@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.11 lines 4098, 4128-4133, 4254-4256 — migration 0136 creates the
+// spec: §25.11 — migration 0136 creates the
 // ops_restore_test_results record the lenny-restore-test CronJob writes one
 // row to per run and the leader lenny-ops replica reads to publish the
 // restore-test gauges (lenny_restore_test_success / _duration_seconds /

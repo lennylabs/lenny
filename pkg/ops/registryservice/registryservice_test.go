@@ -24,7 +24,7 @@ func baseConfig() registryservice.EffectiveConfig {
 	}
 }
 
-// spec: §25.8 line 3362 — with no runtime override the effective config is
+// spec: §25.8 — with no runtime override the effective config is
 // the chart base, sourced from helm.
 func TestEffective_BaseWhenNoOverride_spec_25_8(t *testing.T) {
 	svc := registryservice.New(registryservice.Options{Base: baseConfig(), Store: registryservice.NewMemoryStore()})
@@ -40,7 +40,7 @@ func TestEffective_BaseWhenNoOverride_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3362 — a runtime PUT overlays the base and takes effect
+// spec: §25.8 — a runtime PUT overlays the base and takes effect
 // on the next read; the pull-secret name is returned but never a value.
 func TestUpdate_OverlaysBaseAndAudits_spec_25_8(t *testing.T) {
 	var events []registryservice.AuditEvent
@@ -96,7 +96,7 @@ func TestUpdate_ReadOnlyWithoutStore_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 lines 3352-3358 — the image plan resolves every component
+// spec: §25.8 — the image plan resolves every component
 // against the base with the target version as the tag.
 func TestResolveImagePlan_TagForm_spec_25_8(t *testing.T) {
 	svc := registryservice.New(registryservice.Options{Base: baseConfig(), Store: registryservice.NewMemoryStore()})
@@ -117,7 +117,7 @@ func TestResolveImagePlan_TagForm_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3406 — when requireDigest is set the plan pins by digest
+// spec: §25.8 — when requireDigest is set the plan pins by digest
 // rather than tag; a missing digest is an unresolvable plan.
 func TestResolveImagePlan_DigestForm_spec_25_8(t *testing.T) {
 	base := baseConfig()
@@ -145,7 +145,7 @@ func TestResolveImagePlan_DigestForm_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 lines 3348-3349 — a per-component override wins over the base
+// spec: §25.8 — a per-component override wins over the base
 // path.
 func TestResolveImagePlan_OverrideWins_spec_25_8(t *testing.T) {
 	base := baseConfig()
@@ -178,7 +178,7 @@ func TestComponents_StableSet_spec_25_8(t *testing.T) {
 }
 
 // A store error surfaces from Effective so the handler can report the
-// §25.8 line 3610 Postgres-down degradation rather than a stale base.
+// §25.8 Postgres-down degradation rather than a stale base.
 func TestEffective_StoreError_spec_25_8(t *testing.T) {
 	svc := registryservice.New(registryservice.Options{Base: baseConfig(), Store: errStore{}})
 	if _, err := svc.Effective(context.Background()); err == nil {

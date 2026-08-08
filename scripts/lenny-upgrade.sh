@@ -19,7 +19,7 @@
 # Also available as `make upgrade RELEASE=<version> NAMESPACE=<ns> \
 #   VALUES=<values.yaml> [NON_INTERACTIVE=true]`.
 #
-# spec: §10.5 "CRD upgrade procedure" (lines 439-462). F-10.5.4.
+# spec: §10.5 "CRD upgrade procedure". F-10.5.4.
 
 set -euo pipefail
 
@@ -85,7 +85,7 @@ done
 
 echo "lenny-upgrade: upgrading release '${RELEASE_NAME}' to ${RELEASE} in namespace '${NAMESPACE}'"
 
-# Step 1: preflight CRD-currency assertion (§10.5 line 443). Prefer the
+# Step 1: preflight CRD-currency assertion (§10.5). Prefer the
 # interactive lenny-ctl preflight; fall back to the lenny-preflight Job
 # binary, which the spec names as the equivalent. The check fails closed,
 # and set -e aborts the upgrade on a non-zero exit.

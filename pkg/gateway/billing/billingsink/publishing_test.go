@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
-// spec: §11.2.1 line 137 — the decorator publishes a sealed event to the
+// spec: §11.2.1 — the decorator publishes a sealed event to the
 // sinks only after the synchronous primary write confirms.
 func TestPublishing_PublishesAfterAppend_spec_11_2_1_137(t *testing.T) {
 	rec := &recordSink{name: "webhook"}

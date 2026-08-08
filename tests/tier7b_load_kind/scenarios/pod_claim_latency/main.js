@@ -5,9 +5,9 @@
 // TESTING.md 12.7 target: 100 concurrent pod claims. SLO: P99 < 100ms
 // cache-warm; SandboxClaim CAS under 50ms.
 //
-// Spec cross-reference: spec/06_warm-pod-model.md line 360 budgets
+// Spec cross-reference: §6.3 budgets
 // "Pod claim and routing" at P95 ≤ 100ms (indicative planning until
-// the §6.3 Tier-2 promotion gate clears, see line 368). The current
+// the §6.3 Tier-2 promotion gate clears, see). The current
 // baseline (P95 ≈ 113ms) records an overshoot relative to that budget;
 // the regression-comparison logic asserts against the stored baseline,
 // not the §6.3 indicative number. spec-reviews: F-6.3.17.

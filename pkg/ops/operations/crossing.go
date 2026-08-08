@@ -2,7 +2,7 @@
 
 package operations
 
-// ProgressThresholds is the §25.2 line 401 set of named percent
+// ProgressThresholds is the §25.2 set of named percent
 // thresholds. The event stream emits an operation_progressed event
 // whenever an operation's percent crosses one of these on the way up.
 var ProgressThresholds = []int{10, 25, 50, 75, 90, 95, 99}
@@ -14,8 +14,7 @@ var ProgressThresholds = []int{10, 25, 50, 75, 90, 95, 99}
 // prior reading", so the first observation reports every threshold at or
 // below cur.
 //
-// spec: §25.2 line 401 (percent crosses a named threshold: 10, 25, 50,
-// 75, 90, 95, 99).
+// spec: §25.2.
 func CrossedThresholds(prev, cur float64) []int {
 	if cur <= prev {
 		return nil

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 line 865 — each tenant carries a TenantState enum
+// spec: §12.8 — each tenant carries a TenantState enum
 // (active/disabling/deleting/deleted) persisted in Postgres. Migration
 // 0105 must add the state column with the four-value CHECK constraint
 // and an 'active' default, and reconcile any pre-existing soft-deleted

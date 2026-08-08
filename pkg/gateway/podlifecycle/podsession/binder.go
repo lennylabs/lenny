@@ -94,7 +94,7 @@ type Binder struct {
 	// user's registered credential and pushes it to the pod alongside the
 	// pool leases. Nil when user-source credentials are not configured; a
 	// BindRequest then names no user providers and Bind delivers none.
-	// spec: §4.9 lines 1340-1381.
+	// spec: §4.9.
 	UserCredentials UserCredentialAssigner
 	// SlotCounter is the §5.2 atomic slot counter and the only intra-pod
 	// capacity gate for the maxConcurrentSessions > 1 slot path. Wired in
@@ -123,37 +123,37 @@ type Binder struct {
 	// FallbackSkipReasonAPIServerUnreachable), backing the
 	// lenny_pod_claim_fallback_skipped_total counter. Nil is a no-op.
 	FallbackSkipped func(reason string)
-	// SlotConflict records a §5.2 line 519 concurrent-mode slot
+	// SlotConflict records a §5.2 concurrent-mode slot
 	// reservation failure due to slot contention, backing the
 	// lenny_slot_assignment_conflict_total counter (labeled by pool).
 	// It is threaded into the per-BindSlot SlotClaimer. Nil is a no-op.
 	SlotConflict func(pool string)
-	// SlotFailure records a §5.2 line 12 concurrent-workspace slot bind
+	// SlotFailure records a §5.2 concurrent-workspace slot bind
 	// failure after a slot was reserved, backing the
 	// lenny_slot_failure_total counter (labeled by error_type, pool, and
 	// k8s_pod_name). errorType names the bind stage that failed. Nil is a
 	// no-op.
 	SlotFailure func(errorType, pool, podName string)
-	// Rehydration records a §5.2 line 521 post-recovery slot-counter
+	// Rehydration records a §5.2 post-recovery slot-counter
 	// rehydration event, backing the lenny_slot_rehydration_total counter
 	// (labeled by pod and pool). It is threaded into the per-BindSlot
 	// SlotClaimer. Nil is a no-op.
 	Rehydration func(podID, pool string)
-	// ClaimAccepted records the §6.3 line 352 / §16.1 line 122
+	// ClaimAccepted records the §6.3 / §16.1
 	// `lenny_warmpool_claims_total{pool,runtime_class}` counter
 	// increment on each idle→claimed transition the §6.1 warm pool
 	// observes. Bind and Resume both go through `connect()`, so the
 	// counter rolls up session-mode + resume claims. Slot claims
 	// (BindSlot / concurrent mode) are accounted separately under
-	// §5.2; the deployer-facing demotion-rate ratio (§6.3 line 352)
+	// §5.2; the deployer-facing demotion-rate ratio (§6.3)
 	// keys off this denominator. Nil is a no-op.
-	// spec: §6.3 line 352, §16.1 line 122.
+	// spec: §6.3, §16.1.
 	ClaimAccepted func(pool, runtimeClass string)
-	// SDKDemotion records one §6.1 line 34 SDK-warm demotion: the binder
+	// SDKDemotion records one §6.1 SDK-warm demotion: the binder
 	// demoted an SDK-warm pod to pod-warm because the workspace plan
 	// matched a sdkWarmBlockingPaths pattern. pool is the demoted pod's
-	// pool and teardownSeconds is the §6.3 line 352 DemoteSDK teardown
-	// penalty. The deployer-facing demotion rate (§6.3 line 352) is this
+	// pool and teardownSeconds is the §6.3 DemoteSDK teardown
+	// penalty. The deployer-facing demotion rate (§6.3) is this
 	// numerator over the ClaimAccepted denominator. Nil is a no-op.
 	SDKDemotion func(pool string, teardownSeconds float64)
 	// IntegrationLevelProbeWaitMs bounds how long the §5.1 first-assignment
@@ -164,18 +164,17 @@ type Binder struct {
 	// a runtime never opens the channel (the underperformance case the
 	// probe catches). spec: §5.1.
 	IntegrationLevelProbeWaitMs int32
-	// IntegrationLevelUnderdeclared records the §5.1 line 43
+	// IntegrationLevelUnderdeclared records the §5.1
 	// `runtime.integrationLevel.underdeclared` warning: the observed level
 	// exceeds the declared level, so the author can raise the declared
 	// level in a future release. Called at most once per runtime per
-	// gateway process. Nil is a no-op. spec: §5.1 line 43.
+	// gateway process. Nil is a no-op. spec: §5.1.
 	IntegrationLevelUnderdeclared func(runtime, declared, observed string)
 	// integrationVerified gates the §5.1 observed-level probe to the first
 	// session assignment per runtime: a runtime whose observed level met or
 	// exceeded its declared level is recorded so later assignments skip the
 	// probe. Underperforming runtimes are not recorded, so every assignment
-	// keeps being rejected. spec: §5.1 line 41 ("the first session
-	// assignment").
+	// keeps being rejected. spec: §5.1.
 	integrationVerified sync.Map
 	// UploadGate is the §4.1 Upload Handler subsystem the gateway runs
 	// archive extraction inside, so a hostile archive's decompression is
@@ -183,13 +182,13 @@ type Binder struct {
 	// breaker that gate the upload HTTP path and cannot starve session
 	// attachment or delegation. Production wires the shared
 	// `upload_handler` subsystem; nil runs extraction ungated (tests).
-	// spec: §7.4 line 448 — F-7.4.1, F-13.4.1.
+	// spec: §7.4 — F-7.4.1, F-13.4.1.
 	UploadGate *subsystem.Subsystem
-	// ExtractionAbort records one §7.4 line 462 archive-extraction abort,
+	// ExtractionAbort records one §7.4 archive-extraction abort,
 	// backing `lenny_upload_extraction_aborted_total{error_type}`. errorType
 	// is the §13.4 sub-code (max_decompressed_size, non_regular_entry,
 	// symlink, etc.). Called only on the gateway extraction path. Nil is a
-	// no-op. spec: §7.4 line 462; §16.1 — F-7.4.11.
+	// no-op. spec: §7.4; §16.1 — F-7.4.11.
 	ExtractionAbort func(errorType string)
 	// HoldCanceller cancels the holding replica's local §3.2 reserved-hold
 	// expiry timer after a successful acquisition-path rebind, so the timer
@@ -233,7 +232,7 @@ type RecycleBoundaryArmer interface {
 
 // SDKDemotionNotSupported is returned by Bind when a §6.1 preConnect pod's
 // workspace plan requires demotion but the pod's adapter does not
-// implement the DemoteSDK RPC (it returns UNIMPLEMENTED). Per §6.1 line 40
+// implement the DemoteSDK RPC (it returns UNIMPLEMENTED). Per §6.1
 // the gateway fails the session with SDK_DEMOTION_NOT_SUPPORTED rather than
 // serving the session with stale SDK state.
 type SDKDemotionNotSupported struct {
@@ -246,7 +245,7 @@ func (e *SDKDemotionNotSupported) Error() string {
 
 // workspacePlanPaths returns the relative workspace paths the plan places,
 // one per §14 WorkspaceSource, for matching against sdkWarmBlockingPaths
-// (§6.1 line 34).
+// (§6.1).
 func workspacePlanPaths(plan *adapterv1.WorkspacePlan) []string {
 	if plan == nil {
 		return nil
@@ -261,7 +260,7 @@ func workspacePlanPaths(plan *adapterv1.WorkspacePlan) []string {
 }
 
 // isUnimplemented reports whether err is a gRPC UNIMPLEMENTED status, the
-// §6.1 line 40 signal that a preConnect pod's adapter cannot DemoteSDK.
+// §6.1 signal that a preConnect pod's adapter cannot DemoteSDK.
 func isUnimplemented(err error) bool {
 	return status.Code(err) == codes.Unimplemented
 }
@@ -274,7 +273,7 @@ func isUnimplemented(err error) bool {
 // (which makes the decision) and the launch-only /start path (which needs it
 // without re-running Prepare) compute the identical answer from the persisted
 // plan rather than the gateway persisting the boolean. A non-preConnect request
-// never demotes. spec: §6.1 lines 34-40, §4.3, §4.4 (proposal).
+// never demotes. spec: §6.1, §4.3, §4.4 (proposal).
 func RequiresDemotion(req BindRequest) bool {
 	if !req.PreConnect {
 		return false
@@ -283,7 +282,7 @@ func RequiresDemotion(req BindRequest) bool {
 	return requires
 }
 
-// §5.2 line 12 lenny_slot_failure_total error_type labels: the
+// §5.2 lenny_slot_failure_total error_type labels: the
 // concurrent-mode slot bind stages whose failure terminates a reserved
 // slot. The set is finite so the metric stays low-cardinality.
 const (
@@ -322,13 +321,13 @@ type CredentialAssigner interface {
 	// pod's SPIFFE identity for proxy-mode SPIFFE-binding; an empty value
 	// disables binding. tenantID is recorded on the lease so the §4.9
 	// LLM proxy can attribute proxy-extracted usage to the right tenant
-	// (spec: §4.9 line 1468).
+	// (spec: §4.9).
 	AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error)
 	// ReleaseSession releases every §4.9 credential lease the session
 	// holds back to its pool. It is the §7.1 step 23 teardown the binder
 	// runs when a session's pod is released, so a completed session's
 	// pool slots are returned rather than leaking. A session with no
-	// leases is a no-op. spec: §7.1 line 52.
+	// leases is a no-op. spec: §7.1.
 	ReleaseSession(sessionID string)
 }
 
@@ -342,7 +341,7 @@ type CredentialAssigner interface {
 // file. User leases share the lease store the pool assigner uses, so the
 // pool assigner's ReleaseSession releases them at teardown.
 //
-// spec: §4.9 lines 1340-1381.
+// spec: §4.9.
 type UserCredentialAssigner interface {
 	MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string) (*adapterv1.CredentialLease, error)
 }
@@ -350,7 +349,7 @@ type UserCredentialAssigner interface {
 // CredentialAssignmentError reports that a §4.9 credential lease
 // assignment failed during Bind for a specific provider/pool, after the
 // §4.9 pre-claim availability check had already passed. The gateway
-// maps it to the §4.9 line 1220 race: it releases the claimed pod,
+// maps it to the §4.9 race: it releases the claimed pod,
 // increments lenny_credential_preclaim_mismatch_total{pool,provider},
 // and returns CREDENTIAL_POOL_EXHAUSTED to the client.
 type CredentialAssignmentError struct {
@@ -385,7 +384,7 @@ type BindRequest struct {
 	// the §5.1 default "basic"). On the first session assignment to the
 	// runtime, Bind probes the adapter for the observed level and rejects
 	// the assignment with RUNTIME_LEVEL_UNDERPERFORMS when observed <
-	// declared. spec: §5.1 lines 41-44.
+	// declared. spec: §5.1.
 	DeclaredIntegrationLevel string
 	// Plan is the workspace the adapter materializes before start.
 	Plan *adapterv1.WorkspacePlan
@@ -403,7 +402,7 @@ type BindRequest struct {
 	// block. The Binder forwards it to the adapter on FinalizeWorkspace so
 	// uploadArchive symlink entries are admitted (and target-validated)
 	// only for runtimes that opt in. Nil leaves the platform default
-	// (symlinks rejected). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+	// (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
 	ArchivePolicy *adapterv1.ArchivePolicy
 	// CredentialPools names the §4.9 credential pool to lease from for
 	// each authorized provider, keyed by provider. The caller resolves it
@@ -422,7 +421,7 @@ type BindRequest struct {
 	// Flow). For each, Bind materializes a proxy-mode lease from the user's
 	// registered credential through UserCredentials and pushes it alongside
 	// the pool leases. Empty when no provider resolved to a user credential.
-	// spec: §4.9 lines 1340-1381.
+	// spec: §4.9.
 	UserCredentialProviders []string
 	// PodSpiffeURI is the issuing pod's SPIFFE identity, recorded on each
 	// minted lease for the §4.9 proxy-mode SPIFFE-binding check. Empty
@@ -444,7 +443,7 @@ type BindRequest struct {
 	// SDKWarmBlockingPaths is the runtime's §5.1 sdkWarmBlockingPaths glob
 	// list. When PreConnect is true and any workspace path matches, the
 	// binder demotes the SDK-warm pod before materializing the workspace
-	// (§6.1 line 34). An empty list disables demotion (§6.1 line 38).
+	// (§6.1). An empty list disables demotion (§6.1).
 	SDKWarmBlockingPaths []string
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
 	// by ResolvePool. When true and the session ends cleanly, Release patches
@@ -463,7 +462,7 @@ type BindRequest struct {
 	// Demoted carries the §6.1 SDK-warm demotion decision Prepare made into
 	// Launch, so Launch chooses StartSession (demoted or pod-warm) vs.
 	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
-	// match. Meaningful only when PreConnect is true. spec: §6.1 lines 30-40.
+	// match. Meaningful only when PreConnect is true. spec: §6.1.
 	Demoted bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters resolved from the pool's sessionPolicy at bind time. Bind
@@ -539,12 +538,11 @@ type BindResult struct {
 	Timings BindTimings
 	// WorkspacePlanWarnings carries the §14 non-fatal advisories the
 	// adapter raised during FinalizeWorkspace materialization. The
-	// caller republishes each as an SSE event so clients see the §7.4
-	// line 459 `workspace_plan_strip_components_skip` per-entry notice.
+	// caller republishes each as an SSE event so clients see the §7.4 per-entry notice.
 	// Nil when materialization produced no warnings or when Bind
 	// returned before FinalizeWorkspace ran. F-7.4.15.
 	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
-	// WorkspaceRoot is the §7.3 line 408 / §6.1 absolute cwd path the
+	// WorkspaceRoot is the §7.3 / §6.1 absolute cwd path the
 	// pod's adapter reported on the §15.5 version handshake. The gateway
 	// persists it on the session row so a subsequent Resume can pass it
 	// back via ResumeRequest.expected_workspace_root for the adapter to
@@ -552,7 +550,7 @@ type BindResult struct {
 	// bytes. Empty when the adapter is on an older protocol that did
 	// not report the field. F-7.3.15.
 	WorkspaceRoot string
-	// SetupOutputs carries the §7.5 line 475 captured stdout/stderr/exit
+	// SetupOutputs carries the §7.5 captured stdout/stderr/exit
 	// for each setup command the adapter ran. The gateway persists this
 	// trail on the session row so it is visible through §15.1
 	// GET /v1/sessions/{id} and the §11.7 audit log. F-7.5.4 / F-7.5.11.
@@ -564,7 +562,7 @@ type BindResult struct {
 // unwraps it on the §7.3 setup_command_failed classification path to
 // persist the trail on the session row and to emit the §16.1
 // `lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}`
-// counter. spec: §7.5 line 475, §7.3 line 387 — F-7.5.4 / F-7.5.9.
+// counter. spec: §7.5, §7.3 — F-7.5.4 / F-7.5.9.
 type SetupCommandFailure struct {
 	// Pod is the sandbox name the failure was observed on.
 	Pod string
@@ -583,23 +581,23 @@ func (e *SetupCommandFailure) Error() string {
 func (e *SetupCommandFailure) Unwrap() error { return e.Cause }
 
 // BindTimings carries the per-phase wall-clock durations a successful
-// Bind measured, so the caller can attribute the §6.3 line 358 latency
-// budget. The end-to-end pod-warm SLO (§6.3 line 348,
+// Bind measured, so the caller can attribute the §6.3 latency
+// budget. The end-to-end pod-warm SLO (§6.3,
 // lenny_session_startup_duration_seconds) is the sum of PodClaim,
 // CredentialAssignment, and AgentSessionStart; it excludes
 // WorkspaceMaterialization (payload-dependent) and SetupCommands
 // (deployer-controlled), both of which §6.3 keeps out of the
-// platform-controlled pod-warm budget. spec: §6.3 lines 348, 372.
+// platform-controlled pod-warm budget. spec: §6.3.
 type BindTimings struct {
 	// PodClaim is the §6.3 "pod claim and routing" phase: the warm-pod
 	// claim, pod-IP resolution, mTLS dial, and version handshake.
 	PodClaim time.Duration
 	// WorkspaceMaterialization is the staging plus FinalizeWorkspace
-	// phase. Excluded from the pod-warm SLO total per §6.3 line 348.
+	// phase. Excluded from the pod-warm SLO total per §6.3.
 	WorkspaceMaterialization time.Duration
 	// SetupCommands is the RunSetup phase. Deployer-controlled and
-	// excluded from the platform pod-warm budget (§6.3 line 363), but
-	// instrumented per the §6.3 line 372 per-phase requirement.
+	// excluded from the platform pod-warm budget (§6.3), but
+	// instrumented per the §6.3 per-phase requirement.
 	SetupCommands time.Duration
 	// CredentialAssignment is the §4.9 lease mint plus AssignCredentials
 	// RPC phase.
@@ -637,14 +635,13 @@ type ResumeRequest struct {
 	RecoveryGeneration int64
 	// ExpectedWorkspaceBytes is the session's
 	// last_checkpoint_workspace_bytes from sessionstore. Passed to the
-	// adapter so it can run the §4.4 / §7.3 line 397 symmetric
+	// adapter so it can run the §4.4 / §7.3 symmetric
 	// workspace size pre-check before extraction. F-7.3.26.
 	ExpectedWorkspaceBytes int64
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap from
 	// the SandboxTemplate. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
-	// ExpectedWorkspaceRoot is the §7.3 line 408 "same absolute cwd
-	// path" the original session ran against. The gateway records the
+	// ExpectedWorkspaceRoot is the §7.3 the original session ran against. The gateway records the
 	// SandboxTemplate's WorkspaceRoot at session creation; the adapter
 	// asserts on Resume that the replacement pod's WorkspaceRoot
 	// matches. Empty disables the assertion. F-7.3.15.
@@ -657,7 +654,7 @@ type ResumeRequest struct {
 	// decompress→untar pipeline. Empty for the conversation-only and
 	// coordinator-handoff resume paths that restore no workspace.
 	//
-	// spec: §10.1 line 155 — reassembly on resume.
+	// spec: §10.1 — reassembly on resume.
 	Chunks []adapterclient.ChunkGrant
 }
 
@@ -715,7 +712,7 @@ type ClaimResult struct {
 // captured setup outputs, and the §7.4 strip-skip advisories, and emit the
 // per-phase §6.3 timings. The adapter connection Prepare opened is closed
 // before Prepare returns; Launch reconnects from the binding (§4.6).
-// spec: §4.3 (proposal), §6.3 lines 358, 372.
+// spec: §4.3 (proposal), §6.3.
 type PrepareResult struct {
 	// WorkspaceRoot is the §7.3 cwd the adapter reported when Prepare
 	// reconnected, carried onto the session row for a later Resume.
@@ -724,7 +721,7 @@ type PrepareResult struct {
 	// during Prepare. Launch reads it to decide StartSession vs.
 	// ConfigureWorkspace without re-running the blocking-path match.
 	Demoted bool
-	// WorkspacePlanWarnings carries the §7.4 line 459 strip-skip advisories
+	// WorkspacePlanWarnings carries the §7.4 strip-skip advisories
 	// the gateway and adapter raised during materialization, for the
 	// finalize handler to republish on the §7.2 SSE stream.
 	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
@@ -774,7 +771,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	}
 	// Reassemble the monolithic BindResult: the live adapter and launch
 	// timing come from Launch, the prepared workspace and setup trail from
-	// Prepare, and the claim timing from Claim. spec: §6.3 lines 358, 372.
+	// Prepare, and the claim timing from Claim. spec: §6.3.
 	res.Timings.PodClaim = claim.PodClaim
 	res.Timings.WorkspaceMaterialization = prep.Timings.WorkspaceMaterialization
 	res.Timings.SetupCommands = prep.Timings.SetupCommands
@@ -794,7 +791,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 // and Launch reconnect from the binding without a held connection (§4.6).
 // The handshake connection is closed before Claim returns. A pool-exhaustion
 // or handshake failure is returned so the create handler surfaces it before
-// the client uploads. spec: §4.1 (proposal), §7.1 step 4; §6.3 lines 358, 372.
+// the client uploads. spec: §4.1 (proposal), §7.1 step 4; §6.3.
 func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
 	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
@@ -822,7 +819,7 @@ func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, erro
 // assignCredentials. On any step failure the pod and any assigned lease are
 // reclaimed via failPhase and the corresponding error is returned. The
 // adapter connection is closed before Prepare returns; Launch reconnects.
-// spec: §4.3 (proposal), §6.1 lines 34-40, §7.4, §4.9; §6.3 lines 358, 372.
+// spec: §4.3 (proposal), §6.1, §7.4, §4.9; §6.3.
 func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, error) {
 	sb, cl, neg, err := b.reconnect(ctx, req)
 	if err != nil {
@@ -851,7 +848,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		cl.Close()
 	}
 
-	// spec: §6.1 lines 34-40 — on an SDK-warm (preConnect) pod, decide
+	// spec: §6.1 — on an SDK-warm (preConnect) pod, decide
 	// whether the workspace plan forces a demotion before the workspace is
 	// materialized. A blocking-path match tears down the pre-connected SDK
 	// (DemoteSDK) and the pod proceeds via the normal pod-warm StartSession
@@ -865,7 +862,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
 				reclaim()
 				if isUnimplemented(err) {
-					// spec: §6.1 line 40 — the runtime declared preConnect
+					// spec: §6.1 — the runtime declared preConnect
 					// but its adapter cannot tear down the SDK; fail the
 					// session rather than serve it with stale SDK state.
 					return nil, &SDKDemotionNotSupported{Pod: sandboxName}
@@ -874,7 +871,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 			}
 			demoted = true
 			if b.SDKDemotion != nil {
-				// spec: §6.3 line 352 — record the SDK teardown penalty.
+				// spec: §6.3 — record the SDK teardown penalty.
 				b.SDKDemotion(req.Pool, time.Since(demoteStart).Seconds())
 			}
 		}
@@ -888,7 +885,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// per-step CRD phase. On a pre-attached failure the pod is reclaimed by
 	// draining it (the failed claim disposition: claimed → draining, §6.2).
 	phaseStart := time.Now()
-	// spec: §7.4 line 458; §13.4 line 665 — symlink targets are
+	// spec: §7.4; §13.4 — symlink targets are
 	// canonicalized against the pod's actual workspace root so the
 	// gateway-side extraction matches the adapter's post-promotion
 	// re-validation location.
@@ -906,7 +903,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		reclaim()
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
-	// §7.4 line 459 strip-skip warnings now originate gateway-side (the
+	// §7.4 strip-skip warnings now originate gateway-side (the
 	// archive is no longer decompressed in the pod); merge them ahead of
 	// any adapter-raised advisories for the §7.2 SSE republish.
 	finalizeWarnings = append(stageWarnings, finalizeWarnings...)
@@ -916,7 +913,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
 		reclaim()
-		// spec: §7.5 line 488 — partial outputs ride alongside the failure
+		// spec: §7.5 — partial outputs ride alongside the failure
 		// so the gateway can persist what was captured before the abort.
 		return nil, &SetupCommandFailure{
 			Pod:     sandboxName,
@@ -955,7 +952,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 // observed integration level. On success the caller owns the returned live
 // adapter connection. A launch failure reclaims the pod (and any lease
 // assigned at Prepare) via failPhase and is returned so the gateway retries
-// on a fresh pod. spec: §4.4 (proposal), §6.1 lines 30-34, §5.1 lines 41-44.
+// on a fresh pod. spec: §4.4 (proposal), §6.1, §5.1.
 func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sb, cl, neg, err := b.reconnect(ctx, req)
 	if err != nil {
@@ -983,7 +980,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	}
 
 	phaseStart := time.Now()
-	// spec: §6.1 lines 30-34 — a still-SDK-warm pod (preConnect, not
+	// spec: §6.1 — a still-SDK-warm pod (preConnect, not
 	// demoted) is started by pointing the pre-connected SDK at the
 	// finalized workspace (ConfigureWorkspace) rather than booting the
 	// runtime from cold (StartSession). A demoted or pod-warm pod uses
@@ -1004,7 +1001,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		reclaim()
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
-	// spec: §5.1 lines 41-44 — the runtime has now booted, so the adapter
+	// spec: §5.1 — the runtime has now booted, so the adapter
 	// has had its first lifecycle_capabilities/lifecycle_support exchange.
 	// On the first assignment to this runtime, compare the observed level
 	// against the declared integrationLevel and reject the assignment with
@@ -1208,8 +1205,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
 			if err != nil {
 				// The §4.9 pre-claim check (CredentialRouter) passed for this
-				// provider, yet the assignment failed — the race at §4.9 line
-				// 1220. Surface a typed error so the caller can release the pod,
+				// provider, yet the assignment failed — the race at §4.9. Surface a typed error so the caller can release the pod,
 				// increment lenny_credential_preclaim_mismatch_total, and return
 				// CREDENTIAL_POOL_EXHAUSTED.
 				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
@@ -1223,7 +1219,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 		}
 	}
 	if hasUser {
-		// spec: §4.9 lines 1347-1351 — for each provider the pre-claim
+		// spec: §4.9 — for each provider the pre-claim
 		// resolved to the user source, materialize a proxy-mode lease from
 		// the user's registered credential. The lease shares the credential-
 		// lease store the pool path uses, so the pod sees a single
@@ -1254,13 +1250,13 @@ func (b *Binder) releaseCredentials(sessionID string) {
 // stageWorkspace prepares the pod's staging area for the plan's
 // non-filesystem-native sources, ahead of FinalizeWorkspace. It extracts
 // every uploadArchive source — and every gitClone source's repository
-// archive — inside the gateway (§7.4 line 448; §13.4 line 652 — the pod
+// archive — inside the gateway (§7.4; §13.4 — the pod
 // never decompresses external archives), rewriting each into the
 // uploadFile / mkdir / symlink sources its already-validated entries
 // produce; it fetches the blob content of every (original) uploadFile
 // source from the §4.5 blob store; and it streams all of it to the pod
 // via PrepareWorkspace. It returns the rewritten plan (which carries no
-// uploadArchive or gitClone sources) and the §7.4 line 459
+// uploadArchive or gitClone sources) and the §7.4
 // strip-components-skip warnings the gateway raised during extraction. A
 // plan that carries upload sources but binds through a Binder with no
 // blob store fails rather than materializing an incomplete workspace.
@@ -1270,7 +1266,7 @@ func (b *Binder) releaseCredentials(sessionID string) {
 func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, slotID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	uploads := make(map[string][]byte)
 
-	// §7.4 line 448 / §13.4 line 652 — extract uploadArchive and gitClone
+	// §7.4 / §13.4 — extract uploadArchive and gitClone
 	// sources in the gateway and rewrite them into pre-extracted
 	// file/dir/symlink sources whose bytes ride the same PrepareWorkspace
 	// stream.
@@ -1327,13 +1323,11 @@ func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, s
 // §4.5 blob store; gitClone repositories are cloned on the gateway's
 // network path (so the pod never sees VCS credentials). Both are then
 // decompressed inside the gateway's §4.1 Upload Handler subsystem
-// (UploadGate), so the pod never sees the compressed bytes (§7.4 line
-// 448; §13.4 line 652). Extracted file content is accumulated under
+// (UploadGate), so the pod never sees the compressed bytes (§7.4; §13.4). Extracted file content is accumulated under
 // synthetic refs in uploads so it rides the same PrepareWorkspace stream;
 // directory and symlink entries become source records the adapter
 // materializes without parsing untrusted input. A plan with no
-// uploadArchive or gitClone source is returned unchanged. spec: §7.4
-// lines 448-462; §13.4 — F-7.4.1, F-13.4.1.
+// uploadArchive or gitClone source is returned unchanged. spec: §7.4; §13.4 — F-7.4.1, F-13.4.1.
 func (b *Binder) rewriteExtractedSources(ctx context.Context, plan *adapterv1.WorkspacePlan, tenantID string, uploads map[string][]byte, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	needsRewrite := false
 	for _, src := range plan.GetSources() {
@@ -1433,9 +1427,9 @@ func (b *Binder) extractOneArchive(ctx context.Context, src *adapterv1.Workspace
 // exactly as an uploadArchive. Git histories commonly carry symlinks, so
 // gitClone opts in to symlinks unconditionally; every target is still
 // resolved through pkg/upload.ValidateSymlinkTarget against the workspace
-// root. spec: §7.4 line 448; §13.4 line 652; §14 line 95 — F-7.4.1.
+// root. spec: §7.4; §13.4; §14 — F-7.4.1.
 func (b *Binder) extractGitCloneSource(ctx context.Context, src *adapterv1.WorkspaceSource, tenantID string, sourceIndex int, workspaceRoot string) (*archive.Result, error) {
-	// §14 line 95: an authenticated clone resolves the §4.9 VCS
+	// §14: an authenticated clone resolves the §4.9 VCS
 	// credential-lease token on the gateway and injects it into the fetch.
 	// A public clone (no auth block) proceeds with a zero credential.
 	var cred gitref.Credential
@@ -1469,7 +1463,7 @@ func (b *Binder) extractGitCloneSource(ctx context.Context, src *adapterv1.Works
 // upload path's goroutine pool, concurrency limiter, and circuit breaker
 // and cannot starve session attachment or delegation. It records the
 // §16.1 extraction-abort metric on any failure. A nil gate runs the
-// decode directly (tests). spec: §7.4 line 448; §16.1 — F-7.4.1, F-7.4.11.
+// decode directly (tests). spec: §7.4; §16.1 — F-7.4.1, F-7.4.11.
 func (b *Binder) gatedExtract(ctx context.Context, fn func() (*archive.Result, error)) (*archive.Result, error) {
 	var res *archive.Result
 	do := func(context.Context) error {
@@ -1496,7 +1490,7 @@ func (b *Binder) gatedExtract(ctx context.Context, fn func() (*archive.Result, e
 // recordExtractionAbort increments lenny_upload_extraction_aborted_total
 // for a §13.4 extraction failure, labeling by the typed sub-code when the
 // error is a *upload.ValidationError and "format_error" otherwise. spec:
-// §7.4 line 462; §16.1 — F-7.4.11.
+// §7.4; §16.1 — F-7.4.11.
 func (b *Binder) recordExtractionAbort(err error) {
 	if b.ExtractionAbort == nil {
 		return
@@ -1606,7 +1600,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		cl.Close()
 		return ResumeResult{}, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
 	}
-	// spec: §6.2 lines 82, 172 — the resumed session's fine states
+	// spec: §6.2 — the resumed session's fine states
 	// (resume_pending, resuming, running) are session-model states on the
 	// Postgres session row, not coarse Sandbox.status.phase values; the fresh
 	// pod stays in the coarse `claimed` phase. Release drains the pod when the
@@ -1630,7 +1624,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 // response fields the gateway threads onto BindResult so downstream
 // users (session-row persistence, Resume-time assertion) can see them.
 type negotiated struct {
-	// WorkspaceRoot is the adapter's reported §7.3 line 408 cwd path.
+	// WorkspaceRoot is the adapter's reported §7.3 cwd path.
 	// Empty when the adapter is on an older protocol. F-7.3.15.
 	WorkspaceRoot string
 }
@@ -1697,7 +1691,7 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		)
 	}
-	// spec: §6.3 line 352, §16.1 line 122 — record the warm-pool claim
+	// spec: §6.3, §16.1 — record the warm-pool claim
 	// now that the idle→claimed transition has succeeded and the
 	// adapter handshake has confirmed the pod is usable. Labels are
 	// {pool, runtime_class}; the runtime_class is mapped from the
@@ -1796,7 +1790,7 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest) (
 	// applied while we were locking the Postgres row. If the live phase
 	// has moved past idle, delete the orphan claim and surface the
 	// no-idle-pod result rather than binding a session to a doomed pod.
-	// spec: §4.6.1 fallback claim consistency; §6.2 line 305.
+	// spec: §4.6.1 fallback claim consistency; §6.2.
 	var sb lennyv1.Sandbox
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: pod.PodID}, &sb); err != nil {
 		_ = b.Client.Delete(ctx, claim)
@@ -1830,7 +1824,7 @@ func (b *Binder) recordFallbackSkip(reason string) {
 // dispositionFailed is the disposition string Release treats as the §6.2
 // "ends in failure or a crash" terminal that always retires the pod
 // regardless of recycle settings. Every other clean terminal (completed,
-// cancelled, expired) recycles on a recycling pool. spec: §6.2 lines 24, 157
+// cancelled, expired) recycles on a recycling pool. spec: §6.2
 // (a session that ends in failure or a crash always retires its pod).
 const dispositionFailed = "failed"
 
@@ -1863,14 +1857,14 @@ const dispositionFailed = "failed"
 // §3.4 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
 // §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
-	// spec: §7.1 line 52 (step 23) — release the session's §4.9 credential
+	// spec: §7.1 — release the session's §4.9 credential
 	// leases back to the pool. Done before the disposition so the credential's
 	// active-session counter is decremented on the way out; without it the
 	// pool's per-credential slot count drifts up without bound and
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
-	// spec: §3.2 / §3.4 / §6.2 lines 24, 105, 157 — a recycling pool recycles
+	// spec: §3.2 / §3.4 / §6.2 — a recycling pool recycles
 	// the pod across whole sessions of the same tenant when occupancy reaches
 	// zero after a clean session termination; a failed/crashed session always
 	// retires the pod. On the recycle path Release patches the claim

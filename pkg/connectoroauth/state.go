@@ -65,7 +65,7 @@ type FlowContext struct {
 	ConnectorID string
 
 	// TenantID + UserID + Environment scope the resulting connector
-	// credential per §4.3 line 202. The empty Environment selects the
+	// credential per §4.3. The empty Environment selects the
 	// no-environment scope.
 	TenantID    string
 	UserID      string
@@ -100,7 +100,7 @@ type FlowContext struct {
 	// callback time) so an operator can investigate a state replay or
 	// session hijack between authorize and callback. Empty strings
 	// preserve back-compat for code paths that do not stamp them.
-	// spec: §9.3 line 140 — audit logging is the prescribed forensic
+	// spec: §9.3 — audit logging is the prescribed forensic
 	// surface. F-9.3.11.
 	InitiatorIP string
 	InitiatorUA string

@@ -364,7 +364,7 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 42 — a runtime declaring integrationLevel `full` whose
+// spec: §5.1 — a runtime declaring integrationLevel `full` whose
 // adapter handshake is observed at Basic (no CH-RUNTIMEOPS, no MCP)
 // has its first session assignment rejected with
 // RUNTIME_LEVEL_UNDERPERFORMS, and the pod is reclaimed by draining it
@@ -401,7 +401,7 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 44 — a runtime whose observed level meets its declared
+// spec: §5.1 — a runtime whose observed level meets its declared
 // level is admitted: a Basic-declared runtime observed at Basic binds and
 // reaches attached.
 func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
@@ -432,7 +432,7 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §6.3 lines 358, 372 — Bind records the per-phase wall-clock
+// spec: §6.3 — Bind records the per-phase wall-clock
 // durations on its result so the start path can attribute the §6.3
 // latency budget. Each phase duration is non-negative and the recorded
 // phases cannot together exceed the overall Bind wall-clock.
@@ -538,7 +538,7 @@ func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 352, §16.1 line 122 — a successful Bind records one
+// spec: §6.3, §16.1 — a successful Bind records one
 // idle→claimed transition on `lenny_warmpool_claims_total{pool,
 // runtime_class}`. The runtime_class label is mapped from the pod's
 // §5.3 isolation profile so the §6.3 demotion-rate ratio per runtime
@@ -583,8 +583,8 @@ func TestBindRecordsWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 352 — Bind that fails after the claim does not record
-// the claim. This matches the §6.3 line 348 SLO semantics: only
+// spec: §6.3 — Bind that fails after the claim does not record
+// the claim. This matches the §6.3 SLO semantics: only
 // successful claim transitions are counted.
 func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.T) {
 	sb := idleSandbox("sbx-1", "") // no PodIP → connect fails on dial
@@ -604,7 +604,7 @@ func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.
 	}
 }
 
-// spec: §6.3 line 352 — an unrecognized isolation profile is skipped
+// spec: §6.3 — an unrecognized isolation profile is skipped
 // rather than emitting an empty `runtime_class` series. The series
 // must stay low-cardinality and meaningful.
 func TestBindSkipsWarmpoolClaimOnUnknownIsolation_spec_6_3_F_6_3_6(t *testing.T) {
@@ -1046,7 +1046,7 @@ func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
 // TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4 asserts a failed session
 // on a recycling pool takes the retire path (deletes the claim) and does NOT
 // arm the missing-report timeout: there is no whole-pod scrub to await on a
-// retired pod. spec: §3.4; §6.2 lines 24, 157.
+// retired pod. spec: §3.4; §6.2.
 func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1119,8 +1119,8 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 
 // TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4 asserts a failed/crashed
 // session on a recycling pool retires the pod (deletes the claim) rather than
-// recycling: §6.2 lines 24, 157 require a failed session to always retire its
-// pod regardless of recycle settings. spec: §3.4; §6.2 lines 24, 157.
+// recycling: §6.2 require a failed session to always retire its
+// pod regardless of recycle settings. spec: §3.4; §6.2.
 func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1428,7 +1428,7 @@ func TestBindClonesGitSource(t *testing.T) {
 }
 
 func TestBindRejectsAuthenticatedGitCloneWithNoResolver(t *testing.T) {
-	// spec: §14 line 95 — an authenticated gitClone needs a wired VCS
+	// spec: §14 — an authenticated gitClone needs a wired VCS
 	// credential resolver. With none, Bind fails with a clear error rather
 	// than cloning unauthenticated.
 	srv := adapter.New("adapter-test")
@@ -1476,7 +1476,7 @@ func (s *stubVCSResolver) Resolve(_ context.Context, tenantID, gitURL, leaseScop
 }
 
 func TestBindClonesAuthenticatedGitClone(t *testing.T) {
-	// spec: §14 line 95 — an authenticated gitClone resolves its VCS
+	// spec: §14 — an authenticated gitClone resolves its VCS
 	// credential on the gateway and clones on the gateway's network path.
 	// The local file:// remote ignores the injected HTTP header, so this
 	// exercises the binder's resolver-call-and-thread wiring end to end.

@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: MIT
 
-// Package evictionfallback implements the §4.4 lines 263–289 eviction
+// Package evictionfallback implements the §4.4 eviction
 // fallback writer. When an eviction checkpoint cannot persist the
 // workspace to MinIO (all retry attempts exhausted), the gateway falls
 // back to the Postgres minimal-state record. This package owns:
 //
-//   - The 2 KB inline / MinIO key chooser per §4.4 line 271. Small
+//   - The 2 KB inline / MinIO key chooser per §4.4. Small
 //     last-message contexts are stored inline as a TEXT column; large
 //     contexts are uploaded to MinIO at
 //     `/{tenant_id}/eviction/{session_id}/context` and the row carries
 //     the object key.
-//   - The MinIO-unavailable degradation per §4.4 line 271: truncate
+//   - The MinIO-unavailable degradation per §4.4: truncate
 //     the context to 2 KB and store it inline with
 //     `context_truncated: true`.
-//   - The §4.4 line 277 Postgres-fallback retry budget: every Postgres
+//   - The §4.4 Postgres-fallback retry budget: every Postgres
 //     write attempt is wrapped in an exponential-backoff loop (500 ms
 //     initial, 2x factor, 5 s per-attempt cap, 60 s total) before the
 //     total-loss path fires. The budget is sourced from
 //     pkg/checkpoint.RetryBudgetForFallback().
-//   - The §4.4 line 279 partial-keys WARN log + counter emission on
+//   - The §4.4 partial-keys WARN log + counter emission on
 //     the MinIO-then-Postgres-fail path.
-//   - The §4.4 line 291 storage quota accounting for eviction context
+//   - The §4.4 storage quota accounting for eviction context
 //     objects: the MinIO write is paired with an `artifact_store` row
 //     insert and a post-upload Redis quota bump.
-//   - The §4.4 lines 283–289 total-loss path: when both stores fail,
+//   - The §4.4 total-loss path: when both stores fail,
 //     emit the `lenny_session_eviction_total_loss_total` counter, log
 //     `CRITICAL`, and best-effort-publish a `session.lost` event with
 //     `reason: "eviction_total_loss"`.
 //
-// spec: §4.4 lines 263–291.
+// spec: §4.4.
 package evictionfallback
 
 import (
@@ -43,32 +43,32 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
 )
 
-// MaxInlineContextBytes is the §4.4 line 271 2 KB cutoff for the
+// MaxInlineContextBytes is the §4.4 2 KB cutoff for the
 // inline-vs-MinIO chooser. A context ≤ this threshold is stored
 // inline as TEXT; a larger context is uploaded to MinIO and the row
 // carries the object key.
 //
-// spec: §4.4 line 271 — "for contexts ≤ 2KB the value is stored
+// spec: §4.4 — "for contexts ≤ 2KB the value is stored
 // inline".
 const MaxInlineContextBytes = 2 * 1024
 
-// MaxTruncatedContextBytes is the §4.4 line 271 truncation cap when
+// MaxTruncatedContextBytes is the §4.4 truncation cap when
 // MinIO is unavailable. The writer truncates the context to this size
 // and stores it inline with `context_truncated: true` so the resume
 // path can detect partial context. The §4.4 spec wording "truncated
 // to 2KB" pairs the truncation size with the inline threshold so the
 // row stays small under the same TOAST-avoidance constraint.
 //
-// spec: §4.4 line 271 — "On MinIO unavailability during a fallback
+// spec: §4.4 — "On MinIO unavailability during a fallback
 // write, the context is truncated to 2KB and stored inline".
 const MaxTruncatedContextBytes = MaxInlineContextBytes
 
-// MaxOriginalContextBytes is the §4.4 line 271 original context-size
+// MaxOriginalContextBytes is the §4.4 original context-size
 // ceiling. The writer rejects payloads larger than this before
 // touching either store so a runaway producer cannot drive the
 // fallback path into unbounded buffering.
 //
-// spec: §4.4 line 271 — "The original context may reach up to 64KB
+// spec: §4.4 — "The original context may reach up to 64KB
 // before truncation".
 const MaxOriginalContextBytes = 64 * 1024
 
@@ -77,12 +77,12 @@ const MaxOriginalContextBytes = 64 * 1024
 // the implementation the canonical object key
 // (`/{tenant_id}/eviction/{session_id}/context`) and the context
 // bytes; the implementation returns nil on success, or an error to
-// trigger the §4.4 line 271 MinIO-unavailable degradation.
+// trigger the §4.4 MinIO-unavailable degradation.
 //
 // The interface is narrow so unit tests can stub it without pulling
 // in a S3 client. The production wiring lives in pkg/blobstore.
 //
-// spec: §4.4 line 271 — MinIO object key path.
+// spec: §4.4 — MinIO object key path.
 type ContextObjectUploader interface {
 	// Upload writes the supplied bytes to MinIO at the canonical
 	// eviction-context key for (tenant, session). Returns nil on
@@ -92,26 +92,24 @@ type ContextObjectUploader interface {
 	Upload(ctx context.Context, tenantID, sessionID string, body io.Reader, sizeBytes int) error
 }
 
-// MetricsSink receives the §4.4 lines 283–289 total-loss counter
-// increment, the §4.4 line 279 partial-keys-logged counter, the §4.4
-// line 263 fallback-entry counter, and the §4.4 line 291 storage-
+// MetricsSink receives the §4.4 total-loss counter
+// increment, the §4.4 partial-keys-logged counter, the §4.4 fallback-entry counter, and the §4.4 storage-
 // quota counter. The gatewaymetrics.Metrics satisfies it. Nil is
 // permitted; the writer still runs.
 //
-// spec: §4.4 line 286 — `lenny_session_eviction_total_loss_total`
+// spec: §4.4 — `lenny_session_eviction_total_loss_total`
 // counter, labels (`pool`, `had_prior_checkpoint`).
-// spec: §4.4 line 279 — `lenny_checkpoint_eviction_partial_keys_logged_total`
+// spec: §4.4 — `lenny_checkpoint_eviction_partial_keys_logged_total`
 // counter, labels (`pool`, `keys_committed`).
-// spec: §4.4 line 263 — `lenny_checkpoint_eviction_fallback_total`
+// spec: §4.4 — `lenny_checkpoint_eviction_fallback_total`
 // counter, labels (`pool`, `had_prior_checkpoint`).
 type MetricsSink interface {
 	// IncSessionEvictionTotalLoss bumps the
 	// `lenny_session_eviction_total_loss_total` counter labeled by
-	// pool and had_prior_checkpoint. Called only on the §4.4 lines
-	// 283–289 total-loss path (both MinIO and Postgres failed).
+	// pool and had_prior_checkpoint. Called only on the §4.4 total-loss path (both MinIO and Postgres failed).
 	IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bool)
 
-	// IncCheckpointEvictionPartialKeysLogged bumps the §4.4 line 279
+	// IncCheckpointEvictionPartialKeysLogged bumps the §4.4
 	// `lenny_checkpoint_eviction_partial_keys_logged_total` counter
 	// labeled by pool and keys_committed ("0" or "1+"). Called before
 	// the total-loss path fires for every MinIO-then-Postgres-fail
@@ -119,7 +117,7 @@ type MetricsSink interface {
 	// partial-upload scenarios.
 	IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string)
 
-	// IncCheckpointEvictionFallback bumps the §4.4 line 263
+	// IncCheckpointEvictionFallback bumps the §4.4
 	// `lenny_checkpoint_eviction_fallback_total` counter labeled by
 	// pool and had_prior_checkpoint. Called at the entry to the
 	// eviction Postgres-fallback writer so operators can count
@@ -127,12 +125,12 @@ type MetricsSink interface {
 	IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool)
 }
 
-// StorageQuotaSink is the §4.4 line 291 per-tenant storage-byte
+// StorageQuotaSink is the §4.4 per-tenant storage-byte
 // adjustment surface. The writer bumps the Redis quota counter after a
 // successful MinIO eviction-context upload. Nil is permitted (dev mode
 // without Redis-backed accounting); the upload still succeeds.
 //
-// spec: §4.4 line 291 — "After both rows are durably committed, the
+// spec: §4.4 — "After both rows are durably committed, the
 // gateway follows the standard post-upload increment and increments
 // the tenant's Redis `storage_bytes_used` counter by the confirmed
 // object size."
@@ -144,13 +142,13 @@ type StorageQuotaSink interface {
 	Adjust(ctx context.Context, tenantID string, delta int64) error
 }
 
-// ArtifactCatalog is the §4.4 line 291 / §12.5 catalog surface. The
+// ArtifactCatalog is the §4.4 / §12.5 catalog surface. The
 // writer inserts an `artifact_store` row alongside every successful
 // MinIO eviction-context upload so the bytes are tracked in the GC
 // catalog. Nil is permitted (dev mode without Postgres-backed
 // accounting); the upload still succeeds.
 //
-// spec: §4.4 line 291 — "MinIO eviction-context-object write paired in
+// spec: §4.4 — "MinIO eviction-context-object write paired in
 // the same Postgres transaction with `artifact_store` row insert
 // (artifact_type = eviction_context)".
 type ArtifactCatalog interface {
@@ -164,12 +162,12 @@ type ArtifactCatalog interface {
 	RecordEvictionContext(ctx context.Context, tenantID, sessionID, uri string, sizeBytes int64) error
 }
 
-// EventEmitter publishes the best-effort §4.4 line 285 `session.lost`
+// EventEmitter publishes the best-effort §4.4
 // event onto the session's event stream. The gateway-side wiring uses
 // the existing sessionevents.Bus; nil makes the emit a no-op (logged
 // only).
 //
-// spec: §4.4 line 285 — "Emit a session.lost event on the session's
+// spec: §4.4 — "Emit a session.lost event on the session's
 // event stream with reason: 'eviction_total_loss'".
 type EventEmitter interface {
 	// EmitSessionLost publishes a `session.lost` event with the
@@ -211,12 +209,12 @@ func (ContextEncoder) EncodeMinIOKey(template evictionstatestore.Record, key str
 	return out
 }
 
-// EvictionContextObjectKey returns the §4.4 line 271 canonical MinIO
+// EvictionContextObjectKey returns the §4.4 canonical MinIO
 // object key for the supplied (tenant, session): the path the
 // uploader writes to and the row stores as the LastMessageContext
 // value when the context is large enough for the MinIO path.
 //
-// spec: §4.4 line 271 — `/{tenant_id}/eviction/{session_id}/context`.
+// spec: §4.4 — `/{tenant_id}/eviction/{session_id}/context`.
 func EvictionContextObjectKey(tenantID, sessionID string) string {
 	return "/" + tenantID + "/eviction/" + sessionID + "/context"
 }
@@ -251,34 +249,34 @@ type WriteParams struct {
 	HadPriorCheckpoint bool
 
 	// MinIOError, when set, is the error summary the writer
-	// includes on the §4.4 line 285 session.lost event when the
+	// includes on the §4.4 session.lost event when the
 	// total-loss path fires. This is the prior MinIO error from the
 	// failed eviction-checkpoint storage attempt that drove the
 	// fallback.
 	MinIOError error
 
-	// ChunkEncoding is the §4.4 line 279 chunk-encoding tag
+	// ChunkEncoding is the §4.4 chunk-encoding tag
 	// included in the WARN log for manual workspace reconstruction.
 	// Value is "tar" or "tar.gz"; empty omits the field from the
 	// log line.
 	ChunkEncoding string
 
-	// CommittedMinIOKeys is the §4.4 line 279 list of object keys
+	// CommittedMinIOKeys is the §4.4 list of object keys
 	// for partial-checkpoint chunk objects that were successfully
 	// committed to MinIO before MinIO became unavailable. The slice
 	// may be empty (no chunks committed) or carry up to one entry
 	// per partial-{n}.{chunk_encoding} chunk that landed.
 	CommittedMinIOKeys []string
 
-	// Generation is the §4.4 line 279 generation tag included in
+	// Generation is the §4.4 generation tag included in
 	// the WARN log. Defaults to Record.RecoveryGeneration when zero.
 	Generation int64
 }
 
-// Writer is the §4.4 line 271 eviction-fallback writer. It chooses
+// Writer is the §4.4 eviction-fallback writer. It chooses
 // inline vs MinIO storage for the last-message context, executes the
-// Postgres write under the §4.4 line 277 60-second retry budget, and
-// on a Postgres failure drives the §4.4 lines 283–289 total-loss
+// Postgres write under the §4.4 60-second retry budget, and
+// on a Postgres failure drives the §4.4 total-loss
 // orchestration.
 //
 // The writer is configuration-bag-style so the gateway can wire each
@@ -302,11 +300,11 @@ type Writer struct {
 	// total-loss path. Nil is permitted; the writer logs the loss
 	// regardless.
 	Events EventEmitter
-	// Catalog records the §4.4 line 291 artifact_store row for a
+	// Catalog records the §4.4 artifact_store row for a
 	// successfully-uploaded eviction context object. Nil is permitted;
 	// the upload still succeeds (storage quota accounting is skipped).
 	Catalog ArtifactCatalog
-	// Quota receives the §4.4 line 291 Redis storage-bytes counter
+	// Quota receives the §4.4 Redis storage-bytes counter
 	// bump after a successful MinIO + artifact_store write pair. Nil
 	// is permitted; the upload still succeeds.
 	Quota StorageQuotaSink
@@ -314,7 +312,7 @@ type Writer struct {
 	// per-call inputs. The zero ContextEncoder is acceptable.
 	Encoder ContextEncoder
 
-	// RetryBudget overrides the §4.4 line 277 Postgres-fallback retry
+	// RetryBudget overrides the §4.4 Postgres-fallback retry
 	// budget (default RetryBudgetForFallback). Tests inject a zero
 	// total budget to disable retries; production code leaves this
 	// zero so the §4.4 60s default applies.
@@ -325,7 +323,7 @@ type Writer struct {
 	Sleep func(time.Duration)
 }
 
-// Outcome enumerates the §4.4 line 271 writer outcomes.
+// Outcome enumerates the §4.4 writer outcomes.
 type Outcome string
 
 const (
@@ -338,7 +336,7 @@ const (
 	// the writer truncated to 2 KB and stored inline with
 	// `context_truncated: true`.
 	OutcomeTruncated Outcome = "truncated"
-	// OutcomeTotalLoss: both stores failed; the §4.4 lines 283–289
+	// OutcomeTotalLoss: both stores failed; the §4.4
 	// total-loss path fired.
 	OutcomeTotalLoss Outcome = "total_loss"
 )
@@ -351,30 +349,29 @@ type Result struct {
 	PersistedRecord evictionstatestore.Record
 }
 
-// Write executes the §4.4 line 271 eviction-fallback writer for the
+// Write executes the §4.4 eviction-fallback writer for the
 // supplied params:
 //
 //  1. If len(Context) ≤ MaxInlineContextBytes: encode the Record
 //     inline and write to the EvictionStateStore. On a Postgres
-//     failure (after the §4.4 line 277 60-second retry budget is
-//     exhausted), fire the §4.4 lines 283–289 total-loss path.
+//     failure (after the §4.4 60-second retry budget is
+//     exhausted), fire the §4.4 total-loss path.
 //  2. If len(Context) > MaxInlineContextBytes (capped at
 //     MaxOriginalContextBytes): try to upload the context to MinIO at
 //     the canonical key.
-//     - On success: record the §4.4 line 291 artifact_store row
+//     - On success: record the §4.4 artifact_store row
 //     (when Catalog is wired), encode the Record with the MinIO
-//     key, write to the EvictionStateStore, then bump the §4.4
-//     line 291 Redis storage_bytes_used counter (when Quota is
+//     key, write to the EvictionStateStore, then bump the §4.4 Redis storage_bytes_used counter (when Quota is
 //     wired).
 //     - On MinIO failure: degrade to the truncation path —
 //     truncate to MaxTruncatedContextBytes, set
 //     ContextTruncated=true, write inline. On a Postgres failure,
-//     emit the §4.4 line 279 partial-keys WARN log and metric,
+//     emit the §4.4 partial-keys WARN log and metric,
 //     then fire the total-loss path.
 //  3. WorkspaceLost is forced to true on every persisted record so
 //     the §7.2 resume path observes a consistent signal.
 //
-// spec: §4.4 lines 263–291.
+// spec: §4.4.
 func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 	if w == nil || w.Store == nil {
 		return Result{}, errors.New("evictionfallback: writer requires a Store")
@@ -382,7 +379,7 @@ func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 	if p.Record.TenantID == "" || p.Record.SessionID == "" {
 		return Result{}, errors.New("evictionfallback: tenant and session ids are required")
 	}
-	// spec: §4.4 line 263 — every entry into the eviction-fallback
+	// spec: §4.4 — every entry into the eviction-fallback
 	// writer bumps lenny_checkpoint_eviction_fallback_total, labeled
 	// by pool and had_prior_checkpoint. The counter fires before the
 	// MinIO-or-truncation chooser runs so operators see every fallback
@@ -412,7 +409,7 @@ func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 			strings.NewReader(string(body)), len(body))
 		if uploadErr == nil {
 			row := w.Encoder.EncodeMinIOKey(template, key)
-			// spec: §4.4 line 291 — record the artifact_store row in
+			// spec: §4.4 — record the artifact_store row in
 			// the same logical transaction as the Postgres minimal-
 			// state row. The Catalog implementation owns the Postgres
 			// statement; the writer issues it before the row write so
@@ -431,7 +428,7 @@ func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 			if err := w.putWithRetry(ctx, row); err != nil {
 				return w.driveTotalLoss(ctx, template, p, err), err
 			}
-			// spec: §4.4 line 291 — after both rows are durably
+			// spec: §4.4 — after both rows are durably
 			// committed, bump the tenant's Redis storage_bytes_used
 			// counter by the confirmed object size.
 			if w.Quota != nil {
@@ -459,14 +456,14 @@ func (w *Writer) Write(ctx context.Context, p WriteParams) (Result, error) {
 	return Result{Outcome: OutcomeTruncated, PersistedRecord: row}, nil
 }
 
-// putWithRetry wraps the Store.Put call in the §4.4 line 277
+// putWithRetry wraps the Store.Put call in the §4.4
 // exponential-backoff retry loop (500 ms initial, 2x factor, 5 s
 // per-attempt cap, 60 s total budget). The retry covers a managed
 // Postgres failover window (RDS Multi-AZ, Cloud SQL HA: typically
 // 15–30 s); after the budget is exhausted the caller drives the
 // total-loss path.
 //
-// spec: §4.4 line 277 — "The Postgres write is retried with
+// spec: §4.4 — "The Postgres write is retried with
 // exponential backoff (initial 500ms, factor 2x, capped at 5s per
 // attempt) for up to 60 seconds total."
 func (w *Writer) putWithRetry(ctx context.Context, row evictionstatestore.Record) error {
@@ -541,16 +538,16 @@ func (w *Writer) sleep(d time.Duration) {
 	time.Sleep(d)
 }
 
-// driveTotalLoss executes the §4.4 lines 283–289 total-loss
-// orchestration: emit the §4.4 line 279 partial-keys WARN log +
-// counter, then the §4.4 line 286 total-loss counter, log CRITICAL,
+// driveTotalLoss executes the §4.4 total-loss
+// orchestration: emit the §4.4 partial-keys WARN log +
+// counter, then the §4.4 total-loss counter, log CRITICAL,
 // and best-effort-publish the session.lost event. The caller still
 // returns the underlying Postgres error so its retry / failover policy
 // can re-evaluate.
 //
-// spec: §4.4 lines 279, 283–289.
+// spec: §4.4.
 func (w *Writer) driveTotalLoss(ctx context.Context, template evictionstatestore.Record, p WriteParams, pgErr error) Result {
-	// spec: §4.4 line 279 — emit the WARN log + counter BEFORE the
+	// spec: §4.4 — emit the WARN log + counter BEFORE the
 	// total-loss path so the partial MinIO object keys are durable in
 	// the gateway log even when downstream telemetry sinks fail.
 	w.logPartialKeys(template, p, pgErr)
@@ -566,7 +563,7 @@ func (w *Writer) driveTotalLoss(ctx context.Context, template evictionstatestore
 	if pgErr != nil {
 		pgSummary = pgErr.Error()
 	}
-	// spec: §4.4 line 287 — "Log a CRITICAL-level structured message
+	// spec: §4.4 — "Log a CRITICAL-level structured message
 	// including session_id, tenant_id, generation, evicted_at, and the
 	// errors from both the MinIO retry exhaustion and the Postgres
 	// write failure".
@@ -587,13 +584,13 @@ func (w *Writer) driveTotalLoss(ctx context.Context, template evictionstatestore
 	return Result{Outcome: OutcomeTotalLoss}
 }
 
-// logPartialKeys emits the §4.4 line 279 structured WARN log + counter
+// logPartialKeys emits the §4.4 structured WARN log + counter
 // before the total-loss path fires. Fields: session_id, tenant_id,
 // generation, chunk_encoding, committed_minio_keys, minio_error. The
 // counter label keys_committed discriminates total-MinIO-failure (no
 // keys committed) from partial-upload scenarios.
 //
-// spec: §4.4 line 279.
+// spec: §4.4.
 func (w *Writer) logPartialKeys(template evictionstatestore.Record, p WriteParams, _ error) {
 	generation := p.Generation
 	if generation == 0 {
@@ -611,7 +608,7 @@ func (w *Writer) logPartialKeys(template evictionstatestore.Record, p WriteParam
 	if p.MinIOError != nil {
 		minioSummary = p.MinIOError.Error()
 	}
-	// spec: §4.4 line 279 — structured WARN with the full field set so
+	// spec: §4.4 — structured WARN with the full field set so
 	// operators can reconstruct the workspace from the listed chunks
 	// using the chunk_encoding-appropriate decode pipeline.
 	log.Printf("WARN: checkpoint.eviction_partial_keys tenant=%s session=%s generation=%d chunk_encoding=%q committed_minio_keys=%v minio_error=%q",

@@ -70,7 +70,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 	return false
 }
 
-// spec: §15.1 line 620 (/terminate releases the pod), §4.6 (durable binding),
+// spec: §15.1, §4.6 (durable binding),
 // §6.2 (pre-attached disposition), §7.1 step 23 (lease release) — a session
 // terminated in created/finalizing/ready holds a pod claimed at /create but no
 // live BindResult, so terminalReclaimPreRunning deletes the per-pod claim and

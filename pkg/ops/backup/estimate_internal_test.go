@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §25.11 line 3957 — estimatedDowntime is scaled by backup size
+// spec: §25.11 — estimatedDowntime is scaled by backup size
 // and component count rather than a fixed constant.
 func TestEstimateDowntimeScalesWithSizeAndComponents(t *testing.T) {
 	// A full backup has three components: base 2m + 3×1m = PT5M with no
@@ -32,7 +32,7 @@ func TestEstimateDowntimeScalesWithSizeAndComponents(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 3957 — a custom throughput overrides the default.
+// spec: §25.11 — a custom throughput overrides the default.
 func TestEstimateDowntimeHonorsThroughput(t *testing.T) {
 	b := Backup{Components: componentsFor(TypePostgres), SizeBytes: 600 << 20}
 	// At 10 MiB/s, 600 MiB takes 60s; base 3m + 60s = PT4M.

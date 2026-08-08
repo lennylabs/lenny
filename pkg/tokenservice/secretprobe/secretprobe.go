@@ -15,7 +15,7 @@
 // the gateway's, so the gateway cannot substitute a semantically
 // meaningless self-review under its own RBAC.
 //
-// spec: spec/04_system-components.md §4.9 line 1212.
+// spec: spec/04_system-components.md §4.9.
 package secretprobe
 
 import (
@@ -49,7 +49,7 @@ func New(clientset kubernetes.Interface, namespace string) *Prober {
 }
 
 // ProbeSecretAccess implements tokenservice.SecretAccessProber. spec:
-// §4.9 line 1212.
+// §4.9.
 func (p *Prober) ProbeSecretAccess(ctx context.Context, namespace, name string) (tokenservice.SecretAccessVerdict, error) {
 	ns := namespace
 	if ns == "" {

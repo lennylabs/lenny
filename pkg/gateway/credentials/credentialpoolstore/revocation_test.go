@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 )
 
-// spec: §4.9 lines 1640-1673 — per-credential revocation state and the
+// spec: §4.9 — per-credential revocation state and the
 // startup deny-list rebuild query.
 
 func revPool(tenant, name string, creds ...credentialpoolstore.Credential) credentialpoolstore.CredentialPool {

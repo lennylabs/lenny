@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §11.2 lines 87-88 — the session.created and session.completed
+// spec: §11.2 — the session.created and session.completed
 // billing events auto-populate experiment_id/variant_id from the
 // session's experimentContext so per-experiment / per-variant cost
 // attribution works without joining the session row. F-11.2.13.

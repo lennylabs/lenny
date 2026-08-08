@@ -78,7 +78,7 @@ func decodeCAStatus(t *testing.T, rr *httptest.ResponseRecorder) admin.CARotatio
 	return s
 }
 
-// spec: §10.3 lines 344-350 — the operator drives a full rotation
+// spec: §10.3 — the operator drives a full rotation
 // through the admin API: status -> begin -> promote -> retire, with the
 // overlap guard enforced before the window closes.
 func TestCARotation_fullLifecycle_spec_10_3(t *testing.T) {

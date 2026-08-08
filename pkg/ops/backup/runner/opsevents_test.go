@@ -15,7 +15,7 @@ import (
 
 // captureEmitter records every operational event the run emits so the
 // test can assert the §16.6 backup_completed / backup_failed catalogue
-// types and payloads. spec: §25.3 lines 692-694; §16.6.
+// types and payloads. spec: §25.3; §16.6.
 type captureEmitter struct {
 	events []events.OperationalEvent
 }
@@ -26,8 +26,7 @@ func (e *captureEmitter) Emit(_ context.Context, ev events.OperationalEvent) err
 }
 
 // TestRunEmitsBackupCompletedOpsEvent_spec_25_3_692 asserts a successful
-// run emits the §16.6 backup_completed operational event with the §25.3
-// line 692 payload highlights (type, status, size, duration).
+// run emits the §16.6 backup_completed operational event with the §25.3 payload highlights (type, status, size, duration).
 func TestRunEmitsBackupCompletedOpsEvent_spec_25_3_692(t *testing.T) {
 	em := &captureEmitter{}
 	_, err := runner.Run(context.Background(), runner.Config{
@@ -66,8 +65,7 @@ func TestRunEmitsBackupCompletedOpsEvent_spec_25_3_692(t *testing.T) {
 }
 
 // TestRunEmitsBackupFailedOpsEvent_spec_25_3_694 asserts a failed run
-// emits the §16.6 backup_failed operational event carrying the §25.3
-// line 694 payload (type, error).
+// emits the §16.6 backup_failed operational event carrying the §25.3 payload (type, error).
 func TestRunEmitsBackupFailedOpsEvent_spec_25_3_694(t *testing.T) {
 	em := &captureEmitter{}
 	_, err := runner.Run(context.Background(), runner.Config{

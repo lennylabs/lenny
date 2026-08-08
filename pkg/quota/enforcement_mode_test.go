@@ -4,7 +4,7 @@ package quota
 
 import "testing"
 
-// spec: §12.4 line 268 — the closed quotaEnforcementMode enum.
+// spec: §12.4 — the closed quotaEnforcementMode enum.
 func TestParseEnforcementMode_spec_12_4_268(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -52,7 +52,7 @@ func TestEnforcementModeIsValid(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — the per-replica budget slice is 1/N of the
+// spec: §12.4 — the per-replica budget slice is 1/N of the
 // tenant's remaining budget.
 func TestDrawBudgetSlice_spec_12_4_268(t *testing.T) {
 	cases := []struct {
@@ -80,7 +80,7 @@ func TestDrawBudgetSlice_spec_12_4_268(t *testing.T) {
 }
 
 func TestBudgetSliceReconcileRatio(t *testing.T) {
-	// spec: §12.4 line 268 — reconcile when the local slice is 80% consumed.
+	// spec: §12.4 — reconcile when the local slice is 80% consumed.
 	if BudgetSliceReconcileRatio != 0.80 {
 		t.Fatalf("BudgetSliceReconcileRatio = %v, want 0.80", BudgetSliceReconcileRatio)
 	}

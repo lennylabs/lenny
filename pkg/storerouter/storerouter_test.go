@@ -52,7 +52,7 @@ func newRouter(t *testing.T) *storerouter.SingleShardRouter {
 	return r
 }
 
-// spec: §12.6; §12.3 R-03 line 144
+// spec: §12.6; §12.3 R-03
 // diagnosis: NewSingleShardRouter accepted a nil pool and produced a
 // router that would panic on first Postgres use, so the constructor MUST
 // reject a nil pool. A nil Redis client is permitted: the §12.3 R-03
@@ -102,11 +102,10 @@ func TestSingleShardRouterReturnsSamePoolForEveryAccessor(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 103 — when LENNY_PG_BILLING_AUDIT_DSN is configured,
+// spec: §12.3 — when LENNY_PG_BILLING_AUDIT_DSN is configured,
 // BillingShard, AuditShard, and AllAuditShards route to the separate
 // billing/audit instance while every other accessor stays on the
-// primary. This is the Tier-3 instance-separation posture (§12.3 line
-// 130) that offloads the two largest append-only write sources. F-12.3.5.
+// primary. This is the Tier-3 instance-separation posture (§12.3) that offloads the two largest append-only write sources. F-12.3.5.
 func TestSingleShardRouterBillingAuditPool_spec_12_3_line_103(t *testing.T) {
 	t.Parallel()
 	primary := fakePool(t)
@@ -151,7 +150,7 @@ func TestSingleShardRouterBillingAuditPool_spec_12_3_line_103(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 103 — when no separate billing/audit DSN is
+// spec: §12.3 — when no separate billing/audit DSN is
 // configured (the default), billing and audit writes fall back to the
 // primary pool so a single well-provisioned primary serves Tier-3 load
 // unchanged. F-12.3.5.

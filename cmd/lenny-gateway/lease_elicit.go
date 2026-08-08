@@ -25,7 +25,7 @@ type leaseSessionLookup interface {
 }
 
 const (
-	// leaseElicitMessage is the §8.6 line 718 generic budget prompt. It
+	// leaseElicitMessage is the §8.6 generic budget prompt. It
 	// names no token amounts, per the spec.
 	leaseElicitMessage = "The agent needs more budget to continue. Approve?"
 	// defaultLeaseElicitTimeout bounds how long ExtendLease blocks waiting
@@ -39,7 +39,7 @@ const (
 )
 
 // leaseElicitor is the production leasecontrol.Elicitor. It presents the
-// §8.6 line 718 generic budget elicitation to the requesting session's
+// §8.6 generic budget elicitation to the requesting session's
 // client over the §9.2 interaction store and the client event stream,
 // then blocks until the user resolves it.
 //
@@ -49,10 +49,9 @@ const (
 // A PhaseResponded answer is interpreted by its action — an explicit
 // decline rejects, any other engagement approves. A dismissal or a
 // timeout is a non-decision, so the request is neither granted nor
-// persisted as a denial, per the §8.6 Elicitor contract (only an explicit
-// rejection marks the subtree denied, line 729).
+// persisted as a denial, per the §8.6 Elicitor contract.
 //
-// spec: §8.6 line 714, line 718, line 727
+// spec: §8.6
 type leaseElicitor struct {
 	sessions     leaseSessionLookup
 	interactions interactionstore.Store
@@ -84,7 +83,7 @@ func (e *leaseElicitor) Elicit(ctx context.Context, tenantID, requestingSessionI
 		return false, fmt.Errorf("lease elicitation: record interaction: %w", err)
 	}
 
-	// spec: §7.2 line 136 — surface the prompt on the session's stream as
+	// spec: §7.2 — surface the prompt on the session's stream as
 	// the canonical `elicitation_request` event.
 	if e.publish != nil {
 		payload, _ := json.Marshal(struct {

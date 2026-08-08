@@ -9,7 +9,7 @@
 -- setup_command_policy is the §5.1 / §7.5 setupCommandPolicy object:
 -- {"mode": "allowlist"|"blocklist", "shell": bool, "allowlist": [string],
 --  "blocklist": [string], "maxCommands": int}. The gateway enforces it at
--- session create-time (§7.5 line 488).
+-- session create-time (§7.5).
 --
 -- default_pool_config is the §5.1 defaultPoolConfig object:
 -- {"warmCount": int, "resourceClass": string, "egressProfile": string}.

@@ -163,7 +163,7 @@ tests:
             name: SSL_CERT_DIR
             value: /etc/lenny/minio-ca
 
-  - it: §12.5 line 279 — render fails when minio.tls.enabled=false with a regulated complianceProfile
+  - it: §12.5 — render fails when minio.tls.enabled=false with a regulated complianceProfile
     template: gateway-deployment.yaml
     set:
       complianceProfile: "soc2"
@@ -178,13 +178,13 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
+          errorMessage: "§12.5: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
 
-  # spec: §12.5 line 280 — "All other backends enforce TLS." The
+  # spec: §12.5 — "All other backends enforce TLS." The
   # plaintext-MinIO exception is bound to backends: embedded ONLY; there is
   # no devMode qualifier. A non-embedded backend with tls.enabled=false fails
   # the render regardless of global.devMode.
-  - it: §12.5 line 280 — render fails when minio.tls.enabled=false outside embedded mode
+  - it: §12.5 — render fails when minio.tls.enabled=false outside embedded mode
     template: gateway-deployment.yaml
     set:
       backends: "selfManaged"
@@ -199,13 +199,13 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
 
-  # spec: §12.5 line 280 — the exception is bound to backends: embedded, NOT
+  # spec: §12.5 — the exception is bound to backends: embedded, NOT
   # to dev mode. global.devMode does NOT sanction plaintext MinIO on a
   # non-embedded backend; the guard must still fail. This pins the Fix #1
   # alignment: a devMode clause on this guard would be a §12.5 misalignment.
-  - it: §12.5 line 280 — global.devMode does not relax the TLS mandate on a non-embedded backend
+  - it: §12.5 — global.devMode does not relax the TLS mandate on a non-embedded backend
     template: gateway-deployment.yaml
     set:
       global.devMode: true
@@ -221,9 +221,9 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
 
-  - it: §12.5 line 280 — embedded backends permits minio.tls.enabled=false
+  - it: §12.5 — embedded backends permits minio.tls.enabled=false
     template: gateway-deployment.yaml
     set:
       backends: "embedded"

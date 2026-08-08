@@ -13,7 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultStreamMaxLen is the §4.4 line 225 / §12.4 (lenny:events: relay
+// DefaultStreamMaxLen is the §4.4 / §12.4 (lenny:events: relay
 // row) Redis Streams retention cap. Each session's stream is trimmed to
 // this many entries via `XADD ... MAXLEN ~ {cap}` so the cross-replica
 // replay buffer is bounded. The cap matches the default per-session
@@ -29,7 +29,7 @@ func streamKey(sessionID string) string {
 	return "lenny:events:" + sessionID
 }
 
-// RedisRelay is the §4.4 line 225 / §12.4 (lenny:events: relay row)
+// RedisRelay is the §4.4 / §12.4 (lenny:events: relay row)
 // Redis-backed cross-replica event relay. It pairs with an in-memory
 // Bus: every Publish on the Bus fans out to the relay's `XADD` so
 // reading replicas can replay the stream via `XRANGE` (history) or
@@ -40,7 +40,7 @@ func streamKey(sessionID string) string {
 // existing in-memory semantics. Multi-replica deployments wire a
 // non-nil relay and gain cross-replica history + live delivery.
 //
-// spec: §4.4 line 225 — "Event cursors / stream offsets" durable
+// spec: §4.4 — "Event cursors / stream offsets" durable
 // across replicas. spec: §12.4 — the lenny:events: cross-replica relay
 // stream row in the canonical key-prefix table.
 type RedisRelay struct {

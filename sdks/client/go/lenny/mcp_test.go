@@ -91,7 +91,7 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 		}
 		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"sess_mcp_1","state":"running"}`, false), nil)
 	case "lenny/send_message":
-		// §8.5 line 537 wire contract: the tool arguments are `to`
+		// §8.5 wire contract: the tool arguments are `to`
 		// (target session id) and `message` (content). F-8.5.16 renamed
 		// them from the legacy `sessionId`/`content`.
 		var args struct {
@@ -348,7 +348,7 @@ func TestMCPCallToolFailureIsResultNotError(t *testing.T) {
 	}
 }
 
-// spec: §15.2.1 rule 5(d), §15.2 line 944, 972 — every MCP tool
+// spec: §15.2.1 rule 5(d), §15.2 — every MCP tool
 // failure that carries a `lenny/error` block surfaces the §15.2.1
 // parity triple (code, category, retryable). The SDK helper parses
 // the block so callers do not hand-decode the JSON. F-15.2.10.

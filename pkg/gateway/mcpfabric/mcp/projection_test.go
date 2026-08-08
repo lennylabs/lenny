@@ -28,7 +28,7 @@ func ev(typ, sessionID, data string) sessionevents.Event {
 	return sessionevents.Event{Seq: 7, SessionID: sessionID, Type: typ, Data: data, Timestamp: time.Unix(0, 0)}
 }
 
-// spec: §15.2 lines 1356-1368 — classifier lifts live bus types onto the
+// spec: §15.2 — classifier lifts live bus types onto the
 // §15.0 closed SessionEventKind enum, with the terminal status_change
 // branch.
 func TestClassifyEventKind_spec_15_2_1356(t *testing.T) {
@@ -64,7 +64,7 @@ func TestClassifyEventKind_spec_15_2_1356(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1360; §8.8 — a non-terminal state_change projects to
+// spec: §15.2; §8.8 — a non-terminal state_change projects to
 // notifications/tasks/statusUpdate with the §8.8-mapped status in
 // params.metadata.to.
 func TestProjectStateChange_spec_15_2_1360(t *testing.T) {
@@ -88,7 +88,7 @@ func TestProjectStateChange_spec_15_2_1360(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 873-883 — the suspended/resume_pending session states
+// spec: §8.8 — the suspended/resume_pending session states
 // surface as working with the suspended/resuming metadata annotations.
 func TestProjectStateChangeSubStateAnnotations_spec_8_8_873(t *testing.T) {
 	for _, c := range []struct {
@@ -107,7 +107,7 @@ func TestProjectStateChangeSubStateAnnotations_spec_8_8_873(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 857-865 — input_required and awaiting_client_action
+// spec: §8.8 — input_required and awaiting_client_action
 // both surface as the MCP input_required status.
 func TestProjectStateChangeInputRequired_spec_8_8_857(t *testing.T) {
 	for _, st := range []string{"input_required", "awaiting_client_action"} {
@@ -119,7 +119,7 @@ func TestProjectStateChangeInputRequired_spec_8_8_857(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1368; §8.8 — a terminal status_change projects to the
+// spec: §15.2; §8.8 — a terminal status_change projects to the
 // MCP Tasks final-state frame (final:true) with the §8.8-mapped terminal
 // status and the termination detail surfaced in metadata.
 func TestProjectTerminated_spec_15_2_1368(t *testing.T) {
@@ -140,7 +140,7 @@ func TestProjectTerminated_spec_15_2_1368(t *testing.T) {
 	}
 }
 
-// spec: §8.8 line 862 — cancelled maps to MCP American-spelling canceled;
+// spec: §8.8 — cancelled maps to MCP American-spelling canceled;
 // expired maps to failed with an expired error annotation.
 func TestProjectTerminatedSpellingAndExpired_spec_8_8_862(t *testing.T) {
 	m := decodeFrame(t, projectMCPSessionEvent(ev("status_change", "s", `{"state":"cancelled"}`)))
@@ -157,7 +157,7 @@ func TestProjectTerminatedSpellingAndExpired_spec_8_8_862(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1361 — output projects to a working-status task frame
+// spec: §15.2 — output projects to a working-status task frame
 // carrying the translated MessagePart content (text block).
 func TestProjectOutputText_spec_15_2_1361(t *testing.T) {
 	m := decodeFrame(t, projectMCPSessionEvent(ev("response", "s", `{"type":"text","text":"hello"}`)))
@@ -178,7 +178,7 @@ func TestProjectOutputText_spec_15_2_1361(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1361 — a ref MessagePart projects to a resource_link
+// spec: §15.2 — a ref MessagePart projects to a resource_link
 // content block carrying the reference for client dereference.
 func TestProjectOutputRef_spec_15_2_1361(t *testing.T) {
 	m := decodeFrame(t, projectMCPSessionEvent(ev("agent_output", "s", `{"type":"file","ref":"blob://abc"}`)))
@@ -189,7 +189,7 @@ func TestProjectOutputRef_spec_15_2_1361(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1362 — an elicitation projects to a native MCP
+// spec: §15.2 — an elicitation projects to a native MCP
 // elicitation/create request (carries an id, message, requestedSchema,
 // and §9.2 provenance metadata).
 func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
@@ -217,7 +217,7 @@ func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1363 — the approval-required requested phase is the
+// spec: §15.2 — the approval-required requested phase is the
 // only tool_use projection that uses elicitation/create. The live
 // tool_use_requested event (emitted by the approval gate) is always
 // approval-required.
@@ -239,7 +239,7 @@ func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
 	}
 }
 
-// spec: §15.2 lines 1364-1366, 1372 — non-requested tool_use phases
+// spec: §15.2 — non-requested tool_use phases
 // (approved/denied/completed) project to notifications/lenny/toolCall, an
 // observability frame with no client response expected.
 func TestProjectToolUseNotification_spec_15_2_1364(t *testing.T) {
@@ -262,7 +262,7 @@ func TestProjectToolUseNotification_spec_15_2_1364(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1367 — a non-terminal error projects to
+// spec: §15.2 — a non-terminal error projects to
 // notifications/lenny/error carrying the shared error taxonomy fields.
 func TestProjectError_spec_15_2_1367(t *testing.T) {
 	data := `{"code":"UPSTREAM_TIMEOUT","category":"UPSTREAM","message":"slow","retryable":true}`
@@ -279,7 +279,7 @@ func TestProjectError_spec_15_2_1367(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1370 — a bus event outside the closed SessionEventKind
+// spec: §15.2 — a bus event outside the closed SessionEventKind
 // enum falls back to the generic notifications/lenny/sessionEvent frame so
 // the client still observes it.
 func TestProjectUnclassifiedFallback_spec_15_2_1370(t *testing.T) {
@@ -297,8 +297,7 @@ func TestProjectUnclassifiedFallback_spec_15_2_1370(t *testing.T) {
 }
 
 // Every per-kind frame must be valid JSON and carry jsonrpc:"2.0" so the
-// SSE id: line + resumeFromSeq replay the frame verbatim. spec: §15.2
-// lines 1356, 1374.
+// SSE id: line + resumeFromSeq replay the frame verbatim. spec: §15.2.
 func TestEveryProjectedFrameIsValidJSONRPC_spec_15_2_1374(t *testing.T) {
 	samples := []sessionevents.Event{
 		ev("status_change", "s", `{"state":"running"}`),

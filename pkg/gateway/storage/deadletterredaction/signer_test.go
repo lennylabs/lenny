@@ -10,8 +10,7 @@ import (
 )
 
 // The HMAC signer produces a deterministic, non-empty signature and
-// reports its key id. spec: §12.8 line 810 (the receipt signature is the
-// provenance token that authenticates a redaction).
+// reports its key id. spec: §12.8.
 func TestHMACReceiptSigner_deterministic(t *testing.T) {
 	t.Parallel()
 	signer := NewHMACReceiptSigner("boot", []byte("0123456789abcdef0123456789abcdef"))
@@ -45,7 +44,7 @@ func TestHMACReceiptSigner_noKey(t *testing.T) {
 }
 
 // The KMS-backed constructor unwraps a signing key through the §4 KMS
-// provider and signs with it. spec: §12.8 line 810.
+// provider and signs with it. spec: §12.8.
 func TestNewKMSReceiptSigner_localProvider(t *testing.T) {
 	t.Parallel()
 	provider, err := kms.NewLocalRandom()

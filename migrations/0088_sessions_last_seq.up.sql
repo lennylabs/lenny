@@ -1,4 +1,4 @@
--- §7.3 line 397 — sessions.last_seq is the authoritative per-session
+-- §7.3 — sessions.last_seq is the authoritative per-session
 -- monotonic SessionEvent.SeqNum counter (§15). The gateway advances
 -- last_seq atomically with each persisted event — including frames
 -- synthesised on coordinator-handoff reattach (§10.4) — so the counter

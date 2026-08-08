@@ -91,7 +91,7 @@ func (s *BackupSource) List(ctx context.Context, _ operations.Filter) ([]operati
 
 // project maps one in-flight ops_backups row onto the canonical §25.4
 // Operation envelope under the given kind. A running or verifying backup
-// is in_progress (§25.4 line 1807: "backup Job running"). The resources
+// is in_progress (§25.4: "backup Job running"). The resources
 // block surfaces the backup's own status endpoint and its verify path.
 // spec: §25.4 (Operations Inventory), §25.11 (backup API).
 func (s *BackupSource) project(b backup.Backup, kind operations.Kind) operations.Operation {
@@ -106,8 +106,7 @@ func (s *BackupSource) project(b backup.Backup, kind operations.Kind) operations
 	return operations.Operation{
 		OperationID: opID,
 		Kind:        kind,
-		// A running or verifying backup is actively executing; §25.4 line
-		// 1807 names a running backup Job as in_progress.
+		// A running or verifying backup is actively executing; §25.4 names a running backup Job as in_progress.
 		Status:    operations.StatusInProgress,
 		StartedBy: b.StartedBy,
 		StartedAt: b.StartedAt,
@@ -125,7 +124,7 @@ func (s *BackupSource) project(b backup.Backup, kind operations.Kind) operations
 }
 
 // backupProgress projects a backup's state onto the §25.2 canonical
-// progress envelope §25.4 line 358 requires an inventory backup and backup
+// progress envelope §25.4 requires an inventory backup and backup
 // verification to carry. A backup dump is size-based, but the size
 // estimate is not available on the ops_backups row until the Job reports
 // it, so only the startedAt / lastProgressAt anchors are stamped here and

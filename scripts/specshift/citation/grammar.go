@@ -34,39 +34,26 @@ const (
 // tab, or the byte a consumed continuation left behind.
 const sp = "[ \t\x1f]"
 
-// glossWordSp is the whitespace class the bare-word gloss admits, which is a
-// space or a tab alone. A bare word run has no closing delimiter, so nothing
-// but the end of its line bounds it. Admitting the join byte there reads across
-// the wrap into the following comment line and takes its first word or two as
-// the gloss, so the citation text a register is keyed by carries prose the
-// citation does not own and the pass converting the citation to a single anchor
-// deletes the newline, the following line's comment marker, and its opening
-// words. In the # dialect that removal also stops the following text being a
-// comment.
+// glossOpenSp is the whitespace class a gloss admits ahead of its opening
+// delimiter, which is a space or a tab alone. The join byte is excluded: a
+// gloss whose opening delimiter sat behind a consumed continuation would take
+// the whole of the following comment line whenever that line opens with a
+// parenthesis, a quote, or a backtick, even though nothing of the citation was
+// wrapped, so the citation text a register is keyed by would carry a sentence's
+// own code span or parenthetical and the anchor the pass writes in its place
+// would delete the newline, the carrier's comment marker, and that fragment. In
+// the # dialect that removal also stops the following text being a comment. A
+// gloss therefore opens on the line its member sits on.
 //
-// glossOpenSp is the whitespace class every gloss admits ahead of its opening
-// delimiter, which is the same class the bare-word alternative admits and
-// excludes the join byte for the same reason. A delimited gloss whose opening
-// delimiter sat behind a consumed continuation would take the whole of the
-// following comment line whenever that line opens with a parenthesis, a quote,
-// or a backtick, even though nothing of the citation was wrapped, so the
-// citation text a register is keyed by would carry a sentence's own code span
-// or parenthetical and the anchor the pass writes in its place would delete the
-// newline, the carrier's comment marker, and that fragment. A gloss therefore
-// opens on the line its member sits on.
-//
-// A delimited gloss is bounded by the delimiter that closes it, so its body
-// still admits the join byte and a gloss opened on its member's line closes on
-// the continuation line the join folded in. Refusing it there would end the
-// member list at the wrapped member and drop every member written behind the
-// wrap, which is the head-matching failure the whole-citation rule exists to
-// prevent: the resolver does not read the dropped members, the ratchet does not
-// count them, and the rewritten carrier reads as an anchor followed by orphan
+// A gloss is bounded by the delimiter that closes it, so its body still admits
+// the join byte and a gloss opened on its member's line closes on the
+// continuation line the join folded in. Refusing it there would end the member
+// list at the wrapped member and drop every member written behind the wrap,
+// which is the head-matching failure the whole-citation rule exists to prevent:
+// the resolver does not read the dropped members, the ratchet does not count
+// them, and the rewritten carrier reads as an anchor followed by orphan
 // integers while its file reaches a zero count.
-const (
-	glossWordSp = "[ \t]"
-	glossOpenSp = glossWordSp
-)
+const glossOpenSp = "[ \t]"
 
 // render returns text with every consumed continuation shown as the space it
 // stands for, so a citation's text, gloss, and members read as one line.
@@ -207,19 +194,51 @@ var keywordExpr = regexp.MustCompile(`^lines?` + sp + `+`)
 var memberExpr = regexp.MustCompile(`^` + memberBody)
 
 // glossExpr matches the short trailing gloss naming what the cited line says,
-// written as a parenthesized phrase, a quoted fragment, or a bare word or two
-// with an optional parenthesized tail. The gloss is consumed with its member
-// rather than terminating the match.
+// written as a parenthesized phrase or as a fragment in double quotes, single
+// quotes, or backticks. The gloss is consumed with its member rather than
+// terminating the match.
 //
-// A delimited alternative is bounded by its closing delimiter and by the line
-// it opened on, and the scanner bounds every alternative at the head of the
-// next citation. A gloss alternative that admitted a newline and closed on
-// nothing would run from an unpaired quote to the next quote anywhere in the
-// file, and because the scan resumes at the end of the consumed span every
-// citation inside that run would go unreturned: the resolver would not resolve
-// it, the ratchet would not count it, and the pass would rewrite the whole
-// span, code included, to one anchor. That is the failure the whole-citation
-// rule exists to prevent.
+// Every alternative commits to a delimiter, so every alternative says where it
+// ends. A bare word or two standing behind a member is not a gloss alternative,
+// even though authors write one there, because nothing in the text distinguishes
+// a gloss the author wrote against the pointer from the sentence's own noun
+// phrase running on behind it. A citation standing on its own in a comment and
+// a citation embedded in a sentence are the same bytes at that position, which
+// are a member, a space, and a word, and the two readings are told apart by
+// where the citation sits in its comment and by what stands ahead of it. The
+// grammar sees neither. The fixtures under testdata/citations carry one of each
+// reading against the same member spelling.
+//
+// The two ways of being wrong are not equally bad. Reading a gloss as prose
+// leaves a word standing that the anchor beside it already implies, which costs
+// a reader one redundant word in a comment. Reading prose as a gloss puts the
+// sentence's own words inside the span the pass replaces, and the conversion to
+// a single anchor deletes them from a comment nobody re-reads, so the sentence
+// is left saying something else and no gate reports it: the citation was
+// counted, resolved, and retired exactly as intended. The migration takes the
+// redundant word.
+//
+// Refusing the bare word ends the member list wherever a bare word stands
+// between two members of one citation, and where a bare word stands ahead of a
+// delimited phrase that carries a further member behind it. The members written
+// behind such a word are left in the carrier, which is the head-matching failure
+// this file names throughout, and the pass does not write that state: the anchor
+// it emits stands against the words and the members the citation did not
+// consume, and those compose the retired form again, which the pass's own
+// post-condition reports for hand correction. The whole tree holds a handful of
+// carriers written that way, and they are hand-corrected rather than silently
+// truncated. Admitting the bare word to reach them would reintroduce the
+// deletion for every embedded citation in the tree, which is the trade the
+// paragraph above rejects.
+//
+// A gloss is bounded by its closing delimiter and by the line it opened on, and
+// the scanner bounds every alternative at the head of the next citation. A gloss
+// alternative that admitted a newline and closed on nothing would run from an
+// unpaired quote to the next quote anywhere in the file, and because the scan
+// resumes at the end of the consumed span every citation inside that run would
+// go unreturned: the resolver would not resolve it, the ratchet would not count
+// it, and the pass would rewrite the whole span, code included, to one anchor.
+// That is the failure the whole-citation rule exists to prevent.
 //
 // No alternative is bounded by a byte count. A count long enough to be
 // invisible in review still rejects the gloss that exceeds it, and a rejected
@@ -246,23 +265,13 @@ var glossExpr = regexp.MustCompile(
 		`|` + glossOpenSp + `+"[^"\n]*"` +
 		`|` + glossOpenSp + `+'[^'\n]*'` +
 		"|" + glossOpenSp + "+`[^`\n]*`" +
-		`|` + glossWordSp + `+` + glossWord + `(?:` + glossWordSp + `+` + glossWord + `)?(?:` + glossOpenSp + `*\(` + glossBody + `*\))?` +
 		")",
 )
 
-// glossBody is the byte class a parenthesized gloss admits, and glossWord is
-// one bare word of a gloss.
-//
-// A word carries a dot only when a word byte follows it, so a word that ends a
-// sentence ends the gloss with it. A word run that absorbed the terminating dot
-// would take the first word of the next sentence as its second word, and the
-// citation text a register is keyed by and the pass replaces would carry prose
-// the citation does not own, so converting the citation to an anchor would
-// delete the opening word of the following sentence.
-const (
-	glossBody = `[^()\n]`
-	glossWord = `[A-Za-z][A-Za-z0-9_/-]*(?:\.[A-Za-z0-9_/-]+)*`
-)
+// glossBody is the byte class a parenthesized gloss admits. It stops at the
+// parentheses that open and close the gloss and at a newline the join did not
+// consume, so the body runs no further than the parenthetical the author wrote.
+const glossBody = `[^()\n]`
 
 // The join between two lines of one carrier: the newline together with the
 // carrier's comment marker and the whitespace on either side of it. The marker

@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §7.3 lines 377-393 — CreateSession accepts a client-supplied
+// spec: §7.3 — CreateSession accepts a client-supplied
 // retryPolicy. The gateway clamps each field against the deployer caps
 // and echoes the effective policy on the response. F-7.3.1.
 
@@ -68,7 +68,7 @@ func TestCreateSessionEchoesRetryPolicy_F_7_3_1(t *testing.T) {
 	}
 }
 
-// spec: §7.3 lines 377-393 — populated client fields clamp down to the
+// spec: §7.3 — populated client fields clamp down to the
 // deployer caps, and zero fields fall through to the cap.
 func TestCreateSessionClampsAgainstDeployerCaps_F_7_3_1(t *testing.T) {
 	caps := session.RetryPolicyCaps{MaxRetries: 2, MaxSessionAgeSeconds: 7200, MaxResumeWindowSeconds: 900}
@@ -100,7 +100,7 @@ func TestCreateSessionClampsAgainstDeployerCaps_F_7_3_1(t *testing.T) {
 	if resp.RetryPolicy.MaxResumeWindowSeconds != 900 {
 		t.Errorf("MaxResumeWindowSeconds = %d, want fall-through to 900", resp.RetryPolicy.MaxResumeWindowSeconds)
 	}
-	// Mode should default to auto_then_client per §7.3 line 382.
+	// Mode should default to auto_then_client per §7.3.
 	if resp.RetryPolicy.Mode != session.RetryModeAutoThenClient {
 		t.Errorf("Mode = %q, want %q", resp.RetryPolicy.Mode, session.RetryModeAutoThenClient)
 	}

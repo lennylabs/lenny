@@ -144,9 +144,7 @@ func TestMCPManagementCallCarriesCallerPrincipal_spec_25_12(t *testing.T) {
 //
 // spec: §25.12 ("An agent with a tenant-admin role receives 403 from the
 // underlying REST endpoint when calling a tool that requires
-// platform-admin ... scopes narrow; they don't elevate") and §25.4 line
-// 1562 ("Requires platform-admin or tenant-admin role on all
-// endpoints.").
+// platform-admin ... scopes narrow; they don't elevate") and §25.4.
 func TestMCPManagementCallRejectsNonAdminRole_spec_25_12(t *testing.T) {
 	srv, signer := authedServer()
 	rec, _ := doJSON(t, srv, http.MethodPost, "/mcp/management",

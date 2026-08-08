@@ -1,5 +1,5 @@
 {{- /*
-The §12.3 lines 40-47 in-cluster PgBouncer topology: a Deployment
+The §12.3 in-cluster PgBouncer topology: a Deployment
 (minimum 2 replicas) behind a ClusterIP Service, a PodDisruptionBudget,
 a backend-connectivity readiness probe, and a pgbouncer_exporter
 sidecar.
@@ -7,13 +7,13 @@ sidecar.
 Rendering is gated on `pgbouncer.deploy` (default false), distinct from
 `pgbouncer.enabled` (the connect_query ConfigMap). Cloud-managed
 deployments leave `deploy` false and front Postgres with the provider's
-proxy (§12.3 line 38); self-managed deployments set `deploy: true` to
+proxy (§12.3); self-managed deployments set `deploy: true` to
 have the chart run PgBouncer. The pod carries the
 `lenny.dev/component: pgbouncer` label the §13.2 system NetworkPolicies
 already select, and mounts the connect_query ConfigMap (pgbouncer-config.yaml)
 so every fresh server connection runs the §4.2 `__unset__` sentinel.
 
-spec: §12.3 lines 40-47 (PgBouncer Deployment topology, PDB, readiness
+spec: §12.3 (PgBouncer Deployment topology, PDB, readiness
 probe, pgbouncer_exporter sidecar). F-12.3.10 / F-12.3.11.
 */ -}}
 {{- if .Values.pgbouncer.deploy }}
@@ -28,7 +28,7 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: pgbouncer
 spec:
-  # §12.3 line 40 — minimum 2 replicas so a single pod loss does not
+  # §12.3 — minimum 2 replicas so a single pod loss does not
   # take the pooler down.
   replicas: {{ $pb.replicas }}
   selector:
@@ -61,7 +61,7 @@ spec:
             - name: POOL_MODE
               value: {{ $pb.poolMode | quote }}
             {{- if $hasDBURL }}
-            # §12.3 line 45 — DATABASE_URL is the upstream Postgres DSN.
+            # §12.3 — DATABASE_URL is the upstream Postgres DSN.
             # The readiness probe runs SELECT 1 through it to verify a
             # backend connection can be established.
             - name: DATABASE_URL
@@ -70,7 +70,7 @@ spec:
                   name: {{ $pb.databaseURLSecret }}
                   key: {{ $pb.databaseURLKey }}
             {{- end }}
-          # §12.3 line 45 — readiness verifies backend Postgres
+          # §12.3 — readiness verifies backend Postgres
           # connectivity, not just process liveness. With a DATABASE_URL
           # secret the probe runs the configured SELECT 1; otherwise it
           # falls back to a TCP check of the listen port.
@@ -100,7 +100,7 @@ spec:
           resources:
             {{- toYaml $pb.resources | nindent 12 }}
         {{- if $pb.exporter.enabled }}
-        # §12.3 line 47 — pgbouncer_exporter sidecar. Exposes
+        # §12.3 — pgbouncer_exporter sidecar. Exposes
         # pgbouncer_pools_client_maxwait_seconds (the §16.5
         # PgBouncerPoolSaturated alert numerator) and the pool-utilization
         # gauges. F-12.3.11.
@@ -132,7 +132,7 @@ spec:
           resources:
             {{- toYaml $pb.exporterResources | nindent 12 }}
         {{- end }}
-      {{- /* §12.3 line 40 — spread replicas across nodes so a single
+      {{- /* §12.3 — spread replicas across nodes so a single
          node loss never removes the whole pooler tier. */ -}}
       {{- if ge (int $pb.replicas) 2 }}
       topologySpreadConstraints:
@@ -148,7 +148,7 @@ spec:
           configMap:
             name: {{ $pb.configMapName }}
 ---
-# §12.3 line 43 — ClusterIP Service. PgBouncer is stateless, so multiple
+# §12.3 — ClusterIP Service. PgBouncer is stateless, so multiple
 # replicas behind the Service provide transparent failover.
 apiVersion: v1
 kind: Service
@@ -171,7 +171,7 @@ spec:
       targetPort: metrics
     {{- end }}
 ---
-# §12.3 line 44 — PodDisruptionBudget. minAvailable: 1 at 2 replicas, or
+# §12.3 — PodDisruptionBudget. minAvailable: 1 at 2 replicas, or
 # maxUnavailable: 1 at 3+ replicas, so a rolling update or node drain
 # never terminates every PgBouncer replica at once.
 apiVersion: policy/v1

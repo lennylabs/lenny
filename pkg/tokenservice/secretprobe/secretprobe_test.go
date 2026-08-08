@@ -37,7 +37,7 @@ func secretObj(ns, name string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
 }
 
-// spec: §4.9 line 1212 — an allowed review plus an existing Secret is
+// spec: §4.9 — an allowed review plus an existing Secret is
 // ALLOWED.
 func TestProbe_AllowedAndExists(t *testing.T) {
 	cs := fake.NewSimpleClientset(secretObj("lenny-system", "anthropic-key-1"))
@@ -51,7 +51,7 @@ func TestProbe_AllowedAndExists(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — a denied review is DENIED (RBAC grant missing).
+// spec: §4.9 — a denied review is DENIED (RBAC grant missing).
 func TestProbe_Denied(t *testing.T) {
 	cs := fake.NewSimpleClientset(secretObj("lenny-system", "anthropic-key-1"))
 	withSSARReactor(cs, false, nil)
@@ -64,7 +64,7 @@ func TestProbe_Denied(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — the grant exists but the Secret object is
+// spec: §4.9 — the grant exists but the Secret object is
 // absent: NOT_FOUND, distinct from DENIED so the operator creates the
 // Secret rather than patching RBAC.
 func TestProbe_AllowedButMissing(t *testing.T) {

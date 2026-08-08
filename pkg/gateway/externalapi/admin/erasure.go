@@ -53,7 +53,7 @@ type EraseUserRequest struct {
 // summarizeHolds projects the §12.8 preflight hold set into the two
 // shapes the erasure audit surface uses: the session-id list
 // (heldSessions, retained for backward-compatible SIEM correlation) and
-// the {resourceType, resourceId} tuples the §12.8 line 794 blocked event
+// the {resourceType, resourceId} tuples the §12.8 blocked event
 // and override receipt carry.
 func summarizeHolds(holds []heldResource) (sessions []string, tuples []map[string]any) {
 	for _, h := range holds {
@@ -118,7 +118,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 	var overrideReceipt map[string]any
 	if len(holds) > 0 {
 		if !body.AcknowledgeHoldOverride {
-			// spec: §12.8 line 794 — the blocked event carries the
+			// spec: §12.8 — the blocked event carries the
 			// {resourceType, resourceId} tuples for every blocking hold.
 			r.emit(req.Context(), principal, "gdpr.erasure_blocked_by_hold", subject, map[string]any{
 				"tenantId":     tenant,
@@ -144,7 +144,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 				"a legal-hold override requires the platform-admin role", nil)
 			return
 		}
-		// spec: §12.8 line 796 — the receipt records legal_hold_override,
+		// spec: §12.8 — the receipt records legal_hold_override,
 		// override_by, override_justification, override_at, and the full
 		// list of holds that would otherwise have blocked the erasure.
 		// override_at is captured here, at the instant the override is
@@ -161,7 +161,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		// The underlying legal-hold rows are left set; the erasure
 		// proceeds. The gdpr.legal_hold_overridden audit event is emitted
 		// after the erasure job is created so the event carries jobId per
-		// spec §12.8 line 796 ("carrying the same fields plus job_id").
+		// spec §12.8.
 	}
 	jobID, err := r.erasureRunner.Start(req.Context(), tenant, subject)
 	if err != nil {
@@ -170,7 +170,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if overrideReceipt != nil {
-		// spec: §12.8 line 796 — emit gdpr.legal_hold_overridden after the
+		// spec: §12.8 — emit gdpr.legal_hold_overridden after the
 		// job exists so the event payload carries jobId for SIEM pivoting
 		// from admin.user.erasure_initiated to the override decision. The
 		// event carries the same fields as the receipt (legal_hold_override,
@@ -223,7 +223,7 @@ func (r *Router) handleEraseUser(w http.ResponseWriter, req *http.Request) {
 // and is the shared completion path for both initial erasure
 // (handleEraseUser) and operator retry (handleRetryErasureJob). A
 // failed job leaves the restriction set so an operator can retry or
-// clear it explicitly. spec: §12.8 lines 762, 764, 851.
+// clear it explicitly. spec: §12.8.
 func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subject, jobID string, overrideReceipt map[string]any) {
 	_ = r.erasureRunner.Run(context.Background(), jobID)
 	job, err := r.erasureJobs.Get(context.Background(), jobID)
@@ -254,7 +254,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 			"verified":      job.Billing.Verified,
 		}
 	}
-	// spec: §12.8 line 762 — the receipt carries the per-phase timeline
+	// spec: §12.8 — the receipt carries the per-phase timeline
 	// so a compliance auditor can reconstruct the erasure sequence from
 	// a single event.
 	if len(job.PhaseLog) > 0 {
@@ -267,7 +267,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 		}
 		receipt["phaseLog"] = phaseLog
 	}
-	// spec: §12.8 line 851 — the salt-removal verification outcome is
+	// spec: §12.8 — the salt-removal verification outcome is
 	// recorded in the erasure receipt.
 	receipt["verificationOutcome"] = job.Billing.VerificationOutcome()
 	for k, v := range overrideReceipt {
@@ -277,7 +277,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 }
 
 // handleRetryErasureJob implements POST
-// /v1/admin/erasure-jobs/{jobId}/retry — the §24.12 / §12.8 line 766
+// /v1/admin/erasure-jobs/{jobId}/retry — the §24.12 / §12.8
 // operator retry of a failed erasure job. The job must be in the
 // `failed` phase; the handler clears the transient failure fields,
 // resets the job to its first phase, and re-enqueues it on the runner.
@@ -287,7 +287,7 @@ func (r *Router) runErasureToCompletion(principal authmw.Principal, tenant, subj
 // deletes the already-removed rows as a no-op), so resetting to
 // `initiated` is the safe resume point given the runner keeps no
 // mid-phase checkpoint. On success the shared completion path lifts the
-// processing restriction. spec: §12.8 line 766; §24.12 line 143.
+// processing restriction. spec: §12.8; §24.12.
 func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request) {
 	jobID := req.PathValue("jobId")
 	job, err := r.erasureJobs.Get(req.Context(), jobID)
@@ -305,7 +305,7 @@ func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "erasure job not found", nil)
 		return
 	}
-	// spec: §24.12 line 143 — "The job must be in `failed` state."
+	// spec: §24.12 — "The job must be in `failed` state."
 	if job.Phase != erasurejob.PhaseFailed {
 		writeError(w, http.StatusConflict, "ERASURE_JOB_NOT_FAILED",
 			"erasure job is in phase "+string(job.Phase)+"; only a failed job can be retried", nil)
@@ -326,7 +326,7 @@ func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request)
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	go r.runErasureToCompletion(principal, job.TenantID, job.UserID, jobID, nil)
-	// spec: §24.12 lines 143-144 — the retry is recorded in the audit
+	// spec: §24.12 — the retry is recorded in the audit
 	// trail with the operator identity for the §11.7 chain.
 	r.emit(req.Context(), principal, "gdpr.erasure_job_retried", job.UserID, map[string]any{
 		"tenantId": job.TenantID,
@@ -347,18 +347,18 @@ func (r *Router) handleRetryErasureJob(w http.ResponseWriter, req *http.Request)
 // /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction body.
 type clearRestrictionRequest struct {
 	// Justification is the operator's recorded reason for lifting the
-	// restriction. Required (§24.12 line 144 / §12.8 line 764).
+	// restriction. Required (§24.12 / §12.8).
 	Justification string `json:"justification,omitempty"`
 }
 
 // handleClearErasureRestriction implements POST
 // /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction — the
-// §24.12 / §12.8 line 764 manual clear of the GDPR Article 18
+// §24.12 / §12.8 manual clear of the GDPR Article 18
 // processing-restriction flag after a failed erasure job. It requires a
 // non-empty justification, records the operator identity and
 // justification in the audit trail, and clears the flag through the
 // privileged store path that bypasses the database-level Article 18
-// trigger. spec: §12.8 line 764; §24.12 line 144.
+// trigger. spec: §12.8; §24.12.
 func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.Request) {
 	jobID := req.PathValue("jobId")
 	var body clearRestrictionRequest
@@ -396,7 +396,7 @@ func (r *Router) handleClearErasureRestriction(w http.ResponseWriter, req *http.
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
-	// spec: §12.8 line 764 / §24.12 line 144 — the clear records the
+	// spec: §12.8 / §24.12 — the clear records the
 	// operator identity and justification in the §11.7 audit chain.
 	r.emit(req.Context(), principal, "gdpr.processing_restriction_cleared", job.UserID, map[string]any{
 		"tenantId":      job.TenantID,
@@ -474,7 +474,7 @@ func erasureJobPayload(j erasurejob.Job, now time.Time) map[string]any {
 	if j.Deleted != nil {
 		out["deleted"] = j.Deleted
 	}
-	// spec: §12.8 line 762 — surface the per-phase timeline so the status
+	// spec: §12.8 — surface the per-phase timeline so the status
 	// query exposes the same sequence the completion receipt records.
 	if len(j.PhaseLog) > 0 {
 		phaseLog := make([]map[string]any, 0, len(j.PhaseLog))

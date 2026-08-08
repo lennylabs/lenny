@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.6 line 436 Tier-4 PostgresPodRegistry,
+// Contract test for the §12.6 Tier-4 PostgresPodRegistry,
 // exercising pkg/podregistry.PostgresPodRegistry against a real Postgres
 // container with the production migrations applied (including the 0108
 // LISTEN/NOTIFY trigger). Covers CRUD round-trips, the optimistic-locking
@@ -58,7 +58,7 @@ func seedPod(t *testing.T, ctx context.Context, pg *containers.Postgres, podID, 
 	}
 }
 
-// spec: §12.6 line 436 — the PostgresPodRegistry adapter over
+// spec: §12.6 — the PostgresPodRegistry adapter over
 // agent_pod_state satisfies the full §12.6 PodRegistry interface so a
 // Tier-4 swap is a configuration change rather than a from-scratch
 // build.
@@ -356,7 +356,7 @@ func TestPostgresPodRegistryContract_spec_12_6_436(t *testing.T) {
 
 	t.Run("notify trigger fires pg_notify on the per-pool channel", func(t *testing.T) {
 		pool := "pool-" + newUUID(t)[:8]
-		// A dedicated connection LISTENs on the §12.6 line 484 per-pool
+		// A dedicated connection LISTENs on the §12.6 per-pool
 		// channel; the 0108 trigger must publish the pod_id when a row is
 		// inserted or updated.
 		conn, err := pg.Pool.Acquire(ctx)

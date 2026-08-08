@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package checkpointretention persists the §4.4 line 234 / §12.5
+// Package checkpointretention persists the §4.4 / §12.5
 // latest-2 checkpoints retention catalog. On every successful
 // checkpoint, the gateway records a row keyed by (tenant_id,
 // session_id, ref). The Rotate method retains the two most recent
@@ -17,7 +17,7 @@
 //   - Postgres-backed implementation lives in
 //     pkg/gateway/checkpointretention/pgstore.
 //
-// spec: §4.4 line 234, §12.5 latest-2 checkpoints retention.
+// spec: §4.4, §12.5 latest-2 checkpoints retention.
 package checkpointretention
 
 import (
@@ -48,7 +48,7 @@ type Record struct {
 	// concurrent-workspace path writes the bound slot id so the
 	// "latest 2" cap applies independently per slot.
 	//
-	// spec: §12.5 lines 313, 326 — rotation operates on
+	// spec: §12.5 — rotation operates on
 	// (session_id, slot_id) pairs.
 	SlotID string
 	// Ref is the MinIO object reference for the checkpoint snapshot.
@@ -63,7 +63,7 @@ type Record struct {
 	// recent checkpoints for this session. Rotate sets this to false
 	// on every other row for the session.
 	Retained bool
-	// DeletedAt is the §4.4 line 236 soft-delete tombstone. Zero
+	// DeletedAt is the §4.4 soft-delete tombstone. Zero
 	// while the row is active; set by Rotate when Retained drops to
 	// false. The §12.5 backstop sweep hard-prunes rows whose
 	// DeletedAt is older than the tombstone retention window.
@@ -99,7 +99,7 @@ type Store interface {
 	// CreatedAt-ascending order (oldest first), so the caller can
 	// correlate with MinIO deletes.
 	//
-	// spec: §12.5 lines 313, 326 — per-slot "latest 2".
+	// spec: §12.5 — per-slot "latest 2".
 	Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]Record, error)
 
 	// List returns every row for (tenantID, sessionID, slotID),

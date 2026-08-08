@@ -11,23 +11,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultMaxDLQSize is the §7.2 line 341 `maxDLQSize` default: the
+// DefaultMaxDLQSize is the §7.2 default: the
 // per-session dead-letter queue holds at most this many messages before
 // evicting the oldest.
 const DefaultMaxDLQSize = 500
 
-// DefaultDLQTTL is the §7.2 line 341 dead-letter TTL default
+// DefaultDLQTTL is the §7.2 dead-letter TTL default
 // (`maxResumeWindowSeconds`, 900s if unset). A message enqueued to the
 // DLQ for a recovering session is discarded after this window if the
 // target never resumes.
 const DefaultDLQTTL = 900 * time.Second
 
-// TerminalDLQTTL is the §7.2 line 343 short TTL applied when inbox
+// TerminalDLQTTL is the §7.2 short TTL applied when inbox
 // messages are drained to the DLQ on a terminal transition, allowing
 // brief post-mortem retrieval by monitoring tools.
 const TerminalDLQTTL = 60 * time.Second
 
-// dlqKey is the §12.4 / §7.2 line 341 canonical DLQ Redis key
+// dlqKey is the §12.4 / §7.2 canonical DLQ Redis key
 // `t:{tenant_id}:session:{session_id}:dlq`. The tenant prefix ensures a
 // DLQ processor iterating across keys cannot read another tenant's
 // messages.
@@ -42,7 +42,7 @@ func dlqKey(tenantID, sessionID string) string {
 // transitions. Entries past their score are expired; entries are
 // delivered in FIFO (ascending-score) order on resume.
 //
-// spec: §7.2 lines 305-311, 341, 343; §12.4 DLQ key.
+// spec: §7.2; §12.4 DLQ key.
 type DLQ struct {
 	client redis.UniversalClient
 	max    int
@@ -57,7 +57,7 @@ func NewDLQ(client redis.UniversalClient, maxSize int) *DLQ {
 	return &DLQ{client: client, max: maxSize}
 }
 
-// enqueueDLQScript enforces the §7.2 line 341 `maxDLQSize` cap
+// enqueueDLQScript enforces the §7.2 cap
 // atomically: when the set is already at the cap it drops the
 // lowest-scored (oldest-to-expire, i.e. earliest-enqueued for a fixed
 // TTL) member and returns it for the caller to surface as a
@@ -83,7 +83,7 @@ return dropped
 // clock passes the score. A non-positive ttl selects DefaultDLQTTL. On
 // overflow the oldest entry is evicted and returned as dropped.
 //
-// spec: §7.2 line 341.
+// spec: §7.2.
 func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Message, ttl time.Duration) (*Message, error) {
 	if ttl <= 0 {
 		ttl = DefaultDLQTTL
@@ -114,12 +114,12 @@ func (d *DLQ) Enqueue(ctx context.Context, tenantID, sessionID string, msg Messa
 }
 
 // DrainAll reads every DLQ entry in FIFO (ascending-score) order and
-// deletes the key in one transaction. It backs the §7.2 line 343 /
-// §7.3 line 425 DLQ drain on terminal transition (the caller emits a
-// `message_expired` event per entry) and the §7.2 line 341 resume
+// deletes the key in one transaction. It backs the §7.2 /
+// §7.3 DLQ drain on terminal transition (the caller emits a
+// `message_expired` event per entry) and the §7.2 resume
 // delivery (the caller re-delivers each entry in FIFO order).
 //
-// spec: §7.2 lines 341, 343; §7.3 line 425.
+// spec: §7.2; §7.3.
 func (d *DLQ) DrainAll(ctx context.Context, tenantID, sessionID string) ([]Message, error) {
 	key := dlqKey(tenantID, sessionID)
 	var rangeCmd *redis.StringSliceCmd
@@ -151,7 +151,7 @@ return expired
 // and returns them so the caller emits a `message_expired` event with
 // `reason: "dlq_ttl_expired"` on each sender's stream.
 //
-// spec: §7.2 line 341 (TTL expiry); §15.4.1 message_expired reason
+// spec: §7.2; §15.4.1 message_expired reason
 // `dlq_ttl_expired`.
 func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now time.Time) ([]Message, error) {
 	res, err := sweepExpiredScript.Run(ctx, d.client,

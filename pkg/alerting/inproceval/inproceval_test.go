@@ -378,7 +378,7 @@ func catalogRule(t *testing.T, name string) rules.Rule {
 
 // TestBundledUniversalAlertsFireOnTriggerCondition_spec_25_13 drives the
 // in-process alert state tracker with the triggering condition of each
-// Universal alert (§25.13 line 4731) whose expression the per-replica
+// Universal alert (§25.13) whose expression the per-replica
 // in-process fallback can evaluate, and asserts the named bundled alert
 // transitions to StateFiring and appears in the tracker's Firing() set.
 //

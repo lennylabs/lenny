@@ -13,19 +13,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §6.2 lines 246-254, 292; §7.3 line 404 — F-6.2.14
+// spec: §6.2; §7.3 — F-6.2.14
 //
 // The watchdog must:
-//   - transition resume_pending → awaiting_client_action when the §6.2
-//     line 292 wall-clock cap expires;
-//   - transition resuming → resume_pending on the §6.2 line 249 300s
+//   - transition resume_pending → awaiting_client_action when the §6.2 wall-clock cap expires;
+//   - transition resuming → resume_pending on the §6.2 300s
 //     timeout when retries remain (and bump retryCount);
 //   - transition resuming → awaiting_client_action when retries are
 //     exhausted;
 //   - honour the per-session retryPolicy.maxResumeWindowSeconds tightener
 //     and retryPolicy.maxRetries override;
 //   - fire the awaiting-action entry notifier on every entry into the
-//     state so the §7.3 line 427 webhook + §11.7 audit row land;
+//     state so the §7.3 webhook + §11.7 audit row land;
 //   - fire the retry-attempt notifier on the resuming → resume_pending
 //     retry path so the §16.1 metric + §11.7 audit row see the
 //     watchdog-initiated retry.

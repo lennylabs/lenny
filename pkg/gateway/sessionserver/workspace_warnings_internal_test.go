@@ -18,7 +18,7 @@ import (
 
 // F-7.4.15: publishWorkspaceWarnings emits one SSE workspace_plan_warning
 // frame per §14 advisory the adapter returned from FinalizeWorkspace.
-// spec: §7.4 line 459.
+// spec: §7.4.
 func TestPublishWorkspaceWarnings_EmitsOnePerWarning_spec_7_4_15(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := New(memstore.New(), Options{Events: bus})
@@ -57,7 +57,7 @@ func TestPublishWorkspaceWarnings_NilSafe_spec_7_4_15(t *testing.T) {
 	}
 }
 
-// F-14.1.18: spec §14 line 100 — the strip-components-skip SSE event
+// F-14.1.18: spec §14 — the strip-components-skip SSE event
 // carries `entryPath`, `segmentCount`, and `stripComponents` so a
 // consumer that matches on these structured fields can extract them
 // without parsing the human-readable message.
@@ -96,7 +96,7 @@ func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing
 	}
 }
 
-// F-14.1.9: spec §14 line 338 — the materialization-time
+// F-14.1.9: spec §14 — the materialization-time
 // workspace_plan_path_collision warning is published on the per-session
 // SSE bus with `path`, `winningSourceIndex`, and `losingSourceIndex`
 // structured fields. Other warning codes (empty path) do not leak them.
@@ -153,7 +153,7 @@ func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) 
 	}
 }
 
-// F-14.1.17 / F-14.1.18: spec §14 line 334 — the parse-time
+// F-14.1.17 / F-14.1.18: spec §14 — the parse-time
 // unknown-source-type warning is published on the per-session SSE
 // bus with `schemaVersion` and `unknownType` structured fields.
 func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
@@ -192,7 +192,7 @@ func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// F-14.1.17 / F-14.1.18: spec §14 line 338 — the parse-time
+// F-14.1.17 / F-14.1.18: spec §14 — the parse-time
 // path-collision warning is published on the per-session SSE bus with
 // `path`, `winningSourceIndex`, and `losingSourceIndex` structured
 // fields.
@@ -245,7 +245,7 @@ func TestPublishParsePlanWarnings_NoOpOnEmpty_spec_14(t *testing.T) {
 	}
 }
 
-// F-14.1.17: spec §14 lines 100/334/338 — each warning is also
+// F-14.1.17: spec §14 — each warning is also
 // published on the §16.6 / §25.3 operational-event stream so Ops
 // consoles, audit pipelines, and AI DevOps agents (per §25) see them
 // without subscribing to the per-session SSE feed.

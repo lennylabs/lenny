@@ -12,14 +12,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 )
 
-// phaseStampFloorReader reads the §17.2 line 86
+// phaseStampFloorReader reads the §17.2
 // security.elicitationContentIntegrity.floor key from the
 // lenny-deployment-phase-stamp ConfigMap via the controller-runtime
 // client. It implements elicitationfloor.FloorReader so the gateway's
 // platform floor stays live across `helm upgrade` floor changes without a
 // pod restart.
 //
-// spec: §17.2 line 86. F-17.2.9.
+// spec: §17.2. F-17.2.9.
 type phaseStampFloorReader struct {
 	client    client.Client
 	namespace string

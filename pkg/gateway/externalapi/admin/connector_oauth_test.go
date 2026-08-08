@@ -174,7 +174,7 @@ func TestAuthorizeConnectorHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §9.2 line 87 — URL domain validation is a hard enforcement
+// spec: §9.2 — URL domain validation is a hard enforcement
 // boundary. When a connector declares an expected_domain that its
 // authorization URL host satisfies, the §9.3 flow proceeds; when the
 // host falls outside the expected_domain the gateway drops the flow with
@@ -289,7 +289,7 @@ func TestAuthorizeConnectorNotOAuth(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 140 — audit logging is the prescribed forensic
+// spec: §9.3 — audit logging is the prescribed forensic
 // surface for the connector OAuth flow. F-9.3.11 — the
 // `connector.oauth.credential_stored` audit detail must carry the
 // initiator IP + user agent (captured at authorize time) and the
@@ -355,7 +355,7 @@ func TestConnectorOAuthCredentialStoredAuditCarriesInitiatorAndCompleterIP_spec_
 	}
 }
 
-// spec: §9.3 line 140 — F-9.3.11. When a deployment terminates
+// spec: §9.3 — F-9.3.11. When a deployment terminates
 // TLS at a proxy, the authorize-time / callback-time IP must be
 // taken from the first-hop client in X-Forwarded-For so the audit
 // trail records the user's client IP instead of the proxy's.

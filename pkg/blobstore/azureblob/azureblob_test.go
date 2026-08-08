@@ -155,13 +155,13 @@ func TestPutRejectsConflict(t *testing.T) {
 	}
 }
 
-// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5
 // fail-closed contract: a CPK resolver returning (requireKey=true, err)
 // for a T4 tenant rejects the write with
 // blobstore.ErrClassificationControlViolation, persists nothing, and
 // fires the KMS-unavailable hook.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 	f := newFakeBlob()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {
@@ -185,7 +185,7 @@ func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 // resolver returns (requireKey=true) with a nil CPKInfo fails closed
 // rather than falling through to the storage-account default.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func TestPutFailsClosedWhenT4ResolverNoKey(t *testing.T) {
 	f := newFakeBlob()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {
@@ -201,7 +201,7 @@ func TestPutFailsClosedWhenT4ResolverNoKey(t *testing.T) {
 // (requireKey=false) with a nil CPKInfo admits the write under the
 // storage-account default.
 //
-// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+// spec: §12.5; §12.9.
 func TestPutT3NilCPKFallsThrough(t *testing.T) {
 	f := newFakeBlob()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (*blob.CPKInfo, bool, error) {

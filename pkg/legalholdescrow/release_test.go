@@ -59,7 +59,7 @@ func artifactRec(tenant, session, uri, key string) Record {
 	}
 }
 
-// spec: §12.8 line 884 — clearing a session hold releases every escrow
+// spec: §12.8 — clearing a session hold releases every escrow
 // object escrowed under it: each object is deleted, marked released, and a
 // legal_hold.escrow_released event is emitted.
 func TestReleaseForSession_spec_12_8_line884(t *testing.T) {
@@ -103,7 +103,7 @@ func TestReleaseForSession_spec_12_8_line884(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 884 — clearing an artifact's own hold releases exactly it.
+// spec: §12.8 — clearing an artifact's own hold releases exactly it.
 func TestReleaseForArtifact_spec_12_8_line884(t *testing.T) {
 	t.Parallel()
 	store := NewMemRecordStore()

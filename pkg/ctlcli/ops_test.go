@@ -198,7 +198,7 @@ func TestDiagnoseCredentialPool(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 44 — `lenny-ctl doctor` POSTs to the read-only
+// spec: §24.2 — `lenny-ctl doctor` POSTs to the read-only
 // diagnostics run endpoint.
 func TestDoctorReadOnly(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"fix":false,"findings":[]}`, "doctor")
@@ -210,7 +210,7 @@ func TestDoctorReadOnly(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 45 — `lenny-ctl doctor --fix` sets ?fix=true.
+// spec: §24.2 — `lenny-ctl doctor --fix` sets ?fix=true.
 func TestDoctorFixSetsQuery(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"fix":true,"findings":[]}`, "doctor", "--fix")
 	if code != 0 {
@@ -316,7 +316,7 @@ func TestOpsAutoDiscoveryFromGateway(t *testing.T) {
 // routing rule 3: when the gateway advertises no opsServiceURL and
 // --ops-server is not passed, lenny-ctl falls back to the gateway host
 // (rather than aborting) and surfaces a warning. The ops call is routed
-// to the gateway host. spec: §24.16 line 201 rule 3.
+// to the gateway host. spec: §24.16 rule 3.
 func TestOpsAutoDiscoveryMissingURLFallsBackToGateway(t *testing.T) {
 	got := &capturedRequest{}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +348,7 @@ func TestOpsAutoDiscoveryMissingURLFallsBackToGateway(t *testing.T) {
 // TestOpsAutoDiscoveryGatewayUnreachableFallsBack covers the rule-3
 // fallback when the version probe itself fails (gateway unreachable for
 // that path): the ops call is still attempted against the gateway host
-// with a warning, rather than aborting at exit 2. spec: §24.16 line 201.
+// with a warning, rather than aborting at exit 2. spec: §24.16.
 func TestOpsAutoDiscoveryGatewayUnreachableFallsBack(t *testing.T) {
 	got := &capturedRequest{}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

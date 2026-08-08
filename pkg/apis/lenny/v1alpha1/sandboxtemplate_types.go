@@ -83,11 +83,11 @@ type SandboxTemplateSpec struct {
 
 	// WorkspaceTier is the §12.9 data-classification tier of the runtime
 	// this pool serves. The pool-config webhook reads it to enforce the
-	// §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
+	// §12.9 cross-tenant-reuse prohibition: a `T4` (Restricted)
 	// pool may not set `sessionPolicy.recycle.allowCrossTenantReuse: true`, because
 	// T4 workspace state must never be reused across tenants regardless of
 	// isolation profile. Empty leaves the tier unclassified at the pool
-	// level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
+	// level (the cross-tenant rule does not fire). spec: §12.9.
 	// +kubebuilder:validation:Enum=T1;T2;T3;T4
 	// +optional
 	WorkspaceTier string `json:"workspaceTier,omitempty"`
@@ -109,7 +109,7 @@ type SandboxTemplateSpec struct {
 	// `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
 	// Opting out is permitted only for `standard` (runc) pools and removes
 	// the dedicated instance's query logging, rate limiting, and response
-	// filtering for that pool. spec: §13.2 lines 470-490.
+	// filtering for that pool. spec: §13.2.
 	// +kubebuilder:validation:Enum=cluster-default
 	// +optional
 	DNSPolicy string `json:"dnsPolicy,omitempty"`
@@ -135,7 +135,7 @@ type SandboxTemplateSpec struct {
 	// chunk-upload capabilities the gateway keeps outstanding at once
 	// while draining this pool's workspace checkpoints. When unset the
 	// gateway falls back to its deployment-wide checkpointGrantWindow
-	// default. spec: §10.1 line 131 chunk-grant window; §17.8.1
+	// default. spec: §10.1 chunk-grant window; §17.8.1
 	// checkpointGrantWindow default 4.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
@@ -192,15 +192,13 @@ type SandboxTemplateSpec struct {
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 
-	// WorkspaceSizeLimitBytes is the §4.4 line 254 / §10.1 line 122 per-pod
+	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod
 	// workspace-size hard limit. The pool-config webhook resolves it to the
 	// matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
 	// ≤300 MB, 90s for ≤512 MB) when computing the
 	// `terminationGracePeriodSeconds` floor; a service-mode pool fans this
 	// cap across maxConcurrent slots while a session-mode pool uses a
-	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2
-	// line 516). Unset defaults to the 90s conservative tier per §10.1
-	// line 108.
+	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2). Unset defaults to the 90s conservative tier per §10.1.
 	// +optional
 	WorkspaceSizeLimitBytes *int64 `json:"workspaceSizeLimitBytes,omitempty"`
 

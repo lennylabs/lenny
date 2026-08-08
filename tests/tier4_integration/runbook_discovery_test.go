@@ -13,7 +13,7 @@
 // (tier-3 ops_endpoints). A runbook name the gateway emits that the
 // lenny-ops index cannot resolve breaks the closed loop and would
 // otherwise ship undetected, because the gateway does not validate the
-// name against lenny-ops by design (spec §25.7 line 3238). This test
+// name against lenny-ops by design (spec §25.7). This test
 // drives the real lenny-ops process reading the bundled docs/runbooks/
 // so a divergence is caught.
 //
@@ -39,13 +39,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
 )
 
-// specRequiredPathBIssues is the §17.7 line 776 set of health-API issue
+// specRequiredPathBIssues is the §17.7 set of health-API issue
 // codes the spec names as required by §25.7 Path B, each mapped to the
 // runbook the gateway surfaces for it. Every one of these names must
 // resolve in the lenny-ops runbook index for the closed loop to hold.
-// spec: §25.7 lines 3221-3238 (Path B: the runbook field is the name used
-// in GET /v1/admin/runbooks/{name}; the mapping is unvalidated by
-// convention); §17.7 line 776 (the eight codes required by Path B).
+// spec: §25.7; §17.7.
 var specRequiredPathBIssues = map[string]string{
 	"WARM_POOL_EXHAUSTED":       "warm-pool-exhaustion",
 	"WARM_POOL_LOW":             "warm-pool-exhaustion",
@@ -146,12 +144,7 @@ func getJSON(t *testing.T, url string) (int, map[string]any) {
 // that name to full markdown and to structured steps carrying the api
 // access path an external watchdog uses.
 //
-// spec: §25.7 lines 3221 ("The runbook field is the runbook name as used
-// in GET /v1/admin/runbooks/{name}. This closes the loop ... agent calls
-// health API → sees degraded component with suggested action → fetches
-// the linked runbook"), 3062-3063 (/{name} full markdown, /{name}/steps
-// structured representation), 3049-3051 (an external watchdog with only
-// API access uses the api path).
+// spec: §25.7.
 // diagnosis: a failure means the §25.7 Path B closed loop is broken
 // across the gateway and lenny-ops. Either the gateway health service did
 // not surface suggestedAction.runbook for an exhausted warm pool, or the
@@ -170,7 +163,7 @@ func TestWarmPoolExhaustionRunbookDiscoveryLoopE2E(t *testing.T) {
 		t.Fatalf("gateway health suggestedAction.runbook = %q, want warm-pool-exhaustion", runbook)
 	}
 
-	// Hop 1: the full-markdown fetch (§25.7 line 3062).
+	// Hop 1: the full-markdown fetch (§25.7).
 	code, body := getJSON(t, opsBase+"/v1/admin/runbooks/"+runbook)
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/admin/runbooks/%s: status %d (%v) — the gateway-emitted runbook name did not resolve in the lenny-ops index", runbook, code, body)
@@ -182,9 +175,9 @@ func TestWarmPoolExhaustionRunbookDiscoveryLoopE2E(t *testing.T) {
 		t.Errorf("runbook %s resolved with empty markdown", runbook)
 	}
 
-	// Hop 2: the structured steps (§25.7 line 3063). At least one step
+	// Hop 2: the structured steps (§25.7). At least one step
 	// must expose the api access path so an external watchdog agent with
-	// only API access can execute it (§25.7 lines 3049-3051).
+	// only API access can execute it (§25.7).
 	code, stepsBody := getJSON(t, opsBase+"/v1/admin/runbooks/"+runbook+"/steps")
 	if code != http.StatusOK {
 		t.Fatalf("GET /v1/admin/runbooks/%s/steps: status %d (%v)", runbook, code, stepsBody)
@@ -222,17 +215,14 @@ func hasAPIAccessPath(steps []any) bool {
 
 // TestPathBRequiredRunbooksResolveInOpsIndexE2E verifies the full §25.7
 // Path B join: every issue code the spec names as required by Path B
-// (§17.7 line 776) surfaces a runbook name on the gateway health API, and
+// (§17.7) surfaces a runbook name on the gateway health API, and
 // every such name resolves in the real lenny-ops runbook index. This is
 // the guarantee the gateway itself does not enforce — it emits the name
-// without validating it exists (§25.7 line 3238), so the convention that
+// without validating it exists (§25.7), so the convention that
 // each name has a bundled runbook is only ever checked here across the
 // two components.
 //
-// spec: §25.7 lines 3221-3238 (Path B closed loop; the name is the one
-// used in GET /v1/admin/runbooks/{name}; the mapping is maintained by
-// convention and unvalidated by the gateway); §17.7 line 776 (the eight
-// required Path B issue codes).
+// spec: §25.7; §17.7.
 // diagnosis: a failure names an issue code the gateway health API can
 // emit whose runbook the lenny-ops index cannot resolve. The §25.7 Path B
 // closed loop is broken for that code: an agent that follows the health

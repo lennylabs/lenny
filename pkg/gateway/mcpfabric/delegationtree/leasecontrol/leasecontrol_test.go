@@ -26,7 +26,7 @@ func newService(t *testing.T, budgets *leasecontrol.MemoryBudgetSource, clock fu
 		Budgets: budgets,
 		Tenants: budgets,
 		Clock:   clock,
-		// Trees default to elicitation mode (§8.6 line 674); the
+		// Trees default to elicitation mode (§8.6); the
 		// auto-approving elicitor lets the grant-math tests exercise the
 		// consent path without a real client. F-8.6.2.
 		Elicitor: autoApproveElicitor{},
@@ -191,7 +191,7 @@ func TestExtendLeaseRejectedDuringCoolOff(t *testing.T) {
 	if resp.CoolOffExpiryUnixMs != wantExpiry {
 		t.Errorf("cool-off expiry = %d, want %d", resp.CoolOffExpiryUnixMs, wantExpiry)
 	}
-	// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
+	// spec: §15.1 — REJECTED carries details.subtreeId and
 	// details.coolOffExpiresAt (UTC RFC 3339) for the denied subtree.
 	if resp.SubtreeID != "root-1" {
 		t.Errorf("subtree_id = %q, want %q", resp.SubtreeID, "root-1")
@@ -322,14 +322,13 @@ func TestExtendLeaseClearDenialEndsCoolOff(t *testing.T) {
 }
 
 // TestExtendLeaseChildSessionResolvesTree: an extension request from a
-// delegated child session resolves the right tree. Per §8.6 line
-// 737-741, the grant applies to the requesting session only — the
+// delegated child session resolves the right tree. Per §8.6, the grant applies to the requesting session only — the
 // child's view raises while the root's view stays at the base. The
 // previous implementation bumped the tree-wide counter, violating the
 // scope-isolation contract; F-8.6.12 corrected it. The new assertion
 // pins both views so a regression that re-introduces tree-wide
 // propagation fails loudly.
-// spec: §8.6 line 737-741; F-8.6.12.
+// spec: §8.6; F-8.6.12.
 func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
@@ -354,13 +353,13 @@ func TestExtendLeaseChildSessionResolvesTree(t *testing.T) {
 	}
 	rootView, _ := budgets.TreeBudget(context.Background(), "acme", "root-1")
 	if rootView.Current.Tokens != 100_000 {
-		t.Errorf("root view = %d, want 100000 — extensions apply to the requesting session only (§8.6 line 737)",
+		t.Errorf("root view = %d, want 100000 — extensions apply to the requesting session only (§8.6)",
 			rootView.Current.Tokens)
 	}
 }
 
 // TestExtendLeaseExtensionScopedToRequestingSession_spec_8_6_line_737:
-// directly anchors §8.6 line 737-741. Two siblings extend
+// directly anchors §8.6. Two siblings extend
 // independently; each sibling's view of the tree budget rises only by
 // its own grant, and a third "existing" sibling that did not extend
 // continues to see the unchanged base. F-8.6.12.
@@ -474,7 +473,7 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 		t.Fatalf("audit entries = %d, want 1", len(rec.entries))
 	}
 	e := rec.entries[0]
-	// spec: §8.6 line 743 — PartiallyGranted maps to the "capped" audit
+	// spec: §8.6 — PartiallyGranted maps to the "capped" audit
 	// class because the ceiling reduced the grant below the requested
 	// amount.
 	if e.Outcome != leasecontrol.AuditOutcomeCapped {
@@ -489,7 +488,7 @@ func TestExtendLeaseAuditRecorded(t *testing.T) {
 }
 
 // TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743: a full grant
-// is audited under the "approved" classification per §8.6 line 743.
+// is audited under the "approved" classification per §8.6.
 func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
@@ -514,8 +513,7 @@ func TestExtendLeaseAuditOutcomeApproved_spec_8_6_line_743(t *testing.T) {
 }
 
 // TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743: an
-// auto-rejection during the cool-off audits under "denied" per §8.6 line
-// 743.
+// auto-rejection during the cool-off audits under "denied" per §8.6.
 func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
@@ -544,7 +542,7 @@ func TestExtendLeaseAuditOutcomeDeniedDuringCoolOff_spec_8_6_line_743(t *testing
 
 // TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743: a
 // zero grant against an already-reached ceiling audits under "capped"
-// (§8.6 line 743 treats CEILING_REACHED as a cap-to-zero).
+// (§8.6 treats CEILING_REACHED as a cap-to-zero).
 func TestExtendLeaseAuditOutcomeCeilingReachedIsCapped_spec_8_6_line_743(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
@@ -679,8 +677,7 @@ func TestExtendLeaseBudgetSourceError(t *testing.T) {
 	}
 }
 
-// TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields: every §8.6 line
-// 743 field rides on the recorded ExtensionAudit row — ApprovalMode,
+// TestExtendLeaseAuditCarriesSpec_8_6_line_743_fields: every §8.6 field rides on the recorded ExtensionAudit row — ApprovalMode,
 // Approver, BatchID, ServiceInstanceID, ClientIP, and the post-grant
 // NewLimits. The handler is wired with deterministic BatchIDGen +
 // PeerIPFn so the test pins the exact strings. F-8.6.10.
@@ -973,7 +970,7 @@ func TestResolveSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
 
 // TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674: a tree
 // registered without an explicit ApprovalMode reports the spec-default
-// elicitation mode, satisfying §8.6 line 674 even before the
+// elicitation mode, satisfying §8.6 even before the
 // dispatcher lands.
 func TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
@@ -988,7 +985,7 @@ func TestMemoryBudgetSourceApprovalModeDefault_spec_8_6_line_674(t *testing.T) {
 		t.Errorf("default ApprovalMode = %q, want %q (elicitation)", got, leasecontrol.DefaultApprovalMode)
 	}
 	if got != leasecontrol.ApprovalModeElicitation {
-		t.Errorf("DefaultApprovalMode is %q, want elicitation per §8.6 line 674", got)
+		t.Errorf("DefaultApprovalMode is %q, want elicitation per §8.6", got)
 	}
 }
 
@@ -1016,14 +1013,14 @@ func TestMemoryBudgetSourceApprovalModeExplicit_spec_8_6_line_674(t *testing.T) 
 // spec-default 5 seconds.
 func TestDefaultSuccessCoolOff_spec_8_6_line_675(t *testing.T) {
 	if leasecontrol.DefaultSuccessCoolOff != 5*time.Second {
-		t.Errorf("DefaultSuccessCoolOff = %v, want 5s per §8.6 line 675", leasecontrol.DefaultSuccessCoolOff)
+		t.Errorf("DefaultSuccessCoolOff = %v, want 5s per §8.6", leasecontrol.DefaultSuccessCoolOff)
 	}
 }
 
 // TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080: the
 // pre-grant rejection-cool-off path surfaces the §15.1 typed
 // EXTENSION_COOL_OFF_ACTIVE error envelope, with category POLICY and
-// retryable=false per §15.1 line 1080. F-8.6.9.
+// retryable=false per §15.1. F-8.6.9.
 func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	clock := fixedClock(now)
@@ -1056,7 +1053,7 @@ func TestExtendLeaseRejectedCoolOffActiveError_spec_15_1_line_1080(t *testing.T)
 }
 
 // TestExtendLeaseInFlightDenialCoolOffActiveError_spec_15_1_line_1080: the
-// §8.6 line 731 in-flight atomic re-check converts the outcome to
+// §8.6 in-flight atomic re-check converts the outcome to
 // REJECTED with the same EXTENSION_COOL_OFF_ACTIVE envelope as the
 // pre-grant path, so admin tooling can route both rejections through
 // one error code. F-8.6.9.
@@ -1247,7 +1244,7 @@ func TestExtendLeaseSecondsDimensionAudited_spec_8_6_line_743(t *testing.T) {
 }
 
 // TestExtendLeaseDrivesMetricEmitter_spec_16_line_66: every ExtendLease
-// decision drives the §16 line 66 lenny_delegation_lease_extension_total
+// decision drives the §16 lenny_delegation_lease_extension_total
 // counter via the Options.Metrics callback, labelled with the audit
 // outcome class. F-8.6.13.
 func TestExtendLeaseDrivesMetricEmitter_spec_16_line_66(t *testing.T) {
@@ -1423,8 +1420,7 @@ func TestExtendLeaseRootSessionHasNoParentCeiling_spec_8_6_line_648(t *testing.T
 	}
 }
 
-// TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643: the §8.6
-// line 643 non-extendable dimensions (maxDepth, minIsolationProfile,
+// TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643: the §8.6 non-extendable dimensions (maxDepth, minIsolationProfile,
 // delegationPolicyRef, perChildRetryBudget, treeVisibility,
 // allowSelfRecursion) MUST NOT be requestable. The in-process request
 // carries a leasecontrol.Dimensions value, whose field set is exactly the
@@ -1441,7 +1437,7 @@ func TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643(t *testing.T)
 		"TreeVisibility":      true,
 		"AllowSelfRecursion":  true,
 	}
-	// The extendable set §8.6 line 643 permits, in the Dimensions struct's
+	// The extendable set §8.6 permits, in the Dimensions struct's
 	// field names (fileExportLimits is decomposed into its two components).
 	allowed := map[string]bool{
 		"Tokens":           true,
@@ -1456,10 +1452,10 @@ func TestExtendRequestRejectsNonExtendableFields_spec_8_6_line_643(t *testing.T)
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name
 		if forbidden[name] {
-			t.Errorf("Dimensions exposes non-extendable dimension %q — §8.6 line 643 lists it as not extendable", name)
+			t.Errorf("Dimensions exposes non-extendable dimension %q — §8.6 lists it as not extendable", name)
 		}
 		if !allowed[name] {
-			t.Errorf("Dimensions has unexpected field %q; confirm it is a §8.6 line 643 extendable dimension and add it to the allowed set", name)
+			t.Errorf("Dimensions has unexpected field %q; confirm it is a §8.6 extendable dimension and add it to the allowed set", name)
 		}
 	}
 }
@@ -1500,7 +1496,7 @@ func (g *recordingTreeGranter) GrantTokenBudget(_ context.Context, rootSessionID
 // extension propagates the granted delta onto the §8.2 per-tree
 // delegation budget counter via the TreeBudgetGranter seam, closing the
 // F-8.6.3 gap where the grant raised only the leasecontrol view.
-// spec: §8.6 line 643.
+// spec: §8.6.
 func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-9", leasecontrol.TreeConfig{
@@ -1539,7 +1535,7 @@ func TestExtendLeaseBridgesTokenGrantToTreeBudget_spec_8_6_643(t *testing.T) {
 
 // TestExtendLeaseNoTokenGrantNoBridge: an extension that grants zero
 // tokens (a non-token dimension, or a ceiling-reached request) must not
-// drive the token-budget bridge. spec: §8.6 line 643.
+// drive the token-budget bridge. spec: §8.6.
 func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	// A tree already at its token ceiling: a token request is CEILING_REACHED
@@ -1575,7 +1571,7 @@ func TestExtendLeaseNoTokenGrantNoBridge_spec_8_6_643(t *testing.T) {
 // TestExtendLeaseTreeGranterFailureDoesNotFailGrant: the control-plane
 // grant has already committed when the bridge runs, so a transient
 // treebudget fault must not turn a GRANTED response into an error.
-// spec: §8.6 line 643.
+// spec: §8.6.
 func TestExtendLeaseTreeGranterFailureDoesNotFailGrant_spec_8_6_643(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-11", leasecontrol.TreeConfig{

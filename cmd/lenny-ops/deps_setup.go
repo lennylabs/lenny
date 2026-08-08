@@ -48,7 +48,7 @@ func (w *opsWiring) buildProcessSetup() {
 		w.replicaID = "lenny-ops"
 	}
 
-	// §25.4 lines 2499-2526: install the structured JSON logger. Every
+	// §25.4: install the structured JSON logger. Every
 	// log line carries ts / level / msg / component=lenny-ops; lines
 	// emitted from a request context also carry operation_id, agent_name,
 	// and trace_id pulled from the §25.2 X-Lenny-Operation-ID,
@@ -60,7 +60,7 @@ func (w *opsWiring) buildProcessSetup() {
 	// loops and the leader-election goroutine.
 	w.ctx, w.stop = signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 
-	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// spec: §16.3 — install the process-wide TracerProvider and
 	// W3C propagator so lenny-ops spans reach the OTLP Collector instead of
 	// the no-op provider. With no OTEL endpoint a stdout exporter is used.
 	// F-16.3.2.
@@ -161,7 +161,7 @@ func (w *opsWiring) buildDependencies() {
 	w.probes = map[string]probe.Func{
 		opsservice.ProbePostgres: opsservice.PostgresProbe(w.pgPool),
 		opsservice.ProbeRedis:    opsservice.RedisProbe(w.redisClient),
-		// spec: §25.2 line 169 — lenny-ops connects to MinIO and Prometheus;
+		// spec: §25.2 — lenny-ops connects to MinIO and Prometheus;
 		// the §25.6 connectivity report names both. Each probe is registered
 		// unconditionally and reports "not configured" when its endpoint is
 		// empty, so the report is honest about object-storage / metrics
@@ -173,7 +173,7 @@ func (w *opsWiring) buildDependencies() {
 		w.probes[opsservice.ProbeK8sAPI] = opsservice.K8sAPIProbe(w.clientset.Discovery())
 	}
 	if *w.f.gatewayURL != "" {
-		// spec: §25.6 lines 2905-2906 — the §25.6 connectivity check
+		// spec: §25.6 — the §25.6 connectivity check
 		// "probes the gateway admin API itself (GET
 		// /v1/admin/health/summary)", the gateway's aggregated §25.3
 		// dependency-health endpoint, rather than the liveness-only

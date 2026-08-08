@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §7.4 line 443 — STORAGE_QUOTA_EXCEEDED on over-stream must
+// spec: §7.4 — STORAGE_QUOTA_EXCEEDED on over-stream must
 // remove any bytes already written to staging. F-7.4.14.
 //
 // The over-stream path lands in the upload handler after blob.Put has
@@ -79,12 +79,12 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 		t.Fatalf("expected at least one staged blob, found 0 — the test pre-check is broken")
 	}
 	if deleted != total {
-		t.Errorf("expected every staged blob to be soft-deleted on STORAGE_QUOTA_EXCEEDED: got %d/%d (spec §7.4 line 443)",
+		t.Errorf("expected every staged blob to be soft-deleted on STORAGE_QUOTA_EXCEEDED: got %d/%d (spec §7.4)",
 			deleted, total)
 	}
 }
 
-// spec: §7.4 line 463 — finalize must close the upload channel.
+// spec: §7.4 — finalize must close the upload channel.
 // F-7.4.16. The race window covered here is: handleUpload's pre-Put
 // precondition check passed (state was `created`), the body is read,
 // finalize commits between the read and the response, and the
@@ -123,7 +123,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 463 — a finalize that fires while /upload is
+// spec: §7.4 — a finalize that fires while /upload is
 // mid-Read must abort the in-flight stream, soft-delete its staged
 // blob, and surface UPLOAD_CHANNEL_CLOSED to the client. F-7.4.16.
 func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
@@ -196,7 +196,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 463 — late /upload registers after finalize must
+// spec: §7.4 — late /upload registers after finalize must
 // not race past the channel-close. F-7.4.16. The registry stamps the
 // session-id with closed=true on finalize; a subsequent register
 // returns an already-closed channel.
@@ -258,7 +258,7 @@ func countSessionBlobs(t *testing.T, blobs blobstore.Store, tenant, session stri
 	return deleted, total
 }
 
-// spec: §7.4 line 444 — optional client-supplied SHA-256 verification
+// spec: §7.4 — optional client-supplied SHA-256 verification
 // for /upload. F-7.4.10. A matching header passes; a mismatch aborts
 // with VALIDATION_ERROR + hash_mismatch and removes the staged blob.
 func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
@@ -281,7 +281,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 444 — a mismatched client-supplied hash header
+// spec: §7.4 — a mismatched client-supplied hash header
 // must reject with VALIDATION_ERROR + reason=hash_mismatch and
 // remove the staged blob so the client can retry. F-7.4.10.
 func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
@@ -314,7 +314,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 444 — case-insensitive hex comparison. F-7.4.10.
+// spec: §7.4 — case-insensitive hex comparison. F-7.4.10.
 func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")

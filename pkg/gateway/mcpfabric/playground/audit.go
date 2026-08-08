@@ -37,7 +37,7 @@ type AuditEvent struct {
 	// Origin is always "playground".
 	Origin string
 
-	// Labels is the §27.2 line 41 playground.sessionLabels map applied
+	// Labels is the §27.2 playground.sessionLabels map applied
 	// to the session for audit/accounting. EffectiveLabels guarantees
 	// the load-bearing origin=playground entry is present; operators
 	// can add labels via the chart value.
@@ -47,7 +47,7 @@ type AuditEvent struct {
 	At time.Time
 }
 
-// MintRejectedEvent is the §10.2 line 243 playground.bearer_mint_rejected
+// MintRejectedEvent is the §10.2 playground.bearer_mint_rejected
 // audit event. It is emitted on every rejected playground mint —
 // whether the rejection happens in the §10.2 tenant-claim chain
 // (TENANT_CLAIM_MISSING / TENANT_CLAIM_INVALID_FORMAT / TENANT_NOT_FOUND)
@@ -55,7 +55,7 @@ type AuditEvent struct {
 // being the only one with a dedicated error envelope today). Fields
 // match the spec's audit payload contract.
 //
-// spec: §10.2 line 243.
+// spec: §10.2.
 type MintRejectedEvent struct {
 	// TenantID is the tenant the subject token claimed. Empty when the
 	// rejection fires before tenant extraction (no token presented or a
@@ -92,7 +92,7 @@ type MintRejectedEvent struct {
 // block the request path.
 type AuditEmitter interface {
 	EmitPlaygroundEvent(ctx context.Context, event AuditEvent)
-	// EmitMintRejected receives a §10.2 line 243
+	// EmitMintRejected receives a §10.2
 	// playground.bearer_mint_rejected event. Implementations route it
 	// to the same audit sink as EmitPlaygroundEvent.
 	EmitMintRejected(ctx context.Context, event MintRejectedEvent)
@@ -129,12 +129,12 @@ func (h *Handler) emitBearerMintedAudit(r *http.Request, tenant, user, jti strin
 	})
 }
 
-// emitMintRejected emits the §10.2 line 243
+// emitMintRejected emits the §10.2
 // playground.bearer_mint_rejected event for an invariant or
 // tenant-claim rejection. It also bumps the
 // lenny_playground_bearer_mint_rejected_total{reason} counter.
 // Both calls are nil-safe (a no-op when the audit or metrics sinks
-// are unwired). spec: §10.2 line 243.
+// are unwired). spec: §10.2.
 func (h *Handler) emitMintRejected(r *http.Request, tenant, subjectJTI, subjectTyp, invariant string) {
 	h.metrics.bearerMintRejected(invariant)
 	if h.audit == nil {

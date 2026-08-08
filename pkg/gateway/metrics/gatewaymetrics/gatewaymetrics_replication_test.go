@@ -61,7 +61,7 @@ func TestReplicationMetricNilSafe(t *testing.T) {
 	m.AddMinioReplicationFailed("eu-west-1", 3)
 }
 
-// spec: §17.3 line 130 / §25.11 line 4085 — MeasureAll sets the
+// spec: §17.3 / §25.11 — MeasureAll sets the
 // per-region replication-lag gauge and advances the per-region
 // replication-failure counter. F-17.3.7.
 func TestMinioReplicationLagAndFailed(t *testing.T) {

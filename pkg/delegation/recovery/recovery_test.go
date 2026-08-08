@@ -178,7 +178,7 @@ func TestRecoverEmptyTree(t *testing.T) {
 }
 
 // TestQuiescenceDeadlineUsesDefault_spec_11_3_224 verifies the default
-// usage-quiescence window matches the §11.3 line 224 spec value (5s).
+// usage-quiescence window matches the §11.3 spec value (5s).
 // F-11.3.19.
 func TestQuiescenceDeadlineUsesDefault_spec_11_3_224(t *testing.T) {
 	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
@@ -188,7 +188,7 @@ func TestQuiescenceDeadlineUsesDefault_spec_11_3_224(t *testing.T) {
 		t.Errorf("QuiescenceDeadline default delta = %s, want %s", got, recovery.DefaultUsageQuiescenceTimeout)
 	}
 	if recovery.DefaultUsageQuiescenceTimeout != 5*time.Second {
-		t.Errorf("DefaultUsageQuiescenceTimeout = %s, want 5s (§11.3 line 224)", recovery.DefaultUsageQuiescenceTimeout)
+		t.Errorf("DefaultUsageQuiescenceTimeout = %s, want 5s (§11.3)", recovery.DefaultUsageQuiescenceTimeout)
 	}
 }
 
@@ -203,15 +203,14 @@ func TestQuiescenceDeadlineHonorsOverride_spec_11_3_224(t *testing.T) {
 	}
 }
 
-// TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023 pins the §8.10
-// line 1022/1023 defaults so a regression that drops the operator-tunable
+// TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023 pins the §8.10 defaults so a regression that drops the operator-tunable
 // path back to non-spec values is caught. F-8.10.6.
 func TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023(t *testing.T) {
 	if recovery.DefaultLevelTimeout != 120*time.Second {
-		t.Errorf("DefaultLevelTimeout = %s, want 120s (§8.10 line 1022)", recovery.DefaultLevelTimeout)
+		t.Errorf("DefaultLevelTimeout = %s, want 120s (§8.10)", recovery.DefaultLevelTimeout)
 	}
 	if recovery.DefaultTreeTimeout != 600*time.Second {
-		t.Errorf("DefaultTreeTimeout = %s, want 600s (§8.10 line 1023)", recovery.DefaultTreeTimeout)
+		t.Errorf("DefaultTreeTimeout = %s, want 600s (§8.10)", recovery.DefaultTreeTimeout)
 	}
 }
 
@@ -250,7 +249,7 @@ func TestRecoverHonorsConfigLevelAndTreeOverrides_spec_8_10_1022_1023(t *testing
 }
 
 // TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027 covers the
-// §8.10 line 1027 effective recovery window contract — a node whose
+// §8.10 effective recovery window contract — a node whose
 // individual maxResumeWindowSeconds is shorter than the level cap must
 // be force-failed with the node-window reason when the per-node budget
 // elapses. F-8.10.11.
@@ -291,7 +290,7 @@ func TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027(t *testing.T) {
 }
 
 // TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027 covers the
-// other direction of §8.10 line 1027 — when the per-node window would
+// other direction of §8.10 — when the per-node window would
 // outlive the remaining tree budget, the tree cap binds first. F-8.10.11.
 func TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027(t *testing.T) {
 	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)

@@ -19,7 +19,7 @@ permits. Each renders only when its backend's deploy flag is set, so a
 bring-your-own or cloud-managed install is unchanged.
 
 spec: §13.2 (lenny-system default-deny + per-component allow-lists),
-§17.9.5 lines 1497-1530 (self-managed backend workloads), §12.4, §12.5.
+§17.9.5, §12.4, §12.5.
 */ -}}
 {{- $tlsPort := int .Values.redis.tlsPort }}
 {{- $busPort := add $tlsPort 10000 }}

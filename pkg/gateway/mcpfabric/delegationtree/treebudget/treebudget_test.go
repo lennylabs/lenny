@@ -21,7 +21,7 @@ func newReserver(t *testing.T) (*treebudget.Reserver, *miniredis.Miniredis) {
 	return treebudget.New(cl, 0), mr
 }
 
-// spec: §8.2 line 57 — a delegation within every cap is admitted and
+// spec: §8.2 — a delegation within every cap is admitted and
 // the tree-wide counters advance by the reserved deltas.
 func TestReserveAdmitsWithinCaps_spec_8_2_57(t *testing.T) {
 	t.Parallel()
@@ -49,7 +49,7 @@ func TestReserveAdmitsWithinCaps_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 57 — a zero cap means no limit on that axis; the
+// spec: §8.2 — a zero cap means no limit on that axis; the
 // reservation is admitted regardless of accumulated value.
 func TestReserveZeroCapUnbounded_spec_8_2_57(t *testing.T) {
 	t.Parallel()
@@ -64,7 +64,7 @@ func TestReserveZeroCapUnbounded_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 127 — a reservation that would push tree_size over
+// spec: §8.2 — a reservation that would push tree_size over
 // maxTreeSize is rejected with BUDGET_EXHAUSTED and no counter mutates.
 func TestReserveTreeSizeExhausted_spec_8_2_127(t *testing.T) {
 	t.Parallel()
@@ -93,7 +93,7 @@ func TestReserveTreeSizeExhausted_spec_8_2_127(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 127 — every capped axis rejects independently. Memory
+// spec: §8.2 — every capped axis rejects independently. Memory
 // is the binding axis here even though tree_size has headroom.
 func TestReserveMemoryExhausted_spec_8_2_127(t *testing.T) {
 	t.Parallel()
@@ -114,7 +114,7 @@ func TestReserveMemoryExhausted_spec_8_2_127(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 193 — parallel_children is per-parent. Two distinct
+// spec: §12.4 — parallel_children is per-parent. Two distinct
 // parents in the same tree each get their own ceiling.
 func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
 	t.Parallel()
@@ -142,7 +142,7 @@ func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 130 — Return decrements the reserved axes; a released
+// spec: §8.2 — Return decrements the reserved axes; a released
 // parallel-children slot frees capacity for a new child.
 func TestReturnFreesParallelSlot_spec_8_2_130(t *testing.T) {
 	t.Parallel()
@@ -166,7 +166,7 @@ func TestReturnFreesParallelSlot_spec_8_2_130(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 130 — Return clamps at zero so a double-return cannot
+// spec: §8.2 — Return clamps at zero so a double-return cannot
 // drive a counter negative and inflate available budget.
 func TestReturnClampsAtZero_spec_8_2_130(t *testing.T) {
 	t.Parallel()
@@ -190,7 +190,7 @@ func TestReturnClampsAtZero_spec_8_2_130(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 213 — a Redis outage fails closed; Reserve returns
+// spec: §12.4 — a Redis outage fails closed; Reserve returns
 // ErrBudgetUnavailable rather than admitting an unbudgeted delegation.
 func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
 	t.Parallel()
@@ -205,7 +205,7 @@ func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 57 — an empty root session id is rejected before any
+// spec: §8.2 — an empty root session id is rejected before any
 // Redis interaction.
 func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
 	t.Parallel()
@@ -215,7 +215,7 @@ func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 193 — all five keys share the {root} hash tag so a
+// spec: §12.4 — all five keys share the {root} hash tag so a
 // Redis Cluster co-locates them on one slot for atomic multi-key Lua.
 func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
 	t.Parallel()
@@ -241,7 +241,7 @@ func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — the reserve script tracks the per-tree
+// spec: §8.3 — the reserve script tracks the per-tree
 // parallel-children high-watermark, and ObserveHighWatermark reads it
 // once at tree completion and clears the key (GETDEL) so a re-settle
 // cannot double-count. F-8.9.6.
@@ -282,7 +282,7 @@ func TestHighWatermarkTracksMaxParallelChildren_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — a tree that admitted no delegation has no
+// spec: §8.3 — a tree that admitted no delegation has no
 // recorded watermark, so ObserveHighWatermark returns found=false and
 // the caller skips the histogram observation. F-8.9.6.
 func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
@@ -297,7 +297,7 @@ func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — the watermark does not regress when a later
+// spec: §8.3 — the watermark does not regress when a later
 // reservation observes a lower per-parent in-flight count (e.g. a
 // different parent's first child). F-8.9.6.
 func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
@@ -328,7 +328,7 @@ func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 643 — a granted lease extension raises the tree's
+// spec: §8.6 — a granted lease extension raises the tree's
 // tokens-axis ceiling so a delegation that would breach the parent's
 // pre-extension MaxTokenBudget is admitted after the grant. Without the
 // bridge the second reserve below would exhaust against the old cap.
@@ -359,7 +359,7 @@ func TestGrantTokenBudgetRaisesTokenCeiling_spec_8_6_643(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 643 — the grant is cumulative; repeated grants stack so
+// spec: §8.6 — the grant is cumulative; repeated grants stack so
 // a tree that is extended twice observes the sum. F-8.6.3.
 func TestGrantTokenBudgetIsCumulative_spec_8_6_643(t *testing.T) {
 	t.Parallel()
@@ -387,7 +387,7 @@ func TestGrantTokenBudgetIsCumulative_spec_8_6_643(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 643 — a zero base token cap means "unlimited"; a grant
+// spec: §8.6 — a zero base token cap means "unlimited"; a grant
 // must not narrow it to a finite ceiling. A non-positive grant and an
 // empty root are no-ops / errors respectively. F-8.6.3.
 func TestGrantTokenBudgetEdges_spec_8_6_643(t *testing.T) {

@@ -33,14 +33,14 @@ import (
 var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
 
 // defaultInterval is the periodic-checkpoint cadence used when Interval
-// is zero. The §4.4 line 256/258 mandated default is 600 s / 10 minutes
+// is zero. The §4.4 mandated default is 600 s / 10 minutes
 // (`periodicCheckpointIntervalSeconds`).
-// spec: §4.4 line 256 — "every active session MUST have a successful
+// spec: §4.4 — "every active session MUST have a successful
 // checkpoint recorded within the last periodicCheckpointIntervalSeconds
 // (default: 600s / 10 minutes)".
 const defaultInterval = 10 * time.Minute
 
-// DefaultGrantWindow is the §10.1 line 131 / §17.8.1 default for
+// DefaultGrantWindow is the §10.1 / §17.8.1 default for
 // `checkpointGrantWindow`: the gateway keeps at most this many
 // chunk-upload capabilities outstanding at once while draining a
 // session's workspace checkpoint. It bounds both the pipelining depth
@@ -58,27 +58,27 @@ const DefaultGrantWindow = 4
 // (checkpointCapabilityTTLSeconds) | 30 s".
 const DefaultCapabilityTTLSeconds = 30
 
-// DefaultJitterFraction is the §4.4 line 258 default for
+// DefaultJitterFraction is the §4.4 default for
 // `periodicCheckpointJitterFraction`: 0.2 spreads the first periodic
 // checkpoint uniformly across a 120-second window at the default
 // 600-second interval, preventing correlated burst patterns.
-// spec: §4.4 line 258 — "periodicCheckpointJitterFraction (default: 0.2,
+// spec: §4.4 — "periodicCheckpointJitterFraction (default: 0.2,
 // range: 0.0–1.0)".
 const DefaultJitterFraction = 0.2
 
-// DurationObserver receives the §4.4 line 254
+// DurationObserver receives the §4.4
 // `lenny_checkpoint_duration_seconds` observation for a single
 // checkpoint snapshot. The production wiring is
 // gatewaymetrics.Metrics; a nil observer skips the emission.
 //
-// spec: §4.4 line 254.
+// spec: §4.4.
 type DurationObserver interface {
 	// ObserveCheckpointDuration records one observation for the
 	// supplied (pool, level, trigger) histogram label triple.
 	ObserveCheckpointDuration(pool, level, trigger string, seconds float64)
 }
 
-// Retention persists the §4.4 line 234 / §12.5 latest-2 rotation
+// Retention persists the §4.4 / §12.5 latest-2 rotation
 // catalog. The checkpointer records a row for every successful
 // snapshot and runs Rotate immediately after so the table never
 // holds more than RetainedCount active rows per (session, slot).
@@ -86,7 +86,7 @@ type DurationObserver interface {
 // snapshot — the catalog is observability for the §12.5 GC sweep,
 // not a §4.4 correctness gate.
 //
-// spec: §4.4 line 234; §12.5 lines 313, 326.
+// spec: §4.4; §12.5.
 type Retention interface {
 	Insert(ctx context.Context, r checkpointretention.Record) error
 	Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error)
@@ -109,11 +109,11 @@ type Checkpointer struct {
 	Interval time.Duration
 	// JitterFraction spreads each session's first periodic checkpoint
 	// across `Interval + random(0, Interval × JitterFraction)` per
-	// §4.4 line 258. Range is [0.0, 1.0]; a negative value or a value
+	// §4.4. Range is [0.0, 1.0]; a negative value or a value
 	// > 1.0 is clamped to the [0.0, 1.0] range. Zero selects no jitter
 	// (every session ticks together at the same wall-clock second),
 	// matching the test-only no-jitter path.
-	// spec: §4.4 line 258 — "each session's first periodic checkpoint
+	// spec: §4.4 — "each session's first periodic checkpoint
 	// is scheduled at periodicCheckpointIntervalSeconds + random(0,
 	// periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)".
 	JitterFraction float64
@@ -123,11 +123,11 @@ type Checkpointer struct {
 	// during a sweep so the gateway can log it. A sweep continues
 	// past a failed session regardless.
 	OnError func(sessionID string, err error)
-	// Metrics receives the §4.4 line 254 duration histogram
+	// Metrics receives the §4.4 duration histogram
 	// observation at the end of every checkpoint snapshot. Nil
 	// disables the emission.
 	Metrics DurationObserver
-	// Retention persists the §4.4 line 234 / §12.5 latest-2
+	// Retention persists the §4.4 / §12.5 latest-2
 	// rotation catalog. Nil disables both the Insert and the Rotate
 	// path; the snapshot still completes.
 	Retention Retention
@@ -142,7 +142,7 @@ type Checkpointer struct {
 	// once. It is the fallback the loop applies when the session's pool
 	// declares no per-pool checkpointGrantWindow override. Zero selects
 	// DefaultGrantWindow.
-	// spec: §10.1 line 131 chunk-grant window; §17.8.1 checkpointGrantWindow
+	// spec: §10.1 chunk-grant window; §17.8.1 checkpointGrantWindow
 	// default 4; §5.2 (deployment-wide default with per-pool override).
 	GrantWindow int
 	// CapabilityTTL is the expiry the loop signs into every presigned
@@ -164,7 +164,7 @@ type Checkpointer struct {
 	// exactly-once reservation release. Nil disables the whole manifest
 	// side of the driver (dev-mode / degenerate test path); the snapshot
 	// still records the WorkspaceSnapshot from the adapter's Summary total.
-	// spec: §10.1 lines 130-141.
+	// spec: §10.1.
 	Manifests partialmanifeststore.Store
 	// Quota reserves the probed workspace size against the tenant's §11.2
 	// storage counter before any grant and reconciles it against the
@@ -187,7 +187,7 @@ type Checkpointer struct {
 	ObjectStore ObjectStat
 	// Cataloging inserts the §12.5 artifact_store catalog row for each
 	// confirmed chunk from its Stat-confirmed size. Nil skips cataloging.
-	// spec: §12.5 line 309.
+	// spec: §12.5.
 	Cataloging ChunkRecorder
 	// ChunkCatalog soft-deletes each released checkpoint chunk's
 	// artifact_store row through the cataloging decorator, issuing the §12.5
@@ -197,33 +197,33 @@ type Checkpointer struct {
 	// bytes return to the tenant rather than staying charged forever. Nil (with
 	// ChunkObjects) skips the chunk release, leaving the chunk rows and objects
 	// in place. cataloging.Store satisfies it.
-	// spec: §12.5 GC rule 4, GC rule 5; §10.1 line 157.
+	// spec: §12.5 GC rule 4, GC rule 5; §10.1.
 	ChunkCatalog ChunkCatalogReleaser
 	// ChunkObjects discovers a released checkpoint's chunk objects under its
 	// chunk_object_key_prefix and hard-deletes each one per key. The abort,
 	// supersede, and rotation arms share it. Nil (with ChunkCatalog) skips the
 	// chunk release. miniostore.Store satisfies it.
-	// spec: §12.5 GC rule 5; §4.4 line 236.
+	// spec: §12.5 GC rule 5; §4.4.
 	ChunkObjects ChunkObjectStore
-	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// TombstoneRetention is the §12.5 gc.tombstoneRetentionSeconds
 	// window stamped onto each soft-deleted chunk row's hard-prune deadline
 	// during the rotation-side release. Zero selects DefaultTombstoneRetention.
-	// spec: §12.5 line 341.
+	// spec: §12.5.
 	TombstoneRetention time.Duration
 	// DriverMetrics receives the gateway-side §4.4 / §10.1 counter
 	// increments the object-store call moving off the adapter transferred
 	// to the gateway. Nil disables the emissions.
-	// spec: §4.4 lines 254, 262; §10.1 supersede-on-write; §12.5 line 303.
+	// spec: §4.4; §10.1 supersede-on-write; §12.5.
 	DriverMetrics DriverMetrics
-	// SkippedEventFunc emits the §4.4 line 255 `checkpoint.skipped` session
+	// SkippedEventFunc emits the §4.4 session
 	// event when the adapter rejects the run at its workspace-size probe.
 	// Nil disables the emission.
-	// spec: §4.4 line 255.
+	// spec: §4.4.
 	SkippedEventFunc func(ctx context.Context, tenantID, sessionID, reason string)
 	// ChunkSizeBytes is the gateway-chosen fixed chunk size the driver
 	// signs into every grant and clamps every declared length against.
 	// Zero selects DefaultChunkSizeBytes.
-	// spec: §10.1 line 139 (fixed-size chunked-object model).
+	// spec: §10.1.
 	ChunkSizeBytes int64
 	// ChunkEncoding is the wire encoding the gateway declares in Start.
 	// Empty selects tar.
@@ -298,14 +298,14 @@ func (c *Checkpointer) Run(ctx context.Context) {
 }
 
 // FirstCheckpointDelay computes the per-session jitter for the session's
-// first periodic checkpoint per §4.4 line 258: the delay is
+// first periodic checkpoint per §4.4: the delay is
 // `interval + random(0, interval × jitterFraction)` where the random
 // component is seeded by a stable hash of sessionID so the same session
 // receives the same jitter across gateway restarts and coordinator
 // handoffs. Subsequent checkpoints fire at the fixed interval from the
 // previous checkpoint (no additional jitter); after the first cycle
 // sessions naturally desynchronise.
-// spec: §4.4 line 258 — "Subsequent checkpoints are scheduled at the
+// spec: §4.4 — "Subsequent checkpoints are scheduled at the
 // fixed interval from the previous checkpoint (no additional jitter),
 // so sessions naturally desynchronize after the first cycle."
 func FirstCheckpointDelay(sessionID string, interval time.Duration, jitterFraction float64) time.Duration {
@@ -366,12 +366,11 @@ func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID strin
 // checkpoint.TriggerEviction so both the barrier-window checkpoint and
 // the per-session tier-cap finalisation are labelled eviction, which is
 // what the §16.1 `lenny_checkpoint_partial_total{trigger="eviction"}`
-// domain and the §10.1 line 172 finalisation counter are written
+// domain and the §10.1 finalisation counter are written
 // against. Like Checkpoint it returns ErrNoBinding when this replica
 // does not coordinate the session.
 //
-// spec: §10.1 line 172 (the preStop drain driver stamps the eviction
-// trigger on both barrier-drain and Stage 2 tier-cap finalisations).
+// spec: §10.1.
 func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sessionID string, trigger checkpoint.Trigger) error {
 	return c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotCheckpoint, trigger)
 }
@@ -386,14 +385,14 @@ func (c *Checkpointer) CheckpointWithTrigger(ctx context.Context, tenantID, sess
 // Seal returns nil rather than ErrNoBinding, satisfying the Sealer
 // contract's "no-op for a session that never ran on a pod". The
 // session's final snapshot then falls back to the latest checkpoint
-// (§7.1 line 89). The §7.1 line 112 retry path therefore retries only
+// (§7.1). The §7.1 retry path therefore retries only
 // real export failures, never an inapplicable seal.
 //
 // Seal stamps the §4.4 TriggerPeriodic label on the duration histogram:
 // the §4.4 enum (pkg/checkpoint.Trigger) has no seal value, and the
 // seal/periodic distinction is carried by the recorded
 // WorkspaceSnapshotSource on the session row rather than by the trigger.
-// spec: §4.4 line 259 (the trigger enum has no seal value).
+// spec: §4.4.
 func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) error {
 	err := c.snapshot(ctx, tenantID, sessionID, sessionstore.WorkspaceSnapshotSealed, checkpoint.TriggerPeriodic)
 	if errors.Is(err, ErrNoBinding) {
@@ -405,18 +404,18 @@ func (c *Checkpointer) Seal(ctx context.Context, tenantID, sessionID string) err
 // snapshot drives the session's bound pod adapter to checkpoint its
 // workspace and records the result on the session row with the given
 // §7.1 snapshot source. Every successful checkpoint also bumps the
-// §4.4 line 258 `last_successful_checkpoint_at` freshness timestamp
+// §4.4 freshness timestamp
 // on the session row regardless of the trigger that produced it
 // (periodic, eviction, pre-drain, or seal); the §4.4 freshness gauge
 // keys off this field.
 //
 // Two side-effects are layered on top of the snapshot:
 //
-//   - The §4.4 line 254 `lenny_checkpoint_duration_seconds` histogram
+//   - The §4.4 histogram
 //     is observed at the end of the snapshot regardless of outcome
 //     (success or failure); the §16.5 CheckpointDurationHigh alert
 //     reads the P95 of this histogram.
-//   - The §4.4 line 234 / §12.5 latest-2 rotation catalog records a
+//   - The §4.4 / §12.5 latest-2 rotation catalog records a
 //     new row for the checkpoint and runs Rotate to soft-delete any
 //     row past the RetainedCount cap. Best-effort: catalog failures
 //     log and discard.
@@ -428,7 +427,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	startedAt := c.now()
 	checkpointID, sizeBytes, err := c.driveCheckpoint(ctx, binding, tenantID, sessionID, trigger)
 	elapsed := c.now().Sub(startedAt).Seconds()
-	// spec: §4.4 line 254 — observe the duration histogram regardless
+	// spec: §4.4 — observe the duration histogram regardless
 	// of outcome so operators see slow checkpoints that also failed
 	// (the most common cause of a stuck quiescence handshake).
 	c.observeDuration(trigger, elapsed)
@@ -438,27 +437,27 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	now := c.now()
 	var legalHold bool
 	if _, err := c.Sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-		// §12.5 line 313 — a session under legal hold is exempt from
+		// §12.5 — a session under legal hold is exempt from
 		// the latest-2 rotation; capture the flag inside the update so
 		// the post-snapshot rotation observes the committed state.
 		legalHold = row.LegalHold
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
-			// spec: §10.1 line 130 — the gateway mints the
+			// spec: §10.1 — the gateway mints the
 			// checkpoint_id and records it as the snapshot ref; the
 			// adapter never mints one.
 			Ref:       checkpointID,
 			Source:    source,
 			Timestamp: now,
-			// spec: §7.3 line 397 / §10.1 coordinator-handoff step 0 —
+			// spec: §7.3 / §10.1 coordinator-handoff step 0 —
 			// persist the adapter-reported compressed size as the
 			// authoritative last_checkpoint_workspace_bytes value so the
-			// §7.2 line 138 workspaceRecoveryFraction and the §10.1
+			// §7.2 workspaceRecoveryFraction and the §10.1
 			// preStop tiered-cap selection both have a non-NULL input.
 			// A zero size is treated the same as NULL by the storage
 			// layer and the preStop fallback. F-7.3.21.
 			Bytes: sizeBytes,
 		}
-		// spec: §4.4 line 258 — "The gateway tracks
+		// spec: §4.4 — "The gateway tracks
 		// last_successful_checkpoint_at on the session record in
 		// Postgres, updated on every successful checkpoint regardless
 		// of trigger".
@@ -467,7 +466,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	}); err != nil {
 		return fmt.Errorf("checkpointer: record snapshot for session %s: %w", sessionID, err)
 	}
-	// §4.4 line 234 / §12.5 latest-2 rotation. Best-effort: a catalog
+	// §4.4 / §12.5 latest-2 rotation. Best-effort: a catalog
 	// or rotation failure does not unwind the successful snapshot. The
 	// rotation is per (session, slot) — binding.SlotID is the empty
 	// string for the single-workspace path and the bound slot id for
@@ -478,7 +477,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 
 // driveCheckpoint runs the gateway side of the §4.7 / §10.1
 // bidirectional Checkpoint stream far enough to record a workspace
-// snapshot. It mints the checkpoint_id (§10.1 line 130 — the gateway
+// snapshot. It mints the checkpoint_id (§10.1 — the gateway
 // mints it, never the adapter), opens the stream against the bound pod,
 // and sends CheckpointStart carrying the id and the typed trigger. It
 // then consumes server frames until the adapter closes the attempt with
@@ -494,7 +493,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // resolves the effective grant window from the bound pool at attempt time
 // (§5.2 per-pool checkpointGrantWindow override).
 //
-// spec: §10.1 lines 130-132 — the gateway mints the checkpoint_id, opens
+// spec: §10.1 — the gateway mints the checkpoint_id, opens
 // the stream, and the adapter reports the confirmed byte total in
 // CheckpointSummary.
 func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string, trigger checkpoint.Trigger) (string, int64, error) {
@@ -622,7 +621,7 @@ type sessionCheckpointContext struct {
 // transient read failure degrades to the deployment default rather than
 // aborting the checkpoint.
 //
-// spec: §5.2 (per-pool override); §10.1 lines 137, 155 (generation fence,
+// spec: §5.2 (per-pool override); §10.1 (generation fence,
 // MAX(coordination_generation) resume selector, baseline denominator).
 func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, sessionID string) sessionCheckpointContext {
 	if c.Sessions == nil {
@@ -640,7 +639,7 @@ func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, s
 	// A prior successful checkpoint recorded its compressed size as
 	// last_checkpoint_workspace_bytes; freeze it as this attempt's baseline.
 	// Nil is load-bearing: it denotes a session with no prior successful full
-	// checkpoint (§10.1 line 155).
+	// checkpoint (§10.1).
 	if row.WorkspaceSnapshot != nil && row.WorkspaceSnapshot.Bytes > 0 {
 		b := row.WorkspaceSnapshot.Bytes
 		sc.baselineBytes = &b
@@ -655,8 +654,8 @@ func chunkPrefix(tenantID, sessionID, checkpointID string) string {
 	return fmt.Sprintf("/%s/%s/%s/%s/", tenantID, blobstore.ObjectTypeCheckpoint, sessionID, checkpointID)
 }
 
-// observeDuration emits the §4.4 line 254 histogram observation.
-// spec: §4.4 line 254.
+// observeDuration emits the §4.4 histogram observation.
+// spec: §4.4.
 func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float64) {
 	if c.Metrics == nil {
 		return
@@ -671,11 +670,11 @@ func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float
 // recordRetention inserts the catalog row for the new checkpoint and
 // runs Rotate to soft-delete any row past the §12.5 latest-2 cap for
 // the (session, slot) pair. A session under legal hold is exempt from
-// rotation (§12.5 line 313): the row is still catalogued so the
+// rotation (§12.5): the row is still catalogued so the
 // §12.8 reconciler can observe it, but Rotate is skipped so every
 // checkpoint is retained until the hold is lifted. Best-effort: a
 // failure logs and discards rather than fail the snapshot.
-// spec: §4.4 line 234 / §12.5 lines 313, 326.
+// spec: §4.4 / §12.5.
 func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, slotID, ref string, legalHold bool, trigger checkpoint.Trigger) {
 	if c.Retention == nil || ref == "" {
 		return
@@ -693,7 +692,7 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 		return
 	}
 	if legalHold {
-		// §12.5 line 313 — held sessions retain all checkpoints.
+		// §12.5 — held sessions retain all checkpoints.
 		return
 	}
 	rotated, err := c.Retention.Rotate(ctx, tenantID, sessionID, slotID)
@@ -704,14 +703,14 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 	}
 	// §12.5 GC rule 5 — release every checkpoint the latest-2 rotation
 	// dropped. Each confirmed chunk carries a quota-charged artifact_store
-	// row (§12.5 line 309), so without this release a long-running session's
+	// row (§12.5), so without this release a long-running session's
 	// chunk rows accrete and storage_bytes_used climbs monotonically to
-	// STORAGE_QUOTA_EXCEEDED (§12.5 line 348). Best-effort per row: a resolve
+	// STORAGE_QUOTA_EXCEEDED (§12.5). Best-effort per row: a resolve
 	// or release failure logs. A dropped checkpoint is finalised
 	// (partial = false), which the §12.5 backstop sweep never re-selects (its
 	// predicate carries partial = true), so a failed object delete has no
 	// backstop; it surfaces on lenny_checkpoint_orphaned_objects_total instead
-	// (§4.4 line 248).
+	// (§4.4).
 	for _, dropped := range rotated {
 		c.releaseRotatedCheckpoint(ctx, tenantID, dropped.Ref, trigger)
 	}
@@ -731,8 +730,7 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 // release's OnOrphanedObject callback so the leak is observable.
 //
 // spec: §12.5 GC rule 5 (keep only the latest 2 checkpoints per active
-// session), GC rule 6 (backstop selects partial = true rows only); §4.4 line
-// 248 (orphaned-object counter).
+// session), GC rule 6 (backstop selects partial = true rows only); §4.4.
 func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, ref string, trigger checkpoint.Trigger) {
 	if c.Manifests == nil || c.ChunkCatalog == nil || c.ChunkObjects == nil {
 		// Chunk release is not wired (dev-mode / degenerate test path). The
@@ -761,12 +759,12 @@ func (c *Checkpointer) releaseRotatedCheckpoint(ctx context.Context, tenantID, r
 	}
 }
 
-// emitOrphanedObject stamps the §4.4 line 248
+// emitOrphanedObject stamps the §4.4
 // lenny_checkpoint_orphaned_objects_total counter for one chunk object the
 // rotation-side release could not delete, labeling it with the checkpointer's
 // pool and the trigger of the checkpoint whose rotation dropped the object.
 // A nil DriverMetrics skips the emission.
-// spec: §4.4 line 248.
+// spec: §4.4.
 func (c *Checkpointer) emitOrphanedObject(trigger checkpoint.Trigger) {
 	if c.DriverMetrics == nil {
 		return
@@ -774,7 +772,7 @@ func (c *Checkpointer) emitOrphanedObject(trigger checkpoint.Trigger) {
 	c.DriverMetrics.IncCheckpointOrphanedObjects(c.Pool, string(trigger))
 }
 
-// tombstoneRetention returns the §12.5 line 341 tombstone-retention window
+// tombstoneRetention returns the §12.5 tombstone-retention window
 // stamped onto each soft-deleted chunk row during the rotation-side release,
 // applying DefaultTombstoneRetention when TombstoneRetention is unset.
 func (c *Checkpointer) tombstoneRetention() time.Duration {

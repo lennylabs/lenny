@@ -74,7 +74,7 @@ import (
 // externally-managed runtimeClasses.profiles entries. Malformed items
 // are skipped.
 //
-// spec: §5.3 line 676.
+// spec: §5.3.
 func parseRuntimeClassRequirements(s string) []preflight.RuntimeClassRequirement {
 	var out []preflight.RuntimeClassRequirement
 	for _, pair := range strings.Split(s, ",") {
@@ -97,7 +97,7 @@ func parseRuntimeClassRequirements(s string) []preflight.RuntimeClassRequirement
 // means the SDK could not read the configuration (regulated profiles
 // fail closed; others surface as advisory).
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool) preflight.MinIOEncryptionProber {
 	if endpoint == "" {
 		return nil
@@ -145,7 +145,7 @@ func minioGetBucketEncryption(endpoint, accessKey, secretKey string, useSSL bool
 // GCS and Azure are not wired in v1; the chart passes a nil prober for
 // those providers, which the check routes through its advisory path.
 //
-// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+// spec: §17.9.4; §17.6. F-17.9.3.
 func s3LifecycleProber(region string) preflight.CloudObjectStorageLifecycleProber {
 	return preflight.CloudObjectStorageLifecycleProbeFunc(func(ctx context.Context, bucket string) (preflight.CloudObjectStorageLifecycleStatus, error) {
 		var status preflight.CloudObjectStorageLifecycleStatus
@@ -208,7 +208,7 @@ func (f opsSARProbeFunc) CanI(ctx context.Context, sa string, rule preflight.Ops
 // Role/ClusterRole templates remain the source of truth). The preflight
 // SA needs `create subjectaccessreviews.authorization.k8s.io`.
 //
-// spec: §17.6 line 519; §25.4. F-17.6.1.
+// spec: §17.6; §25.4. F-17.6.1.
 func opsSARProber(cfg *rest.Config, serviceAccount string) preflight.OpsSARBACProber {
 	if strings.TrimSpace(serviceAccount) == "" {
 		return nil
@@ -238,11 +238,11 @@ func opsSARProber(cfg *rest.Config, serviceAccount string) preflight.OpsSARBACPr
 }
 
 // discoverServerVersion reads the API server GitVersion via the
-// discovery client for the §17.6 line 503 minimum-version gate. A
+// discovery client for the §17.6 minimum-version gate. A
 // discovery failure returns an empty string, which the check treats as
 // advisory (a transient discovery error must not block an install).
 //
-// spec: §17.6 line 503. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func discoverServerVersion(cfg *rest.Config) string {
 	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
@@ -260,7 +260,7 @@ func discoverServerVersion(cfg *rest.Config) string {
 // v1; minio is configured by the post-install Job (the check self-skips)
 // and gcs/azure route through the advisory path (nil prober).
 //
-// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+// spec: §17.9.4; §17.6. F-17.9.3.
 func cloudLifecycleProber(provider, region string) preflight.CloudObjectStorageLifecycleProber {
 	if strings.EqualFold(strings.TrimSpace(provider), "s3") {
 		return s3LifecycleProber(region)
@@ -272,12 +272,12 @@ func cloudLifecycleProber(provider, region string) preflight.CloudObjectStorageL
 // `certificates.cert-manager.io` CRD's `app.kubernetes.io/version`
 // label. Reading a cluster-scoped CRD stays within the preflight Job's
 // existing RBAC (it already reads the Lenny CRDs for the schema-version
-// check), so the §10.3 line 304 check needs no cross-namespace
+// check), so the §10.3 check needs no cross-namespace
 // Deployment read in the operator-owned cert-manager namespace. A
 // missing CRD reports cert-manager as not installed; a present CRD with
 // no version label reports it installed but version-unknown (advisory).
 //
-// spec: §10.3 line 304. F-10.3.12.
+// spec: §10.3. F-10.3.12.
 func certManagerVersionProber(reader client.Reader) preflight.CertManagerProber {
 	return preflight.CertManagerProbeFunc(func(ctx context.Context) (string, bool, error) {
 		var crd apiextensionsv1.CustomResourceDefinition
@@ -324,7 +324,7 @@ func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.Re
 }
 
 // poolerSentinelProber builds a PoolerSentinelProber over the operator's
-// Postgres for the §17.6 line 488 cloud-managed pooler sentinel defense.
+// Postgres for the §17.6 cloud-managed pooler sentinel defense.
 // An empty or unexpanded ($(...) placeholder, when the optional
 // datastore Secret is absent at the pre-install hook) DSN returns nil so
 // the check defers to the gateway's runtime LENNY_POOLER_MODE defense
@@ -333,7 +333,7 @@ func redisMaxmemoryProber(url, password string, allowInsecure bool) preflight.Re
 // surfaces as a failed check rather than aborting the Job before the
 // other checks run.
 //
-// spec: §17.6 line 488; §12.3 line 56.
+// spec: §17.6; §12.3.
 func poolerSentinelProber(dsn string) preflight.PoolerSentinelProber {
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" || strings.Contains(dsn, "$(") {
@@ -357,7 +357,7 @@ func poolerSentinelProber(dsn string) preflight.PoolerSentinelProber {
 // returns the handshake error otherwise. An empty endpoint returns nil so
 // the check is skipped; an empty caBundlePath uses the system trust store.
 //
-// spec: §13.2 lines 176-178. F-13.2.9.
+// spec: §13.2. F-13.2.9.
 func otlpTLSProber(endpoint, caBundlePath string, tlsEnabled bool) preflight.OTLPTLSProber {
 	if endpoint == "" || !tlsEnabled {
 		return nil
@@ -397,7 +397,7 @@ func otlpTLSProber(endpoint, caBundlePath string, tlsEnabled bool) preflight.OTL
 // ops.tls.caBundleConfigMap. An empty endpoint or disabled internal TLS
 // returns nil so the check is skipped.
 //
-// spec: §25.4 lines 2544-2546. F-25.4.19.
+// spec: §25.4. F-25.4.19.
 func opsAdminTLSProber(endpoint, caBundlePath string, internalEnabled bool) preflight.OpsAdminTLSProber {
 	if endpoint == "" || !internalEnabled {
 		return nil
@@ -450,7 +450,7 @@ func opsAdminTLSProber(endpoint, caBundlePath string, internalEnabled bool) pref
 // definition. An empty URL returns nil so the check routes through its
 // not-configured advisory.
 //
-// spec: §25.4 lines 1462-1470. F-25.4.25.
+// spec: §25.4. F-25.4.25.
 func prometheusReachabilityProber(rawURL string) preflight.PrometheusProber {
 	if strings.TrimSpace(rawURL) == "" {
 		return nil
@@ -522,7 +522,7 @@ func parseAcceptDowngrade(s string) map[string]bool {
 }
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=preflight). F-16.4.1.
 	logging.Setup(os.Stderr, "preflight")
 
@@ -541,7 +541,7 @@ func main() {
 			"host-sharing and credential-fsGroup audits cover in addition to the release "+
 			"namespace; empty scopes the host-sharing audit to the release namespace and "+
 			"skips the agent-pod credential audit")
-	// spec: §13.1 line 7 — the operator-tunable lenny-cred-readers GID the
+	// spec: §13.1 — the operator-tunable lenny-cred-readers GID the
 	// agent-pod fsGroup audit checks against. 0 falls back to the podspec
 	// default (65534); the chart passes security.podUIDs.credReadersGID so
 	// the audit stays in lock-step with the controller/webhook. F-13.1.16.
@@ -552,11 +552,11 @@ func main() {
 		"value of the features.drainReadiness chart flag")
 	compliance := flag.Bool("feature-compliance", false, "value of the features.compliance chart flag")
 	registryDigest := flag.Bool("feature-registry-digest", false,
-		"value of the platform.registry.requireDigest chart flag; gates the fail-closed lenny-registry-digest webhook (§17.2 line 56)")
+		"value of the platform.registry.requireDigest chart flag; gates the fail-closed lenny-registry-digest webhook (§17.2)")
 	cosignVerify := flag.Bool("feature-cosign-verify", false,
-		"value of the imageVerification.cosign.enabled chart flag; a production/staging install with it false gets a §5.3 line 669 advisory")
+		"value of the imageVerification.cosign.enabled chart flag; a production/staging install with it false gets a §5.3 advisory")
 	environment := flag.String("environment", "",
-		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 line 669 cosign-production advisory")
+		"value of the chart `environment` value (dev | staging | prod); feeds the §5.3 cosign-production advisory")
 	monitoringFormat := flag.String("monitoring-format", "",
 		"value of the monitoring.format chart value (prometheusrule | configmap | both); feeds the §16.9 R8 Prometheus Operator CRD-presence advisory")
 	prometheusURL := flag.String("prometheus-url", "",
@@ -565,20 +565,20 @@ func main() {
 		"value of the global.deploymentTier chart value (tier1 | tier2 | tier3); the §25.4 prometheus-reachability check emits INFO at Tier 1 and WARN at Tier 2/3")
 	acknowledgeNoPrometheus := flag.Bool("acknowledge-no-prometheus", false,
 		"value of the monitoring.acknowledgeNoPrometheus chart value; suppresses the §25.4 Tier 2/3 Prometheus WARN when the operator intentionally runs without Prometheus")
-	// §17.9.3 / §17.6 line 488 — the preflight-job template passes
+	// §17.9.3 / §17.6 — the preflight-job template passes
 	// --connection-pooler so the cloud-pooler sentinel defense check can
 	// see the effective pooler mode. When "external" the check connects to
 	// Postgres (--postgres-dsn) and verifies the lenny_tenant_guard
 	// per-transaction trigger. F-17.9.2.
 	connectionPooler := flag.String("connection-pooler", "",
 		"value of the effective postgres.connectionPooler (pgbouncer | external); §17.9.3")
-	// §17.6 line 488 — the Postgres DSN the cloud-pooler sentinel defense
+	// §17.6 — the Postgres DSN the cloud-pooler sentinel defense
 	// dials to query pg_trigger for lenny_tenant_guard. The Job wires it
 	// from the lenny-datastore-conn Secret only when connectionPooler is
 	// external; an empty or unexpanded value leaves the prober nil and the
 	// check defers to the gateway's runtime LENNY_POOLER_MODE defense.
 	postgresDSN := flag.String("postgres-dsn", "",
-		"Postgres DSN for the §17.6 line 488 cloud-pooler sentinel defense (lenny_tenant_guard trigger probe). Empty skips the live probe.")
+		"Postgres DSN for the §17.6 cloud-pooler sentinel defense (lenny_tenant_guard trigger probe). Empty skips the live probe.")
 	acceptDowngrade := flag.String("accept-downgrade", "",
 		"comma-separated feature flags whose admission-plane downgrade is acknowledged")
 	spiffeTrustDomain := flag.String("spiffe-trust-domain", "",
@@ -586,13 +586,13 @@ func main() {
 	saTokenAudience := flag.String("sa-token-audience", "",
 		"value of the global.saTokenAudience chart value (NET-064 uniqueness check)")
 	complianceProfile := flag.String("compliance-profile", "",
-		"value of the complianceProfile chart value (regulated values fail closed on absent MinIO SSE; §12.5 line 297)")
+		"value of the complianceProfile chart value (regulated values fail closed on absent MinIO SSE; §12.5)")
 	minioEndpoint := flag.String("minio-endpoint", "",
-		"MinIO endpoint host:port for the §12.5 line 297 SSE audit. Empty skips the check.")
+		"MinIO endpoint host:port for the §12.5 SSE audit. Empty skips the check.")
 	minioBucket := flag.String("minio-bucket", "",
-		"MinIO artifact bucket name for the §12.5 line 297 SSE audit. Empty skips the check.")
+		"MinIO artifact bucket name for the §12.5 SSE audit. Empty skips the check.")
 	minioUseSSL := flag.Bool("minio-use-ssl", true,
-		"use TLS when probing MinIO for the §12.5 line 297 SSE audit.")
+		"use TLS when probing MinIO for the §12.5 SSE audit.")
 	objectStorageProvider := flag.String("object-storage-provider", "",
 		"value of the objectStorage.provider chart value (minio | s3 | gcs | azure) for the §17.9.4 cloud lifecycle audit.")
 	objectStorageBucket := flag.String("object-storage-bucket", "",
@@ -614,13 +614,13 @@ func main() {
 	objectStorageAzureDenyEncryptionScopeOverride := flag.Bool("object-storage-azure-deny-encryption-scope-override", false,
 		"value of objectStorage.azure.denyEncryptionScopeOverride; the §17.6 checkpoint T4 default-encryption check requires it for an azure backend serving a T4 tenant.")
 	siemEndpoint := flag.String("siem-endpoint", "",
-		"value of the audit.siem.endpoint chart value for the §17.6 line 517 SIEM advisory. Empty in a production environment emits a non-blocking warning.")
+		"value of the audit.siem.endpoint chart value for the §17.6 SIEM advisory. Empty in a production environment emits a non-blocking warning.")
 	opsIngressClusterIssuer := flag.String("ops-ingress-cluster-issuer", "",
-		"the cert-manager.io/cluster-issuer annotation on ops.ingress for the §17.6 line 520 advisory. Empty skips the check.")
+		"the cert-manager.io/cluster-issuer annotation on ops.ingress for the §17.6 advisory. Empty skips the check.")
 	monitoringNamespace := flag.String("monitoring-namespace", "",
-		"value of the monitoring.namespace chart value for the §17.6 line 521 advisory.")
+		"value of the monitoring.namespace chart value for the §17.6 advisory.")
 	monitoringPodLabel := flag.String("monitoring-pod-label", "",
-		"value of the monitoring.podLabel chart value (key=value) the Prometheus pod must carry for the §17.6 line 521 advisory.")
+		"value of the monitoring.podLabel chart value (key=value) the Prometheus pod must carry for the §17.6 advisory.")
 	ingressControllerNamespace := flag.String("ingress-controller-namespace", "",
 		"value of the ingressControllerNamespace chart value for the §13.2 NET-038 ingress-controller advisory. Empty skips the check.")
 	ingressControllerPodLabelKey := flag.String("ingress-controller-pod-label-key", "",
@@ -628,7 +628,7 @@ func main() {
 	ingressControllerPodLabelValue := flag.String("ingress-controller-pod-label-value", "",
 		"value of ingress.controllerPodLabel.value the Ingress controller pods must carry for the §13.2 NET-038 advisory.")
 	opsServiceAccount := flag.String("ops-service-account", "",
-		"the fully-qualified lenny-ops SA username (system:serviceaccount:<ns>:lenny-ops-sa) for the §17.6 line 519 RBAC audit. Empty skips the check.")
+		"the fully-qualified lenny-ops SA username (system:serviceaccount:<ns>:lenny-ops-sa) for the §17.6 RBAC audit. Empty skips the check.")
 	redisURL := flag.String("redis-url", "",
 		"bring-your-own Redis URL for the §12.4 maxmemory-policy=noeviction audit. Empty skips the check.")
 	redisAllowInsecure := flag.Bool("redis-allow-insecure", false,
@@ -654,7 +654,7 @@ func main() {
 	opsAdminTLSCaBundle := flag.String("ops-admin-tls-ca-bundle", "",
 		"path to the trust bundle for the §25.4 NET-070 admin-API handshake probe (ops.tls.caBundleConfigMap); empty uses the system trust store.")
 	requiredRuntimeClasses := flag.String("required-runtime-classes", "",
-		"comma-separated profile=runtimeClassName pairs the §5.3 line 676 RuntimeClass "+
+		"comma-separated profile=runtimeClassName pairs the §5.3 RuntimeClass "+
 			"presence check requires; empty skips the check")
 	// §27.2 playground-config preflight inputs. Disabled by default;
 	// the chart renders these only when playground.enabled=true.
@@ -669,24 +669,24 @@ func main() {
 	playgroundGlobalDevMode := flag.Bool("playground-global-dev-mode", false,
 		"value of the global.devMode chart flag, propagated for the §27.3 authMode=dev gate (§27.2)")
 	playgroundAcknowledgeAPIKeyMode := flag.Bool("playground-acknowledge-api-key-mode", false,
-		"value of the playground.acknowledgeApiKeyMode chart flag (§27.2 line 42; §27.9)")
+		"value of the playground.acknowledgeApiKeyMode chart flag (§27.2; §27.9)")
 	devMode := flag.Bool("dev-mode", false,
 		"value of the global.devMode chart flag; exempts the §12.9 volume-encryption check")
 	tenancyMode := flag.String("tenancy-mode", "single",
 		"value of the tenancy.mode chart flag (single | multi); the §4.9 credential-delivery scan enforces only when multi")
 	attestVolumeEncryption := flag.Bool("attest-volume-encryption", false,
-		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9 line 1050)")
+		"value of the preflight.attestVolumeEncryption chart flag; operator attestation that Postgres/Redis volumes are encrypted (§12.9)")
 	certManagerEnabled := flag.Bool("certmanager-enabled", true,
-		"value of the certmanager.enabled chart flag; when true the §10.3 line 304 cert-manager version check requires cert-manager >= v1.12.0")
-	// §17.9.2 line 1372 — the airgap answer file sets preflight.skipNetworkProbes
+		"value of the certmanager.enabled chart flag; when true the §10.3 cert-manager version check requires cert-manager >= v1.12.0")
+	// §17.9.2 — the airgap answer file sets preflight.skipNetworkProbes
 	// so the backend-reachability probes (MinIO SSE, BYO-Redis maxmemory,
 	// OTLP TLS handshake, ops-admin internal-TLS handshake) are dropped while
 	// the cluster-API checks still run. F-17.9.11.
 	skipNetworkProbes := flag.Bool("skip-network-probes", false,
-		"value of the preflight.skipNetworkProbes chart flag; skips the backend-reachability probes for air-gapped installs (§17.9.2 line 1372)")
+		"value of the preflight.skipNetworkProbes chart flag; skips the backend-reachability probes for air-gapped installs (§17.9.2)")
 	flag.Parse()
 
-	// MinIO credentials for the §12.5 line 297 SSE preflight are read
+	// MinIO credentials for the §12.5 SSE preflight are read
 	// from env vars so a Helm template can mount them via a secretKeyRef
 	// without embedding the secret value in the Job spec.
 	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY_ENV")
@@ -713,10 +713,10 @@ func main() {
 	}
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	// Register lenny.dev/v1alpha1 so the §5.2 line 516 node-drain-timeout
+	// Register lenny.dev/v1alpha1 so the §5.2 node-drain-timeout
 	// warning can list SandboxTemplate pools.
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
-	// spec: §10 line 443 — the crd-schema-version check fetches the
+	// spec: §10 — the crd-schema-version check fetches the
 	// installed CRDs by name; register apiextensions.k8s.io/v1 so the
 	// reader can deserialize them. F-15.5.12.
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
@@ -725,7 +725,7 @@ func main() {
 		log.Fatalf("lenny-preflight: build cluster client: %v", err)
 	}
 
-	// §17.6 line 503 — read the API server version via the discovery
+	// §17.6 — read the API server version via the discovery
 	// client for the minimum-version gate. A discovery error degrades to
 	// an empty version, which the check treats as advisory rather than
 	// blocking the install. F-17.6.1.

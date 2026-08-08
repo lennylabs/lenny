@@ -107,7 +107,7 @@ func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 663 — `environmentId` populated on all billing events
+// spec: §10.6 — `environmentId` populated on all billing events
 // for sessions created in an environment context. F-10.6.9.
 func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()
@@ -129,7 +129,7 @@ func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 663 — sessions outside an environment carry the
+// spec: §10.6 — sessions outside an environment carry the
 // empty environment id (no stamp). F-10.6.9.
 func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()

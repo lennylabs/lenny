@@ -80,7 +80,7 @@ func TestRequestElicitationDismissed(t *testing.T) {
 	}
 }
 
-// TestRequestElicitationTimeout_spec_9_2 verifies the §9.2 line 103
+// TestRequestElicitationTimeout_spec_9_2 verifies the §9.2
 // timeout path returns a structured ELICITATION_TIMEOUT envelope: the
 // lenny code lands in the lenny/error content block and the §15.2.1
 // classifier resolves it to (TRANSIENT, retryable=false). F-9.2.18.
@@ -266,10 +266,10 @@ func TestRequestElicitationRejectsTerminalSession(t *testing.T) {
 
 // TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2 asserts
 // that lenny/request_elicitation surfaces the elicitation on the
-// resolver session's stream as the canonical §7.2 line 136
+// resolver session's stream as the canonical §7.2
 // `elicitation_request` event, not the pre-fix `elicitation_requested`
 // synonym (which appeared nowhere in the §7.2 catalog).
-// spec: §7.2 line 136. F-7.2.17.
+// spec: §7.2. F-7.2.17.
 func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	interactions := interactionstore.NewMemory()
@@ -299,7 +299,7 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
 	}
 	if hist[0].Type != "elicitation_request" {
-		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
+		t.Errorf("event type = %q, want elicitation_request (§7.2 canonical name)", hist[0].Type)
 	}
 	if !strings.Contains(hist[0].Data, "elic_x") || !strings.Contains(hist[0].Data, "pick one") {
 		t.Errorf("event data = %q, want it to carry the elicitationId + message", hist[0].Data)

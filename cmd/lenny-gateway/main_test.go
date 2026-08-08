@@ -243,7 +243,7 @@ func TestExportHPAGaugesContextCancellation(t *testing.T) {
 	exportHPAGauges(ctx, store, lister, bus, m)
 }
 
-// spec: §16.5 line 460 — exportElicitationIntegrityWeakened counts the
+// spec: §16.5 — exportElicitationIntegrityWeakened counts the
 // active tenants whose §9.2 effective elicitation content-integrity
 // mode is weaker than enforce. With no platform floor, a stored
 // detect-only or off is weakened; an unset value resolves to the
@@ -401,8 +401,7 @@ func TestNewSSEKeyResolverPicksT4AliasOrFallsBack(t *testing.T) {
 // log marker §10.3 mandates; under dev mode an unset value derives
 // allow-all (the §17.4 dev-mode escape hatch); explicit deny-all and
 // allow-all both pass through; an unrecognised value is rejected.
-// spec: §11.1 line 13; §10.3 configuration validation table; §10.6
-// line 646; §17.4 dev mode.
+// spec: §11.1; §10.3 configuration validation table; §10.6; §17.4 dev mode.
 func TestGatewayConfigValidation_spec_11_1(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -471,15 +470,14 @@ func TestGatewayConfigValidation_spec_11_1(t *testing.T) {
 	}
 }
 
-// TestGatewayConfigValidationRequiredKeys_spec_10_3 asserts the §10.3
-// line 361 required-key table contract for the keys gated by
+// TestGatewayConfigValidationRequiredKeys_spec_10_3 asserts the §10.3 required-key table contract for the keys gated by
 // validatePlatformConfig: outside dev mode an empty or non-URL
 // auth.oidc.issuerUrl, an empty auth.oidc.clientId, and a non-positive
 // defaultMaxSessionDuration each produce a LENNY_CONFIG_MISSING
 // violation carrying the correct config_key; the OIDC keys are exempt
-// when dev mode is on (the §10.3 line 373 / §17.4 dev-mode symmetry);
+// when dev mode is on (the §10.3 / §17.4 dev-mode symmetry);
 // the session-duration key is gated even in dev mode (no dev exemption
-// in the table). spec: §10.3 lines 361-373; §17.4.
+// in the table). spec: §10.3; §17.4.
 func TestGatewayConfigValidationRequiredKeys_spec_10_3(t *testing.T) {
 	const validIssuer = "https://idp.acme.example/realms/lenny"
 	const validClient = "lenny-gateway"
@@ -596,10 +594,10 @@ func TestGatewayConfigValidationRequiredKeys_spec_10_3(t *testing.T) {
 	}
 }
 
-// TestBuildStartupProbeTLSConfig_spec_10_3 asserts the §10.3 line 359
+// TestBuildStartupProbeTLSConfig_spec_10_3 asserts the §10.3
 // probe TLS config builder: no material yields system roots with no
 // client cert, a missing CA file is a hard error, and a malformed CA
-// bundle is rejected. spec: §10.3 line 359.
+// bundle is rejected. spec: §10.3.
 func TestBuildStartupProbeTLSConfig_spec_10_3(t *testing.T) {
 	cfg, err := buildStartupProbeTLSConfig("", "", "")
 	if err != nil {

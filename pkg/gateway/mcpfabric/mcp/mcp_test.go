@@ -163,7 +163,7 @@ func TestToolsCallToolErrorIsResultNotTransportError(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053 — the result interceptor hook (the PreToolResult
+// spec: §4.8 — the result interceptor hook (the PreToolResult
 // seam) receives the call id and tool name and may replace the result.
 func TestResultInterceptorModifiesResult(t *testing.T) {
 	s := mcp.NewServer()
@@ -189,7 +189,7 @@ func TestResultInterceptorModifiesResult(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053 — a result interceptor error rejects delivery; the
+// spec: §4.8 — a result interceptor error rejects delivery; the
 // dispatcher surfaces it as an isError result with the interceptor's code.
 func TestResultInterceptorRejectIsErrorResult(t *testing.T) {
 	s := mcp.NewServer()
@@ -211,7 +211,7 @@ func TestResultInterceptorRejectIsErrorResult(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053 — a handler that already failed is not passed to the
+// spec: §4.8 — a handler that already failed is not passed to the
 // result interceptor; the original tool error is delivered unchanged.
 func TestResultInterceptorSkippedOnHandlerError(t *testing.T) {
 	s := mcp.NewServer()
@@ -261,8 +261,7 @@ func TestUnknownMethod(t *testing.T) {
 // transport-error path now populates error.data with the §15.2.1 lenny
 // envelope (code, category, retryable) so a client switches on the same
 // fields it reads from a REST error body or an MCP tool error. Before
-// F-15.2.6 these paths carried only {code, message}. spec: §15.2.1 rule
-// 3 line 1384. F-15.2.6.
+// F-15.2.6 these paths carried only {code, message}. spec: §15.2.1 rule 3. F-15.2.6.
 func TestTransportErrorsCarryLennyEnvelope(t *testing.T) {
 	s := mcp.NewServer()
 	s.RegisterTool(mcp.Tool{Name: "echo", InputSchema: json.RawMessage(`{}`)},

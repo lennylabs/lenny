@@ -22,7 +22,7 @@ type Usage struct {
 	OutputTokens int64 `json:"outputTokens"`
 }
 
-// SessionInfo carries the fields the §14 line 142-148 per-event data
+// SessionInfo carries the fields the §14 per-event data
 // schemas draw from. The caller fills only the fields the target event
 // type names; the builders read the relevant subset.
 type SessionInfo struct {
@@ -41,7 +41,7 @@ type SessionInfo struct {
 	ChildStatus     string
 }
 
-// CompletedData builds the §14 line 142 dev.lenny.session_completed data.
+// CompletedData builds the §14 dev.lenny.session_completed data.
 func CompletedData(info SessionInfo) json.RawMessage {
 	arts := info.Artifacts
 	if arts == nil {
@@ -55,7 +55,7 @@ func CompletedData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// FailedData builds the §14 line 143 dev.lenny.session_failed data.
+// FailedData builds the §14 dev.lenny.session_failed data.
 func FailedData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"session_id": info.SessionID,
@@ -68,7 +68,7 @@ func FailedData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// TerminatedData builds the §14 line 144 dev.lenny.session_terminated data.
+// TerminatedData builds the §14 dev.lenny.session_terminated data.
 func TerminatedData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"session_id":   info.SessionID,
@@ -77,7 +77,7 @@ func TerminatedData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// CancelledData builds the §14 line 145 dev.lenny.session_cancelled data.
+// CancelledData builds the §14 dev.lenny.session_cancelled data.
 func CancelledData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"session_id": info.SessionID,
@@ -85,7 +85,7 @@ func CancelledData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// ExpiredData builds the §14 line 146 dev.lenny.session_expired data.
+// ExpiredData builds the §14 dev.lenny.session_expired data.
 func ExpiredData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"session_id":   info.SessionID,
@@ -93,7 +93,7 @@ func ExpiredData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// AwaitingActionData builds the §14 line 147 dev.lenny.session_awaiting_action data.
+// AwaitingActionData builds the §14 dev.lenny.session_awaiting_action data.
 func AwaitingActionData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"session_id":     info.SessionID,
@@ -102,7 +102,7 @@ func AwaitingActionData(info SessionInfo) json.RawMessage {
 	})
 }
 
-// DelegationCompletedData builds the §14 line 148 dev.lenny.delegation_completed data.
+// DelegationCompletedData builds the §14 dev.lenny.delegation_completed data.
 func DelegationCompletedData(info SessionInfo) json.RawMessage {
 	return mustJSON(map[string]any{
 		"parent_session_id": info.ParentSessionID,

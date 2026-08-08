@@ -94,7 +94,7 @@ func newChange(path string, kind Kind, desired, actual any) Change {
 	return Change{Path: path, Kind: kind, Desired: desired, Actual: actual, Severity: Classify(path)}
 }
 
-// Classify ranks a field path's drift severity per §25.10 line 3773:
+// Classify ranks a field path's drift severity per §25.10:
 // image, isolation profile, and security fields are high; scaling
 // parameters and quota values are medium; labels, descriptions, and
 // metadata are low. A field matching none of these defaults to medium.
@@ -110,7 +110,7 @@ func newChange(path string, kind Kind, desired, actual any) Change {
 // not a metadata bag. F-25.10.11.
 func Classify(path string) Severity {
 	p := strings.ToLower(path)
-	// §25.10 line 3773: image, isolation, and security fields drift at
+	// §25.10: image, isolation, and security fields drift at
 	// high severity. The substring match is faithful: any path segment
 	// that contains one of these keywords (e.g. "securityContext",
 	// "isolationProfile") is structural-security and high.
@@ -119,7 +119,7 @@ func Classify(path string) Severity {
 			return SeverityHigh
 		}
 	}
-	// §25.10 line 3773: scaling parameters and quota values drift at
+	// §25.10: scaling parameters and quota values drift at
 	// medium severity. The keyword set covers the common §6.x / §17.x
 	// names operators use; matching scaling/quota before the low-bucket
 	// keywords keeps a path like "pool.scaling.labelSelector" at medium
@@ -132,7 +132,7 @@ func Classify(path string) Severity {
 			return SeverityMedium
 		}
 	}
-	// §25.10 line 3773: labels, descriptions, annotations, and metadata
+	// §25.10: labels, descriptions, annotations, and metadata
 	// drift at low severity. The match is segment-anchored so the
 	// keyword applies only to a metadata bag — a path segment that is
 	// the literal keyword, or that starts a sub-key under one of the

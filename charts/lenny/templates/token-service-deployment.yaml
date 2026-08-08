@@ -30,7 +30,7 @@ metadata:
     lenny.dev/component: token-service
 spec:
   replicas: {{ .Values.tokenService.replicas }}
-  # spec: §10.5 line 544 ("Token Service: Rolling Deployment update") /
+  # spec: §10.5 /
   # §17.1. The strategy is declared explicitly so the rolling posture
   # is auditable and survives chart customization rather than relying
   # on the Kubernetes 25% default. The Token Service sits on the

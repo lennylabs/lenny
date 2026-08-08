@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §4.8 line 1019 — a full registration parses every field.
+// spec: §4.8 — a full registration parses every field.
 func TestParseExternalSpecFull(t *testing.T) {
 	got, err := interceptor.ParseExternalSpec(
 		"name=guardrails, endpoint=classifier.acme.svc:9000, phase=PreDelegation, priority=450, failPolicy=fail-open, timeout=2s",

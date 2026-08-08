@@ -45,7 +45,7 @@ func (f *fakeProvider) UnwrapDEK(_ context.Context, _ string, w kms.WrappedDEK) 
 
 func (f *fakeProvider) CurrentKEKVersion(context.Context, string) (int, error) { return 1, nil }
 
-// spec: §12.5 line 301 / line 307 — the ProviderProbeManager backs the
+// spec: §12.5 — the ProviderProbeManager backs the
 // admin-time and continuous probe over the gateway's resolved
 // kms.Provider.
 

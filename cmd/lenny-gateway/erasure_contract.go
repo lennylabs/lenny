@@ -16,7 +16,7 @@ import (
 )
 
 // §12.1 mandatory-erasure contract, compile-enforced at the gateway
-// binary boundary. §12.1 line 5 requires every store role interface to
+// binary boundary. §12.1 requires every store role interface to
 // expose DeleteByUser and DeleteByTenant "enforced at compile time by Go
 // interface satisfaction"; these assertions are that enforcement made
 // concrete against the single named contract in pkg/gateway/erasure.

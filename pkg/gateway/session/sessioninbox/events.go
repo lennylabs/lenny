@@ -12,7 +12,7 @@ const (
 	// be delivered.
 	EventMessageExpired = "message_expired"
 
-	// EventInboxCleared is the §7.2 line 284 event published on the
+	// EventInboxCleared is the §7.2 event published on the
 	// target session's own stream when a new coordinator acquires the
 	// session and finds an empty in-memory inbox.
 	EventInboxCleared = "inbox_cleared"
@@ -35,7 +35,7 @@ const (
 	ReasonTargetTerminated = "target_terminated"
 )
 
-// inboxClearedReason is the §7.2 line 284 `inbox_cleared` reason. The
+// inboxClearedReason is the §7.2 reason. The
 // event currently fires only on coordinator failover.
 const inboxClearedReason = "coordinator_failover"
 
@@ -47,7 +47,7 @@ const messageExpiredSchemaVersion = 1
 // asynchronous signal that a previously-queued message will not be
 // delivered; senders MUST NOT infer expiry from any other signal.
 //
-// spec: §15.4.1 lines 1760-1782.
+// spec: §15.4.1.
 type MessageExpiredEvent struct {
 	SchemaVersion   int    `json:"schemaVersion"`
 	Type            string `json:"type"`
@@ -71,14 +71,14 @@ func NewMessageExpiredEvent(messageID, targetSessionID, reason string, now time.
 	}
 }
 
-// InboxClearedEvent is the §7.2 line 284 `inbox_cleared` payload
+// InboxClearedEvent is the §7.2 payload
 // published on the target session's own event stream after a new
 // coordinator acquires the session with an empty in-memory inbox.
 // MessagesPreservedInDLQ counts inbox messages successfully drained to
 // the DLQ before the prior coordinator crashed: `> 0` means those
 // messages survive in the DLQ, `0` means the in-memory inbox was lost.
 //
-// spec: §7.2 line 284.
+// spec: §7.2.
 type InboxClearedEvent struct {
 	Type                   string `json:"type"`
 	Reason                 string `json:"reason"`

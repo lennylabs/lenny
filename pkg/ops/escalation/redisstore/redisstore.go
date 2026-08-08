@@ -11,7 +11,7 @@
 // records, not tenant data), so the keys carry no tenant prefix —
 // matching the other ops: Redis namespaces.
 //
-// spec: §25.4 lines 2376-2429.
+// spec: §25.4.
 package redisstore
 
 import (
@@ -26,10 +26,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 )
 
-// keyPrefix is the §25.4 line 2383 escalation key namespace.
+// keyPrefix is the §25.4 escalation key namespace.
 const keyPrefix = "ops:escalations:"
 
-// recordTTL is the §25.4 line 2383 Tier 2 escalation TTL.
+// recordTTL is the §25.4 Tier 2 escalation TTL.
 const recordTTL = 24 * time.Hour
 
 // dataField is the hash field holding the JSON-encoded escalation.
@@ -60,7 +60,7 @@ func unavailable(err error) error {
 
 // Put writes esc to ops:escalations:{id} as a JSON blob with a fresh 24h
 // TTL. A re-put of the same id overwrites the record, so the
-// reconciliation flush is idempotent (§25.4 line 2413).
+// reconciliation flush is idempotent (§25.4).
 func (s *Store) Put(ctx context.Context, esc escalation.Escalation) error {
 	blob, err := json.Marshal(esc)
 	if err != nil {
@@ -88,7 +88,7 @@ func (s *Store) Get(ctx context.Context, id string) (*escalation.Escalation, err
 // records newest-first as one page capped by limit. The Redis scan is the
 // CursorKindNone query path: it paginates by limit only and reports
 // HasMore when more matching records exist beyond the page, but issues no
-// continuation cursor (§25.4 line 2428, cursorKind "none").
+// continuation cursor (§25.4, cursorKind "none").
 func (s *Store) List(ctx context.Context, f escalation.Filter, _ string, limit int) (escalation.ListPage, error) {
 	all, err := s.scanAll(ctx)
 	if err != nil {

@@ -63,7 +63,7 @@ type Server struct {
 	// tool to the gateway through the Provider, so the catalog and
 	// dispatch stay in lockstep with the gateway-edge /mcp surface. Nil
 	// leaves the server serving only its registered tools (the dev / test
-	// default). spec: §9.1 lines 14-31. F-9.1.1.
+	// default). spec: §9.1. F-9.1.1.
 	Provider ToolProvider
 
 	// OnHandshake, when set, is called once per connection immediately
@@ -79,8 +79,7 @@ type Server struct {
 // locally. The §9.1 intra-pod platform MCP server uses it to proxy the
 // platform tool catalog and dispatch to the gateway: List returns the
 // catalog to advertise on tools/list, and Call dispatches a tools/call
-// for a name the server does not register locally. spec: §9.1 lines
-// 14-31. F-9.1.1.
+// for a name the server does not register locally. spec: §9.1. F-9.1.1.
 type ToolProvider interface {
 	// List returns the provider's tool catalog. The server appends it to
 	// any locally-registered tools on tools/list.
@@ -177,7 +176,7 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 	if err != nil {
 		return err
 	}
-	// §4.7 lines 879-883: in nonce-only mode the static manifest nonce is
+	// §4.7: in nonce-only mode the static manifest nonce is
 	// replayable, so supplement it with a per-connection challenge-response
 	// before dispatching any tool. Failure closes the socket with no
 	// protocol response.

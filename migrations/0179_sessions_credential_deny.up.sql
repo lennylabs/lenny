@@ -1,4 +1,4 @@
--- §8.3 line 443 — credential_deny records that the delegate_task hop that
+-- §8.3 — credential_deny records that the delegate_task hop that
 -- created this child session set credentialPropagation: deny, so the child
 -- receives no LLM credentials. inherit versus independent is already carried
 -- by credential_origin_session_id (migration 0176); this column adds only the

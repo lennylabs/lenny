@@ -21,7 +21,7 @@ const (
 	StageSkipped StageStatus = "skipped"
 )
 
-// Stage names match the §15.1 line 1163 connector-test response.
+// Stage names match the §15.1 connector-test response.
 const (
 	StageDNS  = "dns_resolution"
 	StageTLS  = "tls_handshake"
@@ -37,7 +37,7 @@ type TestStage struct {
 	Error     string      `json:"error,omitempty"`
 }
 
-// TestReport is the §15.1 line 1163 connector live-test response body.
+// TestReport is the §15.1 connector live-test response body.
 type TestReport struct {
 	Connector string      `json:"connector"`
 	Stages    []TestStage `json:"stages"`
@@ -49,7 +49,7 @@ type TestReport struct {
 // validation. The DNS resolver, TLS dialer, and MCP client are seams so
 // the stage orchestration is unit-testable without a network.
 //
-// spec: §15.1 line 791, lines 1163-1180.
+// spec: §15.1.
 type Tester struct {
 	client  *Client
 	resolve func(ctx context.Context, host string) error

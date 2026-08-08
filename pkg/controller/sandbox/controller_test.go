@@ -222,12 +222,11 @@ func getSandbox(t *testing.T, c client.Client) lennyv1.Sandbox {
 	return sb
 }
 
-// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 line
-// 677 pod-fallback default: a Sandbox that omits an isolation profile
+// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 pod-fallback default: a Sandbox that omits an isolation profile
 // stamps runtimeClassName=runc under dev mode (so a gVisor-less cluster
 // can launch the pod), and gvisor without dev mode.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	sb := sandboxCR("")
@@ -252,13 +251,13 @@ func TestReconcileDevModeDefaultsPodToRunc_spec_5_3(t *testing.T) {
 // TestReconcileMicrovmLaunchesKataPod_spec_5_3_8 drives a microvm
 // Sandbox through the production reconciler and confirms it launches a
 // genuine Kata pod end-to-end: the §5.3 row-3 RuntimeClass (kata) plus
-// the §17.2 lines 97-101 dedicated-node isolation (hard node affinity on
+// the §17.2 dedicated-node isolation (hard node affinity on
 // lenny.dev/node-pool=kata and the lenny.dev/isolation=kata:NoSchedule
 // toleration). Before F-5.3.8, microvm isolation was type-checked and
 // the podspec builder was unit-tested, but no controller-level reconcile
 // drove a Kata pod to creation through the apiserver.
 //
-// spec: §5.3 row 3 (microvm → kata); §17.2 lines 97-101 (Kata node isolation).
+// spec: §5.3 row 3 (microvm → kata); §17.2.
 func TestReconcileMicrovmLaunchesKataPod_spec_5_3_8(t *testing.T) {
 	s := newScheme(t)
 	sb := sandboxCR("")
@@ -381,13 +380,12 @@ func TestReconcileCreatesEmbeddedPodForEmbeddedRuntime(t *testing.T) {
 }
 
 // TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4 confirms the
-// §6.4 lines 416-419 enforcement chain: a Runtime declared at
+// §6.4 enforcement chain: a Runtime declared at
 // `workspaceTier: T4` causes the sandbox reconciler to stamp the
 // `lenny.dev/workspace-tier: t4` pod label the lenny-t4-node-isolation
 // admission webhook keys on, pin the pod to a T4 node via nodeSelector,
 // and tolerate the T4 NoSchedule taint. Without that triple, the webhook
-// rejects the pod and a T4 Runtime cannot back any pool. spec: §6.4
-// lines 416-419.
+// rejects the pod and a T4 Runtime cannot back any pool. spec: §6.4.
 func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
 	s := newScheme(t)
 	rt := runtimeCR()
@@ -427,7 +425,7 @@ func TestReconcileWiresT4WorkspaceTierFromRuntimeCRD_spec_6_4(t *testing.T) {
 // without an explicit T4 tier (the default T3 path) does not pick up the
 // T4 dedicated-node injection, so a non-T4 pod cannot accidentally
 // schedule onto a T4-dedicated node. The webhook rejects a non-T4 pod that
-// carries the T4 label/selector/toleration. spec: §6.4 lines 416-419.
+// carries the T4 label/selector/toleration. spec: §6.4.
 func TestReconcileNonT4RuntimeOmitsT4Injection_spec_6_4(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, sandboxCR(""), runtimeCR())

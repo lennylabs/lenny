@@ -23,7 +23,7 @@ import (
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the function
 // under test emitted, then restores the prior provider when the test
-// ends. F-8.7.11 / spec: §16 trace inventory line 346.
+// ends. F-8.7.11 / spec: §16 trace inventory.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	recorder := tracetest.NewSpanRecorder()
@@ -352,7 +352,7 @@ func TestRunPreExportMaterializationModifyCannotAlterDelegationContext(t *testin
 }
 
 // TestRunPreExportMaterializationFailClosedSurfacesUnavailable_spec_15_1_1073:
-// §15.1 line 1073 and §8.3 rule 3 line 164 — a fail-closed scanner
+// §15.1 and §8.3 rule 3 — a fail-closed scanner
 // timeout or error must surface as EXPORT_FILE_SCAN_UNAVAILABLE
 // (TRANSIENT, HTTP 503) so retries are allowed, not EXPORT_FILE_SCAN_REJECTED
 // (PERMANENT, HTTP 422). F-8.7.7; F-8.7.8.
@@ -488,7 +488,7 @@ func TestRunPreExportMaterializationThroughExternalInterceptor(t *testing.T) {
 	}
 }
 
-// spec: §16.3 / §16 trace inventory line 346 (F-8.7.11). Every
+// spec: §16.3 / §16 trace inventory. Every
 // PreExportMaterialization scan loop runs under a
 // `delegation.export_files` span. The span carries the §8.7 telemetry
 // attributes (file_count, total_bytes, max_per_file_bytes,

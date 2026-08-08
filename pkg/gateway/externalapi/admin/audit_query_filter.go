@@ -22,7 +22,7 @@ import (
 // the backend's optional state-tracking interfaces. Combining filters
 // is AND.
 //
-// spec: §25.9 line 3659 (the query-parameter set), line 3703
+// spec: §25.9
 // (?operationId= diagnostics correlation).
 type auditQueryFilter struct {
 	since            time.Time
@@ -38,18 +38,18 @@ type auditQueryFilter struct {
 	publishState     eventbus.PublishState
 }
 
-// auditWindow is the longest unfiltered time window §25.9 line 3707
+// auditWindow is the longest unfiltered time window §25.9
 // permits before AUDIT_QUERY_TOO_BROAD: 90 days.
 const auditWindow = 90 * 24 * time.Hour
 
-// auditDefaultWindow is the §25.9 line 3708 default look-back applied
+// auditDefaultWindow is the §25.9 default look-back applied
 // when a query supplies neither `since` nor `until`.
 const auditDefaultWindow = 24 * time.Hour
 
 // parseAuditFilter parses the §25.9 list query parameters off req. now is
 // the gateway clock used to default the time window. It returns
 // ok=false with an error already written when a parameter is malformed
-// or the query is too broad (§25.9 line 3707).
+// or the query is too broad (§25.9).
 func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (auditQueryFilter, bool) {
 	q := req.URL.Query()
 	var f auditQueryFilter
@@ -60,7 +60,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 	}
 	f.since, f.until = since, until
 
-	// spec: §25.9 line 3659 / §12.8 line 986 — ?eventType= accepts a
+	// spec: §25.9 / §12.8 — ?eventType= accepts a
 	// comma-separated list. The §12.8 DSAR template's category-(b)
 	// invocation passes
 	// `eventType=admin.impersonation_started,admin.impersonation_ended`;
@@ -73,7 +73,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 	f.severity = q.Get("severity")
 	f.operationID = q.Get("operationId")
 
-	// spec: §25.9 line 3659 — ?ocsf_translation_state filters by the
+	// spec: §25.9 — ?ocsf_translation_state filters by the
 	// §11.7 translator state; an unparseable value is rejected.
 	if v := q.Get("ocsf_translation_state"); v != "" {
 		f.translationState = audit.OCSFTranslationState(v)
@@ -83,7 +83,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 			return auditQueryFilter{}, false
 		}
 	}
-	// spec: §25.9 line 3659 — ?eventbus_publish_state filters by the
+	// spec: §25.9 — ?eventbus_publish_state filters by the
 	// §12.3.7 publish state; an unparseable value is rejected.
 	if v := q.Get("eventbus_publish_state"); v != "" {
 		f.publishState = eventbus.PublishState(v)
@@ -94,7 +94,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 		}
 	}
 
-	// spec: §25.9 line 3707 — a query spanning more than 90 days without
+	// spec: §25.9 — a query spanning more than 90 days without
 	// a narrowing filter would scan too broadly; reject it.
 	if f.until.Sub(f.since) > auditWindow && !f.hasNarrowingFilter() {
 		writeError(w, http.StatusBadRequest, "AUDIT_QUERY_TOO_BROAD",
@@ -105,8 +105,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 	return f, true
 }
 
-// parseAuditTimeWindow parses the §25.9 since/until bounds with the line
-// 3708 default look-back. A query without `since` or `until` defaults to
+// parseAuditTimeWindow parses the §25.9 since/until bounds with the default look-back. A query without `since` or `until` defaults to
 // the last 24 hours; when only one bound is supplied the other anchors
 // the 24h window to it. A malformed timestamp or an inverted range is
 // rejected with 400 INVALID_ARGUMENT.
@@ -138,7 +137,7 @@ func parseAuditTimeWindow(w http.ResponseWriter, req *http.Request, now time.Tim
 }
 
 // hasNarrowingFilter reports whether the filter carries a non-time
-// predicate that bounds the scan, per the §25.9 line 3707
+// predicate that bounds the scan, per the §25.9
 // "without sufficient filters" exemption from the 90-day cap.
 func (f auditQueryFilter) hasNarrowingFilter() bool {
 	return f.eventType != "" || f.actorID != "" || f.resourceType != "" ||

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 )
 
-// spec: §9.1 lines 8-31 — with no gateway address ConnectGateway binds
+// spec: §9.1 — with no gateway address ConnectGateway binds
 // the platform MCP socket but leaves the forwarders nil (the dev path
 // with no gateway link), and returns a working no-op closer the caller
 // can defer unconditionally. F-9.1.1.
@@ -38,7 +38,7 @@ func TestConnectGatewayNoAddrBindsSocketOnly_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 lines 14-31 — with a gateway address ConnectGateway dials
+// spec: §9.1 — with a gateway address ConnectGateway dials
 // the gateway's GatewayControl service and sets both forwarders to the
 // gateway client, and the returned closer releases that client. The dial
 // is non-blocking (grpc.NewClient), so this exercises the wiring and the
@@ -137,7 +137,7 @@ func TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2(t *testing.T) 
 	}
 }
 
-// spec: §9.1 lines 8-31, §5.2 (maxSessionsPerPod) — with no gateway address
+// spec: §9.1, §5.2 (maxSessionsPerPod) — with no gateway address
 // ConnectGateway leaves the SessionScrubReporter nil (the dev path with no
 // gateway link), alongside the other gateway-control seams. F-5.2.31.
 func TestConnectGatewayNoAddrLeavesSessionScrubReporterNil_spec_5_2(t *testing.T) {

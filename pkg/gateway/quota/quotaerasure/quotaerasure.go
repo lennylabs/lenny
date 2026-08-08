@@ -13,7 +13,7 @@
 //
 // spec: §12.2 (QuotaStore — Redis + Postgres); §12.8 step 6 ("delete
 // per-user rate-limit counters and budget tracking (Redis + Postgres)");
-// §12.1 line 5 (mandatory erasure primitives).
+// §12.1.
 package quotaerasure
 
 import (
@@ -67,7 +67,7 @@ func New(backends ...Backend) *Composite {
 // attempted even when an earlier one errors (each backend's DeleteByUser is
 // idempotent, so a retry re-runs only the failed backend); the first error
 // is returned alongside the partial count so the orchestrator records the
-// step as failed and retries. spec: §12.8 step 6; §12.1 line 5.
+// step as failed and retries. spec: §12.8 step 6; §12.1.
 func (c *Composite) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	total := 0
 	var firstErr error
@@ -87,7 +87,7 @@ func (c *Composite) DeleteByUser(ctx context.Context, tenantID, userID string) (
 // DeleteByTenant erases the tenant across every backend exposing a tenant
 // eraser and returns the summed deleted-row count. As with DeleteByUser,
 // every backend is attempted and the first error is returned with the
-// partial count. spec: §12.8 Phase 4; §12.1 line 5.
+// partial count. spec: §12.8 Phase 4; §12.1.
 func (c *Composite) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	total := 0
 	var firstErr error

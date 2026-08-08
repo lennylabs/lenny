@@ -2,7 +2,7 @@
 
 package upgradeservice
 
-// The §25.8 canonical error-code table (spec line 3629). Every code the
+// The §25.8 canonical error-code table. Every code the
 // platform-lifecycle surface returns is declared here so the symbols
 // exist in code even before the handler that returns each one is built
 // (the preflight, image-resolution, manual-CRD-rollback, and config
@@ -44,8 +44,7 @@ const (
 	CodeConfigRestartRequired = "CONFIG_RESTART_REQUIRED"
 )
 
-// Section258ErrorCodes returns the nine §25.8 canonical error codes in
-// spec-table order (spec line 3629). The package test asserts the set
+// Section258ErrorCodes returns the nine §25.8 canonical error codes in spec-table order. The package test asserts the set
 // matches the spec table exactly so a future rename cannot silently
 // drift a wire value away from the documented contract.
 func Section258ErrorCodes() []string {

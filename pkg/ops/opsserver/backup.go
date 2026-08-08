@@ -32,7 +32,7 @@ var backupErrorMap = map[string]struct {
 	backup.ErrCodeRemediationLockConflict: {http.StatusConflict, conventions.CategoryPolicy},
 	backup.ErrCodeRestoreNotFailed:        {http.StatusConflict, conventions.CategoryPolicy},
 	backup.ErrCodeJustificationRequired:   {http.StatusBadRequest, conventions.CategoryPolicy},
-	// §25.11 line 4336: BACKUP_REGION_UNRESOLVABLE is PERMANENT, HTTP 422 —
+	// §25.11: BACKUP_REGION_UNRESOLVABLE is PERMANENT, HTTP 422 —
 	// a fail-closed residency abort the operator resolves by configuring
 	// the missing backups.regions.<region> entry, not by retrying.
 	backup.ErrCodeBackupRegionUnresolvable: {http.StatusUnprocessableEntity, conventions.CategoryPermanent},
@@ -74,7 +74,7 @@ func (s *Server) registerBackupRoutes() {
 
 // backupUnavailable reports the §25.11 surface as unconfigured. It
 // returns the spec-canonical TRANSIENT 503 BACKUP_STORAGE_UNREACHABLE
-// (§25.11 Error Codes table line 4335) — the closest enumerated code
+// (§25.11 Error Codes table) — the closest enumerated code
 // for "backup dependency missing" when lenny-ops has no BackupService
 // (deployment without Postgres or a Kubernetes connection). Using a
 // catalogued code keeps the response within the spec-enumerated set
@@ -125,7 +125,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
-	// spec: §25.2 lines 287-300, §25.11 line 3883 — a confirm-gated backup
+	// spec: §25.2, §25.11 — a confirm-gated backup
 	// (a full backup in production) requested without confirm:true returns
 	// 200 with a dry-run preview, not an error. The orchestrator keeps the
 	// same gate as a library-level guard.
@@ -431,7 +431,7 @@ func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) bo
 // ledger is current after a gdpr.backup_reconcile_blocked stall. The
 // synthetic watermark is persisted on the restore row so the
 // post-restore reconciler accepts it as the authoritative
-// ledgerLatestWriteAt on the next ResumeRestore. §25.11 line 3897
+// ledgerLatestWriteAt on the next ResumeRestore. §25.11
 // requires the platform-admin role specifically.
 func (s *Server) handleConfirmLegalHoldLedger(w http.ResponseWriter, r *http.Request) {
 	if s.backups == nil {

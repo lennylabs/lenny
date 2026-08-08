@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §11.1 line 9 — per-user active-delegated-children admission cap.
+// spec: §11.1 — per-user active-delegated-children admission cap.
 // F-11.1.4.
 
 func perUserDelegateReq() delegation.Request {

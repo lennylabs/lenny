@@ -18,13 +18,13 @@ import (
 const wsAttachBuffer = 64
 
 // wsAttachRequest reports whether a raw inbound WebSocket frame is a
-// `tools/call` for the §15.2 line 1289 `attach_session` tool, returning the
+// `tools/call` for the §15.2 tool, returning the
 // parsed request envelope and the tool arguments. Detecting it before the
 // generic dispatch lets the WebSocket leg stream the per-session event bus
 // (a long-lived push) instead of returning the single snapshot frame the
 // registered handler produces. A non-attach or malformed frame returns
 // ok=false and the caller falls through to the normal request/response
-// dispatch. spec: §15.2 line 1289.
+// dispatch. spec: §15.2.
 func wsAttachRequest(data []byte) (jsonRPCRequest, json.RawMessage, bool) {
 	var req jsonRPCRequest
 	if err := json.Unmarshal(data, &req); err != nil {
@@ -60,8 +60,7 @@ func wsAttachRequest(data []byte) (jsonRPCRequest, json.RawMessage, bool) {
 // caller cancels a prior attach before starting a new one and on connection
 // close. A nil return means the attach failed (the error was already written)
 // and there is nothing to cancel. Every outbound frame passes through the same
-// §27.9 redaction gate the request/response path applies. spec: §15.2 lines
-// 1331, 1370; §27.5 R2; F-27.4.7.
+// §27.9 redaction gate the request/response path applies. spec: §15.2; §27.5 R2; F-27.4.7.
 func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *http.Request, req jsonRPCRequest, arguments json.RawMessage, redact bool) context.CancelFunc {
 	var in attachArgs
 	if err := json.Unmarshal(arguments, &in); err != nil {
@@ -123,7 +122,7 @@ func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *
 	ctx, cancel := context.WithCancel(parent)
 	go func() {
 		defer sub.Close()
-		// §15.2 line 1331 — when the cursor fell below the oldest retained
+		// §15.2 — when the cursor fell below the oldest retained
 		// event the client missed evicted events; emit one gap_detected frame
 		// ahead of the backlog. Cursor 0 is a first attach and is never a gap.
 		if afterSeq > 0 {
@@ -161,7 +160,7 @@ func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *
 // goroutine (or the read loop, which shares the connection write mutex)
 // indefinitely. It reports whether the write succeeded; a failure (closed
 // connection, timeout, cancelled context, or a nil frame from a marshal
-// error) tells the caller to stop. spec: §27.9 line 251.
+// error) tells the caller to stop. spec: §27.9.
 func (s *Server) writeWSBytes(ctx context.Context, conn *websocket.Conn, b []byte, redact bool) bool {
 	if b == nil {
 		return false

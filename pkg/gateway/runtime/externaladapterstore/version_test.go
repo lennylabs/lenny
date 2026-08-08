@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// TestExternalAdapterVersionRoundTrip_spec_15_1_1207 covers the §15.1 lines
-// 1207-1211 optimistic-concurrency version: it starts at 1 on Create and
+// TestExternalAdapterVersionRoundTrip_spec_15_1_1207 covers the §15.1 optimistic-concurrency version: it starts at 1 on Create and
 // increments on every successful Update (including a validate transition).
 func TestExternalAdapterVersionRoundTrip_spec_15_1_1207(t *testing.T) {
 	ctx := context.Background()

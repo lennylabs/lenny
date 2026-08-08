@@ -34,14 +34,14 @@ import (
 // is immutable once a record is created and envelope schema changes are
 // additive-only; ReconcileSchemaVersion enforces the immutability rule
 // on any read-modify-write path.
-// spec: §8.8 lines 806, 825-827; §15.5 item 7.
+// spec: §8.8; §15.5 item 7.
 const SchemaVersion = 1
 
 // Message-entry roles on a §8.8 TaskRecord. The messages array uses
 // caller/agent, distinct from the §7.2 transcript's user/assistant/
 // system roles; the gateway maps transcript roles onto these at
 // projection time.
-// spec: §8.8 lines 810-817.
+// spec: §8.8.
 const (
 	RoleCaller = "caller"
 	RoleAgent  = "agent"
@@ -49,8 +49,7 @@ const (
 
 // MessagePart is the §15.4.1 internal content envelope. It carries its
 // own per-type SchemaVersion, independent of the enclosing TaskRecord
-// envelope version: the two version axes evolve separately per §8.8
-// line 825. v1 producers emit `text` parts; the full canonical type
+// envelope version: the two version axes evolve separately per §8.8. v1 producers emit `text` parts; the full canonical type
 // registry (code, image, diff, file, execution_result, error, ...) is
 // an open string per §15.4.1.
 // spec: §15.4 Internal MessagePart Format, with §15.4.1 for the
@@ -71,7 +70,7 @@ type MessagePart struct {
 // It is the projection used when the source is a plain-text transcript
 // entry; a runtime that emits richer parts (image, file ref) populates
 // MessagePart directly.
-// spec: §15.4.1 lines 1530-1531 — `text` guarantees type, inline,
+// spec: §15.4.1 — `text` guarantees type, inline,
 // mimeType (text/plain).
 func TextPart(content string) MessagePart {
 	return MessagePart{
@@ -214,7 +213,7 @@ func (m MessageContent) MarshalJSON() ([]byte, error) {
 
 // Message is one entry in a §8.8 TaskRecord messages array. State is
 // set only on agent entries that have reached a terminal task state.
-// spec: §8.8 lines 810-817.
+// spec: §8.8.
 type Message struct {
 	Role  string        `json:"role"`
 	Parts []MessagePart `json:"parts"`
@@ -222,7 +221,7 @@ type Message struct {
 }
 
 // Usage is the §8.8 per-task usage rollup.
-// spec: §8.8 lines 897-903.
+// spec: §8.8.
 type Usage struct {
 	InputTokens            int64   `json:"inputTokens"`
 	OutputTokens           int64   `json:"outputTokens"`
@@ -235,7 +234,7 @@ type Usage struct {
 // every descendant's. It is populated by the gateway only after all
 // descendants settle; the producer surfaces a nil *TreeUsage (JSON
 // null) for an in-progress task or one with unsettled descendants.
-// spec: §8.8 lines 904-917.
+// spec: §8.8.
 type TreeUsage struct {
 	Usage
 	TotalTasks int64 `json:"totalTasks"`
@@ -260,7 +259,7 @@ type Record struct {
 // §8.10 tree archive persists for a settled child. Output is present on
 // a completed task and nil (JSON-absent) on a failed/cancelled/expired
 // one; Error is the inverse.
-// spec: §8.8 lines 885-940.
+// spec: §8.8.
 type Result struct {
 	SchemaVersion int        `json:"schemaVersion"`
 	TaskID        string     `json:"taskId"`
@@ -274,7 +273,7 @@ type Result struct {
 // Output is the §8.8 TaskResult.output block: the child's emitted parts
 // plus any lenny-blob:// artifact references. Both arrays are always
 // present (possibly empty) when Output itself is set.
-// spec: §8.8 lines 888-891.
+// spec: §8.8.
 type Output struct {
 	Parts        []MessagePart `json:"parts"`
 	ArtifactRefs []string      `json:"artifactRefs"`
@@ -284,8 +283,7 @@ type Output struct {
 // §16.3 error taxonomy value the gateway classifier assigns to Code;
 // RetriesExhausted reports whether the gateway exhausted its automatic
 // recovery budget before declaring the terminal failure.
-// spec: §8.8 lines 922-940 (failure example: code, category, message,
-// retriesExhausted).
+// spec: §8.8.
 type Error struct {
 	Code             string `json:"code"`
 	Category         string `json:"category,omitempty"`
@@ -320,9 +318,9 @@ const maxCrashStderrBytes = 4096
 // pod-crash retry budget is spent (a property the gateway sets later, not
 // at synthesis time). The stderr tail is trimmed of trailing whitespace
 // and capped to the last maxCrashStderrBytes so the message stays bounded.
-// spec: §15.4.1 line 1889 — "When the process exits non-zero without
+// spec: §15.4.1 — "When the process exits non-zero without
 // emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error
-// from the exit code and stderr."; §8.8 lines 936-938.
+// from the exit code and stderr."; §8.8.
 func RuntimeCrash(exitCode int, stderr string) *Error {
 	trimmed := strings.TrimRight(stderr, " \t\r\n")
 	if len(trimmed) > maxCrashStderrBytes {
@@ -348,7 +346,7 @@ func RuntimeCrash(exitCode int, stderr string) *Error {
 // original version rather than re-deriving it. This is how a rolling
 // gateway upgrade where replica B knows schema 2 does not silently
 // mutate a schema-1 record replica A created.
-// spec: §8.8 lines 825-827; §15.5 item 7.
+// spec: §8.8; §15.5 item 7.
 func ReconcileSchemaVersion(existing, producer int) int {
 	if existing > 0 {
 		return existing
@@ -364,8 +362,7 @@ func ReconcileSchemaVersion(existing, producer int) int {
 // (maxRetries == 0) it falls back to "ran at least one automatic
 // recovery attempt", which is the row-only witness that the gateway
 // drove the session through the retry path before it terminated.
-// spec: §8.8 lines 936-938 (RUNTIME_CRASH → retriesExhausted: true after
-// the pod-crash retries are exhausted); §7.3 lines 408-411.
+// spec: §8.8; §7.3.
 func RetriesExhausted(retryCount int64, maxRetries int) bool {
 	if maxRetries > 0 {
 		return retryCount >= int64(maxRetries)

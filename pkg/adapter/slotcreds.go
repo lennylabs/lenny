@@ -19,7 +19,7 @@ import (
 // lease set, leaving sibling slots' files untouched. The slot must
 // already hold the session (StartSession ran first); credentials may also
 // be assigned before start during the §4.7 bind sequence, in which case
-// the slot tree is created here. spec: §6.1 line 28.
+// the slot tree is created here. spec: §6.1.
 func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.AssignCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -45,7 +45,7 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 		return nil, err
 	}
 	st.creds = leases
-	// §4.9 line 1149: arm a per-slot expiry timer for each direct-mode lease,
+	// §4.9: arm a per-slot expiry timer for each direct-mode lease,
 	// independent of sibling slots.
 	s.reconcileSlotExpiryTimersLocked(st, slotID, leases)
 	return &adapterv1.AssignCredentialsResponse{}, nil
@@ -57,7 +57,7 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 // in-flight gate / ceiling / ack protocol is the runtime's concern over
 // its CH-RUNTIMEOPS; the concurrent slot's runtime owns its own
 // channel, so this path performs the file rewrite and lets the slot's
-// runtime rebind. spec: §6.1 line 28; §4.7 lines 816-829.
+// runtime rebind. spec: §6.1; §4.7.
 func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.RotateCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -89,7 +89,7 @@ func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[s
 // has no timer for the provider, or its lease id differs from leaseID, it
 // is a no-op. The re-armed timer still targets onSlotLeaseExpired, so a
 // later expiry deletes the provider's entry at the extended deadline.
-// spec: §6.1 line 28; §4.9 line 1470.
+// spec: §6.1; §4.9.
 func (s *Server) extendCredentialLeaseSlot(slotID, provider, leaseID string, newExpiresAt time.Time) (*adapterv1.ExtendCredentialLeaseResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,7 +109,7 @@ func (s *Server) extendCredentialLeaseSlot(slotID, provider, leaseID string, new
 }
 
 // revokeCredentialsSlot removes the named providers from the slot's
-// per-slot file. spec: §6.1 line 28.
+// per-slot file. spec: §6.1.
 func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []string) (*adapterv1.RevokeCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -146,7 +146,7 @@ func cloneLeases(in map[string]*adapterv1.CredentialLease) map[string]*adapterv1
 // writeSlotCredentialFile materializes the slot's leases to its per-slot
 // credential file, ordered by provider for a deterministic file. The
 // credential directory must already exist (ensureSlotStateLocked created
-// it). spec: §6.1 line 28.
+// it). spec: §6.1.
 func writeSlotCredentialFile(dir string, leases map[string]*adapterv1.CredentialLease) error {
 	if dir == "" {
 		return status.Error(codes.FailedPrecondition,
@@ -169,7 +169,7 @@ func writeSlotCredentialFile(dir string, leases map[string]*adapterv1.Credential
 
 // reconcileSlotExpiryTimersLocked brings the slot's §4.9 direct-mode
 // expiry timers in line with its lease set, independent of sibling slots
-// and the single-slot set. Callers hold s.mu. spec: §4.9 line 1149.
+// and the single-slot set. Callers hold s.mu. spec: §4.9.
 func (s *Server) reconcileSlotExpiryTimersLocked(st *slotState, slotID string, leases map[string]*adapterv1.CredentialLease) {
 	if st.timers == nil {
 		st.timers = map[string]*expiryTimer{}
@@ -186,7 +186,7 @@ func (s *Server) reconcileSlotExpiryTimersLocked(st *slotState, slotID string, l
 
 // armSlotExpiryTimerLocked arms (or re-arms) the slot's direct-mode
 // expiry timer for one provider. Only direct-mode leases with a positive
-// expiry get a timer. Callers hold s.mu. spec: §4.9 line 1149.
+// expiry get a timer. Callers hold s.mu. spec: §4.9.
 func (s *Server) armSlotExpiryTimerLocked(st *slotState, slotID, provider string, lease *adapterv1.CredentialLease) {
 	ms := lease.GetExpiresAtUnixMs()
 	if leaseDeliveryMode(lease) != string(directDeliveryMode) || ms <= 0 {
@@ -218,7 +218,7 @@ func (s *Server) cancelSlotExpiryTimerLocked(st *slotState, provider string) {
 // lease the timer guarded is still current it deletes the provider's entry
 // from the slot's credential file and reports AUTH_EXPIRED, exactly as the
 // single-slot path does but scoped to the slot so sibling slots are
-// unaffected. spec: §4.9 line 1149.
+// unaffected. spec: §4.9.
 func (s *Server) onSlotLeaseExpired(slotID, provider, leaseID string) {
 	s.mu.Lock()
 	st, ok := s.slotStateLocked(slotID)

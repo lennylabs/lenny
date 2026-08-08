@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.3 line 244 — `lenny/discover_agents` returns only targets
+// spec: §8.3 — `lenny/discover_agents` returns only targets
 // authorized by the calling session's effective DelegationPolicy. The
 // effective policy is the one named by the caller session's resolved
 // runtime via DelegationPolicyRef; its tag-based allow/deny rule set

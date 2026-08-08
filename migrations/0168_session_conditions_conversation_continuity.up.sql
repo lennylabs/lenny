@@ -8,7 +8,7 @@
 -- now carries only the coarse pod-occupancy phases the WarmPoolController
 -- projects (§6.2). The terminal-disposition and suspend facts the old
 -- conditions carried are session-row fields read through the session API
--- (§7.2 line 230, §8.8 session-level state mapping). No existing column
+-- (§7.2, §8.8 session-level state mapping). No existing column
 -- carries them: state/failure_class/failure_reason record the terminal
 -- classification, but not the relocated condition timestamps and reason
 -- strings.
@@ -20,7 +20,7 @@
 -- lifetime) or 'none' for service mode (the gateway routes each message
 -- to any ready replica and maintains no conversation context between
 -- messages). It is resolved against the assigned pool at create time and
--- frozen for the session lifetime per §7.1 line 75, parallel to the
+-- frozen for the session lifetime per §7.1, parallel to the
 -- execution_mode and scrub_policy envelope halves migration 0084 added.
 -- Empty rows predating this migration treat the gap as session-mode and
 -- backfill 'platform' (and 'none' for an execution_mode = 'service'

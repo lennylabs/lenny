@@ -42,7 +42,7 @@ func TestDelegation(t *testing.T) {
 		if root == nil {
 			t.Fatalf("tree response carried no root: %v", body)
 		}
-		// spec: §8.5 line 540 — each tree node's wire field is `taskId`
+		// spec: §8.5 — each tree node's wire field is `taskId`
 		// (the external-protocol name for the session's execution under
 		// the §4.2 "task record == session row" invariant), not the
 		// internal `sessionId`. The tree projection emits `taskId`.

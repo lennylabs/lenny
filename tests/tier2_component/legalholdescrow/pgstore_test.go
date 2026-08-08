@@ -38,7 +38,7 @@ func rec(tenant, session, uri, key string) legalholdescrow.Record {
 	}
 }
 
-// spec: §12.8 lines 884-885 — the escrow record store round-trips the
+// spec: §12.8 — the escrow record store round-trips the
 // release-lookup keys and the MarkReleased transition is idempotent.
 // diagnosis: a failure means the legal-hold escrow store does not
 // round-trip the release-lookup keys or MarkReleased is not idempotent,

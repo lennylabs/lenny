@@ -18,7 +18,7 @@ import (
 // below compile only because the package-level names are aliases (=),
 // not distinct named types.
 //
-// spec: §12.6 lines 369-373.
+// spec: §12.6.
 func TestSharedIDTypesAreSingleDefinition_spec_12_6_369(t *testing.T) {
 	var (
 		tenant  store.TenantID  = "acme"
@@ -54,7 +54,7 @@ func TestSharedIDTypesAreSingleDefinition_spec_12_6_369(t *testing.T) {
 // is the shared definition and the storerouter aliases carry the spec's
 // wire values.
 //
-// spec: §12.6 lines 375-389.
+// spec: §12.6.
 func TestRedisConcernEnumSharedValues_spec_12_6_375(t *testing.T) {
 	cases := map[storerouter.RedisConcern]string{
 		store.RedisConcernCoordination: "coordination",
@@ -77,7 +77,7 @@ func TestRedisConcernEnumSharedValues_spec_12_6_375(t *testing.T) {
 // TestStoreTypeEnumSharedValues asserts the §12.6 StoreType enum is the
 // shared definition with the spec's wire values.
 //
-// spec: §12.6 lines 391-400.
+// spec: §12.6.
 func TestStoreTypeEnumSharedValues_spec_12_6_391(t *testing.T) {
 	cases := map[storerouter.StoreType]string{
 		store.StoreTypeSession: "session",
@@ -97,7 +97,7 @@ func TestStoreTypeEnumSharedValues_spec_12_6_391(t *testing.T) {
 // so a caller depending on store.Subscription accepts an eventbus
 // subscription without a wrapper.
 //
-// spec: §12.6 lines 411-414.
+// spec: §12.6.
 func TestSubscriptionAliasSatisfiedByEventbus_spec_12_6_411(t *testing.T) {
 	var _ store.Subscription = eventbus.Subscription(nil)
 	var _ eventbus.Subscription = store.Subscription(nil)

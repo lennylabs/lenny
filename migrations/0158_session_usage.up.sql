@@ -23,8 +23,7 @@
 -- retention or staleness sweep measures the row's age against the database
 -- clock rather than a replica's local Go clock.
 --
--- spec: §8.8 lines 897-917; §4.9 line 1468 (proxy-extracted counts are
--- authoritative).
+-- spec: §8.8; §4.9.
 
 CREATE TABLE session_usage (
     tenant_id     TEXT        NOT NULL REFERENCES tenants(id),

@@ -101,7 +101,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 	if envelope["code"] != "SUBSYSTEM_UNAVAILABLE" {
 		t.Errorf("error code: want SUBSYSTEM_UNAVAILABLE, got %v", envelope["code"])
 	}
-	// §4.1 line 115 / §15.2.1: the per-replica breaker is transient — the
+	// §4.1 / §15.2.1: the per-replica breaker is transient — the
 	// client should retry so the load balancer distributes the retry
 	// across replicas. The 503 envelope therefore carries retryable=true.
 	if envelope["retryable"] != true {

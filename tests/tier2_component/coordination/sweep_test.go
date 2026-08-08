@@ -257,7 +257,7 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.2 line 156 — coordination_generation is incremented on
+	// spec: §4.2 — coordination_generation is incremented on
 	// coordinator handoff across gateway replicas. The sweeper observes
 	// the prior holder before its Acquire; when the prior holder is a
 	// different replica, the sweeper records the handoff. The no-bump
@@ -296,8 +296,7 @@ func TestSweeperContract(t *testing.T) {
 	})
 
 	// spec: §10.1 (a terminal session is no longer coordinated by anyone; a
-	// session that goes terminal during takeover is not resurrected), §4.2
-	// line 156 — a session that races to terminal between the sweep's List
+	// session that goes terminal during takeover is not resurrected), §4.2 — a session that races to terminal between the sweep's List
 	// snapshot and the atomic handoff bump must not have its
 	// coordination_generation advanced. RecordHandoff re-reads the row under
 	// the same atomic Update and refuses the bump on a terminal state, so the
@@ -329,7 +328,7 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.2 line 156, §10.1 (coordinator handoff re-adopts the
+	// spec: §4.2, §10.1 (coordinator handoff re-adopts the
 	// still-running pod) — a fresh acquisition of a running-pod orphan by a
 	// replica that holds no binding for it is a crash takeover (the prior
 	// coordinator crashed and its lease lapsed), so the sweeper bumps
@@ -367,7 +366,7 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.2 line 156 — when the lease is held by another replica
+	// spec: §4.2 — when the lease is held by another replica
 	// the sweeper's Acquire fails with ErrHeld; no handoff occurred so
 	// the counter must not bump.
 	t.Run("Sweep held-by-other does not bump counter", func(t *testing.T) {
@@ -397,7 +396,7 @@ func TestSweeperContract(t *testing.T) {
 
 	// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
 	// CoordinatorFence precondition; no operational RPC before the fence
-	// acknowledges), §4.2 line 156. On the crash-takeover edge the sweeper
+	// acknowledges), §4.2. On the crash-takeover edge the sweeper
 	// adopts the lapsed lease, bumps coordination_generation, drives the
 	// re-adopt fence with the post-bump generation over the real Redis lease
 	// store, and publishes the binding only after the fence acknowledges —
@@ -452,7 +451,7 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 35 (relinquish-and-backoff). A terminal fence failure
+	// spec: §10.1. A terminal fence failure
 	// relinquishes the real Redis lease (coordfence release) and the sweeper
 	// records a per-session adoption backoff, so the fixed sweep does not
 	// re-adopt inside the window and re-bump the generation every sweep. The
@@ -460,7 +459,7 @@ func TestSweeperContract(t *testing.T) {
 	// session is re-adopted.
 	// spec: §10.1 (coordinator handoff fences the pod to the post-handoff
 	// generation; a failed generation bump restarts the handoff from lease
-	// acquisition), §4.2 line 156. When the RecordHandoff store write fails
+	// acquisition), §4.2. When the RecordHandoff store write fails
 	// transiently the sweeper must not drive the re-adopt fence at the
 	// baseline generation 0: it releases the just-acquired real Redis lease
 	// and skips the re-adopt, so the next sweep re-observes the unheld lapsed

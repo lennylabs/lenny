@@ -113,7 +113,7 @@ func (p ComplianceProfile) IsValid() bool {
 // IsRegulated reports whether the profile is one of the regulated
 // values (soc2, fedramp, hipaa). The regulated profiles trigger the
 // §11.7 SIEM hard-requirement and the §12.8 audit.gdprRetentionDays
-// compliance floor. spec: §12.8 line 839.
+// compliance floor. spec: §12.8.
 func (p ComplianceProfile) IsRegulated() bool {
 	return p == ComplianceSOC2 || p == ComplianceFedRAMP || p == ComplianceHIPAA
 }
@@ -297,19 +297,18 @@ func (s OCSFTranslationState) IsTerminal() bool {
 // GDPRRetentionDefaultDays is the §12.8 audit.gdprRetentionDays default:
 // 2555 days (7 years). gdpr.* audit rows (erasure receipts, legal-hold
 // ledger events) are retained at least this long, on a window separate
-// from the general audit.retentionDays setting. spec: §12.8 line 839.
+// from the general audit.retentionDays setting. spec: §12.8.
 const GDPRRetentionDefaultDays = 2555
 
 // GDPRRetentionComplianceFloorDays is the §12.8 minimum
 // audit.gdprRetentionDays under any regulated complianceProfile (soc2,
 // fedramp, hipaa): 2190 days (6 years). A configured value below this
-// floor is rejected at startup. spec: §12.8 line 839.
+// floor is rejected at startup. spec: §12.8.
 const GDPRRetentionComplianceFloorDays = 2190
 
 // GDPRRetentionFloorError reports that the configured
 // audit.gdprRetentionDays is below the §12.8 compliance floor a
-// regulated complianceProfile mandates. Its Error() is the §12.8 line
-// 839 CONFIG_INVALID startup message verbatim; the struct fields carry
+// regulated complianceProfile mandates. Its Error() is the §12.8 CONFIG_INVALID startup message verbatim; the struct fields carry
 // the configured value, the binding profile, and the floor for logging.
 type GDPRRetentionFloorError struct {
 	RetentionDays int
@@ -328,7 +327,7 @@ func (e *GDPRRetentionFloorError) Error() string {
 // gdprRetentionDays is below GDPRRetentionComplianceFloorDays, and nil
 // otherwise. A non-positive gdprRetentionDays is treated as
 // GDPRRetentionDefaultDays before the comparison so an unset value
-// cannot bypass the floor. spec: §12.8 line 839.
+// cannot bypass the floor. spec: §12.8.
 func ValidateGDPRRetentionDays(gdprRetentionDays int, profiles []string) error {
 	if gdprRetentionDays <= 0 {
 		gdprRetentionDays = GDPRRetentionDefaultDays

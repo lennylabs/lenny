@@ -98,7 +98,7 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1349, 1365 — last_used_at is recorded by MarkUsed and
+// spec: §4.9 — last_used_at is recorded by MarkUsed and
 // surfaces on the GET /v1/credentials response.
 func TestMarkUsed(t *testing.T) {
 	s := newStore()
@@ -154,13 +154,13 @@ func TestGetMissing(t *testing.T) {
 	}
 }
 
-// TestRegisterEnvironmentScopedCredentials covers the §4.3 line 202
+// TestRegisterEnvironmentScopedCredentials covers the §4.3
 // environment scoping: the same (tenant, user, provider) triple can
 // hold one credential per environment. Registering with environment
 // "staging" and again with environment "production" yields two
 // independent refs and secrets; the "" no-environment scope is also
 // independent.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func TestRegisterEnvironmentScopedCredentials(t *testing.T) {
 	s := newStore()
 	ctx := context.Background()
@@ -191,7 +191,7 @@ func TestRegisterEnvironmentScopedCredentials(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is mandatory on Store and the
+// spec: §12.1 — DeleteByUser is mandatory on Store and the
 // user is the load-bearing key for the §4.9 credential registry.
 func TestDeleteByUserRemovesUserCredentials_spec_12_1(t *testing.T) {
 	s := newStore()
@@ -214,7 +214,7 @@ func TestDeleteByUserRemovesUserCredentials_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is idempotent — a second call on
+// spec: §12.1 — DeleteByUser is idempotent — a second call on
 // an already-erased scope returns 0 and nil per §12.8 semantics.
 func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	s := newStore()
@@ -225,7 +225,7 @@ func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser rejects empty scope ids; the
+// spec: §12.1 — DeleteByUser rejects empty scope ids; the
 // spec is explicit that empty arguments are not "delete everything".
 func TestDeleteByUserRejectsEmptyScope_spec_12_1(t *testing.T) {
 	s := newStore()
@@ -237,7 +237,7 @@ func TestDeleteByUserRejectsEmptyScope_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant hard-deletes
 // every credential row belonging to the tenant.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := newStore()
@@ -257,7 +257,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — re-registering after DeleteByUser yields a
+// spec: §12.1 — re-registering after DeleteByUser yields a
 // fresh credential ref (no scope-key residue).
 func TestDeleteByUserClearsScopeIndex_spec_12_1(t *testing.T) {
 	s := newStore()
@@ -312,7 +312,7 @@ func TestLookupResolvesFourTuple_spec_4_9_1347(t *testing.T) {
 	}
 
 	// A revoked credential is still returned by Lookup with its status; the
-	// resolution path decides to skip it (§4.9 line 1379).
+	// resolution path decides to skip it (§4.9).
 	if _, err := store.Revoke(ctx, "acme", reg.Ref); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}

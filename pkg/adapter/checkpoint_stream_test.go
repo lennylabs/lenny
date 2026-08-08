@@ -250,8 +250,7 @@ func seedFile(t *testing.T, path, content string) {
 	}
 }
 
-// spec: §5.2 (per-slot checkpoint granularity), §6.4 line 393 (slot-qualified
-// export target /workspace/slots/{slotId}/current and /sessions/{slotId}) —
+// spec: §5.2 (per-slot checkpoint granularity), §6.4 —
 // a CheckpointStart carrying a slot_id captures only that slot's live
 // workspace and session subtree, not the pod-global base tree. The
 // non-happy path this pins is a concurrent-session pod whose checkpoint
@@ -506,7 +505,7 @@ func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 241, §15.4.3 — a Full-level runtime quiesces cooperatively
+// spec: §4.4, §15.4.3 — a Full-level runtime quiesces cooperatively
 // across the chunked stream, and the adapter's checkpoint_complete frame
 // carries status "failed" with a reason when a chunk PUT is rejected by the
 // object store. A pre-fix adapter collapsed the terminal Failed frame to a
@@ -555,7 +554,7 @@ func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.
 	}
 }
 
-// spec: §4.4 line 241, §15.4.3 — on the success path the adapter emits
+// spec: §4.4, §15.4.3 — on the success path the adapter emits
 // checkpoint_complete with status "ok" only after the Summary frame, so the
 // quiesced Full-level runtime resumes on a checkpoint that was actually
 // stored.
@@ -602,7 +601,7 @@ func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 255 — the workspace-size probe runs before the quiescence
+// spec: §4.4 — the workspace-size probe runs before the quiescence
 // handshake, so an over-limit workspace aborts with FailedPrecondition
 // without ever quiescing the Full-level runtime. A pre-fix adapter issued
 // checkpoint_request (pausing the agent) before the size check, then resumed
@@ -722,7 +721,7 @@ func TestCheckpointStreamUploadsChunksAndSummarizes(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 255 — a workspace over the hard size limit aborts the
+// spec: §4.4 — a workspace over the hard size limit aborts the
 // checkpoint with FailedPrecondition before any grant is minted. A pre-fix
 // adapter with no probe would upload the oversized workspace anyway.
 func TestCheckpointStreamRejectsOversizeWorkspace_spec_4_4_255(t *testing.T) {

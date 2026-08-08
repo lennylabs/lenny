@@ -56,7 +56,7 @@ type readCloser interface {
 // object.
 //
 // Return semantics mirror the §4.5 MinIO backend so every artifact
-// store fails closed identically for a T4 tenant (§12.5 line 303):
+// store fails closed identically for a T4 tenant (§12.5):
 //   - (kmsKey, requireKey=false, nil) — use kmsKey when non-empty,
 //     otherwise fall through to the bucket default (the T3 path).
 //   - (kmsKey, requireKey=true, nil) — T4 tenant. The Put MUST wrap
@@ -65,7 +65,7 @@ type readCloser interface {
 //     resolver level. The Put fails closed with
 //     blobstore.ErrClassificationControlViolation.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 type KMSKeyResolver func(u blobstore.URI) (kmsKey string, requireKey bool, err error)
 
 // Config configures a Store.
@@ -99,13 +99,13 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
 }
 
-// SetOnKMSUnavailable registers the §12.5 line 303 fail-closed write
+// SetOnKMSUnavailable registers the §12.5 fail-closed write
 // callback the gateway uses to drive
 // lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
 // whenever a Put rejects a T4 tenant whose per-tenant KMS key is
 // unavailable.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
 	s.onKMSUnavailable = fn
 }
@@ -114,7 +114,7 @@ func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
 // failing closed for a T4 tenant whose key is unavailable. An empty
 // returned key leaves the bucket default in force (the T3 path).
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func (s *Store) resolveKMSKey(u blobstore.URI) (string, error) {
 	if s.resolver == nil {
 		return "", nil
@@ -136,7 +136,7 @@ func (s *Store) resolveKMSKey(u blobstore.URI) (string, error) {
 // fireKMSUnavailable invokes the gateway-registered hook on a
 // fail-closed T4 write rejection. It is a no-op when no hook is wired.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func (s *Store) fireKMSUnavailable(tenantID string) {
 	if s.onKMSUnavailable != nil {
 		s.onKMSUnavailable(tenantID)
@@ -148,7 +148,7 @@ func (s *Store) fireKMSUnavailable(tenantID string) {
 // §16.5 MinIOUnavailable alert fires uniformly across self-managed
 // MinIO and managed-cloud backends.
 //
-// spec: §16.5 ArtifactUploadError; §12.5 line 282.
+// spec: §16.5 ArtifactUploadError; §12.5.
 func classifyGCSPutError(err error) string {
 	s := err.Error()
 	switch {
@@ -411,7 +411,7 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 // single object named by u; a missing object (ErrObjectNotExist) is a
 // no-op.
 //
-// spec: §12.5 line 320 — catalog-driven targeted prune.
+// spec: §12.5 — catalog-driven targeted prune.
 func (s *Store) HardDeleteObject(u blobstore.URI) error {
 	ctx := context.Background()
 	if err := s.client.Delete(ctx, objectKey(u)); err != nil && !errors.Is(err, storage.ErrObjectNotExist) {

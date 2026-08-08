@@ -21,11 +21,11 @@ import (
 // a near-zero SetupOptions — no aggregate cap, shell mode (legacy
 // `/bin/sh -c`). on_timeout "warn" proceeds past the cap; any other
 // value, including empty, is the conservative "fail" default. Env is
-// seeded with the §7.5 line 479 minimal whitelist (DefaultSetupEnv) so
+// seeded with the §7.5 minimal whitelist (DefaultSetupEnv) so
 // a setup command does not see the adapter's process environment.
-// Shell mirrors the §7.5 line 490 setupCommandPolicy.shell flag the
+// Shell mirrors the §7.5 setupCommandPolicy.shell flag the
 // gateway sets per runtime (true→`/bin/sh -c`, false→exec argv). spec:
-// §7.5 line 490 — F-7.5.2 / F-7.5.8.
+// §7.5 — F-7.5.2 / F-7.5.8.
 func setupOptionsFromProto(p *adapterv1.SetupPolicy, workdir string) workspace.SetupOptions {
 	opts := workspace.SetupOptions{
 		Env:   workspace.DefaultSetupEnv(workdir),
@@ -74,7 +74,7 @@ type RuntimeProcess interface {
 // On any failure after the session is tentatively claimed, the pod is
 // returned to the idle state so a retry can land on a fresh pod.
 func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
-	// spec: §16.3 line 341 — `session.start` is emitted by the Pod. This
+	// spec: §16.3 — `session.start` is emitted by the Pod. This
 	// is the Go-side adapter emitter that closes the F-16.3.6 gap: the
 	// process-global OTLP provider cmd/lenny-adapter installs via
 	// tracing.InitProvider backs NewTracer(nil), so the span exports under
@@ -96,7 +96,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		)
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
-	// spec: §6.4 lines 385-405 — a slot-qualified StartSession claims one
+	// spec: §6.4 — a slot-qualified StartSession claims one
 	// of the pod's concurrent-workspace slots (its own per-slot tree and
 	// runtime) rather than the whole pod. The single-session base path
 	// (maxConcurrentSessions == 1, no slot id) below is taken unchanged.
@@ -119,7 +119,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		return nil, err
 	}
 
-	// §9.3 line 142: resolve the connectors this session's effective
+	// §9.3: resolve the connectors this session's effective
 	// delegation policy permits so the manifest can list one per-connector
 	// MCP server and the adapter can open each socket. Best-effort: a
 	// resolution failure leaves the session with no connector servers
@@ -152,7 +152,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
-		// §9.3 lines 142-164: open one intra-pod MCP server per permitted
+		// §9.3: open one intra-pod MCP server per permitted
 		// connector, forwarding tools/list and tools/call to the gateway.
 		// Best-effort per connector. F-9.1.2.
 		s.startConnectorMCPServers(sessionID, nonce, connectors)
@@ -180,7 +180,7 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 	if len(req.GetEnvelopeJson()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "SendMessage requires a message envelope")
 	}
-	// spec: §6.4 lines 401-405 — a slot-qualified message is delivered to
+	// spec: §6.4 — a slot-qualified message is delivered to
 	// the slot's own runtime so the dispatch lands on the slot's cwd.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		if err := s.checkSlotSession(sessionID, slotID); err != nil {
@@ -213,14 +213,13 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // Close runs under a context bounded by that deadline so the runtime
 // adapter's SIGTERM/SIGKILL pivot honors the spec window instead of an
 // internal default. A non-positive `deadline_ms` falls through to the
-// inbound RPC context, preserving the previous behavior. spec: §11.4
-// line 258; §4.7 ShutdownRequest.deadline_ms.
+// inbound RPC context, preserving the previous behavior. spec: §11.4; §4.7 ShutdownRequest.deadline_ms.
 func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Shutdown requires a session id")
 	}
-	// spec: §6.4 lines 401-405 — a slot-qualified Shutdown tears down only
+	// spec: §6.4 — a slot-qualified Shutdown tears down only
 	// the named slot (its runtime + per-slot tree), leaving sibling slots
 	// on the pod running.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
@@ -247,7 +246,7 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	if err := s.checkSession(sessionID); err != nil {
 		return nil, err
 	}
-	// §4.7 lines 661-662: flush a final usage report onto the gateway
+	// §4.7: flush a final usage report onto the gateway
 	// control stream before the stream closes, so the gateway can run
 	// budget_return.lua (§8.3) with the session's complete token totals.
 	s.emitFinalUsage(ctx, sessionID)
@@ -319,8 +318,7 @@ func drainReason(reason string) string {
 // contextWithGraceDeadline derives a context bounded by `grace` from
 // `parent`, returning a no-op cancel when `grace` is non-positive. The
 // adapter's RuntimeProcess.Close implementations read the derived
-// context's deadline to size their SIGTERM/SIGKILL pivot. spec: §11.4
-// line 258.
+// context's deadline to size their SIGTERM/SIGKILL pivot. spec: §11.4.
 func contextWithGraceDeadline(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
 	if grace <= 0 {
 		return parent, func() {}
@@ -374,7 +372,7 @@ func (s *Server) claimSession(sessionID string) error {
 // releaseSession returns the pod to the idle state and stops the
 // session's platform MCP server, if one was started.
 //
-// credSessionID is INTENTIONALLY left set: the §6.1 lines 5/16/24
+// credSessionID is INTENTIONALLY left set: the §6.1
 // invariant ("After a session completes or fails in `executionMode:
 // session`, the pod is terminated and replaced — never recycled for a
 // different session") is primarily enforced by the gateway-side
@@ -397,7 +395,7 @@ func (s *Server) releaseSession() {
 	// F-9.1.2.
 	connectorCancels := s.connectorCancels
 	s.connectorCancels = nil
-	// §4.9 line 1149: drop the direct-mode expiry timers so a stale lease
+	// §4.9: drop the direct-mode expiry timers so a stale lease
 	// cannot fire AUTH_EXPIRED against a session that has already ended.
 	s.cancelAllExpiryTimers()
 	s.mu.Unlock()

@@ -7,14 +7,14 @@
 // in-flight requests as slots, and drives the pod's readiness probe so
 // it reports NotReady once the pod reaches maxConcurrent.
 //
-// The §5.2 line 500 model relies on this signal: "Pod readiness probe
+// The §5.2 model relies on this signal: "Pod readiness probe
 // reflects slot availability." When a pod hits slot capacity its
 // readiness flips false, the pod drops out of the Service's
 // EndpointSlice, the gateway's tenantaffinity.Router stops routing new
 // requests to it, and a fresh unpinned pod is selected instead. When a
 // slot frees, readiness flips back true and the pod re-enters routing.
 //
-// spec: §5.2 line 500 (readiness reflects slot availability), §5.2
+// spec: §5.2, §5.2
 // "Concurrent-stateless limitations (v1)" (the platform tracks only
 // slot occupancy, not individual task outcomes).
 package statelessslot
@@ -83,7 +83,7 @@ func (g *Gate) Max() int {
 	return g.max
 }
 
-// Ready reports the §5.2 line 500 readiness signal: a pod is ready while
+// Ready reports the §5.2 readiness signal: a pod is ready while
 // it has a free slot (active < max) and NotReady at capacity.
 func (g *Gate) Ready() bool {
 	g.mu.Lock()

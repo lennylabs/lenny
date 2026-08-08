@@ -91,32 +91,32 @@ func main() {
 		"agent namespace the derived SandboxTemplate/SandboxWarmPool CRDs are materialized in. Required.")
 	flag.DurationVar(&syncInterval, "sync-interval", 30*time.Second,
 		"§4.6.2 pool-config reconcile cadence. The PSC re-syncs Postgres pool definitions into CRDs on this timer because Kubernetes cannot watch the Postgres source of truth.")
-	// §16.5 lines 590-601 — the workload-profile assumptions the tier
+	// §16.5 — the workload-profile assumptions the tier
 	// sizing formulas depend on. The PSC reads them at startup and warns
 	// when a Tier 2 / Tier 3 deployment still runs the defaults. The
 	// chart renders these from the capacityPlanning.* Helm values.
 	defCP := poolscaling.DefaultCapacityPlanning()
 	flag.StringVar(&capTier, "capacity-tier", envOr("LENNY_CAPACITY_TIER", "tier1"),
-		"§17.8.2 capacity tier (tier1, tier2, tier3) the deployment is sized for. A Tier 2 / Tier 3 deployment running the capacityPlanning.* defaults gets the §16.5 line 601 startup warning.")
+		"§17.8.2 capacity tier (tier1, tier2, tier3) the deployment is sized for. A Tier 2 / Tier 3 deployment running the capacityPlanning.* defaults gets the §16.5 startup warning.")
 	flag.Float64Var(&capPlanning.AvgSessionDurationSeconds, "capacity-avg-session-duration-seconds", envFloatOr("LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS", defCP.AvgSessionDurationSeconds),
-		"§16.5 line 594 capacityPlanning.avgSessionDurationSeconds — average session duration feeding the warm-pool claim rate.")
+		"§16.5 capacityPlanning.avgSessionDurationSeconds — average session duration feeding the warm-pool claim rate.")
 	flag.Float64Var(&capPlanning.DelegationParticipationRate, "capacity-delegation-participation-rate", envFloatOr("LENNY_CAPACITY_DELEGATION_PARTICIPATION_RATE", defCP.DelegationParticipationRate),
-		"§16.5 line 595 capacityPlanning.delegationParticipationRate — fraction of sessions that delegate at least once.")
+		"§16.5 capacityPlanning.delegationParticipationRate — fraction of sessions that delegate at least once.")
 	flag.Float64Var(&capPlanning.AvgDelegationsPerDelegatingSession, "capacity-avg-delegations-per-delegating-session", envFloatOr("LENNY_CAPACITY_AVG_DELEGATIONS_PER_DELEGATING_SESSION", defCP.AvgDelegationsPerDelegatingSession),
-		"§16.5 line 596 capacityPlanning.avgDelegationsPerDelegatingSession — average child delegations per delegating session.")
+		"§16.5 capacityPlanning.avgDelegationsPerDelegatingSession — average child delegations per delegating session.")
 	flag.Float64Var(&capPlanning.AvgChildSessionSeconds, "capacity-avg-child-session-seconds", envFloatOr("LENNY_CAPACITY_AVG_CHILD_SESSION_SECONDS", defCP.AvgChildSessionSeconds),
-		"§16.5 line 597 capacityPlanning.avgChildSessionSeconds — average child-delegation session duration.")
+		"§16.5 capacityPlanning.avgChildSessionSeconds — average child-delegation session duration.")
 	flag.Float64Var(&capPlanning.AvgWorkspaceSizeMB, "capacity-avg-workspace-size-mb", envFloatOr("LENNY_CAPACITY_AVG_WORKSPACE_SIZE_MB", defCP.AvgWorkspaceSizeMB),
-		"§16.5 line 598 capacityPlanning.avgWorkspaceSizeMB — average workspace size feeding checkpoint bandwidth budgets.")
+		"§16.5 capacityPlanning.avgWorkspaceSizeMB — average workspace size feeding checkpoint bandwidth budgets.")
 	flag.Float64Var(&capPlanning.SessionIdleFraction, "capacity-session-idle-fraction", envFloatOr("LENNY_CAPACITY_SESSION_IDLE_FRACTION", defCP.SessionIdleFraction),
-		"§16.5 line 599 capacityPlanning.sessionIdleFraction — fraction of active sessions idle (no active LLM call).")
-	// §17.8.2 line 1008 poolScaling.safetyFactor — the agent-type
+		"§16.5 capacityPlanning.sessionIdleFraction — fraction of active sessions idle (no active LLM call).")
+	// §17.8.2 poolScaling.safetyFactor — the agent-type
 	// safety_factor applied to a pool that does not pin one. A non-positive
 	// value (the default) resolves the per-tier default from --capacity-tier
 	// (1.2 at Tier 3, 1.5 otherwise) so a Tier 3 deployment picks up the
 	// override automatically; a positive value pins it for every pool.
 	flag.Float64Var(&safetyFactor, "default-safety-factor", envFloatOr("LENNY_POOL_SCALING_SAFETY_FACTOR", 0),
-		"§17.8.2 line 1008 poolScaling.safetyFactor — the agent-type safety_factor applied to pools that do not pin one. 0 (default) resolves the per-tier default from --capacity-tier (1.2 at Tier 3, else 1.5).")
+		"§17.8.2 poolScaling.safetyFactor — the agent-type safety_factor applied to pools that do not pin one. 0 (default) resolves the per-tier default from --capacity-tier (1.2 at Tier 3, else 1.5).")
 	flag.StringVar(&prometheusURL, "prometheus-url", os.Getenv("LENNY_PROMETHEUS_URL"),
 		"§6.1 Prometheus HTTP API base URL the SDK-warm circuit breaker reads the rolling demotion rate from (lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total). When unset, the breaker only honors a state already persisted on a pool and never auto-trips (the v1 bootstrap default).")
 	zapOpts := zap.Options{Development: false}
@@ -132,7 +132,7 @@ func main() {
 		log.Fatalf("lenny-pool-scaling-controller: --agent-namespace is required")
 	}
 
-	// spec: §16.5 line 601 — a Tier 2 / Tier 3 deployment running the
+	// spec: §16.5 — a Tier 2 / Tier 3 deployment running the
 	// capacityPlanning.* workload-profile defaults has not substituted
 	// observed values, so the tier sizing formulas rest on first-
 	// principles assumptions. Surface the warning at startup so an
@@ -168,7 +168,7 @@ func main() {
 		Store:     poolstorepg.New(pgPool),
 		Namespace: agentNS,
 	}
-	// spec: §6.1 lines 48, 50 — when a Prometheus backend is configured the
+	// spec: §6.1 — when a Prometheus backend is configured the
 	// SDK-warm circuit breaker reads the rolling demotion rate from it and
 	// auto-trips at 90%; the SDKWarmDemotionRateHigh event fires at the
 	// 60% 1-hour threshold. Without --prometheus-url the breaker still
@@ -192,12 +192,12 @@ func main() {
 		demotionSource = &poolscaling.PrometheusDemotionSource{Querier: promClient}
 		demandSource = &poolscaling.PrometheusStatelessDemandSource{Querier: promClient}
 		log.Printf("lenny-pool-scaling-controller: §6.1 SDK-warm demotion source wired to %s", prometheusURL)
-		log.Printf("lenny-pool-scaling-controller: §5.2 line 573 stateless demand source wired to %s", prometheusURL)
+		log.Printf("lenny-pool-scaling-controller: §5.2 stateless demand source wired to %s", prometheusURL)
 	}
 	// Without --prometheus-url every pool runs in §4.6.2 bootstrap mode:
 	// no DemandSource is wired, so each pool holds at its operator-set
 	// warmCount floor until observed-demand metrics are available.
-	// spec: §17.8.2 line 1008 — resolve the agent-type safety_factor a pool
+	// spec: §17.8.2 — resolve the agent-type safety_factor a pool
 	// inherits when it does not pin one. An explicit --default-safety-factor
 	// pins it for every pool; 0 selects the per-tier default so a Tier 3
 	// deployment automatically applies the 1.2 override.

@@ -94,7 +94,7 @@ type materializeLeaseRecord struct {
 
 // materializeLeaseCounter is a podsession Binder.Credentials that records every
 // AssignProto under a mutex. When the resolved credential pool equals failPool
-// it models the §8.3 line 470 post-pod-claim assignment race: the pre-claim
+// it models the §8.3 post-pod-claim assignment race: the pre-claim
 // resolution found the pool yet the lease mint loses the race, so it returns
 // credential.ErrPoolExhausted and delivers no lease token into the claimed pod.
 // Every other pool mints and delivers a lease, driving the counter so the

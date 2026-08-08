@@ -16,7 +16,7 @@ type staleFreshness bool
 
 func (s staleFreshness) Stale() bool { return bool(s) }
 
-// spec: §13.3 line 601 — a replica that cannot reach Postgres refuses to
+// spec: §13.3 — a replica that cannot reach Postgres refuses to
 // validate tokens with 503 token_validation_unavailable rather than
 // honoring a possibly-revoked token from a stale revocation cache.
 // F-13.3.4.

@@ -38,7 +38,7 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 // TestAgentSandboxPoolReader_GetPoolStatus_Spec4_6_1 confirms the
 // PoolReader translator merges the SandboxTemplate, SandboxWarmPool,
 // and observed Sandbox phase counts into one PoolStatus.
-// spec: spec/04_system-components.md lines 335-338, 359.
+// spec: §4.6.1.
 func TestAgentSandboxPoolReader_GetPoolStatus_Spec4_6_1(t *testing.T) {
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-prod", Namespace: "agents"},
@@ -85,7 +85,7 @@ func TestAgentSandboxPoolReader_GetPoolStatus_Spec4_6_1(t *testing.T) {
 
 // TestAgentSandboxPoolReader_GetPoolStatus_NotFound surfaces the
 // sentinel error on a missing SandboxTemplate.
-// spec: spec/04_system-components.md line 338.
+// spec: §4.6.1.
 func TestAgentSandboxPoolReader_GetPoolStatus_NotFound(t *testing.T) {
 	c := newClient(t)
 	r := &podlifecycle.AgentSandboxPoolReader{Client: c, Namespace: "agents"}
@@ -99,8 +99,7 @@ func TestAgentSandboxPoolReader_GetPoolStatus_NotFound(t *testing.T) {
 // occupancy SandboxClaim (`claim-<podName>`) with a `bound` binding state,
 // without writing Sandbox.status — the WarmPoolController projects the
 // claimed phase from the claim.
-// spec: spec/04_system-components.md lines 342, 386, 388 (occupancy
-// projection); §4.6.3 (gateway is not a Sandbox.status writer).
+// spec: §4.6.1; §4.6.3 (gateway is not a Sandbox.status writer).
 func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.T) {
 	tmpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"},
@@ -162,7 +161,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.
 // TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim
 // confirms a second claim attempt against a pod that already has a per-pod
 // claim surfaces ErrClaimConflict so the caller retries with a fresh pod.
-// spec: spec/04_system-components.md line 386 (AlreadyExists retry).
+// spec: §4.6.1.
 func TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim(t *testing.T) {
 	tmpl := &lennyv1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"}}
 	idle := &lennyv1.Sandbox{
@@ -186,7 +185,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim(t *te
 // TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim confirms
 // ReleasePod deletes the per-pod claim; the WarmPoolController returns the
 // pod to idle as a projection of the claim's absence.
-// spec: spec/04_system-components.md line 386 (claim deleted at release).
+// spec: §4.6.1.
 func TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim(t *testing.T) {
 	claim := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-1", Namespace: "agents"},
@@ -240,7 +239,7 @@ func TestAgentSandboxPodLifecycleManager_ReleasePod_IdempotentForMissing(t *test
 // TestAgentSandboxPodLifecycleManager_DrainPod_AnnotatesCheckpointFirst
 // confirms a checkpointFirst drain sets the §7.1 seal-and-export
 // annotation alongside the draining phase.
-// spec: spec/04_system-components.md line 344.
+// spec: §4.6.1.
 func TestAgentSandboxPodLifecycleManager_DrainPod_AnnotatesCheckpointFirst(t *testing.T) {
 	pod := &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "agents"},
@@ -271,7 +270,7 @@ func TestAgentSandboxPodLifecycleManager_DrainPod_AnnotatesCheckpointFirst(t *te
 
 // TestAgentSandboxPoolManager_ReconcilePool_CreatesTemplateAndWarmPool
 // confirms ReconcilePool creates both CRDs on first apply.
-// spec: spec/04_system-components.md line 349.
+// spec: §4.6.1.
 func TestAgentSandboxPoolManager_ReconcilePool_CreatesTemplateAndWarmPool(t *testing.T) {
 	c := newClient(t)
 	m := &podlifecycle.AgentSandboxPoolManager{
@@ -304,7 +303,7 @@ func TestAgentSandboxPoolManager_ReconcilePool_CreatesTemplateAndWarmPool(t *tes
 
 // TestAgentSandboxPoolManager_ApplyPoolDefinition_DeleteTearsTemplate
 // confirms Deleted: true removes the SandboxTemplate.
-// spec: spec/04_system-components.md line 350.
+// spec: §4.6.1.
 func TestAgentSandboxPoolManager_ApplyPoolDefinition_DeleteTearsTemplate(t *testing.T) {
 	tmpl := &lennyv1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"}}
 	c := newClient(t, tmpl)
@@ -327,7 +326,7 @@ func TestAgentSandboxPoolManager_ApplyPoolDefinition_DeleteTearsTemplate(t *test
 
 // TestAgentSandboxPoolManager_GarbageCollect_DetectsOrphanedSandbox
 // confirms the GC sweep flags a Sandbox whose pool has no template.
-// spec: spec/04_system-components.md line 353.
+// spec: §4.6.1.
 func TestAgentSandboxPoolManager_GarbageCollect_DetectsOrphanedSandbox(t *testing.T) {
 	orphan := &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-orphan", Namespace: "agents"},
@@ -350,7 +349,7 @@ func TestAgentSandboxPoolManager_GarbageCollect_DetectsOrphanedSandbox(t *testin
 // TestAgentSandboxPoolManager_TransitionPodState_RejectsIllegalEdge
 // confirms ErrInvalidTransition fires for a phase pair not in the
 // §6.2 state-machine.
-// spec: spec/04_system-components.md line 352.
+// spec: §4.6.1.
 func TestAgentSandboxPoolManager_TransitionPodState_RejectsIllegalEdge(t *testing.T) {
 	pod := &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"},
@@ -370,7 +369,7 @@ func TestAgentSandboxPoolManager_TransitionPodState_RejectsIllegalEdge(t *testin
 
 // TestAgentSandboxPoolManager_ManageFinalizer_AddsAndRemoves
 // covers the §4.6.1 lenny.dev/session-cleanup add/remove flow.
-// spec: spec/04_system-components.md line 354.
+// spec: §4.6.1.
 func TestAgentSandboxPoolManager_ManageFinalizer_AddsAndRemoves(t *testing.T) {
 	pod := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"}}
 	c := newClient(t, pod)

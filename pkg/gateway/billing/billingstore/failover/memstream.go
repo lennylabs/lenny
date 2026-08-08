@@ -64,7 +64,7 @@ func (m *MemStream) SetUnavailable(err error) {
 // userID within tenantID and returns the count removed — the §12.8
 // step-5 erasure of the in-process stream's staged events.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+// spec: §12.8, step 5.
 func (m *MemStream) PurgeUser(_ context.Context, tenantID, userID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

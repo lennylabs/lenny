@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsaudit"
 )
 
-// spec: §25.4 line 2332 — lenny_ops_lock_store_active{store} is 1 for the
+// spec: §25.4 — lenny_ops_lock_store_active{store} is 1 for the
 // serving tier and 0 for the others.
 func TestLockMetricsActiveStore_spec_25_4(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -39,7 +39,7 @@ func TestLockMetricsActiveStore_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2333-2335 — the outage-epoch gauge and the split-brain
+// spec: §25.4 — the outage-epoch gauge and the split-brain
 // / steal counters carry data.
 func TestLockMetricsEpochAndCounters_spec_25_4(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -78,7 +78,7 @@ func (c *capturingAppender) Append(_ context.Context, _, eventType string, _ jso
 	return audit.Row{}, nil
 }
 
-// spec: §25.4 lines 2338-2340 + §11.7 line 435 — the lock audit emitter
+// spec: §25.4 + §11.7 — the lock audit emitter
 // routes the lock lifecycle events onto the operational-event stream and
 // commits a durable §11.7 platform-audit row for every event. lock_extended
 // has no operational-event counterpart so it reaches only the durable chain.

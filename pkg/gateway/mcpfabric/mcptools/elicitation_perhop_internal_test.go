@@ -14,7 +14,7 @@ import (
 )
 
 // slowAncestorStore satisfies sessionstore.Store but blocks Get on the
-// designated parent id past the caller's deadline so the §11.3 line 211
+// designated parent id past the caller's deadline so the §11.3
 // per-hop forwarding timeout can be exercised deterministically. Other
 // store methods are not used by the elicitation chain walk and panic if
 // reached so a future refactor that depends on them surfaces here.
@@ -103,12 +103,12 @@ func (s *slowAncestorStore) CountActiveDelegatedChildrenByUser(context.Context, 
 }
 
 // TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211
-// pins the §11.3 line 211 / §9.1 line 104 hard-coded 30s default.
+// pins the §11.3 / §9.1 hard-coded 30s default.
 // F-11.3.16: changing the constant requires a spec edit, so guard it
 // with a literal-value assertion at the test layer.
 func TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211(t *testing.T) {
 	if ElicitationPerHopForwardingTimeout != 30*time.Second {
-		t.Fatalf("ElicitationPerHopForwardingTimeout = %s, want 30s per §11.3 line 211",
+		t.Fatalf("ElicitationPerHopForwardingTimeout = %s, want 30s per §11.3",
 			ElicitationPerHopForwardingTimeout)
 	}
 }
@@ -182,7 +182,7 @@ func TestBuildHopsFastAncestorLookupSucceeds_spec_11_3_211(t *testing.T) {
 }
 
 // TestEffectivePerHopTimeoutDefaultsToConstant_spec_11_3_211 proves
-// the dispatcher applies the §11.3 line 211 30s default when the test
+// the dispatcher applies the §11.3 30s default when the test
 // override is unset.
 func TestEffectivePerHopTimeoutDefaultsToConstant_spec_11_3_211(t *testing.T) {
 	d := &elicitationDispatcher{}

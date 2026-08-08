@@ -237,10 +237,7 @@ type adminIssuedTokenStore interface {
 // store lacks. The adapter owns the §16.7 audit-payload vocabulary; the
 // admintoken package passes only domain data.
 //
-// spec: §13.3 (gateway-mediated admin-credential rotation ordering and
-// mandatory exchange/revoke audit, lines 587/599), §16.7 (token.exchanged
-// exchange_type=admin_rotation, line 672; token.revoked rotation_replaced,
-// line 673) — F-17.6.3.
+// spec: §13.3, §16.7 — F-17.6.3.
 type adminIssuedTokens struct {
 	store adminIssuedTokenStore
 	cache admin.RevocationCache
@@ -267,7 +264,7 @@ func (a adminIssuedTokens) now() time.Time {
 // §16.7 admin-rotation audit vocabulary. The gateway is a second emitter
 // of token.exchanged{admin_rotation} (its in-process bootstrap Secret
 // rotation) alongside the Token Service's /v1/oauth/token exchange grant;
-// both classify the rotation identically. spec: §16.7 lines 672, 673.
+// both classify the rotation identically. spec: §16.7.
 const (
 	adminRotationExchangeType     = "admin_rotation"
 	adminRotationRevocationReason = "rotation_replaced"
@@ -275,7 +272,7 @@ const (
 	// is the authoritative revocation store; a peer replica falls back to
 	// issued_tokens.revoked_at, so the durable revoke alone satisfies the
 	// no-grace-period guarantee. The gateway path does not publish on the
-	// EventBus, so the mode is postgres_only. spec: §16.7 line 673.
+	// EventBus, so the mode is postgres_only. spec: §16.7.
 	adminRotationPropagationMode = "postgres_only"
 )
 
@@ -292,7 +289,7 @@ func (a adminIssuedTokens) issuedToken(rec admintoken.MintedToken) issuedtokenst
 
 // Record persists the bootstrap first token with no audit row. The
 // initial credential issuance is not a token exchange, so no
-// token.exchanged row is emitted (§13.3 line 587).
+// token.exchanged row is emitted (§13.3).
 func (a adminIssuedTokens) Record(ctx context.Context, rec admintoken.MintedToken) error {
 	return a.store.Record(ctx, a.issuedToken(rec))
 }
@@ -307,7 +304,7 @@ func (a adminIssuedTokens) RecordWithExchangeAudit(ctx context.Context, rec admi
 		"caller_sub":    rec.Subject,
 		"subject_sub":   rec.Subject,
 		"jti":           rec.JTI,
-		// spec: §16.7 line 672 — token.exchanged policy_result enum is
+		// spec: §16.7 — token.exchanged policy_result enum is
 		// (accepted | rejected:<reason>). A successful rotation mirrors the
 		// Token Service emitter (pkg/tokenservice PolicyResult="accepted").
 		"policy_result": "accepted",
@@ -375,7 +372,7 @@ func (a adminIssuedTokens) DurableRevoke(ctx context.Context, tenantID, jti stri
 
 // WithSubjectLock serializes the whole non-atomic rotation read-modify-write
 // for one subject through the store's per-subject session-scoped advisory
-// lock. spec: §13.3 line 605.
+// lock. spec: §13.3.
 func (a adminIssuedTokens) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
 	return a.store.WithSubjectLock(ctx, tenantID, subject, fn)
 }

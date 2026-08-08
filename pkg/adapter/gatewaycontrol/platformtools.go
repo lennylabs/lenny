@@ -17,7 +17,7 @@ import (
 // @lenny-platform-mcp and calls tools/list sees the same tools the
 // gateway-edge /mcp surface exposes. The returned tools carry no handler
 // (the intra-pod server forwards each tools/call to the gateway via
-// CallPlatformTool). spec: §9.1 lines 14-31. F-9.1.1.
+// CallPlatformTool). spec: §9.1. F-9.1.1.
 func (c *Client) ListPlatformTools(ctx context.Context, sessionID string) ([]mcp.Tool, error) {
 	resp, err := c.rpc.ListPlatformTools(ctx, &adapterv1.ListPlatformToolsRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
@@ -42,7 +42,7 @@ func (c *Client) ListPlatformTools(ctx context.Context, sessionID string) ([]mcp
 // tool result (a `content` array, optionally with `isError`); a
 // tool-level failure is carried inside that result. A transport or
 // routing failure (unknown session, unregistered tool) is returned as an
-// error. spec: §9.1 line 14. F-9.1.1.
+// error. spec: §9.1. F-9.1.1.
 func (c *Client) CallPlatformTool(ctx context.Context, sessionID, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
 	resp, err := c.rpc.CallPlatformTool(ctx, &adapterv1.CallPlatformToolRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},

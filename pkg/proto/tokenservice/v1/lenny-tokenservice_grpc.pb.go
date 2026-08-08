@@ -77,7 +77,7 @@ type TokenServiceClient interface {
 	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
 	// at the admin handler; a transport or non-deterministic failure maps
 	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9 line 1212.
+	// (never fail open). spec: §4.9.
 	ProbeSecretAccess(ctx context.Context, in *ProbeSecretAccessRequest, opts ...grpc.CallOption) (*ProbeSecretAccessResponse, error)
 }
 
@@ -163,7 +163,7 @@ type TokenServiceServer interface {
 	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
 	// at the admin handler; a transport or non-deterministic failure maps
 	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9 line 1212.
+	// (never fail open). spec: §4.9.
 	ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error)
 }
 

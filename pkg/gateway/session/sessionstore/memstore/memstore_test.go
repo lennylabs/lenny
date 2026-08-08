@@ -30,7 +30,7 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
-// spec: §24.11 lines 135-136 — GetByID resolves a session across tenants
+// spec: §24.11 — GetByID resolves a session across tenants
 // for the platform-admin investigation surface, unlike the tenant-scoped
 // Get. F-24.11.2.
 func TestGetByIDResolvesAcrossTenants(t *testing.T) {
@@ -123,7 +123,7 @@ func TestListFiltersByState(t *testing.T) {
 // TestListFiltersByUserID asserts the §11.4 full_revoke step-1
 // SessionStore lookup narrows to the invalidation subject, so a tenant
 // with many sessions does not read tenant-wide on every revoke.
-// spec: §11.4 line 256.
+// spec: §11.4.
 func TestListFiltersByUserID_spec_11_4_256(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -146,7 +146,7 @@ func TestListFiltersByUserID_spec_11_4_256(t *testing.T) {
 }
 
 // TestListUserIDIsTenantScoped asserts a UserID match in a peer tenant
-// is not surfaced by the §11.4 lookup. spec: §11.4 line 256.
+// is not surfaced by the §11.4 lookup. spec: §11.4.
 func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -159,7 +159,7 @@ func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
 	}
 }
 
-// TestListFiltersByLabels asserts the §15.1 line 598 labels filter is
+// TestListFiltersByLabels asserts the §15.1 labels filter is
 // AND-containment: a row matches only when its Labels map contains every
 // requested key=value pair. F-15.1.15.
 func TestListFiltersByLabels_spec_15_1_598(t *testing.T) {
@@ -192,7 +192,7 @@ func TestListFiltersByLabels_spec_15_1_598(t *testing.T) {
 	}
 }
 
-// TestListExcludeDeriveFailures asserts the §15.1 lines 652/661
+// TestListExcludeDeriveFailures asserts the §15.1
 // `?includeDeriveFailures=false` behaviour: derive_failure audit rows are
 // returned by default and dropped only when the flag is set. F-15.1.14.
 func TestListExcludeDeriveFailures_spec_15_1_652(t *testing.T) {
@@ -305,7 +305,7 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — newly created sessions are written at
+// spec: §4.2 — newly created sessions are written at
 // schema_version=1 by default. Recovery and coordination generations
 // start at zero. Cwd and PodAssignment are empty.
 func TestCreateDefaultsSessionRecordFields(t *testing.T) {
@@ -332,7 +332,7 @@ func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — recovery_generation and coordination_generation
+// spec: §4.2 — recovery_generation and coordination_generation
 // are monotonically non-decreasing across every state transition; never
 // rolled back, never reset. The store clamps an accidental decrement
 // in the mutate callback back to the prior value.
@@ -360,7 +360,7 @@ func TestUpdateClampsGenerationCountersMonotonically(t *testing.T) {
 	}
 }
 
-// TestUpdateClampsLastSeqMonotonically covers F-7.3.3 / §7.3 line 397:
+// TestUpdateClampsLastSeqMonotonically covers F-7.3.3 / §7.3:
 // sessions.last_seq is monotonic and an accidental rollback in the
 // mutate callback must be clamped back to the prior value. The
 // production pgstore enforces the same floor via GREATEST in updateSQL.
@@ -383,7 +383,7 @@ func TestUpdateClampsLastSeqMonotonically(t *testing.T) {
 	}
 }
 
-// TestUpdateAdvancesLastSeq covers F-7.3.3 / §7.3 line 397: a legitimate
+// TestUpdateAdvancesLastSeq covers F-7.3.3 / §7.3: a legitimate
 // advance writes through the store and round-trips on subsequent reads.
 func TestUpdateAdvancesLastSeq(t *testing.T) {
 	s := memstore.New()
@@ -408,7 +408,7 @@ func TestUpdateAdvancesLastSeq(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — both counters advance monotonically on
+// spec: §4.2 — both counters advance monotonically on
 // legitimate increments.
 func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	s := memstore.New()
@@ -438,7 +438,7 @@ func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 160 — the pod_assignment field is the cross-replica
+// spec: §4.2 — the pod_assignment field is the cross-replica
 // source of truth for the pod-to-session binding. Get must read back
 // what Update wrote so a fresh replica observes the binding without
 // touching the in-memory Registry.
@@ -461,7 +461,7 @@ func TestPodAssignmentReadBackAcrossReadAfterWrite(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — concurrent Updates on the same row maintain
+// spec: §4.2 — concurrent Updates on the same row maintain
 // the monotonicity floor even when mutate callbacks race. The store's
 // mutex serializes the read-mutate-write so successive bumps preserve
 // the latest counter value.
@@ -492,7 +492,7 @@ func TestUpdateConcurrentGenerationBumpsPreserveMonotonicity(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — a Create call carrying an explicit schema
+// spec: §4.2 — a Create call carrying an explicit schema
 // version preserves it (so a forward-compat path can write a
 // non-default value without the store overriding it).
 func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
@@ -510,7 +510,7 @@ func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — GetActiveSlotsByPod counts only the live
+// spec: §5.2 — GetActiveSlotsByPod counts only the live
 // (non-terminal) sessions bound to a pod, across every tenant, and
 // excludes sessions on other pods.
 func TestGetActiveSlotsByPod_spec_5_2_521(t *testing.T) {
@@ -548,7 +548,7 @@ func TestGetActiveSlotsByPod_spec_5_2_521(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — the count aggregates across tenants because the
+// spec: §5.2 — the count aggregates across tenants because the
 // rehydration path holds only the pod identity (a pod is pinned to one
 // tenant by §5.2, but the query itself is pod-scoped).
 func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
@@ -568,8 +568,7 @@ func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
 	}
 }
 
-// TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010 pins the §8.9
-// line 1010 default: a session created without a parent has
+// TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010 pins the §8.9 default: a session created without a parent has
 // RootSessionID equal to its own id (a standalone session is the root
 // of its own tree). F-8.9.8.
 func TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010(t *testing.T) {
@@ -586,8 +585,7 @@ func TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010(t *testing.T) {
 	}
 }
 
-// TestCreateChildInheritsParentRoot_spec_8_9_1010 pins the §8.9 line
-// 1010 inheritance: a session created with ParentSessionID inherits
+// TestCreateChildInheritsParentRoot_spec_8_9_1010 pins the §8.9 inheritance: a session created with ParentSessionID inherits
 // its parent's RootSessionID so all rows in one delegation tree share
 // the same root_session_id. F-8.9.8.
 func TestCreateChildInheritsParentRoot_spec_8_9_1010(t *testing.T) {
@@ -701,7 +699,7 @@ func TestListByRootCrossTenantIsolation_spec_8_9_1010(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant hard-deletes
 // every session row belonging to the tenant; rows owned by other
 // tenants survive unchanged.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
@@ -728,7 +726,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByTenant is idempotent: a second call on
+// spec: §12.1 — DeleteByTenant is idempotent: a second call on
 // an empty scope returns (0, nil), never ErrNotFound.
 func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
 	s := memstore.New()

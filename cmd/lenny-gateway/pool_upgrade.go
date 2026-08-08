@@ -13,9 +13,9 @@ import (
 // poolSpecReader adapts the §15.1 pool catalog to the
 // runtimeupgrade.PoolReader seam. Start uses it to confirm the target
 // pool exists and to capture its current configuration as
-// previousPoolSpec, which §10.5 line 507 preserves for rollback until
+// previousPoolSpec, which §10.5 preserves for rollback until
 // the upgrade reaches Complete. A missing pool returns ok=false so Start
-// maps it to 404. spec: §10.5 lines 466-540.
+// maps it to 404. spec: §10.5.
 type poolSpecReader struct {
 	store poolstore.Store
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
-// spec: §8.2 lines 12-28 — the opaque `target` resolver and the
+// spec: §8.2 — the opaque `target` resolver and the
 // `task.input` MessagePart[] projection. F-8.2.1.
 
 func TestFlattenTaskInput_spec_8_2(t *testing.T) {

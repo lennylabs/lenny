@@ -141,7 +141,7 @@ func ActionsForIssue(issue, target string) (single *conventions.SuggestedAction,
 }
 
 // sortRanked orders ranked alternatives by descending confidence in
-// place (§25.3 line 487) and returns the slice for chaining.
+// place (§25.3) and returns the slice for chaining.
 func sortRanked(actions []conventions.SuggestedAction) []conventions.SuggestedAction {
 	conventions.SortByConfidence(actions)
 	return actions

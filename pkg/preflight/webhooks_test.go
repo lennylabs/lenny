@@ -20,10 +20,10 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
-		// spec: §13.2 line 440 step 2 — renders unconditionally, so the
+		// spec: §13.2 step 2 — renders unconditionally, so the
 		// inventory expects it in the baseline set (F-13.2.12).
 		"lenny-direct-mode-isolation": true,
-		// spec: §10.5 line 508 — renders unconditionally and fail-closed
+		// spec: §10.5 — renders unconditionally and fail-closed
 		// (F-10.5.14).
 		"lenny-sandboxtemplate-deletion-guard": true,
 	}
@@ -70,7 +70,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 	}
 }
 
-// spec: §13.2 line 440 step 2 (F-13.2.12) — lenny-direct-mode-isolation
+// spec: §13.2 step 2 (F-13.2.12) — lenny-direct-mode-isolation
 // is no longer gated on the LLM-proxy feature flag; it appears in the
 // inventory whether or not LLMProxy is set.
 func TestExpectedValidatingWebhooksDirectModeIsolationUngated_spec_13_2(t *testing.T) {
@@ -108,7 +108,7 @@ func TestExpectedValidatingWebhooksCosignFlag(t *testing.T) {
 	}
 }
 
-// spec: §17.2 line 56 — lenny-registry-digest is fail-closed and is
+// spec: §17.2 — lenny-registry-digest is fail-closed and is
 // tracked by the preflight inventory only when platform.registry.requireDigest
 // is set, so an air-gap install (where the webhook is mandatory) cannot
 // ship without it being verified. F-17.2.13.
@@ -211,7 +211,7 @@ func TestCheckAdmissionWebhooksFailsOnEmptyCABundle(t *testing.T) {
 // §17.2-enumerated ValidatingAdmissionWebhook is reachable in the
 // inventory, and every inventory webhook is either catalogued or
 // declared implementation-only. This makes the §17.2 line-40 "single
-// source of truth" cross-check machine-checked. spec: §17.2 line 40.
+// source of truth" cross-check machine-checked. spec: §17.2.
 // F-17.2.12.
 func TestCatalogueCoverageInventoryMatchesSpec17_2(t *testing.T) {
 	missing, undocumented := preflight.CatalogueCoverage()
@@ -227,7 +227,7 @@ func TestCatalogueCoverageInventoryMatchesSpec17_2(t *testing.T) {
 // catalogue used for the ValidatingWebhookConfiguration inventory does
 // not list lenny-crd-conversion (item 12), which is a CRD conversion
 // endpoint verified by CheckConversionWebhook, not a
-// ValidatingWebhookConfiguration. spec: §17.2 line 53. F-17.2.12.
+// ValidatingWebhookConfiguration. spec: §17.2. F-17.2.12.
 func TestSpec17_2CatalogueExcludesConversionWebhook(t *testing.T) {
 	for _, w := range preflight.Spec17_2ValidatingWebhooks {
 		if w == "lenny-crd-conversion" {
@@ -242,8 +242,7 @@ func TestSpec17_2CatalogueExcludesConversionWebhook(t *testing.T) {
 // surface it. The test exercises the detection logic directly by
 // confirming that the implementation-only webhooks (which the inventory
 // renders) are the reason undocumented stays empty — removing the
-// implementation-only acknowledgement would re-expose them. spec: §17.2
-// line 40. F-17.2.12.
+// implementation-only acknowledgement would re-expose them. spec: §17.2. F-17.2.12.
 func TestCatalogueCoverageImplementationOnlyWebhooksAreInInventory(t *testing.T) {
 	inventory := preflight.ExpectedValidatingWebhooks(preflight.WebhookFeatureFlags{
 		DrainReadiness: true, Compliance: true, CosignVerify: true, RegistryDigest: true,

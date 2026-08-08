@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 408 step (d) — persistWorkspaceRoot records the
+// spec: §7.3 step (d) — persistWorkspaceRoot records the
 // adapter-reported absolute cwd path on the session row at the first
 // non-empty bind so a subsequent Resume can pass it as
 // `expected_workspace_root` for the §7.3 "same absolute cwd path"

@@ -41,7 +41,7 @@ func inlinePlan(path string) *adapterv1.WorkspacePlan {
 	}
 }
 
-// spec: §6.1 lines 34-40, §4.3, §4.4 (proposal) — RequiresDemotion is the pure
+// spec: §6.1, §4.3, §4.4 (proposal) — RequiresDemotion is the pure
 // §6.1 SDK-warm demotion decision the finalize-time Prepare makes and the
 // launch-only /start path recomputes from the persisted plan, so the gateway
 // does not persist the boolean. It must answer true only for a preConnect
@@ -91,7 +91,7 @@ func TestRequiresDemotionDecision_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 lines 30-34 — a preConnect pod whose plan matches no blocking
+// spec: §6.1 — a preConnect pod whose plan matches no blocking
 // path stays SDK-warm: the binder points the pre-connected SDK at the
 // workspace (ConfigureWorkspace) and does not StartSession from cold.
 func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
@@ -126,7 +126,7 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 lines 34-40 — a preConnect pod whose plan matches a blocking
+// spec: §6.1 — a preConnect pod whose plan matches a blocking
 // path is demoted (DemoteSDK) before materialization and served via the
 // pod-warm StartSession path; the demotion metric increments.
 func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
@@ -170,11 +170,11 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 		t.Errorf("SDKDemotion metric = %v, want [%q]", demotedPools, testPool)
 	}
 	if !teardownSeen {
-		t.Errorf("SDKDemotion did not report a teardown duration (§6.3 line 352)")
+		t.Errorf("SDKDemotion did not report a teardown duration (§6.3)")
 	}
 }
 
-// spec: §6.1 line 40 — a preConnect pod whose adapter cannot DemoteSDK
+// spec: §6.1 — a preConnect pod whose adapter cannot DemoteSDK
 // (returns UNIMPLEMENTED) fails the session with SDK_DEMOTION_NOT_SUPPORTED
 // rather than serving it with stale SDK state.
 func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
@@ -202,7 +202,7 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 38 — an empty sdkWarmBlockingPaths list keeps the pod
+// spec: §6.1 — an empty sdkWarmBlockingPaths list keeps the pod
 // SDK-warm for every request (no demotion path checking).
 func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
 	rt := &fakeSDKWarmRuntime{}
@@ -217,7 +217,7 @@ func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
 		Plan:                 inlinePlan("CLAUDE.md"),
 		PreConnect:           true,
-		SDKWarmBlockingPaths: nil, // §6.1 line 38 opt-out
+		SDKWarmBlockingPaths: nil, // §6.1 opt-out
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)

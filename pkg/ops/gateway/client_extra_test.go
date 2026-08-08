@@ -36,7 +36,7 @@ func (r *recordingTLSMetrics) count(result string) int {
 	return r.counts[result]
 }
 
-// TestClient_HandshakeMetric_Plaintext covers §25.4 line 2544: an http://
+// TestClient_HandshakeMetric_Plaintext covers §25.4: an http://
 // admin-API request records a "plaintext" handshake result, the signal
 // the OpsAdminAPIPlaintextDetected alert fires on.
 func TestClient_HandshakeMetric_Plaintext_spec_25_4(t *testing.T) {

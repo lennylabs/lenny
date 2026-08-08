@@ -228,7 +228,7 @@ func TestPodReconcileCertExpirySkipsClaimedPod_spec_4_6(t *testing.T) {
 }
 
 // warmingSandbox returns a Sandbox in the §4.6.1 warming (pre-idle) phase
-// so the §10.3 line 342 issuance-grace drain has a live object to patch.
+// so the §10.3 issuance-grace drain has a live object to patch.
 func warmingSandbox(name string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
@@ -255,7 +255,7 @@ func (m *recordingCertMetric) Set(ns, pod string, s float64) { m.set[ns+"/"+pod]
 func (m *recordingCertMetric) Clear(ns, pod string)          { m.clear[ns+"/"+pod]++ }
 
 // TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3 verifies the
-// §10.3 line 342 cert-issuance grace: a pre-idle pod that has not presented
+// §10.3 cert-issuance grace: a pre-idle pod that has not presented
 // a valid certificate within the grace window of its creation is drained for
 // replacement (its Sandbox transitions to draining) when the check is enabled.
 func TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3(t *testing.T) {
@@ -325,8 +325,7 @@ func TestPodReconcileCertIssuanceDisabledKeepsPreIdlePod_spec_10_3(t *testing.T)
 	}
 }
 
-// TestPodReconcileCertExpiryGaugeEmitted_spec_10_3 verifies the §10.3 line
-// 342/343 lenny_cert_expiry_seconds gauge is published through the real
+// TestPodReconcileCertExpiryGaugeEmitted_spec_10_3 verifies the §10.3 lenny_cert_expiry_seconds gauge is published through the real
 // Reconcile path for a managed pod with a derivable expiry.
 func TestPodReconcileCertExpiryGaugeEmitted_spec_10_3(t *testing.T) {
 	s := newScheme(t)
@@ -352,7 +351,7 @@ func TestPodReconcileCertExpiryGaugeEmitted_spec_10_3(t *testing.T) {
 
 // TestPodReconcileCertExpiryGaugeClearedOnMissingPod_spec_10_3 verifies a
 // reconcile for a pod that no longer exists clears its gauge series so a
-// retired pod cannot pin the CertExpiryImminent alert (§10.3 line 343).
+// retired pod cannot pin the CertExpiryImminent alert (§10.3).
 func TestPodReconcileCertExpiryGaugeClearedOnMissingPod_spec_10_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s) // no pods seeded

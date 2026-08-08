@@ -16,7 +16,7 @@ import (
 // and MinIO over the network. The binaries (the standalone CLI and the
 // gateway) wire these; tests inject fakes through the Probers seam.
 //
-// spec: §15.1 line 890 (active outbound connectivity probes).
+// spec: §15.1.
 func RealProbers() Probers {
 	return Probers{
 		Postgres: RealPostgresProber{},

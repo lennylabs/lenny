@@ -181,7 +181,7 @@ func (s *Store) CountElicitations(ctx context.Context, tenantID, sessionID strin
 }
 
 // ListPending returns every pending interaction recorded for the
-// (tenant, session) tuple, ordered oldest first. The §7.2 line 153
+// (tenant, session) tuple, ordered oldest first. The §7.2
 // `ReattachedChild.pending_request_id` surface calls this so a
 // resumed parent learns which request its child is waiting on.
 func (s *Store) ListPending(ctx context.Context, tenantID, sessionID string) ([]interactionstore.Interaction, error) {
@@ -234,7 +234,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // returns the count deleted — the §12.8 Phase-4 tenant-deletion adapter.
 // A tenant with no interactions is a no-op returning (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+// spec: §12.1; §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	deleted := 0
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {

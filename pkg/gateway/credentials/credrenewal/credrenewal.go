@@ -32,7 +32,7 @@ const MaxRenewalRetries = 3
 // DefaultMaxExtensions bounds consecutive breaker-open lease extensions
 // per §4.9 when a lease carries no LeaseTTL from which to derive the
 // cumulative-extension cap. It is the fallback for maxExtensions.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 const DefaultMaxExtensions = 3
 
 // ErrRenewInfraUnavailable signals that a renewal could not proceed
@@ -43,7 +43,7 @@ const DefaultMaxExtensions = 3
 // not exhausted into the Fallback Flow. The gateway wiring maps
 // credassign.ErrTokenServiceUnavailable to this sentinel at the package
 // boundary so credrenewal need not import credassign.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 var ErrRenewInfraUnavailable = errors.New("credrenewal: renewal infrastructure transiently unavailable")
 
 // maxExtensions returns the number of renewBeforeBuffer intervals that
@@ -52,7 +52,7 @@ var ErrRenewInfraUnavailable = errors.New("credrenewal: renewal infrastructure t
 // buffer, buffer is invariant across extensions, so the cap is stable
 // for the life of the lease. When either input is non-positive (a lease
 // carrying no TTL), it falls back to DefaultMaxExtensions.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func maxExtensions(ttl, buffer time.Duration) int {
 	if ttl <= 0 || buffer <= 0 {
 		return DefaultMaxExtensions
@@ -64,13 +64,13 @@ func maxExtensions(ttl, buffer time.Duration) int {
 	return n
 }
 
-// DefaultExpiryWarningLead is the §11.3 line 215
+// DefaultExpiryWarningLead is the §11.3
 // `credentials.expiryWarningLeadSeconds` default (1h). When a lease is
 // within this window of its ExpiresAt, the worker fires OnExpiryWarning
 // once so a deployer-facing observer (log, metric, audit hook) can
 // surface impending lease expiry before the §4.9 proactive renewal
 // fully runs out of retries.
-// spec: §11.3 line 215.
+// spec: §11.3.
 const DefaultExpiryWarningLead = 3600 * time.Second
 
 // Lease is the subset of a §4.9 CredentialLease the renewal worker
@@ -93,7 +93,7 @@ type Lease struct {
 	// breaker-open extension under the §4.9 Token Service unavailability
 	// guard: total extension may not exceed one LeaseTTL. A zero value
 	// selects DefaultMaxExtensions.
-	// spec: §4.9 line 1470.
+	// spec: §4.9.
 	LeaseTTL time.Duration
 }
 
@@ -127,7 +127,7 @@ type Options struct {
 	// store for proxy mode). It returns an error when the enforcement
 	// point could not be reached, in which case the worker does not
 	// advance its own view of the deadline and the lease falls through to
-	// the retry and Fallback path. spec: §4.9 line 1470.
+	// the retry and Fallback path. spec: §4.9.
 	OnExtend func(lease Lease, newExpiresAt time.Time) error
 
 	// OnExtensionCapReached, when set, is called under the §4.9 Token
@@ -138,11 +138,10 @@ type Options struct {
 	// clients as expired:lease) and does NOT enter the Fallback Flow,
 	// because a re-mint against the still-open breaker would re-enter the
 	// restart loop the guard prevents. The worker drops the lease from
-	// tracking before invoking it. spec: §4.9 line 1470.
+	// tracking before invoking it. spec: §4.9.
 	OnExtensionCapReached func(lease Lease)
 
-	// ExpiryWarningLead overrides DefaultExpiryWarningLead. The §11.3
-	// line 215 contract: when a tracked lease is within this window of
+	// ExpiryWarningLead overrides DefaultExpiryWarningLead. The §11.3 contract: when a tracked lease is within this window of
 	// its ExpiresAt, the worker fires OnExpiryWarning exactly once. Set
 	// to a negative value to disable warnings outright.
 	ExpiryWarningLead time.Duration
@@ -205,7 +204,7 @@ func New(renewer Renewer, opts Options) *Worker {
 	if w.clock == nil {
 		w.clock = func() time.Time { return time.Now() }
 	}
-	// spec: §11.3 line 215 — zero selects the platform default; a
+	// spec: §11.3 — zero selects the platform default; a
 	// negative override disables warning emission outright.
 	if w.expiryWarningLead == 0 {
 		w.expiryWarningLead = DefaultExpiryWarningLead
@@ -260,7 +259,7 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 	due := make([]*trackedLease, 0)
 	revokedLeases := make([]Lease, 0)
 	warnings := make([]Lease, 0)
-	// spec: §11.3 line 215 — fire the expiry warning once per lease
+	// spec: §11.3 — fire the expiry warning once per lease
 	// when now is inside the deployer-tunable warning window. The
 	// warning fires regardless of whether the lease is due for renewal,
 	// so a deployer sees impending expiry even when the proactive-
@@ -303,14 +302,14 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) int {
 		}
 		next, err := w.renewer.Renew(ctx, tl.lease)
 		if err != nil {
-			// spec: §4.9 line 1470 — Token Service unavailability guard.
+			// spec: §4.9 — Token Service unavailability guard.
 			// The breaker is open and the lease is still valid (the
 			// now >= ExpiresAt guard above already handled the expired
 			// case). Extend the enforced deadline by one renewBeforeBuffer
 			// and reschedule instead of exhausting into the Fallback Flow.
 			if errors.Is(err, ErrRenewInfraUnavailable) && w.onExtend != nil {
 				buffer := tl.lease.ExpiresAt.Sub(tl.lease.RenewBefore)
-				// spec: §4.9 line 1470 — cumulative-extension cap. Once
+				// spec: §4.9 — cumulative-extension cap. Once
 				// total extension reaches the lease's original TTL, stop
 				// extending; a permanently-open breaker must not keep the
 				// key alive forever. At the cap, terminate the session

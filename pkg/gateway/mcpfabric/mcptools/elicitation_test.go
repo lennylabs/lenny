@@ -86,7 +86,7 @@ func (r *recordingDropMetric) RecordElicitationDrop(reason string) {
 	r.reasons = append(r.reasons, reason)
 }
 
-// recordingLifecycleMetric records the §16.1 lines 60–63 admit/terminal
+// recordingLifecycleMetric records the §16.1 admit/terminal
 // lifecycle events the dispatcher reports. F-9.2.14. The dispatcher fires
 // these hooks from the elicitation handler goroutine while a test reads
 // the counters, so the fields are guarded by a mutex to stay -race clean.
@@ -373,7 +373,7 @@ func detailInt(v any) (int, bool) {
 // initiator_type) is stamped on the recorded elicitation so the §16.7
 // audit row can source delegation_depth / initiator_type from the
 // stored record and the §15.1 resolver UI can render provenance.
-// spec: §9.2 lines 70–82; §16.7 line 674. F-9.2.6.
+// spec: §9.2; §16.7. F-9.2.6.
 func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T) {
 	srv, store, interactions, _ := newMCPForProvenance(t)
 	mkUserSession(t, store, "sess_root", "alice", "")
@@ -412,7 +412,7 @@ func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T)
 // elicitation_request SSE payload carries origin_pod, initiator_type,
 // delegation_depth, and origin_runtime so a resolver UI can display
 // provenance prominently and distinguish a platform OAuth flow from an
-// agent-initiated prompt. spec: §9.2 lines 70–82. F-9.2.6.
+// agent-initiated prompt. spec: §9.2. F-9.2.6.
 func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
 	srv, store, interactions, bus := newMCPForProvenance(t)
 	mkUserSession(t, store, "sess_root", "alice", "")
@@ -533,7 +533,7 @@ func TestElicitationLifecycleAdmitAndResolveBumpsMetrics_spec_16_1_F_9_2_14(t *t
 }
 
 // TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14
-// proves the §16.1 line 63 timeout counter increments and pending
+// proves the §16.1 timeout counter increments and pending
 // decrements when the §9.1 maxElicitationWait fires. F-9.2.14.
 func TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14(t *testing.T) {
 	lc := &recordingLifecycleMetric{}
@@ -562,7 +562,7 @@ func TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14(t *te
 }
 
 // TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_14
-// proves the §16.1 line 62 suppressed counter increments when a §9.2
+// proves the §16.1 suppressed counter increments when a §9.2
 // depth-policy suppression fires; the pending gauge is NOT touched
 // because the suppression rejects before admit. F-9.2.14.
 func TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_14(t *testing.T) {
@@ -625,7 +625,7 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 // payload is asserted in the internal dispatcher test
 // TestDispatchURLModeDropWritesAuditRow_spec_16_7 (F-EL3).
 //
-// spec: §9.2 line 86; §16.7 (elicitation.url_mode_domain_rejected).
+// spec: §9.2; §16.7 (elicitation.url_mode_domain_rejected).
 // F-9.2.11, F-EL3.
 func TestURLModeElicitationDisallowedDomain_spec_9_2_F_9_2_11(t *testing.T) {
 	drops := &recordingDropMetric{}
@@ -693,8 +693,7 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 // against the empty allowlist with the standard §11.7 url_mode_disabled
 // audit event.
 //
-// spec: §9.2 lines 87–88 (agent binaries cannot self-declare as a
-// connector); F-9.2.19.
+// spec: §9.2; F-9.2.19.
 func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
 	drops := &recordingDropMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{drops: drops})
@@ -822,7 +821,7 @@ func TestResolveElicitationDismiss(t *testing.T) {
 	}
 }
 
-// TestMCPRespondToElicitationResolves proves the §9.2 line 108 MCP
+// TestMCPRespondToElicitationResolves proves the §9.2 MCP
 // `lenny/respond_to_elicitation` tool resolves a pending elicitation
 // when the (sessionId, sessionUserID, elicitationId) triple matches.
 // F-9.2.17.
@@ -853,7 +852,7 @@ func TestMCPRespondToElicitationResolves(t *testing.T) {
 }
 
 // TestMCPRespondToElicitationTripleMismatchSurfacesNotFound verifies
-// §9.2 line 108: a (sessionId, userId, elicitationId) mismatch
+// §9.2: a (sessionId, userId, elicitationId) mismatch
 // collapses to ELICITATION_NOT_FOUND on the MCP surface, mirroring the
 // §15.1 REST handler so the existence of another session's elicitation
 // never leaks. F-9.2.17.
@@ -883,7 +882,7 @@ func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
 	}
 }
 
-// TestMCPDismissElicitation proves the §9.2 line 108 MCP
+// TestMCPDismissElicitation proves the §9.2 MCP
 // `lenny/dismiss_elicitation` tool records the dismissal with the
 // caller-supplied reason. F-9.2.17.
 func TestMCPDismissElicitation(t *testing.T) {

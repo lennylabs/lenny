@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
-// AuthConfig configures the §25.4 lines 1562-1564 lenny-ops
+// AuthConfig configures the §25.4 lenny-ops
 // authentication and role gate. lenny-ops validates JWT tokens using
 // the same OIDC verifier as the gateway admin API and requires the
 // platform-admin or tenant-admin role on every endpoint except the
@@ -31,7 +31,7 @@ type AuthConfig struct {
 	// RequireAuth so the operability surface admits no anonymous request.
 	Options authmw.Options
 
-	// RateLimiter, when non-nil, applies the §25.4 line 2001 per-service-
+	// RateLimiter, when non-nil, applies the §25.4 per-service-
 	// account token-bucket rate limit after authentication. It keys on the
 	// authenticated sub claim, so it sits inside the auth wrapper.
 	RateLimiter *RateLimiter
@@ -43,8 +43,7 @@ type AuthConfig struct {
 // attach one. Every other path requires a verified bearer
 // (RequireAuth) whose principal holds platform-admin or tenant-admin.
 //
-// spec: §25.4 line 1562 ("Requires platform-admin or tenant-admin role
-// on all endpoints. No anonymous access except /healthz.").
+// spec: §25.4.
 func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 	opts := cfg.Options
 	// The operability surface never serves an anonymous request, so force
@@ -56,7 +55,7 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 	// but-unauthorized caller is still back-pressured. The §25.1 scope gate
 	// sits inside the role gate and before the mux so a scope-narrowed token
 	// is rejected with 403 SCOPE_FORBIDDEN before any admin handler runs at
-	// its full role ceiling (spec: §25.1 lines 92-94, enforcement point 1).
+	// its full role ceiling (spec: §25.1, enforcement point 1).
 	postAuth := requireAdminRole(s.scopeEnforce(mux))
 	// §25.12: the MCP invoker replays a mapped tool request against this
 	// post-authentication chain with the caller's already-verified
@@ -85,7 +84,7 @@ func (s *Server) withOpsAuth(mux http.Handler, cfg *AuthConfig) http.Handler {
 }
 
 // isProbePath reports whether p is a Kubernetes liveness/readiness probe
-// endpoint exempt from authentication. §25.4 line 1562 names /healthz;
+// endpoint exempt from authentication. §25.4 names /healthz;
 // /readyz is its companion readiness probe and is exempted on the same
 // rationale (a kubelet probe carries no bearer token).
 func isProbePath(p string) bool {
@@ -100,8 +99,7 @@ func isProbePath(p string) bool {
 func isUnauthenticatedPath(p string) bool {
 	// The §25.5 subscription_cache_invalidate peer RPC carries no OIDC
 	// bearer; it is authenticated by the shared-secret-derived token
-	// header in its handler and gated at the network layer. spec: §25.5
-	// line 2751.
+	// header in its handler and gated at the network layer. spec: §25.5.
 	return isProbePath(p) || p == "/metrics" || p == opsservice.DefaultCacheInvalidatePath
 }
 
@@ -111,7 +109,7 @@ func isUnauthenticatedPath(p string) bool {
 // principal, so an absent principal (which RequireAuth already rejects
 // upstream) also fails closed here.
 //
-// spec: §25.4 line 1562.
+// spec: §25.4.
 func requireAdminRole(inner http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := authmw.FromContext(r.Context())
@@ -137,12 +135,12 @@ func callerPrincipal(r *http.Request) (authmw.Principal, bool) {
 // withCorrelation middleware stamped onto the request context. Handlers
 // that record an operationId on a state-changing resource fall back to
 // this when the request body omits the field, so a watchdog that sends
-// the header on every call (the §25.17 lines 5185-5186 / 5264 pattern)
+// the header on every call (the §25.17 pattern)
 // has its operation correlated even on the body-less diagnostic GETs and
 // on POSTs whose body does not carry the field. An empty string means
 // the caller supplied no correlation header.
 //
-// spec: §25.17 lines 5185-5186, 5264 — "the audit trail shows four calls
+// spec: §25.17 — "the audit trail shows four calls
 // tied to operation 550e8400-...".
 func callerOperationID(r *http.Request) string {
 	return correlation.From(r.Context()).OperationID
@@ -152,7 +150,7 @@ func callerOperationID(r *http.Request) string {
 // withCorrelation middleware stamped onto the request context, or the
 // empty string when the caller supplied no agent-name header.
 //
-// spec: §25.17 lines 5185-5186 — X-Lenny-Agent-Name: prod-watchdog-us-east-1.
+// spec: §25.17 — X-Lenny-Agent-Name: prod-watchdog-us-east-1.
 func callerAgentName(r *http.Request) string {
 	return correlation.From(r.Context()).AgentName
 }

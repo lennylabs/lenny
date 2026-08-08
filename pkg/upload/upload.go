@@ -119,7 +119,7 @@ const (
 	ReasonZipBomb   Reason = "zip_bomb"
 	ReasonSizeLimit Reason = "size_limit"
 	// ReasonPathTraversal is a §16.1 metric label retained for source
-	// compatibility only. The client-visible §15.1 line 1093 sub-code
+	// compatibility only. The client-visible §15.1 sub-code
 	// for a `..`/absolute/zip-slip rejection is ReasonPathEscapesRoot;
 	// ValidateEntry returns that. F-13.4.9.
 	ReasonPathTraversal         Reason = "path_traversal"
@@ -168,8 +168,7 @@ func ValidateEntry(e Entry, allow RuntimeAllow) error {
 	}
 
 	// spec: §7.4 zip-slip — "Paths containing `..` components or absolute
-	// paths are rejected ... details.reason = path_escapes_root"; §15.1
-	// line 1093 lists path_escapes_root (not path_traversal) as the
+	// paths are rejected ... details.reason = path_escapes_root"; §15.1 lists path_escapes_root (not path_traversal) as the
 	// client-visible UPLOAD_ARCHIVE_LIMIT_EXCEEDED sub-code for these.
 	// path_traversal survives only as a §16.1 metric label retained for
 	// source compatibility. F-13.4.9.
@@ -223,7 +222,7 @@ func ValidateSymlinkTarget(linkPath, target, workspaceRoot string) error {
 	// POSIX paths (Lenny agent pods are Linux-only, §13.4). Reject a root
 	// that is not already a clean absolute slash path so the slash-based
 	// containment test below cannot silently misbehave on a relative root
-	// or an OS-native root such as `C:\workspace`. spec: §13.4 line 665.
+	// or an OS-native root such as `C:\workspace`. spec: §13.4.
 	if !isCleanAbsSlashPath(workspaceRoot) {
 		return &ValidationError{Reason: ReasonPathEscapesRoot, Path: linkPath, Detail: fmt.Sprintf("workspace root %q is not a clean absolute path", workspaceRoot)}
 	}
@@ -269,7 +268,7 @@ func ValidateArchive(a Archive) error {
 	// remainder, so a true ratio just above the boundary (for example
 	// 100.5:1) would round down to 100 and be admitted. Both operands are
 	// bounded by the size ceilings rejected above, so the product cannot
-	// overflow int64. spec: §13.4 line 659.
+	// overflow int64. spec: §13.4.
 	if a.CompressedBytes > 0 && a.DecompressedBytes > MaxDecompressionRatio*a.CompressedBytes {
 		return &ValidationError{Reason: ReasonMaxDecompressionRatio, Detail: fmt.Sprintf("decompression ratio exceeds maximum %d:1", MaxDecompressionRatio)}
 	}
@@ -291,7 +290,7 @@ func pathDepth(p string) int {
 // form (no ".", "..", duplicate, or trailing slashes). The §13.4 symlink-
 // containment check joins and prefix-matches against this root using the
 // slash-based path package, so a root not in this form would make the
-// containment test silently wrong. spec: §13.4 line 665.
+// containment test silently wrong. spec: §13.4.
 func isCleanAbsSlashPath(p string) bool {
 	if p == "" || !strings.HasPrefix(p, "/") {
 		return false

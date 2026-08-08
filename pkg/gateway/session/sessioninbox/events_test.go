@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §15.4.1 lines 1760-1782 — the message_expired envelope carries
+// spec: §15.4.1 — the message_expired envelope carries
 // schemaVersion, type, messageId, targetSessionId, reason, expiredAt.
 func TestNewMessageExpiredEvent_Schema_spec_15_4_1(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 34, 56, 0, time.UTC)
@@ -32,7 +32,7 @@ func TestNewMessageExpiredEvent_Schema_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 284 — the inbox_cleared event carries type, reason,
+// spec: §7.2 — the inbox_cleared event carries type, reason,
 // clearedAt, sessionId, messagesPreservedInDLQ.
 func TestNewInboxClearedEvent_Schema_spec_7_2_284(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)

@@ -19,7 +19,7 @@ import (
 // recordStartupDuration in pkg/gateway/sessionserver/start.go it is
 // PodClaim + CredentialAssignment + AgentSessionStart and excludes
 // workspace materialization and setup commands, so its P95 is the
-// gate-canonical 2s/5s SLO envelope (spec §6.3 line 348). The benchmark
+// gate-canonical 2s/5s SLO envelope (spec §6.3). The benchmark
 // reads it from the gateway /metrics endpoint rather than timing the
 // client request, whose envelope is broader.
 const startupDurationMetric = "lenny_session_startup_duration_seconds"

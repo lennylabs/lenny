@@ -420,8 +420,7 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 
 // expectedDegradationLevel maps a §25.3 aggregate health status to the
 // §25.2 degradation-envelope level the report must carry alongside it:
-// healthy→healthy, degraded→degraded, unhealthy→failed. spec: §25.2
-// lines 210, 233.
+// healthy→healthy, degraded→degraded, unhealthy→failed. spec: §25.2.
 func expectedDegradationLevel(status string) string {
 	switch status {
 	case "degraded":
@@ -442,9 +441,7 @@ func expectedDegradationLevel(status string) string {
 // rules), and its level is the §25.2 mapping of the report's overall
 // status. This pins the response-level envelope an agent reads against
 // the live JSON during a real store outage, which unit tests exercise
-// only in process. spec: §25.2 line 224 (thresholdSource is used for
-// health responses); §25.3 line 529 (health Degradation); §25.13 line
-// 4851 (compiled-in-defaults on the in-process fallback view).
+// only in process. spec: §25.2; §25.3; §25.13.
 func assertDegradationEnvelope(t *testing.T, report healthReport, when string) {
 	t.Helper()
 	if report.Degradation == nil {

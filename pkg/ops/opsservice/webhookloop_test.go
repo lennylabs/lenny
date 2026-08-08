@@ -343,7 +343,7 @@ func (g genSubs) Current(subID string, generation int64) bool {
 	return ok && live == generation
 }
 
-// TestWebhookWorkerObservesDeliveryMetrics is the §25.5 lines 2790-2791
+// TestWebhookWorkerObservesDeliveryMetrics is the §25.5
 // contract: the worker reports a delivered status and a measured latency
 // to the metrics observer for a successful delivery, and a failed status
 // when the budget is exhausted.
@@ -382,7 +382,7 @@ func TestWebhookWorkerObservesDeliveryMetrics_spec_25_5_2790(t *testing.T) {
 }
 
 // TestWebhookWorkerMetricsFailedStatus confirms an exhausted delivery is
-// reported with the failed status. spec: §25.5 line 2790.
+// reported with the failed status. spec: §25.5.
 func TestWebhookWorkerMetricsFailedStatus_spec_25_5_2790(t *testing.T) {
 	sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 500}}}
 	met := &recordingMetrics{}
@@ -402,7 +402,7 @@ func TestWebhookWorkerMetricsFailedStatus_spec_25_5_2790(t *testing.T) {
 	}
 }
 
-// TestWebhookWorkerSkipsStaleGeneration is the §25.5 line 2751 contract:
+// TestWebhookWorkerSkipsStaleGeneration is the §25.5 contract:
 // a subscription whose generation no longer matches the cache (deleted
 // or updated since the tick snapshot) is not delivered to.
 func TestWebhookWorkerSkipsStaleGeneration_spec_25_5_2751(t *testing.T) {

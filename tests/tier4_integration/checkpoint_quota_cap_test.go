@@ -14,7 +14,7 @@
 // bound degrades from zero to the outstanding grant window
 // (grant_window × chunk_size_bytes) rather than to unbounded.
 //
-// spec: §11.2 (the quota cap is a gateway observation), §10.1 line 139
+// spec: §11.2 (the quota cap is a gateway observation), §10.1
 // (fixed-size chunk clamp), §13.2 (residual-exposure bound).
 
 package tier4_integration_test
@@ -107,7 +107,7 @@ func TestCheckpointRefusesToSignPastReservation(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 139 / §13.2 — a ChunkReady whose declared length
+// spec: §10.1 / §13.2 — a ChunkReady whose declared length
 // exceeds the gateway-chosen chunk_size_bytes gets no capability, so the
 // overage a compromised pod can write is bounded by the grant window times
 // the gateway's own chunk size rather than by a pod self-report.
@@ -139,7 +139,7 @@ func TestCheckpointRejectsOverChunkSizeDeclaration(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant, no confirm)", rec.ChunkCount)
 	}
-	// spec: §10.1 line 132 — the zero-chunk abort soft-deletes the row in the
+	// spec: §10.1 — the zero-chunk abort soft-deletes the row in the
 	// finalising transaction, so no empty partial manifest is left active for
 	// the resume path or the §12.5 backstop to reclaim.
 	if rec.DeletedAt.IsZero() {

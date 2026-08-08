@@ -40,7 +40,7 @@ func kubernetesService(clusterIP string) client.Object {
 	}
 }
 
-// spec: §13.1 lines 6-8 — Run wires the pod-security-baseline check; a
+// spec: §13.1 — Run wires the pod-security-baseline check; a
 // release-namespace Lenny-managed Deployment that sets no securityContext
 // fails the install. F-13.1.12.
 func TestRunFailsOnPodSecurityBaselineViolation(t *testing.T) {

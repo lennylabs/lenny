@@ -113,7 +113,7 @@ func (r *materializeRespondingRuntime) Output(context.Context, string) (<-chan [
 func (r *materializeRespondingRuntime) Interrupt(context.Context, string, bool) error { return nil }
 func (r *materializeRespondingRuntime) Close(context.Context, string) error           { return nil }
 
-// materializeRaceAssigner fails every AssignProto, modelling the §8.3 line 470
+// materializeRaceAssigner fails every AssignProto, modelling the §8.3
 // post-pod-claim credential-assignment race: the pre-claim resolution found the
 // pool yet the lease mint fails in the assignment window after the warm pod is
 // claimed, so the engine must release the pod and surface the assignment-race
@@ -446,7 +446,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 	if row.PodAssignment == "" {
 		t.Error("child row has no PodAssignment; the materialization claimed no warm pod")
 	}
-	// spec: §8.3 lines 472, 488 — the inherit hop threads the parent as the
+	// spec: §8.3 — the inherit hop threads the parent as the
 	// child's credential origin, so the inherit resolution (not the
 	// independent self-origin mint) ran through claim-and-start. An
 	// independent child would carry its own id here.
@@ -455,8 +455,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 			row.CredentialOriginSessionID)
 	}
 	// The credential lease was assigned to the child during the launch,
-	// constrained to the origin∩child provider intersection (spec/08 §8.3
-	// line 470): the parent runtime and the child runtime both support
+	// constrained to the origin∩child provider intersection (spec/08 §8.3): the parent runtime and the child runtime both support
 	// anthropic_direct, so the inherit child draws from poolAnthropic.
 	if pools := assigner.assignedPools(); len(pools) != 1 || pools[0] != poolAnthropic {
 		t.Errorf("assigned pools = %v, want [%s] (the inherit child drew its lease from the origin∩child pool at materialization)", pools, poolAnthropic)

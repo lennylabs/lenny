@@ -49,7 +49,7 @@ func newIntrospectionServer(t *testing.T, body map[string]any) (*httptest.Server
 	return srv, &calls, &lastAuth
 }
 
-// spec: §10.6 line 661 — a tenant with introspection off keeps the JWT
+// spec: §10.6 — a tenant with introspection off keeps the JWT
 // groups: the Verifier reports enabled=false and never calls the endpoint.
 func TestIntrospectGroupsDisabledSkipsCall_spec_10_6(t *testing.T) {
 	srv, calls, _ := newIntrospectionServer(t, map[string]any{"active": true, "groups": []string{"x"}})
@@ -66,7 +66,7 @@ func TestIntrospectGroupsDisabledSkipsCall_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — an enabled tenant gets the provider's real-time
+// spec: §10.6 — an enabled tenant gets the provider's real-time
 // group set, replacing the JWT claim, and the basic-auth credentials are
 // sent.
 func TestIntrospectGroupsEnabledReturnsProviderGroups_spec_10_6(t *testing.T) {
@@ -98,7 +98,7 @@ func TestIntrospectGroupsEnabledReturnsProviderGroups_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — the cache bounds the latency cost: a second call
+// spec: §10.6 — the cache bounds the latency cost: a second call
 // for the same (tenant, token) inside the TTL reuses the result without a
 // second round-trip.
 func TestIntrospectGroupsCachesWithinTTL_spec_10_6(t *testing.T) {
@@ -127,7 +127,7 @@ func TestIntrospectGroupsCachesWithinTTL_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — an inactive-token verdict surfaces active=false
+// spec: §10.6 — an inactive-token verdict surfaces active=false
 // (the middleware rejects). No group set is returned.
 func TestIntrospectGroupsInactiveToken_spec_10_6(t *testing.T) {
 	srv, _, _ := newIntrospectionServer(t, map[string]any{"active": false})
@@ -147,7 +147,7 @@ func TestIntrospectGroupsInactiveToken_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — a transport failure surfaces as an error so the
+// spec: §10.6 — a transport failure surfaces as an error so the
 // middleware fails closed rather than honoring the JWT groups.
 func TestIntrospectGroupsEndpointUnreachable_spec_10_6(t *testing.T) {
 	v := New(staticSource{cfg: Config{Enabled: true, Endpoint: "https://127.0.0.1:1/introspect"}})

@@ -29,7 +29,7 @@ func (f *fakeRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle,
 	return []storerouter.ShardHandle{{Pool: f.audit}}, nil
 }
 
-// spec: §12.3 line 79 — the synchronous audit write path prefers the
+// spec: §12.3 — the synchronous audit write path prefers the
 // dedicated sync write pool when one is wired, and otherwise falls back
 // to the router's audit shard.
 func TestWriteShard_PrefersSyncPool_spec_12_3(t *testing.T) {
@@ -71,7 +71,7 @@ type fakeEnqueuer struct {
 
 func (f *fakeEnqueuer) Enqueue(it auditbatch.Item) { f.items = append(f.items, it) }
 
-// spec: §12.3 line 81 — when batching is enabled, the non-PII T2
+// spec: §12.3 — when batching is enabled, the non-PII T2
 // cross_tenant_read receipt is enqueued onto the batch buffer instead
 // of a synchronous write (which would require the pool).
 func TestEmitCrossTenantRead_RoutesToBatchBuffer_spec_12_3(t *testing.T) {

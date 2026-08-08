@@ -12,8 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )
 
-// EventStreamService is the canonical §25.5 event-stream service
-// contract — the surface the spec at lines 2574–2585 names as the
+// EventStreamService is the canonical §25.5 event-stream service contract — the surface the spec at names as the
 // unifying interface for the operational-event delivery surface. Every
 // method is implemented, split across two packages: this package's
 // Service covers StreamEvents and ListEvents against the Redis
@@ -24,7 +23,7 @@ import (
 // the HTTP routes are the contract today, and the single-implementor
 // aggregator is deferred to a follow-on change. The declaration fixes the signature so test
 // doubles and alternative event sources substitute without divergence.
-// spec: §25.5 lines 2574-2585.
+// spec: §25.5.
 type EventStreamService interface {
 	StreamEvents(ctx context.Context, w http.ResponseWriter, filter EventFilter) error
 	ListEvents(ctx context.Context, filter EventFilter, cursor string, limit int) (*EventPage, error)
@@ -39,25 +38,24 @@ type EventStreamService interface {
 // EventFilter is the canonical §25.5 / §25.3 filter for stream and
 // polling queries. Aliased to the gateway-side EventFilter so the
 // stream surface uses one filter shape across the gateway buffer and
-// the lenny-ops buffer. spec: §25.5 line 2693.
+// the lenny-ops buffer. spec: §25.5.
 type EventFilter = gwevents.EventFilter
 
 // Subscription is the canonical §25.5 webhook subscription record.
 // Aliased to the eventsubscription.Subscription used by the v1 CRUD
 // surface so substitutable implementations share the wire shape.
-// spec: §25.5 lines 2613-2647.
+// spec: §25.5.
 type Subscription = eventsubscription.Subscription
 
 // SubscriptionRequest is the canonical §25.5 webhook-subscription
 // create body. Aliased to the eventsubscription.CreateRequest used by
-// the v1 CRUD surface. spec: §25.5 line 2579.
+// the v1 CRUD surface. spec: §25.5.
 type SubscriptionRequest = eventsubscription.CreateRequest
 
 // SubscriptionUpdate is the canonical §25.5 webhook-subscription
 // update body — every field is optional so callers may patch the
 // callback URL, the type/severity filters, the description, or the
-// active flag without rewriting unrelated fields. spec: §25.5 line
-// 2582; field-level semantics §25.5 lines 2613-2647.
+// active flag without rewriting unrelated fields. spec: §25.5; field-level semantics §25.5.
 type SubscriptionUpdate struct {
 	CallbackURL *string   `json:"callbackUrl,omitempty"`
 	Types       *[]string `json:"types,omitempty"`
@@ -74,7 +72,7 @@ type SubscriptionUpdate struct {
 // rather than globally ordered, so agents deduplicate across sources on the
 // canonical eventKey and resume on the CloudEvents id (Event.ID) and the opaque
 // pagination cursor. Pagination follows the §25.2 canonical envelope. spec:
-// §25.5 lines 2687-2699; §25.3 (monotonic per-source id for cursor-based
+// §25.5; §25.3 (monotonic per-source id for cursor-based
 // polling).
 type EventPage struct {
 	Items      []gwevents.BufferedEvent `json:"items"`
@@ -82,13 +80,13 @@ type EventPage struct {
 	// Degradation is the §25.5 degradation envelope, attached when the
 	// read surface is serving from a fall-back source (the gateway buffer
 	// during a Redis outage). Omitted when serving from the primary
-	// source. spec: §25.5 lines 2768-2780.
+	// source. spec: §25.5.
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
 // Pagination is the §25.2 canonical pagination envelope shared by
 // the §25.5 polling and ListDeliveries responses. spec: §25.2
-// canonical pagination envelope, restated §25.5 lines 2687-2699.
+// canonical pagination envelope, restated §25.5.
 type Pagination struct {
 	Cursor     string `json:"cursor,omitempty"`
 	HasMore    bool   `json:"hasMore"`
@@ -96,18 +94,17 @@ type Pagination struct {
 	HeadCursor string `json:"headCursor,omitempty"`
 	// GapDetected reports the encoded source cannot be honoured (the
 	// stream evicted past the cursor, or the cursor was minted at a
-	// different actualSource this buffer cannot translate). spec: §25.2
-	// lines 261-271; §25.5 lines 2666-2675.
+	// different actualSource this buffer cannot translate). spec: §25.2; §25.5.
 	GapDetected bool `json:"gapDetected,omitempty"`
 	// GapReason explains a detected gap in human-readable form. spec:
-	// §25.2 line 269.
+	// §25.2.
 	GapReason string `json:"gapReason,omitempty"`
 	// OldestAvailableCursor pairs with GapDetected so a poller can
-	// resume from the oldest retained event. spec: §25.5 line 2698.
+	// resume from the oldest retained event. spec: §25.5.
 	OldestAvailableCursor string `json:"oldestAvailableCursor,omitempty"`
 	// SuggestedAction is the §25.2 recovery hint ("resync") emitted on a
 	// gap so the agent re-reads platform state before assuming
-	// continuity. spec: §25.2 line 270.
+	// continuity. spec: §25.2.
 	SuggestedAction string `json:"suggestedAction,omitempty"`
 }
 
@@ -119,8 +116,7 @@ type DeliveryPage struct {
 	Pagination Pagination `json:"pagination"`
 }
 
-// Delivery is one row from `ops_event_deliveries`. spec: §25.5 lines
-// 2649-2664.
+// Delivery is one row from `ops_event_deliveries`. spec: §25.5.
 type Delivery struct {
 	ID             string    `json:"id"`
 	SubscriptionID string    `json:"subscriptionId"`

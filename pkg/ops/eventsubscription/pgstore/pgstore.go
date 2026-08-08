@@ -10,7 +10,7 @@
 // multi-tenanted at this boundary), so the store does not run inside
 // pgtenant.InTx; the tables have no RLS policy. The subscription's
 // own tenant_filter column carries the §25.5 tenant-isolation scope.
-// spec: §25.5 lines 2613-2664.
+// spec: §25.5.
 package pgstore
 
 import (
@@ -304,11 +304,10 @@ func (s *Store) deliveriesGap(ctx context.Context, subID string) ([]eventsubscri
 }
 
 // DeleteExpired removes up to limit delivery rows whose expires_at is at
-// or before before, returning the number deleted. The §25.5 retention
-// cron calls it in a loop with limit=10000 (line 2661) until a sweep
+// or before before, returning the number deleted. The §25.5 retention cron calls it in a loop with limit=10000 until a sweep
 // deletes fewer than limit, so a single statement never holds a long
 // lock. The ctid sub-select bounds the DELETE to limit rows without a
-// table-wide scan. spec: §25.5 lines 2649-2664.
+// table-wide scan. spec: §25.5.
 func (s *Store) DeleteExpired(ctx context.Context, before time.Time, limit int) (int, error) {
 	if limit <= 0 {
 		limit = 10000

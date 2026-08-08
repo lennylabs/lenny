@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// ChildTokenAudience is the §8.2 line 59 fixed `audience` the child
+// ChildTokenAudience is the §8.2 fixed `audience` the child
 // session token is minted for: the internal gateway. The RFC 8693
 // exchange sets the issued token's audience to this single value.
 const ChildTokenAudience = "lenny-gateway"
@@ -18,7 +18,7 @@ const ChildTokenAudience = "lenny-gateway"
 // minted `exp` is capped at min(parent.exp, now + this).
 const DefaultChildTokenTTL = time.Hour
 
-// ParentToken is the §8.2 line 59 RFC 8693 `actor_token` material the
+// ParentToken is the §8.2 RFC 8693 `actor_token` material the
 // delegating pod presents on the `lenny/delegate_task` call: the parent
 // session token's claims. The §8.5 handler builds it from the
 // authenticated principal (the parent pod's session-capability token).
@@ -29,7 +29,7 @@ const DefaultChildTokenTTL = time.Hour
 // (the in-process minimal gateway and tests that authenticate no
 // caller).
 //
-// spec: §8.2 lines 59-61.
+// spec: §8.2.
 type ParentToken struct {
 	// Subject is the parent token `sub`: the authenticated user. It is
 	// the RFC 8693 `subject_token` identity the child inherits.
@@ -100,7 +100,7 @@ type ChildToken struct {
 	Act []ActClaim
 }
 
-// ChildTokenMinter performs the §8.2 line 59 internal RFC 8693
+// ChildTokenMinter performs the §8.2 internal RFC 8693
 // token-exchange that mints a delegated child's session token. Per §8.2
 // "the exchange is an in-process Token Service call"; implementations
 // narrow scope, build the `act` chain, fix `delegation_depth` at
@@ -108,25 +108,25 @@ type ChildToken struct {
 // §13.3 revocation cache inside the audit-locked minting transaction.
 //
 // An implementation returns ErrParentRevoked when the actor token
-// resolves to a revoked `jti` (§8.2 line 61) and ErrAuditContention when
+// resolves to a revoked `jti` (§8.2) and ErrAuditContention when
 // the per-tenant audit advisory lock times out during the exchange
-// (§8.2 line 63). *childtoken.Minter implements it. A nil minter on the
+// (§8.2). *childtoken.Minter implements it. A nil minter on the
 // Service skips the exchange leg.
 //
-// spec: §8.2 lines 59-63; §13.3 credential flow.
+// spec: §8.2; §13.3 credential flow.
 type ChildTokenMinter interface {
 	MintChildToken(ctx context.Context, p ChildTokenParams) (ChildToken, error)
 }
 
 var (
-	// ErrParentRevoked — the §8.2 line 61 actor-token freshness check
+	// ErrParentRevoked — the §8.2 actor-token freshness check
 	// found the parent token's `jti` revoked between the
 	// `lenny/delegate_task` call and the child-token exchange. The
 	// exchange fails closed (no child token, no child pod) and the §8.5
 	// handler surfaces DELEGATION_PARENT_REVOKED.
 	ErrParentRevoked = errors.New("delegation: actor_token_revoked: parent token revoked mid-flight (§8.2)")
 
-	// ErrAuditContention — the §8.2 line 63 per-tenant audit advisory
+	// ErrAuditContention — the §8.2 per-tenant audit advisory
 	// lock timed out during the child-token exchange after the internal
 	// retries. The §8.5 handler surfaces the retryable
 	// DELEGATION_AUDIT_CONTENTION; the caller retries the entire

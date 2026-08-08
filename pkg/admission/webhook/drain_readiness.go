@@ -75,7 +75,7 @@ func (p HTTPDrainProbe) Probe(ctx context.Context) dr.MinIOStatus {
 // metric is not wired (the lenny-webhook binary is configured at
 // startup; the field is set to a no-op sink in the bootstrap).
 //
-// spec: §12.5 line 291.
+// spec: §12.5.
 type DrainReadinessMetricsSink interface {
 	IncDrainReadinessCheck(outcome string)
 }
@@ -87,7 +87,7 @@ type DrainReadinessMetricsSink interface {
 // response stalls until the audit row commits — fail-closed audit
 // semantics per §11.7. A nil sink falls back to a log line.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 type DrainReadinessAuditSink interface {
 	RecordForcedDrain(ctx context.Context, evt DrainForcedEvent) error
 }
@@ -96,7 +96,7 @@ type DrainReadinessAuditSink interface {
 // override admission. It carries the operator-resolvable tuple the
 // runbook needs to attribute the override.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 type DrainForcedEvent struct {
 	// PodNamespace is the namespace of the evicted pod.
 	PodNamespace string
@@ -117,7 +117,7 @@ type DrainForcedEvent struct {
 // For each eviction the decider resolves the evicted pod's node and
 // reads the §12.5 drain-force override, queries the gateway
 // drain-readiness endpoint, and applies drain_readiness.Decide. Every
-// decision bumps the §12.5 line 291 counter through metrics (when
+// decision bumps the §12.5 counter through metrics (when
 // non-nil). On a forced admission audit emits the §16.7
 // `node.drain.forced` event (when non-nil); a synchronous audit
 // failure flips the decision to a deny so the override never escapes
@@ -154,7 +154,7 @@ func DrainReadiness(reader client.Reader, probe DrainProbe, metrics DrainReadine
 	}
 }
 
-// decisionOutcome maps a Decision onto the §12.5 line 291 outcome
+// decisionOutcome maps a Decision onto the §12.5 outcome
 // label vocabulary (allowed | blocked | forced).
 func decisionOutcome(d dr.Decision) string {
 	switch {
@@ -172,7 +172,7 @@ func decisionOutcome(d dr.Decision) string {
 // endpoint. The webhook uses this sink to commit the drain-force
 // override into the per-tenant §11.7 hash chain.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 type HTTPForcedDrainAuditSink struct {
 	// URL is the gateway POST /internal/audit/node-drain-forced
 	// endpoint.

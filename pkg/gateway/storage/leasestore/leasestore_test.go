@@ -23,7 +23,7 @@ func newStore(t *testing.T) *leasestore.Store {
 	return leasestore.New(cl)
 }
 
-// spec: §12.1 line 5 — the LeaseStore role interface exposes the
+// spec: §12.1 — the LeaseStore role interface exposes the
 // mandatory erasure pair so a substitute backend that omits either
 // method cannot compile in. The var _ check in the package enforces
 // this; this test pins it as an explicit, named assertion.
@@ -32,7 +32,7 @@ func TestStoreSatisfiesLeaseStore_spec_12_1(t *testing.T) {
 	var _ leasestore.LeaseStore = (*leasestore.Store)(nil)
 }
 
-// spec: §12.1 line 5 / §12.8 step 1 — DeleteByUser is a no-op for the
+// spec: §12.1 / §12.8 step 1 — DeleteByUser is a no-op for the
 // session-coordination lease (leases are session-keyed and TTL-bound),
 // returning (0, nil).
 func TestDeleteByUserNoOp_spec_12_8_step1(t *testing.T) {
@@ -52,7 +52,7 @@ func TestDeleteByUserNoOp_spec_12_8_step1(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 753 — empty arguments must never be treated as
+// spec: §12.8 — empty arguments must never be treated as
 // "delete everything"; the erasure primitives reject them.
 func TestErasureRejectsEmptyScope_spec_12_8_line753(t *testing.T) {
 	t.Parallel()
@@ -69,7 +69,7 @@ func TestErasureRejectsEmptyScope_spec_12_8_line753(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // session lease under the tenant prefix and returns the count, leaving
 // other tenants untouched. A second call is idempotent.
 func TestDeleteByTenantScopedAndIdempotent_spec_12_8_phase4(t *testing.T) {

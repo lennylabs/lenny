@@ -28,7 +28,7 @@ func (r *Router) handleRecommendations(w http.ResponseWriter, req *http.Request)
 	}
 	resp, err := r.recommendations.GetRecommendations(req.Context(), category)
 	if err != nil {
-		// spec: §25.3 lines 622-625 — map the service's typed errors to
+		// spec: §25.3 — map the service's typed errors to
 		// the §25.3 error-code table rather than a flat INTERNAL_ERROR.
 		switch {
 		case errors.Is(err, recommendations.ErrUnknownCategory):

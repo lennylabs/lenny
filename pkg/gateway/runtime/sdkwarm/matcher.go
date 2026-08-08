@@ -5,11 +5,11 @@
 // it decides whether the gateway must demote a pre-connected SDK-warm pod
 // to pod-warm before the workspace is materialized.
 //
-// spec: §6.1 lines 34-40 — "if the workspace plan includes files matching
+// spec: §6.1 — "if the workspace plan includes files matching
 // any of these glob patterns, the gateway sets requiresDemotion: true on
 // the ClaimOpts and the adapter calls the DemoteSDK RPC". Patterns follow
 // Go path.Match (per segment) extended with `**` (cross-segment), matched
-// case-sensitively against relative workspace paths (§5.1 line 24).
+// case-sensitively against relative workspace paths (§5.1).
 package sdkwarm
 
 import (
@@ -17,7 +17,7 @@ import (
 	"strings"
 )
 
-// DefaultBlockingPaths is the §5.1 line 24 / §6.1 line 34 default
+// DefaultBlockingPaths is the §5.1 / §6.1 default
 // sdkWarmBlockingPaths list applied when a preConnect runtime declares
 // none. It matches the project-config files that must be present at
 // session start and therefore cannot be served by a pre-connected SDK.
@@ -25,9 +25,9 @@ var DefaultBlockingPaths = []string{"CLAUDE.md", ".claude/*"}
 
 // RequiresDemotion reports whether any workspace path matches any blocking
 // pattern. When it returns true the gateway must call DemoteSDK before
-// materializing the workspace (§6.1 line 34); matchedPath / matchedPattern
+// materializing the workspace (§6.1); matchedPath / matchedPattern
 // name the first match for the audit/observability trail. An empty pattern
-// list (§6.1 line 38, "disables demotion-path checking entirely") never
+// list (§6.1, "disables demotion-path checking entirely") never
 // demotes.
 func RequiresDemotion(paths, patterns []string) (matchedPath, matchedPattern string, requires bool) {
 	for _, p := range paths {
@@ -58,7 +58,7 @@ func normalize(p string) string {
 	return p
 }
 
-// Match reports whether name matches pattern under the §5.1 line 24 glob
+// Match reports whether name matches pattern under the §5.1 glob
 // dialect: each `/`-delimited segment is matched with Go path.Match (so
 // `*`, `?`, and `[...]` stay within a single segment), and `**` matches
 // zero or more whole segments. Matching is case-sensitive.

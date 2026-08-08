@@ -59,7 +59,7 @@ func injectionFailClosedCause(err error) string {
 
 // transcriptSortField is the only sort key valid on the §15.1
 // transcript: entries are written in monotonic `seq` order and that is
-// the only meaningful ordering. spec: §15.1 lines 1228, 1236.
+// the only meaningful ordering. spec: §15.1.
 const transcriptSortField = "seq"
 
 // transcriptDefaultSort sorts by per-session monotonic sequence in
@@ -68,7 +68,7 @@ var transcriptDefaultSort = pagination.Sort{Field: transcriptSortField, Directio
 
 // handleTranscript implements GET /v1/sessions/{id}/transcript per
 // §15.1. Supports the canonical `{items, cursor, hasMore}` envelope
-// (spec §15.1 lines 1228-1253) with opaque cursors, [1, 200] limit
+// (spec §15.1) with opaque cursors, [1, 200] limit
 // clamping, and 24-hour cursor TTL. The legacy `?afterSeq=` parameter
 // is still honoured for backwards-compatible clients that have not
 // switched to opaque cursors yet — the cursor is the canonical form.
@@ -144,7 +144,7 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 // carries a §7.2 batch of `MessageEnvelope` payloads; the per-message
 // `delivery` and `inReplyTo` semantics live on the payload so a batch can
 // mix immediate and queued messages on the same call.
-// spec: §15.4 lines 1672-1721 (`MessageEnvelope`); F-7.2.14.
+// spec: §15.4; F-7.2.14.
 type MessageRequest struct {
 	// Messages is the §7.2 inbound message envelope batch. The
 	// gateway evaluates each one's `delivery`/`inReplyTo`
@@ -153,8 +153,7 @@ type MessageRequest struct {
 }
 
 // MessagePayload is one §15.4 MessageEnvelope on the request batch.
-// The wire field names mirror the spec verbatim. spec: §15.4 lines
-// 1672-1721.
+// The wire field names mirror the spec verbatim. spec: §15.4.
 type MessagePayload struct {
 	ID   string `json:"id,omitempty"`
 	Role string `json:"role,omitempty"`
@@ -172,17 +171,17 @@ type MessagePayload struct {
 	// request the gateway resolves directly (§7.2 path 1) instead of
 	// delivering the message to the executor. An inReplyTo that does
 	// not match a pending request falls through to executor delivery.
-	// spec: §7.2 line 317; §15.4 line 1786.
+	// spec: §7.2; §15.4.
 	InReplyTo string `json:"inReplyTo,omitempty"`
 
-	// Delivery is the §15.4 line 1715 closed enum controlling
+	// Delivery is the §15.4 closed enum controlling
 	// interrupt behaviour. Valid values: `queued` (default) or
 	// `immediate`. Any other value is rejected with
 	// `400 INVALID_DELIVERY_VALUE`. The minimal gateway returns the
 	// response synchronously regardless of the flag; the
 	// interrupt-and-deliver / resume-and-deliver paths land with the
 	// §7.2 inbox + DLQ machinery (F-7.2.4).
-	// spec: §15.4 lines 1715-1723.
+	// spec: §15.4.
 	Delivery string `json:"delivery,omitempty"`
 
 	// The §5.2 slotId is deliberately absent from the request body. slotId is
@@ -201,8 +200,7 @@ type MessagePayload struct {
 // expired / rate_limited / error paths land with the §7.2 inbox + DLQ
 // machinery (F-7.2.4).
 //
-// spec: §15.4 lines 1725-1737 (`delivery_receipt` schema); §7.2 line
-// 345; F-7.2.10.
+// spec: §15.4; §7.2; F-7.2.10.
 type MessageResponse struct {
 	// DeliveryReceipt is the §15.4 envelope clients consume to
 	// distinguish delivered from queued / dropped / expired /
@@ -221,7 +219,7 @@ type MessageResponse struct {
 //
 //  1. Looks up the session row.
 //  2. Validates the §15.1 precondition: any non-terminal state.
-//  3. Applies the §7.2 line 339 pre-running rejection: an external
+//  3. Applies the §7.2 pre-running rejection: an external
 //     client (REST) call against a `created` / `finalizing` / `ready`
 //     / `starting` session is rejected with `409 TARGET_NOT_READY`
 //     (F-7.2.15). Inter-session messages from `lenny/send_message`
@@ -257,8 +255,8 @@ type MessageResponse struct {
 // Production wires these as the gateway moves from in-memory to
 // Redis + Postgres backings.
 //
-// spec: §7.2 paths 1-7 (lines 313-331); §7.2 line 339 (Pre-running);
-// §15.4 lines 1715-1723 (`delivery` enum); §15.4 lines 1725-1737
+// spec: §7.2 paths 1-7; §7.2;
+// §15.4; §15.4
 // (`delivery_receipt`). F-7.2.14, F-7.2.15.
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if s.executor == nil {
@@ -266,7 +264,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 			"gateway has no executor wired", nil)
 		return
 	}
-	// spec: §16.3 line 342 — open the gateway-side `session.prompt` span on
+	// spec: §16.3 — open the gateway-side `session.prompt` span on
 	// the request context so the send_message delivery (executor.Send, the
 	// §4.8 PostAgentOutput chain, transcript + event publish) rides one
 	// trace. The pod-side `session.prompt` span stitches under it via the
@@ -295,11 +293,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadMessageTarget runs the §15.1 message-injection precondition gates:
-// the session lookup in the active tenant, the §15.1 line 818
-// tenant-suspend gate, the §15.1 precondition-table check, the §7.2 line
-// 339 pre-running TARGET_NOT_READY guard, and the §5.1 fail-closed
+// the session lookup in the active tenant, the §15.1
+// tenant-suspend gate, the §15.1 precondition-table check, the §7.2 pre-running TARGET_NOT_READY guard, and the §5.1 fail-closed
 // mid-session injection-support gate. It writes the §15.1 error envelope
-// and returns ok=false on any rejection. spec: §15.1, §7.2 line 339, §5.1.
+// and returns ok=false on any rejection. spec: §15.1, §7.2, §5.1.
 func (s *Server) loadMessageTarget(w http.ResponseWriter, r *http.Request, tenantID string) (sessionstore.Session, bool) {
 	id := r.PathValue("id")
 	row, err := s.store.Get(r.Context(), tenantID, id)
@@ -311,7 +308,7 @@ func (s *Server) loadMessageTarget(w http.ResponseWriter, r *http.Request, tenan
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return sessionstore.Session{}, false
 	}
-	// spec: §15.1 line 818 — message injection against a suspended tenant
+	// spec: §15.1 — message injection against a suspended tenant
 	// is rejected with TENANT_SUSPENDED. The session exists (checked
 	// above) before the suspension state leaks via this endpoint.
 	if !s.requireTenantNotSuspended(w, r, tenantID) {
@@ -325,7 +322,7 @@ func (s *Server) loadMessageTarget(w http.ResponseWriter, r *http.Request, tenan
 		return sessionstore.Session{}, false
 	}
 
-	// spec: §7.2 line 339 (Pre-running row) — external-client REST
+	// spec: §7.2 — external-client REST
 	// calls against `created` / `finalizing` / `ready` / `starting`
 	// MUST reject with TARGET_NOT_READY so the client retries after
 	// starting the session. Inter-session `lenny/send_message`
@@ -372,7 +369,7 @@ func (s *Server) requireInjectionSupported(w http.ResponseWriter, r *http.Reques
 	if s.runtimes == nil || row.RuntimeRef == "" {
 		return true
 	}
-	// §5.1 line 49: overlay the session tenant's capability override so
+	// §5.1: overlay the session tenant's capability override so
 	// a tenant that disabled injection.supported on this runtime has
 	// the injection gate enforce its narrowed value. The override-store
 	// read error now propagates from ResolveForTenant, so a transient
@@ -438,7 +435,7 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 		return MessageRequest{}, nil, nil, false
 	}
 
-	// spec: §15.4 lines 1715-1723 — `delivery` is a closed enum;
+	// spec: §15.4 — `delivery` is a closed enum;
 	// unknown values reject with 400 INVALID_DELIVERY_VALUE. The
 	// check runs before any side effect so the batch is admitted
 	// atomically. F-7.2.14.
@@ -451,11 +448,11 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 		}
 	}
 
-	// spec: §7.2 line 317 (path 1) — when a payload's `inReplyTo`
+	// spec: §7.2 — when a payload's `inReplyTo`
 	// matches an outstanding `lenny/request_input`, the gateway
 	// resolves the blocked tool call directly. No stdin/executor
 	// delivery for that payload. Path 1 wins over every other path
-	// per §7.2 line 313 "the first matching path wins". F-7.2.14.
+	// per §7.2. F-7.2.14.
 	deliverIdx := make([]int, 0, len(req.Messages))
 	for i, m := range req.Messages {
 		if m.InReplyTo != "" && s.inputWaits != nil {
@@ -508,7 +505,7 @@ type deliveryOutcome struct {
 // request; otherwise it returns the deliveryOutcome the receipt echoes.
 // spec: §7.2 paths 1-7, §4.8, §15.1, §15.2.1, §15.4.1. F-7.2.5, F-MS4.
 func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, span trace.Span, row sessionstore.Session, tenantID string, req MessageRequest, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
-	// spec: §7.2 paths 1-7 (lines 313-331) — select the delivery path
+	// spec: §7.2 paths 1-7 — select the delivery path
 	// for the non-reply messages. Path 1 (inReplyTo) was resolved
 	// above; "the first matching path wins". A synchronous in-process
 	// executor is `ready_for_input` by construction, so a `running`
@@ -545,7 +542,7 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 	case messagerouting.ActionDeliver:
 		o, err := s.executor.Send(r.Context(), row.ID, msgs)
 		if err != nil {
-			// spec: §16.3 line 342 / §16 error taxonomy — the executor
+			// spec: §16.3 / §16 error taxonomy — the executor
 			// (the pod) rejected the prompt; UPSTREAM marks it a
 			// downstream dependency failure on the `session.prompt`
 			// span.
@@ -563,7 +560,7 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		outcome.status = session.DeliveryStatusDelivered
 
 	case messagerouting.ActionResumeAndDeliver:
-		// spec: §7.2 path 6 pod-held branch (lines 326-327) — atomically
+		// spec: §7.2 path 6 pod-held branch — atomically
 		// resume the suspended session and deliver. resumeHeldPod
 		// transitions suspended → running reusing any already-bound pod,
 		// guarding a still-suspended row inside its store.Update mutator so
@@ -679,7 +676,7 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		return deliveryOutcome{}, false
 
 	case messagerouting.ActionRejectNotReady:
-		// spec: §7.2 line 339 pre-running external-client row. (The
+		// spec: §7.2 pre-running external-client row. (The
 		// early pre-running guard above already covers this for REST;
 		// retained so the classifier's contract holds on every path.)
 		s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
@@ -700,7 +697,7 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 // ok=false so the caller ends the request. This is the shared response-recording
 // body reused by the direct-delivery (ActionDeliver) and the §7.2 path-6
 // resume-and-deliver (ActionResumeAndDeliver) cases so the two do not duplicate
-// it. spec: §4.8 line 1054, §15.1, §15.4.1, §6.3 line 356, §7.2 path 6.
+// it. spec: §4.8, §15.1, §15.4.1, §6.3, §7.2 path 6.
 func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session, msgs []executor.Message, o executor.Response) ([]executor.MessagePart, bool) {
 	out := o.Parts
 	// respAnnotations carries the §15.4.1 envelope-level degradation
@@ -715,7 +712,7 @@ func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request,
 	// parts before delivering the response to the client. A
 	// REJECT blocks delivery (and writes the §16.7 audit row); a
 	// MODIFY rewrites the parts that are transcribed, published,
-	// and returned. spec: §4.8 line 1054.
+	// and returned. spec: §4.8.
 	if s.interceptors != nil && len(out) > 0 {
 		modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
 		if rejected {
@@ -756,13 +753,13 @@ func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request,
 		s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
 			"type": p.Type, "text": p.Text, "ref": p.Ref,
 		})
-		// spec: §6.3 line 356, §16.1 line 15 — the first
+		// spec: §6.3, §16.1 — the first
 		// agent-streamed `response` event observed on this session
 		// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
 		// only the first event per session triggers the histogram.
 		s.recordTTFTOnce(row, "response")
 	}
-	// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
+	// spec: §15.4.1 — when the gateway forward-read
 	// a response part it did not fully understand (a schemaVersion
 	// ahead of its known max, or an unresolvable ref), it surfaces
 	// the degradation annotation so the subscriber is informed the
@@ -777,13 +774,12 @@ func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request,
 // `messageId` defaults to the first inbound message's sender-supplied id
 // (gateway-assigned ids carry the `msg_` prefix), the status is the §7.2
 // path outcome, and the timestamp/queueDepth are stamped per status. The
-// executor response parts ride alongside on the delivered path. spec: §15.4
-// lines 1725-1737/1784. F-7.2.5, F-7.2.10, F-MS4.
+// executor response parts ride alongside on the delivered path. spec: §15.4. F-7.2.5, F-7.2.10, F-MS4.
 func (s *Server) writeDeliveryReceipt(w http.ResponseWriter, req MessageRequest, outcome deliveryOutcome) {
-	// spec: §15.4 lines 1725-1737 — every send_message call returns a
+	// spec: §15.4 — every send_message call returns a
 	// synchronous `delivery_receipt`. `messageId` defaults to the
 	// first inbound message's sender-supplied id; gateway-assigned
-	// ids carry the `msg_` prefix per §15.4 line 1784. The status is
+	// ids carry the `msg_` prefix per §15.4. The status is
 	// the §7.2 path outcome computed above (delivered / queued /
 	// dropped / error). An inbox-enqueue failure carries
 	// status:"error"/reason:"inbox_unavailable" per §15.2.1 parity
@@ -833,7 +829,7 @@ const (
 // Each payload is serialized as the §15.4 MessageEnvelope so the
 // dequeue path on resume re-delivers the original wire form.
 //
-// spec: §7.2 lines 319-331 (inbox/DLQ buffering, queued/dropped receipts).
+// spec: §7.2.
 func (s *Server) bufferIncomingMessages(ctx context.Context, row sessionstore.Session, all []MessagePayload, idx []int, target bufferTarget, ttl time.Duration) (dropped bool, depth int, err error) {
 	for _, i := range idx {
 		m := all[i]
@@ -870,7 +866,7 @@ func (s *Server) bufferIncomingMessages(ctx context.Context, row sessionstore.Se
 	return dropped, depth, nil
 }
 
-// isValidDelivery reports whether v is a §15.4 line 1715
+// isValidDelivery reports whether v is a §15.4
 // `MessageEnvelope.delivery` enum value. The empty string is the
 // `absent → "queued"` default per the same table.
 func isValidDelivery(v string) bool {
@@ -882,8 +878,7 @@ func isValidDelivery(v string) bool {
 }
 
 // isPreRunningState reports whether s names a pre-running session
-// state per §7.2 line 339 (the pre-running row in the routing-by-
-// target-state table). External-client REST calls against any of
+// state per §7.2. External-client REST calls against any of
 // these states reject with TARGET_NOT_READY. F-7.2.15.
 func isPreRunningState(s session.State) bool {
 	switch s {

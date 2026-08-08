@@ -4,9 +4,8 @@
 
 // Component tests for the §10.1 checkpoint_manifest table (migration
 // 0178): the §12.3 tenant-isolation apparatus (tenant-guard trigger,
-// FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 lines
-// 143-151 partial_manifest_active_uniq at-most-one-active-partial
-// invariant scoped to (session_id, slot_id), and the §10.1 line 141
+// FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 partial_manifest_active_uniq at-most-one-active-partial
+// invariant scoped to (session_id, slot_id), and the §10.1
 // intent-row defaults (manifest_reason = 'in_progress',
 // baseline_full_checkpoint_bytes NULL) the §7.2 resume path relies on.
 package rls_test
@@ -154,8 +153,7 @@ func TestCheckpointManifestPreventsCrossTenantRead(t *testing.T) {
 //
 //	at-most-one active partial manifest per (session_id, slot_id).
 //	The migration 0150 index scoped on (tenant_id, session_id) admitted
-//	a second active partial row for a distinct slot's key; the §10.1
-//	line 147 index scopes on (session_id, slot_id) over active partial
+//	a second active partial row for a distinct slot's key; the §10.1 index scopes on (session_id, slot_id) over active partial
 //	rows so a second active partial row for the same slot is rejected.
 func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 	t.Parallel()
@@ -192,10 +190,9 @@ func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 // diagnosis: the intent row wrote a non-'in_progress' manifest_reason or
 //
 //	a non-NULL baseline_full_checkpoint_bytes for a session with no
-//	prior full checkpoint. §10.1 line 141 requires the intent row to
+//	prior full checkpoint. §10.1 requires the intent row to
 //	carry manifest_reason = 'in_progress' until a terminal arm
-//	overwrites it, and baseline_full_checkpoint_bytes NULL so the §10.1
-//	line 155 IS NULL branch and the §7.2 optional-fraction rule keep the
+//	overwrites it, and baseline_full_checkpoint_bytes NULL so the §10.1 IS NULL branch and the §7.2 optional-fraction rule keep the
 //	resume path from dividing by zero.
 func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 	t.Parallel()

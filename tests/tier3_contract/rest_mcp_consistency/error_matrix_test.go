@@ -3,7 +3,7 @@
 //go:build contract
 
 // §15.2.1 `RegisterAdapterUnderTest` test matrix — error classes.
-// The spec (§15.2.1 lines 1408-1413) requires the contract harness to
+// The spec (§15.2.1) requires the contract harness to
 // exercise the full error-class set across the REST surface and its MCP
 // `create_session` counterpart, asserting identical `code`, `category`,
 // and `retryable` on each surface. Because both transports populate the
@@ -21,11 +21,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 )
 
-// matrixErrorClasses is the §15.2.1 lines 1408-1413 error-class list:
+// matrixErrorClasses is the §15.2.1 error-class list:
 // the named classes plus the §15.4 session-creation rejection family.
 // Per the spec the list MUST stay in lockstep with the §15.4 error code
 // catalog — any session-creation rejection added to §15.4 is added here
-// in the same change. spec: §15.2.1 line 1413.
+// in the same change. spec: §15.2.1.
 var matrixErrorClasses = []string{
 	// Named error classes.
 	"VALIDATION_ERROR",
@@ -52,7 +52,7 @@ var matrixErrorClasses = []string{
 	"TENANT_SUSPENDED",
 }
 
-// spec: §15.2.1 line 1413
+// spec: §15.2.1
 // diagnosis: the §15.2.1 `RegisterAdapterUnderTest` matrix requires the
 // `category` and `retryable` flag to be identical across REST and every
 // adapter surface for each error class. Both surfaces classify through
@@ -146,7 +146,7 @@ func decodeMCPError(t *testing.T, res map[string]any) restErrorTriple {
 	return restErrorTriple{body.Code, body.Category, body.Retryable}
 }
 
-// spec: §15.2.1 lines 1408-1413
+// spec: §15.2.1
 // diagnosis: the matrix requires each error class to be "exercised with
 // a canonical triggering input on POST /v1/sessions and its MCP
 // create_session counterpart", asserting identical code/category/

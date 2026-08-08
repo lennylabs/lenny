@@ -1,6 +1,6 @@
 -- Migration 0096: seed the reserved __preflight__ tenant.
 --
--- spec: §12.8 lines 743-758 — the MemoryStore erasure preflight
+-- spec: §12.8 — the MemoryStore erasure preflight
 -- (memorystore.ValidateMemoryStoreErasure) seeds a synthetic agent_memory
 -- row under (tenant_id='__preflight__', user_id='__preflight_user__'),
 -- erases it, and asserts the row does not survive. agent_memory.tenant_id

@@ -75,7 +75,7 @@ func postFinalize(t *testing.T, srv *Server, id, body string) *httptest.Response
 // /v1/sessions/{id}/finalize accepts a §14 plan referencing this session's
 // staged uploadArchive blob, stores it on the row, and transitions to
 // ready. This closes the §26.2↔§15.1 upload-binding ordering gap.
-// spec: §7.1 step 11; §26.2 lines 95-114. F-24.17.4 / F-26.2.4.
+// spec: §7.1 step 11; §26.2. F-24.17.4 / F-26.2.4.
 func TestFinalizeBindsUploadArchivePlan_spec_26_2(t *testing.T) {
 	srv, store := finalizeTestServer(t)
 	seedCreated(t, store, "sess_ws", "")
@@ -102,7 +102,7 @@ func TestFinalizeBindsUploadArchivePlan_spec_26_2(t *testing.T) {
 // TestFinalizeRejectsForeignUploadRef_spec_12_5 confirms a plan whose
 // uploadRef points at another session's blob prefix is rejected, so
 // finalize cannot bind a plan to a blob the caller did not stage for this
-// session. spec: §12.5 line 295; §13.4.
+// session. spec: §12.5; §13.4.
 func TestFinalizeRejectsForeignUploadRef_spec_12_5(t *testing.T) {
 	srv, store := finalizeTestServer(t)
 	seedCreated(t, store, "sess_a", "")
@@ -124,7 +124,7 @@ func TestFinalizeRejectsForeignUploadRef_spec_12_5(t *testing.T) {
 }
 
 // TestFinalizeRejectsForeignTenantRef confirms a cross-tenant uploadRef is
-// rejected even when the session segment matches. spec: §12.5 line 295.
+// rejected even when the session segment matches. spec: §12.5.
 func TestFinalizeRejectsForeignTenantRef(t *testing.T) {
 	srv, store := finalizeTestServer(t)
 	seedCreated(t, store, "sess_t", "")
@@ -208,7 +208,7 @@ func TestFinalizeRejectsMalformedBody(t *testing.T) {
 // without-fallback not-found rejection stay a POST /v1/sessions error; a source
 // that vanishes across the upload window is the finalize-time mismatch. An
 // unrelated error passes through unchanged so it keeps its own envelope.
-// spec: §4.9 line 1220; §7.3 line 138, §7.6 line 153 (proposal).
+// spec: §4.9; §7.3, §7.6.
 func TestMapFinalizeCredentialMismatch(t *testing.T) {
 	otherErr := errors.New("kube-api read failure")
 	cases := []struct {
@@ -238,9 +238,9 @@ func TestMapFinalizeCredentialMismatch(t *testing.T) {
 // remapped finalize-time credential mismatch routes through writePodClaimError
 // to the §4.9 CREDENTIAL_POOL_EXHAUSTED envelope with the assignment_race
 // reason and emits the preclaim-mismatch metric, rather than the create-only
-// USER_CREDENTIAL_NOT_FOUND 404. This pins the §7.3 line 138 / §7.6 line 153
+// USER_CREDENTIAL_NOT_FOUND 404. This pins the §7.3 / §7.6
 // rule that USER_CREDENTIAL_NOT_FOUND is not a finalize trigger.
-// spec: §4.9 line 1220; §7.3 line 138; §7.6 line 153 (proposal).
+// spec: §4.9; §7.3; §7.6.
 func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
 	var gotPool, gotProvider string
 	mismatchCalled := false
@@ -272,7 +272,7 @@ func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
 		t.Errorf("reason = %v, want assignment_race", env.Error.Details["reason"])
 	}
 	// The mismatch metric is emitted, counting the same pre-check-passes-then-
-	// assignment-fails event now observed at finalize (§7.6 line 153).
+	// assignment-fails event now observed at finalize (§7.6).
 	if !mismatchCalled {
 		t.Errorf("preclaim-mismatch metric not emitted for the finalize credential mismatch")
 	}
@@ -281,7 +281,7 @@ func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
 }
 
 // TestFinalizeBindsUploadFilePlan confirms a uploadFile source is also
-// scope-validated and bound. spec: §14 uploadFile; §26.2 line 213.
+// scope-validated and bound. spec: §14 uploadFile; §26.2.
 func TestFinalizeBindsUploadFilePlan(t *testing.T) {
 	srv, store := finalizeTestServer(t)
 	seedCreated(t, store, "sess_uf", "")

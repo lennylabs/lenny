@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §12.9 line 1048 / §15.1 line 1078 — an upload for a T4 tenant
+// spec: §12.9 / §15.1 — an upload for a T4 tenant
 // against a store not configured for envelope encryption is rejected
 // with 422 CLASSIFICATION_CONTROL_VIOLATION carrying
 // details.reason="tier_store_mismatch".

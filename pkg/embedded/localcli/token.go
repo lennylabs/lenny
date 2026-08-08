@@ -25,7 +25,7 @@ import (
 //
 //	curl -H "Authorization: Bearer $(lenny token print)" https://localhost:8443/...
 //
-// spec: §24.9 line 120 — exits 0 on success; exits
+// spec: §24.9 — exits 0 on success; exits
 // 3 EMBEDDED_MODE_REQUIRED when invoked outside Embedded Mode (no
 // `lenny up` has written the persisted signing key, or the binary is
 // run as lenny-ctl against a remote gateway).

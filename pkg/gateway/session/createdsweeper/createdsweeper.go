@@ -2,8 +2,7 @@
 
 // Package createdsweeper drops abandoned `created`-state Session rows
 // whose §7.1 `maxCreatedStateTimeoutSeconds` deadline (default 300s)
-// has elapsed without a /upload or /finalize landing. The §7.1 line
-// 58 uploadToken TTL closes the upload window at that instant; the
+// has elapsed without a /upload or /finalize landing. The §7.1 uploadToken TTL closes the upload window at that instant; the
 // row itself stayed in `created` forever in the v1 implementation,
 // so abandoned-create rows accumulated under repeated client retries
 // and bloated the storage quota.
@@ -14,16 +13,15 @@
 // each tick it lists every tenant's `created`-state rows, filters by
 // CreatedAt + timeout, releases the warm pod each row claimed at /create
 // back to the pool and revokes any assigned credential lease, then removes
-// the rows. Per §15.1 line 630 a `created`-expiry release must return the
+// the rows. Per §15.1 a `created`-expiry release must return the
 // claimed pod to the pool and revoke the lease before the row is retired,
 // so an abandoned create does not strand a pod for the whole pool. The
 // release runs through the injected Reclaimer, the same claimless reclaim
 // /terminate uses (proposal §4.5).
 //
-// spec: §7.1 line 58 (`maxCreatedStateTimeoutSeconds`); §7.1 line 28
+// spec: §7.1; §7.1
 // (atomicity: the row must not survive a session that never finalized);
-// §15.1 line 630 (created TTL-expiry releases the pod claim and revokes the
-// lease).
+// §15.1.
 package createdsweeper
 
 import (
@@ -78,7 +76,7 @@ type TenantLister interface {
 // (PodAssignment + PoolRef) and so a future pool-scoped release can use it
 // without changing this contract.
 //
-// spec: §15.1 line 630 (created TTL-expiry releases pod and lease); §4.5
+// spec: §15.1; §4.5
 // (proposal); §7.1 step 23 (lease release).
 type Reclaimer func(ctx context.Context, podName, poolRef, sessionID string) error
 
@@ -113,8 +111,7 @@ type Options struct {
 	// Reclaim, when set, releases the claimed pod and revokes the lease an
 	// abandoned `created`-state row holds before the row is deleted. The
 	// in-memory dev/test gateway and the row-only unit tests leave it nil and
-	// the sweep skips the release, dropping the row as before. spec: §15.1
-	// line 630 (proposal §4.5).
+	// the sweep skips the release, dropping the row as before. spec: §15.1.
 	Reclaim Reclaimer
 }
 
@@ -182,9 +179,7 @@ func (s *Sweeper) Tick(ctx context.Context, now time.Time) (int, error) {
 // no-op there; the same dependency serves /terminate, which can run against a
 // `finalizing`/`ready` session that does hold a lease.
 //
-// spec: §15.1 line 630 (created TTL-expiry releases the pod claim and revokes
-// the lease); §7.1 line 28 (atomicity: the row must not survive a session that
-// never finalized).
+// spec: §15.1; §7.1.
 func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time) (int, error) {
 	rows, err := s.store.List(ctx, tenant, sessionstore.ListFilter{})
 	if err != nil {
@@ -210,7 +205,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 // abandoned `created`-state row holds, ahead of the row Delete. It is a no-op
 // when no Reclaimer is wired (the in-memory dev/test gateway) or when the row
 // carries no persisted pod binding (PodAssignment empty), so the sweep degrades
-// to a plain row drop rather than failing. spec: §15.1 line 630 (proposal §4.5).
+// to a plain row drop rather than failing. spec: §15.1.
 func (s *Sweeper) reclaimRow(ctx context.Context, row sessionstore.Session) error {
 	if s.reclaim == nil || row.PodAssignment == "" {
 		return nil

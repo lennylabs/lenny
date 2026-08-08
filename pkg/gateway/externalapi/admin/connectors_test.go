@@ -38,7 +38,7 @@ func connReq(t *testing.T, h http.Handler, method, path string, body any) *httpt
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
-	// spec: §15.1 lines 1207-1211 — the connector PUT enforces If-Match.
+	// spec: §15.1 — the connector PUT enforces If-Match.
 	// Cases that do not exercise the precondition directly reach the handler
 	// by carrying the resource's current ETag, fetched via a GET against the
 	// same resource. A test driving the precondition sets If-Match itself.
@@ -123,7 +123,7 @@ func TestCreateConnectorRejectsInlineSecret(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 116-130 — admin Create rejects oauth2 blocks
+// spec: §9.3 — admin Create rejects oauth2 blocks
 // missing authorizationEndpoint, tokenEndpoint, or clientId.
 // F-9.3.6 — validator surfaces the failure at registration time
 // instead of CONNECTOR_OAUTH_INCOMPLETE at authorize time.
@@ -143,7 +143,7 @@ func TestCreateConnectorRejectsIncompleteOAuth2_spec_9_3_116(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 140 — every connector must be registered with a
+// spec: §9.3 — every connector must be registered with a
 // dialable MCP endpoint. F-9.3.10 — admin Create rejects an empty
 // mcpServerUrl at registration.
 func TestCreateConnectorRejectsEmptyMCPServerURL_spec_9_3_140(t *testing.T) {

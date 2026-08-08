@@ -1,4 +1,4 @@
--- §14 line 106 — session labels are filterable in GET /v1/metering/events
+-- §14 — session labels are filterable in GET /v1/metering/events
 -- (the §11.2.1 billing event stream). Each billing event denormalizes the
 -- session's §14 `labels` map so a label-scoped metering query filters in
 -- SQL, preserving the §15.1 cursor/hasMore pagination contract, without

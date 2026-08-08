@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
-// TestCheckWritesCacheOnSuccess_spec_25_8 covers §25.8 line 3414: a
+// TestCheckWritesCacheOnSuccess_spec_25_8 covers §25.8: a
 // successful upgrade-check refreshes the durable cache.
 func TestCheckWritesCacheOnSuccess_spec_25_8(t *testing.T) {
 	cache := upgradeservice.NewMemCheckCache()
@@ -32,7 +32,7 @@ func TestCheckWritesCacheOnSuccess_spec_25_8(t *testing.T) {
 	}
 }
 
-// TestCheckServesCacheWhenUnreachable_spec_25_8 covers §25.8 line 3413:
+// TestCheckServesCacheWhenUnreachable_spec_25_8 covers §25.8:
 // an unreachable channel returns the cached response with cached=true and
 // a cacheAge measured from the cached check time.
 func TestCheckServesCacheWhenUnreachable_spec_25_8(t *testing.T) {

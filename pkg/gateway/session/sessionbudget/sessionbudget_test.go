@@ -78,7 +78,7 @@ func (s *recordingSeam) count() int {
 	return s.calls
 }
 
-// spec: §11.2 line 44, §8.6 line 629 — with no extension seam wired a
+// spec: §11.2, §8.6 — with no extension seam wired a
 // session whose cumulative proxy consumption reaches its token budget is
 // denied and terminated immediately, and a later request is rejected by
 // the pre-flight gate.
@@ -117,8 +117,7 @@ func TestRecordTerminatesOnBudgetExhaustion_spec_11_2(t *testing.T) {
 	}
 }
 
-// Exhaustion fires at the boundary (consumed == budget), matching §8.10
-// line 1108 "token budget is exhausted".
+// Exhaustion fires at the boundary (consumed == budget), matching §8.10.
 func TestRecordExhaustsAtExactBoundary_spec_8_10(t *testing.T) {
 	term := &recordingTerminator{}
 	e := New(term, nil, nil)
@@ -215,7 +214,7 @@ func TestForgetEvictsAccounting_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — a Granted extension at the exhaustion boundary
+// spec: §8.6 — a Granted extension at the exhaustion boundary
 // continues the session: no termination, no deny flag, the session stays
 // admitted (the transparent path). The pre-fix code terminated
 // unconditionally, so this fails against it.
@@ -246,7 +245,7 @@ func TestRecordGrantedSeamContinues_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — a Pending extension (the in-path deadline elapsed
+// spec: §8.6 — a Pending extension (the in-path deadline elapsed
 // with an elicitation still unresolved) leaves the session ALIVE but
 // denying per request: it sets the deny flag so Allow rejects, and it does
 // NOT call TerminateSession. The out-of-band episode later reclaims it.
@@ -278,7 +277,7 @@ func TestRecordPendingSeamDeniesButDoesNotTerminate_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629, line 719 — after a Pending detach the out-of-band
+// spec: §8.6 — after a Pending detach the out-of-band
 // episode fan-out resolves the session. RaiseBudget (a grant) raises the
 // budget and clears the deny flag so Allow passes again; a subsequent
 // Record against the raised budget does not re-exhaust and does not
@@ -321,7 +320,7 @@ func TestRaiseBudgetClearsDenyAndSurvivesNextRecord_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 719 — TerminateSession is the SessionReclaimer terminal
+// spec: §8.6 — TerminateSession is the SessionReclaimer terminal
 // path the episode fan-out takes for a joined session whose deferred
 // outcome is terminal. It denies the session and delegates to the wired
 // Terminator with ReasonBudgetExhausted.
@@ -341,7 +340,7 @@ func TestTerminateSessionReclaimerPath_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — both context parameters reach the seam (reqCtx
+// spec: §8.6 — both context parameters reach the seam (reqCtx
 // and waitCtx), and a reqCtx cancellation is observable at the seam. This
 // pins the two-context threading that matches leasecontrol.ExtendForBudget.
 func TestRecordThreadsBothContextsToSeam_spec_8_6(t *testing.T) {
@@ -378,7 +377,7 @@ func TestRecordThreadsBothContextsToSeam_spec_8_6(t *testing.T) {
 // present with the reclaimer signatures. This compiles the assignment to
 // a local interface identical to leasecontrol.SessionReclaimer so a
 // signature drift breaks the build here rather than in cmd/lenny-gateway.
-// spec: §8.6 line 719; proposal 0023 S6.
+// spec: §8.6; proposal 0023 S6.
 func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	type sessionReclaimer interface {
 		RaiseBudget(sessionID string, delta int64)
@@ -387,7 +386,7 @@ func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	var _ sessionReclaimer = New(&recordingTerminator{}, nil, nil)
 }
 
-// spec: §8.6 line 629 — Outcome.String renders each tri-state and the
+// spec: §8.6 — Outcome.String renders each tri-state and the
 // unknown fallback. The enforcer logs and audits the outcome by name, so
 // a wrong or empty rendering mislabels the extension result in operator
 // tooling.
@@ -408,9 +407,9 @@ func TestOutcomeString_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion wires the
+// spec: §8.6; proposal 0023 S6 — SetExtendOnExhaustion wires the
 // extension seam after construction. An enforcer built with a nil seam is
-// on the §11.2 line 44 terminate-immediately path; after the setter wires
+// on the §11.2 terminate-immediately path; after the setter wires
 // a Granted seam, a fresh exhaustion resolves through it and the session
 // CONTINUES instead of terminating. This asserts the corrected wired
 // behavior: it fails against a setter that does not install the seam
@@ -443,7 +442,7 @@ func TestSetExtendOnExhaustionWiresSeam_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion(nil)
+// spec: §8.6; proposal 0023 S6 — SetExtendOnExhaustion(nil)
 // returns the enforcer to the terminate-immediately path. A session that
 // exhausts its budget after the seam is cleared is denied and terminated,
 // with no extension attempt.
@@ -464,7 +463,7 @@ func TestSetExtendOnExhaustionNilRestoresTerminateImmediately_spec_8_6(t *testin
 		t.Fatalf("session admitted after exhaustion on the nil-seam path: the enforcer failed open")
 	}
 	if got := term.snapshot(); len(got) != 1 {
-		t.Fatalf("nil-seam exhaustion terminated %d times, want exactly 1 (§11.2 line 44)", len(got))
+		t.Fatalf("nil-seam exhaustion terminated %d times, want exactly 1 (§11.2)", len(got))
 	}
 }
 

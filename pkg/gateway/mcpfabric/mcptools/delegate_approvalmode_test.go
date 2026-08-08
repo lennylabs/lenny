@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §8.4 line 521 — `lenny/delegate_task` MUST short-circuit a
+// spec: §8.4 — `lenny/delegate_task` MUST short-circuit a
 // lease declaring `approvalMode: "deny"` with the canonical
 // `DELEGATION_DENIED` code before pod allocation and before the §4
 // PreDelegation interceptor runs. F-8.4.1.
@@ -58,7 +58,7 @@ func TestDelegateTaskRejectsUnknownApprovalMode_spec_8_4(t *testing.T) {
 	}
 }
 
-// spec: §8.4 line 520 — `lenny/delegate_task` MUST accept
+// spec: §8.4 — `lenny/delegate_task` MUST accept
 // `approvalMode: "approval"` at the wire boundary and alias it to
 // the policy auto-approval path in v1 (no dedicated approval API
 // today). The child session MUST be created. F-8.4.1.

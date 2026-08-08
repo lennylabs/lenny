@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+// spec: §17.9.4; §17.6. F-17.9.3.
 func TestCloudObjectStorageLifecycleCheck_spec_17_9_4(t *testing.T) {
 	ctx := context.Background()
 	compliant := CloudObjectStorageLifecycleStatus{
@@ -112,7 +112,7 @@ func TestCloudObjectStorageLifecycleCheck_spec_17_9_4(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 494 — a prober error on a cloud provider fails the
+// spec: §17.6 — a prober error on a cloud provider fails the
 // install fail-closed. F-17.9.3.
 func TestCloudObjectStorageLifecycleCheck_proberError_failsClosed_spec_17_6_494(t *testing.T) {
 	d := CloudObjectStorageLifecycleCheck{

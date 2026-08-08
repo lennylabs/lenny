@@ -38,13 +38,13 @@ func guardedRedis(t *testing.T) redis.UniversalClient {
 	return cl
 }
 
-// TestRedisTenantKeyIsolation is the §12.4 line 195 mandated integration
+// TestRedisTenantKeyIsolation is the §12.4 mandated integration
 // test. It verifies that operations scoped to one tenant cannot read or
 // mutate keys belonging to another tenant. The spec requires coverage of
 // DLQ (a, b), durable inbox (c), semantic cache (d), delegation budget
 // (e), and EventBus (f); each is a subtest below.
 //
-// spec: §12.4 line 195.
+// spec: §12.4.
 // diagnosis: a failure means Redis key namespacing does not isolate
 // tenants, so one tenant could read or mutate another tenant's DLQ,
 // inbox, cache, delegation-budget, or EventBus keys.

@@ -18,7 +18,7 @@ seed tenants exist before the floor-clamp fanout enumerates them.
 
 The reconciliation is idempotent: the endpoint's release-revision replay
 guard makes a retried hook a no-op, so the Job runs safely on every
-install and upgrade. spec: §16.7 lines 672, 676, 677, 682; §17.2 line 86.
+install and upgrade. spec: §16.7; §17.2.
 F-8.2.5, F-9.2.10, F-17.2.8.
 */ -}}
 {{- if .Values.deploymentAudit.enabled }}

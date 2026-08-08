@@ -14,11 +14,11 @@
 // cross-replica / post-restart path.
 //
 // The table is platform-scoped (the §25 control plane is not
-// multi-tenanted at this boundary; §25.4 line 1492 lists the ops_* tables
+// multi-tenanted at this boundary; §25.4 lists the ops_* tables
 // among the PlatformPostgres() set), so the store does not run inside a
 // tenant-scoped transaction and the table carries no RLS policy.
 //
-// spec: §25.2 lines 393-394.
+// spec: §25.2.
 package baselinestore
 
 import (
@@ -47,8 +47,7 @@ func New(pool *pgxpool.Pool) *Store {
 var _ operations.BaselineStore = (*Store)(nil)
 
 // RecordCompletion folds dur into the in-memory window and upserts the
-// resulting aggregate into ops_operation_baselines. The §25.2 table is
-// "updated on each operation completion" (line 393).
+// resulting aggregate into ops_operation_baselines. The §25.2 table is "updated on each operation completion".
 func (s *Store) RecordCompletion(ctx context.Context, kind operations.Kind, dur time.Duration) error {
 	if err := s.mem.RecordCompletion(ctx, kind, dur); err != nil {
 		return err

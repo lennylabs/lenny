@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.5 item 7 and §15.4.1 line 1694. Migration 0131 adds the
+// spec: §15.5 item 7 and §15.4.1. Migration 0131 adds the
 // query-filterable schema_version column the spec mandates on every
 // MessageEnvelope persisted to session_messages; the down migration drops
 // it.

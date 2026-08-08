@@ -88,7 +88,7 @@ func TestPublisherServesSignedStableManifest(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3410 — currentVersion below minUpgradeFrom is refused.
+// spec: §25.8 — currentVersion below minUpgradeFrom is refused.
 func TestPublisherRefusesBelowMinUpgradeFrom(t *testing.T) {
 	pub, _ := buildPublisher(t) // sampleManifest has minUpgradeFrom 1.3.0
 	req := httptest.NewRequest(http.MethodGet, "/v1/latest?currentVersion=1.2.0", nil)
@@ -99,7 +99,7 @@ func TestPublisherRefusesBelowMinUpgradeFrom(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3410 — currentVersion at or above minUpgradeFrom is served.
+// spec: §25.8 — currentVersion at or above minUpgradeFrom is served.
 func TestPublisherServesAtOrAboveMinUpgradeFrom(t *testing.T) {
 	pub, _ := buildPublisher(t)
 	for _, cur := range []string{"1.3.0", "1.4.3", "2.0.0"} {

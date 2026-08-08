@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §5.1 lines 121-126, 197-198, 199, 208 — workspaceDefaults,
+// spec: §5.1 — workspaceDefaults,
 // sharedAssets, and runtimeOptionsSchema are modeled on the runtime and
 // round-trip through the admin API.
 func TestCreateRuntimeModelsWorkspaceDefaultsSharedAssetsOptionsSchema(t *testing.T) {
@@ -99,7 +99,7 @@ func TestCreateRuntimeRejectsInvalidWorkspaceBlocks(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 199 — a derived runtimeOptionsSchema may only reference
+// spec: §5.1 — a derived runtimeOptionsSchema may only reference
 // property names present in the base schema; an unknown property is
 // rejected with INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares
 // forbidden property.
@@ -131,7 +131,7 @@ func TestCreateDerivedRuntimeRejectsForbiddenOptionsSchemaProperty(t *testing.T)
 	}
 }
 
-// spec: §5.1 line 174 — a base runtime's image is immutable via the admin
+// spec: §5.1 — a base runtime's image is immutable via the admin
 // API; a PUT changing it is rejected with IMAGE_IMMUTABLE.
 func TestUpdateRuntimeRejectsBaseImageMutation(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)

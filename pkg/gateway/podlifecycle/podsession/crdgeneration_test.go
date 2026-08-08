@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
-// spec: §4.6.2 lines 558-560 — CRDGeneration reads the
+// spec: §4.6.2 — CRDGeneration reads the
 // pool_config_generation and last-reconciled timestamp the
 // PoolScalingController stamps on the pool's SandboxTemplate, backing the
 // production sync-status endpoint outside the Postgres-only dev posture.
@@ -45,7 +45,7 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 line 560 — a pool defined in Postgres but not yet
+// spec: §4.6.2 — a pool defined in Postgres but not yet
 // reconciled into a SandboxTemplate reports ok=false so the handler
 // renders the pending state rather than a misleading synced=false-at-0.
 func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
@@ -60,7 +60,7 @@ func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 line 558 — a SandboxTemplate the controller has not yet
+// spec: §4.6.2 — a SandboxTemplate the controller has not yet
 // stamped (applied by hand, or a generation it has not observed) leaves
 // generation 0 with ok=true, so the handler reports inSync=false against
 // the Postgres counter.

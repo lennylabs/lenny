@@ -19,7 +19,7 @@ func canon(t *testing.T, raw string) string {
 
 // TestCanonicalizeKeyOrder_spec_11_7_364 — object keys are emitted in
 // lexicographic order regardless of input order, so two byte forms of
-// the same object hash identically. spec: §11.7 item 3 line 364.
+// the same object hash identically. spec: §11.7 item 3.
 func TestCanonicalizeKeyOrder_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	a := canon(t, `{"b":1,"a":2,"c":3}`)
@@ -33,7 +33,7 @@ func TestCanonicalizeKeyOrder_spec_11_7_364(t *testing.T) {
 }
 
 // TestCanonicalizeNestedKeyOrder_spec_11_7_364 — ordering applies at
-// every nesting level. spec: §11.7 item 3 line 364.
+// every nesting level. spec: §11.7 item 3.
 func TestCanonicalizeNestedKeyOrder_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	got := canon(t, `{"z":{"y":1,"x":2},"a":[{"d":1,"c":2}]}`)
@@ -44,7 +44,7 @@ func TestCanonicalizeNestedKeyOrder_spec_11_7_364(t *testing.T) {
 }
 
 // TestCanonicalizeWhitespaceStripped_spec_11_7_364 — insignificant
-// whitespace is removed. spec: §11.7 item 3 line 364.
+// whitespace is removed. spec: §11.7 item 3.
 func TestCanonicalizeWhitespaceStripped_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	got := canon(t, "{\n  \"a\" : 1,\n  \"b\" : [ 1, 2 ]\n}")
@@ -56,7 +56,7 @@ func TestCanonicalizeWhitespaceStripped_spec_11_7_364(t *testing.T) {
 // TestCanonicalizeNumbers_spec_11_7_364 — numbers are emitted in
 // ECMAScript shortest form, so trailing zeros and exponent spellings of
 // the same value canonicalize identically. This is what makes the hash
-// stable across a Postgres jsonb numeric round trip. spec: §11.7 line 364.
+// stable across a Postgres jsonb numeric round trip. spec: §11.7.
 func TestCanonicalizeNumbers_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ in, want string }{
@@ -84,7 +84,7 @@ func TestCanonicalizeNumbers_spec_11_7_364(t *testing.T) {
 
 // TestCanonicalizeNumberFormEquivalence_spec_11_7_364 — the same numeric
 // value written three ways produces one canonical form, mirroring what a
-// jsonb column does to the stored payload. spec: §11.7 line 364.
+// jsonb column does to the stored payload. spec: §11.7.
 func TestCanonicalizeNumberFormEquivalence_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	a := canon(t, `{"x":1.50}`)
@@ -97,7 +97,7 @@ func TestCanonicalizeNumberFormEquivalence_spec_11_7_364(t *testing.T) {
 
 // TestCanonicalizeNFC_spec_11_7_364 — string values are NFC-normalized,
 // so the precomposed and decomposed spellings of an accented character
-// canonicalize identically. spec: §11.7 item 3 line 364.
+// canonicalize identically. spec: §11.7 item 3.
 func TestCanonicalizeNFC_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	// U+00E9 (é) vs U+0065 U+0301 (e + combining acute).
@@ -111,7 +111,7 @@ func TestCanonicalizeNFC_spec_11_7_364(t *testing.T) {
 // TestCanonicalizeIdempotent_spec_11_7_364 — canonicalizing an already
 // canonical value is a no-op, which guarantees the hash is stable when a
 // stored payload_canonical_json is re-canonicalized on read.
-// spec: §11.7 item 3 line 364.
+// spec: §11.7 item 3.
 func TestCanonicalizeIdempotent_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	once := canon(t, `{"b":1,"a":[3,2,1],"c":"x"}`)
@@ -123,7 +123,7 @@ func TestCanonicalizeIdempotent_spec_11_7_364(t *testing.T) {
 
 // TestCanonicalizeStringEscaping_spec_11_7_364 — control characters use
 // the minimal escapes and non-ASCII is emitted literally.
-// spec: §11.7 item 3 line 364.
+// spec: §11.7 item 3.
 func TestCanonicalizeStringEscaping_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	got := canon(t, `{"s":"a\tb\nc d\"e"}`)

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §27.9 line 251; §16.4 line 376 — a credential literal carried as a
+// spec: §27.9; §16.4 — a credential literal carried as a
 // scalar value under a sensitive key is scrubbed before the frame reaches
 // the playground browser, at any nesting depth and inside arrays.
 func TestRedactPlaygroundFrameScrubsCredentialScalars_spec_27_9_251(t *testing.T) {
@@ -49,7 +49,7 @@ func TestRedactPlaygroundFrameScrubsCredentialScalars_spec_27_9_251(t *testing.T
 	}
 }
 
-// spec: §27.9 line 251 — the redactor must preserve the JSON-RPC envelope
+// spec: §27.9 — the redactor must preserve the JSON-RPC envelope
 // and the id, and not corrupt a tool's inputSchema. A sensitive *name*
 // whose value is a structural schema object (a property named
 // access_token: {"type":"string"}) is not a credential literal and
@@ -88,7 +88,7 @@ func extractRaw(t *testing.T, frame []byte, key string) []byte {
 	return m[key]
 }
 
-// spec: §27.9 line 251 — a frame that does not parse as JSON is forwarded
+// spec: §27.9 — a frame that does not parse as JSON is forwarded
 // unchanged. The gateway only emits well-formed JSON-RPC on this path, so
 // a parse failure is not a credential-leak vector.
 func TestRedactPlaygroundFrameNonJSONPassthrough_spec_27_9_251(t *testing.T) {
@@ -98,7 +98,7 @@ func TestRedactPlaygroundFrameNonJSONPassthrough_spec_27_9_251(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 376 — the marker set covers the credential field
+// spec: §16.4 — the marker set covers the credential field
 // names MCP payloads carry, and excludes the bare token "key" so benign
 // identifiers (publicKey, keyId) are not scrubbed.
 func TestIsSensitiveFrameKey_spec_16_4_376(t *testing.T) {
@@ -119,7 +119,7 @@ func TestIsSensitiveFrameKey_spec_16_4_376(t *testing.T) {
 	}
 }
 
-// spec: §27.3 origin claim; §27.9 line 251 — the egress redaction gate is
+// spec: §27.3 origin claim; §27.9 — the egress redaction gate is
 // keyed on the origin=playground claim. A non-playground bearer (or an
 // unwired extractor) is never redacted so a headless MCP client still
 // receives raw tool results.

@@ -15,7 +15,7 @@ import (
 // schemas/ocsf-mapping.yaml mirror and the schemas/audit-events/v1.json
 // registry name the same version.
 //
-// spec: §11.7 line 365 ("schema-version registry as schemas/audit-events/v*.json").
+// spec: §11.7.
 const MappingSchemaVersion = "v1"
 
 // CatalogEntry is one row of the §11.7 event-type → OCSF class/activity
@@ -23,9 +23,7 @@ const MappingSchemaVersion = "v1"
 // committed schemas/ocsf-mapping.yaml mirror from Catalog() so external
 // verifiers can consume the mapping without reading Go source.
 //
-// spec: §11.7 line 414 ("The full mapping is maintained in
-// schemas/ocsf-mapping.yaml ... regenerated in CI from Lenny's
-// event-type catalog").
+// spec: §11.7.
 type CatalogEntry struct {
 	// EventType is the exact event type for an exact-match row, or the
 	// namespace prefix for a prefix-match row.

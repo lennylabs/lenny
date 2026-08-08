@@ -31,7 +31,7 @@ const lifecycleProtocolVersion = "1.0"
 
 // errLifecycleVersionIncompatible is returned by the handshake when the
 // runtime advertises a protocolVersion the adapter cannot speak. spec:
-// §15.5 line 2431 (item 3) — "The adapter advertises a protocol version
+// §15.5 — "The adapter advertises a protocol version
 // at INIT; the gateway selects a compatible version." Today the adapter
 // speaks `1.x`; a runtime that names a different major version is
 // rejected before any signal frames flow so a forward-compat mismatch
@@ -100,7 +100,7 @@ type RuntimeOps struct {
 	enc       *json.Encoder
 	supported map[string]bool
 	pending   map[string]chan error
-	// inflight is the §4.7 line 820 per-provider count of outbound LLM
+	// inflight is the §4.7 per-provider count of outbound LLM
 	// requests the runtime reported via llm_request_started without a
 	// matching llm_request_completed. The Full-level credential-rotation
 	// gate reads it through InflightCount.
@@ -163,14 +163,14 @@ func (lc *RuntimeOps) SetUsageSink(sink tokenSink) {
 // is closed. It accepts one runtime connection at a time: for each, it
 // performs the lifecycle_capabilities handshake and serves frames until
 // the runtime disconnects, then resets per-connection state and accepts
-// the next connection. A resumed session (§4.7 lines 836-842 startup
+// the next connection. A resumed session (§4.7 startup
 // sequence, applied for both fresh sessions and resumes) starts a fresh
 // runtime that dials the same socket and re-handshakes, so the channel
 // must outlive any single runtime process. Run blocks; callers run it in
 // a goroutine. The request methods block until the current connection
 // completes its handshake.
 //
-// spec: §4.7 lines 836-842 — the Full-level CH-RUNTIMEOPS is rebound
+// spec: §4.7 — the Full-level CH-RUNTIMEOPS is rebound
 // per runtime process rather than torn down after the first disconnect.
 func (lc *RuntimeOps) Run(ctx context.Context) error {
 	defer close(lc.done)
@@ -284,7 +284,7 @@ func (lc *RuntimeOps) handshake(r *bufio.Reader) error {
 	if frame.Type != "lifecycle_support" {
 		return fmt.Errorf("lifecycle handshake: expected lifecycle_support, got %q", frame.Type)
 	}
-	// spec: §15.5 line 2431 (item 3) — the runtime advertises a
+	// spec: §15.5 — the runtime advertises a
 	// `protocolVersion` at INIT and the gateway selects a compatible
 	// version. The adapter speaks `1.x`; a runtime that names a
 	// different major version is rejected before any signal frames
@@ -310,7 +310,7 @@ func (lc *RuntimeOps) handshake(r *bufio.Reader) error {
 // the runtime version share a major number. v1 only ships `1.x`, so the
 // compat rule is "same major"; minor differences are forward-readable.
 //
-// spec: §15.5 line 2431 — "Major version changes are breaking."
+// spec: §15.5 — "Major version changes are breaking."
 // F-15.5.9.
 func lifecycleVersionsCompatible(adapter, runtime string) bool {
 	return lifecycleMajor(adapter) == lifecycleMajor(runtime)
@@ -344,7 +344,7 @@ func lifecycleMajor(v string) int {
 // runtime's acknowledgements (checkpoint_ready, interrupt_acknowledged,
 // credentials_acknowledged) wake the matching request;
 // llm_request_started / llm_request_completed adjust the per-provider
-// in-flight counter (§4.7 line 820). Unknown frame types are ignored for
+// in-flight counter (§4.7). Unknown frame types are ignored for
 // forward compatibility.
 func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
 	for {
@@ -383,7 +383,7 @@ func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
 // adjustInflight changes the per-provider in-flight LLM-request counter
 // by delta and mirrors the value to the lenny_llm_inflight_requests
 // gauge. The count never goes below zero, so a spurious
-// llm_request_completed (no matching start) is a no-op (§4.7 line 820).
+// llm_request_completed (no matching start) is a no-op (§4.7).
 func (lc *RuntimeOps) adjustInflight(provider string, delta int) {
 	if provider == "" {
 		return
@@ -498,7 +498,7 @@ func (lc *RuntimeOps) Terminate(deadlineMs int32, reason string) error {
 // runtime is not required to acknowledge. When no runtime is connected
 // (the pre-start path, before the agent dials the channel) writeFrame
 // returns errLifecycleNotConnected, which the caller treats as a no-op.
-// spec: §7.4 line 433 — F-7.4.6.
+// spec: §7.4 — F-7.4.6.
 func (lc *RuntimeOps) SignalFilesUpdated() error {
 	return lc.writeFrame(lifecycleFrame{Type: "files_updated"})
 }

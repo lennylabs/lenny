@@ -8,10 +8,10 @@
 // only, and a residency violation that suspended replication would silently
 // re-enable on restart (F-25.11.3).
 //
-// The table is platform-scoped (§25.4 line 1492), so the store does not run
+// The table is platform-scoped (§25.4), so the store does not run
 // inside a tenant-scoped transaction and the table carries no RLS policy.
 //
-// spec: §25.11 lines 4073-4098.
+// spec: §25.11.
 package pgstore
 
 import (

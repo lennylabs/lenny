@@ -11,7 +11,7 @@ import (
 // Metrics receives the §25.3 health-probe observations. The Aggregator
 // records the per-component probe latency and the derived status code.
 // All methods are nil-safe so an Aggregator wired without metrics is a
-// no-op. spec: §25.3 lines 538-542.
+// no-op. spec: §25.3.
 type Metrics interface {
 	// ObserveCheckDuration records a component's probe latency in seconds
 	// on lenny_health_check_duration_seconds{component}.
@@ -21,7 +21,7 @@ type Metrics interface {
 	SetStatus(component string, status Status)
 }
 
-// PromMetrics is the prometheus-backed Metrics. spec: §25.3 lines 538-542.
+// PromMetrics is the prometheus-backed Metrics. spec: §25.3.
 type PromMetrics struct {
 	duration *prometheus.HistogramVec
 	status   *prometheus.GaugeVec
@@ -30,7 +30,7 @@ type PromMetrics struct {
 var _ Metrics = (*PromMetrics)(nil)
 
 // NewMetrics registers the §25.3 health metrics against reg and returns
-// the emitter. spec: §25.3 lines 540-542.
+// the emitter. spec: §25.3.
 func NewMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 	duration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name: "lenny_health_check_duration_seconds",
@@ -71,8 +71,7 @@ func (m *PromMetrics) SetStatus(component string, status Status) {
 }
 
 // statusValue maps the §25.3 status enum to the lenny_health_status
-// gauge encoding: 0=healthy, 1=degraded, 2=unhealthy. spec: §25.3
-// line 542.
+// gauge encoding: 0=healthy, 1=degraded, 2=unhealthy. spec: §25.3.
 func statusValue(s Status) float64 {
 	switch s {
 	case StatusDegraded:

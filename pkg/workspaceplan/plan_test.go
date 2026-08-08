@@ -131,7 +131,7 @@ func TestParseRejectsUnsupportedHigherSchemaVersion(t *testing.T) {
 	expectErr(t, err, workspaceplan.ReasonUnsupportedSchemaVersion)
 }
 
-// spec: §14.1 line 326 — the unsupported-schemaVersion error must carry
+// spec: §14.1 — the unsupported-schemaVersion error must carry
 // the version pair so the gateway can echo details.knownVersion /
 // details.encounteredVersion on the 422 envelope. A reason that is not
 // "too new" (e.g. a negative version → invalid) must leave them nil so
@@ -236,7 +236,7 @@ func TestParseMatchesSchemaValidatorOnCanonicalFixtures(t *testing.T) {
 	}
 }
 
-// spec: §14 line 334 — `workspace_plan_unknown_source_type` carries
+// spec: §14 — `workspace_plan_unknown_source_type` carries
 // `schemaVersion` and `unknownType` as structured fields, not only in
 // the free-form message. F-14.1.18.
 func TestUnknownSourceTypeWarningCarriesStructuredFields_spec_14_334(t *testing.T) {
@@ -259,7 +259,7 @@ func TestUnknownSourceTypeWarningCarriesStructuredFields_spec_14_334(t *testing.
 	}
 }
 
-// spec: §14 line 334 — JSON marshalling preserves the structured
+// spec: §14 — JSON marshalling preserves the structured
 // fields so downstream consumers reading the wire format can extract
 // `schemaVersion` and `unknownType` without parsing the message. The
 // other warning codes must not leak the unknown-source-type fields.
@@ -550,7 +550,7 @@ func TestParseMissingRequiredFieldsForEachVariant(t *testing.T) {
 	}
 }
 
-// TestParseRejectsNegativeSetupCommandTimeout covers F-7.5.14 / §14 line 99:
+// TestParseRejectsNegativeSetupCommandTimeout covers F-7.5.14 / §14:
 // per-command timeoutSeconds is an unsigned duration. A negative value
 // must be rejected at the §14 ingress rather than silently degrading to
 // the "no per-command bound" path (the downstream `> 0` gate after the
@@ -568,7 +568,7 @@ func TestParseRejectsNegativeSetupCommandTimeout(t *testing.T) {
 }
 
 // TestParseAcceptsZeroSetupCommandTimeout: a zero or omitted timeoutSeconds
-// is the §14 line 99 "no per-command bound" form and must continue to
+// is the §14 form and must continue to
 // parse cleanly. Regression guard around the F-7.5.14 negative-check.
 func TestParseAcceptsZeroSetupCommandTimeout(t *testing.T) {
 	body := `{
@@ -588,12 +588,12 @@ func TestParseAcceptsZeroSetupCommandTimeout(t *testing.T) {
 	}
 }
 
-// spec: §15.5 lines 2471-2474 — durable consumers MUST forward-read
+// spec: §15.5 — durable consumers MUST forward-read
 // records with unrecognized `schemaVersion`. A stored plan whose
 // schemaVersion exceeds this gateway's known revision is parsed (not
 // rejected) and surfaces a `workspace_plan_durable_schema_version_ahead`
 // warning carrying knownVersion + encounteredVersion so durable-
-// consumer alerts route on the §15.5 line 2466 catalog body shape.
+// consumer alerts route on the §15.5 catalog body shape.
 // F-15.5.8.
 func TestParseStoredForwardReadsNewerSchemaVersion_spec_15_5_2474(t *testing.T) {
 	body := `{"schemaVersion": 99, "sources": [
@@ -626,7 +626,7 @@ func TestParseStoredForwardReadsNewerSchemaVersion_spec_15_5_2474(t *testing.T) 
 	}
 }
 
-// spec: §15.5 lines 2471-2473 — the durable forward-read MUST preserve
+// spec: §15.5 — the durable forward-read MUST preserve
 // unknown fields verbatim so a downstream pass-through consumer (e.g.
 // a controller that re-reads a stored plan) sees the future-version
 // payload intact. F-15.5.8.
@@ -646,7 +646,7 @@ func TestParseStoredForwardReadsPreservesUnknownFields_spec_15_5_2473(t *testing
 	}
 }
 
-// spec: §15.5 line 2474 — durable consumers MUST NOT silently discard
+// spec: §15.5 — durable consumers MUST NOT silently discard
 // records based solely on an unrecognized schemaVersion. The fresh
 // ingress path (Parse) must still hard-reject so a client uploading a
 // future-version plan gets a 400, not silent acceptance. F-15.5.8.
@@ -678,7 +678,7 @@ func TestParseStoredStillRejectsLowerSchemaVersion(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2473 — when forward-reading, unknown fields inside
+// spec: §15.5 — when forward-reading, unknown fields inside
 // a known variant MUST NOT trigger a hard reject. F-15.5.8.
 func TestParseStoredForwardReadsTolerantToUnknownVariantFields(t *testing.T) {
 	body := `{"schemaVersion": 99, "sources": [

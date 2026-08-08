@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package saltlockpg is the Postgres-backed §12.8 line 856 salt-rotation
+// Package saltlockpg is the Postgres-backed §12.8 salt-rotation
 // advisory lock. It serializes a tenant's salt-rotation migration against
 // its per-user erasure pseudonymization across gateway replicas, so a
 // pseudonymize never reads or destroys a salt a rotation is actively
@@ -33,7 +33,7 @@ func New(pool *pgxpool.Pool) *Lock { return &Lock{pool: pool} }
 
 var _ erasurejob.SaltRotationLock = (*Lock)(nil)
 
-// lockKey derives the §12.8 line 856 advisory-lock key for a tenant. The
+// lockKey derives the §12.8 advisory-lock key for a tenant. The
 // FNV-1a hash of `erasure_salt_migration:{tenant_id}` is reinterpreted as
 // a signed 64-bit integer, the type pg_advisory_lock accepts. The hash is
 // stable across processes so every replica computes the same key.

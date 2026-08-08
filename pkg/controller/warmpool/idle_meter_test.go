@@ -84,8 +84,7 @@ func TestIdleMeterForgetRebaselines(t *testing.T) {
 	}
 }
 
-// spec: §16.1 catalog (lenny_warmpool_idle_pods Gauge) and §17.8.2 line
-// 1101 first-week monitoring workflow. setIdlePods must publish the
+// spec: §16.1 catalog (lenny_warmpool_idle_pods Gauge) and §17.8.2 first-week monitoring workflow. setIdlePods must publish the
 // current pool's idle-pod count to the §16.1 gauge.
 func TestSetIdlePodsPublishesGauge_spec_17_8_2_1101(t *testing.T) {
 	const pool = "pool-idle-gauge"

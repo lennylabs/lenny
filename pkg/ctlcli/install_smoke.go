@@ -15,20 +15,19 @@ import (
 
 // install_smoke.go implements the post-install smoke-test phase of the
 // §24.20 installation wizard: "runs a smoke test against the chat
-// reference runtime" (§24.20 line 299). The phase runs after `helm
+// reference runtime" (§24.20). The phase runs after `helm
 // install` in the wizard's phase order (detection → question → preview →
-// preflight → helm install → bootstrap seed → smoke test, §24.20 line
-// 295). It polls the gateway /healthz endpoint until the gateway reports
+// preflight → helm install → bootstrap seed → smoke test, §24.20). It polls the gateway /healthz endpoint until the gateway reports
 // ready, then issues a lenny/create_session MCP round-trip against the
 // chat runtime and asserts a non-error response. On failure it prints the
 // rollback procedure so a broken install is not reported as successful.
 // F-24.20.4.
 
 // defaultSmokeRuntime is the reference runtime the smoke test exercises
-// (§24.20 line 299). It is fixed to the §26 chat runtime.
+// (§24.20). It is fixed to the §26 chat runtime.
 const defaultSmokeRuntime = "chat"
 
-// defaultSmokeHealthTimeout bounds the /healthz poll loop (§24.20 line 299
+// defaultSmokeHealthTimeout bounds the /healthz poll loop (§24.20
 // suggested-resolution: "polls /healthz for up to 120s").
 const defaultSmokeHealthTimeout = 120 * time.Second
 
@@ -65,7 +64,7 @@ type rollbackInfo struct {
 
 // smokeTester runs the smoke-test phase against a resolved target. It is
 // an interface so cmdInstall drives the real HTTP/MCP implementation while
-// tests inject a fake. spec: §24.20 line 299. F-24.20.4.
+// tests inject a fake. spec: §24.20. F-24.20.4.
 type smokeTester interface {
 	run(ctx context.Context, tgt smokeTarget, stdout, stderr io.Writer) error
 }
@@ -95,7 +94,7 @@ func smokeTargetFromAnswers(a installAnswers) smokeTarget {
 // failure, the rollback procedure. A target with no gateway URL is a skip
 // (return 0): the install succeeded and there is no reachable endpoint to
 // probe. A probe or round-trip failure returns 1 so the wizard does not
-// report a broken install as successful. spec: §24.20 line 299. F-24.20.4.
+// report a broken install as successful. spec: §24.20. F-24.20.4.
 func runSmokeTest(ctx context.Context, t smokeTester, tgt smokeTarget, rb rollbackInfo, stdout, stderr io.Writer) int {
 	if tgt.gatewayURL == "" {
 		fmt.Fprintln(stdout, "# Smoke test: skipped (no gateway URL; set LENNY_API_URL or a gateway domain to enable)")
@@ -112,8 +111,7 @@ func runSmokeTest(ctx context.Context, t smokeTester, tgt smokeTarget, rb rollba
 }
 
 // printRollback writes the rollback procedure the operator runs when the
-// smoke test fails after `helm install` mutated the cluster. spec: §24.20
-// line 299 suggested-resolution ("on failure, print the rollback
+// smoke test fails after `helm install` mutated the cluster. spec: §24.20 suggested-resolution ("on failure, print the rollback
 // procedure"). F-24.20.4.
 func printRollback(w io.Writer, rb rollbackInfo) {
 	fmt.Fprintln(w, "lenny-ctl install: the release was installed but the smoke test did not pass.")
@@ -136,7 +134,7 @@ type httpSmokeTester struct {
 }
 
 // run polls /healthz to the deadline, then runs the MCP round-trip when a
-// token is available. spec: §24.20 line 299. F-24.20.4.
+// token is available. spec: §24.20. F-24.20.4.
 func (h *httpSmokeTester) run(ctx context.Context, tgt smokeTarget, stdout, stderr io.Writer) error {
 	if err := h.waitHealthy(ctx, tgt, stdout); err != nil {
 		return err

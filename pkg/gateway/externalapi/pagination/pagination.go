@@ -3,8 +3,7 @@
 // Package pagination implements the §15.1 canonical cursor-paginated
 // list envelope for the REST API.
 //
-// The envelope is `{items, cursor, hasMore, total?}` (spec §15.1 lines
-// 1228-1253). Cursors are opaque URL-safe strings encoding a sort key,
+// The envelope is `{items, cursor, hasMore, total?}` (spec §15.1). Cursors are opaque URL-safe strings encoding a sort key,
 // a unique tiebreaker, the sort direction, and an issued-at timestamp
 // so the gateway can reject ancient cursors with `cursor_expired`. The
 // limit is clamped to [1, 200] (spec line 1236). Sort fields are
@@ -12,8 +11,7 @@
 // back to the resource default with no rejection so a client supplying
 // `?sort=` for a single-sort-field collection still gets results.
 //
-// spec: §15.1 lines 1228-1253 (cursor envelope, limit clamp, sort
-// validation, 24-hour cursor TTL).
+// spec: §15.1.
 package pagination
 
 import (
@@ -27,7 +25,7 @@ import (
 	"time"
 )
 
-// Spec-derived limits — §15.1 lines 1236, 1253.
+// Spec-derived limits — §15.1.
 const (
 	LimitMin     = 1
 	LimitMax     = 200
@@ -35,7 +33,7 @@ const (
 	CursorTTL    = 24 * time.Hour
 )
 
-// DirectionAsc / DirectionDesc — §15.1 line 1236 `field:asc|desc`.
+// DirectionAsc / DirectionDesc — §15.1.
 const (
 	DirectionAsc  = "asc"
 	DirectionDesc = "desc"
@@ -44,8 +42,7 @@ const (
 // Cursor is the opaque payload encoded into the URL-safe cursor string.
 // Key carries the sort-field value of the last item on the previous
 // page; Tiebreak is the unique identifier (id) of that last item — the
-// two together guarantee stable iteration across inserts (§15.1 line
-// 1253). Field + Direction pin the sort the cursor was minted against;
+// two together guarantee stable iteration across inserts (§15.1). Field + Direction pin the sort the cursor was minted against;
 // a request that paginates with a cursor under a different sort gets
 // `VALIDATION_ERROR cursor_sort_mismatch`. IssuedAt anchors the
 // 24-hour TTL.
@@ -223,7 +220,7 @@ func (e *FieldError) Details() map[string]any {
 // slice the caller supplies; Cursor is the opaque next-page cursor
 // (empty when there are no more pages); HasMore tracks whether
 // additional pages exist beyond this one; Total is populated only when
-// cheaply computable per §15.1 line 1252.
+// cheaply computable per §15.1.
 type Envelope[T any] struct {
 	Items   []T    `json:"items"`
 	Cursor  string `json:"cursor,omitempty"`
@@ -250,13 +247,12 @@ func MintCursor(s Sort, key, tiebreak string, issuedAt time.Time) string {
 // active sort field; for a `created_at` sort it is the RFC3339Nano
 // timestamp, for a `name` sort it is the name. Callers that support
 // multiple sort fields close over the parsed Sort and return the key
-// for the active field. spec: §15.1 line 1253 (sort key + tiebreaker).
+// for the active field. spec: §15.1.
 type KeyFunc[T any] func(T) (key, tiebreak string)
 
 // SortSlice orders items in place to match direction using keyOf. The
 // sort is stable and total: ties on the sort key fall through to the
-// tiebreaker so iteration is deterministic across inserts (§15.1 line
-// 1253). The same keyOf is then passed to Page so the encoded cursor
+// tiebreaker so iteration is deterministic across inserts (§15.1). The same keyOf is then passed to Page so the encoded cursor
 // matches the ordering.
 func SortSlice[T any](items []T, direction string, keyOf KeyFunc[T]) {
 	sort.SliceStable(items, func(i, j int) bool {
@@ -281,9 +277,9 @@ func SortSlice[T any](items []T, direction string, keyOf KeyFunc[T]) {
 // cursor position in sort order is skipped. Up to params.Limit items
 // are returned; HasMore and the next Cursor are set when more remain.
 // Total is stamped because an in-memory slice has a cheaply-computable
-// count (§15.1 line 1252).
+// count (§15.1).
 //
-// spec: §15.1 lines 1228-1253.
+// spec: §15.1.
 func Page[T any](items []T, params Params, now time.Time, keyOf KeyFunc[T]) Envelope[T] {
 	start := 0
 	if c := params.Cursor; c.Key != "" || c.Tiebreak != "" {

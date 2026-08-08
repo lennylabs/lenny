@@ -57,7 +57,7 @@ const Channel = denylistprop.Channel
 
 // PGChannel is the §4.9 Postgres LISTEN/NOTIFY fallback channel, shared
 // with the credential-deny-list propagator so both transports carry the
-// same fleet-wide revocation event. spec: §4.9 line 1647.
+// same fleet-wide revocation event. spec: §4.9.
 const PGChannel = denylistprop.PGChannel
 
 // CredentialRevoker is the subset of credrenewal.Worker the propagator
@@ -89,7 +89,7 @@ type Propagator struct {
 	// rotate wires it so a revoked pool credential proactively rotates the
 	// direct-delivery pods bound on this replica — fanning the rotate out
 	// fleet-wide alongside the deny-list propagation. Nil disables it.
-	// spec: spec/04_system-components.md line 1649.
+	// spec: §4.9.
 	onRevoke func(credential.CredentialKey)
 }
 
@@ -112,7 +112,7 @@ func WithErrorHandler(fn func(error)) Option {
 // rotate out fleet-wide through the same propagation as the deny list.
 // The hook runs inline under the applying goroutine, so a slow hook (a
 // RotateCredentials RPC) must hand off its own work. spec:
-// spec/04_system-components.md line 1649.
+// §4.9.
 func WithRevokeHook(fn func(credential.CredentialKey)) Option {
 	return func(p *Propagator) { p.onRevoke = fn }
 }
@@ -121,7 +121,7 @@ func WithRevokeHook(fn func(credential.CredentialKey)) Option {
 // publishes on it when the Redis publish fails (or when no Redis bus is
 // wired), and Run additionally subscribes on it so a peer replica's
 // revocation reaches this replica over Postgres even while Redis is
-// down. spec: §4.9 line 1647. F-13.3.8.
+// down. spec: §4.9. F-13.3.8.
 func WithFallback(fb denylistprop.Fallback) Option {
 	return func(p *Propagator) { p.fallback = fb }
 }
@@ -157,7 +157,7 @@ func (p *Propagator) Revoke(key credential.CredentialKey) {
 		}
 		return
 	}
-	// §4.9 line 1647: Redis pub/sub is primary with Postgres
+	// §4.9: Redis pub/sub is primary with Postgres
 	// LISTEN/NOTIFY as fallback. The Postgres path carries the revocation
 	// when the Redis publish fails (Redis down) or when no Redis bus is
 	// configured. F-13.3.8.
@@ -205,7 +205,7 @@ func (p *Propagator) Run(ctx context.Context) {
 		p.bus.Subscribe(ctx, Channel, p.apply)
 		return
 	}
-	// §4.9 line 1647: subscribe on both transports so a revocation reaches
+	// §4.9: subscribe on both transports so a revocation reaches
 	// this replica over whichever is live. apply is idempotent, so a key
 	// received on both channels is harmless. F-13.3.8.
 	var wg sync.WaitGroup
@@ -241,7 +241,7 @@ func (p *Propagator) applyLocal(key credential.CredentialKey) {
 	if p.worker != nil && key.Source == credential.SourcePool && key.CredentialID != "" {
 		p.worker.Revoke(key.CredentialID)
 	}
-	// §4.9 line 1649: a revocation also drives the per-replica direct-mode
+	// §4.9: a revocation also drives the per-replica direct-mode
 	// rotate when one is wired, so every replica that applies the
 	// revocation rotates its own direct-delivery pods off the credential.
 	if p.onRevoke != nil {

@@ -51,7 +51,7 @@ func TestPromUploadMetrics_EmitsCatalogedNames(t *testing.T) {
 		t.Fatalf("lenny_upload_queue_depth after negative set = %v, want 0", got)
 	}
 
-	// spec: §7.4 line 462 — extraction aborts increment by error type.
+	// spec: §7.4 — extraction aborts increment by error type.
 	m.AddExtractionAbort("max_decompressed_size")
 	m.AddExtractionAbort("max_decompressed_size")
 	m.AddExtractionAbort("non_regular_entry")

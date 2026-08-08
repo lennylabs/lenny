@@ -78,7 +78,7 @@ func newTickReconciler(t *testing.T) (*Reconciler, *recStore, *recCounter) {
 	return &Reconciler{Probe: nil, Service: svc, Interval: time.Hour}, store, cnt
 }
 
-// spec: §11.2 lines 44, 48 — a down→up edge reconstructs before
+// spec: §11.2 — a down→up edge reconstructs before
 // checkpointing; a steady-reachable tick only checkpoints; an unreachable
 // tick does neither.
 func TestReconcilerTickEdge_spec_11_2(t *testing.T) {

@@ -9,10 +9,10 @@
 // whenever the Redis-counter occupancy is nonzero), while these per-slot
 // sub-states track each individual slot's progress through workspace
 // materialization, execution, and cleanup. The sub-states are tracked per
-// slotId, not as a pod-level phase (spec §6.2 line 170).
+// slotId, not as a pod-level phase (spec §6.2).
 //
 // SubState and ValidTransitions() form the authoritative contract for the
-// per-slot edges in spec §6.2 lines 171-176. IsValid returns nil for an
+// per-slot edges in spec §6.2. IsValid returns nil for an
 // edge present in ValidTransitions() and an InvalidTransitionError
 // otherwise.
 package slotstate
@@ -20,7 +20,7 @@ package slotstate
 import "fmt"
 
 // SubState is a slot's per-slotId sub-state, distinct from the pod-level
-// Sandbox phase. spec: §6.2 lines 170-176.
+// Sandbox phase. spec: §6.2.
 type SubState string
 
 const (
@@ -29,25 +29,24 @@ const (
 	// from idle to claimed under sessionPolicy.maxConcurrentSessions > 1).
 	SlotAssigned SubState = "slot_assigned"
 	// ReceivingUploads is the workspace-materialization sub-state for one
-	// slot. spec: §6.2 line 171.
+	// slot. spec: §6.2.
 	ReceivingUploads SubState = "receiving_uploads"
 	// Running is the dispatched sub-state: the slot's workspace is ready
 	// and the task has been dispatched to the runtime with the slotId.
-	// spec: §6.2 line 172.
+	// spec: §6.2.
 	Running SubState = "running"
 	// SlotCleanup is the post-execution cleanup sub-state (task completed
-	// or failed, per-slot cleanup runs). spec: §6.2 line 173.
+	// or failed, per-slot cleanup runs). spec: §6.2.
 	SlotCleanup SubState = "slot_cleanup"
 	// Released is the terminal sub-state for a slot whose workspace was
-	// removed, processes killed, and slotId released. spec: §6.2 line 175.
+	// removed, processes killed, and slotId released. spec: §6.2.
 	Released SubState = "released"
 	// Leaked is the terminal sub-state for a slot whose cleanup timed out:
 	// the slot is not reclaimed until pod termination and remains counted
-	// in active_slots. spec: §6.2 line 176, line 179.
+	// in active_slots. spec: §6.2.
 	Leaked SubState = "leaked"
 	// Failed is the terminal sub-state for a slot that hit a non-retryable
-	// error (OOM, workspace validation, policy rejection). spec: §6.2
-	// line 174.
+	// error (OOM, workspace validation, policy rejection). spec: §6.2.
 	Failed SubState = "failed"
 )
 
@@ -82,8 +81,7 @@ func Terminal(s SubState) bool {
 // the pod's active_slots. Every sub-state except Released occupies a
 // slot; in particular a Leaked slot "remains counted in active_slots
 // (preventing the gateway from over-assigning new slots that would
-// conflict with the leaked slot's unreleased resources)". spec: §6.2
-// line 179. A Failed slot's pod is replaced as a whole, but until the pod
+// conflict with the leaked slot's unreleased resources)". spec: §6.2. A Failed slot's pod is replaced as a whole, but until the pod
 // terminates the slot is still allocated, so it occupies one too.
 func OccupiesSlot(s SubState) bool {
 	return s != Released
@@ -96,7 +94,7 @@ type Transition struct {
 }
 
 // ValidTransitions is the canonical per-slot sub-state edge list, spec
-// §6.2 lines 171-176:
+// §6.2:
 //
 //	slot_assigned     → receiving_uploads   (workspace materialization begins)
 //	receiving_uploads → running             (workspace ready, task dispatched)

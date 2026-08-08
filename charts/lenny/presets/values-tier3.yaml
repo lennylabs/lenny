@@ -36,7 +36,7 @@ capacityPlanning:
 global:
   deploymentTier: tier3
 
-# §12.3 line 117 per-tier write ceiling: Tier 3 reference instance
+# §12.3 per-tier write ceiling: Tier 3 reference instance
 # (8 vCPU / 32 GB) sustains ~1600 write IOPS. Emitted on
 # lenny_postgres_write_ceiling_iops for the PostgresWriteSaturation
 # alert. F-12.3.8.
@@ -137,16 +137,16 @@ ops:
   # Tier 3 is a production posture. Enabling ops.production turns on the
   # §25.11 confirm:true requirement for full backups.
   production: true
-  # §25.4 line 903 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
+  # §25.4 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
   # catch fast failure-and-recovery cycles.
   selfHealth:
     checkIntervalSeconds: 10
-  # §25.5 line 2598 / §17.8.4 — Tier 3 ops:events:stream MAXLEN of
+  # §25.5 / §17.8.4 — Tier 3 ops:events:stream MAXLEN of
   # 100,000 (~50 MB Redis budget) for a ~10-30 minute catch-up window at
   # peak event rates.
   events:
     streamMaxLen: 100000
-  # §25.5 lines 2655-2659 — Tier 3 webhook delivery retention of 30 days
+  # §25.5 — Tier 3 webhook delivery retention of 30 days
   # (compliance-aligned for audit).
   webhooks:
     deliveryRetentionDays: 30
@@ -175,7 +175,7 @@ backups:
     schedule: "0 4 1 * *"
     backupSelector: "latest-full"
 
-# §25.13 line 4737 / §16.5 — tier-tightened alert thresholds. Tier 3
+# §25.13 / §16.5 — tier-tightened alert thresholds. Tier 3
 # applies the §25.13 example tier-3 row: queue depth 5/1m, p95 latency
 # 1s/2m, credential pool utilisation 60 percent (tighter still than
 # Tier 2). Critical severity for replenishment-slow per §25.13.

@@ -17,8 +17,7 @@ import (
 // lenny-label-immutability ValidatingAdmissionWebhook. It enforces the
 // strictly-immutable agent-pod label set (`lenny.dev/managed`,
 // `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`). The
-// companion `TenantLabelImmutability` decider handles the §5.2 line
-// 392 / NET-003 `lenny.dev/tenant-id` transition rules — they were
+// companion `TenantLabelImmutability` decider handles the §5.2 / NET-003 `lenny.dev/tenant-id` transition rules — they were
 // historically folded into one webhook but the spec names two distinct
 // ValidatingWebhookConfigurations.
 //
@@ -27,12 +26,12 @@ func LabelImmutability() Decider {
 	return immutabilityDecider(labelimm.DecideImmutableLabels)
 }
 
-// TenantLabelImmutability returns the Decider for the §5.2 line 392 /
+// TenantLabelImmutability returns the Decider for the §5.2 /
 // NET-003 lenny-tenant-label-immutability ValidatingAdmissionWebhook.
 // It enforces the gateway-only initial-assignment edge and the
 // WarmPoolController-only return-to-pool edge for `lenny.dev/tenant-id`.
 //
-// spec: §5.2 line 392; §13.2 line 498.
+// spec: §5.2; §13.2.
 func TenantLabelImmutability() Decider {
 	return immutabilityDecider(labelimm.DecideTenantTransition)
 }

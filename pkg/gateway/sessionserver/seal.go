@@ -14,23 +14,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
-// DefaultWorkspaceSealMaxDuration is the §7.1 line 112
+// DefaultWorkspaceSealMaxDuration is the §7.1
 // maxWorkspaceSealDurationSeconds default: the total wall-clock window
 // the gateway retries the seal-and-export before giving up and failing
 // the session with workspace_seal_timeout. Deployers override it via
 // Options.WorkspaceSealMaxDuration.
 //
-// spec: §7.1 line 112 — "bounded by maxWorkspaceSealDurationSeconds
+// spec: §7.1 — "bounded by maxWorkspaceSealDurationSeconds
 // (pool-level configuration, default: 300s)".
 const DefaultWorkspaceSealMaxDuration = 300 * time.Second
 
-// sealBackoffInitial and sealBackoffCap are the §7.1 line 112 fixed
+// sealBackoffInitial and sealBackoffCap are the §7.1 fixed
 // exponential-backoff parameters for a failed seal: the first retry
 // waits sealBackoffInitial, each subsequent wait doubles, capped per
 // attempt at sealBackoffCap. These are spec constants, not deployer
 // configuration; only the total window (sealMaxDuration) is tunable.
 //
-// spec: §7.1 line 112 — "exponential backoff (initial: 5s, factor: 2×,
+// spec: §7.1 — "exponential backoff (initial: 5s, factor: 2×,
 // cap: 60s per attempt)".
 const (
 	sealBackoffInitial = 5 * time.Second
@@ -38,7 +38,7 @@ const (
 )
 
 // sealOutcomeSuccess, sealOutcomeTimeout, and sealOutcomePermanent are
-// the §7.1 line 112 `outcome` label values on
+// the §7.1 label values on
 // lenny_workspace_seal_duration_seconds. `permanent` records a seal that
 // failed on an export error the adapter reported as permanent and
 // returned immediately without retrying; only the `timeout` arm fires
@@ -50,13 +50,13 @@ const (
 )
 
 // isPermanentSealError reports whether err is a gRPC status the seal
-// adapter reports as permanent: FailedPrecondition (the §4.4 line 255
+// adapter reports as permanent: FailedPrecondition (the §4.4
 // workspace-size probe rejection, which re-probes identically on every
 // retry), InvalidArgument, or Unimplemented. A permanent error
 // re-produces identically on each attempt, so retrying it for the full
 // §7.1 window only delays the identical terminal state.
 //
-// spec: §7.1 line 112 — "an export failure the adapter reports as
+// spec: §7.1 — "an export failure the adapter reports as
 // permanent ends the window on its first observation with the same
 // terminal outcome".
 func isPermanentSealError(err error) bool {
@@ -96,10 +96,10 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 // session that never ran on a pod completes on the first attempt with no
 // delay.
 //
-// spec: §7.1 line 112 — backoff initial 5s, factor 2×, cap 60s per
+// spec: §7.1 — backoff initial 5s, factor 2×, cap 60s per
 // attempt, total window maxWorkspaceSealDurationSeconds.
 func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (retErr error) {
-	// spec: §16.3 line 356 — the gateway-side `session.seal_and_export`
+	// spec: §16.3 — the gateway-side `session.seal_and_export`
 	// span covers the whole bounded-backoff retry loop, so a trace shows
 	// the full seal window and its terminal outcome. A seal timeout records
 	// the last export error on the span (TRANSIENT: a MinIO outage is a
@@ -121,7 +121,7 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 			return nil
 		}
 		lastErr = err
-		// spec: §7.1 line 112 — an export failure the adapter reports as
+		// spec: §7.1 — an export failure the adapter reports as
 		// permanent ends the window on its first observation with the same
 		// terminal outcome. The workspace-size probe rejection re-produces
 		// identically on every retry, so retrying it for the full window
@@ -153,7 +153,7 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 	}
 }
 
-// observeWorkspaceSeal records the §7.1 line 112
+// observeWorkspaceSeal records the §7.1
 // lenny_workspace_seal_duration_seconds{pool,outcome} histogram for one
 // completed seal attempt. The pool label is the session's runtime
 // reference, the closest stable pool identity the gateway holds at
@@ -165,7 +165,7 @@ func (s *Server) observeWorkspaceSeal(sess sessionstore.Session, start time.Time
 	s.observeSealDuration(sess.RuntimeRef, outcome, s.clock().Sub(start).Seconds())
 }
 
-// failWorkspaceSeal applies the §7.1 line 112 seal-timeout terminal
+// failWorkspaceSeal applies the §7.1 seal-timeout terminal
 // override: it transitions the session to failed with reason
 // workspace_seal_timeout and emits the workspaceSealFailed audit event
 // recording the last export error. The pod is terminated anyway by the
@@ -177,14 +177,13 @@ func (s *Server) observeWorkspaceSeal(sess sessionstore.Session, start time.Time
 // that reached failed for another reason keeps its original failure
 // class rather than being relabeled by a best-effort seal.
 //
-// spec: §7.1 line 112; §7.1 line 107 (workspace_seal_timeout failure
-// class).
+// spec: §7.1; §7.1.
 func (s *Server) failWorkspaceSeal(ctx context.Context, sess sessionstore.Session, lastErr error) sessionstore.Session {
 	detail := ""
 	if lastErr != nil {
 		detail = lastErr.Error()
 	}
-	// spec: §11.7 / §7.1 line 112 — record the audit event under the
+	// spec: §11.7 / §7.1 — record the audit event under the
 	// session's own tenant with the last MinIO error in the detail.
 	if s.lifecycleAudit != nil {
 		s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{

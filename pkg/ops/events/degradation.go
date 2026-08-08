@@ -13,7 +13,7 @@ import (
 // The §25.5 degradation-matrix source labels. They name the source a
 // response was actually served from so an agent can reason about the
 // history window and completeness of the events it received. spec:
-// §25.5 lines 2768-2780.
+// §25.5.
 const (
 	// sourceRedisStream is the primary cross-replica source: the Redis
 	// ops:events:stream every replica XADDs to.
@@ -40,7 +40,7 @@ const codeEventStreamUnavailable = "EVENT_STREAM_UNAVAILABLE"
 // unreachable). The Service consults it on every poll and stream request
 // to compute the §25.5 degradation envelope. A nil SourceHealth is
 // treated as fully healthy, preserving the pre-degradation behavior.
-// spec: §25.5 lines 2768-2780.
+// spec: §25.5.
 type SourceHealth interface {
 	// RedisAvailable reports whether the Redis ops:events:stream is
 	// reachable.
@@ -68,8 +68,7 @@ func (h StaticSourceHealth) GatewayAvailable() bool { return h.Gateway }
 // source health and returns the source the response is served from, the
 // degradation envelope to attach (nil when not degraded), and whether
 // the dual Redis + gateway outage holds (case 4), in which only
-// lenny-ops-originated events are observable. spec: §25.5 lines
-// 2768-2780.
+// lenny-ops-originated events are observable. spec: §25.5.
 func (s *Service) streamState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
 	if s.health == nil {
 		return sourceRedisStream, nil, false
@@ -99,8 +98,7 @@ func (s *Service) streamState() (actualSource string, deg *conventions.Degradati
 // EVENT_STREAM_DEGRADED response metadata on an HTTP 200 rather than as an
 // HTTP error. It is reached both from the health matrix and from a request
 // whose Redis read failed inside the source-health refresh window, which is
-// served from the same fall-back and must carry the same label. spec: §25.5
-// lines 2768-2780 (Redis-down gateway-buffer fall-back).
+// served from the same fall-back and must carry the same label. spec: §25.5.
 func gatewayFallbackState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
 	return sourceGatewayBuffer, &conventions.Degradation{
 		Level:         conventions.DegradationDegraded,
@@ -116,7 +114,7 @@ func gatewayFallbackState() (actualSource string, deg *conventions.Degradation, 
 // It is reached both from the health matrix (Redis and gateway both
 // unreachable) and from source selection, where a Redis-down classification
 // with no gateway source wired resolves to the same data path and must carry
-// the same label. spec: §25.5 lines 2768-2780 (dual-outage case).
+// the same label. spec: §25.5.
 func dualOutageState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
 	return sourceOpsLocalBuffer, &conventions.Degradation{
 		Level:             conventions.DegradationFailed,
@@ -143,7 +141,7 @@ func writeStreamUnavailable(w http.ResponseWriter) {
 // and reports whether there is one to write. A healthy classification renders
 // no line, which is how the caller distinguishes a degraded stint that repeats
 // the envelope on its poll cadence from a healthy source that carries none.
-// spec: §25.5 line 2691 (periodic :degradation comment line).
+// spec: §25.5.
 func degradationComment(deg *conventions.Degradation) (string, bool) {
 	if deg == nil {
 		return "", false

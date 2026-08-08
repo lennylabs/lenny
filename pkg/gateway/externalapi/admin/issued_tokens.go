@@ -80,7 +80,7 @@ func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 		// the §16.7 propagation_mode is recorded as postgres_only. F-16.7.5.
 		r.revocationCache.Revoke(jti)
 	}
-	// spec: §16.7 line 666 — operator-initiated single-token revocation
+	// spec: §16.7 — operator-initiated single-token revocation
 	// is the `explicit_revoke` reason. The payload carries the §16.7
 	// fields (revoked_jti, revocation_reason, propagation_mode) rather
 	// than the prior ad-hoc tenantId/reason pair; the free-text operator

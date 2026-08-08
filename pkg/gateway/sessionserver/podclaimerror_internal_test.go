@@ -31,7 +31,7 @@ func decodeErrorBody(t *testing.T, body []byte) map[string]any {
 	return env.Error
 }
 
-// spec: §4.9 line 1476 — a runtime↔pool proxy-dialect mismatch surfaces
+// spec: §4.9 — a runtime↔pool proxy-dialect mismatch surfaces
 // as 422 INVALID_POOL_PROXY_DIALECT (PERMANENT, not retryable) carrying
 // the offending pool and dialect in details and the verbatim spec
 // message. The errors.As check sees through %w wrapping.
@@ -71,7 +71,7 @@ func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519 — pod and slot exhaustion both map to
+// spec: §5.2 — pod and slot exhaustion both map to
 // WARM_POOL_EXHAUSTED, with details.reason distinguishing the cause:
 // an empty pool is "no_idle_pods" and pods-exist-but-full is
 // "concurrent_slots_exhausted". The errors.Is checks see through %w
@@ -107,7 +107,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 			if details["reason"] != tc.wantReason {
 				t.Errorf("details.reason = %v, want %q", details["reason"], tc.wantReason)
 			}
-			// spec: §15.2.1 line 1017 / §4.6.1 — the WARM_POOL_EXHAUSTED
+			// spec: §15.2.1 / §4.6.1 — the WARM_POOL_EXHAUSTED
 			// envelope carries a Retry-After header so a client backs off
 			// with a deterministic budget (both the reject path and the
 			// onPoolExhausted: queue timeout path).
@@ -118,7 +118,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a create-time
+// spec: §7.1 / §4.1 (proposal) — a create-time
 // pod-claim exhaustion (claimAtCreate wraps ErrNoIdlePod as
 // errCreateClaimExhausted) surfaces the create-handler fallback envelope
 // SESSION_CREATION_FAILED, not the §5.2 WARM_POOL_EXHAUSTED code the
@@ -151,7 +151,7 @@ func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
 				t.Errorf("details.reason = %v, want no_idle_pods", details["reason"])
 			}
 			if w.Header().Get("Retry-After") == "" {
-				t.Error("create-time exhaustion 503 must carry a Retry-After header (§15.1 line 1138)")
+				t.Error("create-time exhaustion 503 must carry a Retry-After header (§15.1)")
 			}
 		})
 	}
@@ -170,7 +170,7 @@ func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
 	})
 }
 
-// spec: §5.2 lines 602-625 — a PoolWarmingError maps to the 503
+// spec: §5.2 — a PoolWarmingError maps to the 503
 // RUNTIME_UNAVAILABLE "Pool Not Ready" response with Retry-After and a
 // details block carrying poolName, poolCondition, estimatedReadyIn, and
 // podsWarming.
@@ -200,7 +200,7 @@ func TestWritePodClaimErrorPoolWarming(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 625 — Retry-After is max(30, estimatedWarmupSeconds);
+// spec: §5.2 — Retry-After is max(30, estimatedWarmupSeconds);
 // a sub-30s estimate still reports the true estimate in the body while
 // the header floors at 30.
 func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
@@ -217,7 +217,7 @@ func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 / §15.1 line 1138 — a claim failure that is
+// spec: §7.1 / §15.1 — a claim failure that is
 // neither exhaustion nor warming surfaces as a retryable 503 carrying
 // the caller-named fallback code (SESSION_CREATION_FAILED for atomic
 // create / start, STARTING_FAILED for the two-step start, RESUME_FAILED
@@ -244,7 +244,7 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 			if msg, _ := body["message"].(string); msg != "could not place the session on a warm pod: boom" {
 				t.Errorf("message = %q, want the fallback message with the cause appended", msg)
 			}
-			// spec: §15.1 line 1138 — every retryable 503 carries Retry-After.
+			// spec: §15.1 — every retryable 503 carries Retry-After.
 			if ra := w.Header().Get("Retry-After"); ra != "5" {
 				t.Errorf("Retry-After = %q, want 5 (the §7.1 atomic-unit floor)", ra)
 			}

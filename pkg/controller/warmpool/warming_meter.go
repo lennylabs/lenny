@@ -20,8 +20,7 @@ import (
 // gauge the shipped alert rule references a metric no component emits and can
 // never fire.
 //
-// spec: §5.2 line 627 (WarmPoolBootstrapping alert fires when
-// PoolWarmingUp = True for more than warmupDeadlineSeconds); §16.5 line 526.
+// spec: §5.2; §16.5.
 var poolWarmingUp = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_pool_warming_up",
@@ -39,7 +38,7 @@ var poolWarmingUp = func() *prometheus.GaugeVec {
 // reconcile (not only on a condition change) so a controller restart
 // re-establishes the series.
 //
-// spec: §5.2 line 627.
+// spec: §5.2.
 func setPoolWarmingUp(pool string, warming bool) {
 	v := 0.0
 	if warming {

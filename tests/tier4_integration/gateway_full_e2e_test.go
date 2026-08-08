@@ -71,7 +71,7 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 		"runtimes": []map[string]any{{
 			"name":   "echo",
 			"image":  "lenny/echo@sha256:abc",
-			"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
+			"labels": map[string]string{"tier": "test"}, // §5.1: labels required
 			// §5.1: the runtime must declare injection support for the
 			// test's POST /messages mid-session injection to be accepted.
 			"capabilities": map[string]any{
@@ -132,7 +132,7 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("transcript: %d", code)
 	}
-	// spec: §15.1 lines 1228-1253 — the transcript is the canonical
+	// spec: §15.1 — the transcript is the canonical
 	// cursor-paginated envelope {items, cursor, hasMore}; the linearized
 	// message nodes are under `items`.
 	if entries, _ := transcript["items"].([]any); len(entries) < 2 {
@@ -155,7 +155,7 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	}
 
 	// ---- audit: the bootstrap mutation is in the verified chain ----
-	// spec: §25.9 line 3653 (F-25.9.10) — there is no standalone verify
+	// spec: §25.9 — there is no standalone verify
 	// route; chain integrity rides on the list response's
 	// chainIntegrityReport envelope. A healthy chain reports zero broken
 	// rows and at least one verified row. The bootstrap mutation is

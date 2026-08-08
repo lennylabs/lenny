@@ -69,7 +69,7 @@ const warmWorkspaceRootMode = 0o755
 // (through a read-only mount), so it carries group/other read+execute
 // (0o755). The directory exists even when no shared assets are
 // configured, so the runtime cannot treat the mountpoint as writable
-// scratch space (§6.4 line 409).
+// scratch space (§6.4).
 const warmSharedMode = 0o755
 
 // warmStagingMode is the permission mode of the warm-time staging
@@ -80,8 +80,8 @@ const warmStagingMode = 0o700
 
 // EnsureWarmWorkspaceLayout creates the workspace subdirectories the
 // §6.1 warm-pod invariant requires to exist before a pod is claimed:
-// "/workspace/current exists but is empty" (spec: §6.1 line 11) and
-// "/workspace/staging exists for upload staging" (spec: §6.1 line 12).
+// "/workspace/current exists but is empty" (spec: §6.1) and
+// "/workspace/staging exists for upload staging" (spec: §6.1).
 // The pod spec mounts a single emptyDir at /workspace, so without this
 // step a freshly-warmed pod exposes an empty /workspace and the
 // current/ and staging/ subdirectories appear only lazily at claim

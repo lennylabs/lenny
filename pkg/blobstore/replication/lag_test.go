@@ -40,8 +40,7 @@ func newLagController(t *testing.T, cfg replication.Config, driver *replication.
 	return c
 }
 
-// TestMeasureAllReportsLagAndFailures covers the §17.3 line 130 / §25.11
-// line 4085 producer of lenny_minio_replication_lag_seconds and
+// TestMeasureAllReportsLagAndFailures covers the §17.3 / §25.11 producer of lenny_minio_replication_lag_seconds and
 // lenny_minio_replication_failed_total: MeasureAll samples each region's
 // declared target and reports the measurement onto the LagObserver.
 func TestMeasureAllReportsLagAndFailures_spec_25_11_4085(t *testing.T) {

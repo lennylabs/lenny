@@ -20,7 +20,7 @@
 // `store`/`erase` are no-ops because the gateway, not the pod, is the
 // authoritative credential store.
 //
-// spec: §26.2 line 119; §9.1; §15.4.3. F-26.2.5.
+// spec: §26.2; §9.1; §15.4.3. F-26.2.5.
 package main
 
 import (
@@ -59,7 +59,7 @@ type minterFunc func(ctx context.Context, host, mode string) (username, token st
 // operation (get|store|erase). Only `get` produces output; the gateway
 // is authoritative, so `store`/`erase` are no-ops. A non-HTTPS protocol
 // or an absent host declines silently (no output, exit 0) so Git falls
-// back to its other helpers. spec: §26.2 line 119. F-26.2.5.
+// back to its other helpers. spec: §26.2. F-26.2.5.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, mode string, mint minterFunc) error {
 	op := ""
 	if len(args) > 0 {
@@ -74,7 +74,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, 
 	if err != nil {
 		return fmt.Errorf("git-credential-lenny: read request: %w", err)
 	}
-	// spec: §26.2 line 119 — gitClone.url is HTTPS-only in v1; decline
+	// spec: §26.2 — gitClone.url is HTTPS-only in v1; decline
 	// anything else and let Git try another helper.
 	if proto := attrs["protocol"]; proto != "" && proto != "https" {
 		return nil
@@ -161,7 +161,7 @@ func readManifest(path string) (socket, nonce string, err error) {
 // socketMinter returns a minterFunc that dials the platform MCP socket,
 // performs the §15.4.3 nonce handshake, and calls the lenny/vcs_token
 // platform tool. The §9.1 forwarding path carries the call to the
-// gateway scoped to this pod's session. spec: §26.2 line 119; §9.1.
+// gateway scoped to this pod's session. spec: §26.2; §9.1.
 // F-26.2.5.
 func socketMinter(socket, nonce string, dialTimeout time.Duration) minterFunc {
 	return func(ctx context.Context, host, mode string) (string, string, error) {

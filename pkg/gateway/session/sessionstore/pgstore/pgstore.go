@@ -32,11 +32,11 @@ import (
 // Store is the Postgres-backed SessionStore. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
-	// read is the §12.3 line 146 read-replica pool for the read-heavy
+	// read is the §12.3 read-replica pool for the read-heavy
 	// query classes the spec names (session status, task tree). It is set
 	// to pool unless WithReadPool wires a separate reader endpoint, so a
 	// single primary serves reads and writes unchanged. Writes always use
-	// pool. spec: §12.3 line 146.
+	// pool. spec: §12.3.
 	read *pgxpool.Pool
 }
 
@@ -44,8 +44,8 @@ type Store struct {
 type Option func(*Store)
 
 // WithReadPool routes the read-heavy session-status and task-tree
-// queries (§12.3 line 146) to a separate read-replica pool. A nil pool
-// keeps reads on the primary. spec: §12.3 line 146.
+// queries (§12.3) to a separate read-replica pool. A nil pool
+// keeps reads on the primary. spec: §12.3.
 func WithReadPool(read *pgxpool.Pool) Option {
 	return func(s *Store) {
 		if read != nil {
@@ -73,32 +73,31 @@ var _ sessionstore.Store = (*Store)(nil)
 //
 // The trailing five columns from migration 0050 are
 // (cwd, pod_assignment, recovery_generation, coordination_generation,
-// schema_version) — the §4.2 line 156 session-record fields. The
+// schema_version) — the §4.2 session-record fields. The
 // next three columns from migration 0055 are
 // (retry_count, policy_enforcement_state, resume_eligible_until) —
-// the §4.2 line 158-159 retry counter, policy enforcement state,
+// the §4.2 retry counter, policy enforcement state,
 // and resume window. The final column from migration 0061 is
-// `last_successful_checkpoint_at` — the §4.4 line 258 freshness
+// `last_successful_checkpoint_at` — the §4.4 freshness
 // timestamp the gauge / `lenny_checkpoint_stale_sessions` reaper keys
 // off.
-// The column (workspace_snapshot_hash) is the §4.5 line 311
+// The column (workspace_snapshot_hash) is the §4.5
 // content-addressed snapshot hash added in migration 0068. The
-// execution_mode and scrub_policy columns are the §7.1
-// line 75 sessionIsolationLevel halves added in migration 0084.
-// The conversation_continuity column is the §7.1 line 74
+// execution_mode and scrub_policy columns are the §7.1 sessionIsolationLevel halves added in migration 0084.
+// The conversation_continuity column is the §7.1
 // sessionIsolationLevel envelope half, and the
 // terminated_at/terminated_reason and suspended_at/suspended_reason
 // columns are the §7.2 / §8.8 session-condition facts relocated off
 // Sandbox.status.conditions, all added in migration 0168. The nullable
 // condition timestamps COALESCE to NULL: a zero timestamp means the
-// condition has not fired. spec: §6.49; §7.1 line 74; §7.2 line 230;
+// condition has not fired. spec: §6.49; §7.1; §7.2;
 // §8.8.
-// The metadata column is the §7.1 line 6 client-supplied
+// The metadata column is the §7.1 client-supplied
 // CreateSession(..., metadata) payload added in migration 0086
 // (F-7.3.20). The next two columns are the §7.3
 // retry_policy + last_checkpoint_workspace_bytes pair added in
 // migration 0087 (F-7.3.1 / F-7.3.21). The trailing two columns are
-// the §8.2 line 52 delegation tracing_context and the §8.3 line 266 /
+// the §8.2 delegation tracing_context and the §8.3 /
 // §8.10 cascade_on_failure lease policy added in migration 0090
 // (F-8.2.14 / F-8.2.15).
 const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
@@ -151,19 +150,18 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	// The trailing five binds ($26-$30) cover the §4.2 session-record
 	// fields added in migration 0050: cwd, pod_assignment,
 	// recovery_generation, coordination_generation, schema_version.
-	// The next three binds ($31-$33) cover the §4.2 line 158-159
+	// The next three binds ($31-$33) cover the §4.2
 	// retry counter, policy enforcement state, and resume window
 	// added in migration 0055. Bind $34 is the §4.4 freshness
-	// timestamp added in migration 0061. Bind $35 is the §4.5
-	// line 311 content-addressed snapshot hash added in
-	// migration 0068. Binds $36 and $37 are the §7.1 line 75
+	// timestamp added in migration 0061. Bind $35 is the §4.5 content-addressed snapshot hash added in
+	// migration 0068. Binds $36 and $37 are the §7.1
 	// execution_mode and scrub_policy halves of sessionIsolationLevel
-	// added in migration 0084. Bind $38 is the §7.1 line 6
+	// added in migration 0084. Bind $38 is the §7.1
 	// client-supplied metadata payload added in migration 0086
 	// (F-7.3.20). Binds $39 and $40 are the §7.3 retry_policy +
 	// last_checkpoint_workspace_bytes pair added in migration 0087
-	// (F-7.3.1 / F-7.3.21). Binds $43 and $44 are the §8.2 line 52
-	// delegation tracing_context and the §8.3 line 266 / §8.10
+	// (F-7.3.1 / F-7.3.21). Binds $43 and $44 are the §8.2
+	// delegation tracing_context and the §8.3 / §8.10
 	// cascade_on_failure lease policy added in migration 0090
 	// (F-8.2.14 / F-8.2.15). Bind $45 is the §8.9 root_session_id —
 	// children inherit the parent's root so the column identifies the
@@ -231,11 +229,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$48::jsonb,
 		$49::jsonb, $50::jsonb,
 		$51,
-		-- §8.3 line 472 credential_origin_session_id: empty string
+		-- §8.3 credential_origin_session_id: empty string
 		-- collapses to SQL NULL (the read path COALESCEs it back to the
 		-- row's own id), matching the parent_session_id NULLIF convention.
 		NULLIF($57, '')::uuid,
-		-- §8.3 line 443 credential_deny: the deny bit that self-origin
+		-- §8.3 credential_deny: the deny bit that self-origin
 		-- cannot express (an independent child and a deny child are both
 		-- self-origin). A plain BOOLEAN NOT NULL DEFAULT false; invariant
 		-- after creation, so it is absent from updateSQL.
@@ -245,7 +243,7 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
 	schemaVersion := sess.SchemaVersion
 	if schemaVersion == 0 {
-		// spec: §4.2 line 156 — v1 sessions are written at schema_version=1.
+		// spec: §4.2 — v1 sessions are written at schema_version=1.
 		schemaVersion = 1
 	}
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
@@ -300,33 +298,32 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// credentialPolicy, delegationLease, runtimeOptions). NULL when
 			// the client supplied none of the bundled fields. F-14.1.14.
 			requestEnvelopeArg(sess),
-			// $51 — §6.2 lines 273-300 idle-timer anchor; NULL until the
+			// $51 — §6.2 idle-timer anchor; NULL until the
 			// first qualifying agent activity is recorded, in which case
 			// the watchdog falls back to updated_at. F-11.3.7.
 			pgtenant.NullTime(sess.LastAgentActivityAt),
-			// $52 — §7.1 line 74 conversation_continuity envelope half;
+			// $52 — §7.1 conversation_continuity envelope half;
 			// "platform" for session mode, "none" for service mode, or ""
 			// until the next read path resolves it from the pool. spec:
-			// §7.1 line 74.
+			// §7.1.
 			sess.ConversationContinuity,
 			// $53-$54 — §7.2 / §8.8 Terminated session-condition fact
 			// relocated off Sandbox.status.conditions. terminated_at passes
 			// through NullTime so a zero time persists as SQL NULL per the
-			// "condition has not fired" sentinel. spec: §6.49; §7.2 line
-			// 230; §8.8.
+			// "condition has not fired" sentinel. spec: §6.49; §7.2; §8.8.
 			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
 			// $55-$56 — §7.2 interrupt-suspension Suspended condition fact.
 			// suspended_at is NULL while the session is not suspended. spec:
-			// §6.49; §7.2 line 230; §8.8.
+			// §6.49; §7.2; §8.8.
 			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
-			// $57 — §8.3 line 472 / 488 credential_origin_session_id; the
+			// $57 — §8.3 credential_origin_session_id; the
 			// resolved origin pool the delegation Service stamps at
 			// child-row creation so contiguous `inherit` hops share one
 			// origin. Empty falls back to the row's own id via the
 			// NULLIF/COALESCE convention. Invariant after creation, so it is
 			// absent from updateSQL.
 			sess.CredentialOriginSessionID,
-			// $58 — §8.3 line 443 credential_deny; the deny marker the
+			// $58 — §8.3 credential_deny; the deny marker the
 			// delegation Service stamps at child-row creation so the
 			// finalize-time §4.9 engine fails a deny child closed at
 			// credential assignment. A deny child is self-origin
@@ -347,7 +344,7 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 // miss is indistinguishable from a missing row (§4.2 isolation).
 func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	var out sessionstore.Session
-	// spec: §12.3 line 146 — session-status read routes to the read replica.
+	// spec: §12.3 — session-status read routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
@@ -371,11 +368,10 @@ func (s *Store) Get(ctx context.Context, tenantID, id string) (sessionstore.Sess
 // under the §4.2 platform-admin cross-tenant context
 // (`app.current_tenant = '__all__'`) so the lenny_tenant_isolation RLS
 // policy does not filter the lookup by tenant. The caller MUST gate
-// this on a platform-admin role. spec: §24.11 lines 135-136; §4.2
-// line 163.
+// this on a platform-admin role. spec: §24.11; §4.2.
 func (s *Store) GetByID(ctx context.Context, id string) (sessionstore.Session, error) {
 	var out sessionstore.Session
-	// spec: §12.3 line 146 — session-status read routes to the read replica.
+	// spec: §12.3 — session-status read routes to the read replica.
 	err := pgtenant.InAllTenants(ctx, s.read, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM sessions WHERE id = $1::uuid`, id)
@@ -398,17 +394,15 @@ func (s *Store) GetByID(ctx context.Context, id string) (sessionstore.Session, e
 // resolution) so callers can rely on monotonicity.
 func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	// The trailing five SET clauses cover the §4.2 session-record
-	// fields added in migration 0050; the next three cover the §4.2
-	// line 158-159 retry counter, policy enforcement state, and
-	// resume window added in migration 0055. Clause $32 is the §4.4
-	// line 258 freshness timestamp added in migration 0061. Clause
-	// $33 is the §4.5 line 311 content-addressed snapshot hash
-	// added in migration 0068. Clause $36 is the §7.1 line 6
+	// fields added in migration 0050; the next three cover the §4.2 retry counter, policy enforcement state, and
+	// resume window added in migration 0055. Clause $32 is the §4.4 freshness timestamp added in migration 0061. Clause
+	// $33 is the §4.5 content-addressed snapshot hash
+	// added in migration 0068. Clause $36 is the §7.1
 	// client-supplied metadata payload added in migration 0086
 	// (F-7.3.20). Clauses $37 and $38 are the §7.3 retry_policy +
 	// last_checkpoint_workspace_bytes pair added in migration 0087
-	// (F-7.3.1 / F-7.3.21). Clauses $41 and $42 are the §8.2 line 52
-	// delegation tracing_context and the §8.3 line 266 / §8.10
+	// (F-7.3.1 / F-7.3.21). Clauses $41 and $42 are the §8.2
+	// delegation tracing_context and the §8.3 / §8.10
 	// cascade_on_failure lease policy added in migration 0090
 	// (F-8.2.14 / F-8.2.15).
 	// last_seq is GREATEST-floored so a late writer from a sibling
@@ -469,7 +463,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if err := mutate(&sess); err != nil {
 			return err
 		}
-		// spec: §4.2 line 156 / line 158 — recovery_generation,
+		// spec: §4.2 — recovery_generation,
 		// coordination_generation, and retry_count are monotonically
 		// non-decreasing. Enforce the floor here so an accidental
 		// rollback in the mutate callback cannot violate the
@@ -484,7 +478,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		if sess.RetryCount < prevRetryCount {
 			sess.RetryCount = prevRetryCount
 		}
-		// spec: §7.3 line 397 — sessions.last_seq is monotonic. The
+		// spec: §7.3 — sessions.last_seq is monotonic. The
 		// GREATEST in updateSQL is the cross-replica floor; this
 		// callback-level guard keeps the in-memory copy consistent so
 		// the returned Session never reports a rewound LastSeq even if
@@ -527,25 +521,25 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			envArg(sess.Env),
 			// $45 — §14.1 request envelope bundle; see Create. F-14.1.14.
 			requestEnvelopeArg(sess),
-			// $46-$48 — §15.1 line 865 legal-hold provenance (setBy, setAt,
+			// $46-$48 — §15.1 legal-hold provenance (setBy, setAt,
 			// note) reported by GET /v1/admin/legal-holds.
 			sess.LegalHoldSetBy, pgtenant.NullTime(sess.LegalHoldSetAt), sess.LegalHoldNote,
-			// $49 — §6.2 lines 273-300 idle-timer anchor; the activity
+			// $49 — §6.2 idle-timer anchor; the activity
 			// stamper advances it ≤1/s on qualifying agent events. NULL
 			// until the first event. F-11.3.7.
 			pgtenant.NullTime(sess.LastAgentActivityAt),
-			// $50 — §7.1 line 74 conversation_continuity envelope half; see
-			// Create. spec: §7.1 line 74.
+			// $50 — §7.1 conversation_continuity envelope half; see
+			// Create. spec: §7.1.
 			sess.ConversationContinuity,
 			// $51-$52 — §7.2 / §8.8 Terminated session-condition fact; the
 			// terminal-disposition writer (S27/S30) stamps terminated_at and
 			// terminated_reason when the session reaches a terminal state.
 			// terminated_at passes through NullTime so a non-terminal row
-			// keeps SQL NULL. spec: §6.49; §7.2 line 230; §8.8.
+			// keeps SQL NULL. spec: §6.49; §7.2; §8.8.
 			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
 			// $53-$54 — §7.2 interrupt-suspension Suspended condition fact;
 			// stamped when the session enters `suspended`, NULL otherwise.
-			// spec: §6.49; §7.2 line 230; §8.8.
+			// spec: §6.49; §7.2; §8.8.
 			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
 		); err != nil {
 			return err
@@ -575,14 +569,14 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 		args = append(args, string(filter.FailureClass))
 		q += fmt.Sprintf(" AND failure_class = $%d", len(args))
 	}
-	// spec: §11.4 line 256 — full_revoke step 1 narrows to the
+	// spec: §11.4 — full_revoke step 1 narrows to the
 	// invalidation subject. Pushes the filter to SQL so a tenant with
 	// many sessions does not scan tenant-wide.
 	if filter.UserID != "" {
 		args = append(args, filter.UserID)
 		q += fmt.Sprintf(" AND user_id = $%d", len(args))
 	}
-	// spec: §15.1 line 598 — labels filter is AND-containment over the
+	// spec: §15.1 — labels filter is AND-containment over the
 	// §14 Labels map, which rides the request_envelope JSONB bundle under
 	// the `labels` key. The `@>` containment matches a row whose stored
 	// labels include every requested pair. F-15.1.15.
@@ -593,7 +587,7 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 			q += fmt.Sprintf(" AND request_envelope -> 'labels' @> $%d::jsonb", len(args))
 		}
 	}
-	// spec: §15.1 lines 652, 661 — `?includeDeriveFailures=false` drops
+	// spec: §15.1 — `?includeDeriveFailures=false` drops
 	// the audit-only derive_failure rows. F-15.1.14.
 	if filter.ExcludeDeriveFailures {
 		args = append(args, string(session.FailureClassDeriveFailure))
@@ -602,7 +596,7 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 	q += ` ORDER BY created_at DESC, id`
 
 	var out []sessionstore.Session
-	// spec: §12.3 line 146 — session-status listing routes to the read replica.
+	// spec: §12.3 — session-status listing routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, args...)
 		if err != nil {
@@ -627,9 +621,9 @@ func (s *Store) List(ctx context.Context, tenantID string, filter sessionstore.L
 // ListByRoot implements Store — every row whose root_session_id equals
 // rootSessionID within tenantID, ordered by created_at ascending so a
 // caller can rebuild the §8.9 tree by walking ParentSessionID. Uses the
-// `idx_sessions_root` index (§12.5 line 101) for an O(tree size)
+// `idx_sessions_root` index (§12.5) for an O(tree size)
 // projection instead of the O(tenant size) List path. An empty
-// rootSessionID returns no rows. spec: §8.9 line 1010; §12.5 line 101.
+// rootSessionID returns no rows. spec: §8.9; §12.5.
 // F-8.9.7.
 func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
 	if rootSessionID == "" {
@@ -639,7 +633,7 @@ func (s *Store) ListByRoot(ctx context.Context, tenantID, rootSessionID string) 
 		AND root_session_id = $2::uuid
 		ORDER BY created_at ASC, id`
 	var out []sessionstore.Session
-	// spec: §12.3 line 146 — task-tree projection routes to the read replica.
+	// spec: §12.3 — task-tree projection routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, q, tenantID, rootSessionID)
 		if err != nil {
@@ -699,7 +693,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // belonging to tenantID and returns the count deleted; a tenant with
 // no sessions yields (0, nil).
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("sessionstore: DeleteByTenant requires a concrete tenant_id")
@@ -725,8 +719,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 // 0080 keeps the count under the 5ms target the spec assumes during a
 // post-restart rehydration burst. The non-terminal predicate matches
 // the index predicate and session.TerminalStates() verbatim.
-// spec: §5.2 line 521 ("GetActiveSlotsByPod ... indexed ... returns at
-// most maxConcurrent rows").
+// spec: §5.2.
 func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, error) {
 	if podID == "" {
 		return 0, nil
@@ -745,7 +738,7 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 	return count, nil
 }
 
-// ReserveSlotUnderLock implements Store — the §12.4 line 208 Redis-outage
+// ReserveSlotUnderLock implements Store — the §12.4 Redis-outage
 // capacity gate. The count-and-decide runs inside one transaction holding a
 // per-pod `pg_advisory_xact_lock`, so two concurrent admissions for the same
 // pod during a Redis outage serialize: the second waits for the first to
@@ -758,8 +751,8 @@ func (s *Store) GetActiveSlotsByPod(ctx context.Context, podID string) (int, err
 // returned post-admission count is the observed count plus one; the caller
 // (slotcounter) does not write the Postgres row — the slot occupancy is
 // recorded when the session row's pod_assignment is persisted on bind.
-// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
-// §5.2 line 541 (intra-pod capacity gate during a Redis outage).
+// spec: §12.4;
+// §5.2.
 func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
@@ -801,7 +794,7 @@ func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcu
 	return count, admitted, nil
 }
 
-// PoolDrainStats implements Store — the §15.1 line 797 pool-drain
+// PoolDrainStats implements Store — the §15.1 pool-drain
 // accounting. It counts live (non-terminal) sessions bound to poolRef
 // across every tenant and reports the oldest created_at among them so
 // the drain handler can derive the activeSessions count and the
@@ -810,7 +803,7 @@ func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcu
 // runs InAllTenants like GetActiveSlotsByPod. The non-terminal predicate
 // matches session.TerminalStates() verbatim. A pool with no live
 // sessions returns (0, time.Time{}, nil).
-// spec: §15.1 line 797.
+// spec: §15.1.
 func (s *Store) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {
 	if poolRef == "" {
 		return 0, time.Time{}, nil
@@ -864,7 +857,7 @@ func (s *Store) CountActiveSessions(ctx context.Context, tenantID string) (int, 
 // concurrent-session admission count. It counts the user's live
 // (non-terminal) sessions with a COUNT query, scoped to the tenant via
 // RLS. The non-terminal predicate matches session.TerminalStates()
-// verbatim. spec: §11.1 line 8 (Concurrency limits — per-user).
+// verbatim. spec: §11.1.
 func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -888,7 +881,7 @@ func (s *Store) CountActiveSessionsByUser(ctx context.Context, tenantID, userID 
 // concurrent-session admission count. It counts live (non-terminal)
 // sessions targeting runtimeRef within the tenant. The non-terminal
 // predicate matches session.TerminalStates() verbatim.
-// spec: §11.1 line 8 (Concurrency limits — per-runtime).
+// spec: §11.1.
 func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runtimeRef string) (int, error) {
 	if tenantID == "" || runtimeRef == "" {
 		return 0, nil
@@ -913,7 +906,7 @@ func (s *Store) CountActiveSessionsByRuntime(ctx context.Context, tenantID, runt
 // (non-terminal) session across all tenants (InAllTenants) so the
 // gateway-wide ceiling bounds total live sessions. The non-terminal
 // predicate matches session.TerminalStates() verbatim.
-// spec: §11.1 line 8 (Concurrency limits — global).
+// spec: §11.1.
 func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 	var count int
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
@@ -931,7 +924,7 @@ func (s *Store) CountActiveSessionsGlobal(ctx context.Context) (int, error) {
 // Session availability SLI numerator. It counts live sessions across
 // every tenant in a retry/recovery state; the recovery predicate matches
 // session.RecoveryStates() verbatim.
-// spec: §16.5 line 616 (Session availability SLO). F-16.5.3.
+// spec: §16.5. F-16.5.3.
 func (s *Store) CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, error) {
 	var count int
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
@@ -950,7 +943,7 @@ func (s *Store) CountActiveSessionsInRecoveryGlobal(ctx context.Context) (int, e
 // (non-terminal) sessions owned by userID within the tenant that carry
 // a non-empty parent_session_id (delegated children). The non-terminal
 // predicate matches session.TerminalStates() verbatim.
-// spec: §11.1 line 9 (Active delegated children — per-user).
+// spec: §11.1.
 func (s *Store) CountActiveDelegatedChildrenByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, nil
@@ -981,21 +974,21 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		planJSON                []byte
 		expID, expVariant       string
 		expInherited            bool
-		// §4.2 line 158-159 retry / policy / resume fields from
+		// §4.2 retry / policy / resume fields from
 		// migration 0055.
 		policyJSON  []byte
 		resumeUntil *time.Time
-		// §4.4 line 258 freshness timestamp from migration 0061.
+		// §4.4 freshness timestamp from migration 0061.
 		lastCheckpointAt *time.Time
-		// §4.5 line 311 content-addressed snapshot hash from
+		// §4.5 content-addressed snapshot hash from
 		// migration 0068.
 		wsHash string
 		// §7.2 / §8.8 session-condition timestamps from migration 0168.
 		// Nullable: NULL means the condition has not fired (the session is
-		// neither terminal nor suspended). spec: §6.49; §7.2 line 230; §8.8.
+		// neither terminal nor suspended). spec: §6.49; §7.2; §8.8.
 		terminatedAt *time.Time
 		suspendedAt  *time.Time
-		// §7.1 line 6 client-supplied metadata payload from migration
+		// §7.1 client-supplied metadata payload from migration
 		// 0086 (F-7.3.20).
 		metadataJSON []byte
 		// §7.3 client-supplied retry policy and
@@ -1003,7 +996,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// (F-7.3.1 / F-7.3.21).
 		retryPolicyJSON     []byte
 		lastCheckpointBytes *int64
-		// §8.2 line 52 delegation tracing_context and §8.3 line 266 /
+		// §8.2 delegation tracing_context and §8.3 /
 		// §8.10 cascade_on_failure lease policy from migration 0090
 		// (F-8.2.14 / F-8.2.15).
 		tracingContextJSON []byte
@@ -1020,10 +1013,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// bundle from migration 0109 (F-14.1.12 / F-14.1.14).
 		envJSON             []byte
 		requestEnvelopeJSON []byte
-		// §15.1 line 865 legal-hold provenance from migration 0145.
+		// §15.1 legal-hold provenance from migration 0145.
 		// legal_hold_set_at is nullable (no hold → SQL NULL).
 		legalHoldSetAt *time.Time
-		// §6.2 lines 273-300 idle-timer anchor from migration 0159.
+		// §6.2 idle-timer anchor from migration 0159.
 		// Nullable (NULL until the first qualifying agent event). F-11.3.7.
 		lastAgentActivityAt *time.Time
 	)
@@ -1034,70 +1027,70 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		&s.UploadTokenDigest, &upExp, &s.CreatedAt, &s.UpdatedAt, &planJSON,
 		&s.LegalHold, &expID, &expVariant, &expInherited, &s.Environment,
 		// §4.2 session-record fields from migration 0050.
-		// spec: §4.2 line 156.
+		// spec: §4.2.
 		&s.Cwd, &s.PodAssignment, &s.RecoveryGeneration,
 		&s.CoordinationGeneration, &s.SchemaVersion,
-		// §4.2 line 158-159 retry / policy / resume fields from
+		// §4.2 retry / policy / resume fields from
 		// migration 0055.
 		&s.RetryCount, &policyJSON, &resumeUntil,
 		// §4.4 freshness timestamp from migration 0061.
-		// spec: §4.4 line 258.
+		// spec: §4.4.
 		&lastCheckpointAt,
-		// §4.5 line 311 content-addressed snapshot hash from
+		// §4.5 content-addressed snapshot hash from
 		// migration 0068.
 		&wsHash,
-		// §7.1 line 75 sessionIsolationLevel halves from migration 0084.
+		// §7.1 sessionIsolationLevel halves from migration 0084.
 		&s.ExecutionMode, &s.ScrubPolicy,
-		// §7.1 line 74 conversation_continuity envelope half and the
+		// §7.1 conversation_continuity envelope half and the
 		// §7.2 / §8.8 Terminated/Suspended session-condition facts from
 		// migration 0168. The nullable timestamps scan into pointers and
-		// map back to the zero time when NULL. spec: §6.49; §7.1 line 74;
-		// §7.2 line 230; §8.8.
+		// map back to the zero time when NULL. spec: §6.49; §7.1;
+		// §7.2; §8.8.
 		&s.ConversationContinuity,
 		&terminatedAt, &s.TerminatedReason,
 		&suspendedAt, &s.SuspendedReason,
-		// §7.1 line 6 client metadata from migration 0086 (F-7.3.20).
+		// §7.1 client metadata from migration 0086 (F-7.3.20).
 		&metadataJSON,
 		// §7.3 retry_policy + last_checkpoint_workspace_bytes from
 		// migration 0087 (F-7.3.1 / F-7.3.21).
 		&retryPolicyJSON, &lastCheckpointBytes,
-		// §7.3 line 397 last_seq durable counter from migration 0088
+		// §7.3 last_seq durable counter from migration 0088
 		// (F-7.3.3).
 		&s.LastSeq,
-		// §7.3 line 408 workspace_root recorded at first bind from
+		// §7.3 workspace_root recorded at first bind from
 		// migration 0089 (F-7.3.15).
 		&s.WorkspaceRoot,
-		// §8.2 line 52 / §8.10 — tracing_context + cascade_on_failure
+		// §8.2 / §8.10 — tracing_context + cascade_on_failure
 		// from migration 0090 (F-8.2.14 / F-8.2.15).
 		&tracingContextJSON, &cascadeOnFailure,
-		// §8.9 line 1010 — root_session_id surfaces the delegation-tree
+		// §8.9 — root_session_id surfaces the delegation-tree
 		// apex on every row in the tree so a single-shard query can
 		// rebuild the §8.9 tree without walking ParentSessionID. F-8.9.8.
 		&s.RootSessionID,
-		// §8.5 line 540 — tree_visibility scopes get_task_tree for this
+		// §8.5 — tree_visibility scopes get_task_tree for this
 		// session; from migration 0094 (F-8.5.2 / F-8.9.2).
 		&treeVisibility,
-		// §10.7 line 905 — delegation_depth feeds the eval_results copy
+		// §10.7 — delegation_depth feeds the eval_results copy
 		// the Results API filters on; from migration 0095 (F-10.7.5).
 		&delegationDepth,
-		// §8.2 lines 38-48 — delegation_lease carries the granted
+		// §8.2 — delegation_lease carries the granted
 		// lease_slice so a descendant's slice validates against the
 		// ancestor ceiling; from migration 0099 (F-8.2.2).
 		&delegationLeaseJSON,
 		// §14 / §14.1 — env map + request envelope bundle from
 		// migration 0109 (F-14.1.12 / F-14.1.14).
 		&envJSON, &requestEnvelopeJSON,
-		// §15.1 line 865 — legal-hold provenance from migration 0145.
+		// §15.1 — legal-hold provenance from migration 0145.
 		&s.LegalHoldSetBy, &legalHoldSetAt, &s.LegalHoldNote,
-		// §6.2 lines 273-300 — idle-timer anchor from migration 0159
+		// §6.2 — idle-timer anchor from migration 0159
 		// (F-11.3.7). NULL → the watchdog falls back to updated_at.
 		&lastAgentActivityAt,
-		// §8.3 line 472 / 488 — credential_origin_session_id from
+		// §8.3 — credential_origin_session_id from
 		// migration 0176. COALESCEd to '' when NULL so a self-origin row
 		// scans as empty, matching the memstore convention. The finalize
 		// path treats an empty or self value as "not inherited".
 		&s.CredentialOriginSessionID,
-		// §8.3 line 443 — credential_deny from migration 0179. A plain
+		// §8.3 — credential_deny from migration 0179. A plain
 		// BOOLEAN NOT NULL, so it scans directly; true iff the delegate
 		// hop set credentialPropagation: deny. The finalize-time §4.9
 		// engine fails a deny child (and an inherit hop whose origin row
@@ -1112,7 +1105,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if lastAgentActivityAt != nil {
 		s.LastAgentActivityAt = *lastAgentActivityAt
 	}
-	// spec: §6.49 / §7.2 line 230 / §8.8 — a NULL terminated_at /
+	// spec: §6.49 / §7.2 / §8.8 — a NULL terminated_at /
 	// suspended_at means the session-condition has not fired, mapped to
 	// the zero time so the in-memory Session matches the memstore "not
 	// fired" sentinel. The reason strings scan directly into the struct.
@@ -1122,7 +1115,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if suspendedAt != nil {
 		s.SuspendedAt = *suspendedAt
 	}
-	// spec: §14 lines 47-50 — decode the client-supplied env map. A
+	// spec: §14 — decode the client-supplied env map. A
 	// nil/empty payload leaves Env nil so the read envelope omits it.
 	// F-14.1.12.
 	if len(envJSON) > 0 {
@@ -1137,7 +1130,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		applyStoredEnvelope(&s, requestEnvelopeJSON)
 	}
 	s.DelegationDepth = uint32(delegationDepth)
-	// spec: §8.2 lines 38-48 — decode the granted lease_slice. A
+	// spec: §8.2 — decode the granted lease_slice. A
 	// nil/empty payload leaves DelegationLease nil, matching the
 	// "no explicit budget binding" case (root/standalone or a child
 	// whose lease declared no slice). F-8.2.2.
@@ -1160,7 +1153,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 			s.RetryPolicy = rp
 		}
 	}
-	// spec: §8.2 line 52 / §8.3 line 286 — decode the delegation
+	// spec: §8.2 / §8.3 — decode the delegation
 	// tracing_context back into the in-memory string→string map so a
 	// Postgres-backed reload returns the same context the parent
 	// registered. A nil/empty payload yields a nil map, matching the
@@ -1170,13 +1163,13 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 			s.TracingContext = tc
 		}
 	}
-	// spec: §8.3 line 266 / §8.10 — cascade_on_failure persisted as TEXT;
+	// spec: §8.3 / §8.10 — cascade_on_failure persisted as TEXT;
 	// the empty string preserves the in-Go convention "empty resolves to
 	// the §8.10 default (cancel_all)". F-8.2.15.
 	if cascadeOnFailure != "" {
 		s.CascadeOnFailure = session.CascadePolicy(cascadeOnFailure)
 	}
-	// spec: §8.5 line 540 — tree_visibility persisted raw; the empty
+	// spec: §8.5 — tree_visibility persisted raw; the empty
 	// string preserves the in-Go "resolve to default full" convention
 	// (TreeVisibility.OrDefault). F-8.5.2 / F-8.9.2.
 	s.TreeVisibility = session.TreeVisibility(treeVisibility)
@@ -1221,7 +1214,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 }
 
 // snapshotCols flattens an optional WorkspaceSnapshot into its four
-// column values: ref, source, timestamp, and the §4.5 line 311
+// column values: ref, source, timestamp, and the §4.5
 // content-addressed hash.
 func snapshotCols(ws *sessionstore.WorkspaceSnapshot) (ref, src string, at time.Time, hash string) {
 	if ws == nil {
@@ -1265,11 +1258,11 @@ func delegationLeaseArg(l *sessionstore.DelegationLease) any {
 	return string(b)
 }
 
-// policyEnforcementArg renders the §4.2 line 158 policy enforcement
+// policyEnforcementArg renders the §4.2 policy enforcement
 // state as a jsonb argument. The column carries a NOT NULL DEFAULT
 // of '{}'::jsonb, so an empty payload falls through to the spec
 // default rather than the SQL NULL the workspace-plan column uses.
-// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+// spec: §4.2 — "Retry counters and policy enforcement".
 func policyEnforcementArg(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return "{}"
@@ -1277,7 +1270,7 @@ func policyEnforcementArg(raw json.RawMessage) string {
 	return string(raw)
 }
 
-// metadataArg renders the §7.1 line 6 client-supplied metadata map as
+// metadataArg renders the §7.1 client-supplied metadata map as
 // a jsonb argument. A nil or empty map stores SQL NULL so the read
 // path can distinguish "client supplied nothing" from "client supplied
 // {}" — the §15.1 GET envelope omits the field in both cases. F-7.3.20.
@@ -1304,7 +1297,7 @@ func envArg(env map[string]string) any {
 // bundle: the outer-envelope fields that do not need their own column or
 // index (pool, timeouts, credentialPolicy, delegationLease,
 // runtimeOptions). Bundling them into one JSONB column keeps the §14.1
-// surface to a single migration column. spec: §14.1 line 311. F-14.1.14.
+// surface to a single migration column. spec: §14.1. F-14.1.14.
 type storedEnvelope struct {
 	Pool             string                                 `json:"pool,omitempty"`
 	Timeouts         *sessionstore.SessionTimeouts          `json:"timeouts,omitempty"`
@@ -1317,10 +1310,10 @@ type storedEnvelope struct {
 	// keeps the label durable across replicas without a migration.
 	// F-27.6.8.
 	Origin string `json:"origin,omitempty"`
-	// Labels carries the §14 line 311 client-supplied session labels. They
+	// Labels carries the §14 client-supplied session labels. They
 	// ride the envelope bundle so the §15.1 list label filter
 	// (`request_envelope->'labels' @> $n`) has a durable, indexable target
-	// without a dedicated column. spec: §14 line 311; §15.1 line 598.
+	// without a dedicated column. spec: §14; §15.1.
 	// F-15.1.15.
 	Labels map[string]string `json:"labels,omitempty"`
 	// Callback carries the §14 session-terminal webhook fields: the
@@ -1329,7 +1322,7 @@ type storedEnvelope struct {
 	// ride the bundle so the §14 callback survives a coordinator handoff
 	// without a dedicated migration column; the sealed secret stays opaque
 	// to the lenny_app role exactly as a dedicated ciphertext column would.
-	// spec: §14 lines 108-150. F-14.1.11.
+	// spec: §14. F-14.1.11.
 	CallbackURL      string                            `json:"callbackUrl,omitempty"`
 	CallbackPinnedIP string                            `json:"callbackPinnedIp,omitempty"`
 	CallbackSecret   []byte                            `json:"callbackSecret,omitempty"`
@@ -1420,7 +1413,7 @@ func decodeMetadata(raw []byte) (map[string]string, error) {
 // supplied no override" from "client supplied an explicit object". An
 // unmarshalable payload (the in-memory struct is by-construction
 // well-formed, but defensive) stores NULL rather than fail the write.
-// spec: §7.3 lines 377-393.
+// spec: §7.3.
 func retryPolicyArg(p *session.RetryPolicy) any {
 	if p == nil {
 		return nil
@@ -1436,7 +1429,7 @@ func retryPolicyArg(p *session.RetryPolicy) any {
 // A malformed payload returns an error so the caller can surface the
 // corruption; in practice the gateway writes only ClampRetryPolicy
 // output, so the on-row payload is well-formed by construction.
-// spec: §7.3 lines 377-393.
+// spec: §7.3.
 func decodeRetryPolicy(raw []byte) (*session.RetryPolicy, error) {
 	var out session.RetryPolicy
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -1445,11 +1438,11 @@ func decodeRetryPolicy(raw []byte) (*session.RetryPolicy, error) {
 	return &out, nil
 }
 
-// workspaceBytesArg surfaces the §7.3 line 397
+// workspaceBytesArg surfaces the §7.3
 // last_checkpoint_workspace_bytes column value from the snapshot. A nil
 // snapshot or a zero size stores SQL NULL so the read path treats
 // "never checkpointed" the same as "no size reported", matching the
-// §10.1 preStop tiered-cap fallback rule. spec: §7.3 line 397; §10.1.
+// §10.1 preStop tiered-cap fallback rule. spec: §7.3; §10.1.
 func workspaceBytesArg(ws *sessionstore.WorkspaceSnapshot) any {
 	if ws == nil || ws.Bytes <= 0 {
 		return nil
@@ -1457,11 +1450,11 @@ func workspaceBytesArg(ws *sessionstore.WorkspaceSnapshot) any {
 	return ws.Bytes
 }
 
-// tracingContextArg renders the §8.2 line 52 / §8.3 line 286 delegation
+// tracingContextArg renders the §8.2 / §8.3 delegation
 // tracingContext map as a JSONB argument. A nil or empty map stores SQL
 // NULL so the read path returns nil (the "no context registered" case)
 // rather than the empty map. F-8.2.14.
-// spec: §8.2 line 52, §8.3 line 286.
+// spec: §8.2, §8.3.
 func tracingContextArg(tc map[string]string) any {
 	if len(tc) == 0 {
 		return nil
@@ -1477,7 +1470,7 @@ func tracingContextArg(tc map[string]string) any {
 // string→string map. The gateway writes only well-formed values (the map
 // originates as a Go map[string]string via lenny/set_tracing_context), so
 // a malformed payload returns an error the caller can surface. F-8.2.14.
-// spec: §8.2 line 52.
+// spec: §8.2.
 func decodeTracingContext(raw []byte) (map[string]string, error) {
 	var out map[string]string
 	if err := json.Unmarshal(raw, &out); err != nil {

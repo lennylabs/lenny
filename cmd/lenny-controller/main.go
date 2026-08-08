@@ -49,7 +49,7 @@ import (
 // Kubernetes built-in types plus the lenny.dev/v1alpha1 CRDs the controllers
 // reconcile.
 //
-// apiextensions.k8s.io/v1 is also registered so the §10 line 437
+// apiextensions.k8s.io/v1 is also registered so the §10
 // startup self-check can fetch each installed CRD and read its
 // `lenny.dev/schema-version` annotation. F-15.5.12.
 func buildScheme() *runtime.Scheme {
@@ -91,7 +91,7 @@ func envInt64(key string, def int64) int64 {
 
 // repeatableFlag accumulates the value of a flag passed multiple times. It
 // backs --resource-class so an operator can retune several §5.2 classes on
-// one command line. spec: §6.4 line 413.
+// one command line. spec: §6.4.
 type repeatableFlag []string
 
 func (f *repeatableFlag) String() string     { return strings.Join(*f, ",") }
@@ -100,7 +100,7 @@ func (f *repeatableFlag) Set(v string) error { *f = append(*f, v); return nil }
 // buildResourceClasses starts from the built-in §5.2 small/medium/large
 // defaults and applies the operator's --resource-class overrides, then
 // validates that every class's memory limit clears the §6.4 tmpfs
-// reservation. spec: §5.2 line 369, §6.4 line 413.
+// reservation. spec: §5.2, §6.4.
 func buildResourceClasses(overrides []string) (resourceclass.Registry, error) {
 	reg := resourceclass.DefaultRegistry()
 	for _, raw := range overrides {
@@ -131,13 +131,13 @@ const (
 // the composition root in wiring.go runs the ordered per-subsystem build
 // sequence (proposal 0020 §4 Part A R8).
 //
-// spec: §16.4 lines 370-372 — structured JSON logs from the pool controller;
+// spec: §16.4 — structured JSON logs from the pool controller;
 // routes the stdlib log package through the §16.4 handler (component=controller)
 // before any subsystem logs. F-16.4.1. §4.1 — the composition root parses its
 // inputs once and threads them to each subsystem builder; §4.6.1 — the
 // lenny-controller service body.
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs from the pool
+	// spec: §16.4 — structured JSON logs from the pool
 	// controller; routes the stdlib log package through the §16.4 handler
 	// (component=controller). F-16.4.1. This runs before flag parsing so the
 	// flag-parse and wiring log lines also surface in the §16.4 format.
@@ -145,7 +145,7 @@ func main() {
 	runController(parseFlags())
 }
 
-// assertCRDSchemaVersion is the §10 line 437 startup self-check: it
+// assertCRDSchemaVersion is the §10 startup self-check: it
 // builds a read-only controller-runtime client and runs the shared
 // preflight CRD schema-version comparison. On mismatch (or a missing
 // CRD, or a missing annotation) it returns an error whose text matches

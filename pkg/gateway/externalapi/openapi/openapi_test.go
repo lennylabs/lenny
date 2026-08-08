@@ -51,7 +51,7 @@ func TestServesJSONEndpoint(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 589 — the gateway also serves the JSON form at
+// spec: §15.1 — the gateway also serves the JSON form at
 // `/openapi.json` (no `/v1` prefix). The same document must come back
 // byte-for-byte from both JSON mounts. F-15.1.17.
 func TestServesJSONAtCanonicalSpecPath_spec_15_1_589(t *testing.T) {
@@ -114,7 +114,7 @@ func TestServesYAMLAtV1DiscoveryPath_spec_15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 589 — the canonical `/openapi.json` mount preserves
+// spec: §15.1 — the canonical `/openapi.json` mount preserves
 // the gateway release version stamped via HandlerWithVersion. F-15.1.17.
 func TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589(t *testing.T) {
 	const release = "2.7.0"
@@ -134,7 +134,7 @@ func TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589(t *testing.T) {
 	}
 }
 
-// TestAdminEndpointsCarryMCPExtensions implements the §15.1 line 933
+// TestAdminEndpointsCarryMCPExtensions implements the §15.1
 // build-time CI check: every admin-API endpoint MUST carry the four
 // mandatory `x-lenny-*` extensions (`x-lenny-mcp-tool`,
 // `x-lenny-scope`, `x-lenny-required-role`, `x-lenny-category`).
@@ -145,7 +145,7 @@ func TestCanonicalJSONMountStampsReleaseVersion_spec_15_1_589(t *testing.T) {
 // key-exists probe so the strict check accepts the null sentinel.
 // F-15.1.26.
 //
-// spec: §15.1 lines 923-933 (admin-API MCP extension contract).
+// spec: §15.1.
 func TestAdminEndpointsCarryMCPExtensions_spec_15_1_933(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
@@ -163,7 +163,7 @@ func TestAdminEndpointsCarryMCPExtensions_spec_15_1_933(t *testing.T) {
 				"x-lenny-required-role", "x-lenny-category",
 			} {
 				if _, exists := body[ext]; !exists {
-					t.Errorf("%s %s missing %s (spec §15.1 line 933)", method, path, ext)
+					t.Errorf("%s %s missing %s (spec §15.1)", method, path, ext)
 					continue
 				}
 				// `x-lenny-mcp-tool` is the only extension the spec
@@ -183,16 +183,16 @@ func TestAdminEndpointsCarryMCPExtensions_spec_15_1_933(t *testing.T) {
 }
 
 // TestAdminScopesFollowDocumentedSyntax_spec_15_1_933 asserts the
-// §15.1 line 933 "additional check" that every `x-lenny-scope` value
+// §15.1 that every `x-lenny-scope` value
 // conforms to the canonical `tools:<domain>:<action>` syntax and names
-// a domain in the closed §15.1 line 919 taxonomy. The served document
+// a domain in the closed §15.1 taxonomy. The served document
 // carries the canonical form for every admin endpoint; the legacy
 // `admin.<domain>.<verb>` form is rejected outright. Membership is
 // asserted through scopes.ParseScope, which both validates the
 // `tools:<domain>:<action>` syntax and rejects any domain absent from
 // the closed scopes.Domains taxonomy, so the test doubles as the
 // verification that the taxonomy enumerates every served domain.
-// spec: §15.1 line 919 (closed scope taxonomy), line 933 (CI syntax contract).
+// spec: §15.1.
 func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
@@ -201,7 +201,7 @@ func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 
 	// The canonical syntax is `tools:<domain>:<action>` with lowercase
 	// letters, digits, and underscore in the domain and action, and `*`
-	// permitted in the action position (per §15.1 line 922 wildcard).
+	// permitted in the action position (per §15.1 wildcard).
 	// scopes.ParseScope enforces the same grammar plus taxonomy
 	// membership; the regex pins the exact admitted character set so a
 	// malformed value reports a precise syntax error before the
@@ -245,13 +245,12 @@ func TestAdminScopesFollowDocumentedSyntax_spec_15_1_933(t *testing.T) {
 }
 
 // TestAdminRequiredRolesAreFromAuthEnum_spec_15_1_933 asserts every
-// `x-lenny-required-role` is one of the §10.2 roles the gateway
-// admits. The spec line 928 documents only `platform-admin` and
+// `x-lenny-required-role` is one of the §10.2 roles the gateway admits. The spec documents only `platform-admin` and
 // `tenant-admin`, but in-tree operability endpoints legitimately
 // grant `tenant-viewer` (health), `user` (caller-self-view), and
 // `billing-viewer` (`/v1/metering/events`). The §10.2 role taxonomy
 // is the source-of-truth so the CI guard accepts that broader set.
-// spec: §15.1 line 933; §10.2 (Roles).
+// spec: §15.1; §10.2 (Roles).
 func TestAdminRequiredRolesAreFromAuthEnum_spec_15_1_933(t *testing.T) {
 	allowed := map[string]struct{}{
 		"platform-admin": {}, "tenant-admin": {},
@@ -280,7 +279,7 @@ func TestAdminRequiredRolesAreFromAuthEnum_spec_15_1_933(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 972 / §15.2.1 line 1376 — the published Error
+// spec: §15.1 / §15.2.1 — the published Error
 // envelope must require `code`, `category`, `message`, and `retryable`
 // so SDK generators surface every field the Go handler emits. F-15.5.7,
 // F-15.1.5.
@@ -308,7 +307,7 @@ func TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972(t *testing.T) {
 	}
 	for _, want := range []string{"code", "category", "message", "retryable"} {
 		if !required[want] {
-			t.Errorf("Error.error.required missing %q (spec §15.1 line 972)", want)
+			t.Errorf("Error.error.required missing %q (spec §15.1)", want)
 		}
 	}
 	props, _ := inner["properties"].(map[string]any)
@@ -345,7 +344,7 @@ func TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated list
+// spec: §15.1 — the canonical cursor-paginated list
 // envelope `{items, cursor, hasMore, total}` is the SDK-generator input
 // for GET /v1/sessions, and the cursor/limit/sort query params are
 // advertised. F-15.1.6.
@@ -430,7 +429,7 @@ func TestDocumentReturnsCopy(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 589 — `info.version` field in the spec matches the
+// spec: §15.1 — `info.version` field in the spec matches the
 // gateway's release version. F-15.1.18.
 func TestHandlerStampsGatewayReleaseVersionIntoInfoVersion_spec_15_1_589(t *testing.T) {
 	const release = "1.4.2"
@@ -450,7 +449,7 @@ func TestHandlerStampsGatewayReleaseVersionIntoInfoVersion_spec_15_1_589(t *test
 	}
 }
 
-// spec: §15.1 line 589 — empty / "dev" build version leaves the
+// spec: §15.1 — empty / "dev" build version leaves the
 // embedded default in place so unconfigured deployments still serve a
 // non-empty version string.
 func TestHandlerKeepsEmbeddedVersionWhenBuildVersionIsEmptyOrDev_spec_15_1_589(t *testing.T) {
@@ -470,7 +469,7 @@ func TestHandlerKeepsEmbeddedVersionWhenBuildVersionIsEmptyOrDev_spec_15_1_589(t
 	}
 }
 
-// spec: §9.3 lines 144-158 — the §13 openapi-to-mcp tool generator
+// spec: §9.3 — the §13 openapi-to-mcp tool generator
 // consumes the OpenAPI document; the connector OAuth authorize +
 // callback routes must be declared so the OAuth flow surfaces as a
 // generated tool and external SDK consumers can see it. F-9.3.14.
@@ -497,7 +496,7 @@ func TestConnectorOAuthEndpointsDeclaredInDocument_spec_9_3_157(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 589 — version templating preserves the rest of the
+// spec: §15.1 — version templating preserves the rest of the
 // document (paths and MCP-extensions remain intact).
 func TestHandlerVersionTemplatingPreservesPaths_spec_15_1_589(t *testing.T) {
 	doc := openapi.DocumentWithVersion("9.9.9")
@@ -783,8 +782,8 @@ func equalStringSet(a, b map[string]bool) bool {
 // routing, the same engine the admin router routes on, so a templated route
 // (`/v1/admin/connectors/{name}`) resolves through a concrete request path.
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920),
-// §25.1 (middleware checks scopes before routing, line 94).
+// spec: §15.1,
+// §25.1.
 func TestRouteScopesResolvesCanonicalScope_spec_15_1_914(t *testing.T) {
 	rs := openapi.NewRouteScopes()
 
@@ -857,8 +856,8 @@ func TestRouteScopesResolvesCanonicalScope_spec_15_1_914(t *testing.T) {
 // to the role ceiling rather than matching against an empty scope. This pins
 // the §25.1 absent-route-scope behavior the enforcement step relies on.
 //
-// spec: §15.1 (x-lenny-scope per operation, line 920),
-// §25.1 (absent claim defers to the role ceiling, line 90).
+// spec: §15.1,
+// §25.1.
 func TestRouteScopesUnmatchedRouteHasNoScope_spec_15_1_914(t *testing.T) {
 	rs := openapi.NewRouteScopes()
 

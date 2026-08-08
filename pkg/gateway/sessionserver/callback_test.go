@@ -24,8 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §14 lines 108-150 (session-completion webhook); §15.1 lines 678,
-// 690 (webhook-events list, start callbackUrl). F-14.1.11 / F-15.1.11.
+// spec: §14; §15.1. F-14.1.11 / F-15.1.11.
 
 // fakeResolver maps a hostname to fixed addresses so the §14 SSRF
 // validator runs without real DNS in the sessionserver tests.
@@ -150,7 +149,7 @@ func TestCreateRejectsSecretWithoutURL_spec_14_139(t *testing.T) {
 	}
 }
 
-// TestCreateAndStartAcceptsCallback covers the §15.1 line 690 start-path
+// TestCreateAndStartAcceptsCallback covers the §15.1 start-path
 // callbackUrl. F-15.1.11.
 func TestCreateAndStartAcceptsCallback_spec_15_690(t *testing.T) {
 	store := memstore.New()
@@ -195,7 +194,7 @@ func TestCreateAndStartRejectsBadCallback_spec_15_690(t *testing.T) {
 	}
 }
 
-// TestWebhookEventsEndpoint covers the §15.1 line 678 undelivered-events
+// TestWebhookEventsEndpoint covers the §15.1 undelivered-events
 // list. F-14.1.11.
 func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	store := memstore.New()
@@ -270,7 +269,7 @@ func getWebhookEvents(t *testing.T, h http.Handler, id string) webhookEventsResp
 
 // TestTerminalCallbackDelivered drives a completed session through the
 // terminal hook and asserts the §14 webhook is delivered and the sealed
-// secret is cleared. spec: §14 lines 108-150. F-14.1.11.
+// secret is cleared. spec: §14. F-14.1.11.
 func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 	var gotType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

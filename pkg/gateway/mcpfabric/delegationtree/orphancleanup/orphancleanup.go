@@ -50,11 +50,11 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 // orphaned child session to a terminal state. It supersedes the
 // in-package archive emission when wired so terminal side effects —
 // workspace seal, executor release (which releases concurrent-mode slots
-// per §5.2 line 519 and drains pods per §6.2), §11.7 audit, §7.2 SSE,
+// per §5.2 and drains pods per §6.2), §11.7 audit, §7.2 SSE,
 // §11.2.1 billing, and §8.10 archive — run once through the same
 // Server.recordSessionCompleted path the REST handlers use.
 //
-// spec: §5.2 line 519 — slot release on session end / expiry; §8.10 —
+// spec: §5.2 — slot release on session end / expiry; §8.10 —
 // orphan cascade.
 type TerminalHook interface {
 	// fromState is the orphan's pre-terminal state, captured before the sweep
@@ -65,8 +65,7 @@ type TerminalHook interface {
 
 // MetricsSink receives the §8.10 / §16.1 orphan-cleanup and per-tenant
 // orphan-gauge observations a sweep generates. Implementations are
-// best-effort and must not block the sweep. spec: §8.10 lines 1091,
-// 1093-1101, 1103; §16.1 lines 146-149. F-8.10.7.
+// best-effort and must not block the sweep. spec: §8.10; §16.1. F-8.10.7.
 type MetricsSink interface {
 	// IncOrphanCleanupRun bumps the per-sweep counter; one Inc per Tick.
 	IncOrphanCleanupRun()
@@ -140,7 +139,7 @@ func New(store sessionstore.Store, tenants TenantLister, opts Options) *Sweeper 
 // Tick runs one sweep at now and returns the count of orphaned
 // children it terminated. An orphan is a non-terminal session whose
 // delegation tree root is terminal and whose root has been terminal
-// for longer than cascadeTimeout. Per §16.1 lines 146-149 every Tick
+// for longer than cascadeTimeout. Per §16.1 every Tick
 // also bumps the cleanup-runs counter, the cumulative terminated
 // counter, the fleet-wide active gauge, and the per-tenant active gauge
 // when a MetricsSink is wired.
@@ -199,7 +198,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 		if !session.IsTerminal(root.State) {
 			continue // the tree is still active
 		}
-		// spec: §8.10 line 1103 — `lenny_orphan_tasks_active_per_tenant`
+		// spec: §8.10 — `lenny_orphan_tasks_active_per_tenant`
 		// counts every non-terminal child whose root is terminal,
 		// regardless of whether the cascade window has elapsed. F-8.10.7.
 		activeOrphans++
@@ -211,7 +210,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 				return nil // concurrent transition — leave it alone
 			}
 			r.State = session.StateExpired
-			// spec: §8.8 line 867 — orphan cleanup is a wall-clock
+			// spec: §8.8 — orphan cleanup is a wall-clock
 			// deadline (the cascade window after a root settles), so
 			// the MCP boundary surfaces `failed` with code
 			// `expired:deadline`. F-8.8.8.
@@ -229,8 +228,7 @@ func (s *Sweeper) sweepTenant(ctx context.Context, tenant string, now time.Time)
 			activeOrphans--
 			if s.terminal != nil {
 				// Gateway-side terminal pipeline — release the executor
-				// (drains the pod, returns concurrent-mode slots per §5.2
-				// line 519), emit SSE/audit/billing, and archive the child.
+				// (drains the pod, returns concurrent-mode slots per §5.2), emit SSE/audit/billing, and archive the child.
 				// row.State is the pre-terminal state (§4.6).
 				s.terminal.OnSessionTerminal(ctx, row.State, updated)
 			} else {

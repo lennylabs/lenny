@@ -21,7 +21,7 @@ func (r *recordingAuditSink) EmitAdminEvent(_ context.Context, ev admin.AuditEve
 	r.events = append(r.events, ev)
 }
 
-// spec: §27.3.1 step 6 (line 156) — playground.bearer_minted /
+// spec: §27.3.1 step 6 — playground.bearer_minted /
 // playground.bearer_revoked share the §11.7 taxonomy and reach the
 // durable audit sink, not just the log. F-27.3.5.
 func TestPlaygroundAuditEmitterRoutesToDurableSink(t *testing.T) {
@@ -66,7 +66,7 @@ func TestPlaygroundAuditEmitterRoutesToDurableSink(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 243 — the bearer_mint_rejected event routes to the
+// spec: §10.2 — the bearer_mint_rejected event routes to the
 // same §11.7 sink. F-27.3.5.
 func TestPlaygroundAuditEmitterMintRejectedRoutesToDurableSink(t *testing.T) {
 	sink := &recordingAuditSink{}

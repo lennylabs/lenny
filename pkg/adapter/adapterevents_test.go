@@ -88,7 +88,7 @@ func recvEvent(t *testing.T, stream *fakeControlStream) controlEvent {
 	}
 }
 
-// spec: §4.7 lines 652-662 — every adapter→gateway control event is
+// spec: §4.7 — every adapter→gateway control event is
 // surfaced on the AdapterEvents stream with its type and fields.
 func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 	s := New("served")
@@ -140,7 +140,7 @@ func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 652-662 — events emitted while no gateway stream is
+// spec: §4.7 — events emitted while no gateway stream is
 // attached are recorded on lenny_adapter_control_events_dropped_total so
 // the loss is observable.
 func TestControlEventDroppedWhenNoStream_spec_4_7(t *testing.T) {
@@ -178,7 +178,7 @@ type stubUsage struct {
 func (s stubUsage) Usage(context.Context, string) (Usage, error)      { return s.u, s.err }
 func (s stubUsage) Cumulative(context.Context, string) (Usage, error) { return s.u, s.err }
 
-// spec: §4.7 lines 661-662 — Shutdown flushes a FINAL_USAGE_REPORT with
+// spec: §4.7 — Shutdown flushes a FINAL_USAGE_REPORT with
 // the session's totals before the stream closes (§8.3 budget return).
 func TestEmitFinalUsageOnShutdownPath_spec_4_7(t *testing.T) {
 	s := New("served")
@@ -212,7 +212,7 @@ func TestEmitFinalUsageNoMeterIsNoop_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 661-662 — a gateway frame that closes the stream
+// spec: §4.7 — a gateway frame that closes the stream
 // (io.EOF on Recv) ends AdapterEvents cleanly.
 func TestAdapterEventsClosesOnGatewayEOF_spec_4_7(t *testing.T) {
 	s := New("served")

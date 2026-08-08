@@ -84,7 +84,7 @@ type OperationalEvent struct {
 	// pkg/gateway/eventbus.Event. CloudEvents extension attribute names
 	// are lowercase alphanumeric. The map is excluded from the default
 	// struct marshaling; MarshalJSON / UnmarshalJSON move it to and from
-	// the top-level object. spec: §25.3 line 650 / §12.6 CloudEvents
+	// the top-level object. spec: §25.3 / §12.6 CloudEvents
 	// envelope.
 	Extensions map[string]string `json:"-"`
 }
@@ -169,7 +169,7 @@ type BufferedEvent struct {
 // not filter on that dimension. The CSV fields accept the §25.2 CSV form
 // (e.g. EventType "alert_fired,session_failed", Severity
 // "critical,warning"); a query matches when the event matches any one
-// of the comma-separated tokens. spec: §25.2 lines 210-211, 334-345.
+// of the comma-separated tokens. spec: §25.2.
 type EventFilter struct {
 	// EventType matches the CloudEvents type, either in full
 	// (dev.lenny.alert_fired) or by short-name suffix (alert_fired).
@@ -182,30 +182,29 @@ type EventFilter struct {
 
 	// ResourceType matches the type segment of the event's Subject (the
 	// part before the first "/", e.g. "pool" in "pool/default-gvisor").
-	// A CSV value matches the union of its tokens. spec: §25.2 line 340
+	// A CSV value matches the union of its tokens. spec: §25.2
 	// (?resourceType=pool).
 	ResourceType string
 
 	// ResourceID matches the id segment of the event's Subject (the part
 	// after the first "/", e.g. "default-gvisor" in "pool/default-
-	// gvisor"). A CSV value matches the union of its tokens. spec: §25.2
-	// line 340 (?resourceId=default-gvisor).
+	// gvisor"). A CSV value matches the union of its tokens. spec: §25.2.
 	ResourceID string
 
 	// Since constrains the query to events at or after this instant. A
-	// zero value imposes no lower time bound. spec: §25.2 line 344
+	// zero value imposes no lower time bound. spec: §25.2
 	// (?since=, RFC 3339).
 	Since time.Time
 
 	// Until constrains the query to events at or before this instant. A
-	// zero value imposes no upper time bound. spec: §25.2 line 344
+	// zero value imposes no upper time bound. spec: §25.2
 	// (?until=, RFC 3339).
 	Until time.Time
 }
 
 // Matches reports whether e satisfies the filter. An empty filter field
 // does not constrain that dimension; a CSV field matches when any token
-// matches (a §25.2 union). spec: §25.2 lines 210-211, 334-345.
+// matches (a §25.2 union). spec: §25.2.
 func (f EventFilter) Matches(e OperationalEvent) bool {
 	if !matchToken(f.Severity, func(tok string) bool { return e.Severity == tok }) {
 		return false
@@ -267,7 +266,7 @@ func matchToken(csv string, match func(string) bool) bool {
 // Pagination is the §25.2 canonical pagination envelope for the §25.3
 // buffer query. The buffer's cursor is a per-replica monotonic uint64
 // sequence, so cursorKind is always "buffer-seq" (one of the §25.2
-// listed kinds). spec: §25.2 lines 245-275 / §25.3 line 750.
+// listed kinds). spec: §25.2 / §25.3.
 type Pagination struct {
 	// Cursor is the id of the last event on the page — the value a
 	// poller passes back as ?since=.
@@ -298,7 +297,7 @@ type Pagination struct {
 
 // BufferedEventPage is the §25.3 GET /v1/admin/events/buffer response.
 // Pagination fields ride under the §25.2 canonical pagination envelope.
-// spec: §25.3 line 750.
+// spec: §25.3.
 type BufferedEventPage struct {
 	Events     []BufferedEvent `json:"events"`
 	Pagination Pagination      `json:"pagination"`

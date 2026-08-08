@@ -239,7 +239,7 @@ func (s *Store) Create(ctx context.Context, r runtimestore.Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	version := r.Version
 	if version == 0 {
 		version = 1
@@ -315,7 +315,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*runtimesto
 		return runtimestore.Runtime{}, err
 	}
 	r.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	r.Version++
 	if _, err := tx.Exec(ctx, `UPDATE runtime_definitions SET
 		type = $2, image = $3, execution_mode = $4, isolation_profile = $5,
@@ -398,7 +398,7 @@ func (s *Store) List(ctx context.Context, filter runtimestore.ListFilter) ([]run
 // SoftDelete sets deleted_at on the row. It is idempotent:
 // soft-deleting an already-deleted runtime is a no-op success.
 func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error {
-	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE runtime_definitions SET deleted_at = $2, updated_at = $2,
 		 version = version + 1 WHERE name = $1 AND deleted_at IS NULL`, name, at)

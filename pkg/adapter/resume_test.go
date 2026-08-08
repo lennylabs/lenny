@@ -23,7 +23,7 @@ import (
 // spec: §4.7 / §7.1 — the adapter Resume RPC restores a session
 // workspace from the gateway-minted presigned GET capabilities on
 // ResumeRequest.chunks, fetched in index order and concatenated into one
-// tar (or tar.gz) byte stream (§10.1 line 155).
+// tar (or tar.gz) byte stream (§10.1).
 
 // fakeCheckpointTransport serves fixed chunk bodies keyed by presigned
 // URL, standing in for the object store the production restore path
@@ -58,7 +58,7 @@ func archiveOf(t *testing.T, files map[string]string) []byte {
 
 // bundleOf builds a §4.4 checkpoint bundle carrying the given workspace
 // files and, when sessionFiles is non-nil, a /sessions tree under the
-// session prefix. spec: §7.3 line 408-409 (steps e and f).
+// session prefix. spec: §7.3.
 func bundleOf(t *testing.T, workspaceFiles, sessionFiles map[string]string) []byte {
 	t.Helper()
 	wsDir := writeTree(t, workspaceFiles)
@@ -139,7 +139,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a multi-chunk checkpoint is restored by fetching
+// spec: §10.1 — a multi-chunk checkpoint is restored by fetching
 // each presigned GET capability in ascending index order and feeding the
 // concatenation into one decompress→untar pipeline. This pins that the
 // adapter reassembles across chunk boundaries rather than treating each
@@ -172,7 +172,7 @@ func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 409 step (f) — a resume restores the runtime's
+// spec: §7.3 step (f) — a resume restores the runtime's
 // session file (native SDK session state, conversation logs) from the
 // /sessions tmpfs, not just the workspace. F-7.3.14.
 func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
@@ -310,7 +310,7 @@ func TestResumeReleasesThePodWhenChunkFetchFails(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
+// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
 // The gateway carries the original session's WorkspaceRoot on
 // ResumeRequest.expected_workspace_root; the adapter MUST refuse a
 // Resume whose mount path disagrees with the adapter's configured
@@ -326,7 +326,7 @@ func TestResumeRejectsWorkspaceRootMismatch_spec_7_3_15(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 408 — a matching workspace_root passes the assertion
+// spec: §7.3 — a matching workspace_root passes the assertion
 // and the resume proceeds. F-7.3.15.
 func TestResumeAcceptsMatchingWorkspaceRoot_spec_7_3_15(t *testing.T) {
 	s, _, root := sessionServer(t)
@@ -350,7 +350,7 @@ func TestResumeAcceptsEmptyExpectedWorkspaceRoot_spec_7_3_15(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 408 — a mismatch must release the session claim so a
+// spec: §7.3 — a mismatch must release the session claim so a
 // retry can land on a fresh pod without the original session being
 // stuck claimed.
 func TestResumeWorkspaceRootMismatchReleasesClaim_spec_7_3_15(t *testing.T) {

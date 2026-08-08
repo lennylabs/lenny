@@ -213,12 +213,12 @@ func TestRuntimeCapabilityInferenceModeDefault(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultsIsolationDevMode_spec_5_3 covers the §5.3 line 677
+// TestApplyDefaultsIsolationDevMode_spec_5_3 covers the §5.3
 // dev-mode isolation fallback in the runtime defaulter: dev mode
 // defaults an unset profile to standard (runc); production keeps
 // sandboxed; an explicit profile survives either way.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestApplyDefaultsIsolationDevMode_spec_5_3(t *testing.T) {
 	prod := runtimestore.Runtime{Name: "prod"}
 	runtimestore.ApplyDefaults(&prod, false)

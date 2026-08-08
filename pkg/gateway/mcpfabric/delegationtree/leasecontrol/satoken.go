@@ -17,9 +17,9 @@ import (
 
 // RequireSATokenInterceptor returns a unary server interceptor that
 // validates the projected ServiceAccount token on every pod→gateway
-// GatewayControl call. The §10.2 line 227 contract — "Pods cannot forge
+// GatewayControl call. The §10.2 contract — "Pods cannot forge
 // or extend this token. The gateway validates the signature on every
-// pod→gateway request" — and the §10.3 line 334 audience binding are both
+// pod→gateway request" — and the §10.3 audience binding are both
 // enforced here, the SA-token layer of the defense-in-depth chain that
 // sits alongside the mTLS SPIFFE check (RequireVerifiedPeerInterceptor)
 // and the NetworkPolicy isolation.
@@ -45,7 +45,7 @@ import (
 // global.saTokenAudience is unset — the interceptor passes every call
 // through unchanged, mirroring RequireVerifiedPeerInterceptor's dev-mode
 // behaviour.
-// spec: §10.2 line 227 (signature validation); §10.3 line 334 (audience).
+// spec: §10.2; §10.3.
 func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if expectedAudience == "" {
@@ -57,7 +57,7 @@ func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) 
 				"leasecontrol: GatewayControl requires a projected SA token (reason=token_missing) (§10.2)")
 		}
 		if verifier != nil {
-			// spec: §10.2 line 227 — validate the signature (and audience)
+			// spec: §10.2 — validate the signature (and audience)
 			// on every pod→gateway request. Fail closed on any error.
 			if err := verifier.Verify(ctx, token, expectedAudience); err != nil {
 				reason := "signature_invalid"

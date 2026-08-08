@@ -25,11 +25,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// UploadContentHashHeader is the §7.4 line 444 optional client-supplied
+// UploadContentHashHeader is the §7.4 optional client-supplied
 // SHA-256 of the uploaded body. When present, the gateway verifies the
 // streamed bytes against the value and rejects with
 // `VALIDATION_ERROR` + `reason: hash_mismatch` on disagreement. Hex
-// lowercase per §4.5 line 311. F-7.4.10.
+// lowercase per §4.5. F-7.4.10.
 const UploadContentHashHeader = "X-Lenny-Content-Hash"
 
 // UploadDefaultTTL is the §4.5 TTL the minimal gateway stamps on
@@ -71,10 +71,10 @@ type UploadResponse struct {
 	// lineage queries also surface this hash via the §15.1 derive
 	// response's `workspaceSnapshotContentHash` field.
 	//
-	// spec: §4.5 line 311.
+	// spec: §4.5.
 	ContentHash string `json:"contentHash,omitempty"`
 
-	// IsArchive is true when the blob was uploaded via the §18 line 234
+	// IsArchive is true when the blob was uploaded via the §18
 	// POST /v1/sessions/{id}/upload-archive endpoint. The §7.4 archive
 	// extraction pipeline (the §4.1 Upload Handler subsystem) inspects
 	// this flag to decide whether to parse the body as a tar/tar.gz/zip
@@ -86,7 +86,7 @@ type UploadResponse struct {
 	IsArchive bool `json:"isArchive,omitempty"`
 }
 
-// UploadKind distinguishes the §18 line 234 /upload and /upload-archive
+// UploadKind distinguishes the §18 /upload and /upload-archive
 // surfaces. The plain upload stores the body verbatim under
 // ObjectTypeUpload; the archive variant tags the response so the §7.4
 // extraction pipeline (Upload Handler subsystem) can recognise the
@@ -131,17 +131,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUploadArchive implements POST /v1/sessions/{id}/upload-archive
-// per §18 line 234. It accepts the same request shape as /upload but
+// per §18. It accepts the same request shape as /upload but
 // tags the resulting blob as archive-kind so the §7.4 extraction
 // pipeline (F-7.4.1) can recognise it without sniffing bytes. v1
 // stores the body unchanged; archive parsing, the §13.4 size /
 // decompression-ratio / entry-count ceilings, and the zip-slip guard
-// land with the extraction pipeline. spec: §18 line 234.
+// land with the extraction pipeline. spec: §18.
 func (s *Server) handleUploadArchive(w http.ResponseWriter, r *http.Request) {
 	s.runUpload(w, r, UploadKindArchive)
 }
 
-// runUpload is the shared §15.1 / §18 line 234 upload pipeline that
+// runUpload is the shared §15.1 / §18 upload pipeline that
 // backs both /upload and /upload-archive. The kind parameter only
 // affects the response envelope's IsArchive flag; the storage path,
 // breaker accounting, and §11.2 quota reservation are identical.
@@ -151,7 +151,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 			"gateway has no blob store configured", nil)
 		return
 	}
-	// spec: §16.3 line 338 — open the gateway-side `session.upload` span on
+	// spec: §16.3 — open the gateway-side `session.upload` span on
 	// the request context so the staged-blob commit (token verify, quota
 	// reserve, blob Put, hash verify) rides one trace. The pod-side
 	// `session.upload` span stitches under it via the inherited trace
@@ -189,7 +189,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		return
 	}
 
-	// §11.1 line 10: per-session and global concurrent-upload admission.
+	// §11.1: per-session and global concurrent-upload admission.
 	// Acquired after the precondition gate so a rejected-precondition
 	// request never counts against the cap, and before any body is read
 	// so a flood of parallel uploads is throttled at admission rather
@@ -206,7 +206,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 		return
 	}
 
-	// §11.1 line 11: per-session cumulative upload-size admission. When
+	// §11.1: per-session cumulative upload-size admission. When
 	// the client declares a Content-Length, reject early — before
 	// streaming — if the declared size alone would push the session past
 	// its cumulative cap. The authoritative check against the bytes
@@ -244,7 +244,7 @@ func (s *Server) runUpload(w http.ResponseWriter, r *http.Request, kind UploadKi
 	body := http.MaxBytesReader(w, r.Body, UploadMaxBodyBytes)
 	defer body.Close()
 
-	// §7.4 line 463: register an abort signal for this in-flight
+	// §7.4: register an abort signal for this in-flight
 	// upload. When finalize fires for this session, the registry
 	// closes the signal and the next abortableReader.Read aborts the
 	// stream with errUploadAborted so the channel "closes" semantically
@@ -280,12 +280,12 @@ type uploadCommit struct {
 // §7.1 uploadToken verification, and the §15.1 precondition-table check. It
 // records the lookup failure on the §16.3 upload span, writes the §15.1
 // error envelope, and returns ok=false on any rejection. spec: §15.1, §7.1,
-// §16.3 line 338.
+// §16.3.
 func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request, span trace.Span, tenantID string) (sessionstore.Session, bool) {
 	id := r.PathValue("id")
 	row, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
-		// spec: §16.3 line 338 — record the lookup failure on the
+		// spec: §16.3 — record the lookup failure on the
 		// `session.upload` span. A missing session is a caller error
 		// (PERMANENT); any other store error is left uncategorized.
 		if errors.Is(err, sessionstore.ErrNotFound) {
@@ -326,7 +326,7 @@ func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request, span trace.
 // INTERNAL_ERROR), releasing the whole reservation on failure and writing
 // the breaker error back through breakerErr so the deferred §4.1 release
 // trips the subsystem breaker only on a downstream outage. spec: §12.5,
-// §13.4, §7.4, §11.2, §16.3 line 338.
+// §13.4, §7.4, §11.2, §16.3.
 func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span trace.Span, tenantID string, row sessionstore.Session, mimeType string, reservation *quotaReservation, body io.ReadCloser, abortSig <-chan struct{}, breakerErr *error) (uploadCommit, bool) {
 	// §11.2 hard stream cap: when a quota reservation is held, cap the
 	// inbound stream one byte past the headroom so a client that
@@ -362,7 +362,7 @@ func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span t
 			// The upload failed: release the whole reservation.
 			_ = s.storageQuota.Adjust(r.Context(), tenantID, -reservation.reserved)
 		}
-		// §7.4 line 463: a finalize fired mid-stream and closed the
+		// §7.4: a finalize fired mid-stream and closed the
 		// upload channel. The blob.Put aborted on the abortableReader's
 		// sentinel; surface UPLOAD_CHANNEL_CLOSED so the client knows
 		// the channel is no longer accepting bytes. F-7.4.16.
@@ -400,7 +400,7 @@ func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span t
 			return uploadCommit{}, false
 		}
 		if errors.Is(err, blobstore.ErrClassificationControlViolation) {
-			// §12.9 line 1048 / §15.1 line 1078 — the storage boundary
+			// §12.9 / §15.1 — the storage boundary
 			// rejected the write because the tenant's data classification
 			// is not satisfiable by the configured store. details.reason
 			// distinguishes a tier_store_mismatch (store not configured for
@@ -419,7 +419,7 @@ func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span t
 		// Downstream blob store failure — feed the §4.1 Upload Handler
 		// subsystem breaker so repeated MinIO outages trip it open and
 		// new uploads return 503 SUBSYSTEM_UNAVAILABLE.
-		// spec: §16.3 line 338 / §16 error taxonomy — a blob-store outage is
+		// spec: §16.3 / §16 error taxonomy — a blob-store outage is
 		// a downstream dependency failure (UPSTREAM) on the upload span.
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
 		*breakerErr = err
@@ -431,18 +431,18 @@ func (s *Server) commitUploadBlob(w http.ResponseWriter, r *http.Request, span t
 
 // finalizeUpload runs the post-commit verification on a staged blob: the
 // §11.2 storage-quota reconcile against the bytes actually written, the
-// §7.4 optional client-supplied SHA-256 check, the §7.4 line 463
+// §7.4 optional client-supplied SHA-256 check, the §7.4
 // finalize-race re-validation, and the §11.1 authoritative cumulative-size
 // commit. Every rejection unwinds the committed blob (storage-quota release
 // plus soft delete) and writes the §15.1 error envelope, returning false.
-// spec: §11.2, §7.4 lines 444-463, §11.1 line 11. F-7.4.10, F-7.4.14, F-7.4.16, F-11.1.6.
+// spec: §11.2, §7.4, §11.1. F-7.4.10, F-7.4.14, F-7.4.16, F-11.1.6.
 func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session, reservation *quotaReservation, commit uploadCommit) bool {
 	uri, ref, bytesRead := commit.uri, commit.ref, commit.bytesRead
 	if reservation != nil {
 		if bytesRead.n > reservation.headroom {
 			// The client streamed past the quota headroom: abort,
 			// release the reservation, and SoftDelete the partial
-			// staged blob so the §7.4 line 443 invariant "any bytes
+			// staged blob so the §7.4 invariant "any bytes
 			// already written to staging are removed" holds at abort
 			// time instead of deferring removal to the TTL ageout.
 			// F-7.4.14.
@@ -457,7 +457,7 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 		_ = s.storageQuota.Adjust(r.Context(), tenantID, bytesRead.n-reservation.reserved)
 	}
 
-	// §7.4 lines 444-445: optional client-supplied SHA-256 verification.
+	// §7.4: optional client-supplied SHA-256 verification.
 	// Clients that pre-computed the hash may send it via the
 	// X-Lenny-Content-Hash header; the gateway compares it against the
 	// streamed bytes' SHA-256. A mismatch aborts with hash_mismatch and
@@ -482,7 +482,7 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 		}
 	}
 
-	// §7.4 line 463: race window — finalize may have committed between
+	// §7.4: race window — finalize may have committed between
 	// the pre-Put precondition check and now. Re-load the session row
 	// and re-validate; if the row no longer admits /upload, soft-delete
 	// the just-written blob, release the reservation, and surface
@@ -506,7 +506,7 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 		}
 	}
 
-	// §11.1 line 11: authoritative per-session cumulative-size check
+	// §11.1: authoritative per-session cumulative-size check
 	// against the bytes actually streamed. The early Content-Length
 	// gate above is an optimization; this atomic check-and-add is the
 	// binding enforcement, so a client that under-declares its
@@ -536,8 +536,8 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 // `lenny-blob://` ref, the stored mime type, the committed byte count, the
 // §4.5 content hash, and the §18 archive-kind flag), counts the committed
 // bytes against the §16.1 lenny_upload_bytes_total metric, and emits the
-// §16.6 session.upload accepted audit row. spec: §15.1, §4.5, §18 line 234,
-// §16.1, §16.6 line 338. F-7.4.17, F-13.4.12.
+// §16.6 session.upload accepted audit row. spec: §15.1, §4.5, §18,
+// §16.1, §16.6. F-7.4.17, F-13.4.12.
 func (s *Server) writeUploadResponse(w http.ResponseWriter, r *http.Request, row sessionstore.Session, mimeType string, kind UploadKind, commit uploadCommit) {
 	resp := UploadResponse{
 		UploadRef:   commit.ref,
@@ -554,8 +554,7 @@ func (s *Server) writeUploadResponse(w http.ResponseWriter, r *http.Request, row
 	// F-7.4.17: §16.6 session.upload audit row. One row per successful
 	// blob commit, regardless of UploadKindBlob vs UploadKindArchive —
 	// downstream SOC tooling joins the row to a finalize/extract event
-	// via the resulting UploadRef carried in Detail. spec: §16.6 line
-	// 338; §11.7. F-7.4.17.
+	// via the resulting UploadRef carried in Detail. spec: §16.6; §11.7. F-7.4.17.
 	if s.lifecycleAudit != nil {
 		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
 			EventType:  auditSessionUpload,
@@ -575,8 +574,8 @@ func (s *Server) writeUploadResponse(w http.ResponseWriter, r *http.Request, row
 }
 
 // softDeleteStagedBlob best-effort removes a staged upload blob whose
-// commit must be unwound — the §7.4 line 443 STORAGE_QUOTA_EXCEEDED
-// abort path (F-7.4.14) and the §7.4 line 463 finalize-race abort
+// commit must be unwound — the §7.4 STORAGE_QUOTA_EXCEEDED
+// abort path (F-7.4.14) and the §7.4 finalize-race abort
 // path (F-7.4.16) both call into it. Soft-delete is preferred over a
 // hard delete so the §12.5 lifecycle (catalog row remains for the
 // retention window) is uniform; the bytes themselves are dropped
@@ -667,7 +666,7 @@ func (s *Server) observeUploadDepth() {
 // oversize / zip-bomb / quota-busting upload attempts leaves no audit
 // trail (the accepted row at the success path covers admitted uploads
 // only). Best-effort and non-blocking, mirroring the accepted row.
-// spec: §13.4; §11.7; §16.6 line 338 — F-13.4.8.
+// spec: §13.4; §11.7; §16.6 — F-13.4.8.
 func (s *Server) emitUploadRejected(r *http.Request, row sessionstore.Session, reason string) {
 	if s.lifecycleAudit == nil {
 		return
@@ -728,11 +727,11 @@ func (s *Server) reserveStorageQuota(w http.ResponseWriter, r *http.Request, ten
 		return nil, false
 	}
 	if errors.Is(err, storagequota.ErrUnavailable) {
-		// §12.4 line 210 dual-store outage: the Redis counter is down and
+		// §12.4 dual-store outage: the Redis counter is down and
 		// the Postgres artifact_store fallback is also unreachable. Fail
 		// closed — reject with 503 and write nothing to the blob store so
 		// the storage quota can never be bypassed by infrastructure
-		// degradation. spec: §12.4 line 210.
+		// degradation. spec: §12.4.
 		s.writeError(w, http.StatusServiceUnavailable, "STORAGE_UNAVAILABLE",
 			"storage quota cannot be verified while both the quota counter and its durable fallback are unavailable; retry shortly",
 			map[string]any{"retryAfterSeconds": 10})
@@ -848,7 +847,7 @@ func (s *Server) writeUploadTokenError(w http.ResponseWriter, err error) {
 // length and the §4.5 ll. 311 content-addressed hash without
 // buffering the whole body in memory.
 //
-// spec: §4.5 line 311 — "Each workspace snapshot is immutable and
+// spec: §4.5 — "Each workspace snapshot is immutable and
 // identified by a content-addressed hash (SHA-256 of the tar
 // archive)".
 type countingReader struct {

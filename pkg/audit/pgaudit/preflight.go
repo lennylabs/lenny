@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Preflight errors. The §11.7 line 375 startup check returns one of
+// Preflight errors. The §11.7 startup check returns one of
 // these so the gateway can distinguish a missing extension from a
 // misconfigured log-class list when it decides whether to refuse to
 // start.
@@ -30,7 +30,7 @@ type preflightQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// Preflight implements the §11.7 line 375 pgaudit startup check: it
+// Preflight implements the §11.7 pgaudit startup check: it
 // verifies that the `pgaudit` extension is installed on the connected
 // Postgres cluster and that the `pgaudit.log` setting includes both the
 // DDL and ROLE classes. It returns ErrExtensionNotInstalled or
@@ -38,7 +38,7 @@ type preflightQuerier interface {
 //
 // The gateway runs this when `audit.pgaudit.enabled` is true; a failure
 // is fatal in production mode when any active tenant carries a regulated
-// complianceProfile. spec: §11.7 lines 374-379.
+// complianceProfile. spec: §11.7.
 func Preflight(ctx context.Context, q preflightQuerier) error {
 	var installed bool
 	if err := q.QueryRow(ctx,
@@ -71,7 +71,7 @@ func Preflight(ctx context.Context, q preflightQuerier) error {
 // enables both the `ddl` and `role` classes. The setting is a
 // comma-separated, case-insensitive list of classes; `all` enables every
 // class, and a leading `-` on a class subtracts it (meaningful after
-// `all`). spec: §11.7 line 375.
+// `all`). spec: §11.7.
 func logClassesCoverDDLAndRole(setting string) bool {
 	// allClasses is the closed pgaudit class set that `all` expands to.
 	allClasses := []string{"read", "write", "function", "role", "ddl", "misc", "misc_set"}

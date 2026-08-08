@@ -173,7 +173,7 @@ func TestTickPropagatesDeleterError(t *testing.T) {
 	}
 }
 
-// fakeMetricsSink records every §12.5 line 321 retention-GC metric
+// fakeMetricsSink records every §12.5 retention-GC metric
 // signal the Collector emits so tests can assert wiring.
 type fakeMetricsSink struct {
 	runs      []string
@@ -206,7 +206,7 @@ func (s *fakeMetricsSink) ObserveGCDuration(seconds float64) {
 // artifacts to each per-store adapter, and observes a non-negative
 // duration.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func TestTickEmitsSuccessMetrics(t *testing.T) {
 	store := memstore.New()
 	seed(t, store, sessionstore.Session{ID: "sess_old", RetentionExpiresAt: gcClock.Add(-time.Hour)})
@@ -241,7 +241,7 @@ func TestTickEmitsSuccessMetrics(t *testing.T) {
 // the sweep outcome to `error` and increments
 // `lenny_gc_errors_total{store=...}` for the failing adapter.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func TestTickEmitsErrorMetrics(t *testing.T) {
 	store := memstore.New()
 	seed(t, store, sessionstore.Session{ID: "sess_e", RetentionExpiresAt: gcClock.Add(-time.Hour)})
@@ -269,26 +269,26 @@ func TestTickEmitsErrorMetrics(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 317 — gc.cycleIntervalSeconds default 900, minimum 60;
-// §12.5 line 341 — gc.tombstoneRetentionSeconds default 86400.
+// spec: §12.5 — gc.cycleIntervalSeconds default 900, minimum 60;
+// §12.5 — gc.tombstoneRetentionSeconds default 86400.
 func TestGCConfigDefaultsMatchSpec_spec_12_5_317_341(t *testing.T) {
 	if got := retentiongc.DefaultSweepInterval; got != 900*time.Second {
-		t.Errorf("DefaultSweepInterval = %s, want 900s (§12.5 line 317)", got)
+		t.Errorf("DefaultSweepInterval = %s, want 900s (§12.5)", got)
 	}
 	if got := retentiongc.MinSweepInterval; got != 60*time.Second {
-		t.Errorf("MinSweepInterval = %s, want 60s (§12.5 line 317)", got)
+		t.Errorf("MinSweepInterval = %s, want 60s (§12.5)", got)
 	}
 	if got := retentiongc.DefaultTombstoneRetention; got != 86400*time.Second {
-		t.Errorf("DefaultTombstoneRetention = %s, want 86400s/24h (§12.5 line 341)", got)
+		t.Errorf("DefaultTombstoneRetention = %s, want 86400s/24h (§12.5)", got)
 	}
-	// The tombstone-retention window is the §12.5 line 341 default, not the
+	// The tombstone-retention window is the §12.5 default, not the
 	// §7.1 7-day artifact TTL the gateway previously conflated it with.
 	if retentiongc.DefaultTombstoneRetention == 7*24*time.Hour {
 		t.Error("DefaultTombstoneRetention must not equal the §7.1 7-day artifact TTL")
 	}
 }
 
-// spec: §12.5 line 317 — the configured sweep interval is clamped to the
+// spec: §12.5 — the configured sweep interval is clamped to the
 // 60s floor; a non-positive value selects the default.
 func TestClampSweepInterval_spec_12_5_317(t *testing.T) {
 	cases := []struct {

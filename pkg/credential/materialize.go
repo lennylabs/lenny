@@ -13,7 +13,7 @@ import (
 // field. The spec classifies it as category INTERNAL and surfaces it to
 // the client as CREDENTIAL_POOL_EXHAUSTED.
 //
-// spec: §4.9 line 1298.
+// spec: §4.9.
 const CodeCredentialMaterializationError = "CREDENTIAL_MATERIALIZATION_ERROR"
 
 // ErrCredentialMaterialization is the sentinel every MaterializationError
@@ -35,7 +35,7 @@ var ErrCredentialMaterialization = errors.New("credential: " + CodeCredentialMat
 // secrets; the bundle reaches the pod through the adapter credential
 // file and lives in the gateway only transiently.
 //
-// spec: §4.9 lines 1246-1298.
+// spec: §4.9.
 type MaterializedConfig map[string]string
 
 // directRequiredFields lists the §4.9 Required:yes direct-mode
@@ -44,7 +44,7 @@ type MaterializedConfig map[string]string
 // pool) and is validated separately; a provider absent from this map and
 // not azure_openai is treated as custom and bypasses validation.
 //
-// spec: §4.9 lines 1267-1297.
+// spec: §4.9.
 var directRequiredFields = map[Provider][]string{
 	ProviderAnthropicDirect: {"apiKey"},
 	ProviderAWSBedrock:      {"accessKeyId", "secretAccessKey", "sessionToken", "region", "expiresAt"},
@@ -63,7 +63,7 @@ const expiresAtField = "expiresAt"
 // carries an unparseable provider expiry. It satisfies errors.Is against
 // the package sentinel so a caller can branch without naming the type.
 //
-// spec: §4.9 line 1298.
+// spec: §4.9.
 type MaterializationError struct {
 	Provider Provider
 	// Missing names the absent or empty Required:yes fields.
@@ -98,10 +98,9 @@ func (e *MaterializationError) Is(target error) bool {
 // non-empty value, and that any provider expiry parses as RFC3339. It
 // returns a *MaterializationError on a violation, or nil when the config
 // is complete. A custom provider (any value outside the built-in enum)
-// bypasses built-in validation and always returns nil, per §4.9 line
-// 1298 ("Custom providers bypass built-in field validation").
+// bypasses built-in validation and always returns nil, per §4.9.
 //
-// spec: §4.9 lines 1267-1298.
+// spec: §4.9.
 func ValidateMaterializedConfig(p Provider, cfg MaterializedConfig) error {
 	if p == ProviderAzureOpenAI {
 		return validateAzureOpenAI(cfg)
@@ -126,7 +125,7 @@ func ValidateMaterializedConfig(p Provider, cfg MaterializedConfig) error {
 // (API-key pool) or accessToken (Azure AD pool) must be present; an
 // Azure AD pool additionally requires a parseable expiresAt.
 //
-// spec: §4.9 lines 1289-1294.
+// spec: §4.9.
 func validateAzureOpenAI(cfg MaterializedConfig) error {
 	missing := missingFields(cfg, []string{"endpoint", "deploymentName"})
 	hasAPIKey := cfg["apiKey"] != ""
@@ -189,7 +188,7 @@ func badExpiry(cfg MaterializedConfig) string {
 // expiresAt must equal or precede the lease expiresAt" invariant read
 // it.
 //
-// spec: §4.9 lines 1154, 1271.
+// spec: §4.9.
 func MaterializedExpiry(cfg MaterializedConfig) (time.Time, bool) {
 	v, ok := cfg[expiresAtField]
 	if !ok || v == "" {

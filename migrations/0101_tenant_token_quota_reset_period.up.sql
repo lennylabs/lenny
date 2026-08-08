@@ -9,7 +9,7 @@
 -- §4.8 QuotaEvaluator always resolved the tenant-scope limit to zero
 -- (unlimited). The reset period was a single platform-wide setting.
 --
--- spec: spec/11_policy-and-controls.md §11.2 line 31
+-- spec: spec/11_policy-and-controls.md §11.2
 -- ("Quota reset periods are configurable per quota type: hourly, daily,
 -- monthly, or rolling window"; "Tenant quotas are configured via the
 -- admin API or Helm values").

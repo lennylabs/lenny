@@ -58,7 +58,7 @@ type receivedWebhook struct {
 // receiver — the "webhook subscriber still paged when Postgres is down"
 // guarantee, composed end to end against real backends.
 //
-// The subscription-CRUD SSRF/allowlist gate (§25.5 lines 2735-2745) is
+// The subscription-CRUD SSRF/allowlist gate (§25.5) is
 // exercised elsewhere (cmd/lenny-ops/webhook_ssrf_test.go); it blocks a
 // loopback callback URL and is not part of the guarantee under test, so
 // the worker here is driven with a static subscription pointed at an

@@ -1,4 +1,4 @@
--- §10.1 lines 141-151: the checkpoint_manifest table carries the full
+-- §10.1: the checkpoint_manifest table carries the full
 -- per-attempt upload record the gateway writes intent-row-first before
 -- the first chunk PutObject and updates as chunks commit. It supersedes
 -- the migration 0062 session_partial_checkpoint_manifest table, whose
@@ -8,7 +8,7 @@
 -- chunk_size_bytes, chunk_object_key_prefix, checkpoint_started_at,
 -- checkpoint_timeout_at, manifest_reason), and the migration 0150 partial
 -- unique index, whose (tenant_id, session_id) scoping degraded the
--- §10.1 line 147 (session_id, slot_id) key for lack of a slot_id column.
+-- §10.1 key for lack of a slot_id column.
 -- There are no deployments carrying the old table, so this drops and
 -- recreates rather than chaining ALTERs, a renamed column, a swapped
 -- primary key, and a rebuilt index.
@@ -20,7 +20,7 @@
 -- current_setting('app.current_tenant', false), and lenny_app gets the
 -- standard grants.
 --
--- spec: §10.1 lines 141-151, §12.3.
+-- spec: §10.1, §12.3.
 
 DROP INDEX IF EXISTS partial_manifest_active_uniq;
 DROP POLICY IF EXISTS lenny_tenant_isolation ON session_partial_checkpoint_manifest;
@@ -40,7 +40,7 @@ CREATE TABLE checkpoint_manifest (
     -- intent-row INSERT time; the resume-selection query filters on
     -- max(coordination_generation) so a late-committed older-generation
     -- row cannot win against a fenced newer-generation writer under
-    -- split-brain (§10.1 line 141, 155).
+    -- split-brain (§10.1).
     coordination_generation        BIGINT      NOT NULL DEFAULT 0,
     -- recovery_generation is the session's recovery counter at the time
     -- the manifest row was written; captured so audit reconstruction and
@@ -48,7 +48,7 @@ CREATE TABLE checkpoint_manifest (
     -- (coordination, recovery) tuple that authored the partial chunks.
     recovery_generation            BIGINT      NOT NULL DEFAULT 0,
     partial                        BOOLEAN     NOT NULL DEFAULT TRUE,
-    -- manifest_reason is the §10.1 line 141 closed enum of the row's
+    -- manifest_reason is the §10.1 closed enum of the row's
     -- disposition. It carries 'in_progress' from intent-row INSERT until a
     -- terminal arm overwrites it with 'complete', 'timeout',
     -- 'stream_truncated', 'superseded', or 'quota_exceeded'. NOT NULL: the
@@ -94,7 +94,7 @@ CREATE TABLE checkpoint_manifest (
     -- resume-time threshold check and the post-extraction
     -- workspaceRecoveryFraction. NULL is load-bearing: it denotes a
     -- session with no prior successful full checkpoint, in which case
-    -- §10.1 line 155 degenerates the threshold check to "any non-zero
+    -- §10.1 degenerates the threshold check to "any non-zero
     -- workspace_bytes_uploaded is eligible" and §7.2 omits
     -- workspaceRecoveryFraction from session.resumed. It carries no
     -- DEFAULT so the IS NULL predicate stays reachable and the resume path
@@ -113,7 +113,7 @@ CREATE TABLE checkpoint_manifest (
     PRIMARY KEY (tenant_id, checkpoint_id)
 );
 
--- §10.1 lines 143-151: the at-most-one-active-partial-manifest invariant.
+-- §10.1: the at-most-one-active-partial-manifest invariant.
 -- Scoped on (session_id, slot_id) and restricted to partial rows so it
 -- does not conflict with coexisting full-checkpoint rows in the same
 -- table; the deleted_at IS NULL predicate lets soft-deleted rows remain

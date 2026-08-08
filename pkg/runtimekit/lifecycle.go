@@ -12,12 +12,12 @@ import (
 	"time"
 )
 
-// CheckpointAutoResumeTimeout is the §4.4 line 244 runtime-side
+// CheckpointAutoResumeTimeout is the §4.4 runtime-side
 // timeout: after sending `checkpoint_ready`, a Full-level runtime MUST
 // autonomously resume normal operation if it has not received
 // `checkpoint_complete` within 60 seconds.
 //
-// spec: §4.4 line 244 — "if the runtime sends checkpoint_ready but
+// spec: §4.4 — "if the runtime sends checkpoint_ready but
 // does not receive checkpoint_complete within 60 seconds, it MUST
 // autonomously resume normal operation and log a `checkpoint_timeout`
 // warning".
@@ -76,7 +76,7 @@ type LifecycleClientOptions struct {
 	// Writer is the adapter→runtime output stream. Required.
 	Writer io.Writer
 
-	// Stderr receives the §4.4 line 244 `checkpoint_timeout` warning.
+	// Stderr receives the §4.4 warning.
 	// Defaults to io.Discard when nil.
 	Stderr io.Writer
 
@@ -140,7 +140,7 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 // JSONL dispatch loop may want to run it in a separate goroutine if
 // other lifecycle frames arrive concurrently.
 //
-// spec: §4.4 line 244 — runtime-side `checkpoint_ready` plus the
+// spec: §4.4 — runtime-side `checkpoint_ready` plus the
 // autonomous-resume contract.
 func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, checkpointID string, deadlineMs int32, handler CheckpointHandler) error {
 	if checkpointID == "" {

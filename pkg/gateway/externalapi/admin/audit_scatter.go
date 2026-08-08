@@ -20,11 +20,11 @@ import (
 	auditcat "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// scatterCacheTTL is the §25.9 line 3709 cross-tenant scatter-gather
+// scatterCacheTTL is the §25.9 cross-tenant scatter-gather
 // result cache lifetime: 5 minutes.
 const scatterCacheTTL = 5 * time.Minute
 
-// auditScatterReader is the optional §25.9 line 3668 platform-admin
+// auditScatterReader is the optional §25.9 platform-admin
 // cross-tenant audit read surface. *auditstore.Store satisfies it
 // (ScatterGatherRows fans out across AllAuditShards). When the wired
 // backend does not implement it — the in-memory dev gateway — the
@@ -38,7 +38,7 @@ type auditScatterReader interface {
 	ScatterGatherRows(ctx context.Context) (rows []audit.Row, missingShards []string, err error)
 }
 
-// ScatterGatherCache is the §25.9 line 3709 cross-tenant result cache.
+// ScatterGatherCache is the §25.9 cross-tenant result cache.
 // The in-memory MemScatterGatherCache satisfies it; a Redis-backed
 // implementation is a documented seam behind the same interface (the
 // gateway wires whichever is available). Get returns ok=false on a miss
@@ -50,7 +50,7 @@ type ScatterGatherCache interface {
 
 // MemScatterGatherCache is the in-process default ScatterGatherCache: a
 // per-key TTL map with an injectable clock. The Redis-backed cache the
-// §25.9 line 3709 spec names is the same interface; this keeps the
+// §25.9 spec names is the same interface; this keeps the
 // single-replica dev/test gateway functional without Redis.
 type MemScatterGatherCache struct {
 	clock func() time.Time
@@ -105,7 +105,7 @@ func (r *Router) WithAuditScatter(s auditScatterReader) *Router {
 	return r
 }
 
-// WithScatterGatherCache wires the §25.9 line 3709 cross-tenant result
+// WithScatterGatherCache wires the §25.9 cross-tenant result
 // cache and enables it. Pass enabled=false to honor
 // `ops.audit.scatterGatherCacheEnabled: false` (the cache is opt-out).
 func (r *Router) WithScatterGatherCache(cache ScatterGatherCache, enabled bool) *Router {
@@ -124,7 +124,7 @@ type AuditDegradation struct {
 	Reason        string   `json:"reason"`
 }
 
-// isCrossTenantAuditQuery reports whether req is the §25.9 line 3668
+// isCrossTenantAuditQuery reports whether req is the §25.9
 // platform-admin cross-tenant query: a platform-admin caller that names
 // no `tenantId`, when a scatter-gather reader is wired.
 func (r *Router) isCrossTenantAuditQuery(req *http.Request) bool {
@@ -138,7 +138,7 @@ func (r *Router) isCrossTenantAuditQuery(req *http.Request) bool {
 	return ok && p.HasRole(pkgauth.RolePlatformAdmin)
 }
 
-// scatterCacheKey hashes the §25.9 line 3709 query parameters into the
+// scatterCacheKey hashes the §25.9 query parameters into the
 // cross-tenant cache key so a different page or filter does not serve a
 // stale entry.
 func scatterCacheKey(f auditQueryFilter, limit int, cursor string) string {
@@ -240,7 +240,7 @@ func crossTenantIntegrities(rows []audit.Row) map[string]audit.ChainIntegrity {
 	return out
 }
 
-// crossTenantGaps computes §25.9 line 3679 suspected gap windows
+// crossTenantGaps computes §25.9 suspected gap windows
 // per-tenant (sequence numbers reset across tenants, so a cross-tenant
 // boundary is never a gap) and concatenates them.
 func crossTenantGaps(rows []audit.Row) []AuditGapWindow {
@@ -310,14 +310,14 @@ func (r *Router) auditRowItem(w http.ResponseWriter, req *http.Request, tenant s
 	return ocsfBytes, true, true
 }
 
-// listAuditEventsCrossTenant serves the §25.9 line 3668 platform-admin
+// listAuditEventsCrossTenant serves the §25.9 platform-admin
 // cross-tenant query. It reads cached results when the cache is enabled
 // and `?fresh=true` is absent; otherwise it scatter-gathers across all
 // audit shards, verifies each tenant's chain, and renders the page. A
 // partial-shard outage returns 207 AUDIT_PARTIAL_RESULTS with the
 // degradation envelope; a total outage returns 503.
 //
-// spec: §25.9 lines 3668, 3709, 3710; "Degradation" (207/503).
+// spec: §25.9; "Degradation" (207/503).
 func (r *Router) listAuditEventsCrossTenant(w http.ResponseWriter, req *http.Request, limit int, cursorRaw string, filter auditQueryFilter) {
 	start := r.clock()
 	fresh := req.URL.Query().Get("fresh") == "true"
@@ -409,7 +409,7 @@ func (r *Router) listAuditEventsCrossTenant(w http.ResponseWriter, req *http.Req
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 
-	// spec: §25.9 line 3709 — cache only complete (200) cross-tenant
+	// spec: §25.9 — cache only complete (200) cross-tenant
 	// results; a partial-shard 207 is degraded and must not be served as a
 	// healthy cache hit.
 	if useCache && status == http.StatusOK {
@@ -423,7 +423,7 @@ func (r *Router) listAuditEventsCrossTenant(w http.ResponseWriter, req *http.Req
 	r.recordAuditQuery("list_cross_tenant", start, 1, report.Broken, report.RechainedPostOutage)
 }
 
-// emitAuditQueryCross emits the §25.9 line 3750 audit.query_executed
+// emitAuditQueryCross emits the §25.9 audit.query_executed
 // receipt for a cross-tenant query, carrying the empty tenant scope, the
 // cache-hit flag, and the shard fan-out width (1 in single-shard v1).
 func (r *Router) emitAuditQueryCross(req *http.Request, filter auditQueryFilter, resultCount int, cacheHit bool) {

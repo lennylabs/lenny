@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §8.6 lines 730-733 Postgres-backed
+// Contract test for the §8.6 Postgres-backed
 // leasecontrol.DenialStore (pkg/gateway/leasecontrol/denialpg) against a
 // real container with the production migrations applied. Covers the
 // durable Deny/Denied round-trip, the database-clock cool-off comparison
@@ -57,7 +57,7 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
-// extTokens reads the §8.6 line 643 token grant counter for a tree under
+// extTokens reads the §8.6 token grant counter for a tree under
 // its tenant's RLS context, so the test can prove a Grant did or did not
 // increment it.
 func extTokens(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, root string) int64 {
@@ -82,7 +82,7 @@ func extTokens(t *testing.T, ctx context.Context, pg *containers.Postgres, tenan
 	return tokens
 }
 
-// spec: §8.6 lines 730-733 — the delegation-tree denial store records a
+// spec: §8.6 — the delegation-tree denial store records a
 // Deny with a cool-off expiry, round-trips Denied, reports not-denied
 // for an untouched tree, and isolates denials per tenant and root.
 // diagnosis: a failure means the lease-denial store mis-records the
@@ -121,7 +121,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 733 — the cool-off comparison uses the database
+	// spec: §8.6 — the cool-off comparison uses the database
 	// clock, so an already-expired cool-off reports not denied even
 	// though extension_denied is still set on the row.
 	t.Run("expired cool-off reports not denied via db clock", func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 732 — Grant on a not-denied tree increments the
+	// spec: §8.6 — Grant on a not-denied tree increments the
 	// durable counters and commits.
 	t.Run("grant increments counters on not-denied tree", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
@@ -157,7 +157,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 732 — the in-flight atomic re-check: a Grant against
+	// spec: §8.6 — the in-flight atomic re-check: a Grant against
 	// a denied-and-in-cool-off tree returns ErrExtensionDenied and does
 	// NOT increment the counters.
 	t.Run("grant on denied tree returns ErrExtensionDenied and does not increment", func(t *testing.T) {
@@ -174,7 +174,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 735 — Clear lifts the denial so a subsequent Grant
+	// spec: §8.6 — Clear lifts the denial so a subsequent Grant
 	// proceeds.
 	t.Run("clear lifts the denial", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)

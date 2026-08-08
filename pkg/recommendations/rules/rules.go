@@ -180,7 +180,7 @@ func Catalog() []Rule {
 			SpecRef:     "§25.3",
 		},
 		{
-			// spec: §17.8.2 line 1103 first-week monitoring workflow:
+			// spec: §17.8.2 first-week monitoring workflow:
 			// "if idle pod-minutes per hour exceeds `minWarm × 30` ...
 			// `minWarm` is oversized; reduce by 25%."
 			Name:      "WarmPoolOversized",
@@ -191,10 +191,10 @@ func Catalog() []Rule {
 			Description: "First-week tuning (§17.8.2): a pool whose hourly idle pod-minutes " +
 				"exceed `minWarm × 30` is oversized. Recommend reducing `minWarm` by 25% and " +
 				"re-monitoring for one hour before further adjustment.",
-			SpecRef: "§17.8.2 line 1103",
+			SpecRef: "§17.8.2",
 		},
 		{
-			// spec: §17.8.2 line 1104 first-week monitoring workflow:
+			// spec: §17.8.2 first-week monitoring workflow:
 			// "P99 claim latency exceeds 2s, the pool is not keeping up
 			// with demand; increase `minWarm` or investigate pod startup".
 			Name:      "WarmPoolClaimLatencyHigh",
@@ -206,7 +206,7 @@ func Catalog() []Rule {
 				"the warm pool is not keeping up with demand. Recommend raising `minWarm` (by ~25%) " +
 				"or, when P99 pod-startup time is also rising, investigating image pull and runtime " +
 				"warmup before increasing the pool size.",
-			SpecRef: "§17.8.2 line 1104",
+			SpecRef: "§17.8.2",
 		},
 	}
 }

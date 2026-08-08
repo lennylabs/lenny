@@ -16,14 +16,14 @@ import (
 )
 
 // checkpointRoots returns the §4.4 checkpoint bundle: the session
-// workspace under workspace.WorkspacePrefix, plus the §6.4 line 380
+// workspace under workspace.WorkspacePrefix, plus the §6.4
 // /sessions session-file tmpfs under workspace.SessionsPrefix when the
 // adapter is configured with a SessionsRoot. The sessions root is
 // skipped (no entries) when unset or absent on disk, so a runtime that
 // keeps no session file checkpoints workspace-only exactly as before.
 //
-// spec: §7.3 line 408 step (e) (replay workspace checkpoint) + line 409
-// step (f) (restore session file to expected path) — both replayed from
+// spec: §7.3 step (e) (replay workspace checkpoint) and step (f)
+// (restore session file to expected path) — both replayed from
 // this one bundle on Resume.
 func (s *Server) checkpointRoots() []workspace.NamedRoot {
 	roots := []workspace.NamedRoot{
@@ -38,7 +38,7 @@ func (s *Server) checkpointRoots() []workspace.NamedRoot {
 }
 
 // probeWorkspaceBytes measures the on-disk workspace byte total for the
-// §4.4 line 254 pre-checkpoint size probe, summing every checkpoint root
+// §4.4 pre-checkpoint size probe, summing every checkpoint root
 // the resume path replays so the gateway reserves quota against the whole
 // bundle rather than the workspace tree alone. It takes the precomputed
 // roots the handler resolved for the slot so the probe measures the same
@@ -67,11 +67,11 @@ func (s *Server) probeWorkspaceBytes(roots []workspace.NamedRoot) (int64, error)
 // confirms it (ChunkCommitted). The stream closes with a CheckpointSummary
 // on success, a CheckpointFailed carrying the object store's HTTP status
 // and error code when a chunk PUT is rejected, or a FailedPrecondition
-// gRPC status when the §4.4 line 255 workspace-size probe rejects the
+// gRPC status when the §4.4 workspace-size probe rejects the
 // attempt before any grant is minted.
 //
 // spec: §4.4 (checkpoint quiescence, hard workspace size limit, storage
-// failure retry budget); §10.1 line 130 (the gateway mints checkpoint_id).
+// failure retry budget); §10.1.
 func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	ctx := stream.Context()
 	first, err := stream.Recv()
@@ -119,7 +119,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 
 	// Link a quiesce-and-hold barrier, if one is waiting, to this stream's
 	// checkpoint_id and signal it on stream termination so the barrier's
-	// CheckpointBarrierAck echoes the gateway-minted id (§10.1 line 167).
+	// CheckpointBarrierAck echoes the gateway-minted id (§10.1).
 	linked := s.barrier.link(start.GetCheckpointId())
 	if linked {
 		defer s.barrier.complete()
@@ -127,7 +127,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 
 	trigger := checkpoint.TriggerFromProto(start.GetTrigger())
 
-	// spec: §4.4 line 254-255 — probe the on-disk workspace size and enforce
+	// spec: §4.4 — probe the on-disk workspace size and enforce
 	// the hard limit before the quiescence handshake. An over-limit workspace
 	// aborts with FailedPrecondition before any grant is minted and before
 	// the runtime is quiesced, so a checkpoint that cannot be taken never
@@ -148,7 +148,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 		return serr
 	}
 
-	// spec: §4.4 line 241 — Full-level runtimes quiesce cooperatively over
+	// spec: §4.4 — Full-level runtimes quiesce cooperatively over
 	// the lifecycle channel: checkpoint_request → checkpoint_ready before the
 	// first chunk is archived, checkpoint_complete after the stream ends. The
 	// runtime stays quiesced for the whole chunked archive, and the completion
@@ -290,7 +290,7 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 			return s.failChunk(stream, index, "object store rejected chunk", httpStatus, code)
 		}
 		if !time.Now().Before(deadline) {
-			// spec: §4.4 lines 261-264 — retry budget exhausted; report the
+			// spec: §4.4 — retry budget exhausted; report the
 			// retry-exhausted failure so the gateway stamps
 			// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
 			return s.failChunk(stream, index, "retry_exhausted", lastStatus, lastCode)

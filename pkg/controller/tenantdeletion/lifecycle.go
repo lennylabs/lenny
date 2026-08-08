@@ -79,7 +79,7 @@ const (
 	// holds. The standard path blocks the deletion while any hold is in
 	// force; the override path (POST /v1/admin/tenants/{id}/force-delete)
 	// segregates held evidence into a region-scoped escrow before
-	// proceeding. spec: §12.8 line 872, lines 878-889.
+	// proceeding. spec: §12.8.
 	PhaseLegalHoldSegregation Phase = "legal_hold_segregation"
 	// PhaseDeleteData — §12.8 Phase 4: DeleteByTenant on every store
 	// in the erasure scope, in dependency order.
@@ -203,7 +203,7 @@ type Job struct {
 	// operator invoked POST /v1/admin/tenants/{id}/force-delete with
 	// acknowledgeHoldOverride. With it set, Phase 3.5 segregates held
 	// evidence into the region-scoped escrow (the EscrowMigrator seam)
-	// instead of blocking. spec: §12.8 lines 880-889.
+	// instead of blocking. spec: §12.8.
 	OverrideHoldAck bool
 	// OverrideBy is the platform-admin subject that authorized the
 	// override, recorded as override_by on gdpr.legal_hold_overridden_tenant.
@@ -225,7 +225,7 @@ type Job struct {
 
 // HeldResource is one §12.8 Phase 3.5 active legal hold scoped to the
 // tenant under deletion. resourceType is one of session, artifact,
-// audit_range, or workspace_snapshot. spec: §12.8 line 878.
+// audit_range, or workspace_snapshot. spec: §12.8.
 type HeldResource struct {
 	// ResourceType is the §12.8 legal-hold ledger resource class.
 	ResourceType string
@@ -263,8 +263,7 @@ var (
 	// failure; the job stays at PhaseLegalHoldSegregation and a later pass
 	// re-evaluates the ledger once the holds clear.
 	ErrBlockedByLegalHold = errors.New("tenantdeletion: blocked by active legal hold")
-	// ErrEscrowRegionUnresolvable — §12.8 Phase 3.5 override path, sub-step
-	// 2 (line 883): the force-delete override was authorized but the
+	// ErrEscrowRegionUnresolvable — §12.8 Phase 3.5 override path, sub-step 2: the force-delete override was authorized but the
 	// tenant's escrow region has no storage.regions.<region>.legalHoldEscrow
 	// entry (or the region's escrow KEK / bucket is unreachable). The
 	// EscrowMigrator has already emitted the DataResidencyViolationAttempt

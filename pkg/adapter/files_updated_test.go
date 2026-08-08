@@ -14,7 +14,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// TestSignalFilesUpdatedEmitsFrame asserts the §7.4 line 433 files_updated
+// TestSignalFilesUpdatedEmitsFrame asserts the §7.4 files_updated
 // lifecycle signal reaches a connected runtime. F-7.4.6.
 func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
 	lc, fr := startRuntimeOps(t)

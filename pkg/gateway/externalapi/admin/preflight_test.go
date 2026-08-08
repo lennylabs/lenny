@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
-// spec: §15.1 line 890 — POST /v1/admin/preflight returns the full
+// spec: §15.1 — POST /v1/admin/preflight returns the full
 // connectivity report; an all-pass report yields passed=true.
 func TestPreflightEndpoint_AllPass(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{}).
@@ -41,7 +41,7 @@ func TestPreflightEndpoint_AllPass(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 890 — a failing probe is reported as passed=false in
+// spec: §15.1 — a failing probe is reported as passed=false in
 // the body with HTTP 200 (the probe ran; the negative finding is the
 // payload), so the CLI can exit non-zero.
 func TestPreflightEndpoint_FailureReportedInBody(t *testing.T) {

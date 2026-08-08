@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §7.2 line 341 — DLQ entries are delivered in FIFO order; DrainAll
+// spec: §7.2 — DLQ entries are delivered in FIFO order; DrainAll
 // reads ascending-score (earliest-enqueued first) and clears the key.
 func TestDLQ_EnqueueDrainFIFO_spec_7_2_341(t *testing.T) {
 	d := NewDLQ(newRedisT(t), 10)
@@ -33,7 +33,7 @@ func TestDLQ_EnqueueDrainFIFO_spec_7_2_341(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 341 — on maxDLQSize overflow the oldest (lowest-score)
+// spec: §7.2 — on maxDLQSize overflow the oldest (lowest-score)
 // entry is evicted and returned for the message_dropped(dlq_overflow)
 // receipt.
 func TestDLQ_OverflowDropsOldest_spec_7_2_341(t *testing.T) {
@@ -60,7 +60,7 @@ func TestDLQ_OverflowDropsOldest_spec_7_2_341(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 341 — SweepExpired removes entries whose absolute
+// spec: §7.2 — SweepExpired removes entries whose absolute
 // expiry has passed and returns them for the message_expired event;
 // non-expired entries remain.
 func TestDLQ_SweepExpired_spec_7_2_341(t *testing.T) {
@@ -90,7 +90,7 @@ func TestDLQ_SweepExpired_spec_7_2_341(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 341 — a sweep before any entry expires removes nothing.
+// spec: §7.2 — a sweep before any entry expires removes nothing.
 func TestDLQ_SweepExpired_NoneExpired_spec_7_2_341(t *testing.T) {
 	d := NewDLQ(newRedisT(t), 10)
 	ctx := context.Background()

@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
-// meRequestsTotal is the §25.4 line 1638 counter of calls to /v1/admin/me
+// meRequestsTotal is the §25.4 counter of calls to /v1/admin/me
 // and its sub-endpoints, labelled by the caller type.
 var meRequestsTotal *prometheus.CounterVec
 
@@ -40,7 +40,7 @@ func init() {
 // state. A nil *MeConfig on Options leaves the platform/capabilities
 // blocks at their zero values (the dev / embedded path).
 //
-// spec: §25.4 lines 1596-1631.
+// spec: §25.4.
 type MeConfig struct {
 	InstallationID           string
 	Version                  string
@@ -57,11 +57,11 @@ type MeConfig struct {
 
 	// LiveOpsReplicas, when non-nil, supplies the current replica count
 	// for capabilities.opsReplicas, overriding the static snapshot so an
-	// agent reads the live scaling indicator (§25.4 line 1604).
+	// agent reads the live scaling indicator (§25.4).
 	LiveOpsReplicas func() int
 }
 
-// Capabilities is the §25.4 line 1602-1612 capabilities block: the
+// Capabilities is the §25.4 capabilities block: the
 // actual install state, not compiled feature flags.
 type Capabilities struct {
 	PrometheusAvailable     bool   `json:"prometheusAvailable"`
@@ -159,7 +159,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		resp.RateLimits = rl
 	}
 
-	// §25.4 line 1641: identity.discovered on first call per token,
+	// §25.4: identity.discovered on first call per token,
 	// deduplicated by sub (a precise (sub, token_iat) key requires the iat
 	// claim the principal does not surface in v1).
 	if hasPrincipal && p.Subject != "" {
@@ -198,7 +198,7 @@ func (s *Server) meAuthorization(p authmw.Principal, hasPrincipal bool) meAuthor
 	}
 	scope := p.Scopes.Raw
 	if scope == "" {
-		// §25.4 line 1592: an absent scope claim echoes as tools:* (no
+		// §25.4: an absent scope claim echoes as tools:* (no
 		// restriction beyond role).
 		scope = "tools:*"
 	}
@@ -211,10 +211,10 @@ func (s *Server) meAuthorization(p authmw.Principal, hasPrincipal bool) meAuthor
 	}
 }
 
-// authorizedLockScopes returns the §25.4 line 1583-1589 lock scopes the
+// authorizedLockScopes returns the §25.4 lock scopes the
 // caller's role authorizes. Platform-admin gets the full platform set;
 // tenant-admin gets tenant-scoped expansions rather than wildcards
-// (§25.4 line 1647). The dev path (no principal) returns the
+// (§25.4). The dev path (no principal) returns the
 // platform-admin set.
 func authorizedLockScopes(p authmw.Principal, hasPrincipal bool) []string {
 	if hasPrincipal && !p.HasRole(auth.RolePlatformAdmin) {
@@ -230,7 +230,7 @@ func authorizedLockScopes(p authmw.Principal, hasPrincipal bool) []string {
 	}
 }
 
-// subjectToGuards returns the §25.4 line 1593-1595 conditional-requirement
+// subjectToGuards returns the §25.4 conditional-requirement
 // rules surfaced from the tool x-lenny-guards extensions so an agent
 // learns upfront which operations require confirm / acknowledgeDataLoss.
 func subjectToGuards() meGuards {
@@ -300,7 +300,7 @@ func (s *Server) meIssuer() string {
 	return s.me.Issuer
 }
 
-// meLinks returns the §25.4 line 1616-1623 discovery hop-off block.
+// meLinks returns the §25.4 discovery hop-off block.
 //
 // spec: §25.4 (`/me` example, links.openApi/platformHealth/myRecentAudit)
 // — `authorizedTools` and `myOperations` are `lenny-ops`'s own routes and
@@ -354,12 +354,12 @@ type authorizedToolEntry struct {
 // management tool inventory pre-filtered to the tools the caller's roles
 // and scope claim authorize. When the MCP management server is unwired the
 // endpoint returns 503 AUTHORIZED_TOOLS_UNAVAILABLE with the OpenAPI
-// fallback hint (§25.4 line 1668).
+// fallback hint (§25.4).
 func (s *Server) handleAuthorizedTools(w http.ResponseWriter, r *http.Request) {
 	p, hasPrincipal := callerPrincipal(r)
 	meRequestsTotal.WithLabelValues(callerTypeLabel(p, hasPrincipal)).Inc()
 	if s.mcp == nil {
-		// spec: §25.4 line 1668 — the fallback hint points at the
+		// spec: §25.4 — the fallback hint points at the
 		// gateway-hosted OpenAPI document; join the gateway base URL so an
 		// agent that reads the hint reaches the gateway rather than a route
 		// lenny-ops does not serve. F-COV-1.

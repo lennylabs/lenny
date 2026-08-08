@@ -67,7 +67,7 @@ func TestValidateEntryRejectsForbiddenKinds(t *testing.T) {
 	}
 }
 
-// spec: §7.4 zip-slip / §15.1 line 1093 — an absolute entry path is a
+// spec: §7.4 zip-slip / §15.1 — an absolute entry path is a
 // path_escapes_root rejection (the §15.1 client-visible sub-code), not
 // the source-compat-only path_traversal label. F-13.4.9.
 func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
@@ -78,7 +78,7 @@ func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
 	}
 }
 
-// spec: §7.4 zip-slip / §15.1 line 1093 — `..`-bearing paths surface the
+// spec: §7.4 zip-slip / §15.1 — `..`-bearing paths surface the
 // path_escapes_root sub-code. F-13.4.9.
 func TestValidateEntryRejectsTraversal(t *testing.T) {
 	cases := []string{
@@ -217,7 +217,7 @@ func TestValidateArchiveAcceptsBoundaryRatio(t *testing.T) {
 	}
 }
 
-// spec: §13.4 line 659 — a ratio just above the integer boundary must be
+// spec: §13.4 — a ratio just above the integer boundary must be
 // rejected; integer division previously truncated it to the boundary and
 // admitted it (F-13.4.14).
 func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
@@ -247,7 +247,7 @@ func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §13.4 line 665 — ValidateSymlinkTarget must reject a workspace root
+// spec: §13.4 — ValidateSymlinkTarget must reject a workspace root
 // that is not a clean absolute slash path so the containment check cannot
 // silently misbehave on a relative or OS-native root (F-13.4.13).
 func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/releasechannel"
 )
 
-// spec: §25.8 line 3410 — the minUpgradeFrom prerequisite filter.
+// spec: §25.8 — the minUpgradeFrom prerequisite filter.
 func TestMeetsMinUpgradeFrom(t *testing.T) {
 	cases := []struct {
 		name           string

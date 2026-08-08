@@ -26,7 +26,7 @@ func progressOp(id string, kind operations.Kind, status operations.Status, start
 	return op
 }
 
-// spec §25.2 lines 393-394: with a baseline of sample_size >= 3, the
+// spec §25.2: with a baseline of sample_size >= 3, the
 // Inventory enriches an in-progress operation's Progress with the
 // historical_p50 ETA method.
 func TestInventoryEnrichesHistoricalP50(t *testing.T) {
@@ -64,7 +64,7 @@ func TestInventoryEnrichesHistoricalP50(t *testing.T) {
 	}
 }
 
-// spec §25.2 lines 391/396: the Inventory derives the cadence-relative
+// spec §25.2: the Inventory derives the cadence-relative
 // stalledForSeconds for an in-progress operation past its cadence.
 func TestInventoryEnrichesStalled(t *testing.T) {
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
@@ -86,7 +86,7 @@ func TestInventoryEnrichesStalled(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 391: a completed operation is never reported stalled —
+// spec §25.2: a completed operation is never reported stalled —
 // the enrichment leaves a non-in-progress operation's Progress untouched.
 func TestInventoryDoesNotStallCompleted(t *testing.T) {
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)

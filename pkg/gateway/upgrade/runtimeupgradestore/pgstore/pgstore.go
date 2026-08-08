@@ -11,7 +11,7 @@
 // rather than tenant-isolated: no lenny_tenant_guard trigger and no RLS
 // policy, and this store operates on the pool directly. The optimistic
 // version column serializes concurrent phase transitions across gateway
-// replicas. spec: §10.5 lines 466-540.
+// replicas. spec: §10.5.
 package pgstore
 
 import (

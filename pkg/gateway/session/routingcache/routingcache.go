@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package routingcache is the §4.2 line 152 "Redis hot routing cache".
+// Package routingcache is the §4.2.
 // The Session Manager's primary store is Postgres; this cache short-
 // circuits the per-request lookup of session → replica binding so
 // hot-path traffic does not contend on the database.
@@ -20,7 +20,7 @@
 // transport error so callers always fall back to Postgres, and
 // every Set / Invalidate logs and swallows transport errors.
 //
-// spec: §4.2 line 152 ("Backed by: Postgres (primary), Redis (hot
+// spec: §4.2 ("Backed by: Postgres (primary), Redis (hot
 // routing cache, short-lived locks)").
 package routingcache
 
@@ -47,9 +47,9 @@ const DefaultTTL = 5 * time.Minute
 const keyPrefix = "lenny:route:"
 
 // Binding is the cached session → replica binding. The fields mirror
-// the §4.2 line 156 session row columns: ReplicaID names the
+// the §4.2 session row columns: ReplicaID names the
 // gateway replica currently coordinating the session, PodAssignment
-// is the §4.2 line 160 pod-to-session binding, RecoveryGeneration
+// is the §4.2 pod-to-session binding, RecoveryGeneration
 // is the §4.2 generation counter that produced the binding. The
 // triple lets a fresh replica detect a stale cache entry without
 // consulting Postgres: a recorded RecoveryGeneration older than the
@@ -65,7 +65,7 @@ type Binding struct {
 	// pod (created but not yet started, or already drained).
 	PodAssignment string `json:"podAssignment,omitempty"`
 
-	// RecoveryGeneration is the §4.2 line 156 recovery counter.
+	// RecoveryGeneration is the §4.2 recovery counter.
 	// Callers compare against the row's RecoveryGeneration on
 	// fall-through to detect a stale cache hit produced by an out-
 	// of-date generation.
@@ -148,7 +148,7 @@ func (c *RedisCache) Get(ctx context.Context, sessionID string) (Binding, error)
 		if errors.Is(err, redis.Nil) {
 			return Binding{}, ErrCacheMiss
 		}
-		// spec: §4.2 line 152 — the cache is best-effort. Surface a
+		// spec: §4.2 — the cache is best-effort. Surface a
 		// transport error as a miss so the caller falls through to
 		// Postgres rather than failing the request.
 		return Binding{}, ErrCacheMiss

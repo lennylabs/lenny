@@ -69,7 +69,7 @@ func seedSession(t *testing.T, ctx context.Context, ss sessionstore.Store, tenan
 
 func evalScore(v float64) *float64 { return &v }
 
-// spec: §10.7 line 1088 — the materialized view, its BYPASSRLS owner
+// spec: §10.7 — the materialized view, its BYPASSRLS owner
 // role, the SECURITY DEFINER refresh function, and the tenant-scoped
 // read view are all defined in the migration system. F-10.7.12.
 // diagnosis: a failure means the eval-aggregates matview DDL, its
@@ -112,7 +112,7 @@ func TestEvalAggregatesMatviewDDL_spec_10_7_1088(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 954, 1088 — a cross-tenant REFRESH populates every
+// spec: §10.7 — a cross-tenant REFRESH populates every
 // tenant's aggregates (BYPASSRLS), the tenant-scoped view isolates each
 // tenant under the non-superuser lenny_app role, lenny_app cannot read
 // the matview directly, and the pgstore aggregate read reproduces the
@@ -218,7 +218,7 @@ func TestEvalAggregatesRefreshIsolationAndAggregation_spec_10_7_1088(t *testing.
 	}
 }
 
-// spec: §10.7 line 1088 — migration 0156 rolls back cleanly.
+// spec: §10.7 — migration 0156 rolls back cleanly.
 // diagnosis: a failure means migration 0156 does not roll back cleanly,
 // leaving eval-aggregates objects behind or erroring on down-migration.
 func TestEvalAggregatesMigrationRollback_spec_10_7_1088(t *testing.T) {

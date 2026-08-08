@@ -56,7 +56,7 @@ func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, ten
 	return true
 }
 
-// requireTenantClassification implements the §12.9 line 1048 requirement
+// requireTenantClassification implements the §12.9 requirement
 // that the gateway policy engine validate a tenant's data-classification
 // configuration at session creation. A tenant whose workspaceTier is not
 // a recognized §12.9 tier (a stale value left over from a direct database
@@ -69,7 +69,7 @@ func (s *Server) requireSessionQuota(w http.ResponseWriter, r *http.Request, ten
 // classification to validate, so the create proceeds (the §10.2
 // tenant-claim path governs unknown tenants). requireTenantClassification
 // returns true when the create may proceed; when it returns false it has
-// already written the response. spec: §12.9 line 1048; §15.1 line 1078.
+// already written the response. spec: §12.9; §15.1.
 func (s *Server) requireTenantClassification(w http.ResponseWriter, r *http.Request, tenantID string) bool {
 	if s.tenants == nil {
 		return true
@@ -105,8 +105,7 @@ func (s *Server) requireTenantClassification(w http.ResponseWriter, r *http.Requ
 // §10.2 tenant-claim path governs unknown tenants); a soft-deleted
 // tenant is already rejected upstream as TENANT_NOT_FOUND.
 // requireTenantState returns true when the create may proceed; when it
-// returns false it has already written the response. spec: §12.8 lines
-// 865-873.
+// returns false it has already written the response. spec: §12.8.
 func (s *Server) requireTenantState(w http.ResponseWriter, r *http.Request, tenantID string) bool {
 	if s.tenants == nil {
 		return true
@@ -120,7 +119,7 @@ func (s *Server) requireTenantState(w http.ResponseWriter, r *http.Request, tena
 			"tenant state check failed: "+err.Error(), nil)
 		return false
 	}
-	// spec: §15.1 line 818 — a suspended tenant rejects new session
+	// spec: §15.1 — a suspended tenant rejects new session
 	// creation with TENANT_SUSPENDED. The check precedes the §12.8
 	// deletion-lifecycle gate so an operator suspension is reported as
 	// suspension rather than as the deletion-lifecycle TENANT_NOT_ACTIVE.
@@ -143,7 +142,7 @@ func (s *Server) requireTenantState(w http.ResponseWriter, r *http.Request, tena
 // suspended tenant with 403 TENANT_SUSPENDED. It returns true when the
 // call may proceed; when it returns false it has already written the
 // response. An unwired registry or an unknown tenant means there is no
-// suspension to consult, so the call proceeds. spec: §15.1 line 818.
+// suspension to consult, so the call proceeds. spec: §15.1.
 func (s *Server) requireTenantNotSuspended(w http.ResponseWriter, r *http.Request, tenantID string) bool {
 	if s.tenants == nil {
 		return true
@@ -166,7 +165,7 @@ func (s *Server) requireTenantNotSuspended(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
-// requireConcurrencyLimits enforces the §11.1 line 8 concurrent-session
+// requireConcurrencyLimits enforces the §11.1 concurrent-session
 // admission caps for the global, per-user, and per-runtime scopes (the
 // per-tenant scope is enforced by requireSessionQuota against the tenant
 // record, and the per-team scope is a §14 user-defined session label
@@ -184,8 +183,7 @@ func (s *Server) requireTenantNotSuspended(w http.ResponseWriter, r *http.Reques
 // requireConcurrencyLimits returns true when the create may proceed;
 // when it returns false it has already written the response.
 //
-// spec: §11.1 line 8 (Concurrency limits — global, per-user,
-// per-runtime). F-11.1.3.
+// spec: §11.1. F-11.1.3.
 func (s *Server) requireConcurrencyLimits(w http.ResponseWriter, r *http.Request, tenantID, userID, runtimeRef string) bool {
 	if s.maxConcSessPerUser > 0 && userID != "" {
 		active, err := s.store.CountActiveSessionsByUser(r.Context(), tenantID, userID)
@@ -211,7 +209,7 @@ func (s *Server) requireConcurrencyLimits(w http.ResponseWriter, r *http.Request
 // admitConcurrencyScope applies one §11.1 concurrent-session scope
 // decision. A counter error fails closed with 500; an active count at
 // or above the cap rejects with 429 QUOTA_EXCEEDED. It returns true when
-// the scope admits the create. spec: §11.1 line 8. F-11.1.3.
+// the scope admits the create. spec: §11.1. F-11.1.3.
 func (s *Server) admitConcurrencyScope(w http.ResponseWriter, scope string, limit, active int, err error) bool {
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -277,7 +275,7 @@ func (s *Server) requirePolicyChain(w http.ResponseWriter, r *http.Request, tena
 			return false
 		}
 	}
-	// spec: §4.8 line 1032, §15.1 line 1008 — a fail-closed interceptor
+	// spec: §4.8, §15.1 — a fail-closed interceptor
 	// timeout/error is surfaced as 503 INTERCEPTOR_TIMEOUT (TRANSIENT,
 	// retryable) so the caller distinguishes "the policy service is
 	// degraded" from a deliberate policy REJECT. The details carry

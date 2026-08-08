@@ -17,12 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// defaultCoordinatorHoldTimeout is the §10.1 line 50
+// defaultCoordinatorHoldTimeout is the §10.1
 // coordinatorHoldTimeoutSeconds default: the window the adapter holds a
 // session after losing its coordinator before it self-terminates.
 const defaultCoordinatorHoldTimeout = 120 * time.Second
 
-// reasonCoordinatorLost is the §10.1 line 50 AdapterTerminating /
+// reasonCoordinatorLost is the §10.1 AdapterTerminating /
 // session.terminated reason the adapter reports when the hold times out
 // without a new coordinator.
 const reasonCoordinatorLost = "coordinator_lost"
@@ -35,7 +35,7 @@ const reasonCoordinatorLost = "coordinator_lost"
 // coordinator fences within coordinatorHoldTimeoutSeconds the adapter
 // self-terminates the session.
 //
-// spec: §10.1 lines 47-52.
+// spec: §10.1.
 type holdState struct {
 	mu      sync.Mutex
 	active  bool
@@ -44,13 +44,13 @@ type holdState struct {
 	gen     int64
 }
 
-// coordinatorHoldAllowedMethods is the §10.1 line 49 allowlist: the only
+// coordinatorHoldAllowedMethods is the §10.1 allowlist: the only
 // inbound gRPC methods the adapter still serves while in hold state. A
 // new coordinator negotiates, opens the control stream, and fences;
 // health probes keep the pod live. Every other RPC is rejected with the
 // coordinator_hold detail until the fence lands.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 var coordinatorHoldAllowedMethods = map[string]bool{
 	"/lenny.adapter.v1.Adapter/CoordinatorFence": true,
 	"/lenny.adapter.v1.Adapter/NegotiateVersion": true,
@@ -68,7 +68,7 @@ func (s *Server) holdAfter(d time.Duration, f func()) expiryTimerHandle {
 	return time.AfterFunc(d, f)
 }
 
-// coordinatorHoldTimeout returns the configured §10.1 line 50 hold
+// coordinatorHoldTimeout returns the configured §10.1 hold
 // timeout, or the 120s spec default.
 func (s *Server) coordinatorHoldTimeout() time.Duration {
 	if s.CoordinatorHoldTimeout > 0 {
@@ -81,13 +81,13 @@ func (s *Server) coordinatorHoldTimeout() time.Duration {
 // (AdapterEvents) ends. When the pod still holds an active session the
 // closed stream is the §10.1 coordinator-loss signal: the coordinating
 // gateway replica crashed or partitioned (the gRPC keepalive at
-// 10s/5s — §11.3 lines 205-206 — surfaces the dead connection within one
+// 10s/5s — §11.3 — surfaces the dead connection within one
 // interval plus one timeout), so the adapter enters hold state and waits
 // coordinatorHoldTimeoutSeconds for a new coordinator to fence. A closed
 // stream on an idle pod, or one whose session a clean teardown already
 // released, is not a loss.
 //
-// spec: §10.1 lines 47-52.
+// spec: §10.1.
 func (s *Server) onCoordinatorChannelClosed() {
 	session := s.currentSession()
 	if session == "" {
@@ -101,7 +101,7 @@ func (s *Server) onCoordinatorChannelClosed() {
 // known generation, and starts the hold-timeout timer. It is idempotent —
 // a second close while already held is a no-op.
 //
-// spec: §10.1 lines 47-52.
+// spec: §10.1.
 func (s *Server) enterHoldState(session string) {
 	// Read the generation through the accessor (which takes coord.mu)
 	// before locking hold.mu so the two locks are never held together.
@@ -126,7 +126,7 @@ func (s *Server) enterHoldState(session string) {
 // CoordinatorFence lands: it stops the timeout timer and lowers the
 // coordinator-hold gauge. It is a no-op when no hold is active.
 //
-// spec: §10.1 line 49 — a successful CoordinatorFence is the only way to
+// spec: §10.1 — a successful CoordinatorFence is the only way to
 // exit hold state.
 func (s *Server) exitHoldState() {
 	s.hold.mu.Lock()
@@ -150,7 +150,7 @@ func (s *Server) exitHoldState() {
 // is exactly what was lost), and best-effort terminates the runtime so
 // the agent process does not run unsupervised.
 //
-// spec: §10.1 line 50.
+// spec: §10.1.
 func (s *Server) onHoldTimeout() {
 	s.hold.mu.Lock()
 	if !s.hold.active {
@@ -169,7 +169,7 @@ func (s *Server) onHoldTimeout() {
 		"session_id", session,
 		"last_generation", gen)
 
-	// §10.1 line 50 — notify the gateway so it can transition the session
+	// §10.1 — notify the gateway so it can transition the session
 	// without waiting for the 60s orphan-session reconciler.
 	s.EmitAdapterTerminating(reasonCoordinatorLost)
 	s.writeHoldPostMortem(session, gen)
@@ -190,7 +190,7 @@ func (s *Server) inHoldState() bool {
 	return s.hold.active
 }
 
-// writeHoldPostMortem records a §10.1 line 50 coordinator_lost
+// writeHoldPostMortem records a §10.1 coordinator_lost
 // post-mortem to PostMortemDir so the terminal cause survives even when
 // no coordinator ever returns to receive the AdapterTerminating event.
 // Best-effort: an empty dir skips the write, and an encode/write failure
@@ -241,7 +241,7 @@ func sanitizeSessionFilename(session string) string {
 // state. CoordinatorFence, NegotiateVersion, and health checks pass
 // through so a new coordinator can re-establish coordination.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 func (s *Server) holdStateUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if s.inHoldState() && !coordinatorHoldAllowedMethods[info.FullMethod] {
 		return nil, coordinatorHoldError(info.FullMethod)
@@ -254,7 +254,7 @@ func (s *Server) holdStateUnaryInterceptor(ctx context.Context, req any, info *g
 // coordinator can re-attach the control stream; Attach and
 // PrepareWorkspace are rejected like any other operational RPC.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 func (s *Server) holdStateStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	if s.inHoldState() && !coordinatorHoldAllowedMethods[info.FullMethod] {
 		return coordinatorHoldError(info.FullMethod)
@@ -262,7 +262,7 @@ func (s *Server) holdStateStreamInterceptor(srv any, ss grpc.ServerStream, info 
 	return handler(srv, ss)
 }
 
-// coordinatorHoldError builds the §10.1 line 49 rejection carrying the
+// coordinatorHoldError builds the §10.1 rejection carrying the
 // coordinator_hold detail in its message.
 func coordinatorHoldError(fullMethod string) error {
 	return status.Errorf(codes.Unavailable,

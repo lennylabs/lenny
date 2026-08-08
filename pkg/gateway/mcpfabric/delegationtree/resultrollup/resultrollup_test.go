@@ -242,7 +242,7 @@ func TestTreeUsageReadsArchivedDescendant_spec_8_8_904(t *testing.T) {
 }
 
 // TestTreeUsageNilWhenRootNonTerminal confirms an in-progress task has a
-// null treeUsage per §8.8 line 917, regardless of descendants.
+// null treeUsage per §8.8, regardless of descendants.
 func TestTreeUsageNilWhenRootNonTerminal_spec_8_8_917(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()

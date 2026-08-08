@@ -48,7 +48,7 @@ func decodeEnvelope(t *testing.T, rec *httptest.ResponseRecorder) errorBody {
 	return env.Error
 }
 
-// spec: §4.8 line 1032, §15.1 line 1008 — a fail-closed interceptor
+// spec: §4.8, §15.1 — a fail-closed interceptor
 // timeout/error on the session-create path returns 503
 // INTERCEPTOR_TIMEOUT (TRANSIENT, retryable) carrying interceptor_ref,
 // phase, and timeout_ms, distinct from the 429 a deliberate REJECT gives.

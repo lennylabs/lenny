@@ -46,7 +46,7 @@ func recordRunningStack(t *testing.T) string {
 	return home
 }
 
-// spec: §24.19 line 264 — the pod-backed components (gateway, controller,
+// spec: §24.19 — the pod-backed components (gateway, controller,
 // ops Deployments) are individually restartable; the removed host-process
 // components are not.
 func TestRestartableComponents_spec_24_19_264(t *testing.T) {
@@ -78,7 +78,7 @@ func TestRunRestartRejectsUnknownComponent(t *testing.T) {
 	}
 }
 
-// spec: §24.19 line 264 — restart against a stack that is not running
+// spec: §24.19 — restart against a stack that is not running
 // reports ErrNoRunningStack so the CLI can present a precise message.
 func TestRunRestartNoStack_spec_24_19_264(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
@@ -95,7 +95,7 @@ func TestRunRestartNoStack_spec_24_19_264(t *testing.T) {
 // Deployment rolls without changing its desired spec. Each restartable
 // component maps to its Deployment.
 //
-// spec: §24.19 line 264 (the restart is a Deployment rollout-restart), §17.4
+// spec: §24.19, §17.4
 // (the control plane runs as in-cluster Deployments).
 func TestRunRestartRollsDeployment_spec_24_19_264(t *testing.T) {
 	cases := []struct {
@@ -136,7 +136,7 @@ func TestRunRestartRollsDeployment_spec_24_19_264(t *testing.T) {
 // patch failure rather than reporting a successful restart, so an operator is
 // not told a component rolled when it did not.
 //
-// spec: §24.19 line 264 (the restart targets a real Deployment).
+// spec: §24.19.
 func TestRunRestartMissingDeploymentFailsClosed_spec_24_19_264(t *testing.T) {
 	recordRunningStack(t)
 	// An empty cluster carries no Deployments.

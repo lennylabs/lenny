@@ -65,13 +65,13 @@ const (
 	contractUser    = memorystore.PreflightUserID
 )
 
-// ValidateMemoryStoreIsolation is the §9.4 line 200 contract helper. It
+// ValidateMemoryStoreIsolation is the §9.4 contract helper. It
 // fails the test when the store violates tenant isolation, silently
 // defaults an empty scope, fails the §12.8 erasure stub-detection, or
 // (for a backend exposing the Observer seam) omits an operation label
 // from its instrumentation.
 //
-// spec: §9.4 lines 196, 200, 204; §12.8 lines 743-758.
+// spec: §9.4; §12.8.
 func ValidateMemoryStoreIsolation(t *testing.T, store memorystore.Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -140,7 +140,7 @@ func ValidateMemoryStoreIsolation(t *testing.T, store memorystore.Store) {
 			memorystore.OpList, memorystore.OpDeleteByUser, memorystore.OpDeleteByTenant,
 		} {
 			if rec.seen(op) == 0 {
-				t.Errorf("no lenny_memory_store_operation_duration_seconds observation under operation=%q during the contract exercise (§9.4 line 200)", op)
+				t.Errorf("no lenny_memory_store_operation_duration_seconds observation under operation=%q during the contract exercise (§9.4)", op)
 			}
 		}
 	}

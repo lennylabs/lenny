@@ -50,10 +50,9 @@ const (
 	// breakerReasonDemotionRate marks a breaker tripped automatically
 	// because the rolling demotion rate crossed the trip threshold.
 	breakerReasonDemotionRate = "demotion_rate_exceeded"
-	// breakerReasonOperatorManual marks a breaker held open by the §6.1
-	// line 63 `circuitBreakerOverride: disabled` operator override. Unlike
+	// breakerReasonOperatorManual marks a breaker held open by the §6.1 operator override. Unlike
 	// an automatic trip it carries no minOpenUntil — it stays open until the
-	// operator sets `enabled` or `auto`. spec: §6.1 line 54.
+	// operator sets `enabled` or `auto`. spec: §6.1.
 	breakerReasonOperatorManual = "operator_manual"
 )
 
@@ -195,7 +194,7 @@ func closedDecision() BreakerDecision {
 	return BreakerDecision{State: BreakerState{}, SDKWarmDisabled: false}
 }
 
-// operatorDisabledDecision builds the decision for the §6.1 line 63
+// operatorDisabledDecision builds the decision for the §6.1
 // `circuitBreakerOverride: disabled` override: SDK-warm is forced off
 // regardless of the demotion rate. The breaker is recorded open with the
 // operator_manual reason and no minOpenUntil, since an operator disable is

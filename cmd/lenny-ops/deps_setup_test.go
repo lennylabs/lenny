@@ -12,8 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
-// spec: §25.6 lines 2905-2906 (Connectivity, CheckConnectivity data
-// source) — "Additionally, it probes the gateway admin API itself (GET
+// spec: §25.6 — "Additionally, it probes the gateway admin API itself (GET
 // /v1/admin/health/summary) — if the gateway is unreachable, this
 // appears in the connectivity report as a failed dependency."
 //

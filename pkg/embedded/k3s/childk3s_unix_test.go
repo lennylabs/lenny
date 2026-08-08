@@ -102,7 +102,7 @@ func TestChildEnsureBinaryRejectsUnsupportedPlatform(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 160 — "k3s (single-node, rootless where supported)".
+// spec: §17.4 — "k3s (single-node, rootless where supported)".
 // When running as non-root the supervisor passes --rootless so k3s
 // picks its rootless mode on supported hosts; when running as root it
 // omits the flag so root-mode k3s starts normally.

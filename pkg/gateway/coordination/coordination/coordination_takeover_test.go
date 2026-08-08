@@ -60,7 +60,7 @@ func (r *fakeReadopter) ReadoptAndFence(_ context.Context, tenantID, sessionID s
 
 // spec: §10.1 (coordinator handoff re-adopts the still-running pod;
 // CoordinatorFence precondition; no operational RPC before the fence
-// acknowledges), §4.2 line 156 (generation bump on handoff). On the
+// acknowledges), §4.2. On the
 // crash-takeover edge the Sweeper bumps coordination_generation, drives the
 // re-adopt fence with the post-bump generation, and publishes the binding
 // only after the fence acknowledges — exactly once per handoff. The next
@@ -125,7 +125,7 @@ func TestSweepCrashTakeoverFencesPublishesOncePerHandoff_spec_10_1(t *testing.T)
 	}
 }
 
-// spec: §10.1 line 35 (relinquish-and-backoff), §4.2 line 156. On a terminal
+// spec: §10.1, §4.2. On a terminal
 // fence failure the coordfence driver relinquishes the lease; the Sweeper
 // publishes no binding and records a per-session adoption backoff so the
 // fixed sweep does not re-adopt inside the jittered window and re-drive
@@ -291,8 +291,7 @@ func TestSweepCrashTakeoverSkipsFenceWhenGenerationBumpFails_spec_10_1(t *testin
 	}
 }
 
-// spec: §10.1 (coordinator handoff re-adopts the still-running pod), §4.2
-// line 156. A nil Readopter disables the re-adopt: the generation bump and
+// spec: §10.1 (coordinator handoff re-adopts the still-running pod), §4.2. A nil Readopter disables the re-adopt: the generation bump and
 // the lease acquire still stand on the takeover edge, and the self-held
 // lease keeps the bump to once per handoff on the following sweep. Models a
 // deployment or a peer without the seam wired.

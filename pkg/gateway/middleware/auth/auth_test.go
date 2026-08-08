@@ -22,7 +22,7 @@ import (
 // non-default names (the Claims struct tags are fixed), so the
 // F-10.2.9 test exercises the alt-claim path by hand-crafting the
 // payload.
-// spec: §10.2 line 212. F-10.2.9.
+// spec: §10.2. F-10.2.9.
 func signJWTWithExtras(t *testing.T, secret []byte, kid string, payload map[string]any) string {
 	t.Helper()
 	header := map[string]any{"alg": "HS256", "typ": "JWT"}
@@ -173,11 +173,11 @@ func TestDevHeadersPropagatesRolesOnlyWhenAllowDevRolesIsSet(t *testing.T) {
 	}
 }
 
-// TestBearerHonoursConfigurableTenantClaim asserts the §10.2 line 212
+// TestBearerHonoursConfigurableTenantClaim asserts the §10.2
 // `auth.tenantIdClaim` Helm value flows through: an OIDC token whose
 // tenant identifier lives under a non-default claim name is admitted
 // when TenantClaimName matches it, and rejected as TENANT_CLAIM_MISSING
-// otherwise. spec: §10.2 line 212. F-10.2.9.
+// otherwise. spec: §10.2. F-10.2.9.
 func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
 	secret := []byte("secret")
 	signer := jwt.NewHMACSigner("test", secret)
@@ -228,7 +228,7 @@ func TestBearerHonoursConfigurableTenantClaim(t *testing.T) {
 }
 
 // TestClaimsClaimStringResolvesAcrossFields covers the typed-field /
-// Extras precedence on Claims.ClaimString. spec: §10.2 line 212. F-10.2.9.
+// Extras precedence on Claims.ClaimString. spec: §10.2. F-10.2.9.
 func TestClaimsClaimStringResolvesAcrossFields(t *testing.T) {
 	secret := []byte("secret")
 	signer := jwt.NewHMACSigner("k", secret)

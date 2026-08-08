@@ -69,7 +69,7 @@ func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 }
 
 // TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6 — even with
-// no cap resolver wired, the origin=playground label (§27.6 line 203) is
+// no cap resolver wired, the origin=playground label (§27.6) is
 // stamped and the §27.8 counter fires. F-27.6.8 / F-27.6.11.
 func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing.T) {
 	count := 0
@@ -111,8 +111,7 @@ func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 }
 
 // TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6 — when the runtime's
-// own limits.maxSessionAge is tighter than the playground cap, the §27.6 line
-// 200 min() keeps the runtime bound. F-27.6.2.
+// own limits.maxSessionAge is tighter than the playground cap, the §27.6 min() keeps the runtime bound. F-27.6.2.
 func TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{

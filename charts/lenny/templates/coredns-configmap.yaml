@@ -15,7 +15,7 @@ coredns-deployment.yaml. The Corefile enables:
 
 The ratelimit and filter plugins are non-standard; they are compiled
 into the coredns.image (build/coredns-plugins/). Deployers overriding
-the image MUST include both. spec: §13.2 lines 498-536. F-13.2.3 / F-13.2.14.
+the image MUST include both. spec: §13.2. F-13.2.3 / F-13.2.14.
 */ -}}
 {{- if .Values.coredns.deploy }}
 {{- $cd := .Values.coredns }}

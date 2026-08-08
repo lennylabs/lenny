@@ -33,7 +33,7 @@ func TestIsTerminalCoversFourStates(t *testing.T) {
 	}
 }
 
-// TestIsRecoveryCoversRetryStates verifies the §16.5 line 616 Session
+// TestIsRecoveryCoversRetryStates verifies the §16.5 Session
 // availability SLI recovery-state set: exactly resume_pending, resuming
 // (the internal transient §15.1 normalises to resume_pending), and
 // awaiting_client_action are retry/recovery states; running, input
@@ -110,7 +110,7 @@ func TestValidateStartAdmitsReadyOnly(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 178 — interrupt admits running and input_required (a
+// spec: §7.2 — interrupt admits running and input_required (a
 // running sub-state) but no other state.
 func TestValidateInterruptAdmitsRunningAndInputRequired_spec_7_2(t *testing.T) {
 	for _, allowed := range []State{StateRunning, StateInputRequired} {
@@ -269,7 +269,7 @@ func TestValidateUnknownEndpointErrors(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 195; §15.1 line 621 — `resuming` is an internal
+// spec: §7.2; §15.1 — `resuming` is an internal
 // transient that the API surface normalises to resume_pending → running
 // on the GET envelope but synthesises onto the §10.4 coordinator-handoff
 // `status_change` SSE frame. The constant must exist in the external
@@ -279,12 +279,12 @@ func TestResumingStateConstantExposed(t *testing.T) {
 	if StateResuming != "resuming" {
 		t.Errorf("F-7.3.19: StateResuming = %q, want \"resuming\"", StateResuming)
 	}
-	// §15.1 line 621 — the GET envelope normalises resuming away, so
+	// §15.1 — the GET envelope normalises resuming away, so
 	// AllStates() (which is the closed §15.1 polling enum) does NOT
 	// include it.
 	for _, s := range AllStates() {
 		if s == StateResuming {
-			t.Errorf("F-7.3.19: AllStates() must omit resuming per §15.1 line 621 normalisation rule, got %v", AllStates())
+			t.Errorf("F-7.3.19: AllStates() must omit resuming per §15.1 normalisation rule, got %v", AllStates())
 		}
 	}
 	// resuming is non-terminal so accidental terminal-state plumbing
@@ -294,7 +294,7 @@ func TestResumingStateConstantExposed(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 621 — `POST /v1/sessions/{id}/resume` admits only
+// spec: §15.1 — `POST /v1/sessions/{id}/resume` admits only
 // awaiting_client_action; resuming is the internal-only transient the
 // API never accepts as a precondition. F-7.3.19 must not regress the
 // precondition table.
@@ -304,7 +304,7 @@ func TestValidateResumeRejectsResumingState(t *testing.T) {
 		CurrentState: StateResuming,
 	})
 	if err == nil {
-		t.Errorf("F-7.3.19: resume from resuming must be rejected per §15.1 line 621")
+		t.Errorf("F-7.3.19: resume from resuming must be rejected per §15.1")
 	}
 }
 

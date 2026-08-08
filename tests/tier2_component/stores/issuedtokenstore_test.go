@@ -167,7 +167,7 @@ func TestTokenIssuanceStoreContract(t *testing.T) {
 	})
 
 	t.Run("audiences list and dialect cap round-trip", func(t *testing.T) {
-		// spec: §4.3 line 193, migration 0058.
+		// spec: §4.3, migration 0058.
 		// Multi-valued audience set MUST be stored on the audiences[]
 		// column so forensic queries can match individual audiences.
 		// The dialect cap applied to the issued exp MUST be stored on
@@ -219,7 +219,7 @@ func TestTokenIssuanceStoreContract(t *testing.T) {
 	})
 
 	t.Run("audiences list is back-filled from legacy single audience", func(t *testing.T) {
-		// spec: §4.3 line 193, migration 0058.
+		// spec: §4.3, migration 0058.
 		// A caller that supplies only the legacy single-valued
 		// Audience field still gets the audiences[] column populated
 		// from the writer-side fallback (audienceListArg). Single

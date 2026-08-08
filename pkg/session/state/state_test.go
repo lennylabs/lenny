@@ -75,13 +75,12 @@ func TestIsTerminal(t *testing.T) {
 	}
 }
 
-// TestMCPProtocolStateSessionMapping_spec_8_8_871 covers the §8.8
-// lines 871-883 supplementary table: pre-running session states
+// TestMCPProtocolStateSessionMapping_spec_8_8_871 covers the §8.8 supplementary table: pre-running session states
 // collapse to `submitted`, `suspended`/`resume_pending`/`resuming` map
 // to `working` with the canonical metadata annotation,
 // `awaiting_client_action` collapses to `input_required`, and the
-// terminal + `input_required` states use the §8.8 line 857 task-level
-// table. spec: §8.8 lines 855-883. F-8.8.9.
+// terminal + `input_required` states use the §8.8 task-level
+// table. spec: §8.8. F-8.8.9.
 func TestMCPProtocolStateSessionMapping_spec_8_8_871(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -263,7 +263,7 @@ func TestPolicyAudit(t *testing.T) {
 		t.Error("audit payload must carry the rejection reason")
 	}
 
-	// §11.7 / §25.9 line 3653: the chain stays verifiable after the
+	// §11.7 / §25.9: the chain stays verifiable after the
 	// policy-rejection write. The envelope's chainIntegrityReport tallies
 	// each returned row's per-row §11.7 verdict; no row is broken.
 	report, _ := audit["chainIntegrityReport"].(map[string]any)

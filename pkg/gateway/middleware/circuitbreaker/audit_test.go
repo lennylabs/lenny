@@ -124,7 +124,7 @@ func TestReportDelegationSnapshot(t *testing.T) {
 	}
 }
 
-// spec: §11.6 line 331 — the first rejection per (tenant, circuit,
+// spec: §11.6 — the first rejection per (tenant, circuit,
 // caller) in a 10s window is written; later rejections in the window
 // are suppressed but still counted in rejections_total.
 func TestReportSamplesPerTupleWithinWindow(t *testing.T) {
@@ -169,7 +169,7 @@ func TestReportNilAppenderMetricsOnly(t *testing.T) {
 	}
 }
 
-// spec: §11.6 line 327 — on a breaker match the middleware emits the
+// spec: §11.6 — on a breaker match the middleware emits the
 // audit row before returning 503.
 func TestMiddlewareEmitsAuditOnMatch(t *testing.T) {
 	app := &fakeAppender{}

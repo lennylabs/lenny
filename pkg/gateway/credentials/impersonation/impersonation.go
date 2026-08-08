@@ -3,22 +3,20 @@
 // Package impersonation implements the §13.3 narrow platform-admin
 // impersonation code path: the distinct flow by which a platform-admin
 // acts as a tenant user. It is deliberately NOT routed through
-// /v1/oauth/token — that surface rejects cross-tenant exchanges (§13.3
-// line 585) — and is the sole producer of the §16.7
+// /v1/oauth/token — that surface rejects cross-tenant exchanges (§13.3) — and is the sole producer of the §16.7
 // admin.impersonation_started / admin.impersonation_ended audit events.
 //
 // An impersonation session is established by writing the
 // admin.impersonation_started audit row first and minting the
 // target-user bearer only after the audit commits, because the audit
 // record of a cross-tenant admin action MUST be durable before any
-// externally observable side effect (§11.7 lines 430-433, §16.7 line
-// 680). Both events are written under the platform tenant carrying the
+// externally observable side effect (§11.7, §16.7). Both events are written under the platform tenant carrying the
 // target_tenant_id, so the §11.7 CMP-058 platform-tenant audit residency
 // gate routes them to the target tenant's regional platform-Postgres; an
 // unresolvable target region fails the issuance closed with
 // PLATFORM_AUDIT_REGION_UNRESOLVABLE and establishes no session.
 //
-// spec: §13.3 line 585; §16.7 line 680; §11.7 lines 430-433; §12.8 line 960.
+// spec: §13.3; §16.7; §11.7; §12.8.
 package impersonation
 
 import (

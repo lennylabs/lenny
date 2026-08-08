@@ -20,7 +20,7 @@ type doctorRunRequest struct {
 // registerDoctorRoute wires the §25.6 auto-remediation endpoint. It is
 // registered unconditionally; the handler reports 503 when no
 // orchestrator is configured so an operator gets a clear signal rather
-// than a 404. spec: §25.6 lines 2941-2982 — F-25.6.2, F-24.2.3.
+// than a 404. spec: §25.6 — F-25.6.2, F-24.2.3.
 func (s *Server) registerDoctorRoute() {
 	s.mux.HandleFunc("POST /v1/admin/diagnostics/run", s.handleDiagnosticsRun)
 }

@@ -117,7 +117,7 @@ func TestConfigValidateDevTenantRules(t *testing.T) {
 	}
 }
 
-// TestEffectiveLabelsDefaultsToOrigin exercises the §27.2 line 41
+// TestEffectiveLabelsDefaultsToOrigin exercises the §27.2
 // default: an unset playground.sessionLabels yields the
 // load-bearing {origin: "playground"} label. F-27.2.1.
 func TestEffectiveLabelsDefaultsToOrigin_spec_27_2_41(t *testing.T) {
@@ -288,7 +288,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
 		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
 	}
-	// spec: §10.2 line 243 — every rejected mint emits the
+	// spec: §10.2 — every rejected mint emits the
 	// playground.bearer_mint_rejected audit event with the canonical
 	// payload (tenant_id, subject_jti, subject_typ, invariant_violated,
 	// ingress_path).
@@ -317,7 +317,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 243 — the multi-tenant tenant-claim rejection paths
+// spec: §10.2 — the multi-tenant tenant-claim rejection paths
 // (claim missing, malformed, unknown) all emit the canonical
 // playground.bearer_mint_rejected audit event with the invariant id as
 // the metric reason label.

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// spec: §27.3.1 line 93 — "On each successful POST /v1/playground/token
+// spec: §27.3.1 — "On each successful POST /v1/playground/token
 // mint, the gateway rewrites the session record in place with the new
 // bearer jti/exp". CurrentExp must equal the minted bearer's exp so the
 // §27.3.1 revokedMarkerTTL bounds the marker to the live bearer's

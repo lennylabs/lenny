@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-// Unit coverage for the §8.10 line 129 per-replica LRU read cache that
+// Unit coverage for the §8.10 per-replica LRU read cache that
 // fronts the durable session_tree_archive store. Exercises the
 // write-through, hit/miss, eviction-bound, node-key-sharing, and
 // replay-warming behaviour against an instrumented in-memory inner
 // store so a cache hit can be distinguished from an inner-store call.
 //
-// spec: §8.10 line 129; §8.2 line 129.
+// spec: §8.10; §8.2.
 package treearchive
 
 import (
@@ -66,7 +66,7 @@ func cnode(root, id string) ArchivedNode {
 	}
 }
 
-// spec: §8.10 line 129 — a write-through refreshes the cache so the
+// spec: §8.10 — a write-through refreshes the cache so the
 // follow-up read serves from memory without an inner Get.
 func TestCachedArchiveWriteThroughServesGetFromCache(t *testing.T) {
 	inner := newCountingStore()
@@ -86,7 +86,7 @@ func TestCachedArchiveWriteThroughServesGetFromCache(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — a miss falls through to the inner store and
+// spec: §8.10 — a miss falls through to the inner store and
 // caches the result; the second read is a hit.
 func TestCachedGetMissThenHit(t *testing.T) {
 	inner := newCountingStore()
@@ -104,7 +104,7 @@ func TestCachedGetMissThenHit(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — Get and GetByNode for the same node share one
+// spec: §8.10 — Get and GetByNode for the same node share one
 // cache entry keyed by (tenant, node) so a GetByNode after a Get is a
 // hit.
 func TestCachedGetAndGetByNodeShareEntry(t *testing.T) {
@@ -123,7 +123,7 @@ func TestCachedGetAndGetByNodeShareEntry(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — the cache is bounded; a tree with more
+// spec: §8.10 — the cache is bounded; a tree with more
 // completed branches than the cap evicts the LRU tail rather than
 // growing without bound.
 func TestCachedEvictsLRUAtCapacity(t *testing.T) {
@@ -148,7 +148,7 @@ func TestCachedEvictsLRUAtCapacity(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — a Replay warms the cache with every node it
+// spec: §8.10 — a Replay warms the cache with every node it
 // returns so the awaiting_client_action resume path (replay then
 // per-child read) serves the follow-up reads from memory.
 func TestCachedReplayWarmsCache(t *testing.T) {
@@ -175,7 +175,7 @@ func TestCachedReplayWarmsCache(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — a non-positive cap selects the documented
+// spec: §8.10 — a non-positive cap selects the documented
 // default of 128 entries.
 func TestNewCachedDefaultsCapacity(t *testing.T) {
 	c := NewCached(newCountingStore(), 0)
@@ -184,7 +184,7 @@ func TestNewCachedDefaultsCapacity(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — a Get whose cached entry belongs to a
+// spec: §8.10 — a Get whose cached entry belongs to a
 // different tree root does not satisfy the request; it falls through to
 // the inner store, which scopes by root.
 func TestCachedGetRootMismatchFallsThrough(t *testing.T) {

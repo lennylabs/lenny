@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §12.8 lines 865-873 — requireTenantState rejects new session
+// spec: §12.8 — requireTenantState rejects new session
 // creation for a tenant that has left the `active` TenantState with 403
 // TENANT_NOT_ACTIVE, carrying the offending state in the details.
 // F-12.8.12.

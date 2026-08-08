@@ -44,10 +44,10 @@ import (
 // integer maxDepth on every effective lease, so the service uses this
 // when no preceding precedence layer supplied one.
 //
-// spec: §8.2.bis line 89.
+// spec: §8.2 .bis.
 const DefaultMaxDepth = 10
 
-// DefaultInterceptorWeakeningCooldown is the §8.3 line 181 cluster-
+// DefaultInterceptorWeakeningCooldown is the §8.3 cluster-
 // scoped default for `gateway.interceptorWeakeningCooldownSeconds`
 // (60s). During the window following a DelegationPolicy
 // `scanExportedFiles: true → false` transition every `delegate_task`
@@ -91,14 +91,14 @@ type Request struct {
 	// descendants validate against it in turn. The zero value (no axes
 	// set) imposes no budget binding.
 	//
-	// spec: §8.2 lines 38-48, 127. F-8.2.2.
+	// spec: §8.2. F-8.2.2.
 	LeaseSlice lease.LeaseSlice
 
 	// UserID owns the child session. Inherits the parent's when
 	// blank.
 	UserID string
 
-	// ParentToken is the §8.2 line 59 RFC 8693 `actor_token` material —
+	// ParentToken is the §8.2 RFC 8693 `actor_token` material —
 	// the parent session token the delegating pod presents. When set
 	// (and a ChildTokenMinter is wired), Delegate runs the in-process
 	// child-token exchange after admission: it mints the child session
@@ -108,7 +108,7 @@ type Request struct {
 	// rejects with ErrParentRevoked (DELEGATION_PARENT_REVOKED) and no
 	// child is created. Nil skips the exchange leg.
 	//
-	// spec: §8.2 lines 59-61. F-8.1.2 / F-8.2.7.
+	// spec: §8.2. F-8.1.2 / F-8.2.7.
 	ParentToken *ParentToken
 
 	// ApprovalMode is the §8.4 closed enum on the delegation lease.
@@ -143,7 +143,7 @@ type Request struct {
 	// *TreeVisibilityWeakeningError before the child row is created. The
 	// resolved value is stamped onto the child session row.
 	//
-	// spec: §8.3 lines 311-319; §8.5 line 540. F-8.5.2 / F-8.9.2 / F-13.5.8.
+	// spec: §8.3; §8.5. F-8.5.2 / F-8.9.2 / F-13.5.8.
 	TreeVisibility session.TreeVisibility
 
 	// FileExport carries the §8.7 `fileExport` entries declared on the
@@ -156,15 +156,15 @@ type Request struct {
 	// created, stamping the resulting §14 upload sources onto the child's
 	// WorkspacePlan so the §6.3 binder delivers them at materialization.
 	//
-	// spec: §8.7 (file export model); §8.2 lines 91-95 (steps 3, 4, 6).
+	// spec: §8.7 (file export model); §8.2.
 	FileExport []export.Spec
 
-	// FileExportLimits is the §8.3 line 264 lease `fileExportLimits`
+	// FileExportLimits is the §8.3 lease `fileExportLimits`
 	// structural ceiling (max file count and aggregate bytes) enforced
 	// across all FileExport entries. The zero value selects the §8.3
 	// defaults (100 files, 100 MiB).
 	//
-	// spec: §8.3 line 264.
+	// spec: §8.3.
 	FileExportLimits fileexport.FileExportLimits
 
 	// EffectiveMessagingScope is the child's resolved effective §7.2
@@ -177,7 +177,7 @@ type Request struct {
 	// *TreeVisibilityMessagingScopeError so a child cannot gain sibling
 	// messaging without the visibility needed to discover those siblings.
 	//
-	// spec: §8.3 lines 321-324; §7.2 lines 236-266. F-13.5.8.
+	// spec: §8.3; §7.2. F-13.5.8.
 	EffectiveMessagingScope session.MessagingScope
 }
 
@@ -189,7 +189,7 @@ type Result struct {
 	// Depth is the child's depth in the delegation tree (root = 0).
 	Depth int
 
-	// ChildToken is the §8.2 line 59 minted child session token (narrowed
+	// ChildToken is the §8.2 minted child session token (narrowed
 	// scope, `act` chain, capped exp, delegation_depth = parent + 1). Nil
 	// when no ChildTokenMinter is wired or the request carried no
 	// ParentToken. The gateway hands it to the child pod at materialization
@@ -212,8 +212,8 @@ type MetricsRecorder interface {
 // `would_have_blocked` outcome under `warn` mode. A nil Auditor makes
 // the service skip every emission.
 //
-// spec: §8.2 lines 70-79 (cycle decision matrix);
-// §11.7 line 62 (`delegation.spawned`); §16.7 catalog.
+// spec: §8.2;
+// §11.7; §16.7 catalog.
 // F-8.5.8 / F-8.5.9.
 type Auditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
@@ -221,7 +221,7 @@ type Auditor interface {
 
 // ExperimentRouter routes a delegation child afresh through the §10.7
 // ExperimentRouter when the parent's propagation mode is `independent`
-// (or the parent carries no experiment context). spec: §8.2 line 90
+// (or the parent carries no experiment context). spec: §8.2
 // (independent propagation evaluates the child for experiment
 // eligibility independently). The session server's
 // `*Server.ApplyExperimentRouting` implements this interface.
@@ -238,7 +238,7 @@ type ExperimentRouter interface {
 // `fileExport` entries fail with ErrExportNotConfigured rather than
 // silently dropping the export.
 //
-// spec: §8.7; §8.2 lines 91-95 (steps 3, 4, 6).
+// spec: §8.7; §8.2.
 type ExportMaterializer interface {
 	Materialize(ctx context.Context, p export.Params) (export.Result, error)
 }
@@ -252,7 +252,7 @@ type ExportMaterializer interface {
 // spec forbids honoring `scanExportedFiles` without a resolvable
 // interceptor (§8.3 rule 1).
 //
-// spec: §8.3 lines 160-181 (contentPolicy + fail-closed scan).
+// spec: §8.3.
 type ExportScanChainResolver interface {
 	ResolveExportScanChain(ctx context.Context, tenantID, interceptorRef string) (*interceptor.Chain, interceptor.ExportScanContext, error)
 }
@@ -266,7 +266,7 @@ type ExportScanChainResolver interface {
 // per-call ValidateChildSlice ceiling enforced (used by the in-process
 // minimal gateway and by tests that do not stand up Redis).
 //
-// spec: §8.2 lines 57, 127; §12.4 lines 193, 213.
+// spec: §8.2; §12.4.
 type TreeBudgetReserver interface {
 	Reserve(ctx context.Context, r treebudget.Reservation) (treebudget.Totals, error)
 	Return(ctx context.Context, r treebudget.Reservation) error
@@ -295,7 +295,7 @@ type Service struct {
 	// ceiling supplied one. Always positive (DefaultMaxDepth when the
 	// caller passed 0).
 	defaultMaxDepth int
-	// interceptorWeakeningCooldown is the §8.3 line 181 cluster-scoped
+	// interceptorWeakeningCooldown is the §8.3 cluster-scoped
 	// window after a DelegationPolicy `scanExportedFiles: true → false`
 	// transition during which `delegate_task` rejects with
 	// INTERCEPTOR_WEAKENING_COOLDOWN. Zero disables enforcement (used
@@ -319,13 +319,13 @@ type Service struct {
 	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
 	treeBudget TreeBudgetReserver
-	// tokenMinter performs the §8.2 line 59 internal RFC 8693
+	// tokenMinter performs the §8.2 internal RFC 8693
 	// child-token exchange after admission passes: it narrows scope,
 	// builds the `act` chain, fixes delegation_depth at parent + 1,
 	// caps exp, and runs the §13.3 actor-token freshness check. Nil
 	// skips the exchange leg. F-8.1.2 / F-8.2.7.
 	tokenMinter ChildTokenMinter
-	// maxActiveChildrenPerUser is the §11.1 line 9 per-user
+	// maxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap: the maximum count of live
 	// (non-terminal) delegated children a single user may hold across all
 	// their sessions and trees. The per-session breadth is bounded by the
@@ -340,7 +340,7 @@ type Service struct {
 	// trigger) from the child resolves its tree instead of failing
 	// ErrSessionNotFound. The child is added to its root's tree and its
 	// per-extension ceiling is capped at the parent's own granted lease
-	// (§8.6 line 648). Nil leaves extension state unregistered (the
+	// (§8.6). Nil leaves extension state unregistered (the
 	// in-process minimal gateway with no GatewayControl listener).
 	// F-15.3.5.
 	leaseRegistrar LeaseChildRegistrar
@@ -350,21 +350,20 @@ type Service struct {
 // lease-extension budget source. *leasecontrol.MemoryBudgetSource
 // satisfies it. The delegation Service calls AddSession to bind the
 // child to its root's extension tree and SetParentLease to cap the
-// child's per-extension grant at the parent's own lease (§8.6 line
-// 648). F-15.3.5.
-// spec: §8.6 line 648
+// child's per-extension grant at the parent's own lease (§8.6). F-15.3.5.
+// spec: §8.6
 type LeaseChildRegistrar interface {
 	AddSession(sessionID, rootSessionID, tenantID string)
 	SetParentLease(sessionID string, parent leasecontrol.SessionLease)
 }
 
 // parentLeaseCeiling projects a parent session's granted §8.2
-// DelegationLease onto the §8.6 line 648 SessionLease ceiling its
+// DelegationLease onto the §8.6 SessionLease ceiling its
 // children inherit: a child can never extend a dimension beyond what
 // the parent's lease itself granted. A root parent carries no granted
 // lease (nil), which yields the zero ceiling (no per-parent cap; the
 // tree's effective-max ceiling still applies). F-15.3.5.
-// spec: §8.6 line 648
+// spec: §8.6
 func parentLeaseCeiling(parent sessionstore.Session) leasecontrol.SessionLease {
 	l := parent.DelegationLease
 	if l == nil {
@@ -413,7 +412,7 @@ type Options struct {
 	// rejecting self-recursive hops regardless of the policy's
 	// declared value.
 	//
-	// spec: §8.2 line 75 (LayerPolicy); §8.2.bis line 86 (policy ceiling).
+	// spec: §8.2; §8.2 .bis.
 	Policies delegationpolicystore.Store
 
 	// PlatformAllowSelfRecursion drives the §8.2 LayerPlatform input
@@ -422,7 +421,7 @@ type Options struct {
 	// layer rejects every self-recursive hop unless the operator
 	// explicitly opts in.
 	//
-	// spec: §8.2 line 73 (LayerPlatform).
+	// spec: §8.2.
 	PlatformAllowSelfRecursion bool
 
 	// DefaultMaxDepth is the §8.2.bis Helm fallback for
@@ -432,7 +431,7 @@ type Options struct {
 	// maxDepth, even when the caller and the policy ceiling are both
 	// unset.
 	//
-	// spec: §8.2.bis line 89.
+	// spec: §8.2 .bis.
 	DefaultMaxDepth int
 
 	// Metrics, when set, receives §8.2 delegation admission and
@@ -446,13 +445,13 @@ type Options struct {
 	Auditor Auditor
 
 	// ExperimentRouter, when set, routes a delegation child afresh
-	// under §8.2 line 90 `independent` propagation (or when the
+	// under §8.2 propagation (or when the
 	// parent carries no experiment enrollment). Nil leaves the child
 	// at the propagated context only, which silently unenrolls the
 	// child under `independent`.
 	ExperimentRouter ExperimentRouter
 
-	// InterceptorWeakeningCooldown is the §8.3 line 181 cluster-scoped
+	// InterceptorWeakeningCooldown is the §8.3 cluster-scoped
 	// `gateway.interceptorWeakeningCooldownSeconds`. During the window
 	// following a DelegationPolicy `scanExportedFiles: true → false`
 	// transition every `delegate_task` resolving to the affected
@@ -482,7 +481,7 @@ type Options struct {
 	// F-8.1.1.
 	TreeBudgetReserver TreeBudgetReserver
 
-	// ChildTokenMinter, when set, performs the §8.2 line 59 internal
+	// ChildTokenMinter, when set, performs the §8.2 internal
 	// RFC 8693 child-token exchange on every admitted delegation: it
 	// mints the child session token with narrowed scope, a complete
 	// `act` chain, delegation_depth = parent + 1, and a capped exp, and
@@ -491,7 +490,7 @@ type Options struct {
 	// (the in-process minimal gateway). F-8.1.2 / F-8.2.7.
 	ChildTokenMinter ChildTokenMinter
 
-	// MaxActiveChildrenPerUser is the §11.1 line 9 per-user
+	// MaxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap. Before reserving tree
 	// budget, Delegate counts the owning user's live (non-terminal)
 	// delegated children across all their sessions; a count at or above
@@ -592,7 +591,7 @@ var (
 	ErrParentNotRunning = errors.New("delegation: parent session is not running")
 
 	// ErrParentNoUser — the parent session carries no authenticated
-	// user identity, so the §8.2 child-token exchange (line 58) has no
+	// user identity, so the §8.2 child-token exchange has no
 	// `subject_token` to bind the child to. The §11.2 quota gates,
 	// §10.6 environment resolver, §11.7 audit attribution, and §9.2
 	// elicitation routing all key on a non-empty user_id; spawning a
@@ -600,15 +599,14 @@ var (
 	// invariants for the entire subtree.
 	ErrParentNoUser = errors.New("delegation: parent session has no authenticated user identity")
 
-	// ErrUserChildrenExhausted — the owning user already holds the §11.1
-	// line 9 maximum count of live (non-terminal) delegated children
+	// ErrUserChildrenExhausted — the owning user already holds the §11.1 maximum count of live (non-terminal) delegated children
 	// across all their sessions. The admission is rejected before any
 	// tree budget is reserved. The §8.5 handler maps it to QUOTA_EXCEEDED.
-	// spec: §11.1 line 9 (Active delegated children — per-user). F-11.1.4.
+	// spec: §11.1. F-11.1.4.
 	ErrUserChildrenExhausted = errors.New("delegation: per-user active-delegated-children limit reached (§11.1)")
 
 	// ErrTargetNotAgent — the delegation target resolves to a
-	// `type: mcp` runtime. spec: §8.2 line 50 mandates `lenny/
+	// `type: mcp` runtime. spec: §8.2 mandates `lenny/
 	// delegate_task` reject these with `target_not_an_agent` before any
 	// child session is admitted.
 	ErrTargetNotAgent = errors.New("delegation: target_not_an_agent: target runtime is type:mcp (§8.2)")
@@ -618,7 +616,7 @@ var (
 	// allocation and before the §4 PreDelegation interceptor chain.
 	// The gateway surfaces this as `DELEGATION_DENIED` per §15.1.
 	//
-	// spec: §8.4 line 521. F-8.4.1.
+	// spec: §8.4. F-8.4.1.
 	ErrDelegationDenied = errors.New("delegation: lease approvalMode=deny rejects this hop (§8.4)")
 
 	// ErrExportNotConfigured — the delegation declares §8.7 `fileExport`
@@ -632,19 +630,18 @@ var (
 	// `contentPolicy.scanExportedFiles: true` but no ExportScanChainResolver
 	// is wired, so the mandated per-file scan cannot run. The §8.3 rule-1
 	// fail-closed posture rejects the export rather than materializing
-	// unscanned files. spec: §8.3 lines 160-181. F-8.7.1.
+	// unscanned files. spec: §8.3. F-8.7.1.
 	ErrExportScanUnavailable = errors.New("delegation: contentPolicy.scanExportedFiles is true but no export-scan interceptor is configured (§8.3)")
 
 	// ErrBudgetUnavailable — the Redis-backed delegation tree budget
 	// counters could not be consulted (outage or script error). Per
-	// §12.4 line 213 the admission path fails closed: the §8.5 handler
+	// §12.4 the admission path fails closed: the §8.5 handler
 	// surfaces this as the retryable DELEGATION_BUDGET_UNAVAILABLE
-	// rather than admitting an unbudgeted delegation. spec: §12.4 line
-	// 213. F-8.2.18.
+	// rather than admitting an unbudgeted delegation. spec: §12.4. F-8.2.18.
 	ErrBudgetUnavailable = errors.New("delegation: tree budget counters unavailable (§12.4 fail-closed)")
 )
 
-// InterceptorWeakeningCooldownError reports a §8.3 line 181 rejection:
+// InterceptorWeakeningCooldownError reports a §8.3 rejection:
 // the effective DelegationPolicy is inside the cluster-scoped
 // `gateway.interceptorWeakeningCooldownSeconds` window that opened
 // when an admin flipped `contentPolicy.scanExportedFiles` from true
@@ -703,7 +700,7 @@ func (e *IsolationViolationError) Error() string {
 		e.ChildProfile, e.ParentProfile)
 }
 
-// TreeVisibilityWeakeningError reports a §8.3 lines 313-317 monotonicity
+// TreeVisibilityWeakeningError reports a §8.3 monotonicity
 // failure: the child lease declares a `treeVisibility` broader than the
 // parent's effective value. The §8.5 handler maps it to
 // TREE_VISIBILITY_WEAKENING (POLICY, HTTP 422) with
@@ -716,12 +713,12 @@ type TreeVisibilityWeakeningError struct {
 
 func (e *TreeVisibilityWeakeningError) Error() string {
 	return fmt.Sprintf(
-		"delegation: child treeVisibility %q widens the parent's effective %q (§8.3 lines 313-317; ordering full → parent-and-self → self-only is strict)",
+		"delegation: child treeVisibility %q widens the parent's effective %q (§8.3; ordering full → parent-and-self → self-only is strict)",
 		e.ChildVisibility, e.ParentVisibility,
 	)
 }
 
-// TreeVisibilityMessagingScopeError reports a §8.3 lines 321-324
+// TreeVisibilityMessagingScopeError reports a §8.3
 // compatibility failure: the child's resolved effective messagingScope
 // is `siblings` but its effective treeVisibility is not `full`, so a
 // child could gain sibling messaging without the visibility required to
@@ -737,19 +734,19 @@ type TreeVisibilityMessagingScopeError struct {
 
 func (e *TreeVisibilityMessagingScopeError) Error() string {
 	return fmt.Sprintf(
-		"delegation: effective messagingScope %q requires treeVisibility full, but the child lease resolves to %q (§8.3 lines 321-324)",
+		"delegation: effective messagingScope %q requires treeVisibility full, but the child lease resolves to %q (§8.3)",
 		e.EffectiveMessagingScope, e.EffectiveTreeVisibility,
 	)
 }
 
-// ContentPolicyWeakeningError reports a §8.3 lines 157-187 contentPolicy
+// ContentPolicyWeakeningError reports a §8.3 contentPolicy
 // monotonicity failure: the child's resolved `contentPolicy` weakens the
 // parent's effective policy on one of the inheritance axes — a larger
 // `maxInputSize`, a larger `maxExportedFileSize`, a `scanExportedFiles`
 // `true → false` transition, or a non-null `interceptorRef` set back to
 // null. The §8.5 delegate_task handler maps it to CONTENT_POLICY_WEAKENING
 // (POLICY, HTTP 422) with `details.axis`, `details.parentValue`, and
-// `details.childValue`. spec: §8.3 lines 157, 177, 179, 187. F-13.5.10.
+// `details.childValue`. spec: §8.3. F-13.5.10.
 type ContentPolicyWeakeningError struct {
 	Axis        string
 	ParentValue string
@@ -758,19 +755,19 @@ type ContentPolicyWeakeningError struct {
 
 func (e *ContentPolicyWeakeningError) Error() string {
 	return fmt.Sprintf(
-		"delegation: child contentPolicy.%s %q weakens the parent's effective %q (§8.3 lines 157-187; a child lease may only make contentPolicy stricter)",
+		"delegation: child contentPolicy.%s %q weakens the parent's effective %q (§8.3; a child lease may only make contentPolicy stricter)",
 		e.Axis, e.ChildValue, e.ParentValue,
 	)
 }
 
-// ContentPolicyInterceptorSubstitutionError reports the §8.3 line 188
+// ContentPolicyInterceptorSubstitutionError reports the §8.3
 // identity-based rejection: the child names a different non-null
 // `interceptorRef` than the parent's effective reference. The gateway
 // cannot verify an unrelated interceptor is equally restrictive, so the
 // substitution is rejected unconditionally. The §8.5 handler maps it to
 // CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION (POLICY, HTTP 422) with
 // `details.parentInterceptorRef` and `details.childInterceptorRef`.
-// spec: §8.3 line 188. F-13.5.10.
+// spec: §8.3. F-13.5.10.
 type ContentPolicyInterceptorSubstitutionError struct {
 	ParentRef string
 	ChildRef  string
@@ -778,7 +775,7 @@ type ContentPolicyInterceptorSubstitutionError struct {
 
 func (e *ContentPolicyInterceptorSubstitutionError) Error() string {
 	return fmt.Sprintf(
-		"delegation: child contentPolicy.interceptorRef %q substitutes the parent's %q (§8.3 line 188; a child cannot swap the parent's named interceptor for an unrelated one)",
+		"delegation: child contentPolicy.interceptorRef %q substitutes the parent's %q (§8.3; a child cannot swap the parent's named interceptor for an unrelated one)",
 		e.ChildRef, e.ParentRef,
 	)
 }
@@ -795,7 +792,7 @@ func (e *ContentPolicyInterceptorSubstitutionError) Error() string {
 //  4. §8.2.bis depth check against MaxDepth.
 //  5. atomic child-session INSERT with ParentSessionID set.
 func (s *Service) Delegate(ctx context.Context, tenantID string, req Request) (result Result, retErr error) {
-	// spec: §16.3 line 343 — the gateway spawn-child path runs under a
+	// spec: §16.3 — the gateway spawn-child path runs under a
 	// `delegation.spawn_child` span so a distributed trace shows the
 	// admission gate (isolation, cycle, depth, budget, token mint, child
 	// INSERT) as one unit. The tracer resolves the process-global provider
@@ -884,7 +881,7 @@ type admission struct {
 	// resolved DelegationPolicy, when one applies.
 	effectivePolicy     delegationpolicystore.DelegationPolicy
 	haveEffectivePolicy bool
-	// delegationPolicyRef is the §8.10 lines 1044-1049 lease-scoped policy
+	// delegationPolicyRef is the §8.10 lease-scoped policy
 	// reference stamped on the child lease for tree recovery. F-8.10.5.
 	delegationPolicyRef string
 	// policyCeiling is the §8.2.bis layer-4 policy depth ceiling (zero in
@@ -897,7 +894,7 @@ type admission struct {
 
 // validateDelegation runs the §8 stage-1 validation gates that reject a
 // delegation before any cycle or budget evaluation: the §8.4 approval
-// enum, the §8.2 parent lookup and running-state check, the §8.2 line 58
+// enum, the §8.2 parent lookup and running-state check, the §8.2
 // parent-user requirement, the §8.3 SEC-001 isolation monotonicity, the
 // §8.3 treeVisibility inheritance and messagingScope gate, the §8.2
 // lineage build, and the parent's effective §8.3 contentPolicy. It
@@ -922,7 +919,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 	if err := lease.ValidateCredentialPropagation(req.CredentialPropagation); err != nil {
 		return admission{}, err
 	}
-	// §8.4 line 521: an `approvalMode: "deny"` lease short-circuits
+	// §8.4: an `approvalMode: "deny"` lease short-circuits
 	// the delegation path before pod allocation and before the §4
 	// PreDelegation interceptor. The gateway maps ErrDelegationDenied
 	// to DELEGATION_DENIED at the §8.5 handler. F-8.4.1.
@@ -940,7 +937,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 		return admission{}, ErrParentNotRunning
 	}
 
-	// §8.2 line 58: the gateway mints the child session's token via
+	// §8.2: the gateway mints the child session's token via
 	// the canonical token-exchange endpoint with `subject_token` set
 	// to the parent's authenticated user JWT. A parent without a
 	// user identity has no subject to bind the child to, so the
@@ -970,7 +967,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 		}
 	}
 
-	// §8.3 lines 311-319: treeVisibility inheritance + monotonicity. The
+	// §8.3: treeVisibility inheritance + monotonicity. The
 	// child inherits the parent's effective visibility when it declares
 	// none; a declared value may narrow but never widen it. The check
 	// runs before pod allocation (the lineage / cycle / create steps
@@ -979,7 +976,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 	if err != nil {
 		return admission{}, err
 	}
-	// §8.3 lines 321-324: a resolved effective messagingScope of
+	// §8.3: a resolved effective messagingScope of
 	// `siblings` requires treeVisibility `full` so children can discover
 	// one another via lenny/get_task_tree. messagingScope is resolved by
 	// the caller from the §7.2 deployment/tenant/runtime hierarchy and
@@ -999,7 +996,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 		return admission{}, err
 	}
 
-	// §8.3 lines 157, 240: resolve the parent's effective
+	// §8.3: resolve the parent's effective
 	// (transitively-narrowest) contentPolicy here so stage 2 can apply
 	// the four-axis monotonicity check against the child's declared
 	// policy. F-13.5.10.
@@ -1016,7 +1013,7 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 }
 
 // detectCycle runs the §8.2 stage-2 cycle gate. It resolves the target
-// runtime (the §8.2 line 50 type gate, the §8.3 self-recursion runtime
+// runtime (the §8.2 type gate, the §8.3 self-recursion runtime
 // and policy layers, and the interceptor weakening cooldowns), resolves
 // the child's effective §8.3 contentPolicy, runs the three-layer AND
 // gate, records the §8.2/§16.7 decision metrics and audit, and rejects a
@@ -1024,25 +1021,25 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 // (effectivePolicy, delegationPolicyRef, policyCeiling, childContentEff,
 // decision) back onto adm for the depth and insert stages.
 //
-// spec: §8.2 lines 50, 66-79; §8.3 lines 100, 157-188, 181, 218.
+// spec: §8.2; §8.3.
 // F-8.7.12, F-13.5.7, F-4.8.17, F-13.5.10.
 func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request, adm *admission) error {
 	target := cycle.Identity{RuntimeName: req.RuntimeRef, PoolName: req.PoolRef}
-	// §8.2 three-layer AND gate (spec lines 66-79). Each layer defaults
+	// §8.2 three-layer AND gate. Each layer defaults
 	// to the conservative false (rejects self-recursive hops). A layer
 	// flips true only when the operator explicitly opted in:
 	//   - Layer 1 (Platform): Helm value `gateway.allowSelfRecursion`,
 	//     carried on the Service as platformAllowSelfRec.
 	//   - Layer 2 (Runtime): the resolved target Runtime's
-	//     allowSelfRecursion field (§5.1 line 69). A missing registry
+	//     allowSelfRecursion field (§5.1). A missing registry
 	//     or unresolvable runtime leaves the layer false.
 	//   - Layer 3 (Policy): the resolved DelegationPolicy's
-	//     allowSelfRecursion field (§8.3 line 100). The policy is
+	//     allowSelfRecursion field (§8.3). The policy is
 	//     named on the runtime via DelegationPolicyRef; a missing
 	//     reference, missing policy, or absent policy registry leaves
 	//     the layer false.
 	//
-	// The resolved runtime is also the §8.2 line 50 type gate: a
+	// The resolved runtime is also the §8.2 type gate: a
 	// `type: mcp` runtime is rejected here as defence-in-depth so a
 	// caller that bypasses the MCP shim (REST / non-MCP entry points)
 	// still cannot delegate onto a non-agent target.
@@ -1056,7 +1053,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 				return ErrTargetNotAgent
 			}
 			settings.RuntimeAllowSelfRec = rt.AllowSelfRecursion
-			// spec: §8.10 lines 1044-1049 — the lease-scoped policy
+			// spec: §8.10 — the lease-scoped policy
 			// reference captured at approval time so tree recovery
 			// resumes the node against the persisted lease rather than
 			// re-evaluating live policy. F-8.10.5.
@@ -1065,7 +1062,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
 					adm.effectivePolicy = pol
 					adm.haveEffectivePolicy = true
-					// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) —
+					// spec: §8.3 —
 					// reject every `delegate_task` whose effective
 					// DelegationPolicy is inside the cluster-scoped
 					// scanExportedFiles weakening cooldown window so
@@ -1077,8 +1074,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 					if cdErr := s.checkInterceptorWeakeningCooldown(pol); cdErr != nil {
 						return cdErr
 					}
-					// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013,
-					// F-4.8.17) — reject every `delegate_task` whose
+					// spec: §4.8 / §8.3 — reject every `delegate_task` whose
 					// effective policy names an interceptor inside the
 					// `fail-closed → fail-open` weakening cooldown, the
 					// same protection against a timing-observable
@@ -1099,7 +1095,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 			}
 		}
 	}
-	// §8.3 lines 157-188: contentPolicy inheritance + four-axis
+	// §8.3: contentPolicy inheritance + four-axis
 	// monotonicity. The child's resolved contentPolicy (from the target
 	// runtime's DelegationPolicy, when one applies) may only tighten the
 	// parent's effective policy; a larger maxInputSize / maxExportedFileSize,
@@ -1108,7 +1104,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 	// different non-null interceptorRef rejects with
 	// *ContentPolicyInterceptorSubstitutionError. The resolved effective
 	// policy (childContentEff) is stamped on the child lease below so the
-	// next hop inherits the transitively-narrowest cap (§8.3 line 240).
+	// next hop inherits the transitively-narrowest cap (§8.3).
 	// The check runs before pod allocation, alongside the SEC-001
 	// isolation and treeVisibility monotonicity gates above. F-13.5.10.
 	var childContentInput delegationpolicystore.ContentPolicy
@@ -1136,9 +1132,9 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 // Helm-fallback) and enforces that the child's depth (the parent's
 // lineage depth + 1) does not exceed the resolved ceiling.
 //
-// spec: §8.2.bis lines 81-89.
+// spec: §8.2 .bis.
 func (s *Service) checkDelegationDepth(req Request, adm admission) error {
-	// §8.2.bis depth check (lines 81-89). The precedence chain is
+	// §8.2 .bis depth check. The precedence chain is
 	// explicit-client → preset → runtime-default → policy-ceiling →
 	// Helm-fallback. v1 wires layers 1, 4, 5 (caller, policy ceiling,
 	// Helm fallback); presets and runtime-level default leases are
@@ -1167,11 +1163,11 @@ func (s *Service) checkDelegationDepth(req Request, adm admission) error {
 // the §8.6 lease budget source, observes the §16.1 depth metric, and
 // emits the §11.7 `delegation.spawned` audit. It returns the §8.5 Result.
 //
-// spec: §8.2 lines 38-48, 57-61, 127; §8.6 line 648; §8.9 line 1010;
-// §11.1 line 9; §11.7 line 62. F-8.2.2, F-8.2.18, F-11.1.4, F-15.3.5.
+// spec: §8.2; §8.6; §8.9;
+// §11.1; §11.7. F-8.2.2, F-8.2.18, F-11.1.4, F-15.3.5.
 func (s *Service) insertChildSession(ctx context.Context, tenantID string, req Request, adm admission, resvOut **treebudget.Reservation) (Result, error) {
 	parent := adm.parent
-	// spec: §8.9 line 1010 — every node in a delegation tree shares the
+	// spec: §8.9 — every node in a delegation tree shares the
 	// same root_session_id (the apex session). The §12.4 budget counters
 	// are keyed by it.
 	rootSessionID := parent.RootSessionID
@@ -1198,7 +1194,7 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 	if err := s.store.Create(ctx, child); err != nil {
 		return Result{}, err
 	}
-	// §8.6 line 648: register the committed child with the lease-extension
+	// §8.6: register the committed child with the lease-extension
 	// budget source so an in-process budget-exhaustion extension (the
 	// gateway LLM Proxy's ExtendForBudget trigger) from the child resolves
 	// its tree (AddSession) and is capped at the parent's own granted lease
@@ -1208,7 +1204,7 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 		s.leaseRegistrar.AddSession(child.ID, rootSessionID, tenantID)
 		s.leaseRegistrar.SetParentLease(child.ID, parentLeaseCeiling(parent))
 	}
-	// §8.2 / §16.1 line 27: observe the admitted child's depth onto
+	// §8.2 / §16.1: observe the admitted child's depth onto
 	// the `lenny_delegation_depth` histogram. Depth is invariant once
 	// admitted, so sampling at admission and at session completion
 	// produces the same distribution.
@@ -1228,14 +1224,13 @@ func (s *Service) insertChildSession(ctx context.Context, tenantID string, req R
 // later step before the commit fails. The gates run in this order so an
 // over-limit delegation consumes no §12.4 counter state.
 //
-// spec: §8.2 lines 38-48, 57, 127; §11.1 line 9; §12.4 line 213.
+// spec: §8.2; §11.1; §12.4.
 // F-8.2.2, F-8.2.18, F-8.2.12, F-8.1.1, F-11.1.4.
 func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Request, parent sessionstore.Session, rootSessionID string, resvOut **treebudget.Reservation) error {
-	// §8.2 lines 38-48: validate the caller's requested lease_slice
+	// §8.2: validate the caller's requested lease_slice
 	// against the parent's granted slice. A child may only tighten the
 	// budget; a slice that exceeds the parent's remaining budget on any
-	// axis is rejected with *lease.BudgetExceededError, which the §8.5
-	// handler maps to BUDGET_EXHAUSTED (spec line 127). The parent's
+	// axis is rejected with *lease.BudgetExceededError, which the §8.5 handler maps to BUDGET_EXHAUSTED. The parent's
 	// granted slice (DelegationLease) is the v1 "remaining budget": the
 	// per-call Redis debit of consumed tokens/children is the §8.2.12
 	// follow-on, so admission here enforces the static subtree ceiling
@@ -1251,14 +1246,14 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 		return err
 	}
 
-	// §11.1 line 9: the per-user active-delegated-children admission cap.
+	// §11.1: the per-user active-delegated-children admission cap.
 	// The per-session breadth is bounded by the §8.2 lease/treebudget
 	// axes reserved below; this scope bounds the aggregate count of live
 	// children a single user can spread across all their sessions and
 	// trees. Counted and rejected before any tree budget is reserved so an
 	// over-limit delegation consumes no §12.4 counter state. The owning
 	// user is the child's effective user_id (req override, else the
-	// parent's, which §8.2 line 58 guarantees is non-empty). F-11.1.4.
+	// parent's, which §8.2 guarantees is non-empty). F-11.1.4.
 	if s.maxActiveChildrenPerUser > 0 {
 		owner := req.UserID
 		if owner == "" {
@@ -1273,7 +1268,7 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 		}
 	}
 
-	// §8.2 lines 57, 127 / §12.4 line 213: gate the admission on the
+	// §8.2 / §12.4: gate the admission on the
 	// Redis-backed per-tree budget counters. Unlike the static
 	// ValidateChildSlice ceiling above (which only proves the child's
 	// declared slice is no wider than the ancestor's), this reserves
@@ -1283,7 +1278,7 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	// token pool. A cap breach rejects with *treebudget.BudgetExhaustedError
 	// (mapped to BUDGET_EXHAUSTED); a Redis outage fails closed with
 	// ErrBudgetUnavailable (mapped to the retryable
-	// DELEGATION_BUDGET_UNAVAILABLE per §12.4 line 213). The reservation
+	// DELEGATION_BUDGET_UNAVAILABLE per §12.4). The reservation
 	// is threaded back to Delegate through resvOut so its deferred release
 	// returns the slice if any later step in the insert fails. F-8.2.18 /
 	// F-8.2.12 / F-8.1.1.
@@ -1292,7 +1287,7 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	}
 	memCap := parentSlice.MaxTreeMemoryBytes
 	if memCap == 0 {
-		// §8.2 line 127: the lease carries a maxTreeMemoryBytes
+		// §8.2: the lease carries a maxTreeMemoryBytes
 		// default of 2 MB even when no explicit value was declared,
 		// so the tree's gateway footprint is always bounded.
 		memCap = treebudget.DefaultMaxTreeMemoryBytes
@@ -1334,17 +1329,17 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 // the §10.7 ExperimentRouter for an independent-propagation child. It
 // returns the constructed (uncommitted) row and the minted child token.
 //
-// spec: §8.2 lines 59-61, 90; §8.7; §8.9 line 1010; §10.7 lines 868, 905.
+// spec: §8.2; §8.7; §8.9; §10.7.
 // F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
 // credentialOriginID resolves the credential-origin session id stamped on
-// a delegated child per §8.3 lines 472, 488. A `credentialPropagation:
+// a delegated child per §8.3. A `credentialPropagation:
 // inherit` hop forwards the parent's origin so contiguous `inherit` hops
 // share one origin pool, traced back to the last `independent` break or the
 // root; when the parent carries no explicit origin (a root or top-level
 // parent, whose read-path origin collapses to empty) the parent itself is
 // the origin. Every other mode — `independent`, `deny`, or an omitted value
 // that defaults to `independent` — establishes a new origin equal to the
-// child itself. spec: §8.3 lines 472, 488, 474.
+// child itself. spec: §8.3.
 func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Session, childID string) string {
 	if mode == lease.CredentialPropagationInherit {
 		if parent.CredentialOriginSessionID != "" {
@@ -1382,7 +1377,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		}
 		childPlan = plan
 	}
-	// §8.2 lines 59-61: mint the child session token via the in-process
+	// §8.2: mint the child session token via the in-process
 	// RFC 8693 token exchange. This runs after every admission gate has
 	// passed (cycle, depth, budget, export) but before the child row is
 	// committed, so a revoked parent (the §13.3 actor-token freshness
@@ -1414,7 +1409,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// keyed by it). A child inherits its parent's RootSessionID rather
 	// than minting a new one; the §12.5 `idx_sessions_root` index
 	// supports the single-shard tree-scoped query a §8.9 walker uses.
-	// spec: §8.9 line 1010. F-8.9.8.
+	// spec: §8.9. F-8.9.8.
 	child := sessionstore.Session{
 		ID:               childID,
 		TenantID:         tenantID,
@@ -1425,7 +1420,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		IsolationProfile: adm.childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
-		// §8.3 lines 472, 488 — the credential-origin pool a
+		// §8.3 — the credential-origin pool a
 		// `credentialPropagation: inherit` hop draws from. An `inherit`
 		// child forwards the parent's origin (tracing one origin pool
 		// through contiguous `inherit` hops back to the last `independent`
@@ -1437,22 +1432,22 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		// CredentialDeny marker below, so finalize suppresses credential
 		// assignment for the child while the origin id stays well-formed.
 		CredentialOriginSessionID: credentialOriginID(req.CredentialPropagation, parent, childID),
-		// §8.3 line 443 — a `deny` hop grants the child no LLM credentials
+		// §8.3 — a `deny` hop grants the child no LLM credentials
 		// (for runtimes that need no LLM access, such as pure
 		// file-processing tools). The marker is persisted on the child row
 		// so finalize suppresses credential assignment without re-reading
 		// the originating lease.
 		CredentialDeny: req.CredentialPropagation == lease.CredentialPropagationDeny,
-		// §10.7 lines 868, 905 — the child's delegation depth is the
+		// §10.7 — the child's delegation depth is the
 		// parent's depth + 1, fixed at admission. Recording it here lets
 		// the built-in eval endpoint populate EvalResult.delegation_depth
 		// without re-walking the lineage on every submission. `depth` is
 		// the parent's depth resolved by buildLineage above. F-10.7.5.
 		DelegationDepth: uint32(adm.depth + 1),
-		// §8.2 lines 38-48: stamp the granted lease_slice onto the child
+		// §8.2: stamp the granted lease_slice onto the child
 		// so the child's own descendants validate against this ceiling.
 		// Nil when the lease declared no slice (no budget binding at this
-		// scope). §8.10 lines 1044-1049: the resolved lease-scoped policy
+		// scope). §8.10: the resolved lease-scoped policy
 		// reference (delegationPolicyRef, effective maxDelegationPolicy,
 		// contentPolicy interceptor) is captured here so a later tree
 		// recovery resumes the node against the persisted lease record
@@ -1463,7 +1458,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 			storeLeaseFromSlice(req.LeaseSlice),
 			adm.delegationPolicyRef, adm.effectivePolicy, adm.haveEffectivePolicy, adm.childContentEff,
 		),
-		// §8.3 lines 311-319: the monotonically-resolved visibility
+		// §8.3: the monotonically-resolved visibility
 		// boundary (inherited from the parent or narrowed by the lease)
 		// is stamped on the child so lenny/get_task_tree scopes the
 		// child's view from creation. F-8.5.2 / F-8.9.2.
@@ -1482,7 +1477,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
-	// spec: §8.2 line 90 / §10.7 — under `independent` propagation
+	// spec: §8.2 / §10.7 — under `independent` propagation
 	// (or when the parent carries no experimentContext), the
 	// ExperimentRouter evaluates the child afresh and may newly
 	// enroll it. propagateExperimentContext returned nil in those
@@ -1508,7 +1503,7 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 // the minted `act` chain and child `jti` for the §13.3 recursive-revocation
 // link. A nil auditor skips the emission.
 //
-// spec: §11.7 line 62; §16.7 catalog; §8.4 (F-8.4.3); §8.2 line 59.
+// spec: §11.7; §16.7 catalog; §8.4 (F-8.4.3); §8.2.
 // F-8.5.8, F-8.1.2, F-8.2.7.
 func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, child sessionstore.Session, decision cycle.Decision, childToken *ChildToken, childDepth int) {
 	if s.auditor == nil {
@@ -1536,7 +1531,7 @@ func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, chi
 		"approval_mode":           string(declaredMode),
 		"effective_approval_mode": string(lease.EffectiveApprovalMode(req.ApprovalMode)),
 	}
-	// §8.2 line 59 / §11.7: when the child-token exchange ran, the
+	// §8.2 / §11.7: when the child-token exchange ran, the
 	// audit record carries the minted `act` chain and child `jti` so
 	// audit attribution and the §13.3 recursive-revocation path can
 	// follow the parent→child identity link. F-8.1.2 / F-8.2.7.
@@ -1560,8 +1555,7 @@ func (s *Service) emitSpawnedAudit(ctx context.Context, req Request, parent, chi
 // the policy leaves `maxInputSize` at zero, leaving the evaluator on its
 // configured default (§8.3 128 KiB).
 //
-// *Service implements policy.MaxInputSizeResolver. spec: §8.3 lines
-// 149-157; §4.8 line 974. F-13.5.1 / F-8.2.9.
+// *Service implements policy.MaxInputSizeResolver. spec: §8.3; §4.8. F-13.5.1 / F-8.2.9.
 func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessionID string) (int, bool) {
 	maxSize, _, ok := s.ResolveContentPolicy(ctx, tenantID, parentSessionID)
 	if !ok || maxSize <= 0 {
@@ -1577,7 +1571,7 @@ func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessi
 // PreMessageDelivery interceptor phases use the interceptorRef to run the
 // policy-named external content scanner alone rather than every
 // registered external interceptor, and the message path enforces
-// maxInputSize on the body (§4.8 line 1040, §13.5 mitigation 3).
+// maxInputSize on the body (§4.8, §13.5 mitigation 3).
 //
 // The fields are read from the DelegationPolicy named by the session's
 // runtime (DelegationPolicyRef), the same resolution chain
@@ -1589,7 +1583,7 @@ func (s *Service) ResolveMaxInputSize(ctx context.Context, tenantID, parentSessi
 // verbatim from the policy and may be zero, which the caller treats as
 // "use the default" rather than "no limit".
 //
-// spec: §8.3 lines 149-188; §4.8 lines 1036, 1040; §13.5 mitigations 2-3.
+// spec: §8.3; §4.8; §13.5 mitigations 2-3.
 // F-8.2.9 / F-13.5.2.
 func (s *Service) ResolveContentPolicy(ctx context.Context, tenantID, sessionID string) (maxInputSize int, interceptorRef string, ok bool) {
 	if s.runtimes == nil || s.policies == nil || sessionID == "" {
@@ -1613,9 +1607,9 @@ func (s *Service) ResolveContentPolicy(ctx context.Context, tenantID, sessionID 
 // effContentPolicy is the §8.3 line-157 resolved effective contentPolicy
 // carried on a delegation lease. The four axes (maxInputSize,
 // interceptorRef, scanExportedFiles, maxExportedFileSize) are the
-// inheritance and monotonicity subjects of §8.3 lines 157-188. The size
+// inheritance and monotonicity subjects of §8.3. The size
 // axes are always concrete here (defaults applied), so a comparison never
-// has to special-case an unset value. spec: §8.3 lines 157-188. F-13.5.10.
+// has to special-case an unset value. spec: §8.3. F-13.5.10.
 type effContentPolicy struct {
 	MaxInputSize        int
 	InterceptorRef      string
@@ -1669,7 +1663,7 @@ func (e effContentPolicy) tighterThanDefault() bool {
 // the gateway reads it back rather than re-walking the chain. A root or
 // pre-feature parent has no stamped policy, so the gateway derives the
 // effective policy from the parent's own runtime DelegationPolicy, falling
-// back to the §8.3 platform default. spec: §8.3 lines 157, 240. F-13.5.10.
+// back to the §8.3 platform default. spec: §8.3. F-13.5.10.
 func (s *Service) effectiveParentContentPolicy(ctx context.Context, tenantID string, parent sessionstore.Session) effContentPolicy {
 	if l := parent.DelegationLease; l != nil &&
 		(l.ContentMaxInputSize > 0 || l.ContentPolicyRef != "" ||
@@ -1698,7 +1692,7 @@ func (s *Service) effectiveParentContentPolicy(ctx context.Context, tenantID str
 	return platformDefaultContentPolicy()
 }
 
-// resolveChildContentPolicy applies the §8.3 lines 157-188 contentPolicy
+// resolveChildContentPolicy applies the §8.3 contentPolicy
 // inheritance and monotonicity rules and returns the child's effective
 // policy. parentEff is the parent's effective (transitively-narrowest)
 // policy. When the child's target runtime resolved a DelegationPolicy
@@ -1709,13 +1703,13 @@ func (s *Service) effectiveParentContentPolicy(ctx context.Context, tenantID str
 // interceptorRef returns *ContentPolicyInterceptorSubstitutionError. The
 // returned effective policy is the per-axis narrowest, which (because each
 // axis is verified no looser than the parent) equals the child's declared
-// policy when one applies. spec: §8.3 lines 157-188, 240. F-13.5.10.
+// policy when one applies. spec: §8.3. F-13.5.10.
 func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolicystore.ContentPolicy, haveChild bool) (effContentPolicy, error) {
 	if !haveChild {
 		return parentEff, nil
 	}
 	declared := normalizeContentPolicy(child)
-	// §8.3 line 157: maxInputSize may only shrink across a hop.
+	// §8.3: maxInputSize may only shrink across a hop.
 	if declared.MaxInputSize > parentEff.MaxInputSize {
 		return effContentPolicy{}, &ContentPolicyWeakeningError{
 			Axis:        "maxInputSize",
@@ -1723,7 +1717,7 @@ func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolic
 			ChildValue:  strconv.Itoa(declared.MaxInputSize),
 		}
 	}
-	// §8.3 line 179: maxExportedFileSize is a protective ceiling; a child
+	// §8.3: maxExportedFileSize is a protective ceiling; a child
 	// may set a smaller value but never a larger one.
 	if declared.MaxExportedFileSize > parentEff.MaxExportedFileSize {
 		return effContentPolicy{}, &ContentPolicyWeakeningError{
@@ -1732,7 +1726,7 @@ func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolic
 			ChildValue:  strconv.FormatInt(declared.MaxExportedFileSize, 10),
 		}
 	}
-	// §8.3 lines 170-177: scanExportedFiles uses the ordering false < true;
+	// §8.3: scanExportedFiles uses the ordering false < true;
 	// a parent `true` child `false` removes the scan requirement and is
 	// rejected.
 	if parentEff.ScanExportedFiles && !declared.ScanExportedFiles {
@@ -1742,7 +1736,7 @@ func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolic
 			ChildValue:  "false",
 		}
 	}
-	// §8.3 lines 183-188: interceptorRef restrictiveness is identity-based.
+	// §8.3: interceptorRef restrictiveness is identity-based.
 	switch {
 	case parentEff.InterceptorRef == "":
 		// Null parent: any child (including a new ref) is permitted.
@@ -1769,7 +1763,7 @@ func resolveChildContentPolicy(parentEff effContentPolicy, child delegationpolic
 // materializeExport runs the §8.7 file-export pipeline for one delegation
 // and returns the §14 child WorkspacePlan JSON the caller stamps on the
 // child row. It resolves the §8.3 fileExportLimits ceiling (defaulting to
-// the §8.3 line 264 defaults when the lease left it unset) and, when the
+// the §8.3 defaults when the lease left it unset) and, when the
 // effective DelegationPolicy sets contentPolicy.scanExportedFiles, the
 // per-file content-scan chain. A scan-required policy with no resolver
 // fails closed with ErrExportScanUnavailable so unscanned files are never
@@ -1779,7 +1773,7 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 	if s.exportMat == nil {
 		return nil, ErrExportNotConfigured
 	}
-	// spec: §8.3 line 264 — fileExportLimits defaults to 100 files /
+	// spec: §8.3 — fileExportLimits defaults to 100 files /
 	// 100 MiB when the lease omits it. The zero Request value selects the
 	// defaults; a partially-set limit is taken verbatim.
 	limits := req.FileExportLimits
@@ -1793,7 +1787,7 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 		Specs:           append([]export.Spec(nil), req.FileExport...),
 		Limits:          limits,
 	}
-	// spec: §8.3 lines 160-181 — the per-file content scan runs only when
+	// spec: §8.3 — the per-file content scan runs only when
 	// the effective DelegationPolicy enables scanExportedFiles. Without a
 	// resolvable interceptor the scan cannot run; fail closed rather than
 	// materialize unscanned files.
@@ -1805,7 +1799,7 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 		if err != nil {
 			return nil, err
 		}
-		// spec: §11.7 line 119 / §16.1 line 80 — the policy_name and pool
+		// spec: §11.7 / §16.1 — the policy_name and pool
 		// labels come from the per-delegation context the resolver does not
 		// see (it is keyed only on tenant + interceptorRef).
 		scanCtx.PolicyName = pol.Name
@@ -1836,7 +1830,7 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 // Outside the self-recursive path the function is a no-op so the audit
 // log is not polluted with every successful non-recursive admission.
 //
-// spec: §8.2 lines 70-79; §16.7 catalog. F-8.5.9.
+// spec: §8.2; §16.7 catalog. F-8.5.9.
 func (s *Service) recordCycleAudit(ctx context.Context, tenantID string, req Request, d cycle.Decision) {
 	if s.auditor == nil || !d.IsSelfRecursive {
 		return
@@ -1890,7 +1884,7 @@ func layersAsStrings(in []cycle.Layer) []string {
 //   - OutcomePermissive: never emitted (mode=permissive disables
 //     evaluation per §16.1 catalog).
 //
-// spec: §8.2 line 70; §16.1 line 79.
+// spec: §8.2; §16.1.
 func (s *Service) recordCycleDecision(pool, tenantID string, d cycle.Decision) {
 	if s.metrics == nil || len(d.WouldHaveBlockedLayers) == 0 {
 		return
@@ -1942,7 +1936,7 @@ func (s *Service) propagateExperimentContext(ctx context.Context, tenantID strin
 
 // checkInterceptorWeakeningCooldown returns a typed
 // InterceptorWeakeningCooldownError when the resolved DelegationPolicy
-// is still inside the §8.3 line 181 cluster-scoped
+// is still inside the §8.3 cluster-scoped
 // `gateway.interceptorWeakeningCooldownSeconds` window opened by a
 // `scanExportedFiles: true → false` admin update. Returns nil when the
 // cooldown is disabled (interceptorWeakeningCooldown == 0), the policy
@@ -1980,7 +1974,7 @@ func (s *Service) checkInterceptorWeakeningCooldown(pol delegationpolicystore.De
 
 // InterceptorFailPolicyCooldown returns a typed
 // InterceptorWeakeningCooldownError when interceptorRef names an external
-// interceptor still inside the §4.8 line 1034 / §8.3 SEC-013
+// interceptor still inside the §4.8 / §8.3 SEC-013
 // `fail-closed → fail-open` weakening cooldown window. The window length
 // is the cluster-scoped `gateway.interceptorWeakeningCooldownSeconds`
 // value that was in force at the transition (the §8.3 meta-cooldown rule
@@ -2033,14 +2027,14 @@ func (s *Service) InterceptorFailPolicyCooldown(ctx context.Context, interceptor
 //
 // The §8.5 lenny/discover_agents handler calls this to narrow the
 // discoverable agent set to the targets the caller's effective policy
-// authorizes (§8.3 line 244). The resolution reads the runtime-level
+// authorizes (§8.3). The resolution reads the runtime-level
 // DelegationPolicyRef, the same input the runtime layer of Delegate
 // consults, so discovery and delegation agree on which policy governs a
 // session. The lease-level maxDelegationPolicy intersection and the
 // ancestral-narrowing refinement are not yet part of either path; when
 // they land in Delegate they extend here too.
 //
-// spec: §8.3 line 244. F-8.5.7.
+// spec: §8.3. F-8.5.7.
 func (s *Service) EffectiveDelegationPolicy(ctx context.Context, tenantID, sessionID string) (delegationpolicystore.DelegationPolicy, bool, error) {
 	if s.policies == nil || s.runtimes == nil || sessionID == "" {
 		return delegationpolicystore.DelegationPolicy{}, false, nil
@@ -2082,13 +2076,13 @@ func (s *Service) EffectiveDelegationPolicy(ctx context.Context, tenantID, sessi
 // reference.
 //
 // The §10.6 environment layer in the gateway calls this to apply an
-// environment's defaultDelegationPolicy (§10.6 line 601 — "the
+// environment's defaultDelegationPolicy (§10.6 — "the
 // DelegationPolicy applied to sessions created in this environment") as
-// an additional intersection in the §10.6 line 629 effective-scope
+// an additional intersection in the §10.6 effective-scope
 // formula. The delegation Service does not itself read the §10.6
 // Environment registry; the gateway resolves the policy name from the
 // environment and hands it here for a uniform active-policy lookup.
-// spec: §10.6 line 601, line 629. F-10.6.7.
+// spec: §10.6. F-10.6.7.
 func (s *Service) ResolveActivePolicy(ctx context.Context, tenantID, name string) (delegationpolicystore.DelegationPolicy, bool, error) {
 	if s.policies == nil || name == "" {
 		return delegationpolicystore.DelegationPolicy{}, false, nil
@@ -2169,7 +2163,7 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 	return lineage, len(chain) - 1, nil
 }
 
-// resolveChildTreeVisibility applies the §8.3 lines 313-319
+// resolveChildTreeVisibility applies the §8.3
 // treeVisibility inheritance and monotonicity rules. An absent child
 // value (field omitted) inherits the parent's effective value; a present
 // value must be at least as narrow as the parent's effective value (the
@@ -2177,7 +2171,7 @@ func (s *Service) buildLineage(ctx context.Context, tenantID string, parent sess
 // at any hop but never widen). An unrecognised explicit value is
 // rejected with a plain error the §8.5 handler maps to
 // INVALID_LEASE_FIELD; a widening is rejected with the typed
-// *TreeVisibilityWeakeningError. spec: §8.3 lines 311-319.
+// *TreeVisibilityWeakeningError. spec: §8.3.
 func resolveChildTreeVisibility(parent, child session.TreeVisibility) (session.TreeVisibility, error) {
 	parentEff := parent.OrDefault()
 	if child == "" {
@@ -2242,12 +2236,12 @@ func storeLeaseFromSlice(s lease.LeaseSlice) *sessionstore.DelegationLease {
 	return dl
 }
 
-// stampLeasePolicy records the §8.10 lines 1044-1049 lease-scoped policy
+// stampLeasePolicy records the §8.10 lease-scoped policy
 // reference and the §8.3 line-157 resolved effective contentPolicy onto
 // the granted lease so tree recovery can bring the node back up against
 // the persisted record instead of re-evaluating the live policy state, and
 // so the next delegation hop inherits the transitively-narrowest
-// contentPolicy (§8.3 line 240). It captures the resolved
+// contentPolicy (§8.3). It captures the resolved
 // `delegationPolicyRef`, the effective `maxDelegationPolicy` (the resolved
 // DelegationPolicy name), and the four contentPolicy axes via contentEff.
 // Only a contentPolicy that departs from the §8.3 platform default is
@@ -2298,7 +2292,7 @@ func stampLeasePolicy(dl *sessionstore.DelegationLease, delegationPolicyRef stri
 // override (Options.IDFunc) takes precedence and returns its fixed id
 // verbatim. Otherwise the child id copies the routing prefix from
 // rootSessionID (session.NewChildID) so every session in the delegation
-// tree co-locates on the same shard. spec: §12.6 line 577. F-12.6.13.
+// tree co-locates on the same shard. spec: §12.6. F-12.6.13.
 func (s *Service) newChildID(rootSessionID string) (string, error) {
 	if s.idFn != nil {
 		return s.idFn(), nil

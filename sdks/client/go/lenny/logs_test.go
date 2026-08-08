@@ -11,7 +11,7 @@ import (
 )
 
 // TestSessionLogsFetchesEnvelope_spec_15_1_673 confirms the SDK SessionLogs
-// call GETs /v1/sessions/{id}/logs and decodes the §15.1 line 1228
+// call GETs /v1/sessions/{id}/logs and decodes the §15.1
 // `{items, cursor, hasMore}` envelope. F-24.17.6.
 func TestSessionLogsFetchesEnvelope_spec_15_1_673(t *testing.T) {
 	var lastPath, lastQuery, lastAccept string

@@ -17,7 +17,7 @@ import (
 // OpenSLO query scoped to deployment_tier="<tier>" resolves the same
 // series the bundled alerts evaluate.
 //
-// spec: §16.10 line 734 (tier labels), §16.1.1 (deployment_tier label).
+// spec: §16.10, §16.1.1 (deployment_tier label).
 const SLOTierPlaceholder = "__DEPLOYMENT_TIER__"
 
 // SLONotificationTargetPlaceholder is the token the chart-fragment render
@@ -45,7 +45,7 @@ const OpenSLODefaultNotificationTarget = "webhook"
 // (RenderOpenSLO). A single source keeps the rendered OpenSLO alert
 // conditions identical to the multi-window alerts the gateway evaluates.
 //
-// §16.5 line 627: the fast window is 1h at 14x burn, the slow window is
+// §16.5: the fast window is 1h at 14x burn, the slow window is
 // 6h at 3x burn; both must fire simultaneously for a page.
 const (
 	burnRateFastMultiplier = 14
@@ -53,7 +53,7 @@ const (
 )
 
 // burnRateFastMultiplierThreshold / burnRateSlowMultiplierThreshold are
-// the PromQL the burn-rate alerts compare against. §16.5 line 640 makes
+// the PromQL the burn-rate alerts compare against. §16.5 makes
 // the window multipliers operator-configurable via Helm
 // (slo.burnRate.fastMultiplier / slowMultiplier). The gateway mirrors
 // those values onto the lenny_slo_burn_rate_{fast,slow}_multiplier gauges
@@ -96,8 +96,7 @@ type SLIRatio struct {
 // documents cannot drift from the multi-window alerts the gateway
 // evaluates and the chart bundles: both are a view of this catalog.
 //
-// spec: §16.5 lines 607-640 (SLO target table + burn-rate table), §16.10
-// lines 732-736 (OpenSLO export is a view of the §16.5 catalog).
+// spec: §16.5, §16.10.
 type SLODefinition struct {
 	// Name is the OpenSLO object name (kebab-case), e.g.
 	// "session-creation-success-rate".
@@ -127,7 +126,7 @@ type SLODefinition struct {
 // preserve it. The query templates carry SLOTierPlaceholder where the
 // deployment tier belongs.
 //
-// spec: §16.5 lines 611-640, §16.10 lines 732-736.
+// spec: §16.5, §16.10.
 func SLODefinitions() []SLODefinition {
 	t := `deployment_tier="` + SLOTierPlaceholder + `"`
 	return []SLODefinition{
@@ -144,8 +143,7 @@ func SLODefinitions() []SLODefinition {
 			// "Successful session starts / total attempts" SLI. The
 			// gateway HTTP middleware (gatewaymetrics.Middleware) emits
 			// lenny_gateway_requests_total{method,route,status_class} with
-			// route="/v1/sessions" for the create handler. spec: §16.5
-			// lines 613, 631, 640.
+			// route="/v1/sessions" for the create handler. spec: §16.5.
 			BurnRateExpr: `(sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions",status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total{method="POST",route="/v1/sessions"}[1h]))) / (1 - 0.995)`,
 			SLI: SLIRatio{
 				Counter: true,
@@ -166,7 +164,7 @@ func SLODefinitions() []SLODefinition {
 			// middleware histogram labelled by method/route; route is
 			// "/v1/sessions" for the two-step create handler, which does no
 			// pod-claim work (startup latency is the separate
-			// StartupLatencyBurnRate SLO). spec: §16.5 lines 614, 632, 640.
+			// StartupLatencyBurnRate SLO). spec: §16.5.
 			BurnRateExpr: `(1 - (sum(rate(lenny_gateway_request_duration_seconds_bucket{method="POST",route="/v1/sessions",le="0.5"}[1h])) / sum(rate(lenny_gateway_request_duration_seconds_count{method="POST",route="/v1/sessions"}[1h])))) / 0.01`,
 			SLI: SLIRatio{
 				Counter: true,
@@ -185,8 +183,7 @@ func SLODefinitions() []SLODefinition {
 			// resuming, awaiting_client_action) — the inverse of "uptime of
 			// sessions not in retry/recovery state". The gateway export
 			// loop refreshes it (SetSessionUnavailabilityRatio) as
-			// recovery_sessions / active_sessions. spec: §16.5 lines 616,
-			// 633, 640.
+			// recovery_sessions / active_sessions. spec: §16.5.
 			BurnRateExpr: `lenny_session_unavailability_ratio / (1 - 0.999)`,
 			SLI: SLIRatio{
 				Good:  `(1 - lenny_session_unavailability_ratio{` + t + `})`,
@@ -204,7 +201,7 @@ func SLODefinitions() []SLODefinition {
 			// 5xx was not served by a healthy replica. The HTTP middleware
 			// emits lenny_gateway_requests_total{status_class}; the 5xx
 			// fraction over total is the error rate, normalised by the
-			// 0.05% availability budget. spec: §16.5 lines 617, 634, 640.
+			// 0.05% availability budget. spec: §16.5.
 			BurnRateExpr: `(sum(rate(lenny_gateway_requests_total{status_class="5xx"}[1h])) / sum(rate(lenny_gateway_requests_total[1h]))) / (1 - 0.9995)`,
 			SLI: SLIRatio{
 				Counter: true,
@@ -214,12 +211,10 @@ func SLODefinitions() []SLODefinition {
 		},
 		{
 			// The slow ratio is computed inline from the
-			// lenny_session_startup_duration_seconds histogram (§6.3 line
-			// 348, emitted by the gateway start path): the fraction of
+			// lenny_session_startup_duration_seconds histogram (§6.3, emitted by the gateway start path): the fraction of
 			// runc starts slower than the 2s SLO threshold, against the 5%
 			// error budget. The le="2" bucket boundary is one of the
-			// histogram's explicit buckets. spec: §16.5 line 635, §6.3
-			// line 348.
+			// histogram's explicit buckets. spec: §16.5, §6.3.
 			Name:         "startup-latency-runc",
 			AlertName:    "StartupLatencyBurnRate",
 			Objective:    "Startup latency P95 < 2s (runc)",
@@ -234,7 +229,7 @@ func SLODefinitions() []SLODefinition {
 		},
 		{
 			// As above for the gVisor 5s SLO threshold (le="5" bucket).
-			// spec: §16.5 line 636, §6.3 line 348.
+			// spec: §16.5, §6.3.
 			Name:         "startup-latency-gvisor",
 			AlertName:    "StartupLatencyGVisorBurnRate",
 			Objective:    "Startup latency P95 < 5s (gVisor)",
@@ -249,12 +244,11 @@ func SLODefinitions() []SLODefinition {
 		},
 		{
 			// The slow ratio is computed inline from the
-			// lenny_session_time_to_first_token_seconds histogram (§6.3
-			// line 356, emitted by sessionserver on first agent-streamed
+			// lenny_session_time_to_first_token_seconds histogram (§6.3, emitted by sessionserver on first agent-streamed
 			// response event): the fraction of starts slower than the 10s
 			// SLO threshold, against the 5% error budget. The le="10"
 			// bucket boundary is one of the histogram's explicit buckets.
-			// spec: §16.5 line 637, §6.3 line 356.
+			// spec: §16.5, §6.3.
 			Name:         "ttft",
 			AlertName:    "TTFTBurnRate",
 			Objective:    "Time to first token P95 < 10s",
@@ -277,7 +271,7 @@ func SLODefinitions() []SLODefinition {
 			// 2s SLO, against the 5% error budget. le="2" is an explicit
 			// bucket boundary on lenny_checkpoint_duration_seconds, the
 			// end-to-end checkpoint wall-time histogram the gateway emits.
-			// spec: §16.5 line 638, §16.1 line 103.
+			// spec: §16.5, §16.1.
 			BurnRateExpr: `(1 - (sum(rate(lenny_checkpoint_duration_seconds_bucket{le="2"}[1h])) / sum(rate(lenny_checkpoint_duration_seconds_count[1h])))) / 0.05`,
 			SLI: SLIRatio{
 				Counter: true,

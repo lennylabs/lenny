@@ -90,7 +90,7 @@ type PodCountBreakdown struct {
 }
 
 // PoolConfigSummary is the §25.6 PoolDiagnosis configuration summary.
-// spec: §25.17 line 5195 — the worked example surfaces minWarm, maxPods,
+// spec: §25.17 — the worked example surfaces minWarm, maxPods,
 // and image so the watchdog can reason about headroom before it scales.
 type PoolConfigSummary struct {
 	MinWarm int    `json:"minWarm"`
@@ -111,8 +111,7 @@ type SyncStatus struct {
 // (claim rate and replenishment rate for a demand bottleneck, the
 // observed failure count for an infrastructure bottleneck) so an agent
 // can choose between competing remediations without a second metrics
-// query. spec: §25.6 lines 2861-2867 (PoolBottleneck.Details), §25.17
-// line 5199.
+// query. spec: §25.6, §25.17.
 type PoolBottleneck struct {
 	Category BottleneckCategory `json:"category"`
 	Details  json.RawMessage    `json:"details,omitempty"`
@@ -175,7 +174,7 @@ type SessionRecord struct {
 	// terminal-failure fields (sessions.failure_class /
 	// failure_reason). The §25.6 cause chain cross-references them to
 	// append the session-state-derived BUDGET_EXPIRED / CREDENTIAL_FAILURE
-	// levels that pod signals alone cannot express. spec: §25.6 line 2890.
+	// levels that pod signals alone cannot express. spec: §25.6.
 	FailureClass  string
 	FailureReason string
 	// Degradation is the §25.6 partial-result envelope the data source
@@ -183,7 +182,7 @@ type SessionRecord struct {
 	// outage → Kubernetes) or could not enrich every field (no
 	// Kubernetes connection → no pod exit/OOM signals). Nil means the
 	// record came from its primary source with full fidelity. spec:
-	// §25.6 lines 2908-2920. F-25.6.1.
+	// §25.6. F-25.6.1.
 	Degradation *conventions.Degradation
 	// Found is false when no session of that id exists in any shard.
 	Found bool
@@ -200,8 +199,7 @@ type PoolRecord struct {
 	// Degradation is the §25.6 partial-result envelope the data source
 	// sets when warm-pool fields were served from a fallback source or
 	// could not be read (no metrics source → no claim/replenishment
-	// rates, so the demand bottleneck cannot be classified). spec: §25.6
-	// lines 2908-2920. F-25.6.1.
+	// rates, so the demand bottleneck cannot be classified). spec: §25.6. F-25.6.1.
 	Degradation *conventions.Degradation
 	// Found is false when no pool of that name is registered.
 	Found bool
@@ -216,7 +214,7 @@ type CredentialPoolRecord struct {
 	RateLimited bool
 	// Degradation is the §25.6 partial-result envelope the data source
 	// sets when credential-pool fields were served from a fallback
-	// source or could not be fully read. spec: §25.6 lines 2908-2920.
+	// source or could not be fully read. spec: §25.6.
 	// F-25.6.1.
 	Degradation *conventions.Degradation
 	// Found is false when no credential pool of that name exists.
@@ -272,7 +270,7 @@ func (s *Service) DiagnoseSession(ctx context.Context, sessionID string) (*Sessi
 		return nil, &Error{Code: ErrCodeSessionNotFound, Message: "no session " + sessionID}
 	}
 	chain := PodFailureChain(rec.Signals)
-	// spec: §25.6 line 2890 — the cause chain cross-references session
+	// spec: §25.6 — the cause chain cross-references session
 	// state: when the session carries a budget- or credential-derived
 	// terminal failure, that reason is a deeper (or, with no pod signal,
 	// the proximate) cause level than the pod exit alone. F-25.6.6.
@@ -321,7 +319,7 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 		CRDSyncStatus:    SyncStatus{Synced: rec.CRDSynced, Detail: rec.CRDDetail},
 		Degradation:      rec.Degradation,
 	}
-	// spec: §25.6 line 2865 — CRD_SYNC_LAG is a §25.6 bottleneck category
+	// spec: §25.6 — CRD_SYNC_LAG is a §25.6 bottleneck category
 	// derived from PoolRecord.CRDSynced, so pass it to the classifier as
 	// a PoolSignals flag without requiring every DataSource impl to set it.
 	signals := rec.Signals
@@ -334,7 +332,7 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 			Details:  bottleneckDetails(category, signals),
 			Summary:  bottleneckSummary[category],
 		}
-		// spec: §25.17 lines 5201-5202 / §25.6 line 473 — WARM_POOL_EXHAUSTED
+		// spec: §25.17 / §25.6 — WARM_POOL_EXHAUSTED
 		// is a ranked-alternatives alert, so the demand bottleneck carries a
 		// SCALE_WARM_POOL suggestedAction the watchdog can apply directly.
 		diag.SuggestedActions = suggestedActionsFor(category, rec)
@@ -347,7 +345,7 @@ func (s *Service) DiagnosePool(ctx context.Context, poolName string) (*PoolDiagn
 
 // scaleStep is the §25.17 increment the demand-bottleneck SCALE_WARM_POOL
 // action proposes (the worked example scales minWarm 5 → 15). spec:
-// §25.17 line 5216.
+// §25.17.
 const scaleStep = 10
 
 // suggestedActionsFor returns the §25.6 ranked remediations for a
@@ -355,8 +353,7 @@ const scaleStep = 10
 // remediation (scale the warm pool); the infrastructure bottlenecks
 // (image pull, node pressure, quota, setup failure, CRD lag) require
 // cluster-side action, so they carry no auto-applicable action and the
-// watchdog routes to the runbook prose instead. spec: §25.6 lines
-// 2895-2897, §25.17 lines 5201-5216.
+// watchdog routes to the runbook prose instead. spec: §25.6, §25.17.
 func suggestedActionsFor(category BottleneckCategory, rec PoolRecord) []conventions.SuggestedAction {
 	if category != BottleneckDemandExceedsSupply {
 		return []conventions.SuggestedAction{}
@@ -377,7 +374,7 @@ func suggestedActionsFor(category BottleneckCategory, rec PoolRecord) []conventi
 // bottleneckDetails renders the §25.17 per-category telemetry envelope.
 // The demand bottleneck reports the two rates the agent compares; the
 // failure bottlenecks report the observed warm-up failure count for the
-// matching error_type. spec: §25.17 line 5199.
+// matching error_type. spec: §25.17.
 func bottleneckDetails(category BottleneckCategory, s PoolSignals) json.RawMessage {
 	var m map[string]any
 	switch category {

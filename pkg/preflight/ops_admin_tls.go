@@ -61,7 +61,7 @@ type OpsAdminTLSCheck struct {
 // fails the check so an install does not proceed against a misconfigured
 // admin-API certificate.
 //
-// spec: §25.4 lines 2544-2546 (the ops-admin-tls handshake probe). F-25.4.19.
+// spec: §25.4. F-25.4.19.
 func (c OpsAdminTLSCheck) Decide(ctx context.Context) Decision {
 	if !c.Config.InternalEnabled || c.Config.Endpoint == "" {
 		return Decision{Passed: true}

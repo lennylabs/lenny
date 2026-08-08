@@ -41,7 +41,7 @@ func seedRow(t *testing.T, store sessionstore.Store, row sessionstore.Session) s
 	return got
 }
 
-// spec: §7.3 line 403 — Retryable + budget remaining → resume_pending.
+// spec: §7.3 — Retryable + budget remaining → resume_pending.
 // RetryCount is bumped in the same transaction so the watchdog and
 // failure detector agree on the budget. The status_change SSE frame
 // fires for the new state. F-7.3.4.
@@ -79,8 +79,8 @@ func TestReportSessionFailureRetryableEntersResumePending(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 411 — Retryable but retries exhausted →
-// awaiting_client_action. The platform deploys the §7.3 line 427
+// spec: §7.3 — Retryable but retries exhausted →
+// awaiting_client_action. The platform deploys the §7.3
 // webhook + §11.7 audit row via the existing emitAwaitingClientActionEntered
 // helper. F-7.3.4 / F-7.3.16.
 func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
@@ -116,7 +116,7 @@ func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 174 — Non-retryable from running → failed. The
+// spec: §6.2 — Non-retryable from running → failed. The
 // terminal pipeline runs (the row carries the FailureReason for the
 // failed-row body). F-7.3.4 / F-7.3.5.
 func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
@@ -150,7 +150,7 @@ func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 250 — Non-retryable during resuming →
+// spec: §6.2 — Non-retryable during resuming →
 // awaiting_client_action (regardless of retry budget). F-7.3.4 / F-7.3.5.
 func TestReportSessionFailureNonRetryableDuringResumingEntersAwaiting(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
@@ -194,7 +194,7 @@ func TestReportSessionFailureUnknownReasonDegradesNonRetryable(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 382 — client_only mode disables auto-retry; every
+// spec: §7.3 — client_only mode disables auto-retry; every
 // classifiable cause goes straight to awaiting_client_action when
 // reached from a running source (no resume budget consumed). F-7.3.5.
 func TestReportSessionFailureClientOnlyModeBypassesRetry(t *testing.T) {
@@ -211,7 +211,7 @@ func TestReportSessionFailureClientOnlyModeBypassesRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
 	}
-	// client_only forces non-retryable. From running → failed per §6.2 line 174.
+	// client_only forces non-retryable. From running → failed per §6.2.
 	if disp.To != session.StateFailed {
 		t.Errorf("To = %q, want failed", disp.To)
 	}
@@ -276,7 +276,7 @@ func TestReportSessionFailureIgnoredOnPreRunningState(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 401 — the gateway is the failure-detector entry; a
+// spec: §7.3 — the gateway is the failure-detector entry; a
 // malformed report is rejected so a programming error never silently
 // loses a failure signal.
 func TestReportSessionFailureRejectsMalformedReports(t *testing.T) {
@@ -345,7 +345,7 @@ func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 214 (a) — every exit from `resuming` that aborts
+// spec: §7.2 — every exit from `resuming` that aborts
 // the in-flight resume bumps coordination_generation by exactly one in
 // the same logical write that records the new state. The bump fences
 // any stale coordinator still mid-restore against the prior generation
@@ -381,7 +381,7 @@ func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_
 	}
 }
 
-// spec: §7.2 line 214 — the bump also fires on the retryable+budget
+// spec: §7.2 — the bump also fires on the retryable+budget
 // branch (resuming → resume_pending) because the in-flight resume is
 // aborted before the next attempt; without the fence, a stale
 // coordinator could still race the new resume_pending → resuming
@@ -412,7 +412,7 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	}
 }
 
-// spec: §7.2 line 219-225 — the pre-attach terminal-collapse path
+// spec: §7.2 — the pre-attach terminal-collapse path
 // (resume_pending → cancelled/completed) intentionally does NOT bump
 // coordination_generation: no pod is attached, no CoordinatorFence
 // round-trip is pending, so the bump is unnecessary. Verify that a

@@ -10,10 +10,10 @@
 // The detector is a per-subtree heuristic, not a true cycle-detection
 // algorithm. Cross-subtree circular `lenny/send_message` waits and
 // children blocked on external resources are documented false negatives
-// (spec: §8.8 line 981); they are bounded by `maxRequestInputWaitSeconds`
+// (spec: §8.8); they are bounded by `maxRequestInputWaitSeconds`
 // rather than by this detector.
 //
-// spec: §8.8 lines 981-997. F-8.8.6.
+// spec: §8.8. F-8.8.6.
 package deadlock
 
 import (
@@ -23,23 +23,23 @@ import (
 	session "github.com/lennylabs/lenny/pkg/api/v1/session"
 )
 
-// EventType is the §8.8 line 987 deadlock event discriminator.
+// EventType is the §8.8 deadlock event discriminator.
 const EventType = "deadlock_detected"
 
-// DefaultMaxWait is the §8.8 line 981 `maxDeadlockWaitSeconds` default
+// DefaultMaxWait is the §8.8 default
 // (120s) used when a pool does not override it.
 const DefaultMaxWait = 120 * time.Second
 
 // PendingInput is one pending lenny/request_input round on a task: the
 // §8.8 requestId the parent answers with `inReplyTo` and the wall-clock
-// instant the request began blocking. spec: §8.8 line 990. F-8.8.6.
+// instant the request began blocking. spec: §8.8. F-8.8.6.
 type PendingInput struct {
 	RequestID    string
 	BlockedSince time.Time
 }
 
 // Node is one session's state in a delegation-tree snapshot the
-// detector reasons over. spec: §8.8 line 981. F-8.8.6.
+// detector reasons over. spec: §8.8. F-8.8.6.
 type Node struct {
 	SessionID string
 	TenantID  string
@@ -63,14 +63,14 @@ type Snapshot struct {
 }
 
 // BlockedRequest is one entry in a deadlock event's `blockedRequests`
-// array. spec: §8.8 line 990.
+// array. spec: §8.8.
 type BlockedRequest struct {
 	RequestID    string    `json:"requestId"`
 	TaskID       string    `json:"taskId"`
 	BlockedSince time.Time `json:"blockedSince"`
 }
 
-// Event is the §8.8 lines 985-994 deadlock_detected payload surfaced on
+// Event is the §8.8 deadlock_detected payload surfaced on
 // the root task's lenny/await_children stream.
 type Event struct {
 	Type                  string           `json:"type"`
@@ -82,7 +82,7 @@ type Event struct {
 
 // Subtree is one detected deadlocked subtree: its root, the blocked
 // requests across the whole subtree, and the deepest blocked task ids
-// (the §8.8 line 981 "deepest blocked tasks" the DEADLOCK_TIMEOUT edge
+// (the §8.8 the DEADLOCK_TIMEOUT edge
 // fails when the deadlock is not resolved in time).
 type Subtree struct {
 	Root            string
@@ -91,7 +91,7 @@ type Subtree struct {
 	DeepestTasks    []string
 }
 
-// Detect applies the §8.8 line 981 heuristic to snap and returns one
+// Detect applies the §8.8 heuristic to snap and returns one
 // Subtree per maximal deadlocked subtree.
 //
 // A node is "blocked" when it is in input_required (has a pending
@@ -105,7 +105,7 @@ type Subtree struct {
 // the topmost root. A subtree with no pending request_input anywhere is
 // not actionable and is dropped — the root has nothing to resolve.
 //
-// spec: §8.8 line 981. F-8.8.6.
+// spec: §8.8. F-8.8.6.
 func Detect(snap Snapshot) []Subtree {
 	nodes := snap.Nodes
 	memo := map[string]bool{}
@@ -134,7 +134,7 @@ func Detect(snap Snapshot) []Subtree {
 		// root or a DeepestTask and is never DEADLOCK_TIMEOUT-failed. Its wait is
 		// bounded by maxElicitationWait instead. Only PendingInputs (input_required,
 		// an internal-actor wait on the parent) and AwaitingChildIDs are blocked
-		// signals; do not add an elicitation case. spec: §9.2 line 110, §8.8 line 981.
+		// signals; do not add an elicitation case. spec: §9.2, §8.8.
 		switch {
 		case len(n.PendingInputs) > 0:
 			res = true

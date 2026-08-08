@@ -11,15 +11,14 @@ import (
 
 // DefaultMaxRotations is the §4.9 credentialPolicy
 // `fallback.maxRotationsPerSession` default applied when New receives a
-// non-positive bound. spec: spec/04_system-components.md line 1321.
+// non-positive bound. spec: §4.9.
 const DefaultMaxRotations = 3
 
 // Decision is the outcome of a single fault evaluation against a
 // session's fallback chain. It tells the caller whether the §4.9
 // Fallback Flow can continue with a replacement pool or has reached the
 // CREDENTIAL_FALLBACK_EXHAUSTED terminal state. spec:
-// spec/04_system-components.md lines 1383-1411 (Fallback Flow steps
-// 3-5).
+// §4.9.
 type Decision struct {
 	// Exhausted is true when the session's rotation budget is spent or
 	// no fallback pool remains for the provider. The caller terminates
@@ -41,9 +40,7 @@ type Decision struct {
 	ChainAttempted []string
 }
 
-// sessionState is one session's §4.9 fallback runtime: the rotation
-// counter shared across providers (spec line 1321
-// "maxRotationsPerSession — total across all providers in a session")
+// sessionState is one session's §4.9 fallback runtime: the rotation counter shared across providers
 // and a fallback Chain per provider.
 type sessionState struct {
 	rotationCount int
@@ -119,7 +116,7 @@ func (c *Controller) RegisterChain(sessionID string, provider credential.Provide
 // the pool whose lease failed; it is placed on cooldown. trigger is the
 // fault rotation trigger; only triggers that count against the rotation
 // budget (every trigger except proactive_renewal) increment the
-// session counter. spec: spec/04_system-components.md lines 1383-1411.
+// session counter. spec: §4.9.
 func (c *Controller) Fault(sessionID string, provider credential.Provider, faultedPool string, trigger credential.RotationTrigger) Decision {
 	c.mu.Lock()
 	defer c.mu.Unlock()

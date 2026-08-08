@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/schemas"
 )
 
-// The §15.4.6 conformance categories at spec lines 2405 and 2408 require
+// The §15.4.6 conformance categories at spec require
 // the harness to validate the runtime's emitted frames against the two
 // authoritative wire schemas:
 //
@@ -74,7 +74,7 @@ func loadSchemas() error {
 }
 
 // validateJSONLFrame validates one raw §15.4.1 stdin/stdout frame against
-// schemas/lenny-adapter-jsonl.schema.json. spec: §15.4.6 line 2405.
+// schemas/lenny-adapter-jsonl.schema.json. spec: §15.4.6.
 func validateJSONLFrame(raw []byte) error {
 	if err := loadSchemas(); err != nil {
 		return err
@@ -90,7 +90,7 @@ func validateJSONLFrame(raw []byte) error {
 }
 
 // validateMessagePart validates one MessagePart against
-// schemas/messagepart.schema.json. spec: §15.4.6 line 2408.
+// schemas/messagepart.schema.json. spec: §15.4.6.
 func validateMessagePart(raw json.RawMessage) error {
 	if err := loadSchemas(); err != nil {
 		return err
@@ -107,8 +107,8 @@ func validateMessagePart(raw json.RawMessage) error {
 
 // validateResponseFrame validates a `response` frame against the JSONL
 // schema and, when it carries an `output` array, every MessagePart against
-// the MessagePart schema. It is the combined §15.4.6 line 2405 + 2408
-// assertion the response-producing checks run. spec: §15.4.6 lines 2405, 2408.
+// the MessagePart schema. It is the combined §15.4.6
+// assertion the response-producing checks run. spec: §15.4.6.
 func validateResponseFrame(raw []byte) error {
 	if err := validateJSONLFrame(raw); err != nil {
 		return err

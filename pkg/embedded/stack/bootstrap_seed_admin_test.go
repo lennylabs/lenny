@@ -85,7 +85,7 @@ func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.
 		t.Errorf("claude-code allowedResourceClasses not stored: %+v", cc.AllowedResourceClasses)
 	}
 
-	// spec: §26.1 line 22 / §26.7 — chat is Full (hotRotation: true
+	// spec: §26.1 / §26.7 — chat is Full (hotRotation: true
 	// requires the Full-only lifecycle channel) and carries the small
 	// resource class only.
 	chat, err := runtimes.Get(context.Background(), "chat")

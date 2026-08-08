@@ -55,8 +55,7 @@ func TestCreatePoolPersistsElicitationPolicy_spec_9_2(t *testing.T) {
 	}
 }
 
-// TestCreatePoolRejectsURLModeWithoutDomain_spec_9_2_86 proves the §9.2
-// line 86 rule surfaces as 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED.
+// TestCreatePoolRejectsURLModeWithoutDomain_spec_9_2_86 proves the §9.2 rule surfaces as 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED.
 // F-9.2.12.
 func TestCreatePoolRejectsURLModeWithoutDomain_spec_9_2_86(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
@@ -99,8 +98,7 @@ func TestCreatePoolRejectsBadDepthPolicy_spec_9_2(t *testing.T) {
 	}
 }
 
-// TestUpdatePoolElicitationPolicy_spec_9_2 proves a PUT can set the §9.2
-// elicitation policy and that the line 86 rule is enforced on update.
+// TestUpdatePoolElicitationPolicy_spec_9_2 proves a PUT can set the §9.2 elicitation policy and that the rule is enforced on update.
 // F-9.2.12.
 func TestUpdatePoolElicitationPolicy_spec_9_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)

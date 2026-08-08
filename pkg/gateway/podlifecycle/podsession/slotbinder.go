@@ -37,7 +37,7 @@ type SlotBindRequest struct {
 	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
 	// per-pod simultaneous-session bound.
 	MaxConcurrentSessions int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
+	// MaxPodUptimeSeconds is the §6.2 concurrent-session
 	// pod-uptime retirement cap. The slot-claim path skips a candidate pod
 	// whose uptime exceeds it before assigning a slot; the skip is a
 	// read-only placement filter and the gateway does not write
@@ -58,7 +58,7 @@ type SlotBindRequest struct {
 	SetupPolicy *adapterv1.SetupPolicy
 	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
 	// block. Nil leaves the platform default (symlinks rejected).
-	// spec: §7.4 lines 458, 462 — F-7.4.4.
+	// spec: §7.4 — F-7.4.4.
 	ArchivePolicy *adapterv1.ArchivePolicy
 	// CredentialPools names the §4.9 credential pools to lease from,
 	// keyed by provider. Per §6 a concurrent-session slot holds an
@@ -71,7 +71,7 @@ type SlotBindRequest struct {
 	// UserCredentialProviders names the providers the §4.9 pre-claim
 	// resolved to the user source (the Pre-Authorized Credential Flow).
 	// BindSlot materializes a proxy-mode lease for each. Empty when no
-	// provider resolved to a user credential. spec: §4.9 lines 1340-1381.
+	// provider resolved to a user credential. spec: §4.9.
 	UserCredentialProviders []string
 	// PodSpiffeURI is the issuing pod's SPIFFE identity recorded on each
 	// minted lease. Empty disables proxy-mode SPIFFE binding.
@@ -152,8 +152,8 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 // ErrNoIdlePod) is returned unwrapped so the create handler maps it to the
 // §7.1 atomicity envelope before the client uploads.
 //
-// spec: §4.1 (proposal), §7.1 step 4, line 75; §5.2 (concurrent slot
-// reservation); §6.3 lines 358, 372.
+// spec: §4.1 (proposal), §7.1 step 4; §5.2 (concurrent slot
+// reservation); §6.3.
 func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
 	sandboxName, slotID, podIP, cl, err := b.connectSlot(ctx, req)
@@ -203,8 +203,7 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 // the failure to the client.
 //
 // On success the caller owns the returned live adapter connection. spec:
-// §4.3, §4.4 (proposal), §5.2; §6.2 (pre-attached reclaim); §6.4 lines
-// 401-405.
+// §4.3, §4.4 (proposal), §5.2; §6.2 (pre-attached reclaim); §6.4.
 func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
 	res, err := b.bindReservedSlot(ctx, req, sandboxName, slotID)
 	if err != nil {
@@ -263,14 +262,14 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP string, cl *adapterclient.Client) (*BindResult, error) {
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
-	// extraction runs gateway-side (§7.4 line 448) exactly as in
+	// extraction runs gateway-side (§7.4) exactly as in
 	// session-mode Bind; the adapter re-validates symlinks against the
 	// slot's actual /workspace/slots/{slotId}/current after promotion.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
 	}
-	// spec: §6.4 lines 401-405 — the slot's workspace materializes into
+	// spec: §6.4 — the slot's workspace materializes into
 	// its own /workspace/slots/{slotId}/ tree. slotID is the per-slot
 	// identifier the adapter keys the tree on.
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, slotID, req.TenantID, req.Plan, allow)
@@ -309,7 +308,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		TracingContext:     req.TracingContext,
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
-		// spec: §6.4 lines 385-405 — claim the slot rather than the whole pod.
+		// spec: §6.4 — claim the slot rather than the whole pod.
 		SlotID: slotID,
 	}); err != nil {
 		cl.Close()
@@ -347,11 +346,11 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	}, nil
 }
 
-// recordSlotFailure emits the §5.2 line 12 lenny_slot_failure_total
+// recordSlotFailure emits the §5.2 lenny_slot_failure_total
 // counter for a slot bind stage that failed after the slot was reserved.
 // It is a no-op when the binder has no SlotFailure hook.
 //
-// spec: §5.2 line 12.
+// spec: §5.2.
 func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 	if b.SlotFailure != nil {
 		b.SlotFailure(errorType, pool, podName)
@@ -375,7 +374,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 		for provider, pool := range req.CredentialPools {
 			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
 			if err != nil {
-				// §4.9 line 1220 pre-claim race: surface a typed error so the
+				// §4.9 pre-claim race: surface a typed error so the
 				// caller can release the slot and emit the mismatch metric.
 				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
 			}
@@ -384,7 +383,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 		}
 	}
 	if hasUser {
-		// spec: §4.9 lines 1347-1351 — per-slot user-source leases mirror
+		// spec: §4.9 — per-slot user-source leases mirror
 		// the per-slot pool leases: each slot holds its own user lease.
 		for _, provider := range req.UserCredentialProviders {
 			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
@@ -395,7 +394,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 			leases[provider] = lease
 		}
 	}
-	// spec: §6.1 line 28 — the slot's lease is written to its own per-slot
+	// spec: §6.1 — the slot's lease is written to its own per-slot
 	// credential file so a rotation on a sibling slot does not disrupt it.
 	return cl.AssignCredentialsSlot(ctx, req.SessionID, slotID, leases)
 }
@@ -425,7 +424,7 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		MaxPodUptimeSeconds:   req.MaxPodUptimeSeconds,
 	})
 	if err != nil {
-		// The §5.2 line 519 exhaustion sentinels are returned unwrapped
+		// The §5.2 exhaustion sentinels are returned unwrapped
 		// for the caller's errors.Is check, which maps them to
 		// WARM_POOL_EXHAUSTED with the right details.reason: ErrNoIdlePod
 		// → "no_idle_pods" (pool holds no pods), ErrNoConcurrentSlot and
@@ -532,7 +531,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// may still hold).
 	leaked := false
 	if result.Adapter != nil {
-		// spec: §6.4 lines 401-405 — tear down just this slot (its runtime
+		// spec: §6.4 — tear down just this slot (its runtime
 		// and per-slot tree); sibling slots on the pod keep running. The
 		// connection is held open past this call: on the occupancy-zero recycle
 		// edge below the whole-pod recycle Shutdown reuses it before it is closed.
@@ -540,7 +539,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		leaked = err != nil || !cleanly
 		defer result.Adapter.Close()
 	}
-	// spec: §7.1 line 52 (step 23) — release the slot session's §4.9
+	// spec: §7.1 — release the slot session's §4.9
 	// credential leases back to the pool, the same teardown session-mode
 	// Release runs. The pod and its sibling slots stay live.
 	b.releaseCredentials(result.SessionID)

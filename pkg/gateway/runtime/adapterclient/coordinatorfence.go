@@ -9,21 +9,21 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// CoordinatorFenceTimeout is the §11.3 line 209 hard-coded per-call
+// CoordinatorFenceTimeout is the §11.3 hard-coded per-call
 // timeout the gateway bounds every CoordinatorFence RPC by. The fence
 // is a fast control-plane handshake (the adapter records the generation
 // and returns); a pod that does not answer within the budget is treated
 // as a failed fence so the coordinator can retry or relinquish rather
 // than block the resume path indefinitely.
 //
-// spec: §11.3 line 209 — "CoordinatorFence RPC: 5s hard-coded timeout".
+// spec: §11.3 — "CoordinatorFence RPC: 5s hard-coded timeout".
 const CoordinatorFenceTimeout = 5 * time.Second
 
-// CoordinatorFenceResult mirrors the §10.1 / §4.7 line 632
+// CoordinatorFenceResult mirrors the §10.1 / §4.7
 // CoordinatorFenceResponse: whether the pod accepted the announced
 // coordination_generation, the pod's last fenced generation (so a
 // rejecting caller knows how far ahead the pod is), and whether the
-// fence skipped one or more generations (the §10.1 line 36 gap path).
+// fence skipped one or more generations (the §10.1 gap path).
 type CoordinatorFenceResult struct {
 	Accepted             bool
 	LastFencedGeneration int64
@@ -31,7 +31,7 @@ type CoordinatorFenceResult struct {
 }
 
 // CoordinatorFence announces a new coordination_generation to the pod's
-// adapter (§4.7 line 632 / §10.1 lines 33-37). The pod records the
+// adapter (§4.7 / §10.1). The pod records the
 // generation and, from that point, rejects any RPC carrying a strictly
 // older generation with FailedPrecondition + a `coordinator_handoff_stale`
 // detail. The first fence on a pod's lifetime is always accepted; a
@@ -40,11 +40,11 @@ type CoordinatorFenceResult struct {
 // records as a generation-stale handoff and which drives the §11.3
 // retry/relinquish decision.
 //
-// The call is bounded by the §11.3 line 209 hard-coded
+// The call is bounded by the §11.3 hard-coded
 // CoordinatorFenceTimeout; the caller's ctx still applies, so an earlier
 // caller deadline wins.
 //
-// spec: §10.1 lines 33-37, §11.3 line 209.
+// spec: §10.1, §11.3.
 func (c *Client) CoordinatorFence(ctx context.Context, sessionID string, coordinationGeneration int64) (CoordinatorFenceResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, CoordinatorFenceTimeout)
 	defer cancel()

@@ -11,7 +11,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// TestMaterializeOverlayPreservesExistingFiles is the core §7.4 line 433
+// TestMaterializeOverlayPreservesExistingFiles is the core §7.4
 // mid-session invariant: an overlay adds the named files without wiping the
 // files the running agent already created in /workspace/current. F-7.4.6.
 func TestMaterializeOverlayPreservesExistingFiles_spec_7_4_433(t *testing.T) {
@@ -49,7 +49,7 @@ func TestMaterializeOverlayPreservesExistingFiles_spec_7_4_433(t *testing.T) {
 
 // TestMaterializeOverlayReplacesCollidingFile asserts an overlay file at a
 // path that already exists atomically replaces it (last-writer-wins), the
-// per-file move semantics §7.4 line 433 prescribes. F-7.4.6.
+// per-file move semantics §7.4 prescribes. F-7.4.6.
 func TestMaterializeOverlayReplacesCollidingFile_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte("old"), 0o600); err != nil {
@@ -97,7 +97,7 @@ func TestMaterializeOverlayUploadFile_spec_7_4_433(t *testing.T) {
 
 // TestMaterializeOverlayRejectsTraversalLeavesWorkspaceUntouched asserts a
 // containment-violating source aborts before any entry is moved, so the
-// live workspace is untouched (§7.4 line 460 atomic-cleanup intent applied
+// live workspace is untouched (§7.4 atomic-cleanup intent applied
 // to the overlay path). F-7.4.6.
 func TestMaterializeOverlayRejectsTraversalLeavesWorkspaceUntouched_spec_7_4(t *testing.T) {
 	root := t.TempDir()

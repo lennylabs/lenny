@@ -1,4 +1,4 @@
--- §8.2 lines 38-48 — the delegation lease carries a `lease_slice`
+-- §8.2 — the delegation lease carries a `lease_slice`
 -- (maxTokenBudget, maxChildrenTotal, maxTreeSize, maxParallelChildren,
 -- perChildMaxAge) that bounds the resources a child subtree may consume.
 -- §8.2 requires the gateway to reject any lease_slice that exceeds the

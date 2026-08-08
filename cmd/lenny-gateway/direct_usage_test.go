@@ -85,8 +85,7 @@ func newLoopUnderTest(t *testing.T, registry *podsession.Registry, leases direct
 // invariant — the loop reaches the pod over podRegistry.Get, never the transient
 // BindResult the bind caller closes at teardown.
 //
-// spec: §11.2 line 42 (direct-mode usage recording over the session-scoped
-// registry), §4.7 (ReportUsage pull).
+// spec: §11.2, §4.7 (ReportUsage pull).
 // diagnosis: the direct-mode usage loop kept pulling a session after its binding was removed at teardown, dialing a closed adapter, because it iterated the transient BindResult snapshot rather than re-reading the session-scoped registry (proposal 0024 S9 registry-keyed teardown broken).
 func TestDirectUsageLoopStopsAtTeardown_spec_11_2(t *testing.T) {
 	ctx := context.Background()
@@ -124,7 +123,7 @@ func TestDirectUsageLoopStopsAtTeardown_spec_11_2(t *testing.T) {
 // never dialed. It removes the binding after the snapshot is taken but before
 // the pull, exercising the exact race the registry re-read defends against.
 //
-// spec: §11.2 line 42 (session-scoped pull), §4.7 (ReportUsage).
+// spec: §11.2, §4.7 (ReportUsage).
 // diagnosis: the loop dialed a session's adapter after it unbound mid-poll because pullSession pulled from the stale snapshot binding instead of re-reading the registry (proposal 0024 S9 mid-poll teardown race).
 func TestDirectUsageLoopSkipsSessionRemovedMidPoll_spec_11_2(t *testing.T) {
 	registry := podsession.NewRegistry()
@@ -154,8 +153,7 @@ func TestDirectUsageLoopSkipsSessionRemovedMidPoll_spec_11_2(t *testing.T) {
 // against a loop that stamped the idle clock on every poll (a timer tick), which
 // would keep a hung pod alive forever.
 //
-// spec: §6.2 line 253 (direct-mode idle reset on non-zero delta only), §8.3
-// line 435 (over-run bounded against the poll interval), §11.2 (direct-mode
+// spec: §6.2, §8.3, §11.2 (direct-mode
 // usage).
 // diagnosis: a hung direct-mode pod never idle-terminated because the poll loop reset its idle clock on every zero-delta tick, so the pod, lease, and session leaked (proposal 0024 S9 hung-pod idle bound broken).
 func TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253(t *testing.T) {
@@ -203,7 +201,7 @@ func TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253(t *testing.T) {
 // double-count). It binds one direct and one proxy session and asserts only the
 // direct one is pulled.
 //
-// spec: §4.9 line 1468 (proxy-extracted counts authoritative), §11.2
+// spec: §4.9, §11.2
 // (direct-mode usage).
 func TestDirectUsageLoopSkipsProxyLease_spec_4_9_1468(t *testing.T) {
 	ctx := context.Background()
@@ -234,7 +232,7 @@ func TestDirectUsageLoopSkipsProxyLease_spec_4_9_1468(t *testing.T) {
 // leaves the §6.2 idle clock untouched, the same hung-pod outcome as a
 // zero-delta answer. The stub returns a transport error for every pull.
 //
-// spec: §6.2 line 253 (idle reset on recorded non-zero delta only), §4.7
+// spec: §6.2, §4.7
 // (ReportUsage pull).
 // diagnosis: a wedged direct-mode adapter that failed the pull still reset the idle clock (or crashed the loop) rather than being treated as no activity, so a wedged pod leaked (proposal 0024 S9 failed-pull handling broken).
 func TestDirectUsageLoopFailedPullDoesNotStamp_spec_6_2_253(t *testing.T) {
@@ -326,8 +324,7 @@ func TestNewDirectUsageLoopNilOnMissingDeps(t *testing.T) {
 // Go wraps a typed nil into a non-nil interface, so newDirectUsageLoop would
 // return a live loop and run an empty ticker every tick instead of a no-op.
 //
-// spec: §11.2 line 42 (direct-mode usage loop; a minimal gateway records no
-// usage and runs no pull), §4.1 (background subsystems are constructed only
+// spec: §11.2, §4.1 (background subsystems are constructed only
 // when their dependencies are present).
 // diagnosis: the direct-mode poll loop was constructed and ran a live ticker on a usagestore-less gateway because a nil *proxyUsageRecorder wrapped into a non-nil directUsageRecorder interface, defeating the recorder==nil short-circuit (proposal 0024 S9 typed-nil no-op contract broken).
 func TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop(t *testing.T) {
@@ -366,7 +363,7 @@ func TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop(t *testing.T) {
 // TestClampDirectUsagePollIntervalSeconds pins the §11.2 poll-interval bounds:
 // a non-positive value selects the 30s default, a value below the 10s minimum
 // is clamped up, and a value at or above the minimum is unchanged.
-// spec: §11.2 line 44 (default 30, minimum 10).
+// spec: §11.2.
 func TestClampDirectUsagePollIntervalSeconds(t *testing.T) {
 	cases := []struct {
 		in, want int

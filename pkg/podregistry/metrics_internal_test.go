@@ -48,7 +48,7 @@ func sb(name, pool, phase string) *lennyv1.Sandbox {
 	return s
 }
 
-// spec: §12.6 line 478 — every PodRegistry method records its duration
+// spec: §12.6 — every PodRegistry method records its duration
 // under lenny_pod_registry_operation_duration_seconds{operation, pool}.
 func TestRegistryMetrics_OperationDuration_spec_12_6_478(t *testing.T) {
 	r, m := metricsRegistry(t, sb("alpha", "echo-pool", "idle"))
@@ -74,7 +74,7 @@ func TestRegistryMetrics_OperationDuration_spec_12_6_478(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 478 — a failed operation increments
+// spec: §12.6 — a failed operation increments
 // lenny_pod_registry_error_total{operation, pool}; a successful one does
 // not.
 func TestRegistryMetrics_ErrorCounter_spec_12_6_478(t *testing.T) {

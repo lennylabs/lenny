@@ -1,7 +1,7 @@
 {{- /*
 The §25.4 lenny-ops and lenny-backup NetworkPolicies beyond the
 lenny-ops-deny-all-ingress baseline (rendered in
-system-network-policies.yaml). §25.4 lines 1119-1403 name three more
+system-network-policies.yaml). §25.4 name three more
 policies the chart MUST render:
 
   - lenny-ops-allow-ingress-from-ingress-controller: the single ingress
@@ -67,7 +67,7 @@ spec:
       app: lenny-ops
   policyTypes: [Egress]
   egress:
-    # §25.4 lines 1157-1171 — gateway admin API. Exactly one port is
+    # §25.4 — gateway admin API. Exactly one port is
     # rendered, matching the transport the GatewayClient negotiates:
     # the TLS port (gateway.internalTLSPort) when ops.tls.internalEnabled
     # is true, otherwise the plaintext port (NET-070).
@@ -81,7 +81,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ $gatewayPort }}
-    # §25.4 lines 1172-1194 — Postgres via PgBouncer (NET-061).
+    # §25.4 — Postgres via PgBouncer (NET-061).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -92,7 +92,7 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
-    # §25.4 lines 1195-1205 — Redis (TLS port only).
+    # §25.4 — Redis (TLS port only).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -103,7 +103,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.redis.tlsPort }}
-    # §25.4 lines 1206-1215 — MinIO / S3-compatible (TLS).
+    # §25.4 — MinIO / S3-compatible (TLS).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -114,7 +114,7 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.minio.tlsPort }}
-    # §25.4 lines 1216-1226 — Prometheus (deployer-supplied; app label).
+    # §25.4 — Prometheus (deployer-supplied; app label).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -125,7 +125,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
-    # §25.4 lines 1227-1239 — Kubernetes API, ipBlock-scoped to the
+    # §25.4 — Kubernetes API, ipBlock-scoped to the
     # apiserver Service ClusterIP range (NET-040). An empty
     # namespaceSelector is a forbidden idiom (NET-055).
     - to:
@@ -134,7 +134,7 @@ spec:
       ports:
         - protocol: TCP
           port: 443
-    # §25.4 lines 1240-1251 — DNS with the canonical CoreDNS podSelector
+    # §25.4 — DNS with the canonical CoreDNS podSelector
     # (NET-067). Both UDP/53 and TCP/53.
     - to:
         - namespaceSelector:
@@ -154,7 +154,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # §25.4 lines 1252-1304 — tenant-influenced webhook delivery to the
+    # §25.4 — tenant-influenced webhook delivery to the
     # internet, host filtering enforced at the application layer. Two
     # parallel ipBlock peers (one per family, NET-062); the except block
     # carries cluster pod/service CIDRs (NET-065), RFC1918/link-local
@@ -204,7 +204,7 @@ spec:
           port: 443
 ---
 {{/*
-lenny-backup-job (§25.4 lines 1345-1403) — egress for the backup Job
+lenny-backup-job (§25.4) — egress for the backup Job
 pods (selected by app: lenny-backup). Jobs accept no ingress. Egress is
 Postgres (direct, not via the pooler), MinIO, the Kubernetes API, and
 DNS. Both selectors are present on every storage destination (NET-056).

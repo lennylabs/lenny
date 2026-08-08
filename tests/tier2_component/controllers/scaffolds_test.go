@@ -30,7 +30,7 @@ package controllers_test
 // round-trip per upstream call.
 //
 // The scaffold's original mention of "multi-replica leader election"
-// is deliberately not exercised: per §4.3 line 209 the Token Service
+// is deliberately not exercised: per §4.3 the Token Service
 // is fully stateless and "any replica can handle any request with no
 // affinity requirements", so AssignCredentials / RotateCredentials /
 // RevokeCredentials need no leader-election coordination at the v1

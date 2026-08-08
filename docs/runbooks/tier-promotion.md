@@ -62,7 +62,7 @@ lenny-tier-promote \
   --namespace lenny-system
 ```
 
-The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, §13.1/§13.2 admission-webhook coverage, the autoscaling provider (§17.8.3 line 1285), the SCL-036 burst-absorption floor (§17.8.2 line 950), and the Phase 13.5 attestations required by §17.8.3 (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration). A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
+The validator checks chart-values diff, deployed-replicas, persistent-storage class, secret-encryption posture, audit-retention, §13.1/§13.2 admission-webhook coverage, the autoscaling provider (§17.8.3), the SCL-036 burst-absorption floor (§17.8.2), and the Phase 13.5 attestations required by §17.8.3 (LLM Proxy extraction ratio, gateway GC pause, `maxSessionsPerReplica` calibration). A `FAIL` on any check aborts the promotion; the diagnostic detail identifies the offending resource.
 
 ### Step 3 — Take a fresh backup
 
@@ -161,7 +161,7 @@ The promotion gate validates promotions only and rejects a target tier below the
 
 The promotion is a one-way operation in the sense that tier 1's single-tenant defaults do not satisfy tier 2's multi-tenant invariants. The promotion gate validates promotions only and rejects a request whose target tier is below the source (`pkg/tierpromotion` errors on a demotion). A tier-2-to-tier-1 demotion for incident recovery is handled by `helm rollback` to the prior release (step 9) followed by a restore from the backup recorded in step 3, not by the gate.
 
-Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwarder, and the §25.11 backup-retention extension to 90 days. The §17.8.3 line 1285 NO-GO criterion makes KEDA mandatory at Tier 3; the validator rejects a chart that still renders `autoscaling.provider: hpa`. Before invoking the Tier 3 gate, run the Phase 13.5 benchmark harness and attest each result on the CLI:
+Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwarder, and the §25.11 backup-retention extension to 90 days. The §17.8.3 NO-GO criterion makes KEDA mandatory at Tier 3; the validator rejects a chart that still renders `autoscaling.provider: hpa`. Before invoking the Tier 3 gate, run the Phase 13.5 benchmark harness and attest each result on the CLI:
 
     lenny-tier-promote \
       --from tier2 --to tier3 \

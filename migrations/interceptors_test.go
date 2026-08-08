@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §4.8 lines 1034-1040 / §8.3 lines 205-224 (SEC-013) — migration
+// spec: §4.8 / §8.3 — migration
 // 0161 creates the platform-scoped interceptors registry table with the
 // closed fail-policy enum, the reserved-priority (>100) CHECK, and the
 // server-minted transition columns the admin write path never sets from a

@@ -121,7 +121,7 @@ class MessageEnvelope:
     ``schema_version`` and ``id`` when omitted. Basic-level handlers
     typically read only ``input``.
 
-    ``annotations`` carries the §15.5 line 2461 degradation-annotation
+    ``annotations`` carries the §15.5 degradation-annotation
     catalog (``schema_version_ahead``, ``durable_schema_version_ahead``,
     ``mcp_protocol_version_retired``). Producers stamp them when forward-
     read or retirement defects occur; the field is open metadata so new

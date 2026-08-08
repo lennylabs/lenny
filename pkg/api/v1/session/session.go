@@ -34,7 +34,7 @@ import (
 // use NewID. The version nibble is 8 and the variant bits are 10, per the
 // §12.6 bit layout.
 //
-// spec: §12.6 line 576 — root session creation generates a UUIDv8 with a
+// spec: §12.6 — root session creation generates a UUIDv8 with a
 // fully random routing prefix.
 func NewID() string {
 	var b [16]byte
@@ -53,7 +53,7 @@ func NewID() string {
 // is deployed. rootID must be a session id produced by NewID or
 // NewChildID; a malformed routing prefix returns an error.
 //
-// spec: §12.6 line 577 — "the gateway copies the first 32 bits from the
+// spec: §12.6 — "the gateway copies the first 32 bits from the
 // root session's UUID into the child's UUID. The remaining bits are
 // random."
 func NewChildID(rootID string) (string, error) {
@@ -124,8 +124,8 @@ const (
 	StateCancelled            State = "cancelled"
 	StateExpired              State = "expired"
 
-	// StateResuming is the §7.2 line 195 internal transient between
-	// resume_pending and running. §15.1 line 621 normalises the GET
+	// StateResuming is the §7.2 internal transient between
+	// resume_pending and running. §15.1 normalises the GET
 	// /v1/sessions/{id} envelope's `state` field to `resume_pending` →
 	// `running` so the resuming value is never returned from a polling
 	// read. It does, however, appear on the wire in two cases:
@@ -138,7 +138,7 @@ const (
 	// reference it without depending on the internal pkg/session/state
 	// package; it is intentionally NOT a member of AllStates() because
 	// the §15.1 polling envelope never returns it.
-	// spec: §7.2 line 195; §15.1 line 621; §10.4 coordinator-handoff
+	// spec: §7.2; §15.1; §10.4 coordinator-handoff
 	// reattach synthesis.
 	StateResuming State = "resuming"
 )
@@ -174,13 +174,12 @@ func IsTerminal(s State) bool {
 // action (awaiting_client_action). The §16.5 Session availability SLO is
 // the "uptime of sessions not in retry/recovery state", so these states
 // are the unavailable fraction the SessionAvailabilityBurnRate alert
-// reads. spec: §16.5 line 616, §6.2 lines 246-254, §7.3.
+// reads. spec: §16.5, §6.2, §7.3.
 func RecoveryStates() []State {
 	return []State{StateResumePending, StateResuming, StateAwaitingClientAction}
 }
 
-// IsRecovery reports whether s is a retry/recovery state per §16.5
-// line 616.
+// IsRecovery reports whether s is a retry/recovery state per §16.5.
 func IsRecovery(s State) bool {
 	for _, r := range RecoveryStates() {
 		if s == r {
@@ -289,14 +288,14 @@ var preconditionTable = map[Endpoint]endpointRule{
 	EndpointFinalize: {baseStates: []State{StateCreated}},
 	EndpointStart:    {baseStates: []State{StateReady}},
 	EndpointInterrupt: {
-		// §7.2 line 178 — input_required is a sub-state of running where
+		// §7.2 — input_required is a sub-state of running where
 		// the agent is blocked in lenny/request_input; an interrupt must
 		// still suspend the underlying session, so the precondition
 		// admits both running and input_required.
 		baseStates: []State{StateRunning, StateInputRequired},
 	},
 	EndpointTerminate: {
-		// §7.2 line 178 input_required → cancelled requires terminate to
+		// §7.2 input_required → cancelled requires terminate to
 		// accept the sub-state too.
 		baseStates: []State{
 			StateCreated, StateFinalizing, StateReady, StateStarting,
@@ -318,12 +317,12 @@ var preconditionTable = map[Endpoint]endpointRule{
 		},
 	},
 	EndpointDelete: {
-		// spec: §7.2 line 197 — `resuming → cancelled` via DELETE is
+		// spec: §7.2 — `resuming → cancelled` via DELETE is
 		// the canonical mid-resume cancel edge. StateResuming is
-		// excluded from AllStates() (per §15.1 line 621 collapse rule)
+		// excluded from AllStates() (per §15.1 collapse rule)
 		// so nonTerminalStates() does not pick it up; admit it
 		// explicitly so a DELETE landing during the internal
-		// `resuming` transient drives the §7.2 line 214 snapshot-close
+		// `resuming` transient drives the §7.2 snapshot-close
 		// fence. F-7.1.14.
 		baseStates: append(nonTerminalStates(), StateResuming),
 	},

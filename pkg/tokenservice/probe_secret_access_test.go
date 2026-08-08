@@ -34,7 +34,7 @@ func newProbeServer() *GRPCServer {
 	return NewGRPCServer(credassign.New(leases, credcache.New()), leases)
 }
 
-// spec: §4.9 line 1212 — a definitive verdict maps to the wire enum.
+// spec: §4.9 — a definitive verdict maps to the wire enum.
 func TestProbeSecretAccess_VerdictMapping(t *testing.T) {
 	cases := []struct {
 		name string
@@ -61,7 +61,7 @@ func TestProbeSecretAccess_VerdictMapping(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — with no prober wired (no in-cluster client) the
+// spec: §4.9 — with no prober wired (no in-cluster client) the
 // RPC returns Unavailable so the gateway maps it to 503 and never fails
 // open by treating an unevaluated probe as ALLOWED.
 func TestProbeSecretAccess_NoProberUnavailable(t *testing.T) {
@@ -73,7 +73,7 @@ func TestProbeSecretAccess_NoProberUnavailable(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — an indeterminate probe (prober error) is
+// spec: §4.9 — an indeterminate probe (prober error) is
 // Unavailable, distinct from a definitive DENIED.
 func TestProbeSecretAccess_ProberErrorUnavailable(t *testing.T) {
 	srv := newProbeServer()

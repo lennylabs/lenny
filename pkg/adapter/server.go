@@ -83,11 +83,11 @@ type Server struct {
 	// trees nest under (production /artifacts). Empty omits the per-slot
 	// artifacts directory.
 	ArtifactsRoot string
-	// SessionsRoot is the §6.4 line 380 /sessions tmpfs the runtime
+	// SessionsRoot is the §6.4 /sessions tmpfs the runtime
 	// writes its session file into (conversation logs, native SDK
 	// session state). When set, Checkpoint bundles it into the workspace
 	// archive and Resume restores it to its expected path, satisfying the
-	// §7.3 line 409 step (f) "restore session file to expected path".
+	// §7.3 step (f) "restore session file to expected path".
 	// Empty (dev mode, an in-process executor with no /sessions mount)
 	// leaves the session file out of the checkpoint and the resume a
 	// workspace-only restore.
@@ -103,9 +103,9 @@ type Server struct {
 	// container mounts it read-only. Empty skips the populate step (the
 	// volume is still mounted read-only and empty by the pod spec).
 	SharedAssetsDir string
-	// SharedAssets is the §6.4 line 409 inline shared-asset set
+	// SharedAssets is the §6.4 inline shared-asset set
 	// EnsureWarmWorkspaceLayout writes into SharedAssetsDir. Nil or empty
-	// leaves /workspace/shared empty. spec: §6.4 line 409 — F-6.4.3.
+	// leaves /workspace/shared empty. spec: §6.4 — F-6.4.3.
 	SharedAssets []sharedassets.FileSpec
 	// CredentialsDir is the directory the credential RPCs materialize
 	// the §4.7 credential file into — the pod's /run/lenny.
@@ -137,8 +137,7 @@ type Server struct {
 	// NonceOnlyMode reports that SO_PEERCRED is disabled
 	// (--require-so-peercred=false), so the manifest nonce alone is the
 	// intra-pod MCP authentication boundary. When set, the platform MCP
-	// server supplements the static nonce with the §4.7 per-connection
-	// challenge-response (lines 879-883), keeping forward security on each
+	// server supplements the static nonce with the §4.7 per-connection challenge-response, keeping forward security on each
 	// new connection.
 	NonceOnlyMode bool
 	// PlatformForwarder forwards the §9.1 platform tool calls a type:agent
@@ -148,7 +147,7 @@ type Server struct {
 	// gateway's platform tool catalog on tools/list and dispatches every
 	// tools/call to the gateway. Nil leaves the platform MCP server
 	// serving an empty catalog (the dev path with no gateway link).
-	// *gatewaycontrol.Client satisfies it. spec: §9.1 lines 14-31. F-9.1.1.
+	// *gatewaycontrol.Client satisfies it. spec: §9.1. F-9.1.1.
 	PlatformForwarder PlatformToolForwarder
 	// ConnectorForwarder forwards the §9.3 per-connector tool calls a
 	// type:agent runtime makes against the intra-pod @lenny-connector-<id>
@@ -158,7 +157,7 @@ type Server struct {
 	// server per connector whose tools/list and tools/call forward to the
 	// gateway. Nil leaves the manifest connectorServers array empty (the dev
 	// path with no gateway link). *gatewaycontrol.Client satisfies it.
-	// spec: §9.3 lines 142-164. F-9.1.2.
+	// spec: §9.3. F-9.1.2.
 	ConnectorForwarder ConnectorToolForwarder
 	// PodScrubReporter emits the §5.2 whole-pod scrub outcome to the gateway
 	// on the recycle boundary via ReportPodScrub. ConnectGateway wires it to
@@ -226,7 +225,7 @@ type Server struct {
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size limit. When
 	// greater than zero, a checkpoint whose probed workspace exceeds it
 	// terminates the Checkpoint stream with FailedPrecondition before any
-	// grant is minted (§4.4 line 255). Zero disables the limit — the
+	// grant is minted (§4.4). Zero disables the limit — the
 	// kubelet emptyDir guard is the backstop.
 	WorkspaceSizeLimitBytes int64
 	// Usage reports the session's token and wall-clock accounting the
@@ -243,28 +242,28 @@ type Server struct {
 	// `lenny_credential_rotation_timeout_total` metric's runtime label.
 	// Empty leaves the label empty.
 	RuntimeName string
-	// RotationInflightCeiling overrides the §4.7 line 822 fault/revocation
+	// RotationInflightCeiling overrides the §4.7 fault/revocation
 	// in-flight gate ceiling (default 300s). The renewal trigger ignores
 	// it and waits unbounded. Zero selects the spec default. Operator
 	// override is for test and latency tuning; production keeps the spec
 	// value.
 	RotationInflightCeiling time.Duration
-	// CredentialsAckTimeout overrides the §4.7 line 824 60s
+	// CredentialsAckTimeout overrides the §4.7 60s
 	// credentials_acknowledged timeout. Zero selects the spec default.
 	CredentialsAckTimeout time.Duration
-	// RotationAudit emits the §4.7 line 822 / §4.9.2
+	// RotationAudit emits the §4.7 / §4.9.2
 	// credential.rotation_ceiling_hit audit event when the in-flight gate
 	// hits the ceiling. Nil makes the emission a no-op (the dev-mode
 	// adapter has no EventStore path).
 	RotationAudit RotationAuditEmitter
 
-	// ExpiryAfterFunc and ExpiryNow are the §4.9 line 1149 expiry-timer
+	// ExpiryAfterFunc and ExpiryNow are the §4.9 expiry-timer
 	// test seams. Nil selects time.AfterFunc and time.Now; tests inject
 	// fakes to fire a lease expiry deterministically.
 	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
 	ExpiryNow       func() time.Time
 
-	// CoordinatorHoldTimeout overrides the §10.1 line 50
+	// CoordinatorHoldTimeout overrides the §10.1
 	// coordinatorHoldTimeoutSeconds default (120s): the window the adapter
 	// holds a session after losing its coordinator before it
 	// self-terminates. Zero selects the spec default.
@@ -273,7 +272,7 @@ type Server struct {
 	// time.AfterFunc; tests inject a fake to fire the hold timeout
 	// deterministically.
 	HoldAfterFunc func(time.Duration, func()) expiryTimerHandle
-	// PostMortemDir is the pod-local directory the §10.1 line 50 hold
+	// PostMortemDir is the pod-local directory the §10.1 hold
 	// timeout writes a coordinator_lost post-mortem record into when no
 	// new coordinator returns and the gateway control stream is gone.
 	// Empty skips the disk write (the dev path); the AdapterTerminating
@@ -281,15 +280,15 @@ type Server struct {
 	// primary terminal-notification surfaces.
 	PostMortemDir string
 
-	// HeartbeatInterval is the §15.4.1 line 1442 cadence at which the
+	// HeartbeatInterval is the §15.4.1 cadence at which the
 	// Attach loop sends a `{type:heartbeat,ts}` liveness ping to the
 	// runtime. Zero (the default) disables heartbeats — the in-process
 	// dev executor and tests that construct a bare Server send none.
 	// cmd/lenny-adapter sets it for the production sidecar so a hung
 	// runtime is detected by liveness probe, not only by stream close.
-	// spec: §15.4.1 lines 1442, 1826, 2061.
+	// spec: §15.4.1.
 	HeartbeatInterval time.Duration
-	// HeartbeatAckTimeout is the §15.4.1 line 1826 window the runtime has
+	// HeartbeatAckTimeout is the §15.4.1 window the runtime has
 	// to answer a heartbeat with `heartbeat_ack`. When the window elapses
 	// with no ack the adapter considers the process hung and sends SIGTERM
 	// (RuntimeProcess.Interrupt with hard=false). Zero selects the spec
@@ -354,7 +353,7 @@ type Server struct {
 	// credLeases is the credential lease set materialized into the
 	// credential file, keyed by provider.
 	credLeases map[string]*adapterv1.CredentialLease
-	// expiryTimers holds the §4.9 line 1149 direct-mode lease-expiry
+	// expiryTimers holds the §4.9 direct-mode lease-expiry
 	// timers, keyed by provider. Each fires at its lease's expiresAt to
 	// delete the provider's credential-file entry and report
 	// AUTH_EXPIRED unless a replacement lease arrived first.
@@ -364,7 +363,7 @@ type Server struct {
 	// slotId. Populated when a slot bind assigns a slot. Each slot owns its
 	// own workspace tree, state, and credential lease set; one pod-global
 	// runtime serves every slot, multiplexed on slotId over the single
-	// runtime connection. Guarded by mu. spec: §6.4 lines 385-409.
+	// runtime connection. Guarded by mu. spec: §6.4.
 	slots map[string]*slotState
 }
 
@@ -391,7 +390,7 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 	resp := &adapterv1.NegotiateVersionResponse{
 		Capabilities:   s.advertisedCapabilities(),
 		AdapterVersion: s.Version,
-		// spec: §7.3 line 408 — surface the absolute cwd path the adapter
+		// spec: §7.3 — surface the absolute cwd path the adapter
 		// mounts the workspace into so the gateway can persist it for the
 		// "same absolute cwd path" assertion on Resume. F-7.3.15.
 		WorkspaceRoot: s.WorkspaceRoot,

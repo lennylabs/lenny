@@ -115,7 +115,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Fatalf("create standard-reuse pool: %v", err)
 	}
 
-	// §10.1 line 131 / §5.2 per-pool checkpointGrantWindow override: the
+	// §10.1 / §5.2 per-pool checkpointGrantWindow override: the
 	// gateway-enforced value the checkpoint driver prefers over the
 	// deployment-wide default.
 	grantWindow := 8
@@ -180,7 +180,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Errorf("queue-pool mirror = %+v, want onPoolExhausted=queue / maxQueueWaitSeconds=45", got)
 	}
 
-	// §10.1 line 131 / §5.2 — the per-pool checkpointGrantWindow override
+	// §10.1 / §5.2 — the per-pool checkpointGrantWindow override
 	// surfaces on the mirror so the checkpoint driver's per-pool lookup
 	// reads the gateway-enforced value.
 	got, found, err = m.PoolPolicy(ctx, "cp-pool")
@@ -239,7 +239,7 @@ func TestNewPoolPolicyReader(t *testing.T) {
 	}
 }
 
-// spec: §5.2 / §7.1 lines 69-73 — sessionIsolationLevel maps the resolved
+// spec: §5.2 / §7.1 — sessionIsolationLevel maps the resolved
 // §5.2 pool's execution mode and scrub policy to the client-visible fields.
 // The former task and concurrent modes are session-mode presets: recycle
 // reuse and maxConcurrentSessions > 1.
@@ -332,7 +332,7 @@ func TestIsolationLevelForPool_spec_7_1(t *testing.T) {
 			if got.ScrubPolicy != tc.wantScr {
 				t.Errorf("scrubPolicy = %q, want %q", got.ScrubPolicy, tc.wantScr)
 			}
-			// spec: §7.1 line 74 — service mode reports "none", every other
+			// spec: §7.1 — service mode reports "none", every other
 			// mode "platform".
 			if got.ConversationContinuity != tc.wantCont {
 				t.Errorf("conversationContinuity = %q, want %q", got.ConversationContinuity, tc.wantCont)
@@ -353,7 +353,7 @@ func TestIsolationLevelForPool_FallsBackToRequestedProfile(t *testing.T) {
 
 // resolveIsolationLevel with no pool resolver wired (the Postgres-only
 // posture) falls back to the conservative session-mode level rather
-// than failing the create. spec: §7.1 line 75.
+// than failing the create. spec: §7.1.
 func TestResolveIsolationLevel_NoResolverFallsBackToSession(t *testing.T) {
 	s := &Server{} // podBinder nil
 	got := s.resolveIsolationLevel(t.Context(), "claude-code", isolation.ProfileSandboxed, "")
@@ -363,7 +363,7 @@ func TestResolveIsolationLevel_NoResolverFallsBackToSession(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 75 — persistedIsolationLevel surfaces the
+// spec: §7.1 — persistedIsolationLevel surfaces the
 // executionMode + scrubPolicy halves stamped on the row at create time,
 // so GET / List return the same rich envelope a client received from
 // the create response. Empty ExecutionMode (legacy rows or no-pool-
@@ -445,7 +445,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			},
 		},
 		{
-			// spec: §7.1 line 74 — a service-mode row whose stored
+			// spec: §7.1 — a service-mode row whose stored
 			// conversation_continuity column was never populated (a row
 			// persisted before the gateway resolved a service pool) still
 			// reports "none" through the mode-derived fallback, so the field
@@ -466,7 +466,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			},
 		},
 		{
-			// spec: §7.1 line 74 — a session-mode row with an empty
+			// spec: §7.1 — a session-mode row with an empty
 			// continuity column falls back to "platform".
 			name: "session mode with empty continuity column falls back to platform",
 			row: sessionstore.Session{
@@ -490,7 +490,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 74 — conversationContinuityFor maps the §5.2 execution
+// spec: §7.1 — conversationContinuityFor maps the §5.2 execution
 // mode to the contract value: "none" for service mode, "platform" for
 // session mode and the empty (unresolved) default.
 func TestConversationContinuityFor_spec_7_1_74(t *testing.T) {
@@ -509,7 +509,7 @@ func TestConversationContinuityFor_spec_7_1_74(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 74 — persistedContinuity prefers the stored S25a
+// spec: §7.1 — persistedContinuity prefers the stored S25a
 // conversation_continuity column when non-empty so a read returns the value
 // frozen at create, and falls back to the mode-derived value for an empty
 // column (a pre-migration or never-resolved row).
@@ -534,7 +534,7 @@ func TestPersistedContinuity_spec_7_1_74(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 75 — toResponse returns the persisted
+// spec: §7.1 — toResponse returns the persisted
 // executionMode + scrubPolicy halves so a GET surfaces the rich
 // envelope frozen at session creation, including after a coordinator
 // handoff.

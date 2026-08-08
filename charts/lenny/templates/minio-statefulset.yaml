@@ -20,7 +20,7 @@ TLS render mounts minio.tls.secretName and serves HTTPS on tlsPort.
 The pod carries the `lenny.dev/component: minio` label the §13.2 system
 NetworkPolicies (allow-minio, allow-gateway-egress) already select.
 
-spec: §17.9.5 lines 1497-1530 (self-managed MinIO workload), §12.5
+spec: §17.9.5, §12.5
 (ArtifactStore HA topology), §17.8 (per-tier node counts), §17.9.7 line
 1521 (S3-compatible API, encryption at rest, TLS in transit).
 */ -}}

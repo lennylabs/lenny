@@ -80,7 +80,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 
 // newMCPForInputWithRuntimes builds the MCP server like newMCPForInput
 // and also returns the §5.1 runtime registry + a session event bus so
-// the §8.8 line 869 `one_shot` tests can seed a runtime and read the
+// the §8.8 tests can seed a runtime and read the
 // elicitation_request SSE payload. F-8.8.10.
 func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Server, sessionstore.Store, runtimestore.Store, *inputwait.Registry, *sessionevents.Bus) {
 	t.Helper()
@@ -257,12 +257,11 @@ func TestCreateSessionTool(t *testing.T) {
 	}
 }
 
-// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 line
-// 677 dev-mode fallback in the lenny/create_session tool: the default
+// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 dev-mode fallback in the lenny/create_session tool: the default
 // session profile is sandboxed normally and standard (runc) when the
 // adapter is wired with DevMode.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
 	// Default (production) mode: sandboxed.
 	_, store := newMCP(t)
@@ -363,7 +362,7 @@ func TestSendMessageTool(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
-	// spec: §15.4 lines 1725-1737 — every lenny/send_message call
+	// spec: §15.4 — every lenny/send_message call
 	// returns a `delivery_receipt` envelope as the first text block,
 	// followed by the runtime's text output. F-7.2.10.
 	result, _ := resp["result"].(map[string]any)
@@ -383,7 +382,7 @@ func TestSendMessageTool(t *testing.T) {
 		t.Errorf("delivery receipt status = %q, want %q", envelope.DeliveryReceipt.Status, session.DeliveryStatusDelivered)
 	}
 	if envelope.DeliveryReceipt.MessageID == "" {
-		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id")
+		t.Error("delivery receipt messageId is empty; §15.4 requires a gateway-assigned id")
 	}
 	if envelope.DeliveryReceipt.DeliveredAt.IsZero() {
 		t.Error("delivery receipt deliveredAt is zero for status=delivered")
@@ -400,7 +399,7 @@ func TestSendMessageTool(t *testing.T) {
 // and the text projection echoes back. This is the MCP-side half of the
 // §15.2.1 REST/MCP parity the contract suite pins end to end.
 // spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])), §15.2.1
-// (REST/MCP parity), §8.5 line 537.
+// (REST/MCP parity), §8.5.
 func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 	cases := []struct {
 		name string
@@ -452,7 +451,7 @@ func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 // runtime consumed the answer, so status = delivered. The pre-fix
 // shape `{"resolved":"req-1"}` carried no receipt and clients tracking
 // receipts to reconcile retries had no signal on the inReplyTo path.
-// spec: §15.4 lines 1725-1737; §8.5 inReplyTo resolution. F-7.2.10.
+// spec: §15.4; §8.5 inReplyTo resolution. F-7.2.10.
 func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 	srv, store, reg := newMCPForInput(t, 5*time.Second)
 	mkSession(t, store, "sess_i", session.StateRunning, "")
@@ -561,7 +560,7 @@ func (c *captureTreeCycle) OnTreeCycle(_ context.Context, ev mcptools.TreeCycleE
 }
 
 // TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10
-// verifies that the §8.2 line 50 type rejection in `lenny/delegate_task`
+// verifies that the §8.2 type rejection in `lenny/delegate_task`
 // surfaces TARGET_NOT_AN_AGENT through the §15.2.1 lenny error envelope
 // rather than falling back to INTERNAL_ERROR. spec: §15.2.1 rule 3
 // (shared error taxonomy); F-8.5.10.
@@ -590,7 +589,7 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 // error (and so fell back to INTERNAL_ERROR / TRANSIENT / retryable=true
 // in handleToolCall) now return *mcp.ToolError carrying the canonical
 // lenny code, so the §15.2.1 rule 5(d) (category, retryable) pair
-// matches the REST surface. spec: §15.2.1 rule 5(d) line 1396. F-15.2.12.
+// matches the REST surface. spec: §15.2.1 rule 5(d). F-15.2.12.
 func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
@@ -643,7 +642,7 @@ func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 }
 
 // TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181
-// verifies that the §8.3 line 181 cluster-scoped weakening cooldown
+// verifies that the §8.3 cluster-scoped weakening cooldown
 // rejects every `delegate_task` whose effective DelegationPolicy is
 // the freshly-weakened row, surfacing INTERCEPTOR_WEAKENING_COOLDOWN
 // (TRANSIENT, HTTP 503) through the §15.2.1 lenny envelope with
@@ -692,7 +691,7 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 // TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1 verifies that
 // `lenny/get_task_tree` surfaces `runtimeRef` on every node, matching
 // the REST `/tree` projection (§15.2.1 REST↔MCP semantic equivalence).
-// spec: §8.5 line 530. F-8.5.1.
+// spec: §8.5. F-8.5.1.
 func mkSession(t *testing.T, store sessionstore.Store, id string, state session.State, parent string) {
 	t.Helper()
 	now := time.Now()
@@ -710,7 +709,7 @@ func mkSession(t *testing.T, store sessionstore.Store, id string, state session.
 // so the traversal does NOT descend through it — sess_a2x stays
 // running below the already-terminal sess_a2.
 // spec: §8.5 row for `cancel_child` ("cascades to its descendants per
-// policy"); §8.10 lines 1066-1076. F-8.5.19.
+// policy"); §8.10. F-8.5.19.
 func mkRuntime(t *testing.T, runtimes runtimestore.Store, name string, typ runtimestore.RuntimeType) {
 	t.Helper()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: name, Type: typ}); err != nil {
@@ -995,10 +994,10 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 
 // TestRequestInputPublishesElicitationRequestEvent_spec_7_2 asserts that
 // lenny/request_input surfaces the prompt on the session stream as the
-// canonical §7.2 line 136 `elicitation_request` SSE event, not as the
+// canonical §7.2 SSE event, not as the
 // pre-fix `request_input` synonym that was not in the §7.2 catalog and
 // silently bypassed clients filtering on the documented event name.
-// spec: §7.2 line 136. F-7.2.17.
+// spec: §7.2. F-7.2.17.
 func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
@@ -1028,9 +1027,9 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
 	}
 	if hist[0].Type != "elicitation_request" {
-		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
+		t.Errorf("event type = %q, want elicitation_request (§7.2 canonical name)", hist[0].Type)
 	}
-	// spec: §8.5 line 539 — the elicitation_request event payload now
+	// spec: §8.5 — the elicitation_request event payload now
 	// carries the structured `parts` array (F-8.5.12) rather than the
 	// legacy flat `prompt` string.
 	if !strings.Contains(hist[0].Data, "req-1") || !strings.Contains(hist[0].Data, "pick a color") {
@@ -1050,7 +1049,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 }
 
 // TestRequestInputOneShotRejectsSecondCall_spec_8_8_869 verifies the
-// §8.8 line 869 enforcement: a `one_shot` runtime's first
+// §8.8 enforcement: a `one_shot` runtime's first
 // lenny/request_input call lands; the second is rejected with
 // ONE_SHOT_INPUT_EXHAUSTED. F-8.8.10.
 func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
@@ -1088,7 +1087,7 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 	result2, _ := resp2["result"].(map[string]any)
 	env2 := readLennyErrorEnvelope(t, result2)
 	if env2["code"] != "ONE_SHOT_INPUT_EXHAUSTED" {
-		t.Errorf("second call code = %v, want ONE_SHOT_INPUT_EXHAUSTED (§8.8 line 869)", env2["code"])
+		t.Errorf("second call code = %v, want ONE_SHOT_INPUT_EXHAUSTED (§8.8)", env2["code"])
 	}
 	details, _ := env2["details"].(map[string]any)
 	if details == nil || details["maxInputRounds"] == nil {
@@ -1124,13 +1123,13 @@ func TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869(t *testing.T) {
 		env := readLennyErrorEnvelope(t, result)
 		// Both should time out (no responder), neither should be ONE_SHOT_INPUT_EXHAUSTED.
 		if env["code"] == "ONE_SHOT_INPUT_EXHAUSTED" {
-			t.Errorf("multi_turn runtime got ONE_SHOT_INPUT_EXHAUSTED on call %d (§8.8 line 869 only applies to one_shot)", i)
+			t.Errorf("multi_turn runtime got ONE_SHOT_INPUT_EXHAUSTED on call %d (§8.8 only applies to one_shot)", i)
 		}
 	}
 }
 
 // TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869
-// verifies the §8.8 line 869 elicitation_request annotation: a
+// verifies the §8.8 elicitation_request annotation: a
 // `one_shot` runtime's first request publishes the event with
 // `metadata.maxInputRounds: 1` so client renderers see the constraint
 // alongside the question. A `multi_turn` runtime emits no such
@@ -1173,9 +1172,9 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	}
 }
 
-// TestSendMessageTopologyAcceptsDirectChild — spec §7.2 line 240
+// TestSendMessageTopologyAcceptsDirectChild — spec §7.2
 // `direct` scope admits a parent→child message.
-// spec: §7.2 line 240, 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1190,9 +1189,9 @@ func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
 	}
 }
 
-// TestSendMessageTopologyAcceptsParent — spec §7.2 line 373 child→
+// TestSendMessageTopologyAcceptsParent — spec §7.2 child→
 // parent path is allowed under `direct` scope.
-// spec: §7.2 line 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1211,7 +1210,7 @@ func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 // sessions sharing a parent can message each other. The default `direct`
 // scope denies this (see TestSendMessageScopeDirectRejectsSibling); the
 // deployment must opt in to `siblings`.
-// spec: §7.2 line 241; F-7.2.6, F-7.2.22.
+// spec: §7.2; F-7.2.6, F-7.2.22.
 func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 	srv, store := newMCPMessaging(t, session.MessagingScopeSiblings, session.MessagingScopeSiblings, mcptools.MessagingRateLimit{})
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1229,7 +1228,7 @@ func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 
 // TestSendMessageTopologyRejectsUnrelatedSession — any session pair
 // that is not parent/child/sibling is rejected with SCOPE_DENIED.
-// spec: §7.2 line 240; §15.1 SCOPE_DENIED. F-7.2.22.
+// spec: §7.2; §15.1 SCOPE_DENIED. F-7.2.22.
 func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_a", session.StateRunning, "")
@@ -1245,7 +1244,7 @@ func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
 
 // TestSendMessageTopologyRejectsGrandparent — two-hop relationships
 // fall outside the parent/child/sibling neighborhood.
-// spec: §7.2 line 240; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_root", session.StateRunning, "")
@@ -1261,7 +1260,7 @@ func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
 }
 
 // TestSendMessageTopologyRejectsSelf — sender cannot target itself.
-// spec: §7.2 line 240; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyRejectsSelf(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_self", session.StateRunning, "")
@@ -1277,7 +1276,7 @@ func TestSendMessageTopologyRejectsSelf(t *testing.T) {
 // TestSendMessageTopologyDegradesWhenFromSessionIDOmitted — until
 // every caller upgrades to declare fromSessionId, the topology check
 // is skipped (the existing tests cover this baseline).
-// spec: §7.2 line 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyDegradesWhenFromSessionIDOmitted(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_a", session.StateRunning, "")

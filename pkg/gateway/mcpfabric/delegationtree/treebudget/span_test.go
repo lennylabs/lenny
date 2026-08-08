@@ -19,7 +19,7 @@ import (
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the function under
 // test emitted, then restores the prior provider when the test ends.
-// spec: §16.3 lines 347-348 (F-16.3.1).
+// spec: §16.3.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()
@@ -59,7 +59,7 @@ func hasIntAttr(attrs []attribute.KeyValue, key string) bool {
 	return false
 }
 
-// TestReserveEmitsBudgetReserveSpan_spec_16_3 asserts the §16.3 line 347
+// TestReserveEmitsBudgetReserveSpan_spec_16_3 asserts the §16.3
 // `delegation.budget_reserve` span is emitted on a successful reserve
 // with the four mandated attributes (outcome, tenant_id, root_session_id,
 // lua_queue_wait_ms). tenant_id is projected from the correlation context
@@ -105,7 +105,7 @@ func TestReserveEmitsBudgetReserveSpan_spec_16_3(t *testing.T) {
 
 // TestReserveRejectedSetsOutcomeAndRecordsError_spec_16_3 asserts a
 // budget-exceeded reserve sets outcome=rejected and records the error on
-// the `delegation.budget_reserve` span. §8.2 line 127.
+// the `delegation.budget_reserve` span. §8.2.
 func TestReserveRejectedSetsOutcomeAndRecordsError_spec_16_3(t *testing.T) {
 	rec, restore := installSpanRecorder(t)
 	defer restore()
@@ -149,7 +149,7 @@ func TestReserveRejectedSetsOutcomeAndRecordsError_spec_16_3(t *testing.T) {
 	}
 }
 
-// TestReturnEmitsBudgetReturnSpan_spec_16_3 asserts the §16.3 line 348
+// TestReturnEmitsBudgetReturnSpan_spec_16_3 asserts the §16.3
 // `delegation.budget_return` span is emitted on a successful return with
 // outcome=returned and the mandated attributes.
 func TestReturnEmitsBudgetReturnSpan_spec_16_3(t *testing.T) {

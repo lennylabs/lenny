@@ -10,7 +10,7 @@ import (
 )
 
 // bufferCapacity is the §25.4 Tier 3 in-memory buffer cap: the oldest
-// escalation is evicted when a new one would exceed it (§25.4 line 2384).
+// escalation is evicted when a new one would exceed it (§25.4).
 const bufferCapacity = 100
 
 // MemStore is the §25.4 Tier 3 in-memory escalation buffer: a capped
@@ -68,7 +68,7 @@ func (m *MemStore) Get(_ context.Context, id string) (*Escalation, error) {
 // page capped by limit. The in-memory buffer is the CursorKindNone query
 // path: it paginates by limit only and reports HasMore when more matching
 // records exist beyond the page, but issues no continuation cursor
-// (§25.4 line 2429).
+// (§25.4).
 func (m *MemStore) List(_ context.Context, f Filter, _ string, limit int) (ListPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

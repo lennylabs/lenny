@@ -138,7 +138,7 @@ func TestCronEvaluatorReportsRunError(t *testing.T) {
 	}
 }
 
-// TestCronEvaluatorHonoursRuntimeSchedule is the §25.11 line 4106
+// TestCronEvaluatorHonoursRuntimeSchedule is the §25.11
 // contract: a job whose ExpressionFunc supplies a runtime-edited cron
 // fires on the edited cadence rather than the compiled-in Expression,
 // without a process restart. The compiled-in default is 02:00 daily;

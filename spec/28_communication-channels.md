@@ -580,13 +580,386 @@ the connection it runs on. The runtime is the dialling participant on every chan
   specification does not state a buffering or replay policy for a message the adapter holds while the
   runtime is absent.
 
+This card owns the schema of each `CH-MSGSOCK` message and the schema of the `MessagePart` content
+envelope those messages carry. Both are stated below.
+
+**Message schemas**
+
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`, `slotId`) can be safely ignored.
+
+**Inbound: `message`**
+
+```json
+{
+  "type": "message",
+  "id": "msg_001",
+  "input": [{ "type": "text", "inline": "What is 2+2?" }],
+  "from": { "kind": "client", "id": "client_8f3a2b" },
+  "threadId": "t_01",
+  "delivery": "queued",
+  "slotId": "slot_01"
+}
+```
+
+Basic-level: read `type`, `id`, `input`. Ignore all other fields. `slotId` is optional and is present only on pods with `maxConcurrentSessions > 1`.
+
+**Inbound: `heartbeat`**
+
+```json
+{ "type": "heartbeat", "ts": 1717430400 }
+```
+
+Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and sends SIGTERM.
+
+**Inbound: `shutdown`**
+
+```json
+{ "type": "shutdown", "reason": "drain", "deadline_ms": 10000 }
+```
+
+Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
+
+**Inbound: `tool_result`**
+
+Schema:
+
+```json
+{
+  "type": "tool_result",
+  "id": "<string, required — matches the tool_call.id this result responds to>",
+  "content": ["<MessagePart[], required — result content>"],
+  "isError": "<boolean, optional — true if tool execution failed; defaults to false>",
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
+}
+```
+
+Example:
+
+```json
+{
+  "type": "tool_result",
+  "id": "tc_001",
+  "content": [{ "type": "text", "inline": "file contents here" }],
+  "isError": false
+}
+```
+
+**Correlation:** Every `tool_result.id` MUST match the `id` of a previously emitted `tool_call`. The adapter validates this — a `tool_result` with an unknown `id` is dropped and logged as a protocol error. Agents may have multiple outstanding `tool_call` requests; results may arrive in any order.
+
+**Delivery semantics:** Tool calls use synchronous request/response semantics within the stdin/stdout channel. The agent emits a `tool_call`, then continues reading stdin until it receives the matching `tool_result` (identified by `id`). Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` — the agent must handle interleaved delivery. There is no async callback or webhook mechanism; all tool results are delivered inline on stdin.
+
+**Tool access by level:**
+
+| Level        | Tool access                                                                                                        | `tool_call` / `tool_result` behavior                                                                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Basic**    | No MCP tools available. The agent binary has no platform MCP server or connector MCP servers.                      | Agents MAY still emit `tool_call` for adapter-local tools (e.g., `read_file`, `write_file` provided by the adapter's local sandbox tooling). The adapter resolves these locally and returns `tool_result` on stdin. No platform or connector tools are accessible. |
+| **Standard** | Platform MCP server tools (`lenny/delegate_task`, `lenny/request_input`, etc.) and per-connector MCP server tools. | The agent calls MCP tools via the MCP client connection to the adapter's local servers (not via `tool_call` on stdin). The stdin `tool_call`/`tool_result` channel is used for adapter-local tools only.                                                           |
+| **Full**     | Same as Standard plus CH-RUNTIMEOPS capabilities.                                                              | Same as Standard.                                                                                                                                                                                                                                                  |
+
+**Outbound: `response`**
+
+```json
+{
+  "type": "response",
+  "output": [{ "type": "text", "inline": "The answer is 4." }],
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
+}
+```
+
+Basic-level shorthand (adapter normalizes to canonical form above):
+
+```json
+{ "type": "response", "text": "The answer is 4." }
+```
+
+**Error reporting via `response`.** The `response` message supports an optional `error` field for structured error reporting: `{"code": string, "message": string}`, matching the `TaskResult.error` shape. When `error` is present, the adapter maps the task to `failed` state and populates `TaskResult.error` from the response error. This allows runtimes to report failure details while still delivering partial output in the `output` array, without relying solely on non-zero exit codes (which lose error context). When `error` is absent and the process exits zero, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
+
+**Relationship between `lenny/output` and stdout `response`:** At Standard and Full levels, runtimes may emit output parts incrementally via the `lenny/output` platform MCP tool. The stdout `{type: "response"}` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`; runtimes that have already emitted all output parts via `lenny/output` send an empty `output` array (`[])`. The adapter concatenates `lenny/output` parts (in call order) with the final `response.output` parts to form the complete task output. Basic-level runtimes, which have no access to `lenny/output`, must include all output in the stdout `response.output` array. Standard-level runtimes may use either delivery path or both.
+
+**Outbound: `tool_call`**
+
+Schema:
+
+```json
+{
+  "type": "tool_call",
+  "id": "<string, required — unique call identifier; used to correlate the inbound tool_result>",
+  "name": "<string, required — tool name>",
+  "arguments": "<object, required — tool-specific parameters; validated by the adapter against the tool's input schema>",
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
+}
+```
+
+Example:
+
+```json
+{
+  "type": "tool_call",
+  "id": "tc_001",
+  "name": "read_file",
+  "arguments": { "path": "/workspace/foo.txt" }
+}
+```
+
+The `id` field is generated by the agent and must be unique within the session. Recommended format: `tc_` prefix with a monotonic counter or random suffix (e.g., `tc_001`, `tc_a7f3b`). The adapter uses this `id` to route the corresponding `tool_result` back on stdin.
+
+**Adapter-Local Tool Reference**
+
+Adapter-local tools are resolved entirely within the adapter process — no MCP server, no platform access, and no network call is required. They are available at all levels (Basic, Standard, Full). The following tools are built into every adapter:
+
+| Tool name     | Description                                                       |
+| ------------- | ----------------------------------------------------------------- |
+| `read_file`   | Read the contents of a file in the workspace                      |
+| `write_file`  | Create or overwrite a file in the workspace                       |
+| `list_dir`    | List the entries of a directory in the workspace                  |
+| `delete_file` | Delete a file or empty directory from the workspace               |
+
+Discovery: agents discover adapter-local tools by inspecting the `adapterLocalTools` array in the adapter manifest (`/run/lenny/adapter-manifest.json`). Each entry contains the tool `name`, a human-readable `description`, and a JSON Schema `inputSchema` for its `arguments` object. Adapters MUST populate this array before spawning the runtime; the set is fixed for the lifetime of the pod.
+
+Schemas for the four built-in tools:
+
+```json
+[
+  {
+    "name": "read_file",
+    "description": "Read the contents of a file in the workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Workspace-relative or absolute path to the file." }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "write_file",
+    "description": "Create or overwrite a file in the workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path":    { "type": "string", "description": "Workspace-relative or absolute path to the file." },
+        "content": { "type": "string", "description": "UTF-8 text content to write." }
+      },
+      "required": ["path", "content"]
+    }
+  },
+  {
+    "name": "list_dir",
+    "description": "List the entries of a directory in the workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Workspace-relative or absolute path to the directory." }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "Delete a file or empty directory from the workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Workspace-relative or absolute path to the target." }
+      },
+      "required": ["path"]
+    }
+  }
+]
+```
+
+All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined to the pod's workspace volume (`/workspace`). The adapter rejects any path that resolves outside `/workspace` with a `tool_result` carrying `isError: true` and `content[0].inline` set to the string `"path_outside_workspace"`. Custom adapters MAY extend this list with additional adapter-local tools; they MUST declare all custom tools in `adapterLocalTools` before spawning the runtime.
+
+**Outbound: `heartbeat_ack`**
+
+```json
+{ "type": "heartbeat_ack" }
+```
+
+**Outbound: `status` (optional)**
+
+```json
+{ "type": "status", "state": "thinking", "message": "Analyzing code..." }
+```
+
+**Exit Codes**
+
+| Code | Meaning                                                            |
+| ---- | ------------------------------------------------------------------ |
+| 0    | Normal completion — session ended cleanly or shutdown honored      |
+| 1    | Runtime error — adapter logs stderr and reports failure to gateway |
+| 2    | Protocol error — agent could not parse inbound messages            |
+| 137  | SIGKILL (set by OS) — adapter treats as crash, pod is not reused   |
+
+Any non-zero exit during an active session causes the gateway to report a session error to the client. During draining, exit code 0 confirms graceful shutdown; non-zero triggers an alert but the session result (if any) is still delivered.
+
+**Annotated Protocol Trace — Basic-Level Session**
+
+```
+1. Adapter starts agent binary, stdin/stdout pipes open.
+2. Adapter writes to stdin:
+   {"type": "message", "id": "msg_001", "input": [{"type": "text", "inline": "Hello"}], "from": {"kind": "client", "id": "client_8f3a2b"}, "threadId": "t_01"}
+3. Agent reads line from stdin, parses JSON, reads type/id/input (ignores other fields).
+4. Agent writes to stdout (either form is valid):
+   {"type": "response", "text": "Echo: Hello"}
+   — or equivalently —
+   {"type": "response", "output": [{"type": "text", "inline": "Echo: Hello"}]}
+5. Adapter reads line from stdout, delivers response to gateway.
+6. [Heartbeat interval] Adapter writes:
+   {"type": "heartbeat", "ts": 1717430410}
+7. Agent writes:
+   {"type": "heartbeat_ack"}
+8. Gateway initiates shutdown. Adapter writes:
+   {"type": "shutdown", "reason": "drain", "deadline_ms": 10000}
+9. Agent finishes, exits with code 0.
+10. Adapter reports clean termination to gateway.
+```
+
+**Internal `MessagePart` format**
+
+`agent_text` streaming event is replaced by `agent_output` carrying `MessagePart` array. `TaskResult` and `TaskSpec` use `MessagePart` arrays. This is Lenny's internal content model — the adapter translates to/from external protocol formats (MCP, A2A) at the boundary.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "part_abc123",
+  "type": "text",
+  "mimeType": "text/plain",
+  "inline": "content here",
+  "ref": "lenny-blob://...",
+  "annotations": { "role": "primary", "final": true },
+  "parts": [],
+  "status": "streaming | complete | failed"
+}
+```
+
+**Properties:**
+
+- **`schemaVersion` is an integer identifying the MessagePart schema revision (default `1`).** Present on every persisted `MessagePart`. The forward-compatibility contract has obligations on both sides:
+  - **Producer obligation:** Producers MUST set `schemaVersion` to the highest version required by the fields they emit. When a schema version introduces semantically important fields (e.g., `citations` in v2), the producer MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
+  - **Consumer obligation — streaming/live delivery:** Consumers MUST NOT reject a `MessagePart` solely because its `schemaVersion` is higher than the consumer understands. When a consumer encounters a `schemaVersion` it does not recognize, it processes the fields it does understand and MUST surface a **degradation signal**: a `schema_version_ahead` annotation on the parent `MessageEnvelope` (with `"knownVersion"` and `"encounteredVersion"` fields) so the end user or upstream caller is informed that the response may be incomplete. Consumers MUST NOT silently discard unknown fields without this signal. This ensures data loss from schema mismatch is always visible rather than hidden. `schema_version_ahead` is scoped specifically to the "new writer, old reader" direction on the `schemaVersion` field of a record; it is one of several distinct degradation annotation kinds catalogued in [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7 (Degradation annotation catalog) and MUST NOT be reused for unrelated signals such as retired MCP protocol versions.
+  - **Consumer obligation — durable storage (TaskRecord):** When `MessagePart` arrays are persisted as part of a `TaskRecord` ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)), the forward-read rule from [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7 applies: if a reader encounters a `MessagePart` with a `schemaVersion` it does not recognize, it MUST **forward-read** — process all fields it understands and preserve all unknown fields verbatim (pass-through) — rather than rejecting the record. Billing and audit records retained for 13 months will span multiple schema revisions; silent data loss or outright rejection in these records is unacceptable. If a durable consumer cannot safely pass through unknown fields (e.g., it writes to a schema-strict sink), it MUST emit a `durable_schema_version_ahead` structured error to an operator alert channel and queue the record for manual review rather than dropping it. This rule is consistent with the general durable-consumer rule in [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7 and extends it explicitly to `MessagePart` arrays embedded within persisted `TaskRecord` objects.
+- **`type` is an open string — not a closed enum — with a versioned canonical type registry.** The registry defines platform-defined types and their guaranteed translation behavior per adapter. Unprefixed names are reserved for the platform registry; third-party extensibility uses the `x-<vendor>/` namespace (see namespace convention below). Any type not in the current registry version is treated as a custom type and falls back to `text` with the original type preserved in `annotations.originalType`. Types may be added to the registry in minor releases; removing a type or changing its translation behavior is a breaking change requiring a major version bump. To preserve forward-compatibility across minor releases, unknown unprefixed types are **not** rejected at ingress — they are passed through with the same custom-type fallback, plus an `unregistered_platform_type` warning annotation, so that a newly registered type can be emitted by an updated runtime before all gateways have been upgraded. This retains open-string extensibility while making translation deterministic across adapter implementations.
+
+  **Canonical Type Registry (v1):**
+
+  | Type               | Description                                   | MCP Translation                                              | OpenAI Translation                           | A2A Translation                                      |
+  | ------------------ | --------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------- |
+  | `text`             | Plain or formatted text                       | `TextContent` block                                          | `text` content                               | A2A `TextPart`                                       |
+  | `code`             | Source code with optional language annotation | `TextContent` with `language` annotation                     | `text` content                               | A2A `TextPart` with `mimeType`                       |
+  | `reasoning_trace`  | Model reasoning/chain-of-thought              | `TextContent` with `thinking` annotation                     | `text` content (reasoning not representable) | A2A `TextPart` with `metadata.semantic: "reasoning"` |
+  | `citation`         | Source citation or reference                  | `TextContent` with citation annotation                       | `text` content                               | A2A `TextPart` with `metadata.semantic: "citation"`  |
+  | `screenshot`       | Screen capture image                          | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
+  | `image`            | General image content                         | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
+  | `diff`             | Code diff / patch                             | `TextContent` with `language: "diff"`                        | `text` content                               | A2A `TextPart` with `mimeType: "text/x-diff"`        |
+  | `file`             | File content (binary or text)                 | `ResourceContent` block                                      | Resolved to inline `text` or dropped         | A2A `FilePart`                                       |
+  | `execution_result` | Compound output from code execution           | Flattened to sequential `TextContent` blocks with `parentId` | Flattened to sequential `text` entries       | A2A composite part                                   |
+  | `error`            | Error or diagnostic message                   | `TextContent` with `isError: true`                           | `text` content                               | A2A `TextPart` with `metadata.semantic: "error"`     |
+
+  **Custom types** (any `type` value not listed above): collapsed to `text` with `annotations.originalType` set to the original type string. Runtimes may emit any custom type; the gateway passes them through internally but adapters apply the fallback rule at the protocol boundary. The registry is published as part of the runtime adapter specification and versioned alongside the adapter protocol.
+
+  **Namespace convention for third-party types.** To avoid collisions with future platform-defined types, all vendor- or community-defined custom types MUST use a reverse-DNS namespace prefix in the form `x-<vendor>/<typeName>` (e.g., `x-acme/heatmap`, `x-myorg/audio-transcript`). Unprefixed names are reserved for platform-defined registry types. The gateway logs and annotates unknown unprefixed types at ingress (adding an `unregistered_platform_type` warning annotation with the unrecognized type string) but does **not** reject them — they fall through to the standard custom-type-to-`text` collapse so that newly registered types introduced in a minor release are forward-compatible across gateway versions that have not yet been upgraded.
+
+  **`schemaVersion` per-type contract.** The `schemaVersion` field on a `MessagePart` is scoped to the envelope schema (field set, semantics of existing fields). The stable field set guaranteed at each registry version is:
+
+  | Type               | `schemaVersion` 1 — guaranteed fields                                               | Notes on future versions                                              |
+  | ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+  | `text`             | `type`, `inline`, `mimeType` (`text/plain`)                                         | v2 may add `citations[]`                                              |
+  | `code`             | `type`, `inline`, `mimeType`, `annotations.language`                                | —                                                                     |
+  | `reasoning_trace`  | `type`, `inline`                                                                    | v2 may add structured `steps[]`                                       |
+  | `citation`         | `type`, `inline`, `annotations.source`                                              | —                                                                     |
+  | `screenshot`       | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
+  | `image`            | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
+  | `diff`             | `type`, `inline`, `annotations.language` (`diff`)                                   | —                                                                     |
+  | `file`             | `type`, `inline` or `ref`, `mimeType`                                               | —                                                                     |
+  | `execution_result` | `type`, `parts[]` (each part is a full `MessagePart`)                                | v2 may add `exitCode`, `duration`                                     |
+  | `error`            | `type`, `inline` (human-readable message), `annotations.errorCode` (optional)       | —                                                                     |
+
+  A producer emitting fields that were introduced in a later schema version MUST set `schemaVersion` to that version. Consumers that encounter a `(type, schemaVersion)` combination they do not recognize apply the forward-compatibility rules defined above: degradation signal for live delivery; forward-read with unknown-field preservation for durable storage (see [Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7).
+
+- **`mimeType` handles encoding separately.** The gateway validates, logs, and routes based on MIME type without understanding semantics.
+- **`inline` vs `ref` — resolution protocol.** A part either contains bytes inline (`inline` field set, base64 for binary content) or references external blob storage (`ref` field set). The two fields are mutually exclusive on any given part; setting both is a validation error (`400 MESSAGEPART_INLINE_REF_CONFLICT`). The gateway selects the representation automatically based on part size:
+
+  | Part size | Gateway action | Consumer sees |
+  | --- | --- | --- |
+  | ≤ 64 KB | Store inline (base64 for binary, UTF-8 for text) | `inline` field populated; `ref` absent |
+  | > 64 KB and ≤ 50 MB | Stage to blob store; set `ref` to `LennyBlobURI` | `ref` populated; `inline` absent |
+  | > 50 MB | Rejected at ingress | `413 MESSAGEPART_TOO_LARGE` |
+
+  **`LennyBlobURI` scheme.** Blob references use the URI scheme `lenny-blob://`:
+
+  ```
+  lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl={seconds}&enc=aes256gcm
+  ```
+
+  | Component | Description |
+  | --- | --- |
+  | `tenant_id` | Tenant namespace — prevents cross-tenant dereference |
+  | `session_id` | Originating session — scopes the blob to one session |
+  | `part_id` | Stable part identifier (matches `MessagePart.id`) |
+  | `ttl` | Seconds until the blob expires in storage (see TTL table below) |
+  | `enc` | Encryption indicator; always `aes256gcm` for stored blobs |
+
+  **Immutability guarantee.** Blob storage is write-once per `(tenant_id, session_id, part_id)` triple. The gateway writes a blob exactly once when staging a `MessagePart`; subsequent reads always return the same bytes. No `generation` component is needed in the URI because part IDs are globally unique within a session — the internal `coordination_generation` counter ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) is used only for coordinator fencing and never causes part IDs to be reused or existing blobs to be overwritten. A `lenny-blob://` URI is safe to cache and share for the duration of its `ttl`.
+
+  **TTL policy by context:**
+
+  | Context | Default TTL | Configurable? |
+  | --- | --- | --- |
+  | Live streaming delivery (session active) | 3 600 s (1 h) | Yes — `blobStore.liveDeliveryTtlSeconds` |
+  | Persisted in `TaskRecord` | 2 592 000 s (30 d) | Yes — `blobStore.taskRecordTtlSeconds` |
+  | Audit / billing event payload | 34 128 000 s (13 months) | Yes — `blobStore.auditTtlSeconds` |
+  | Delegation export (parent → child) | Duration of child session + 1 h | Fixed |
+
+  **Consumer fallback obligation.** When a consumer encounters a `ref` it cannot dereference (blob expired, storage unavailable, network partition), it MUST:
+  1. Surface a `blob_ref_unresolvable` degradation annotation on the `MessageEnvelope` (fields: `partId`, `ref`, `reason`).
+  2. Substitute a placeholder `MessagePart` of type `error` with `inline: "Blob reference unresolvable: {reason}"`.
+  3. Never silently drop the part.
+
+  **Adapter dereference obligation.** External protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields before serializing outbound messages to external clients — external protocols do not speak `lenny-blob://`. The REST adapter passes `ref` values through as-is (REST clients may dereference directly via `GET /v1/blobs/{ref}`).
+- **`annotations` as an open metadata map.** `role`, `confidence`, `language`, `final`, `audience` — any metadata. The gateway can index and filter on annotations without understanding the part type.
+- **`parts` for nesting.** Compound outputs (e.g., `execution_result` containing code, stdout, stderr, chart) are first-class.
+- **`id` enables part-level streaming updates** — concurrent part delivery where text streams while an image renders.
+
+**Rationale for internal format over MCP content blocks directly:** Runtimes are insulated from external protocol evolution. When MCP adds new block types or A2A parts change, only the gateway's `ExternalProtocolAdapter` translation layer updates — runtimes are untouched.
+
+**MCP content block → MessagePart mapping (inbound translation):** When the gateway receives MCP content blocks from a client and delivers them to a runtime, the adapter translates each MCP block to a `MessagePart` as follows:
+
+| MCP content block type | → `MessagePart.type` | `MessagePart.inline` source                  | `MessagePart.mimeType`          | `MessagePart.ref` source   | Notes                                                             |
+| ---------------------- | ------------------- | ------------------------------------------- | ------------------------------ | ------------------------- | ----------------------------------------------------------------- |
+| `TextContent`          | `text`              | `text` field                                | `text/plain`                   | —                         | `language` annotation → `annotations.language` if present        |
+| `ImageContent` (url)   | `image`             | —                                           | from `mimeType` if present     | `url.url`                 | URL set as `ref`; inline not populated                            |
+| `ImageContent` (base64)| `image`             | base64 data string                          | `mimeType`                     | —                         | Stored inline                                                     |
+| `EmbeddedResource` (text blob) | `file`    | resource text content                       | `text/plain` or resource MIME  | —                         | Stored inline when small; large blobs staged to artifact store    |
+| `EmbeddedResource` (blob)      | `file`    | —                                           | resource MIME type             | artifact URI              | Staged to artifact store; `ref` set to `lenny-blob://` URI        |
+| `EmbeddedResource` (uri)       | `file`    | —                                           | resource MIME type             | resource URI              | `ref` set directly from resource URI                              |
+| MCP `isError: true` annotation | `error`   | inherited from enclosing block              | —                              | —                         | `type` overridden to `error`; `annotations.errorCode` populated if present |
+
+Runtime authors who produce output using MCP-familiar content block objects can use the `from_mcp_content()` helper (see below) to perform this translation without manual field mapping.
+
+**Minimum required fields for Basic-level runtimes:** Only `type` and `inline` are required. All other fields (`schemaVersion`, `id`, `mimeType`, `ref`, `annotations`, `parts`, `status`) are optional and have sensible defaults — `schemaVersion` defaults to `1` if absent, `id` is generated by the adapter if absent, `mimeType` defaults to `text/plain` for `type: "text"`, `status` defaults to `complete` for non-streaming responses. A minimal valid `MessagePart` is `{"type": "text", "inline": "hello"}`.
+
+**Simplified text-only response shorthand:** Basic-level runtimes may emit a simplified response form with a top-level `text` field instead of an `output` array:
+
+```json
+{ "type": "response", "text": "The answer is 4." }
+```
+
+The adapter normalizes this to the canonical form `{"type": "response", "output": [{"type": "text", "inline": "The answer is 4."}]}` before forwarding to the gateway. This shorthand is strictly equivalent — runtimes that need structured output (multiple parts, non-text types, annotations) use the full `output` array form.
+
+**Optional SDK helper `from_mcp_content(blocks)`** converts MCP content blocks to `MessagePart` arrays for runtime authors who want to produce output using familiar MCP formats. Availability:
+
+- **Go:** Ships in the `github.com/lennylabs/runtime-sdk-go/messagepart` sub-package of the Runtime Author SDK ([§15.7](15_external-api-surface.md#157-runtime-author-sdks)) (Phase 2 deliverable). Import the package and call `messagepart.FromMCPContent(blocks)`.
+- **Other languages:** Not yet published as a library. Use the mapping table above to implement the conversion inline — the logic is a straightforward switch on `content.type`. A copy-paste reference implementation is distributed alongside the runtime adapter specification artifacts ([Section 15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+- **No SDK required:** Runtimes can construct `MessagePart` objects directly without any Lenny SDK dependency. The SDK helper is a convenience only.
+
 **`CH-RUNTIMEOPS`**
 
 - **Link.** `None` (§28.3). The channel's own register row and the endpoint below describe the
   connection.
 - **Endpoint.** The abstract Unix socket `@lenny-runtime-ops`, advertised in the adapter manifest as
-  `runtimeOps.socket`. The runtime connects as a client and the adapter listens
-  ([§4.7](04_system-components.md#47-runtime-adapter)). The protections stated for the socket are the
+  `runtimeOps.socket` ([§4.7](04_system-components.md#47-runtime-adapter)). The runtime connects as a
+  client and the adapter listens. The protections stated for the socket are the
   `SO_PEERCRED` peer-UID check against the expected agent UID and the manifest-nonce handshake, which the
   runtime presents as the first message on the socket. When `Runtime.spec.requireSoPeercred` is `false`
   the peer check is unavailable and the adapter supplements the static nonce with a per-connection
@@ -600,22 +973,41 @@ the connection it runs on. The runtime is the dialling participant on every chan
   `deadline_approaching`. Runtime to adapter: `lifecycle_support`, `checkpoint_ready`,
   `interrupt_acknowledged`, `credentials_acknowledged`, `llm_request_started`, and
   `llm_request_completed`. Each message is a single JSON object terminated by `\n` with `type` as its
-  discriminator, and the field set of each is stated with the message-schema table in
-  [§4.7](04_system-components.md#47-runtime-adapter). An unknown message is silently ignored on both
-  sides ([§4.7](04_system-components.md#47-runtime-adapter)).
+  discriminator, and the field set of each is the message-schema table below. The channel is versioned by
+  the capability negotiation at its top, where `lifecycle_capabilities` carries the `protocolVersion` the
+  adapter offers. An unknown message is silently ignored on both sides. In direct mode
+  `llm_request_completed` optionally carries the per-call `inputTokens` and `outputTokens` counts that
+  supply the direct-mode usage source
+  ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
+
+  | `type`                      | Direction          | Fields                                                                                                                                                              | Notes                                                                       |
+  | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+  | `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`) | First message sent on channel open. Runtime must reply with `lifecycle_support`. |
+  | `lifecycle_support`         | Runtime → Adapter  | `type`, `capabilities` (array of strings — subset of offered capabilities the runtime supports)                                                                    | Runtime's capability handshake reply.                                       |
+  | `checkpoint_request`        | Adapter → Runtime  | `type`, `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                                       | Adapter requests runtime quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
+  | `checkpoint_complete`       | Adapter → Runtime  | `type`, `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                                              | Confirms snapshot upload result; runtime may resume.                        |
+  | `interrupt_request`         | Adapter → Runtime  | `type`, `interruptId` (string), `deadlineMs` (integer)                                                                                                             | Requests the runtime reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
+  | `credentials_rotated`       | Adapter → Runtime  | `type`, `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/credentials.json`), `leaseId` (string)                                        | New credentials written; runtime must rebind and reply with `credentials_acknowledged`. |
+  | `terminate`                 | Adapter → Runtime  | `type`, `deadlineMs` (integer), `reason` (string: `"session_complete"` \| `"budget_exhausted"` \| `"eviction"` \| `"operator"`)                                    | Graceful shutdown signal. Runtime must exit within `deadlineMs`; adapter sends SIGTERM on timeout. Receipt always means process exit. |
+  | `deadline_approaching`      | Adapter → Runtime  | `type`, `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)                              | Advance warning before forced termination. Runtime should wrap up work.     |
+  | `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
+  | `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
+  | `credentials_acknowledged`  | Runtime → Adapter  | `type`, `leaseId` (string), `provider` (string)                                                                                                                    | Runtime has rebound to the new credential. Adapter releases queued LLM requests with new credential. |
+  | `llm_request_started`       | Runtime → Adapter  | `type`, `requestId` (string — opaque, runtime-generated), `provider` (string)                                                                                      | Runtime is about to send an outbound LLM request directly to the provider (direct mode only). Adapter increments the in-flight counter for this provider. Only required when the runtime calls the LLM API directly (not via the adapter proxy). |
+  | `llm_request_completed`     | Runtime → Adapter  | `type`, `requestId` (string — matches the corresponding `llm_request_started`), `provider` (string), `status` (`"ok"` \| `"error"`), `inputTokens` (integer, optional), `outputTokens` (integer, optional)                               | Runtime's outbound LLM request has completed or errored. Adapter decrements the in-flight counter. When the counter reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`. In direct mode the runtime SHOULD populate `inputTokens` and `outputTokens` from the completed provider response when it can extract them; the adapter accumulates them into a per-session cumulative total internally and reports the incremental delta since the last read over the [§4.7](04_system-components.md#47-runtime-adapter) `ReportUsage` RPC (see [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). A runtime that cannot extract counts omits both fields, and the session has no direct-mode token source. |
 - **Preconditions.** The channel is optional and is opened by Full-level runtimes; a runtime that does
   not open it operates in fallback-only mode ([§4.7](04_system-components.md#47-runtime-adapter),
   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The runtime reads
   `runtimeOps.socket` from the manifest the adapter writes before it spawns the runtime binary
   ([§4.7](04_system-components.md#47-runtime-adapter)). `lifecycle_capabilities` is the first message
   sent on channel open and the runtime replies with `lifecycle_support`, which is the handshake the
-  gateway reads to select the credential-rotation strategy for the session
-  ([§4.7](04_system-components.md#47-runtime-adapter)). Before it sends `credentials_rotated` the adapter
+  gateway reads to select the credential-rotation strategy for the session (the message-schema table
+  above, [§4.7](04_system-components.md#47-runtime-adapter)). Before it sends `credentials_rotated` the adapter
   rewrites `/run/lenny/credentials.json` and waits for the in-flight LLM request gate to clear
   ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Timing.** `checkpoint_request`, `interrupt_request`, `terminate`, and `deadline_approaching` each
-  carry a millisecond field that bounds the runtime's reply, its exit, or the remaining session time
-  ([§4.7](04_system-components.md#47-runtime-adapter)). Every checkpoint path is bounded by a 60-second
+  carry a millisecond field that bounds the runtime's reply, its exit, or the remaining session time, as
+  the message-schema table above states. Every checkpoint path is bounded by a 60-second
   timeout measured from the initial quiescence request to completion
   ([§4.4](04_system-components.md#44-event--checkpoint-store)). The adapter enforces a 60-second timeout
   on `credentials_acknowledged`, starting when `credentials_rotated` is sent, and the old credential is
@@ -633,14 +1025,14 @@ the connection it runs on. The runtime is the dialling participant on every chan
   ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Degradation.** When `interrupt_acknowledged` does not arrive within the frame's `deadlineMs`, the
   adapter transitions the session to `suspended` anyway and returns an `INTERRUPT_TIMEOUT` status in the
-  `Interrupt` RPC response; the session is not left in `running`
-  ([§4.7](04_system-components.md#47-runtime-adapter)). When `credentials_acknowledged` does not arrive
+  `Interrupt` RPC response; the session is not left in `running`, as the message-schema table above
+  states. When `credentials_acknowledged` does not arrive
   within 60 seconds, the adapter emits a `credential_rotation_timeout` warning event, increments
   `lenny_credential_rotation_timeout_total`, and falls back to the Standard-level rotation path of
   checkpoint, pod termination, replacement pod, `AssignCredentials`, and `Resume`
   ([§4.7](04_system-components.md#47-runtime-adapter)). When the runtime has not exited by the
-  `terminate` frame's `deadlineMs` the adapter sends SIGTERM
-  ([§4.7](04_system-components.md#47-runtime-adapter)). When the peer is absent, because the runtime
+  `terminate` frame's `deadlineMs` the adapter sends SIGTERM, as the message-schema table above
+  states. When the peer is absent, because the runtime
   never opened the channel, interrupt degrades to SIGTERM-based termination and the deadline warning and
   the drain coordination signal are not delivered, at both Basic level and Standard level. At Standard
   level a checkpoint degrades to a best-effort snapshot without a runtime pause and credential rotation
@@ -677,10 +1069,11 @@ the connection it runs on. The runtime is the dialling participant on every chan
   set is `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`,
   `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`,
   `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`
-  ([§4.7](04_system-components.md#47-runtime-adapter),
-  [§9.1](09_mcp-integration.md#91-where-mcp-is-used)). Lease extension is an internal gateway operation
+  ([§9.1](09_mcp-integration.md#91-where-mcp-is-used)). Lease extension is an internal gateway operation
   and is not exposed as a tool on this channel
-  ([§4.7](04_system-components.md#47-runtime-adapter), [§8.6](08_recursive-delegation.md#86-lease-extension)).
+  ([§8.6](08_recursive-delegation.md#86-lease-extension)). There is no workspace MCP server: the
+  workspace is materialized to `/workspace/current` before the runtime starts and the runtime reaches it
+  through the filesystem directly ([§4.7](04_system-components.md#47-runtime-adapter)).
   The servers speak MCP 2025-03-26 and also accept MCP 2024-11-05, and the adapter never advertises the
   `sampling` MCP capability to the local server
   ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
@@ -731,8 +1124,8 @@ the connection it runs on. The runtime is the dialling participant on every chan
   tools and `tools/call` to invoke one
   ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). Each authorized connector in
   the session's delegation policy gets its own independent server, and no aggregated connector proxy
-  exists, because aggregation is not lossless under the MCP specification
-  ([§4.7](04_system-components.md#47-runtime-adapter)). The call is served by the gateway acting as the
+  exists, because aggregation is not lossless under the MCP specification: capability negotiation is
+  per-server, sampling breaks, tool names collide, and resource URIs collide. The call is served by the gateway acting as the
   MCP client to the external tool, so the tokens the external tool requires never enter the pod
   ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)).
 - **Preconditions.** The manifest carries a `connectorServers` array, which is empty when no connector is

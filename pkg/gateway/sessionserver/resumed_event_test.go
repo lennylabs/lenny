@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §7.2 line 138 / §4.4 line 263 — `session.resumed` event.
+// spec: §7.2 / §4.4 — `session.resumed` event.
 
 // resumedEvent returns the latest session.resumed event for the
 // session, or nil when none has been published.

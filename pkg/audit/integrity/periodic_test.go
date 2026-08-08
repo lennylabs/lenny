@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// spec: §11.7 item 2 lines 357-358 — the periodic grant-check cadence is
+// spec: §11.7 item 2 — the periodic grant-check cadence is
 // profile-dependent: regulated defaults to 60s (max 120s), unregulated to
 // 300s (max 900s). A configured value above the profile maximum is a
 // fatal startup error; zero selects the default; the boundary value is
@@ -202,7 +202,7 @@ func TestPeriodicCheckOnceNoDrift(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 2 line 359 — an UPDATE grant added to an append-only
+// spec: §11.7 item 2 — an UPDATE grant added to an append-only
 // ledger after startup is the named tamper-and-revert drift: CheckOnce
 // must report drift and increment lenny_audit_grant_drift_total. F-11.7.3.
 func TestPeriodicCheckOnceGrantDrift(t *testing.T) {
@@ -224,7 +224,7 @@ func TestPeriodicCheckOnceGrantDrift(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 370 — the periodic check also samples chain segments;
+// spec: §11.7 — the periodic check also samples chain segments;
 // a broken chain (a sequence gap) triggers the same critical alert path
 // even when grants are clean. F-11.7.3.
 func TestPeriodicCheckOnceChainBroken(t *testing.T) {
@@ -255,7 +255,7 @@ func TestPeriodicCheckOnceChainBroken(t *testing.T) {
 }
 
 // spec: §12.8 (post-teardown remnant exempt from chain verification),
-// §12.3 line 103 (split billing/audit Postgres). The periodic check must
+// §12.3. The periodic check must
 // resolve the §12.8 tenant-deletion skip-set from the control-plane pool
 // (CtrlDB), not the ledger pool (DB): under the split billing/audit-pool
 // topology the retained gdpr.*-only remnant of a deleting tenant lives on
@@ -297,7 +297,7 @@ func TestPeriodicCheckOnceSkipsDeletingTenantFromCtrlDB(t *testing.T) {
 	}
 }
 
-// spec: §12.8 (post-teardown remnant exempt), §12.3 line 103. The contrast
+// spec: §12.8 (post-teardown remnant exempt), §12.3. The contrast
 // to the skip case: when the control-plane pool reports the tenant as live
 // (not in deletion), the discontinuous remnant is still verified and its
 // broken chain reported. This guards against the skip-set masking a genuine
@@ -344,7 +344,7 @@ func TestPeriodicCheckOnceQueryErrorIsNotDrift(t *testing.T) {
 	_ = p.CheckOnce(context.Background())
 }
 
-// spec: §11.7 item 2 line 359 — when audit.hardFailOnDrift is enabled, a
+// spec: §11.7 item 2 — when audit.hardFailOnDrift is enabled, a
 // detected drift initiates a graceful shutdown via the Shutdown hook.
 // F-11.7.3.
 func TestPeriodicRunHardFailOnDrift(t *testing.T) {

@@ -49,7 +49,7 @@ type UsageMeter interface {
 // reports on each §4.7 llm_request_completed lifecycle frame (§11.2
 // direct-mode usage) into a running cumulative total, and serves both
 // the incremental delta read the gateway polls steady-state and the
-// cumulative read a reconnected gateway replica pulls for the §11.2:46
+// cumulative read a reconnected gateway replica pulls for the §11.2
 // crash-recovery MAX rule.
 //
 // The adapter (not the gateway) holds the last-read watermark across a
@@ -59,7 +59,7 @@ type UsageMeter interface {
 // cumulative total, the next steady-state delta returns zero and does
 // not double-count. The watermark is never reset on rebind; a rebind is
 // an ordinary coordinator handoff, so an unreset watermark after a
-// cumulative recovery read is the correct state (§11.2:46, §10.1).
+// cumulative recovery read is the correct state (§11.2, §10.1).
 type SessionUsageMeter struct {
 	// now returns the current time. Injected so a unit test can drive
 	// the wall-clock accounting deterministically; nil selects time.Now.
@@ -149,7 +149,7 @@ func (m *SessionUsageMeter) Usage(_ context.Context, sessionID string) (Usage, e
 
 // Cumulative returns sessionID's running cumulative total and advances
 // the watermark to that total, so a reconnected gateway replica seeds
-// its restored counter from the cumulative total (the §11.2:46
+// its restored counter from the cumulative total (the §11.2
 // crash-recovery MAX rule) and its first subsequent delta read returns
 // zero rather than re-adding the recovered tokens. An unknown session
 // reports zero. spec: §11.2 (pod-reported cumulative-usage re-report on
@@ -255,7 +255,7 @@ func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 // reports usage accumulated since the previous read. When the request
 // sets cumulative, the read returns the session's running cumulative
 // total instead, which a reconnected gateway replica uses to seed its
-// restored counter for the §11.2:46 crash-recovery MAX rule.
+// restored counter for the §11.2 crash-recovery MAX rule.
 func (s *Server) ReportUsage(ctx context.Context, req *adapterv1.ReportUsageRequest) (*adapterv1.ReportUsageResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {

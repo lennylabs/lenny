@@ -29,7 +29,7 @@ type MetricsSink interface {
 // fixed detectedAt / willTimeoutAt at first detection, caches the
 // deadlock_detected event the await stream serves, fires the detection
 // metric once, and decides when a deadlock has timed out or been
-// resolved. spec: §8.8 lines 981-997. F-8.8.6.
+// resolved. spec: §8.8. F-8.8.6.
 type Manager struct {
 	maxWait time.Duration
 	metrics MetricsSink

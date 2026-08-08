@@ -64,7 +64,7 @@ func (s *stubPodRegistry) WatchPods(context.Context, podregistry.PoolID) (<-chan
 	return nil, nil
 }
 
-// spec: §12.6 line 586 — the v1 LocalClusterRegistry exposes only the
+// spec: §12.6 — the v1 LocalClusterRegistry exposes only the
 // local cluster.
 func TestLocalClusterRegistryListClusters_spec_12_6_586(t *testing.T) {
 	reg := podregistry.NewLocalClusterRegistry(&stubPodRegistry{}, "cluster-a")
@@ -81,7 +81,7 @@ func TestLocalClusterRegistryListClusters_spec_12_6_586(t *testing.T) {
 	if clusters[0].Health != podregistry.ClusterHealthy {
 		t.Fatalf("local cluster health = %q, want healthy", clusters[0].Health)
 	}
-	// spec: §12.6 line 614 — the local cluster is reached in-process, so
+	// spec: §12.6 — the local cluster is reached in-process, so
 	// it carries no endpoint and no remote CA bundle.
 	if clusters[0].Endpoint != "" || clusters[0].CACertBundle != nil {
 		t.Fatalf("local cluster must carry no endpoint/CA bundle, got endpoint=%q caBundle=%v",
@@ -89,7 +89,7 @@ func TestLocalClusterRegistryListClusters_spec_12_6_586(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 586 — an empty id selects the default local cluster id.
+// spec: §12.6 — an empty id selects the default local cluster id.
 func TestLocalClusterRegistryDefaultID_spec_12_6_586(t *testing.T) {
 	reg := podregistry.NewLocalClusterRegistry(&stubPodRegistry{}, "")
 	if got := reg.LocalClusterID(); got != podregistry.DefaultLocalClusterID {
@@ -97,7 +97,7 @@ func TestLocalClusterRegistryDefaultID_spec_12_6_586(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 604 — GetCluster returns the local cluster for the
+// spec: §12.6 — GetCluster returns the local cluster for the
 // local id and ErrClusterNotFound for any other.
 func TestLocalClusterRegistryGetCluster_spec_12_6_604(t *testing.T) {
 	reg := podregistry.NewLocalClusterRegistry(&stubPodRegistry{}, "cluster-a")
@@ -115,7 +115,7 @@ func TestLocalClusterRegistryGetCluster_spec_12_6_604(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 430 — the v1 SelectCluster ignores every request
+// spec: §12.6 — the v1 SelectCluster ignores every request
 // field and always returns LocalClusterID().
 func TestLocalClusterRegistrySelectClusterIgnoresRequest_spec_12_6_430(t *testing.T) {
 	reg := podregistry.NewLocalClusterRegistry(&stubPodRegistry{}, "cluster-a")
@@ -133,7 +133,7 @@ func TestLocalClusterRegistrySelectClusterIgnoresRequest_spec_12_6_430(t *testin
 	}
 }
 
-// spec: §12.6 lines 609-614 — ClusterClient returns the in-process
+// spec: §12.6 — ClusterClient returns the in-process
 // PodRegistry (a RemotePodOperations superset) for the local cluster,
 // and ErrClusterNotFound otherwise.
 func TestLocalClusterRegistryClusterClient_spec_12_6_609(t *testing.T) {

@@ -32,7 +32,7 @@ import (
 // Deployments, and runtime-<name> names the agent pods of a runtime. The
 // host-process components the in-cluster topology removes (postgres, redis,
 // kms, oidc, supervisor) are dropped. The substrate (k3s) keeps its host log
-// file path. spec: §17.4 line 179, §24.19 line 263.
+// file path. spec: §17.4, §24.19.
 var logComponents = []string{
 	"gateway",
 	"controller",
@@ -49,7 +49,7 @@ type LogsOptions struct {
 	// to every runtime-<name> with running agent pods; an explicit
 	// "runtime-<name>" selects exactly one runtime's pods.
 	Component string
-	// Follow tails the selected logs in §24.19 line 263 `--follow` mode:
+	// Follow tails the selected logs in §24.19 mode:
 	// RunLogs blocks, streaming new lines, until ctx is cancelled.
 	Follow bool
 	// Out receives the log output.
@@ -64,7 +64,7 @@ type LogsOptions struct {
 // Deployment has not scheduled, or no agent pod of that runtime is up) is
 // reported and skipped rather than failing the whole command.
 //
-// spec: §17.4 line 179, §24.19 line 263.
+// spec: §17.4, §24.19.
 func RunLogs(ctx context.Context, opts LogsOptions) error {
 	out := orDiscard(opts.Out)
 	if ctx == nil {
@@ -409,7 +409,7 @@ func writeLogLine(out io.Writer, name, line string, merging bool) {
 	}
 }
 
-// knownLogComponent reports whether name matches a §24.19 line 263 component
+// knownLogComponent reports whether name matches a §24.19 component
 // allow-list entry. The `runtime-<name>` form is handled by the caller via a
 // prefix check rather than enumeration.
 func knownLogComponent(name string) bool {
@@ -424,5 +424,5 @@ func knownLogComponent(name string) bool {
 // followInterval is the poll cadence the substrate-file follow path re-reads
 // the k3s log at after reaching EOF. Pod-log follow streams through the API
 // server's own follow channel, so it needs no client-side poll; only the host
-// file source polls. spec: §24.19 line 263 (`--follow`).
+// file source polls. spec: §24.19.
 const followInterval = 250 * time.Millisecond

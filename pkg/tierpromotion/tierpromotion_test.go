@@ -24,7 +24,7 @@ import (
 // Tier 2 → Tier 3 promotion. Test cases override individual fields to
 // stage targeted failures. The §17.8.3 Phase 13.5 attestations are all
 // set; the §17.8.2 SCL-036 inputs match the Tier 3 KEDA preset
-// (minReplicas: 5 via the §17.8.2 line 975 carve-out).
+// (minReplicas: 5 via the §17.8.2 carve-out).
 func goodInputs() tierpromotion.Inputs {
 	return tierpromotion.Inputs{
 		From:                            tierpromotion.Tier2,
@@ -256,7 +256,7 @@ func TestValidateInputsTier1ToTier2SkipsPostTier1ChecksOnlyWhenAppropriate(t *te
 	failuresByName(t, report, "secret-encryption")
 }
 
-// spec: §17.8.3 line 1285 — F-17.8.10. The Tier 3 gate must reject a
+// spec: §17.8.3 — F-17.8.10. The Tier 3 gate must reject a
 // deployment whose chart still carries autoscaling.provider: hpa.
 func TestValidateInputsRejectsHPAProviderAtTier3_spec_17_8_3_1285(t *testing.T) {
 	in := goodInputs()
@@ -271,7 +271,7 @@ func TestValidateInputsRejectsHPAProviderAtTier3_spec_17_8_3_1285(t *testing.T) 
 	}
 }
 
-// spec: §17.8.3 line 1285 — F-17.8.10. An unset autoscaling.provider
+// spec: §17.8.3 — F-17.8.10. An unset autoscaling.provider
 // fails the Tier 3 gate (the rendered chart did not commit to a path).
 func TestValidateInputsRejectsUnsetProviderAtTier3_spec_17_8_3_1285(t *testing.T) {
 	in := goodInputs()
@@ -283,7 +283,7 @@ func TestValidateInputsRejectsUnsetProviderAtTier3_spec_17_8_3_1285(t *testing.T
 	}
 }
 
-// spec: §17.8.2 line 963 — F-17.8.10. KEDA is optional at Tier 1 / 2,
+// spec: §17.8.2 — F-17.8.10. KEDA is optional at Tier 1 / 2,
 // so the autoscaling-provider check SKIPs when the target is not Tier 3.
 func TestValidateInputsSkipsProviderCheckBelowTier3_spec_17_8_2_963(t *testing.T) {
 	in := tierpromotion.Inputs{
@@ -319,7 +319,7 @@ func TestValidateInputsSkipsProviderCheckBelowTier3_spec_17_8_2_963(t *testing.T
 	}
 }
 
-// spec: §17.8.3 line 1282 — F-17.8.11. The Tier 3 gate must reject a
+// spec: §17.8.3 — F-17.8.11. The Tier 3 gate must reject a
 // promotion when the LLM Proxy extraction-ratio benchmark has not been
 // attested.
 func TestValidateInputsRejectsUnattestedLLMProxy_spec_17_8_3_1282(t *testing.T) {
@@ -332,7 +332,7 @@ func TestValidateInputsRejectsUnattestedLLMProxy_spec_17_8_3_1282(t *testing.T) 
 	}
 }
 
-// spec: §17.8.3 line 1283 — F-17.8.11. The Tier 3 gate must reject a
+// spec: §17.8.3 — F-17.8.11. The Tier 3 gate must reject a
 // promotion when the gateway GC pause benchmark has not been attested.
 func TestValidateInputsRejectsUnattestedGCPause_spec_17_8_3_1283(t *testing.T) {
 	in := goodInputs()
@@ -344,7 +344,7 @@ func TestValidateInputsRejectsUnattestedGCPause_spec_17_8_3_1283(t *testing.T) {
 	}
 }
 
-// spec: §17.8.3 line 1284 — F-17.8.11. The Tier 3 gate must reject a
+// spec: §17.8.3 — F-17.8.11. The Tier 3 gate must reject a
 // promotion when the maxSessionsPerReplica calibration has not been
 // attested (i.e., the provisional value is still in place).
 func TestValidateInputsRejectsUncalibratedMaxSessions_spec_17_8_3_1284(t *testing.T) {
@@ -386,14 +386,14 @@ func TestValidateInputsSkipsPhase135BelowTier3_spec_17_8_3(t *testing.T) {
 	}
 }
 
-// spec: §17.8.2 line 950 (SCL-036) — F-17.8.13. The KEDA path's
+// spec: §17.8.2 — F-17.8.13. The KEDA path's
 // pipeline-lag is 20s; raising maxSessionsPerReplica without raising
 // minReplicas at Tier 3 must trip the burst-absorption check below the
-// §17.8.2 line 975 carve-out of 5.
+// §17.8.2 carve-out of 5.
 func TestValidateInputsRejectsKEDAMinReplicasBelowFloor_spec_17_8_2_SCL_036(t *testing.T) {
 	in := goodInputs()
 	// Tier 3 / KEDA / maxSessionsPerReplica=400: raw floor = ceil(200*20/400) = 10.
-	// The §17.8.2 line 975 carve-out drops the required floor to 5.
+	// The §17.8.2 carve-out drops the required floor to 5.
 	// minReplicas=4 sits below that carve-out and must fail.
 	in.MinReplicas = 4
 	report := tierpromotion.ValidateInputs(in)
@@ -402,11 +402,11 @@ func TestValidateInputsRejectsKEDAMinReplicasBelowFloor_spec_17_8_2_SCL_036(t *t
 		t.Errorf("burst-absorption detail %q does not name the offending minReplicas", failed.Detail)
 	}
 	if !strings.Contains(failed.Detail, "carve-out") {
-		t.Errorf("burst-absorption detail %q does not flag the §17.8.2 line 975 carve-out", failed.Detail)
+		t.Errorf("burst-absorption detail %q does not flag the §17.8.2 carve-out", failed.Detail)
 	}
 }
 
-// spec: §17.8.2 line 975 (KEDA Tier 3 carve-out) — F-17.8.13. The
+// spec: §17.8.2 — F-17.8.13. The
 // carve-out lets Tier 3 KEDA deployments set minReplicas=5 even though
 // the raw SCL-036 floor is 10.
 func TestValidateInputsAcceptsTier3KEDACarveOut_spec_17_8_2_975(t *testing.T) {
@@ -420,7 +420,7 @@ func TestValidateInputsAcceptsTier3KEDACarveOut_spec_17_8_2_975(t *testing.T) {
 	}
 }
 
-// spec: §17.8.2 line 989-991 (HPA Tier 3 non-viable) — F-17.8.13. The
+// spec: §17.8.2 — F-17.8.13. The
 // Prometheus Adapter path at Tier 3 needs minReplicas=30 (the raw
 // SCL-036 floor with pipeline_lag=60s and maxSessionsPerReplica=400);
 // no carve-out applies, so a deployment that left the HPA path on with
@@ -440,7 +440,7 @@ func TestValidateInputsRejectsHPATier3UnderfloorMinReplicas_spec_17_8_2_991(t *t
 	}
 }
 
-// spec: §17.8.2 line 950 (SCL-036) — F-17.8.13. A zero
+// spec: §17.8.2 — F-17.8.13. A zero
 // maxSessionsPerReplica is a malformed deployment; the gate refuses to
 // run the formula and reports the missing input.
 func TestValidateInputsRejectsZeroMaxSessions_spec_17_8_2_950(t *testing.T) {
@@ -453,7 +453,7 @@ func TestValidateInputsRejectsZeroMaxSessions_spec_17_8_2_950(t *testing.T) {
 	}
 }
 
-// spec: §17.8.2 line 988 — F-17.8.13. The Prometheus Adapter path at
+// spec: §17.8.2 — F-17.8.13. The Prometheus Adapter path at
 // Tier 2 needs minReplicas >= ceil(30*60/200) = 9. The gate honors the
 // HPA-path lag of 60s when the rendered chart selects provider=hpa.
 func TestValidateInputsHPAPathUsesProperLag_spec_17_8_2_988(t *testing.T) {

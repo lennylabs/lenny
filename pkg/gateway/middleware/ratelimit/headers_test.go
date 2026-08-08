@@ -27,7 +27,7 @@ func fireRec(h http.Handler, path, subject string) *httptest.ResponseRecorder {
 	return rr
 }
 
-// spec: §15.1 lines 1131-1138 — every REST response carries the
+// spec: §15.1 — every REST response carries the
 // X-RateLimit triplet for the binding scope. F-15.1.7.
 func TestRateLimitHeadersOnSuccess_spec_15_1_1131(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -51,7 +51,7 @@ func TestRateLimitHeadersOnSuccess_spec_15_1_1131(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1134 — remaining decrements with each request in the
+// spec: §15.1 — remaining decrements with each request in the
 // window. F-15.1.7.
 func TestRateLimitRemainingDecrements_spec_15_1_1134(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -66,7 +66,7 @@ func TestRateLimitRemainingDecrements_spec_15_1_1134(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1131-1138 — the binding scope is the one with the
+// spec: §15.1 — the binding scope is the one with the
 // least headroom (here per-user, not the looser global cap). F-15.1.7.
 func TestRateLimitHeadersBindingScope_spec_15_1_1131(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -84,7 +84,7 @@ func TestRateLimitHeadersBindingScope_spec_15_1_1131(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1131-1138 — a 429 rejection carries the triplet
+// spec: §15.1 — a 429 rejection carries the triplet
 // (remaining 0) and Retry-After. F-15.1.7.
 func TestRateLimitHeadersOnRejection_spec_15_1_1131(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -111,7 +111,7 @@ func TestRateLimitHeadersOnRejection_spec_15_1_1131(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1131-1138 — with no configured scope the triplet is
+// spec: §15.1 — with no configured scope the triplet is
 // omitted (there is no budget to report). F-15.1.7.
 func TestRateLimitHeadersOmittedWhenNoScope_spec_15_1_1131(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -123,7 +123,7 @@ func TestRateLimitHeadersOmittedWhenNoScope_spec_15_1_1131(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1131-1138 — an unauthenticated request under only a
+// spec: §15.1 — an unauthenticated request under only a
 // per-user cap counts no scope, so the triplet is omitted. F-15.1.7.
 func TestRateLimitHeadersUnauthenticatedNoUserScope_spec_15_1_1131(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -135,7 +135,7 @@ func TestRateLimitHeadersUnauthenticatedNoUserScope_spec_15_1_1131(t *testing.T)
 	}
 }
 
-// spec: §15.1 line 1136 — Retry-After is injected on a downstream 503
+// spec: §15.1 — Retry-After is injected on a downstream 503
 // that did not set its own. F-15.1.7.
 func TestRetryAfterInjectedOn503_spec_15_1_1136(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -157,7 +157,7 @@ func TestRetryAfterInjectedOn503_spec_15_1_1136(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1136 — a handler that set its own Retry-After on a
+// spec: §15.1 — a handler that set its own Retry-After on a
 // 503 keeps it; the middleware does not overwrite. F-15.1.7.
 func TestRetryAfterNotOverwrittenOn503_spec_15_1_1136(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

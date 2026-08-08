@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §10.5 lines 466-540. Migration 0147 creates the runtime_upgrade
+// spec: §10.5. Migration 0147 creates the runtime_upgrade
 // table that durably records the per-pool RuntimeUpgrade phase so an
 // operator-driven runtime image rollout survives a gateway restart and
 // resumes from the recorded phase. One upgrade targets one pool, so the

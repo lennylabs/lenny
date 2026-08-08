@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback"
 )
 
-// spec: §4.4 line 291 — eviction-context storage accounting.
+// spec: §4.4 — eviction-context storage accounting.
 
 // recordingCatalog is a minimal artifactcatalog.Store fake used by
 // the bridge tests. Only Insert records anything; the other methods
@@ -73,7 +73,7 @@ func (r *recordingCatalog) SumLiveBytes(context.Context, string) (int64, error) 
 // stamps `artifact_type = eviction_context` and forwards the URI /
 // size verbatim.
 //
-// spec: §4.4 line 291.
+// spec: §4.4.
 func TestCatalogBridgeRecordsEvictionContextRow(t *testing.T) {
 	cat := &recordingCatalog{}
 	b := &evictionfallback.CatalogBridge{Catalog: cat}

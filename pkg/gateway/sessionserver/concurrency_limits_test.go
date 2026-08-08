@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §11.1 line 8 — global, per-user, and per-runtime
+// spec: §11.1 — global, per-user, and per-runtime
 // concurrent-session admission caps. F-11.1.3.
 
 // concurrencyServer builds a session server pre-seeded with the given

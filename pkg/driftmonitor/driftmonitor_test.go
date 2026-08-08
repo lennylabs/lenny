@@ -31,7 +31,7 @@ func (f *fakeEmitter) last() float64 {
 }
 
 // TestSamplePublishesGauge confirms Sample reads the source and writes
-// the seconds value to the emitter. spec: §13.3 line 595.
+// the seconds value to the emitter. spec: §13.3.
 func TestSamplePublishesGauge(t *testing.T) {
 	e := &fakeEmitter{}
 	m := New(func() time.Duration { return 750 * time.Millisecond }, e)
@@ -71,7 +71,7 @@ func TestNilSourceReportsZero(t *testing.T) {
 	}
 }
 
-// TestDegradedThresholds walks the §13.3 line 595 5s ceiling: below,
+// TestDegradedThresholds walks the §13.3 5s ceiling: below,
 // at, and above on both sides.
 func TestDegradedThresholds(t *testing.T) {
 	cases := []struct {

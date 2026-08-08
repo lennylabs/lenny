@@ -4,7 +4,7 @@ package audit
 
 import "testing"
 
-// spec: §16.7 lines 661, 670, 674, 682, 687 — the audit event types that
+// spec: §16.7 — the audit event types that
 // are additionally routed onto the §25.5 operational event stream. Every
 // event whose §16.7 entry carries the "also routed to the operational
 // event stream" clause must report true; every other audit event must
@@ -17,7 +17,7 @@ func TestEscalatesToOperationalStream_spec_16_7(t *testing.T) {
 		EventAuditOcsfRetranslateRequested,
 		EventAuditPartitionDropForced,
 		EventEventBusRepublishRequested,
-		// spec: §18 line 609 — the Helm deployment-transition events.
+		// spec: §18 — the Helm deployment-transition events.
 		EventGatewayCycleDetectionModeChanged,
 		EventGatewayAllowSelfRecursionChanged,
 		EventGatewayDefaultMaxDepthChanged,
@@ -45,7 +45,7 @@ func TestEscalatesToOperationalStream_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 661 — every escalating event type is also a known
+// spec: §16.7 — every escalating event type is also a known
 // §16.7 catalogue entry, so an audit-sink validator never discards an
 // event the ops-stream escalation path emits.
 func TestEscalationSetIsKnownCatalog_spec_16_7(t *testing.T) {

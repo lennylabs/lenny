@@ -27,12 +27,11 @@ type EvalRequest struct {
 	// IdempotencyKey is the optional §10.7 dedup key (≤128 bytes). A
 	// repeat submission carrying the same key for the same session within
 	// 24h returns 200 OK with the original record rather than inserting a
-	// duplicate. spec: §10.7 lines 939-940. F-10.7.4.
+	// duplicate. spec: §10.7. F-10.7.4.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
-// EvalResponse echoes the stored §10.7 EvalResult. spec: §10.7 lines
-// 892-928 — the response carries the experiment attribution and the
+// EvalResponse echoes the stored §10.7 EvalResult. spec: §10.7 — the response carries the experiment attribution and the
 // delegation/inherited/submittedAfterConclusion flags the gateway
 // populates from the session's experiment context so callers see the
 // effective record without an additional GET. Empty attribution fields
@@ -54,7 +53,7 @@ type EvalResponse struct {
 
 // evalSubmittedAfterConclusion reports whether an eval submitted now
 // lands after its attributed experiment transitioned to `concluded`.
-// spec: §10.7 line 907 / line 937. An unenrolled session, an unwired
+// spec: §10.7. An unenrolled session, an unwired
 // experiment store, or an experiment that has since been deleted yields
 // false (the submission is treated as in-window) — the eval is stored
 // regardless; only the post-conclusion flag is affected.
@@ -76,12 +75,12 @@ func evalEligible(st session.State) bool {
 	return st == session.StateRunning || st == session.StateCompleted || st == session.StateFailed
 }
 
-// checkEvalRateLimit enforces the §10.7 line 938 per-session and
+// checkEvalRateLimit enforces the §10.7 per-session and
 // per-tenant eval-submission rate limits. It returns false (after
 // writing a 429 with a Retry-After header) when either scope's
 // one-minute count exceeds its configured limit, and true otherwise. A
 // nil counter or a non-positive limit leaves the corresponding scope
-// unlimited. spec: §10.7 line 938. F-10.7.4 / F-11.2.19.
+// unlimited. spec: §10.7. F-10.7.4 / F-11.2.19.
 func (s *Server) checkEvalRateLimit(w http.ResponseWriter, r *http.Request, tenantID, sessionID string) bool {
 	if s.evalRL == nil {
 		return true
@@ -103,8 +102,7 @@ func (s *Server) checkEvalRateLimit(w http.ResponseWriter, r *http.Request, tena
 // checkEvalScope increments one eval rate-limit scope's per-minute
 // counter and writes a 429 (with Retry-After) when the scope is over
 // limit. A transient counter error fails open, matching the §11.1
-// admission gate, so a Redis blip does not block scoring. spec: §10.7
-// line 938. F-10.7.4.
+// admission gate, so a Redis blip does not block scoring. spec: §10.7. F-10.7.4.
 func (s *Server) checkEvalScope(w http.ResponseWriter, r *http.Request, scope, key string, limit int, now time.Time) bool {
 	count, err := s.evalRL.Incr(r.Context(), key, now)
 	if err != nil {
@@ -140,9 +138,8 @@ func (s *Server) checkEvalScope(w http.ResponseWriter, r *http.Request, scope, k
 // Experiment attribution (experiment_id, variant_id, inherited) is
 // auto-populated from the session's experiment context. delegation_depth
 // is copied from the session record (stamped at delegation time per
-// §10.7 line 905), and submitted_after_conclusion is computed by
-// consulting the attributed experiment's current status per §10.7 lines
-// 907 / 937. An unenrolled session leaves the attribution empty and its
+// §10.7), and submitted_after_conclusion is computed by
+// consulting the attributed experiment's current status per §10.7. An unenrolled session leaves the attribution empty and its
 // depth at 0. F-10.7.5.
 func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 	if s.evals == nil {
@@ -171,7 +168,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "score"}}})
 		return
 	}
-	// §10.7 line 939 — the optional idempotency key is bounded at 128
+	// §10.7 — the optional idempotency key is bounded at 128
 	// bytes. Reject an oversize key before any store work. F-10.7.4.
 	if len(req.IdempotencyKey) > evalstore.MaxIdempotencyKeyBytes {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -180,7 +177,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §10.7 line 938 — per-session and per-tenant eval-submission rate
+	// §10.7 — per-session and per-tenant eval-submission rate
 	// limits, enforced before the session lookup so a flood against a
 	// single session (or across a tenant) is capped regardless of whether
 	// the target exists. Excess requests receive 429 with Retry-After.
@@ -204,7 +201,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §10.7 line 940 — a repeat submission carrying the same idempotency
+	// §10.7 — a repeat submission carrying the same idempotency
 	// key for this session within 24h resolves to the original record
 	// rather than inserting a duplicate, returning 200 OK. F-10.7.4.
 	if req.IdempotencyKey != "" {
@@ -229,7 +226,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		Scores:         req.Scores,
 		Metadata:       req.Metadata,
 		IdempotencyKey: req.IdempotencyKey,
-		// §10.7 line 905 — delegation_depth is auto-populated from the
+		// §10.7 — delegation_depth is auto-populated from the
 		// session's delegation lineage (0 for a root session). The depth
 		// is stamped on the session row at delegation time. F-10.7.5.
 		DelegationDepth: sess.DelegationDepth,
@@ -238,7 +235,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		result.ExperimentID = ec.ExperimentID
 		result.VariantID = ec.VariantID
 		result.Inherited = ec.Inherited
-		// §10.7 lines 907 / 937 — the eval is stored with the session's
+		// §10.7 — the eval is stored with the session's
 		// original attribution regardless of the experiment's status, but
 		// the gateway flags submissions that arrive after the experiment
 		// concluded so operators can filter them in analysis. F-10.7.5.
@@ -255,7 +252,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §16.1 line 164 / §10.7 line 1128 — record one lenny_eval_score
+	// spec: §16.1 / §10.7 — record one lenny_eval_score
 	// observation per submitted eval run so the rollback-trigger safety and
 	// mean-score regression queries (rate(_sum)/rate(_count)) resolve per
 	// scorer and variant. Only the aggregate score is observed; a submission
@@ -271,7 +268,7 @@ func (s *Server) handleEval(w http.ResponseWriter, r *http.Request) {
 // writeEvalResponse encodes an EvalResult as the §10.7 EvalResponse with
 // the given status. A fresh insert uses 201 Created; an idempotent
 // replay of an earlier submission uses 200 OK with the original record.
-// spec: §10.7 lines 892-928, 940. F-10.7.4.
+// spec: §10.7. F-10.7.4.
 func (s *Server) writeEvalResponse(w http.ResponseWriter, stored evalstore.EvalResult, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

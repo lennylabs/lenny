@@ -23,7 +23,7 @@ import (
 // is a migration counter and the CRD version is an API-version label.
 // Comparison is therefore exact string equality, not SemVer precedence.
 //
-// spec: §25.8 Version Aggregation (line 3364) — "When any component's
+// spec: §25.8 Version Aggregation — "When any component's
 // current version does not match the compiled-in required version, the
 // response includes versionDrift: true".
 type VersionSource interface {
@@ -94,7 +94,7 @@ type ComponentVersion struct {
 // per-component versions, the overall drift flag, and the degradation
 // warnings for any component whose source was unavailable.
 //
-// spec: §25.8 line 3364 (Version Aggregation), line 3610 (degradation).
+// spec: §25.8.
 type VersionReport struct {
 	// RequiredVersion is the platform build version this lenny-ops runs
 	// (the reference the binary components are expected to match).

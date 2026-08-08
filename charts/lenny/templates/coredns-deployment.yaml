@@ -1,6 +1,6 @@
 {{- /*
 The dedicated lenny-system CoreDNS Deployment plus its PodDisruptionBudget
-(§13.2 lines 452-490, NET-018). The instance is the sole authorized DNS
+(§13.2, NET-018). The instance is the sole authorized DNS
 resolver for every agent namespace, so it runs highly available: the chart
 requires coredns.replicas >= 2 and a PDB minAvailable: 1 keeps at least one
 replica through a node drain or rolling upgrade. Losing all replicas
@@ -12,7 +12,7 @@ The pod runs the lenny-coredns image (coredns.image) with the
 coredns-ratelimit and coredns-filter plugins compiled in, mounting the
 Corefile from coredns-configmap.yaml.
 
-spec: §13.2 lines 452-490 (HA, PDB, dedicated instance). F-13.2.3 / F-13.2.14.
+spec: §13.2. F-13.2.3 / F-13.2.14.
 */ -}}
 {{- if .Values.coredns.deploy }}
 {{- $cd := .Values.coredns }}
@@ -66,7 +66,7 @@ spec:
             - name: health
               containerPort: 8080
               protocol: TCP
-          # §13.2 line 536 — the readiness probe queries the CoreDNS health
+          # §13.2 — the readiness probe queries the CoreDNS health
           # endpoint so a pod whose image is missing the ratelimit/filter
           # plugins (the Corefile fails to load) never joins the Service.
           readinessProbe:
@@ -114,7 +114,7 @@ spec:
               - key: Corefile
                 path: Corefile
 ---
-# §13.2 line 472 — PodDisruptionBudget minAvailable: 1 keeps at least one
+# §13.2 — PodDisruptionBudget minAvailable: 1 keeps at least one
 # replica serving agent DNS through voluntary disruptions.
 apiVersion: policy/v1
 kind: PodDisruptionBudget

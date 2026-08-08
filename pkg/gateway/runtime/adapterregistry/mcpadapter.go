@@ -20,7 +20,7 @@ const mcpPathPrefix = "/mcp"
 // The HTTP surface (initialize / tools/list / tools/call, plus the
 // Streamable HTTP and WebSocket transports) stays in pkg/gateway/mcp; the
 // MCPAdapter wraps that handler and adds only the §15.0 lifecycle/outbound
-// contract the registry dispatches through. spec: §15 line 1335.
+// contract the registry dispatches through. spec: §15.
 type MCPAdapter struct {
 	BaseAdapter
 	handler http.Handler
@@ -58,7 +58,7 @@ func (*MCPAdapter) Capabilities() Capabilities {
 // OutboundCapabilities returns the §15.2 mandatory MCPAdapter override:
 // push-notifications on, every kind in the closed SessionEventKind enum
 // supported, and unlimited concurrent OutboundChannel subscriptions (one
-// per attached attach_session stream). spec: §15 lines 1335-1354.
+// per attached attach_session stream). spec: §15.
 func (*MCPAdapter) OutboundCapabilities() OutboundCapabilitySet {
 	return OutboundCapabilitySet{
 		PushNotifications:          true,

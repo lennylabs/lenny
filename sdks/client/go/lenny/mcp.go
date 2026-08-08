@@ -15,7 +15,7 @@ import (
 )
 
 // mcpProtocolVersion is the MCP protocol revision this client requests
-// in the §15.2 initialize handshake. It is the §15.2 line 1308 target
+// in the §15.2 initialize handshake. It is the §15.2 target
 // version. The gateway negotiates the highest version it and the client
 // both support; the negotiated value is reported by Initialize on
 // InitializeResult.ProtocolVersion.
@@ -67,7 +67,7 @@ func (r MCPToolResult) Text() string {
 // surfaces in a `lenny/error` content block when IsError is true. The
 // Code/Category/Retryable triple is the §15.2.1 REST↔MCP parity contract
 // (item 5(d)): a client compares them across the REST and MCP surfaces
-// and gets the same retry decision either way. spec: §15.2 line 944, 972.
+// and gets the same retry decision either way. spec: §15.2.
 type LennyError struct {
 	// Code is the machine-readable error code from the §15.2.1 catalog
 	// (for example `VALIDATION_ERROR`, `INVALID_STATE_TRANSITION`,
@@ -375,8 +375,7 @@ type MCPSessionState struct {
 // InterruptSession invokes the lenny/interrupt_session MCP tool,
 // transitioning a running session to suspended. It is the MCP transport
 // the §24.17 `lenny session interrupt` command uses. The §24.17 command
-// table names the mapping `lenny/interrupt`; the canonical §15.2 line
-// 1295 tool catalog registers it as `interrupt_session`, which is the
+// table names the mapping `lenny/interrupt`; the canonical §15.2 tool catalog registers it as `interrupt_session`, which is the
 // name the gateway answers.
 func (m *MCPClient) InterruptSession(ctx context.Context, sessionID string) (*MCPSessionState, error) {
 	return m.sessionStateTool(ctx, "lenny/interrupt_session", map[string]any{"sessionId": sessionID})

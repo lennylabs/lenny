@@ -53,7 +53,7 @@ func (r *recordingRefreshMetrics) count(status string) int {
 	return r.counts[status]
 }
 
-// TestRefreshingTokenSource_RefreshesBeforeExpiry covers §25.4 line 1958:
+// TestRefreshingTokenSource_RefreshesBeforeExpiry covers §25.4:
 // the source pre-emptively reloads the token once it is within
 // RefreshBeforeExpiry of its exp claim.
 func TestRefreshingTokenSource_RefreshesBeforeExpiry_spec_25_4(t *testing.T) {
@@ -96,7 +96,7 @@ func TestRefreshingTokenSource_RefreshesBeforeExpiry_spec_25_4(t *testing.T) {
 	}
 }
 
-// TestRefreshingTokenSource_MinTTLFloor covers §25.4 line 1959: a startup
+// TestRefreshingTokenSource_MinTTLFloor covers §25.4: a startup
 // token whose remaining lifetime is below the floor is rejected.
 func TestRefreshingTokenSource_MinTTLFloor_spec_25_4(t *testing.T) {
 	now := time.Unix(2_000_000, 0).UTC()

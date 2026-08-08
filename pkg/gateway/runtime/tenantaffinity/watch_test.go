@@ -36,7 +36,7 @@ func (f *fakeLister) ListEndpoints(context.Context) ([]Endpoint, error) {
 	return f.snapshots[len(f.snapshots)-1], nil
 }
 
-// spec: §5.2 line 500 — the poller feeds the EndpointSlice snapshot into
+// spec: §5.2 — the poller feeds the EndpointSlice snapshot into
 // Router.UpdateEndpoints so Route sees the live pod-IP/readiness set.
 func TestEndpointPollerFeedsRouterFirstListImmediate(t *testing.T) {
 	r := New("acme-stateless", nil)
@@ -60,7 +60,7 @@ func TestEndpointPollerFeedsRouterFirstListImmediate(t *testing.T) {
 	})
 }
 
-// spec: §5.2 line 500 — a failed list retains the last-known endpoint
+// spec: §5.2 — a failed list retains the last-known endpoint
 // set rather than draining the router (a transient API blip must not
 // collapse routing).
 func TestEndpointPollerRetainsSnapshotOnListError(t *testing.T) {
@@ -98,7 +98,7 @@ func TestEndpointPollerRetainsSnapshotOnListError(t *testing.T) {
 	r.Release()
 }
 
-// spec: §5.2 line 500 — a readiness flip on a re-list removes a pod at
+// spec: §5.2 — a readiness flip on a re-list removes a pod at
 // slot capacity from the route-target set.
 func TestEndpointPollerReflectsReadinessFlip(t *testing.T) {
 	r := New("acme-stateless", nil)

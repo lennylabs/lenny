@@ -2,26 +2,25 @@
 -- counters. The fast path lives in Redis under the tree-scoped
 -- {root_session_id}:dlg:* keys (pkg/gateway/treebudget); those counters
 -- are volatile and a Redis restart empties them. This table is the
--- periodic Postgres checkpoint §11.2 line 29 mandates: every
+-- periodic Postgres checkpoint §11.2 mandates: every
 -- quotaSyncIntervalSeconds the gateway persists each active tree's
 -- structural budget (active node count, consumed token budget, and the
 -- separately-tracked aggregate in-memory footprint) so that on Redis
--- recovery the §11.2 line 48 two-source reconstruction can restore the
+-- recovery the §11.2 two-source reconstruction can restore the
 -- counters via the MAX rule rather than resuming against a stale-zero
 -- value that would silently un-enforce a budget the tree had already hit.
 --
 -- The row is keyed by (tenant_id, root_session_id): a delegation tree is
 -- identified tree-wide by its root session, and the Redis keys carry no
 -- tenant prefix (the §12.4 R-04 intentional exception), so the tenant is
--- recovered here from the SessionStore under RLS, exactly as the §12.4
--- line 193 application-layer isolation rule requires.
+-- recovered here from the SessionStore under RLS, exactly as the §12.4 application-layer isolation rule requires.
 --
 -- tree_memory_bytes is checkpointed separately from tree_size because
 -- §8.2 offloads completed subtrees and reclaims their memory, so the two
 -- counters diverge; the memory counter is the binding constraint for
--- gateway memory protection (§11.2 line 29).
+-- gateway memory protection (§11.2).
 --
--- extension_denied / cool_off_expiry are the §8.6 lines 730-733
+-- extension_denied / cool_off_expiry are the §8.6
 -- rejection-denial durability columns. The §11.2 counter checkpoint does
 -- not write them (it touches only the counter columns and checkpoint_at
 -- on conflict, leaving the denial state intact); a Postgres-backed
@@ -31,11 +30,11 @@
 -- the denial lifecycle.
 --
 -- checkpoint_at is stamped with clock_timestamp() server-side so the
--- §11.2 line 48 irrecoverability test (checkpoint older than
+-- §11.2 irrecoverability test (checkpoint older than
 -- 2 x quotaSyncIntervalSeconds) compares against the database clock
 -- rather than a replica's local Go clock.
 --
--- spec: §11.2 lines 29, 48; §12.4 lines 193, 218; §8.6 lines 730-733.
+-- spec: §11.2; §12.4; §8.6.
 
 CREATE TABLE delegation_tree_budget (
     tenant_id             TEXT        NOT NULL REFERENCES tenants(id),

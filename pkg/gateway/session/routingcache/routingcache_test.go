@@ -30,7 +30,7 @@ func newCache(t *testing.T) (*routingcache.RedisCache, *miniredis.Miniredis) {
 	return c, mr
 }
 
-// spec: §4.2 line 152 — empty session ID is rejected before any
+// spec: §4.2 — empty session ID is rejected before any
 // Redis interaction.
 func TestGetEmptySessionIDRejected(t *testing.T) {
 	t.Parallel()
@@ -46,7 +46,7 @@ func TestGetEmptySessionIDRejected(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — a Get on a missing key returns
+// spec: §4.2 — a Get on a missing key returns
 // ErrCacheMiss; callers treat the miss as the trigger to fall
 // through to Postgres.
 func TestGetMissReturnsErrCacheMiss(t *testing.T) {
@@ -57,7 +57,7 @@ func TestGetMissReturnsErrCacheMiss(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — Set then Get round-trips the binding.
+// spec: §4.2 — Set then Get round-trips the binding.
 func TestSetThenGet(t *testing.T) {
 	t.Parallel()
 	c, _ := newCache(t)
@@ -78,7 +78,7 @@ func TestSetThenGet(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — Invalidate removes the cached binding. A
+// spec: §4.2 — Invalidate removes the cached binding. A
 // subsequent Get returns ErrCacheMiss.
 func TestInvalidateRemovesEntry(t *testing.T) {
 	t.Parallel()
@@ -94,7 +94,7 @@ func TestInvalidateRemovesEntry(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — invalidating a missing key is not an error;
+// spec: §4.2 — invalidating a missing key is not an error;
 // the §4.2 coordinator handoff path calls Invalidate unconditionally.
 func TestInvalidateMissingIsNoError(t *testing.T) {
 	t.Parallel()
@@ -104,7 +104,7 @@ func TestInvalidateMissingIsNoError(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — entries expire after the configured TTL.
+// spec: §4.2 — entries expire after the configured TTL.
 // Use a short TTL and miniredis's clock-fast-forward to verify the
 // expiry path.
 func TestEntryExpiresAfterTTL(t *testing.T) {
@@ -126,7 +126,7 @@ func TestEntryExpiresAfterTTL(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — overwriting an entry replaces it
+// spec: §4.2 — overwriting an entry replaces it
 // in-place. The §4.2 coordinator-handoff path Sets the new replica
 // after invalidating, and a subsequent Get must reflect the new
 // binding.
@@ -151,7 +151,7 @@ func TestSetOverwritesExistingEntry(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — a corrupt cache entry (non-JSON value)
+// spec: §4.2 — a corrupt cache entry (non-JSON value)
 // surfaces as a cache miss so the caller falls back to Postgres
 // and rewrites the entry.
 func TestCorruptEntryFallsBackToMiss(t *testing.T) {
@@ -164,7 +164,7 @@ func TestCorruptEntryFallsBackToMiss(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — concurrent Sets converge: with N goroutines
+// spec: §4.2 — concurrent Sets converge: with N goroutines
 // writing distinct bindings under the same key, the final Get
 // observes one of the written values (last-writer-wins for the same
 // key is fine for the cache; the Postgres row remains the source of
@@ -198,7 +198,7 @@ func TestConcurrentSetsConverge(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — New rejects a nil client outright. The
+// spec: §4.2 — New rejects a nil client outright. The
 // caller must supply a valid §12.6 RedisConcernCachePubSub client.
 func TestNewRejectsNilClient(t *testing.T) {
 	t.Parallel()
@@ -207,7 +207,7 @@ func TestNewRejectsNilClient(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — New picks DefaultTTL when the config TTL is
+// spec: §4.2 — New picks DefaultTTL when the config TTL is
 // zero. The default keeps a forgotten invalidation bounded to one
 // window without consulting Postgres again.
 func TestNewDefaultsTTLWhenZero(t *testing.T) {
@@ -230,7 +230,7 @@ func TestNewDefaultsTTLWhenZero(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 152 — Get surfaces a transport-level failure as
+// spec: §4.2 — Get surfaces a transport-level failure as
 // a cache miss. The miniredis-based test cannot inject a transport
 // error directly, so this case closes the client and verifies the
 // Get returns ErrCacheMiss rather than the raw network error.

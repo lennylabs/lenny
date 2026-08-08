@@ -70,7 +70,7 @@ type Postgres struct {
 // StoreRouter in Postgres-only mode (no Redis). Billing and audit store
 // component and integration tests construct their stores through it so
 // the test path matches production: billing/audit writes route through
-// StoreRouter rather than holding a raw pool. spec: §12.3 R-03 line 144.
+// StoreRouter rather than holding a raw pool. spec: §12.3 R-03.
 func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
 	t.Helper()
 	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: p.Pool})

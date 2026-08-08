@@ -13,7 +13,7 @@
 // change to the gateway. lenny-ops owns the operator-facing surface and
 // the §25.2 envelope; the gateway owns the effective config.
 //
-// spec: §25.8 Config Diff and Config Apply (lines 3566-3574).
+// spec: §25.8 Config Diff and Config Apply.
 package configservice
 
 import (
@@ -26,7 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// §25.8 config error codes (spec table line 3640-3641).
+// §25.8 config error codes.
 const (
 	// CodeValidationFailed is CONFIG_VALIDATION_FAILED: the proposed config
 	// failed schema validation. details.errors lists each violation.
@@ -38,8 +38,7 @@ const (
 )
 
 // ErrGatewayUnavailable reports that the running config could not be
-// fetched from the gateway (the §25.8 line 3610 "gateway is down: config
-// diff/apply fail" degradation).
+// fetched from the gateway (the §25.8 degradation).
 var ErrGatewayUnavailable = errors.New("configservice: gateway config unavailable")
 
 // GatewayConfig is the gateway-side config client the service proxies
@@ -68,7 +67,7 @@ type ValidationError struct {
 
 // Validator checks a proposed config against the known config schema.
 // The production validator is generated from the pkg/chart/values Go
-// structs (§17 line 655); a nil validator accepts any config (the
+// structs (§17); a nil validator accepts any config (the
 // cold-start posture). It returns the list of violations; an empty list
 // means the config is valid.
 type Validator interface {
@@ -77,7 +76,7 @@ type Validator interface {
 
 // AuditEvent is the §16.7 platform.config_changed audit event the Service
 // emits on a confirmed apply that the gateway accepted. A nil AuditSink
-// drops it. spec: §16.7 line 686; §25.8 PUT /v1/admin/platform/config.
+// drops it. spec: §16.7; §25.8 PUT /v1/admin/platform/config.
 type AuditEvent struct {
 	// Type is always audit.EventPlatformConfigChanged.
 	Type string
@@ -151,7 +150,7 @@ type DiffResult struct {
 }
 
 // Diff compares the desired config against the gateway's running config
-// and returns the field-by-field differences (§25.8 line 3568, used for
+// and returns the field-by-field differences (§25.8, used for
 // GitOps reconciliation). A gateway-fetch failure returns
 // ErrGatewayUnavailable.
 func (s *Service) Diff(ctx context.Context, desired map[string]any) (DiffResult, error) {
@@ -212,7 +211,7 @@ func (e *ValidationFailed) Error() string { return "configservice: config schema
 // (§25.8 422 CONFIG_VALIDATION_FAILED) and ErrGatewayUnavailable when the
 // running config cannot be fetched.
 //
-// spec: §25.8 lines 3570-3574.
+// spec: §25.8.
 func (s *Service) Apply(ctx context.Context, req ApplyRequest) (ApplyResult, error) {
 	// 1. Schema validation. Unknown keys, type mismatches, and
 	//    out-of-range values are rejected before any diff or apply.
@@ -242,7 +241,7 @@ func (s *Service) Apply(ctx context.Context, req ApplyRequest) (ApplyResult, err
 	}
 	res.Applied = true
 	res.RestartRequired = restart
-	// §16.7 line 686 platform.config_changed: a confirmed apply the gateway
+	// §16.7 platform.config_changed: a confirmed apply the gateway
 	// accepted is an operator-visible config mutation. The in-sync apply
 	// (no diffed paths) still emits — the operator confirmed an apply and
 	// the audit trail records the action even when it was idempotent.

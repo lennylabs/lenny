@@ -13,7 +13,7 @@ import (
 // and stamps CursorKindPK; the Redis scan and in-memory buffer paginate by
 // limit only, with no continuation cursor, and stamp CursorKindNone.
 //
-// spec: §25.4 lines 2427-2429.
+// spec: §25.4.
 const (
 	CursorKindPK   = "pk"
 	CursorKindNone = "none"
@@ -24,7 +24,7 @@ const (
 // endpoint returns in its envelope. NextCursor is an opaque continuation
 // token, empty on the CursorKindNone paths and on the final Postgres page.
 //
-// spec: §25.4 lines 2425-2429 (Storage Tiers, Query Path).
+// spec: §25.4.
 type ListPage struct {
 	Items      []Escalation
 	NextCursor string
@@ -49,7 +49,7 @@ var ErrStoreUnavailable = errors.New("escalation store unavailable")
 // that store. A store whose backend is unreachable returns
 // ErrStoreUnavailable from every method.
 //
-// spec: §25.4 lines 2376-2429.
+// spec: §25.4.
 type Store interface {
 	// Tier returns this store's persistence label
 	// (PersistenceDurablePostgres, PersistenceDurableRedis, or
@@ -58,8 +58,7 @@ type Store interface {
 	Tier() string
 	// Put inserts or replaces esc by ID. It is idempotent: re-putting the
 	// same ID overwrites the row, so the reconciliation flush is a no-op
-	// when the destination store already holds the record (§25.4 line
-	// 2413).
+	// when the destination store already holds the record (§25.4).
 	Put(ctx context.Context, esc Escalation) error
 	// Get returns the escalation by id, or (nil, nil) when absent.
 	Get(ctx context.Context, id string) (*Escalation, error)
@@ -88,7 +87,7 @@ type Store interface {
 // seam (consistent with the backup and drift audit sinks); a nil sink
 // drops the event.
 //
-// spec: §25.4 line 2415.
+// spec: §25.4.
 type AuditSink interface {
 	// EscalationPersisted records a flush of escalation id from the
 	// sourceTier store up to the destTier store, taking durationMS.

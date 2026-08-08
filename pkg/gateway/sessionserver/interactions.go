@@ -141,7 +141,7 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 		}
 		return
 	}
-	// spec: §7.2 lines 124-125 — a tool-use approve/deny must unblock the
+	// spec: §7.2 — a tool-use approve/deny must unblock the
 	// runtime's blocked tool call, not merely flip the interaction phase.
 	// Deliver the verdict onto the shared approval-waiter registry so the
 	// PodExecutor read blocked on this tool_call wakes and relays the
@@ -155,7 +155,7 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 			Reason:   res.reason,
 		})
 	}
-	// spec: §7.2 lines 124-127 / §11.7 / §16.7 — every state-changing
+	// spec: §7.2 / §11.7 / §16.7 — every state-changing
 	// user decision (tool-use approve/deny, elicitation respond/dismiss)
 	// writes a §11.7 hash-chained audit row so the post-incident
 	// reconstruction can show who approved or denied what. Best-effort:

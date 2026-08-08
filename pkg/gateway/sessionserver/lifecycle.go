@@ -14,18 +14,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// DefaultArtifactRetention is the §7.1 line 77 default artifact
+// DefaultArtifactRetention is the §7.1 default artifact
 // retention window. Session artifacts (workspace snapshots, logs,
 // transcripts) remain eligible for retrieval until this long after the
 // session reaches a terminal state, after which the §4.5 retention GC
 // is eligible to delete them. Deployers override the window via
 // Options.DefaultRetention.
 //
-// spec: §7.1 line 77 — "Session artifacts ... are retained for a
+// spec: §7.1 — "Session artifacts ... are retained for a
 // configurable TTL (default: 7 days, deployer-configurable)".
 const DefaultArtifactRetention = 7 * 24 * time.Hour
 
-// DefaultExpectedWorkspaceRoot is the §7.3 line 408 / §6.1 platform
+// DefaultExpectedWorkspaceRoot is the §7.3 / §6.1 platform
 // convention for the absolute `cwd` path mounted into every agent pod.
 // The lenny-adapter's `--workspace-root` flag defaults to this same
 // value; the gateway passes it on Resume so the adapter can assert that
@@ -33,7 +33,7 @@ const DefaultArtifactRetention = 7 * 24 * time.Hour
 // before extracting any checkpoint bytes. A deployer that customises
 // the flag on either side will see the §7.3 step (d) assertion fire.
 //
-// spec: §7.3 line 408 — "Recreate same absolute `cwd` path";
+// spec: §7.3 — "Recreate same absolute `cwd` path";
 // §6.1 — workspace volume convention. F-7.3.15.
 const DefaultExpectedWorkspaceRoot = "/workspace/current"
 
@@ -53,7 +53,7 @@ type LifecycleAuditSink interface {
 
 // SessionLifecycleEvent is the §11.7 audit payload for a session
 // lifecycle transition. The audit row's tenant scope is the session's
-// own TenantID per the §11.7 line 428 write-time tenant-validation
+// own TenantID per the §11.7 write-time tenant-validation
 // rule (the gateway derives it from session context, never from client
 // input). Field names feed the §16.6 OCSF mapping.
 type SessionLifecycleEvent struct {
@@ -71,7 +71,7 @@ type SessionLifecycleEvent struct {
 	// only for the session.failed terminal event.
 	FailureClass string
 	// Detail carries an event-specific human-readable note, e.g. the last
-	// MinIO error recorded on a workspaceSealFailed event (§7.1 line 112).
+	// MinIO error recorded on a workspaceSealFailed event (§7.1).
 	// Empty for events that need no detail.
 	Detail string
 	// Outcome records whether a boundary decision admitted or rejected
@@ -118,9 +118,9 @@ const (
 	auditSessionFailed    = "session.failed"
 	auditSessionCancelled = "session.cancelled"
 	auditSessionExpired   = "session.expired"
-	// auditWorkspaceSealFailed is the §7.1 line 112 audit event emitted
+	// auditWorkspaceSealFailed is the §7.1 audit event emitted
 	// when the seal-and-export retry window is exhausted. It records the
-	// last export error in Detail. spec: §7.1 line 112 — "emits a
+	// last export error in Detail. spec: §7.1 — "emits a
 	// workspaceSealFailed audit event (recording the last MinIO error)".
 	auditWorkspaceSealFailed = "session.workspace_seal_failed"
 
@@ -132,22 +132,21 @@ const (
 	auditSessionAwaitingActionEntered   = "session.awaiting_action_entered"
 	auditSessionExpiredInAwaitingAction = "session.expired_in_awaiting_action"
 	auditSessionCascadeApplied          = "session.cascade_applied"
-	// auditSessionSetupCommandFailed is the §7.5 / §7.3 line 387 audit
+	// auditSessionSetupCommandFailed is the §7.5 / §7.3 audit
 	// row emitted when a setup command exits non-zero or is killed by
 	// the per-command / aggregate cap. F-7.5.9.
 	auditSessionSetupCommandFailed = "session.setup_command_failed"
 
 	// Interaction-resolution audit event types written by the §15.1
 	// approve/deny/respond/dismiss endpoints. The strings match the
-	// §16.7 catalog. spec: §7.2 lines 124-127; §11.7; §16.7. F-7.2.8.
+	// §16.7 catalog. spec: §7.2; §11.7; §16.7. F-7.2.8.
 	auditToolUseApproved      = "tool_use.approved"
 	auditToolUseDenied        = "tool_use.denied"
 	auditElicitationResponded = "elicitation.responded"
 	auditElicitationDismissed = "elicitation.dismissed"
 
 	// §7.4 / §16.6 workspace lifecycle audit event types. The strings
-	// follow the §16.6 OCSF mapping prefixes — `session.upload` (line
-	// 338) covers the `POST /v1/sessions/{id}/upload` and
+	// follow the §16.6 OCSF mapping prefixes — `session.upload` covers the `POST /v1/sessions/{id}/upload` and
 	// `/upload-archive` blob-commit boundary; `session.finalize_workspace`
 	// (line 339) covers the `POST /v1/sessions/{id}/finalize` transition
 	// that consumes the upload token's digest. F-7.4.17.
@@ -165,7 +164,7 @@ const (
 // must be non-blocking — the resolution path emits best-effort and
 // never waits for delivery.
 //
-// spec: §7.2 table lines 124-127 (resolution endpoints); §11.7 (the
+// spec: §7.2 table; §11.7 (the
 // audit row contract); §16.7 (the OCSF mapping). F-7.2.8.
 type InteractionAuditSink interface {
 	EmitInteractionResolution(ctx context.Context, ev InteractionResolutionEvent)
@@ -173,10 +172,10 @@ type InteractionAuditSink interface {
 
 // InteractionResolutionEvent is the §11.7 audit payload for one
 // resolved interaction. The audit row's tenant scope is the session's
-// own TenantID per the §11.7 line 428 write-time tenant-validation
+// own TenantID per the §11.7 write-time tenant-validation
 // rule. Field names feed the §16.7 OCSF mapping.
 //
-// spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+// spec: §7.2 table; §11.7; §16.7. F-7.2.8.
 type InteractionResolutionEvent struct {
 	// EventType is one of auditToolUseApproved, auditToolUseDenied,
 	// auditElicitationResponded, auditElicitationDismissed.
@@ -221,27 +220,27 @@ func auditEventTypeForTerminal(st session.State) (eventType string, ok bool) {
 	}
 }
 
-// emitStatusChange publishes the §7.2 line 137 status_change(state)
+// emitStatusChange publishes the §7.2 status_change(state)
 // event on the session's SSE stream. It is the platform-emitted signal
 // that the session reached a new state; emitting it on every observable
 // transition lets clients subscribed to GET /v1/sessions/{id}/events
 // observe lifecycle changes live instead of polling
 // GET /v1/sessions/{id}.
 //
-// spec: §7.2 line 137 — "status_change(state) | Session state
+// spec: §7.2 — "status_change(state) | Session state
 // transition (including suspended and input_required)".
 func (s *Server) emitStatusChange(tenantID, sessionID string, st session.State) {
 	s.publishEvent(tenantID, sessionID, "status_change", map[string]any{"state": string(st)})
 }
 
-// emitSessionComplete publishes the §7.2 line 141 session_complete(result)
+// emitSessionComplete publishes the §7.2 session_complete(result)
 // event once a session reaches a terminal state. The payload is the
 // §8.8 TaskResult body (schemaVersion, taskId, state, and an error
 // object for a non-completed terminal state), reusing the same encoder
 // the §8.10 tree archive writes so the on-stream result matches the
 // archived result.
 //
-// spec: §7.2 line 141 — "session_complete(result) | Session finished,
+// spec: §7.2 — "session_complete(result) | Session finished,
 // result available".
 func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Session) {
 	// The on-stream result reuses the same §8.8 materialization the §8.10
@@ -250,7 +249,7 @@ func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Sess
 	// output.parts, artifactRefs, or error). The event is an ephemeral
 	// re-projection, so it carries the current producer schemaVersion
 	// (existingVer 0); the durable immutability rule is enforced at the
-	// archive write site. spec: §7.2 line 141; §8.8 lines 885-940.
+	// archive write site. spec: §7.2; §8.8.
 	s.publishEvent(sess.TenantID, sess.ID, "session_complete", s.materializeTaskResult(ctx, sess, 0))
 }
 
@@ -259,7 +258,7 @@ func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Sess
 // heavier teardown (seal, executor close, cascade, billing) that only
 // the full completion path runs: the §7.2 status_change(state) and
 // session_complete(result) SSE events, the §11.7 session lifecycle
-// audit event, and the §7.1 line 77 retention-window roll. It is the
+// audit event, and the §7.1 retention-window roll. It is the
 // shared hook for both terminal paths — recordSessionCompleted (the
 // REST transitions, cancel cascade, and watchdog expiry) and
 // failSession (the start-path claim/credential failure) — so a failed
@@ -267,7 +266,7 @@ func (s *Server) emitSessionComplete(ctx context.Context, sess sessionstore.Sess
 // step is best-effort. The caller must only invoke this for a terminal
 // state.
 //
-// spec: §7.2 lines 137, 141; §7.1 line 77; §16.6.
+// spec: §7.2; §7.1; §16.6.
 func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Session) {
 	if !session.IsTerminal(sess.State) {
 		// Defensive: the terminal signals (notably session_complete and
@@ -294,20 +293,20 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 	}
 	s.rollRetentionOnTerminal(ctx, sess)
 	s.recordTerminalSessionMetrics(sess)
-	// spec: §7.2 line 343 / §7.3 line 425 — drain any inbox + DLQ
+	// spec: §7.2 / §7.3 — drain any inbox + DLQ
 	// messages still buffered for this now-terminal session, emitting a
 	// message_expired(target_terminated) event to each registered
 	// sender so a sender that received a `queued` receipt learns its
 	// message was never consumed. Best-effort; no-op without messaging.
 	// F-7.3.12.
 	s.drainMessagingOnTerminal(ctx, sess)
-	// spec: §6.3 line 356 — the §6.3 TTFT tracker is in-memory only.
+	// spec: §6.3 — the §6.3 TTFT tracker is in-memory only.
 	// On terminal, drop the entry so the map size scales with
 	// concurrently-streaming sessions rather than lifetime sessions.
 	s.firstTokenObserved.Delete(sess.ID)
 }
 
-// recordTerminalSessionMetrics emits the §16.1 lines 161-163 / §10.7
+// recordTerminalSessionMetrics emits the §16.1 / §10.7
 // rollback-trigger metric family at a terminal session transition: every
 // terminal session increments lenny_session_total and observes its
 // wall-clock duration on lenny_session_duration_seconds; a session that
@@ -317,7 +316,7 @@ func (s *Server) emitTerminalLifecycle(ctx context.Context, sess sessionstore.Se
 // duration is measured from session creation to the terminal transition.
 // Best-effort: a nil hook disables the emission.
 //
-// spec: §10.7 lines 1120-1132 (Manual Rollback Triggers), §16.1 lines 161-163.
+// spec: §10.7, §16.1.
 func (s *Server) recordTerminalSessionMetrics(sess sessionstore.Session) {
 	if s.recordSessionTerminal == nil {
 		return
@@ -333,18 +332,18 @@ func (s *Server) recordTerminalSessionMetrics(sess sessionstore.Session) {
 
 // emitAwaitingClientActionEntered fires the §16.6 / §11.7 / §7.2 signals
 // every transition into `awaiting_client_action` must produce:
-//   - the §7.2 line 137 status_change(awaiting_client_action) SSE frame,
+//   - the §7.2 status_change(awaiting_client_action) SSE frame,
 //   - the §16.6 EventSessionAwaitingAction operational event (delivered to
 //     a §14 callbackUrl webhook and the §25.5 subscription stream so CI
-//     systems can react without polling per §7.3 line 427), and
+//     systems can react without polling per §7.3), and
 //   - the §11.7 / §16.7 session.awaiting_action_entered audit row.
 //
 // Every step is best-effort: a nil collaborator or marshal failure must
 // never roll back the state transition that triggered it. The caller
 // must only invoke this when sess.State == StateAwaitingClientAction.
 //
-// spec: §7.3 line 427 (callbackUrl session.awaiting_action emission);
-// §16.6 (operational event); §11.7 / §16.7 audit row; §7.2 line 137
+// spec: §7.3;
+// §16.6 (operational event); §11.7 / §16.7 audit row; §7.2
 // status_change. F-7.3.13 / F-7.3.25 (audit row).
 func (s *Server) emitAwaitingClientActionEntered(ctx context.Context, sess sessionstore.Session) {
 	if sess.State != session.StateAwaitingClientAction {
@@ -387,13 +386,13 @@ func (s *Server) emitAwaitingClientActionEntered(ctx context.Context, sess sessi
 // recordCascadeApplied writes the §11.7 / §16.7 `session.cascade_applied`
 // audit row and emits a structured log line whenever the gateway
 // downgrades or otherwise rewrites a parent's cascade policy at
-// termination time. The §8.10 line 1103 maxOrphanTasksPerTenant
+// termination time. The §8.10 maxOrphanTasksPerTenant
 // fallback is the load-bearing caller: an orchestrator that configured
 // `detach` deliberately needs an audit and log trail when the cap forces
 // the gateway to apply `cancel_all` instead. Best-effort: a nil sink or
 // marshal error never rolls back the cascade.
 //
-// spec: §8.10 line 1103 (orphan-cap fallback); §11.7 / §16.7
+// spec: §8.10; §11.7 / §16.7
 // session.cascade_applied. F-8.10.8.
 func (s *Server) recordCascadeApplied(ctx context.Context, sess sessionstore.Session, original, effective session.CascadePolicy, reason string) {
 	// Structured log line so the §11.3 / §16.4 logging pipeline carries the
@@ -428,14 +427,14 @@ func (s *Server) recordCascadeApplied(ctx context.Context, sess sessionstore.Ses
 }
 
 // emitAwaitingClientActionExpired writes the §11.7 audit row for the
-// `awaiting_client_action → expired` edge — the §7.3 line 423 entry path
+// `awaiting_client_action → expired` edge — the §7.3 entry path
 // the watchdog drives on inactivity. The terminal lifecycle helpers
 // (emitTerminalLifecycle, recordSessionCompleted) already cover the
 // status_change(expired) / session_complete / session.expired writes;
 // this helper adds only the distinct §7.3 audit row so SIEM/SOC
 // dashboards can filter on the cause of the expiry.
 //
-// spec: §7.3 line 423 (awaiting_client_action → expired entry path);
+// spec: §7.3;
 // §11.7 / §16.7 audit row. F-7.3.25.
 func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessionstore.Session) {
 	if s.lifecycleAudit == nil {
@@ -452,7 +451,7 @@ func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessi
 	})
 }
 
-// rollRetentionOnTerminal applies the §7.1 line 77 default artifact-
+// rollRetentionOnTerminal applies the §7.1 default artifact-
 // retention window measured from the terminal transition. The window
 // starts when the session settles, so the deadline is rolled forward
 // to terminal_time + DefaultRetention. A client that already extended
@@ -463,7 +462,7 @@ func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessi
 // create-time deadline in place rather than fail the terminal
 // transition.
 //
-// spec: §7.1 line 77 (default 7-day retention) and §7.1.16 — the
+// spec: §7.1 and §7.1.16 — the
 // window starts at the terminal transition.
 func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.Session) {
 	deadline := s.clock().Add(s.retentionForTier(ctx, sess.TenantID, sess.Environment))
@@ -482,15 +481,14 @@ func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.
 	})
 }
 
-// retentionForTier resolves the §12.9 line 1043 tier-keyed default
+// retentionForTier resolves the §12.9 tier-keyed default
 // artifact-retention window for a session. It reads the §12.9
 // classification tier in effect for the session (the tenant's
 // workspaceTier, tightened by a stricter environment-level override when
 // the session is scoped to an environment) and applies the spec's fixed
 // per-tier default: T2 90 days, T4 24 hours. T3 and the empty default are
 // the deployer-configured window (s.defaultRetention), so a T4-classified
-// tenant no longer silently inherits the T3 7-day default. spec: §12.9
-// line 1043.
+// tenant no longer silently inherits the T3 7-day default. spec: §12.9.
 func (s *Server) retentionForTier(ctx context.Context, tenantID, environment string) time.Duration {
 	tier := s.effectiveWorkspaceTier(ctx, tenantID, environment)
 	if d, fixed := tenantstore.TierRetentionDefault(tier); fixed && d > 0 {
@@ -502,8 +500,7 @@ func (s *Server) retentionForTier(ctx context.Context, tenantID, environment str
 // effectiveWorkspaceTier returns the §12.9 classification tier in effect
 // for a session: the tenant's workspaceTier, replaced by an environment
 // override when the session is scoped to an environment and the override
-// is stricter. The environment override is admitted stricter-only (§12.9
-// line 1033), so taking the higher strictness rank is defensive against a
+// is stricter. The environment override is admitted stricter-only (§12.9), so taking the higher strictness rank is defensive against a
 // stale row. A missing tenant or environment row resolves to the empty
 // (T3-default) tier rather than failing the create path.
 func (s *Server) effectiveWorkspaceTier(ctx context.Context, tenantID, environment string) string {

@@ -19,11 +19,11 @@ import (
 )
 
 // TestAddTenantTotal_AtomicIncrement brings up an embedded Postgres, applies
-// the full migration set, and exercises the §12.4 line 268 atomic
+// the full migration set, and exercises the §12.4 atomic
 // per-tenant rollup increment the in_memory_reconciled budget mode relies
 // on. It downloads the PostgreSQL bundle, so it is skipped under -short.
 //
-// spec: §12.4 line 268; §11.2 line 44.
+// spec: §12.4; §11.2.
 func TestAddTenantTotal_AtomicIncrement_spec_12_4_268(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

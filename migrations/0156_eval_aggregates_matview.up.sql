@@ -1,4 +1,4 @@
--- §10.7 line 1088: the lenny_eval_aggregates materialized view is
+-- §10.7: the lenny_eval_aggregates materialized view is
 -- defined in the schema migration system (alongside all other DDL) and
 -- is created during database migration — never at runtime by the
 -- gateway. Deployers opt into it by setting evalAggregationRefreshSeconds
@@ -44,7 +44,7 @@ GRANT SELECT ON eval_results TO lenny_eval_aggregator;
 --   * 'dimension' — the same aggregates over each per-dimension value in
 --                   the `scores` jsonb map, keyed by dimension. Only
 --                   results that submitted a value for the dimension are
---                   counted, matching §10.7 line 1088 per-dimension
+--                   counted, matching §10.7 per-dimension
 --                   semantics.
 --
 -- percentile_disc (nearest-rank, smallest value with cumulative fraction
@@ -110,7 +110,7 @@ ALTER MATERIALIZED VIEW lenny_eval_aggregates OWNER TO lenny_eval_aggregator;
 -- --- SECURITY DEFINER refresh function ----------------------------------
 -- Owned by the BYPASSRLS aggregator, so the gateway (lenny_app, which has
 -- EXECUTE) drives a cross-tenant REFRESH ... CONCURRENTLY without holding
--- BYPASSRLS itself. spec: §10.7 line 1088.
+-- BYPASSRLS itself. spec: §10.7.
 CREATE FUNCTION refresh_lenny_eval_aggregates() RETURNS void
     LANGUAGE plpgsql
     SECURITY DEFINER

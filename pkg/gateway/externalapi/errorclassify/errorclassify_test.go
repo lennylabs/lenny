@@ -21,61 +21,61 @@ func TestClassifyKnownCodes(t *testing.T) {
 		{"DELEGATION_CYCLE_DETECTED", CategoryPermanent, false},
 		{"RATE_LIMITED", CategoryPolicy, true},
 		{"UPSTREAM_ERROR", CategoryUpstream, true},
-		// spec: §4.3 line 214 — TOKEN_SERVICE_UNAVAILABLE is the
+		// spec: §4.3 — TOKEN_SERVICE_UNAVAILABLE is the
 		// session-start retryable failure when the Token Service
 		// circuit breaker is open.
 		{"TOKEN_SERVICE_UNAVAILABLE", CategoryUpstream, true},
-		// spec: §15.1 line 1008 — INTERCEPTOR_TIMEOUT is TRANSIENT and
+		// spec: §15.1 — INTERCEPTOR_TIMEOUT is TRANSIENT and
 		// retryable, distinct from the POLICY (non-retryable) codes a
 		// deliberate interceptor REJECT produces.
 		{"INTERCEPTOR_TIMEOUT", CategoryTransient, true},
 		{"INTERCEPTOR_REJECTED", CategoryPolicy, false},
-		// spec: §15.1 lines 1012-1013 — a deliberate LLM proxy
+		// spec: §15.1 — a deliberate LLM proxy
 		// interceptor REJECT is PERMANENT and non-retryable, distinct
 		// from the TRANSIENT INTERCEPTOR_TIMEOUT.
 		{"LLM_REQUEST_REJECTED", CategoryPermanent, false},
 		{"LLM_RESPONSE_REJECTED", CategoryPermanent, false},
-		// spec: §15.1 line 1067, §8.3 line 157 — INPUT_TOO_LARGE is
+		// spec: §15.1, §8.3 — INPUT_TOO_LARGE is
 		// PERMANENT and not retryable; the caller must reduce the input.
 		{"INPUT_TOO_LARGE", CategoryPermanent, false},
-		// spec: §15.2.1 line 1017 — WARM_POOL_EXHAUSTED (no idle pods or
+		// spec: §15.2.1 — WARM_POOL_EXHAUSTED (no idle pods or
 		// concurrent slots) is TRANSIENT and retryable with backoff.
 		{"WARM_POOL_EXHAUSTED", CategoryTransient, true},
-		// spec: §4.9 line 1218, §15.1 line 990 — the §4.9 pre-claim
+		// spec: §4.9, §15.1 — the §4.9 pre-claim
 		// exhaustion / assignment race is POLICY and retryable (503).
 		{"CREDENTIAL_POOL_EXHAUSTED", CategoryPolicy, true},
-		// spec: §4.9 line 1364, §15.1 line 993 — a user-only policy with
+		// spec: §4.9, §15.1 — a user-only policy with
 		// no registered credential is PERMANENT and not retryable (404).
 		{"USER_CREDENTIAL_NOT_FOUND", CategoryPermanent, false},
-		// spec: §11.5 line 277 — INVALID_IDEMPOTENCY_KEY is PERMANENT
+		// spec: §11.5 — INVALID_IDEMPOTENCY_KEY is PERMANENT
 		// (key is malformed; the same key will be rejected identically).
 		// F-15.1.30.
 		{"INVALID_IDEMPOTENCY_KEY", CategoryPermanent, false},
-		// spec: §15.1 line 1052 — DERIVE_ON_LIVE_SESSION is PERMANENT
+		// spec: §15.1 — DERIVE_ON_LIVE_SESSION is PERMANENT
 		// (state controls the failure). F-15.1.29.
 		{"DERIVE_ON_LIVE_SESSION", CategoryPermanent, false},
-		// spec: §15.1 line 1054 — DERIVE_SNAPSHOT_UNAVAILABLE is TRANSIENT
+		// spec: §15.1 — DERIVE_SNAPSHOT_UNAVAILABLE is TRANSIENT
 		// because the missing object can be remediated out of band.
 		{"DERIVE_SNAPSHOT_UNAVAILABLE", CategoryTransient, true},
-		// spec: §15.1 line 1055 — ISOLATION_MONOTONICITY_VIOLATED is POLICY
+		// spec: §15.1 — ISOLATION_MONOTONICITY_VIOLATED is POLICY
 		// (the SEC-001 lattice forbids the move); 422, not retryable.
 		{"ISOLATION_MONOTONICITY_VIOLATED", CategoryPolicy, false},
-		// spec: §15.1 line 1053 — DERIVE_LOCK_CONTENTION is POLICY,
+		// spec: §15.1 — DERIVE_LOCK_CONTENTION is POLICY,
 		// retryable=true (back off and try again).
 		{"DERIVE_LOCK_CONTENTION", CategoryPolicy, true},
-		// spec: §15.1 line 1084 — ELICITATION_NOT_FOUND is PERMANENT
+		// spec: §15.1 — ELICITATION_NOT_FOUND is PERMANENT
 		// and not retryable; the triple mismatch will fail identically
 		// until the caller supplies a matching elicitation_id. F-9.2.17.
 		{"ELICITATION_NOT_FOUND", CategoryPermanent, false},
-		// spec: §15.1 line 1085 — ELICITATION_CONTENT_TAMPERED is
+		// spec: §15.1 — ELICITATION_CONTENT_TAMPERED is
 		// PERMANENT and not retryable; the tampering pod's forward fails
 		// identically. F-9.2.18.
 		{"ELICITATION_CONTENT_TAMPERED", CategoryPermanent, false},
-		// spec: §9.2 line 103 — ELICITATION_TIMEOUT is TRANSIENT but
+		// spec: §9.2 — ELICITATION_TIMEOUT is TRANSIENT but
 		// not retryable as-is (the original elicitation_id is dismissed);
 		// a fresh elicitation may succeed. F-9.2.18.
 		{"ELICITATION_TIMEOUT", CategoryTransient, false},
-		// spec: §9.2 line 87 — DOMAIN_NOT_ALLOWLISTED is POLICY and not
+		// spec: §9.2 — DOMAIN_NOT_ALLOWLISTED is POLICY and not
 		// retryable; the operator must add the host to the pool
 		// urlModeElicitation.domainAllowlist.
 		{"DOMAIN_NOT_ALLOWLISTED", CategoryPolicy, false},
@@ -136,7 +136,7 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 		{"POD_CRASH", CategoryTransient, true},              // spec: 15:995
 		{"MESSAGEPART_TOO_LARGE", CategoryPermanent, false}, // spec: 15:1038
 		{"ETAG_MISMATCH", CategoryPermanent, false},         // spec: 15:984
-		// spec: §8.8 line 869 — a one_shot second input round is 400.
+		// spec: §8.8 — a one_shot second input round is 400.
 		{"ONE_SHOT_INPUT_EXHAUSTED", CategoryPermanent, false},
 		// Code-internal delegate_task / request_input codes classified
 		// by sibling analogy (no §15.4 catalog row).
@@ -171,7 +171,7 @@ func TestClassifyCatalogMatrixCodes(t *testing.T) {
 // handleToolCall both classify through this one table, a correct entry
 // is what keeps §15.2.1 rule 5(d) parity. F-15.2.6.
 //
-// spec: §15.1 lines 1101-1106 (error catalog), §7.3 (setup_command_failed
+// spec: §15.1, §7.3 (setup_command_failed
 // non-retryable), §4.3 (KMS signer unavailable retryable).
 func TestClassifySessionLifecycleFallbackCodes(t *testing.T) {
 	cases := []struct {
@@ -217,7 +217,7 @@ func TestClassifyUnknownCodeIsTransientRetryable(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 974-1099 — the error catalog has no INVALID_REQUEST
+// spec: §15.1 — the error catalog has no INVALID_REQUEST
 // code; the canonical 400 validation code is VALIDATION_ERROR. The
 // non-spec INVALID_REQUEST entry was removed from the classifier so it
 // no longer registers as a known PERMANENT code (F-15.1.4).
@@ -231,7 +231,7 @@ func TestClassifyDropsNonSpecInvalidRequest_spec_15_1(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 3 line 368 — an audit advisory-lock acquisition
+// spec: §11.7 item 3 — an audit advisory-lock acquisition
 // timeout is TRANSIENT and retryable; the gateway retries on the same
 // replica before surfacing 503 audit_unavailable.
 func TestClassifyAuditConcurrencyTimeout_spec_11_7(t *testing.T) {
@@ -241,7 +241,7 @@ func TestClassifyAuditConcurrencyTimeout_spec_11_7(t *testing.T) {
 	}
 }
 
-// spec: §25.2 lines 320-329 — the §15.1 admin API emits a large
+// spec: §25.2 — the §15.1 admin API emits a large
 // vocabulary of resource-specific codes the catalog does not enumerate.
 // ClassifyStatus derives a status-appropriate pair for those rather than
 // the provisional (TRANSIENT, true) fallback, so a bespoke 4xx code is

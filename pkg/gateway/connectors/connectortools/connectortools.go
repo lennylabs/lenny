@@ -18,15 +18,15 @@
 //     tenant, owner, and environment, then drive the connectorinvoke
 //     Invoker, which dials the external endpoint as the MCP client with
 //     the gateway-held OAuth credential. The credential never transits
-//     the pod, satisfying the §9.3 line 163 invariant.
+//     the pod, satisfying the §9.3 invariant.
 //
-// The connector-access boundary (§9.3 line 164) is enforced twice:
+// The connector-access boundary (§9.3) is enforced twice:
 // ListSessionConnectors filters at discovery, and the Invoker re-checks
 // every ListTools and CallTool against the policy before any outbound
 // dial, so a stale advertised connector cannot be exercised after the
 // policy tightens.
 //
-// spec: §9.3 lines 142-164. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 package connectortools
 
 import (
@@ -57,14 +57,14 @@ type SessionResolver interface {
 // advertised connector set. A nil Authorizer leaves the discovery gate
 // open (no policy layer wired); the Invoker still re-checks at call time.
 //
-// spec: §9.3 line 164.
+// spec: §9.3.
 type Authorizer interface {
 	AuthorizeConnector(ctx context.Context, tenantID, sessionID, connectorID string, labels map[string]string) error
 }
 
 // Invoker dials a registered connector's external MCP endpoint for the
 // calling session. *connectorinvoke.Invoker satisfies it. ListTools and
-// CallTool both enforce the §9.3 line 164 connector-access boundary
+// CallTool both enforce the §9.3 connector-access boundary
 // before any outbound dial.
 type Invoker interface {
 	ListTools(ctx context.Context, tenantID, sessionID, connectorID, userID, environment string) ([]connectorinvoke.ToolDescriptor, error)
@@ -95,7 +95,7 @@ var _ leasecontrol.ConnectorToolService = (*Bridge)(nil)
 // tenant's active connectors, and filters them by the policy, so the
 // adapter opens one intra-pod MCP server per permitted connector. An
 // unknown session maps to leasecontrol.ErrSessionNotFound.
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func (b *Bridge) ListSessionConnectors(ctx context.Context, sessionID string) ([]leasecontrol.SessionConnectorDescriptor, error) {
 	sess, err := b.sessions.GetByID(ctx, sessionID)
 	if err != nil {
@@ -130,7 +130,7 @@ func (b *Bridge) ListSessionConnectors(ctx context.Context, sessionID string) ([
 // exposes, scoped to the calling session. It resolves the session's
 // tenant, owner, and environment and drives the Invoker, which dials the
 // external endpoint with the gateway-held credential. A denied connector
-// maps to leasecontrol.ErrConnectorNotPermitted. spec: §9.3 lines 142-164.
+// maps to leasecontrol.ErrConnectorNotPermitted. spec: §9.3.
 // F-9.1.2.
 func (b *Bridge) ListConnectorTools(ctx context.Context, sessionID, connectorID string) ([]leasecontrol.PlatformToolDescriptor, error) {
 	sess, err := b.sessions.GetByID(ctx, sessionID)
@@ -158,11 +158,11 @@ func (b *Bridge) ListConnectorTools(ctx context.Context, sessionID, connectorID 
 // CallConnectorTool forwards one external tool call on behalf of
 // sessionID and returns the JSON-encoded §15.2 MCP tool result plus its
 // isError flag. It resolves the session's tenant, owner, and environment
-// and drives the Invoker, which enforces the §9.3 line 164 policy gate
+// and drives the Invoker, which enforces the §9.3 policy gate
 // and dials the external endpoint with the gateway-held credential. A
 // denied connector maps to leasecontrol.ErrConnectorNotPermitted; a
 // transport failure maps to a generic error the handler reports as
-// Internal. spec: §9.3 lines 142-164. F-9.1.2.
+// Internal. spec: §9.3. F-9.1.2.
 func (b *Bridge) CallConnectorTool(ctx context.Context, sessionID, connectorID, toolName string, arguments []byte) ([]byte, bool, error) {
 	sess, err := b.sessions.GetByID(ctx, sessionID)
 	if err != nil {
@@ -178,7 +178,7 @@ func (b *Bridge) CallConnectorTool(ctx context.Context, sessionID, connectorID, 
 	return raw, isErrorResult(raw), nil
 }
 
-// mapInvokeErr translates a §9.3 line 164 policy denial into the
+// mapInvokeErr translates a §9.3 policy denial into the
 // leasecontrol sentinel the GatewayControl handler maps to
 // codes.PermissionDenied. Any other error is returned verbatim and the
 // handler reports it as Internal.

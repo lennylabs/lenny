@@ -3,9 +3,9 @@
 // Package archive decompresses and validates an uploaded workspace
 // archive entirely inside the gateway's §4.1 Upload Handler subsystem.
 //
-// spec: §7.4 line 448 — "All archive extraction runs inside the
+// spec: §7.4 — "All archive extraction runs inside the
 // gateway's Upload Handler subsystem; it is never delegated to agent
-// pods." spec: §13.4 line 652 — "pod binaries neither decompress
+// pods." spec: §13.4 — "pod binaries neither decompress
 // archives nor canonicalize paths on untrusted input." The gateway
 // reads the archive bytes, streams them through the tar/zip parser,
 // feeds every entry through pkg/upload.ValidateEntry / ValidateArchive,
@@ -16,9 +16,7 @@
 //
 // Extraction is in-memory: the §13.4 256 MiB decompressed-size ceiling
 // bounds the working set, and a failure discards the partial result
-// without touching any filesystem, so the §7.4 line 460 "all already-
-// extracted files are removed; the staging directory is returned to its
-// pre-extraction state" contract is satisfied trivially. F-7.4.13.
+// without touching any filesystem, so the §7.4 contract is satisfied trivially. F-7.4.13.
 package archive
 
 import (
@@ -37,16 +35,16 @@ import (
 
 // DefaultWorkspaceRoot is the §13.4 canonical workspace root symlink
 // targets are validated against when the per-Runtime ArchivePolicy does
-// not name one. spec: §7.4 line 458; §13.4 line 665.
+// not name one. spec: §7.4; §13.4.
 const DefaultWorkspaceRoot = "/workspace/current"
 
 // StripComponentsSkipCode is the §14 closed-enum WarningCode for the
-// §7.4 line 459 "entries with fewer than N segments are skipped"
+// §7.4
 // advisory. It matches pkg/workspaceplan.WarnStripComponentsSkip so the
 // gateway can republish the warning on the session SSE stream. F-7.4.15.
 const StripComponentsSkipCode = "workspace_plan_strip_components_skip"
 
-// decompressorPerReadCap is the §7.4 line 451 per-call decompressor size
+// decompressorPerReadCap is the §7.4 per-call decompressor size
 // cap: a single Read from the gzip/deflate decoder cannot allocate more
 // than 1 MiB even when fed a hostile stream.
 const decompressorPerReadCap = 1 << 20
@@ -77,8 +75,8 @@ type Symlink struct {
 }
 
 // Warning is one non-fatal §14 advisory raised during extraction (the
-// §7.4 line 459 strip-components skip is the only v1 producer). The
-// fields mirror the proto WorkspacePlanWarning. spec: §14 line 100.
+// §7.4 strip-components skip is the only v1 producer). The
+// fields mirror the proto WorkspacePlanWarning. spec: §14.
 type Warning struct {
 	Code            string
 	SourceIndex     int
@@ -107,7 +105,7 @@ type Result struct {
 // labels the strip-skip warnings. On any §13.4 violation it returns a
 // *upload.ValidationError whose Reason carries the §15.1 sub-code and
 // the §16.1 lenny_upload_extraction_aborted_total{error_type} label.
-// spec: §7.4 lines 449-462; §13.4 — F-7.4.1, F-13.4.1.
+// spec: §7.4; §13.4 — F-7.4.1, F-13.4.1.
 func Extract(data []byte, format string, strip, sourceIndex int, prefix string, allow upload.RuntimeAllow) (*Result, error) {
 	if strip < 0 {
 		return nil, &upload.ValidationError{Reason: upload.ReasonFormatError, Detail: fmt.Sprintf("stripComponents %d is negative", strip)}
@@ -118,7 +116,7 @@ func Extract(data []byte, format string, strip, sourceIndex int, prefix string, 
 	case "tar.gz":
 		// Count the compressed bytes so the §13.4 100:1 decompression-
 		// ratio check has its numerator, then cap each decompressor Read
-		// at 1 MiB per §7.4 line 451.
+		// at 1 MiB per §7.4.
 		counter := &byteCounter{r: bytes.NewReader(data)}
 		gz, err := gzip.NewReader(counter)
 		if err != nil {
@@ -223,7 +221,7 @@ func extractZip(data []byte, strip, sourceIndex int, prefix string, allow upload
 			if err != nil {
 				return nil, &upload.ValidationError{Reason: upload.ReasonFormatError, Path: entry.Name, Detail: fmt.Sprintf("open zip entry: %v", err)}
 			}
-			// spec: §7.4 line 451 — cap each deflate Read at 1 MiB.
+			// spec: §7.4 — cap each deflate Read at 1 MiB.
 			content, rerr := readEntry(&readCap{r: rc, maxRead: decompressorPerReadCap}, b.written)
 			_ = rc.Close()
 			if rerr != nil {
@@ -248,7 +246,7 @@ func extractZip(data []byte, strip, sourceIndex int, prefix string, allow upload
 // enforcing the §13.4 64 MiB per-entry ceiling and the running 256 MiB
 // archive-total ceiling so extraction aborts immediately when either is
 // crossed rather than buffering the whole bomb and checking at the end
-// ("no extract then check", §7.4). spec: §7.4 lines 449-456.
+// ("no extract then check", §7.4). spec: §7.4.
 func readEntry(r io.Reader, written int64) ([]byte, error) {
 	remainingTotal := upload.MaxDecompressedSize - written
 	if remainingTotal < 0 {
@@ -327,10 +325,10 @@ func (b *builder) symlink(p, target string) {
 }
 
 func (b *builder) warn(sourceIndex int, entryPath string, segCount, strip int) {
-	// spec: §7.4 line 459 — an entry with too few segments after
+	// spec: §7.4 — an entry with too few segments after
 	// stripComponents is skipped without aborting and emits one
 	// workspace_plan_strip_components_skip warning per skipped entry.
-	// spec: §14 line 100 — the warning carries sourceIndex, entryPath,
+	// spec: §14 — the warning carries sourceIndex, entryPath,
 	// segmentCount, stripComponents. F-7.4.15.
 	b.warnings = append(b.warnings, Warning{
 		Code:            StripComponentsSkipCode,
@@ -393,9 +391,8 @@ func stripPath(entryPath string, n int) (string, int, bool) {
 }
 
 // classifyTarKind maps a tar typeflag onto the §13.4 EntryKind. abort is
-// true for the §7.4 line 457 outright-rejected kinds (hardlink, char-
-// device, block-device, FIFO) and for any unknown typeflag. spec: §7.4
-// line 457 — F-7.4.3.
+// true for the §7.4 outright-rejected kinds (hardlink, char-
+// device, block-device, FIFO) and for any unknown typeflag. spec: §7.4 — F-7.4.3.
 func classifyTarKind(typeflag byte) (upload.EntryKind, bool) {
 	switch typeflag {
 	case tar.TypeReg, tar.TypeRegA:
@@ -423,7 +420,7 @@ func classifyTarKind(typeflag byte) (upload.EntryKind, bool) {
 // classifyZipKind maps a zip entry onto the §13.4 EntryKind. zip does not
 // natively encode hardlinks or device files, but unix-mode bits can
 // declare them; abort is true when the mode signals a forbidden kind.
-// spec: §7.4 line 457 — F-7.4.3.
+// spec: §7.4 — F-7.4.3.
 func classifyZipKind(entry *zip.File) (upload.EntryKind, bool) {
 	if entry.FileInfo().IsDir() {
 		return upload.KindDirectory, false
@@ -493,7 +490,7 @@ type nopCounter struct{}
 
 func (nopCounter) Compressed() int64 { return 0 }
 
-// readCap is the §7.4 line 451 per-call decompressor size cap: it
+// readCap is the §7.4 per-call decompressor size cap: it
 // truncates the caller's buffer so a single Read cannot allocate more
 // than maxRead bytes.
 type readCap struct {

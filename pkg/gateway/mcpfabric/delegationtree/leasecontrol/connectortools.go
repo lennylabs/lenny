@@ -17,7 +17,7 @@ import (
 // calling session's §8.3 effective delegation policy does not permit. The
 // §9.3 forwarding handlers map it to codes.PermissionDenied so the
 // runtime's MCP client reports a policy denial rather than a transport
-// fault. spec: §9.3 line 164. F-9.1.2.
+// fault. spec: §9.3. F-9.1.2.
 var ErrConnectorNotPermitted = errors.New("leasecontrol: connector is not permitted for session")
 
 // SessionConnectorDescriptor is one §9.3 connector the calling session's
@@ -37,7 +37,7 @@ type SessionConnectorDescriptor struct {
 // gateway acts as the MCP client to the external endpoint with the
 // gateway-held credential, so the credential never transits the pod.
 //
-// spec: §9.3 lines 142-164. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 type ConnectorToolService interface {
 	// ListSessionConnectors returns the connectors sessionID's effective
 	// delegation policy permits. ErrSessionNotFound is returned for an
@@ -62,7 +62,7 @@ type ConnectorToolService interface {
 // asks the gateway which connectors the calling session's effective
 // delegation policy permits. The adapter opens one intra-pod
 // @lenny-connector-<id> MCP server per returned connector and lists them
-// in the manifest connectorServers array. spec: §9.3 line 142. F-9.1.2.
+// in the manifest connectorServers array. spec: §9.3. F-9.1.2.
 func (s *Service) ListSessionConnectors(ctx context.Context, req *adapterv1.ListSessionConnectorsRequest) (*adapterv1.ListSessionConnectorsResponse, error) {
 	if s.connectorTools == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: connector tool forwarding is not configured on this gateway")
@@ -92,7 +92,7 @@ func (s *Service) ListSessionConnectors(ctx context.Context, req *adapterv1.List
 // the gateway for the tool catalog one connector exposes, for the
 // adapter's intra-pod per-connector MCP server to advertise on
 // tools/list. The gateway dials the external endpoint as the MCP client
-// using the gateway-held credential. spec: §9.3 lines 142-164. F-9.1.2.
+// using the gateway-held credential. spec: §9.3. F-9.1.2.
 func (s *Service) ListConnectorTools(ctx context.Context, req *adapterv1.ListConnectorToolsRequest) (*adapterv1.ListConnectorToolsResponse, error) {
 	if s.connectorTools == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: connector tool forwarding is not configured on this gateway")
@@ -130,11 +130,11 @@ func (s *Service) ListConnectorTools(ctx context.Context, req *adapterv1.ListCon
 // forwards one external tool call a type:agent runtime made against the
 // intra-pod @lenny-connector-<id> socket. The gateway validates the
 // connector_id against the calling session's effective delegation policy
-// (§9.3 line 164) and proxies the tools/call to the external MCP endpoint
+// (§9.3) and proxies the tools/call to the external MCP endpoint
 // with the gateway-held credential. A tool-level failure is carried as an
 // is_error result (the same isError ToolResult the runtime would receive
 // over the local socket); only a routing or policy failure returns a gRPC
-// status. spec: §9.3 lines 142-164. F-9.1.2.
+// status. spec: §9.3. F-9.1.2.
 func (s *Service) CallConnectorTool(ctx context.Context, req *adapterv1.CallConnectorToolRequest) (*adapterv1.CallConnectorToolResponse, error) {
 	if s.connectorTools == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: connector tool forwarding is not configured on this gateway")
@@ -157,7 +157,7 @@ func (s *Service) CallConnectorTool(ctx context.Context, req *adapterv1.CallConn
 		case errors.Is(err, ErrConnectorNotPermitted):
 			return nil, status.Errorf(codes.PermissionDenied, "leasecontrol: connector %s not permitted for session %s", req.GetConnectorId(), sessionID)
 		default:
-			// spec: §4.8 line 1077, §15.1 lines 1014-1015 — a connector
+			// spec: §4.8, §15.1 — a connector
 			// interceptor REJECT (PreConnectorRequest/PostConnectorResponse)
 			// carries the §15.1 code; surface it to the pod with a matching
 			// gRPC status code so the runtime sees the policy rejection
@@ -174,7 +174,7 @@ func (s *Service) CallConnectorTool(ctx context.Context, req *adapterv1.CallConn
 
 // connectorRejection is implemented by the connector proxy's
 // interceptor-REJECT error so this handler can read the §15.1 code without
-// importing the connectorinvoke package. spec: §4.8 line 1077.
+// importing the connectorinvoke package. spec: §4.8.
 type connectorRejection interface {
 	ConnectorRejectionCode() string
 	ConnectorRejectionReason() string
@@ -193,7 +193,7 @@ func asConnectorRejection(err error) (connectorRejection, bool) {
 // PreConnectorRequest REJECT (HTTP 403) maps to PermissionDenied; a
 // PostConnectorResponse REJECT (HTTP 502) and a fail-closed timeout map to
 // codes the runtime treats as a non-retryable upstream rejection. spec:
-// §15.1 lines 1012-1015.
+// §15.1.
 func connectorRejectionGRPCCode(code string) codes.Code {
 	switch code {
 	case "CONNECTOR_REQUEST_REJECTED":

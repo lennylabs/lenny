@@ -92,7 +92,7 @@ func newScrubOps() scrub.DefaultOps {
 }
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs from the runtime
+	// spec: §16.4 — structured JSON logs from the runtime
 	// adapter; routes the stdlib log package through the §16.4 handler
 	// (component=adapter) before any subcommand dispatch. F-16.4.1.
 	logging.Setup(os.Stderr, "adapter")
@@ -164,28 +164,28 @@ func main() {
 		"§13.2 (NET-059) dev/make-run escape hatch: write observability.otlpTlsEnabled=false "+
 			"so the runtime accepts an http:// OTLP endpoint; production keeps this false and "+
 			"uses an https:// endpoint")
-	// spec: §11.3 lines 205-206 — gateway→pod keepalive: 10s interval,
+	// spec: §11.3 — gateway→pod keepalive: 10s interval,
 	// 5s timeout. The server-side EnforcementPolicy keeps the gateway's
 	// client params (the 10s interval) from triggering an
 	// ENHANCE_YOUR_CALM. F-11.3.12.
 	keepaliveTimeMs := flag.Int("keepalive-time-ms",
 		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIME_MS", 10_000),
-		"§11.3 line 205 keepalive interval (ms) for gRPC pings from the gateway. Default 10000ms.")
+		"§11.3 keepalive interval (ms) for gRPC pings from the gateway. Default 10000ms.")
 	keepaliveTimeoutMs := flag.Int("keepalive-timeout-ms",
 		envIntOr("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
-		"§11.3 line 206 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
+		"§11.3 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
 	coordinatorHoldTimeoutSec := flag.Int("coordinator-hold-timeout-seconds",
 		envIntOr("LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS", 120),
-		"§10.1 line 50 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
+		"§10.1 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
 	postMortemDir := flag.String("post-mortem-dir",
 		os.Getenv("LENNY_POST_MORTEM_DIR"),
-		"§10.1 line 50 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
+		"§10.1 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
 	heartbeatIntervalSec := flag.Int("heartbeat-interval-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_INTERVAL_SECONDS", 30),
-		"§15.4.1 line 1442 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
+		"§15.4.1 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
-		"§15.4.1 line 1826 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
+		"§15.4.1 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
 	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
 		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
 		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
@@ -198,7 +198,7 @@ func main() {
 		log.Fatalf("lenny-adapter: --runtime-bin and --runtime-socket are mutually exclusive")
 	}
 
-	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// spec: §16.3 — install the process-wide TracerProvider and
 	// W3C propagator so the pod adapter's §16.3 spans (session.upload,
 	// session.finalize_workspace, session.run_setup, session.start,
 	// session.tool_call) reach the OTLP Collector instead of the no-op
@@ -216,7 +216,7 @@ func main() {
 		_ = traceShutdown(ctx)
 	}()
 
-	// §4.7 lines 870-877: run the mandatory SO_PEERCRED startup self-test
+	// §4.7: run the mandatory SO_PEERCRED startup self-test
 	// before any other setup. On failure, crash-loop the pod so it never
 	// enters the warm pool with a non-functional security boundary; when
 	// --require-so-peercred is false (confirmed gVisor divergence), the
@@ -227,7 +227,7 @@ func main() {
 			"syscall error; adapter security boundary cannot be enforced: %v", err)
 	}
 	if !*requireSoPeercred {
-		// §4.7 lines 885-888: nonce-only mode is an auditable escalation,
+		// §4.7: nonce-only mode is an auditable escalation,
 		// not a silent steady state.
 		adapter.IncSoPeercredDisabled()
 		log.Printf("lenny-adapter: WARNING: --require-so-peercred=false; running in " +
@@ -243,7 +243,7 @@ func main() {
 	if tlsOpt != nil {
 		opts = append(opts, tlsOpt)
 	}
-	// spec: §11.3 lines 205-206 — server-side keepalive that mirrors the
+	// spec: §11.3 — server-side keepalive that mirrors the
 	// gateway's client params. MinTime guards against an over-aggressive
 	// client; PermitWithoutStream allows the gateway's idle pings to
 	// keep the connection observably alive. F-11.3.12.
@@ -263,7 +263,7 @@ func main() {
 
 	adapterSrv := adapter.New(version)
 	adapterSrv.WorkspaceRoot = *workspaceRoot
-	// §6.4 lines 385-409: the per-slot `slots/{slotId}` workspace and
+	// §6.4: the per-slot `slots/{slotId}` workspace and
 	// `/artifacts/{slotId}` trees nest under the parent of --workspace-root
 	// (production /workspace) and --artifacts-root (production /artifacts).
 	// These roots feed slotlayout.Resolve, which gates per-slot tree
@@ -284,23 +284,23 @@ func main() {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
 	adapterSrv.CheckpointTransport = transport
-	// spec: §4.4 lines 254-255 — the pre-checkpoint workspace-size probe
+	// spec: §4.4 — the pre-checkpoint workspace-size probe
 	// reports the on-disk workspace bytes to the gateway (quota reservation)
 	// and aborts the checkpoint when the workspace exceeds the hard limit
 	// before any grant is minted. Zero leaves the limit disabled; the
 	// kubelet emptyDir guard is the backstop.
 	adapterSrv.WorkspaceSizeLimitBytes = *workspaceSizeLimitBytes
-	// spec: §10.1 lines 47-52 — the coordinator-loss hold window and the
+	// spec: §10.1 — the coordinator-loss hold window and the
 	// disk post-mortem path the adapter falls back to when no coordinator
 	// returns to receive the AdapterTerminating event.
 	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
 	adapterSrv.PostMortemDir = *postMortemDir
-	// spec: §15.4.1 lines 1442/1826 — production sidecar probes runtime
+	// spec: §15.4.1 — production sidecar probes runtime
 	// liveness with heartbeats and SIGTERMs a process that misses the ack
 	// window. A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
-	// §6.4 line 409: decode the inline shared-asset set the controller
+	// §6.4: decode the inline shared-asset set the controller
 	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
 	// materialize it into the read-only /workspace/shared tree.
 	adapterSrv.SharedAssetsDir = *sharedAssetsDir
@@ -317,10 +317,10 @@ func main() {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
 	adapterSrv.RuntimeUID = resolveRuntimeUID(*runtimeUID)
-	// §4.7 lines 879-883: in nonce-only mode the platform MCP server adds
+	// §4.7: in nonce-only mode the platform MCP server adds
 	// the per-connection challenge-response supplement to the static nonce.
 	adapterSrv.NonceOnlyMode = !*requireSoPeercred
-	// §9.1 lines 8-31: bind the platform MCP socket and, when a gateway
+	// §9.1: bind the platform MCP socket and, when a gateway
 	// address is configured, dial the gateway's GatewayControl service so
 	// the platform MCP server forwards a type:agent runtime's tools/list and
 	// tools/call (and the §9.3 per-connector tool calls) to the gateway.
@@ -412,7 +412,7 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
-		// §6.1 line 67 — SIGTERM during sdk_connecting tears the pre-connected
+		// §6.1 — SIGTERM during sdk_connecting tears the pre-connected
 		// SDK down within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s),
 		// force-terminating it on overrun, so it is not abandoned
 		// mid-connection and cannot leak credentials or hold provider

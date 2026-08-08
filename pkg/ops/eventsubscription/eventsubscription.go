@@ -13,7 +13,7 @@
 // reads the active subscriptions through a small adapter so a Store
 // change is visible to the worker without a process restart.
 //
-// spec: §25.5 lines 2613-2806.
+// spec: §25.5.
 package eventsubscription
 
 import (
@@ -31,7 +31,7 @@ import (
 
 // Canonical §25.5 error codes for the subscription surface. The HTTP
 // status and §25.2 category each maps to are fixed in the opsserver
-// error map. spec: §25.5 lines 2795-2802, line 2763.
+// error map. spec: §25.5.
 const (
 	// ErrCodeInvalidFilter rejects an unrecognized event type or
 	// severity in the filter (400).
@@ -80,25 +80,25 @@ func CodeOf(err error) string {
 	return ""
 }
 
-// TenantFilterAll is the §25.5 line 2760 wildcard tenant filter that
+// TenantFilterAll is the §25.5 wildcard tenant filter that
 // matches every event, including platform-scoped events that carry no
 // tenant label. A tenant-admin may not register it.
 const TenantFilterAll = "*"
 
-// rotationOverlapWindow is the §25.5 line 2729 dual-secret overlap: for
+// rotationOverlapWindow is the §25.5 dual-secret overlap: for
 // this long after a rotation, a delivery may be signed with either the
 // previous or the new secret so a receiver can be updated without
 // dropping deliveries.
 const rotationOverlapWindow = 60 * time.Second
 
-// secretRotationWarning is the §25.5 lines 2705-2709 single-use notice
+// secretRotationWarning is the §25.5 single-use notice
 // returned alongside a freshly generated secret.
 const secretRotationWarning = "This is the only time the secret will be returned. Store it securely. To rotate, delete and recreate this subscription or POST to /v1/admin/event-subscriptions/{id}/rotate-secret."
 
 // Record is one persisted §25.5 webhook subscription. It holds the
 // SHA-256 secret hash and fingerprint rather than the plaintext secret;
 // the plaintext is returned once on Create/RotateSecret and never read
-// back. spec: §25.5 lines 2613-2647, 2715-2733.
+// back. spec: §25.5.
 type Record struct {
 	ID                        string
 	CallbackURL               string
@@ -120,7 +120,7 @@ type Record struct {
 
 // View returns the redacted read-view of the record. The secret hash is
 // never exposed; only the fingerprint is, so an operator can confirm
-// which secret is in effect without learning it. spec: §25.5 line 2718.
+// which secret is in effect without learning it. spec: §25.5.
 func (r Record) View() Subscription {
 	return Subscription{
 		ID:                r.ID,
@@ -142,7 +142,7 @@ func (r Record) View() Subscription {
 // WithinRotationOverlap reports whether the previous secret is still
 // honored: true for rotationOverlapWindow after the last rotation. The
 // delivery worker consults this to decide whether to also accept the
-// prior secret during the cut-over. spec: §25.5 line 2729.
+// prior secret during the cut-over. spec: §25.5.
 func (r Record) WithinRotationOverlap(now time.Time) bool {
 	if r.SecretRotatedAt.IsZero() || r.PreviousSecretFingerprint == "" {
 		return false
@@ -153,7 +153,7 @@ func (r Record) WithinRotationOverlap(now time.Time) bool {
 // Subscription is the redacted §25.5 read-view returned by the list and
 // get endpoints. It carries no secret material — only the fingerprint.
 // The plaintext secret is returned once via Reveal on Create/Rotate.
-// spec: §25.5 lines 2613-2647, 2711-2713.
+// spec: §25.5.
 type Subscription struct {
 	ID                string    `json:"id"`
 	CallbackURL       string    `json:"callbackUrl"`
@@ -172,7 +172,7 @@ type Subscription struct {
 
 // Reveal is the Create/RotateSecret response: the redacted subscription
 // plus the plaintext secret returned exactly once with the single-use
-// warning. spec: §25.5 lines 2702-2710.
+// warning. spec: §25.5.
 type Reveal struct {
 	Subscription
 	Secret                string `json:"secret"`
@@ -181,7 +181,7 @@ type Reveal struct {
 
 // CreateRequest carries the caller-supplied fields on Create. The secret
 // is generated server-side, so the request never carries one. spec:
-// §25.5 lines 2702-2704.
+// §25.5.
 type CreateRequest struct {
 	CallbackURL  string   `json:"callbackUrl"`
 	Types        []string `json:"types,omitempty"`
@@ -193,7 +193,7 @@ type CreateRequest struct {
 // UpdateRequest patches a subscription's filters and metadata. Every
 // field is a pointer so an omitted field leaves the stored value
 // unchanged. The secret is never updated here (use RotateSecret).
-// spec: §25.5 line 2568, lines 2613-2647.
+// spec: §25.5.
 type UpdateRequest struct {
 	CallbackURL  *string   `json:"callbackUrl,omitempty"`
 	Types        *[]string `json:"types,omitempty"`
@@ -206,15 +206,14 @@ type UpdateRequest struct {
 // Caller is the authenticated principal performing a subscription
 // operation: the OIDC sub, the tenant the principal acts for, and
 // whether the principal holds the platform-admin role. The opsserver
-// resolves it from the verified bearer. spec: §25.5 lines 2758-2766.
+// resolves it from the verified bearer. spec: §25.5.
 type Caller struct {
 	Subject       string
 	TenantID      string
 	PlatformAdmin bool
 }
 
-// Delivery is one §25.5 webhook delivery-tracking row. spec: §25.5 lines
-// 2649-2664.
+// Delivery is one §25.5 webhook delivery-tracking row. spec: §25.5.
 type Delivery struct {
 	ID             int64
 	SubscriptionID string
@@ -228,7 +227,7 @@ type Delivery struct {
 	ExpiresAt      time.Time
 }
 
-// Delivery status values. spec: §25.5 line 2655.
+// Delivery status values. spec: §25.5.
 const (
 	DeliveryDelivered = "delivered"
 	DeliveryFailed    = "failed"
@@ -324,7 +323,7 @@ type Store interface {
 	// or before before, deleting at most limit rows so a single sweep does
 	// not hold a long lock, and returns the number deleted. The §25.5
 	// retention cron calls it in a loop until a sweep deletes fewer than
-	// limit. spec: §25.5 lines 2649-2664.
+	// limit. spec: §25.5.
 	DeleteExpired(ctx context.Context, before time.Time, limit int) (int, error)
 }
 
@@ -345,12 +344,11 @@ type Service struct {
 	SecretFunc func() (string, error)
 	// Now returns the timestamp source. A nil Now uses time.Now.
 	Now func() time.Time
-	// audit receives the §25.5 line 2731/2804 subscription audit events.
+	// audit receives the §25.5 subscription audit events.
 	audit AuditSink
 	// OnChange, when non-nil, is invoked after every successful CRUD
 	// mutation (Create, Update, RotateSecret, Delete) with the affected
-	// subscription id. The lenny-ops wiring uses it for the §25.5 line
-	// 2751 synchronous in-process cache update plus the
+	// subscription id. The lenny-ops wiring uses it for the §25.5 synchronous in-process cache update plus the
 	// subscription_cache_invalidate RPC across replicas, so a change made
 	// on one replica reaches the leader's delivery worker within a few
 	// hundred milliseconds rather than at the next periodic refresh.
@@ -359,7 +357,7 @@ type Service struct {
 	// the freshly generated plaintext secret so the delivery worker's
 	// in-memory reveal cache can sign deliveries. The plaintext is held
 	// only in memory and never persisted; the store keeps the SHA-256
-	// hash. spec: §25.5 lines 2715-2733, 2747-2756.
+	// hash. spec: §25.5.
 	OnSecret func(subID, secret string, generation int64)
 	// OnRemove, when non-nil, is invoked on Delete with the removed
 	// subscription id so the reveal cache can drop its plaintext secret.
@@ -373,7 +371,7 @@ func NewService(store Store) *Service {
 }
 
 // SetAuditSink installs the §25.5 subscription audit-event sink. A nil
-// sink restores the no-op default. spec: §25.5 lines 2731, 2804-2806.
+// sink restores the no-op default. spec: §25.5.
 func (s *Service) SetAuditSink(a AuditSink) {
 	if a == nil {
 		a = noopAuditSink{}
@@ -412,7 +410,7 @@ func (s *Service) auditSink() AuditSink {
 // Create validates the request, applies the tenant-isolation gate,
 // generates the secret server-side, persists the hash + fingerprint,
 // emits the subscription_created audit event, and returns the plaintext
-// secret exactly once. spec: §25.5 lines 2702-2733, 2758-2766.
+// secret exactly once. spec: §25.5.
 func (s *Service) Create(ctx context.Context, req CreateRequest, caller Caller) (Reveal, error) {
 	if s == nil || s.Store == nil {
 		return Reveal{}, storeUnavailable()
@@ -532,7 +530,7 @@ func (s *Service) List(ctx context.Context, caller Caller) ([]Subscription, erro
 
 // Update patches a subscription's filters and metadata, bumps the
 // generation counter so the §25.5 cache invalidates, and emits the
-// subscription_updated audit event. spec: §25.5 lines 2568, 2751.
+// subscription_updated audit event. spec: §25.5.
 func (s *Service) Update(ctx context.Context, id string, req UpdateRequest, caller Caller) (Subscription, error) {
 	if s == nil || s.Store == nil {
 		return Subscription{}, storeUnavailable()
@@ -615,7 +613,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest, call
 // fingerprint, records the previous fingerprint and rotation time for
 // the dual-secret overlap window, bumps the generation, emits the
 // subscription_secret_rotated audit event, and returns the new
-// plaintext once. spec: §25.5 lines 2723-2733.
+// plaintext once. spec: §25.5.
 func (s *Service) RotateSecret(ctx context.Context, id string, caller Caller) (Reveal, error) {
 	if s == nil || s.Store == nil {
 		return Reveal{}, storeUnavailable()
@@ -661,7 +659,7 @@ func (s *Service) RotateSecret(ctx context.Context, id string, caller Caller) (R
 }
 
 // Delete removes a subscription and emits the subscription_deleted
-// audit event. spec: §25.5 line 2806.
+// audit event. spec: §25.5.
 func (s *Service) Delete(ctx context.Context, id string, caller Caller) error {
 	if s == nil || s.Store == nil {
 		return storeUnavailable()
@@ -699,7 +697,7 @@ func (s *Service) Delete(ctx context.Context, id string, caller Caller) error {
 }
 
 // fireChange invokes the OnChange hook when one is registered. spec:
-// §25.5 line 2751.
+// §25.5.
 func (s *Service) fireChange(ctx context.Context, subID string) {
 	if s.OnChange != nil {
 		s.OnChange(ctx, subID)
@@ -707,7 +705,7 @@ func (s *Service) fireChange(ctx context.Context, subID string) {
 }
 
 // fireSecret invokes the OnSecret hook when one is registered. spec:
-// §25.5 lines 2747-2756.
+// §25.5.
 func (s *Service) fireSecret(subID, secret string, generation int64) {
 	if s.OnSecret != nil {
 		s.OnSecret(subID, secret, generation)
@@ -762,8 +760,7 @@ func storeUnavailable() *Error {
 // or unrecognized entry with INVALID_EVENT_FILTER. An entry is
 // recognized whether given as the bare §16.6 short name
 // (`alert_fired`) or the full CloudEvents type (`dev.lenny.alert_fired`).
-// spec: §25.5 line 2795 ("Unrecognized event type or severity in
-// filter"); §16.6 (event-type catalogue).
+// spec: §25.5; §16.6 (event-type catalogue).
 func normalizeTypes(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, t := range in {
@@ -785,7 +782,7 @@ var validSeverities = map[string]bool{"info": true, "warning": true, "critical":
 
 // normalizeSeverity trims, lower-cases, and sorts the severity filter,
 // rejecting any value outside the §16.6 catalog set with
-// INVALID_EVENT_FILTER. spec: §25.5 lines 2693, 2795.
+// INVALID_EVENT_FILTER. spec: §25.5.
 func normalizeSeverity(in []string) ([]string, error) {
 	out := make([]string, 0, len(in))
 	for _, sev := range in {
@@ -810,8 +807,7 @@ func normalizeSeverity(in []string) ([]string, error) {
 // with a NULL created_by_tenant_id. A tenant-admin may only register
 // its own tenant (an empty request defaults to it); a wildcard or a
 // different tenant returns SUBSCRIPTION_TENANT_FORBIDDEN. The returned
-// createdByTenant is empty for platform-admin scope. spec: §25.5 lines
-// 2758-2766.
+// createdByTenant is empty for platform-admin scope. spec: §25.5.
 func resolveTenantFilter(requested string, caller Caller) (filter, createdByTenant string, err error) {
 	requested = strings.TrimSpace(requested)
 	if caller.PlatformAdmin {

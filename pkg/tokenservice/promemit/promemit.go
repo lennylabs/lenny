@@ -7,7 +7,7 @@
 // lenny_token_service_request_duration_seconds /
 // lenny_token_service_errors_total /
 // lenny_token_service_secret_reloads_total and §16.5
-// TokenServiceUnavailable; §13.3 lines 607–611
+// TokenServiceUnavailable; §13.3
 // lenny_oauth_token_rate_limited_total /
 // lenny_oauth_token_rate_limited_sampled_total.
 package promemit
@@ -66,14 +66,14 @@ func New() (*Emitter, error) {
 	}
 	rateLimited, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_oauth_token_rate_limited_total",
-		Help: "§13.3 line 609 token-endpoint rate-limit rejections by §13.3 limit_tier.",
+		Help: "§13.3 token-endpoint rate-limit rejections by §13.3 limit_tier.",
 	}, []string{"limit_tier"})
 	if err != nil {
 		return nil, err
 	}
 	rateLimitedSampled, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_oauth_token_rate_limited_sampled_total",
-		Help: "§13.3 line 609 sampled rate-limit rejections (one row per (tenant, sub, tier) per window).",
+		Help: "§13.3 sampled rate-limit rejections (one row per (tenant, sub, tier) per window).",
 	}, []string{"limit_tier"})
 	if err != nil {
 		return nil, err
@@ -90,13 +90,13 @@ func New() (*Emitter, error) {
 	if err != nil {
 		return nil, err
 	}
-	// §13.3 line 595 / §16.1 — NTP drift self-monitor gauge populated
+	// §13.3 / §16.1 — NTP drift self-monitor gauge populated
 	// by pkg/driftmonitor on its periodic sample. The §16.5
 	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
 	// 0.5`. F-13.3.5.
 	timeDriftGauge, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_time_drift_seconds",
-		Help: "Token Service wall-clock signed offset (seconds) from the NTP reference (§13.3 line 595 / §16.1).",
+		Help: "Token Service wall-clock signed offset (seconds) from the NTP reference (§13.3 / §16.1).",
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -173,7 +173,7 @@ func (e *Emitter) IncSecretReload(outcome string) {
 	e.secretReloads.WithLabelValues(outcome).Inc()
 }
 
-// SetTimeDrift publishes the §13.3 line 595 lenny_time_drift_seconds
+// SetTimeDrift publishes the §13.3 lenny_time_drift_seconds
 // gauge for the Token Service replica. Driven by pkg/driftmonitor.
 // F-13.3.5.
 func (e *Emitter) SetTimeDrift(seconds float64) {

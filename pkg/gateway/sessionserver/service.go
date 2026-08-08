@@ -18,9 +18,7 @@ import (
 // projects the identical error envelope onto its wire format instead of
 // inventing its own code/category pair.
 //
-// spec: §15.2.1 rule 1 line 1380 ("Both API surfaces share a common
-// service layer ... validation ... implemented exactly once"); §15.2.1
-// rule 3 line 1384 (shared error envelope). F-15.2.4.
+// spec: §15.2.1 rule 1; §15.2.1 rule 3. F-15.2.4.
 type ServiceError struct {
 	HTTPStatus int
 	Code       string
@@ -34,7 +32,7 @@ type ServiceError struct {
 	// hint in its native envelope. It is zero when the surface set no
 	// header, for example the §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim
 	// rejection, which carries no Retry-After. spec: §7.1 create-and-start
-	// atomicity; §15.1 line 1138 (Retry-After).
+	// atomicity; §15.1.
 	RetryAfterSeconds int
 }
 
@@ -45,7 +43,7 @@ func (e *ServiceError) Error() string { return e.Code + ": " + e.Message }
 // bytes verbatim, and the response Content-Type. The §15.2 MCP tool
 // projects Body onto its wire format (a JSON tool result for a JSON body,
 // a base64 content block for a binary blob), so the two surfaces return
-// byte-identical payloads. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// byte-identical payloads. spec: §15.2.1 rule 1. F-15.2.3.
 type ServiceResult struct {
 	Status      int
 	Body        []byte
@@ -57,7 +55,7 @@ type ServiceResult struct {
 // surface mounts, so an overlapping operation invoked from the §15.2 MCP
 // tool runs the identical route, validation, and response shaping — the
 // §15.2.1 rule-1 "implemented exactly once" guarantee, with no parallel
-// route table to drift. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// route table to drift. spec: §15.2.1 rule 1. F-15.2.3.
 func (s *Server) serviceMux() http.Handler {
 	s.serviceHandlerOnce.Do(func() {
 		s.serviceHandler = s.Handler()
@@ -151,7 +149,7 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 // row to the resolved tenant (resolveTenant prefers a principal when one is
 // present, so this header is inert under an authenticated principal).
 //
-// spec: §15.2.1 rule 1 line 1380; §15.1 session-creation flow. F-15.2.4.
+// spec: §15.2.1 rule 1; §15.1 session-creation flow. F-15.2.4.
 func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -261,7 +259,7 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 		return resp, nil
 	}
 
-	// spec: §15.1 line 1138 — the pod-claim exhaustion 503 carries its
+	// spec: §15.1 — the pod-claim exhaustion 503 carries its
 	// backoff hint on the Retry-After response header, so read it off the
 	// recorder for every non-2xx result. parseRetryAfterHeader returns zero
 	// when the header is absent (the §4.9 CREDENTIAL_POOL_EXHAUSTED rejection
@@ -294,7 +292,7 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 // response header into an int, returning zero when the header is empty or
 // not a valid non-negative integer. The gateway writes Retry-After only in
 // the delta-seconds form (strconv.Itoa on a seconds count), so the HTTP-date
-// form is intentionally unsupported. spec: §15.1 line 1138.
+// form is intentionally unsupported. spec: §15.1.
 func parseRetryAfterHeader(v string) int {
 	if v == "" {
 		return 0

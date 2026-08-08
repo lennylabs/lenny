@@ -22,15 +22,13 @@ import (
 // runtimes use in their fixtures.
 const DefaultInterruptDeadline = 5 * time.Second
 
-// handleInterrupt implements POST /v1/sessions/{id}/interrupt per §7.2
-// (table line 123, state machine lines 168-169). It is a richer
+// handleInterrupt implements POST /v1/sessions/{id}/interrupt per §7.2. It is a richer
 // transition than the shared handleTransition helper covers: the
 // gateway signals the runtime through the pod's adapter and waits for
 // `interrupt_acknowledged` within `deadlineMs`. The transition to
 // `suspended` is unconditional once the §15.1 precondition is met —
 // either the runtime acknowledges (STATUS_ACKNOWLEDGED) or the deadline
-// elapses (STATUS_INTERRUPT_TIMEOUT, §7.2 line 169 "adapter forces
-// suspended"). A STATUS_BUSY response or a transport error leaves the
+// elapses (STATUS_INTERRUPT_TIMEOUT, §7.2). A STATUS_BUSY response or a transport error leaves the
 // row in `running` so the client can retry per §4.7.
 //
 // When the gateway holds no live pod binding for the session (single-
@@ -40,7 +38,7 @@ const DefaultInterruptDeadline = 5 * time.Second
 // path is the minimal-gateway dev posture; production wires podBinder +
 // podRegistry so the adapter call lands.
 //
-// spec: §7.2 lines 168-169; §4.7 InterruptResponse.Status; §15.1
+// spec: §7.2; §4.7 InterruptResponse.Status; §15.1
 // /v1/sessions/{id}/interrupt endpoint.
 func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
@@ -94,11 +92,11 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §7.2 line 137 — surface the running → suspended transition
+	// spec: §7.2 — surface the running → suspended transition
 	// on the SSE stream alongside the row update.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	if timedOut {
-		// spec: §7.2 line 169 / §4.7 InterruptResponse.Status.
+		// spec: §7.2 / §4.7 InterruptResponse.Status.
 		// Surface INTERRUPT_TIMEOUT to the caller so a UI can flag that
 		// the runtime did not acknowledge; the row state is still
 		// suspended per the "adapter forces suspended" rule.
@@ -114,7 +112,7 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 //   - status: the §4.7 InterruptResponse.Status the adapter returned
 //     (only meaningful when attempted is true).
 //   - timedOut: true when the adapter returned INTERRUPT_TIMEOUT. The
-//     row should still transition to suspended per §7.2 line 169.
+//     row should still transition to suspended per §7.2.
 //   - attempted: true when the call reached the adapter. When false the
 //     gateway holds no binding for the session; the caller must fall
 //     back to the row-only transition.
@@ -133,7 +131,7 @@ func (s *Server) signalAdapterInterrupt(r *http.Request, row sessionstore.Sessio
 	ctx := r.Context()
 	st, err := bind.Adapter.Interrupt(ctx, row.ID, false, deadline)
 	if err != nil {
-		// Transport / RPC error. §7.2 line 169 covers the
+		// Transport / RPC error. §7.2 covers the
 		// deadline-elapsed case explicitly; other failures (ctx
 		// cancelled, gRPC unavailable) collapse to a best-effort row
 		// flip in the same vein as the pre-fix behaviour. We log and
@@ -169,8 +167,7 @@ func (s *Server) interruptDeadline() time.Duration {
 	return DefaultInterruptDeadline
 }
 
-// writeInterruptTimeoutResponse writes the §7.2 line 169 "adapter
-// forces suspended, RPC returns INTERRUPT_TIMEOUT" response. The HTTP
+// writeInterruptTimeoutResponse writes the §7.2 response. The HTTP
 // status is 200 (the state transition succeeded), and the body carries
 // the regular SessionResponse plus an `interruptStatus: "timeout"`
 // field so the caller distinguishes acknowledged from forced. The

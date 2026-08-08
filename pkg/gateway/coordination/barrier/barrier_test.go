@@ -56,7 +56,7 @@ func (f *fakeMetrics) IncPreStopBarrierTargetSource(source string) {
 	f.targetSources = append(f.targetSources, source)
 }
 
-// spec: §10.1 lines 165-166 — Dispatch sends a barrier to every target,
+// spec: §10.1 — Dispatch sends a barrier to every target,
 // persists each ack's barrier_id and checkpoint_ref into
 // session_checkpoint_meta, and emits the target-source counter once for
 // the pass.
@@ -99,7 +99,7 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — the barrier id is monotonically increasing
+// spec: §10.1 — the barrier id is monotonically increasing
 // per session: a second barrier reads the prior persisted id and
 // advances it.
 func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
@@ -124,7 +124,7 @@ func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — a pod that rejects the barrier as
+// spec: §10.1 — a pod that rejects the barrier as
 // generation-stale (a false-positive surviving the cache fallback) is
 // recorded as Stale and does not abort the drain; its meta is not
 // written.
@@ -178,7 +178,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — the degraded cache-fallback target source is
+// spec: §10.1 — the degraded cache-fallback target source is
 // reported on the counter.
 func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 	mx := newFakeMetrics()
@@ -212,7 +212,7 @@ func (s *upsertFailStore) Upsert(context.Context, sessioncheckpointmeta.Record) 
 	return s.err
 }
 
-// spec: §10.1 lines 165-166, 393 — the session_checkpoint_meta write
+// spec: §10.1 — the session_checkpoint_meta write
 // after a barrier ack is best-effort: its only consumer is the
 // coordinator-handoff `session.resumed` workspaceRecoveryFraction, which
 // tolerates an absent row (proposal 0026 removed the resume-dedup
@@ -257,8 +257,7 @@ func TestDispatchMetaUpsertErrorKeepsAcked_spec_10_1(t *testing.T) {
 // reconciliation removed; each absence would fail against the pre-fix
 // code, which declared them.
 //
-// spec: §10.1 lines 165-166 (no gateway-side resume-deduplication on
-// handoff), §4.2 (handoff re-adopts the live pod), §4.7 (gateway not in
+// spec: §10.1, §4.2 (handoff re-adopts the live pod), §4.7 (gateway not in
 // the per-tool-call dispatch path).
 func TestNoResumeDedupSurface_spec_10_1(t *testing.T) {
 	coordT := reflect.TypeOf((*Coordinator)(nil))

@@ -34,7 +34,7 @@ type TenantLister interface {
 // disappears has its goroutine cancelled. The RunFlusher loop itself
 // runs the §11.2.1 flush schedule.
 //
-// spec: §11 line 144 — background flusher goroutine per tenant.
+// spec: §11 — background flusher goroutine per tenant.
 type FlusherManager struct {
 	tenants        TenantLister
 	flushInterval  time.Duration
@@ -54,7 +54,7 @@ type FlusherManager struct {
 // billingFlushIntervalMs cadence; a non-positive reconcileEvery selects
 // DefaultReconcileInterval.
 //
-// spec: §11 line 144.
+// spec: §11.
 func (t *Tier) NewFlusherManager(tenants TenantLister, flushInterval, reconcileEvery time.Duration) *FlusherManager {
 	return newFlusherManager(tenants, flushInterval, reconcileEvery, t.RunFlusher)
 }
@@ -83,7 +83,7 @@ func newFlusherManager(
 // per-tenant goroutine and waits for them to return so a graceful
 // shutdown does not leak flushers.
 //
-// spec: §11 line 144.
+// spec: §11.
 func (m *FlusherManager) Run(ctx context.Context) {
 	defer m.stopAll()
 	m.reconcile(ctx)

@@ -9,13 +9,12 @@
 //     must degrade to the Postgres minimal-state record, truncate the
 //     context inline, and set the conversation_only resume signals
 //     (workspace_lost=true, context_truncated=true, conversation
-//     cursor preserved). The §4.4 line 263 fallback-entry counter
+//     cursor preserved). The §4.4 fallback-entry counter
 //     fires; the total-loss counter and the session.lost event do not.
 //  2. MinIO and Postgres both unreachable. The writer must fire the
-//     §4.4 lines 283-289 total-loss orchestration: best-effort
+//     §4.4 total-loss orchestration: best-effort
 //     session.lost with reason eviction_total_loss, the
-//     lenny_session_eviction_total_loss_total counter, and the §4.4
-//     line 279 partial-keys-logged counter, leaving no durable row.
+//     lenny_session_eviction_total_loss_total counter, and the §4.4 partial-keys-logged counter, leaving no durable row.
 //
 // The unit tests in pkg/gateway/storage/evictionfallback cover the
 // chooser and total-loss branches against in-memory fakes, and the
@@ -30,7 +29,7 @@
 // the eviction-checkpoint preStop wiring, so this is the lowest tier
 // that exercises the degradation paths end to end today.
 //
-// spec: §4.4 lines 263-289.
+// spec: §4.4.
 package tier4_integration_test
 
 import (
@@ -52,7 +51,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// liveMinIOUploader is a §4.4 line 271 ContextObjectUploader backed by
+// liveMinIOUploader is a §4.4 ContextObjectUploader backed by
 // the real minio-go client. Pointing bucket at a name that does not
 // exist on the running container makes PutObject return a real
 // NoSuchBucket error, so the writer observes the same TCP/API-level
@@ -200,7 +199,7 @@ func TestEvictionFallbackMinIOOutageWritesPostgresMinimalState(t *testing.T) {
 			len(got.LastMessageContext), evictionfallback.MaxTruncatedContextBytes)
 	}
 
-	// The §4.4 line 263 fallback-entry counter fired; the recoverable
+	// The §4.4 fallback-entry counter fired; the recoverable
 	// path did not touch the total-loss counter or emit session.lost.
 	if metrics.fallback == 0 {
 		t.Error("IncCheckpointEvictionFallback never fired; every fallback entry must bump the counter")
@@ -263,7 +262,7 @@ func TestEvictionFallbackTotalLossWhenBothStoresDown(t *testing.T) {
 		ContextUploader: uploader,
 		Metrics:         metrics,
 		Events:          events,
-		// A tiny budget with a no-op sleep exhausts the §4.4 line 277
+		// A tiny budget with a no-op sleep exhausts the §4.4
 		// Postgres retry loop deterministically without a wall-clock
 		// wait, so the total-loss path fires promptly.
 		RetryBudget: checkpoint.RetryBudget{

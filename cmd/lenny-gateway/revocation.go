@@ -92,7 +92,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 	// revocation path route through it so a revoked credential lease
 	// stops reaching the provider on every replica, and no replica
 	// proactively renews a credential that is no longer trustworthy.
-	// §4.9 line 1647: the credential deny-list revocation propagates via
+	// §4.9: the credential deny-list revocation propagates via
 	// Redis pub/sub with Postgres LISTEN/NOTIFY as fallback. The Postgres
 	// half is wired only when Postgres is configured (the option is
 	// omitted otherwise so a no-Postgres dev gateway keeps a true-nil
@@ -107,7 +107,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 	if w.pgPool != nil {
 		credDenyPropOpts = append(credDenyPropOpts, credrenewalprop.WithFallback(pgnotify.New(w.pgPool)))
 	}
-	// §4.9 line 1649 emergency-revocation step 5: when the gateway mints
+	// §4.9 emergency-revocation step 5: when the gateway mints
 	// leases in-process, wire the direct-mode rotate as a revoke hook on
 	// the credential-lease propagator. A revoked pool credential then
 	// proactively rotates every direct-delivery pod off the materialized
@@ -132,7 +132,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 	var credRenewalWorker *credrenewal.Worker
 	credRenewalProp := credrenewalprop.New(credDeny, nil, w.securityBus, credDenyPropOpts...)
 	if credRenewal != nil {
-		// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds.
+		// spec: §11.3 — credentials.expiryWarningLeadSeconds.
 		// 0 disables warnings; -1 keeps the package default; any other
 		// non-negative value is the explicit operator override.
 		expiryWarningLead := time.Duration(*credentialsExpiryWarningLeadSeconds) * time.Second
@@ -144,25 +144,25 @@ func (w *gatewayWiring) buildRevocationWiring() {
 			// fault rotation. The worker drops it; onExhausted clears its
 			// pool binding.
 			OnExhausted: credRenewal.onExhausted,
-			// spec: §4.9 line 1470 — Token Service unavailability guard. A
+			// spec: §4.9 — Token Service unavailability guard. A
 			// breaker-open renewal of a still-valid lease extends the
 			// enforced deadline through the delivery mode's enforcement
 			// point (the adapter timer for direct mode, the lease store for
 			// proxy mode) rather than exhausting into the Fallback Flow.
 			OnExtend: credRenewal.onExtend,
-			// spec: §4.9 line 1470 — cumulative-extension cap. Once total
+			// spec: §4.9 — cumulative-extension cap. Once total
 			// extension reaches the lease's original TTL with the breaker
 			// still open, terminate the session to §8.8 expired
 			// (expired:lease) rather than re-minting against the still-open
 			// breaker.
 			OnExtensionCapReached: credRenewal.onExtensionCapReached,
 			Clock:                 clockinject.Now,
-			// spec: §11.3 line 215 — operator-tunable expiry-warning lead.
+			// spec: §11.3 — operator-tunable expiry-warning lead.
 			// F-11.3.20.
 			ExpiryWarningLead: expiryWarningLead,
 			OnExpiryWarning:   logCredentialExpiryWarning,
 		})
-		log.Printf("lenny-gateway: §11.3 line 215 credentials.expiryWarningLeadSeconds=%ds", int(expiryWarningLead/time.Second))
+		log.Printf("lenny-gateway: §11.3 credentials.expiryWarningLeadSeconds=%ds", int(expiryWarningLead/time.Second))
 		// Every §4.9 credential lease the assignment service mints — at
 		// session start and at fault rotation — is tracked by the renewal
 		// worker so its renewBefore deadline drives a proactive renewal.
@@ -174,7 +174,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 		// leases for the credential, not just its deny-list entry.
 		credRenewalProp = credrenewalprop.New(credDeny, credRenewalWorker, w.securityBus, credDenyPropOpts...)
 	}
-	// spec: §4.9 lines 1640-1652 — wire the user-credential revocation onto
+	// spec: §4.9 — wire the user-credential revocation onto
 	// the cross-replica deny-list propagator so a POST /v1/credentials/{ref}
 	// /revoke adds the user-shaped deny-list entry on every replica. Set
 	// after the propagator's final form (it is rebuilt above over the live

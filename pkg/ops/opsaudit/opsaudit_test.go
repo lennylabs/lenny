@@ -34,7 +34,7 @@ func (c *captureAppender) Append(_ context.Context, tenant, eventType string, pa
 	return audit.Row{TenantID: tenant, EventType: eventType, Payload: payload, Timestamp: at}, nil
 }
 
-// spec: §11.7 line 435 — ops_event.* events route to the platform tenant.
+// spec: §11.7 — ops_event.* events route to the platform tenant.
 func TestRecord_CommitsUnderPlatformTenant_spec_11_7_435(t *testing.T) {
 	cap := &captureAppender{}
 	r := New(cap)

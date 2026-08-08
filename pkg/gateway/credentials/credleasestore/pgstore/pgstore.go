@@ -51,7 +51,7 @@ import (
 // owning tenant, so the leases share one platform KEK rather than the
 // per-tenant aliases the credential-secret registry uses.
 //
-// spec: §12.9 line 1048 (T4 — Restricted envelope encryption).
+// spec: §12.9.
 const leasesKEKAlias = "platform:credential-leases"
 
 // Store is the Postgres-backed credential-lease store. Construct with
@@ -235,7 +235,7 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 // credential.Lease.CredentialKey. A row whose body does not decrypt is
 // skipped.
 //
-// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// spec: §4.9 — look up all active leases backed by the
 // revoked credential.
 func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
 	var (
@@ -267,7 +267,7 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 // unknown expiry) is never deleted here; BackfillExpiresAt fills or
 // removes those rows instead.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) DeleteExpired(ctx context.Context, cutoff time.Time) (int, error) {
 	tag, err := s.pool.Exec(ctx,
@@ -290,7 +290,7 @@ func (s *Store) DeleteExpired(ctx context.Context, cutoff time.Time) (int, error
 // reached. It backs the §4.9 fail-closed deny-list-entry removal (the
 // sweep) and the startup rebuild filter.
 //
-// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// spec: §4.9 — the startup rebuild seeds a deny-list
 // entry only for a revoked credential that still has an active lease.
 func (s *Store) LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
 	var (
@@ -331,7 +331,7 @@ func (s *Store) LeasesByCredentialCount(ctx context.Context, key credential.Cred
 // their next renewal Put, so this pass is a one-time convergence step
 // run once at startup.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) BackfillExpiresAt(ctx context.Context) (filled, deleted int, err error) {
 	rows, err := s.pool.Query(ctx,

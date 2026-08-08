@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/jcs"
 )
 
-// DefaultEventSchemaVersion is the §11.7 item 3 line 365 schema version
+// DefaultEventSchemaVersion is the §11.7 item 3 schema version
 // stamped on a row whose event type does not carry an explicit version.
 // The audit_log.event_schema_version column defaults to the same value,
 // so a row sealed in Go and a row scanned from Postgres hash identically.
@@ -50,7 +50,7 @@ type Row struct {
 	// (e.g., `admin.tenant.created`).
 	EventType string `json:"event_type"`
 
-	// EventSchemaVersion is the §11.7 item 3 line 365 schema version of
+	// EventSchemaVersion is the §11.7 item 3 schema version of
 	// EventType (e.g., `v1`). It is part of the hash input so a payload
 	// shape change for the same event_type produces distinct hashes.
 	EventSchemaVersion string `json:"event_schema_version"`
@@ -104,7 +104,7 @@ type RedactionReceipt struct {
 // falls back to its raw bytes (audit payloads are always JSON, so this
 // is defensive); an empty payload canonicalizes to `null`.
 //
-// spec: §11.7 item 3 line 364 (payload_canonical_json is RFC 8785 JCS).
+// spec: §11.7 item 3.
 func CanonicalPayload(payload json.RawMessage) []byte {
 	if len(payload) == 0 {
 		return []byte("null")
@@ -117,14 +117,14 @@ func CanonicalPayload(payload json.RawMessage) []byte {
 }
 
 // canonicalBytes returns the deterministic byte representation of the
-// §11.7 item 3 line 361 hash-input tuple: (id, prev_hash, tenant_id,
+// §11.7 item 3 hash-input tuple: (id, prev_hash, tenant_id,
 // sequence_number, event_type, event_schema_version,
 // payload_canonical_json, created_at). The payload is canonicalized with
 // RFC 8785 JCS so the hash is stable across the key-order and
 // number-form changes a Postgres jsonb round trip introduces.
 // encoding/json with a fixed struct field order is deterministic.
 //
-// spec: §11.7 item 3 lines 361-366.
+// spec: §11.7 item 3.
 func canonicalBytes(r Row) []byte {
 	version := r.EventSchemaVersion
 	if version == "" {
@@ -403,8 +403,7 @@ func (c *Chain) Verify() VerifyResult {
 // in-memory receipt is therefore reported `broken`, which is the
 // spec-correct verdict for an unauthenticated discontinuity.
 //
-// spec: §25.9 lines 3670-3679 (per-row chainIntegrity enum and temporal
-// gap detection).
+// spec: §25.9.
 func (c *Chain) VerifyRows() map[uint64]ChainIntegrity {
 	c.mu.Lock()
 	defer c.mu.Unlock()

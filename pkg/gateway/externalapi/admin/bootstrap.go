@@ -25,14 +25,14 @@ import (
 
 // Bootstrap upsert outcome codes surfaced on the §15.1 wire.
 const (
-	// seedConflictCode is the §15.1 line 1007 SEED_CONFLICT code. It is
+	// seedConflictCode is the §15.1 SEED_CONFLICT code. It is
 	// attached to a skipped entry (not a failure) whose seed fields differ
 	// from the stored resource and `--force-update` was not supplied. The
-	// §17.6 line 450 upsert table makes this case a skip (exit 0), so the
+	// §17.6 upsert table makes this case a skip (exit 0), so the
 	// code rides on the per-entry Skipped record rather than Errors.
 	seedConflictCode = "SEED_CONFLICT"
 
-	// seedSecurityCriticalCode marks a §17.6 line 451 security-critical
+	// seedSecurityCriticalCode marks a §17.6 security-critical
 	// field overwrite (e.g. runtime isolationProfile). The operation is
 	// blocked regardless of `--force-update` and the run exits 1.
 	seedSecurityCriticalCode = "SEED_SECURITY_CRITICAL_FIELD"
@@ -46,7 +46,7 @@ const (
 	seedStoreErrorCode = "SEED_STORE_ERROR"
 )
 
-// Bootstrap per-entry action labels, per the §15.1 line 863 audit summary
+// Bootstrap per-entry action labels, per the §15.1 audit summary
 // (`created`/`updated`/`skipped`/`error`).
 const (
 	actionCreated = "created"
@@ -57,7 +57,7 @@ const (
 
 // BootstrapRequest is the §24.1 bootstrap seed payload accepted by
 // POST /v1/admin/bootstrap. The handler applies upsert semantics
-// per §17.6 line 444: each entry creates a new row, leaves an existing
+// per §17.6: each entry creates a new row, leaves an existing
 // row unchanged (skip), updates it under `--force-update`, or is
 // rejected. Operations are best-effort — the handler returns an
 // aggregate result with per-section counts and per-entry outcomes.
@@ -72,8 +72,8 @@ type BootstrapRequest struct {
 }
 
 // bootstrapOptions carries the per-request §17.6 upsert modifiers parsed
-// from the query string: `?dryRun=true` (§15.1 line 1140) and
-// `?forceUpdate=true` (§17.6 line 450, the server-side projection of the
+// from the query string: `?dryRun=true` (§15.1) and
+// `?forceUpdate=true` (§17.6, the server-side projection of the
 // `--force-update` CLI flag).
 type bootstrapOptions struct {
 	dryRun      bool
@@ -84,7 +84,7 @@ type bootstrapOptions struct {
 // rows the handler inserted; UpdatedCount tracks rows replaced under
 // `--force-update`; SkippedCount tracks rows left unchanged (identical
 // or differing-without-force); Errors carries per-entry failures (the
-// handler does NOT stop on the first error — §17.6 line 420 partial
+// handler does NOT stop on the first error — §17.6 partial
 // failure). Results is the ordered per-entry action summary.
 type BootstrapResponse struct {
 	Tenants            BootstrapSection `json:"tenants,omitempty"`
@@ -121,8 +121,7 @@ type BootstrapError struct {
 }
 
 // BootstrapSkip captures a single per-entry skip whose seed fields differ
-// from the stored resource (§17.6 line 450). It carries the §15.1 line
-// 1007 SEED_CONFLICT code and the differing field names so an operator
+// from the stored resource (§17.6). It carries the §15.1 SEED_CONFLICT code and the differing field names so an operator
 // (or the CLI WARN log) can see why the resource was left unchanged.
 type BootstrapSkip struct {
 	Index             int      `json:"index"`
@@ -131,7 +130,7 @@ type BootstrapSkip struct {
 	ConflictingFields []string `json:"conflictingFields,omitempty"`
 }
 
-// BootstrapResult is one entry's resolved action for the §15.1 line 863
+// BootstrapResult is one entry's resolved action for the §15.1
 // per-resource audit summary (`{type, name, action}`).
 type BootstrapResult struct {
 	Name   string `json:"name"`
@@ -161,7 +160,7 @@ func (s *BootstrapSection) add(index int, id, action, code, message string, conf
 
 // handleBootstrap implements POST /v1/admin/bootstrap.
 //
-// spec: §24.1; §15.1 lines 863, 1140; §17.6 lines 417-453.
+// spec: §24.1; §15.1; §17.6.
 func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(req.Body, 8<<20))
 	if err != nil {
@@ -181,8 +180,8 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// §15.1 line 1140 — `?dryRun=true` performs full validation but does
-	// not persist; §17.6 line 450 — `?forceUpdate=true` is the server-side
+	// §15.1 — `?dryRun=true` performs full validation but does
+	// not persist; §17.6 — `?forceUpdate=true` is the server-side
 	// projection of the `--force-update` CLI flag.
 	opts := bootstrapOptions{
 		dryRun:      req.URL.Query().Get("dryRun") == "true",
@@ -193,7 +192,7 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	// functional deployment: tenants first, then runtimes, then pools
 	// (which reference a runtimeRef), credential pools, delegation
 	// policies, and environments (which reference a defaultDelegationPolicy
-	// and a tenant). This mirrors the §17.6 lines 403-411 values block.
+	// and a tenant). This mirrors the §17.6 values block.
 	out := BootstrapResponse{}
 	if r.tenants != nil {
 		out.Tenants = r.upsertTenants(req, body.Tenants, opts)
@@ -217,7 +216,7 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		out.Environments = r.upsertEnvironments(req, body.Environments, opts)
 	}
 
-	// §17.6 lines 455-474 — provision the initial admin credential after
+	// §17.6 — provision the initial admin credential after
 	// the seed resources stand (the lenny-admin user row the credential
 	// references is upserted by the provisioner itself). Skipped on a
 	// dry-run so no token is minted or Secret written. F-17.6.3 / F-24.1.7.
@@ -225,10 +224,10 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 		out.AdminToken = &section
 	}
 
-	// §15.1 line 863 — the `platform.bootstrap_applied` audit event (T3)
+	// §15.1 — the `platform.bootstrap_applied` audit event (T3)
 	// records the calling identity (actor columns), the seed-file SHA-256,
 	// the per-resource `{type, name, action}` summary, and `dryRun`. Per
-	// §15.1 line 1140 the event is emitted even when `?dryRun=true` so
+	// §15.1 the event is emitted even when `?dryRun=true` so
 	// operators have a record of what a bootstrap run would have changed.
 	seedHash := sha256.Sum256(raw)
 	r.emit(req.Context(), principal, "platform.bootstrap_applied", "platform", map[string]any{
@@ -246,7 +245,7 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	})
 
 	if opts.dryRun {
-		// §15.1 line 1140 — the response body is identical to a non-dry-run
+		// §15.1 — the response body is identical to a non-dry-run
 		// success; the only addition is the X-Dry-Run header.
 		w.Header().Set("X-Dry-Run", "true")
 	}
@@ -254,7 +253,7 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 	status := http.StatusOK
 	if anyFailures(out) {
 		// 207 Multi-Status signals partial failure so curl/CI pipelines
-		// (and the lenny-ctl exit-code mapping, §17.6 line 420) fail fast
+		// (and the lenny-ctl exit-code mapping, §17.6) fail fast
 		// while the body still carries the per-entry results.
 		status = http.StatusMultiStatus
 	}
@@ -264,7 +263,7 @@ func (r *Router) handleBootstrap(w http.ResponseWriter, req *http.Request) {
 }
 
 // bootstrapResourceSummary flattens every section's per-entry results
-// into the §15.1 line 863 `{type, name, action}` summary list.
+// into the §15.1 summary list.
 func bootstrapResourceSummary(out BootstrapResponse) []map[string]any {
 	rows := make([]map[string]any, 0)
 	appendSection := func(kind string, s BootstrapSection) {
@@ -322,10 +321,10 @@ func anyFailures(out BootstrapResponse) bool {
 		len(out.Environments.Errors) > 0
 }
 
-// resolveExisting decides the §17.6 line 444 action when a resource
+// resolveExisting decides the §17.6 action when a resource
 // already exists. conflicts is the set of seed-specified fields whose
 // values differ from the stored row; securityCritical is the subset
-// that is security-critical (§17.6 line 451, blocked regardless of
+// that is security-critical (§17.6, blocked regardless of
 // force-update). The boolean reports whether the caller should persist
 // an update.
 func resolveExisting(conflicts, securityCritical []string, force bool) (action, code string, doUpdate bool) {
@@ -333,14 +332,14 @@ func resolveExisting(conflicts, securityCritical []string, force bool) (action, 
 		return actionError, seedSecurityCriticalCode, false
 	}
 	if len(conflicts) == 0 {
-		// Identical fields — no-op (§17.6 line 449). Recorded as a skip
+		// Identical fields — no-op (§17.6). Recorded as a skip
 		// in the audit summary (the resource is left unchanged).
 		return actionSkipped, "", false
 	}
 	if force {
 		return actionUpdated, "", true
 	}
-	// Differing fields without force-update — skip (§17.6 line 450).
+	// Differing fields without force-update — skip (§17.6).
 	return actionSkipped, seedConflictCode, false
 }
 
@@ -349,7 +348,7 @@ func resolveExisting(conflicts, securityCritical []string, force bool) (action, 
 // the same §4.9 cacheScope contract the admin POST/PUT path enforces:
 // `cacheScope: tenant` is rejected for a regulated complianceProfile.
 //
-// spec: §4.9 lines 1697, 1711 — credential pools are part of the Helm
+// spec: §4.9 — credential pools are part of the Helm
 // bootstrap seed surface, not only the live admin API.
 func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPayload, opts bootstrapOptions) BootstrapSection {
 	out := BootstrapSection{}
@@ -432,7 +431,7 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 	return out
 }
 
-// bootstrapT4KMSProbe runs the §12.5 line 301 admin-time KMS availability
+// bootstrapT4KMSProbe runs the §12.5 admin-time KMS availability
 // probe for a bootstrap tenant entry that requests workspaceTier: T4. It
 // is a no-op for any other tier and when no probe is wired, mirroring the
 // PUT /v1/admin/tenants/{id} promotion path so the bootstrap seed cannot
@@ -481,7 +480,7 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 			out.add(i, p.ID, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// spec: §12.9 line 1048; §15.1 line 816 — the bootstrap seed path
+		// spec: §12.9; §15.1 — the bootstrap seed path
 		// is held to the same closed workspaceTier enum (T3 default or T4)
 		// as the live admin POST/PUT path, so a typo or stale tier name in
 		// a seed file is rejected rather than persisted as "not T4".
@@ -491,7 +490,7 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 		}
 		existing, err := r.tenants.Get(req.Context(), p.ID)
 		if errors.Is(err, tenantstore.ErrNotFound) {
-			// spec: §12.5 line 301 / §12.9 — a seed that creates a T4 tenant
+			// spec: §12.5 / §12.9 — a seed that creates a T4 tenant
 			// runs the admin-time KMS availability probe before persisting,
 			// so the bootstrap path cannot mark a tenant T4 without the
 			// per-tenant key having been observed usable.
@@ -533,7 +532,7 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 			out.add(i, p.ID, actionError, seedStoreErrorCode, err.Error(), nil)
 			continue
 		}
-		// spec: §12.9 line 1033; §15.1 line 816 — workspaceTier is ratcheted
+		// spec: §12.9; §15.1 — workspaceTier is ratcheted
 		// stricter-only. A bootstrap re-run that names a looser tier on a
 		// currently-stricter tenant (e.g. T3 over a T4 tenant) is rejected
 		// regardless of --force-update; a silent downgrade would weaken the
@@ -544,7 +543,7 @@ func (r *Router) upsertTenants(req *http.Request, in []TenantPayload, opts boots
 					p.ID+" from "+existing.WorkspaceTier+" to "+p.WorkspaceTier, nil)
 			continue
 		}
-		// spec: §12.5 line 301 — re-running the seed with workspaceTier: T4
+		// spec: §12.5 — re-running the seed with workspaceTier: T4
 		// (a promotion or an idempotent re-assert) re-runs the admin-time
 		// KMS availability probe, matching the PUT /v1/admin/tenants/{id}
 		// contract.
@@ -621,7 +620,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// §6.2 line 260: the gateway-side maxFinalizingTimeoutSeconds outer
+		// §6.2: the gateway-side maxFinalizingTimeoutSeconds outer
 		// bound must be ≥ the runtime-side setupPolicy.timeoutSeconds inner
 		// bound; reject configurations that violate the invariant at every
 		// admission path, including bootstrap.
@@ -649,12 +648,12 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// §5.1 line 36: integrationLevel is only valid on type:agent.
+		// §5.1: integrationLevel is only valid on type:agent.
 		if err := p.validateIntegrationLevelOnType(); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// §5.1 lines 132-158: a bootstrap-seeded derived runtime is held to
+		// §5.1: a bootstrap-seeded derived runtime is held to
 		// the same registration rules as one created via POST.
 		if err := r.validateDerivedRuntime(req.Context(), p); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
@@ -668,7 +667,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 		}
 		existing, err := r.runtimes.Get(req.Context(), p.Name)
 		if errors.Is(err, runtimestore.ErrNotFound) {
-			// §5.1 line 51: labels are required from v1 on a newly-registered
+			// §5.1: labels are required from v1 on a newly-registered
 			// runtime. An update of an existing runtime may omit labels in the
 			// seed (the stored set persists via applyRuntimePayload).
 			if lerr := p.validateLabelsRequired(); lerr != nil {
@@ -679,7 +678,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 				row := runtimeFromPayload(p, r.clock())
 				runtimestore.ApplyDefaults(&row, r.devMode)
 				row.UpdatedAt = row.CreatedAt
-				// §5.1 lines 283-291: a runtime with an agentInterface gets a
+				// §5.1: a runtime with an agentInterface gets a
 				// write-time auto-generated A2A agent card.
 				r.applyGeneratedCard(&row, row.CreatedAt)
 				if err := r.runtimes.Create(req.Context(), row); err != nil {
@@ -697,7 +696,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 		conflicts, securityCritical := runtimeConflicts(existing, p)
 		action, code, doUpdate := resolveExisting(conflicts, securityCritical, opts.forceUpdate)
 		if action == actionError && code == seedSecurityCriticalCode {
-			// §17.6 line 451: a security-critical field (isolationProfile)
+			// §17.6: a security-critical field (isolationProfile)
 			// overwrite is blocked regardless of --force-update.
 			out.add(i, p.Name, actionError, seedSecurityCriticalCode,
 				"runtime "+p.Name+": seed would overwrite security-critical field(s) "+
@@ -707,7 +706,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 		if doUpdate && !opts.dryRun {
 			_, err = r.runtimes.Update(req.Context(), existing.Name, func(rt *runtimestore.Runtime) error {
 				applyRuntimePayload(rt, p)
-				// §5.1 lines 283-291: regenerate the auto-generated A2A
+				// §5.1: regenerate the auto-generated A2A
 				// agent card at write time whenever the resulting runtime
 				// carries an agentInterface, matching the PUT handler.
 				r.applyGeneratedCard(rt, r.clock())
@@ -724,7 +723,7 @@ func (r *Router) upsertRuntimes(req *http.Request, in []RuntimePayload, opts boo
 }
 
 // applyRuntimePayload merges the seed-specified runtime fields onto rt,
-// the §17.6 line 450 force-update PUT (only fields present in the seed
+// the §17.6 force-update PUT (only fields present in the seed
 // are replaced). Shared by the create-then-update and update paths.
 func applyRuntimePayload(rt *runtimestore.Runtime, p RuntimePayload) {
 	if p.Image != "" {
@@ -830,7 +829,7 @@ func (r *Router) upsertUsers(req *http.Request, in []UserPayload, opts bootstrap
 					Email:       p.Email,
 					DisplayName: p.DisplayName,
 					Roles:       p.Roles,
-					// spec: §10.2 line 294 — a seeded user's platform-managed
+					// spec: §10.2 — a seeded user's platform-managed
 					// roles override the OIDC claim.
 					RoleAssigned: true,
 					Disabled:     p.Disabled,
@@ -888,7 +887,7 @@ func joinFields(fields []string) string {
 }
 
 // tenantConflicts returns the seed-specified tenant fields whose values
-// differ from the stored row (§17.6 line 450). Only fields the seed sets
+// differ from the stored row (§17.6). Only fields the seed sets
 // (non-empty) are compared, mirroring the merge-update mutator.
 func tenantConflicts(existing tenantstore.Tenant, p TenantPayload) []string {
 	var c []string
@@ -908,7 +907,7 @@ func tenantConflicts(existing tenantstore.Tenant, p TenantPayload) []string {
 }
 
 // userConflicts returns the seed-specified user fields whose values
-// differ from the stored row (§17.6 line 450).
+// differ from the stored row (§17.6).
 func userConflicts(existing userstore.User, p UserPayload) []string {
 	var c []string
 	if p.Email != "" && existing.Email != p.Email {
@@ -927,8 +926,8 @@ func userConflicts(existing userstore.User, p UserPayload) []string {
 }
 
 // runtimeConflicts returns the seed-specified runtime fields whose values
-// differ from the stored row (§17.6 line 450), and separately the subset
-// that is security-critical (§17.6 line 451 — isolationProfile). Only
+// differ from the stored row (§17.6), and separately the subset
+// that is security-critical (§17.6 — isolationProfile). Only
 // fields the seed sets are compared, mirroring the merge-update mutator.
 func runtimeConflicts(existing runtimestore.Runtime, p RuntimePayload) (conflicts, securityCritical []string) {
 	if p.Image != "" && existing.Image != p.Image {
@@ -972,7 +971,7 @@ func runtimeConflicts(existing runtimestore.Runtime, p RuntimePayload) (conflict
 }
 
 // credentialPoolConflicts returns the seed-specified credential-pool
-// fields whose values differ from the stored row (§17.6 line 450). The
+// fields whose values differ from the stored row (§17.6). The
 // credential-pool update mutator replaces every field, so all seeded
 // scalars are compared.
 func credentialPoolConflicts(existing credentialpoolstore.CredentialPool, p CredentialPoolPayload) []string {

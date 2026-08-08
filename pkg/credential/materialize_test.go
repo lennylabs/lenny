@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §4.9 lines 1246-1298 — the per-provider direct-mode
+// spec: §4.9 — the per-provider direct-mode
 // materializedConfig schema and its Required:yes field validation.
 
 func TestValidateMaterializedConfigBuiltinHappyPaths(t *testing.T) {
@@ -112,7 +112,7 @@ func TestValidateMaterializedConfigAzureRejectsBothAndNeitherKeyModes(t *testing
 }
 
 func TestValidateMaterializedConfigCustomProviderBypasses(t *testing.T) {
-	// spec: §4.9 line 1298 — custom providers bypass built-in field
+	// spec: §4.9 — custom providers bypass built-in field
 	// validation. An unknown provider with an empty config is accepted.
 	if err := ValidateMaterializedConfig(Provider("my_custom_provider"), nil); err != nil {
 		t.Errorf("custom provider validation did not bypass: %v", err)

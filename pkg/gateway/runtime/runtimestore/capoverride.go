@@ -4,7 +4,7 @@ package runtimestore
 
 import "fmt"
 
-// CapabilityOverride is the §5.1 line 49 per-tenant capability
+// CapabilityOverride is the §5.1 per-tenant capability
 // customization: a tenant overlays a subset of a runtime's declared
 // §5.1 capabilities block onto the platform default. Every field is
 // optional. A nil field inherits the runtime's declared value; a non-nil
@@ -13,7 +13,7 @@ import "fmt"
 // injection support, injection modes, preConnect, and the
 // runtime-level sdkWarmBlockingPaths list.
 //
-// spec: §5.1 line 49 — F-5.1.20.
+// spec: §5.1 — F-5.1.20.
 type CapabilityOverride struct {
 	// Interaction overrides capabilities.interaction. nil inherits.
 	Interaction *RuntimeInteraction `json:"interaction,omitempty"`
@@ -49,7 +49,7 @@ func (o CapabilityOverride) IsZero() bool {
 }
 
 // Validate rejects an override that sets an invalid enum value. Unset
-// fields are not checked. spec: §5.1 line 49.
+// fields are not checked. spec: §5.1.
 func (o CapabilityOverride) Validate() error {
 	if o.Interaction != nil && !o.Interaction.IsValid() {
 		return fmt.Errorf("interaction %q is not a valid §5.1 interaction model", *o.Interaction)
@@ -101,7 +101,7 @@ func (o CapabilityOverride) Clone() CapabilityOverride {
 //
 // When the runtime declares no capabilities block but the override sets a
 // capability field, a fresh block is created so the override takes
-// effect. spec: §5.1 line 49 — F-5.1.20.
+// effect. spec: §5.1 — F-5.1.20.
 func ApplyCapabilityOverride(rt Runtime, o CapabilityOverride) Runtime {
 	if o.IsZero() {
 		return rt

@@ -98,7 +98,7 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 169 — adapter-forced suspended (INTERRUPT_TIMEOUT) stamps the
+// spec: §7.2 — adapter-forced suspended (INTERRUPT_TIMEOUT) stamps the
 // Suspended session-condition fact with the InterruptTimeout reason so the
 // session history distinguishes the forced suspend from an acknowledged one.
 func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 )
 
-// spec: §12.3 lines 115-125 sustained Postgres write-IOPS sampler. F-12.3.7.
+// spec: §12.3 sustained Postgres write-IOPS sampler. F-12.3.7.
 
 // fakeEmitter records the last published gauge value.
 type fakeEmitter struct {

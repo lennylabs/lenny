@@ -14,8 +14,8 @@ rendered node Services.
 replication over TLS, AUTH via redis.password (shared with the gateway
 through the lenny-datastore-conn redis-password key).
 
-spec: §17.9.5 lines 1497-1530 (self-managed Redis = Cluster at Tier 3),
-§17.8 line 1149 (Redis Cluster 6+ nodes), §12.4, §17.9.7 line 1521.
+spec: §17.9.5,
+§17.8, §12.4, §17.9.7.
 */ -}}
 {{- if and .Values.redis.deploy (eq (include "lenny.redisProvider" .) "cluster") }}
 {{- $r := .Values.redis }}

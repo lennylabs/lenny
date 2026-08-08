@@ -1,4 +1,4 @@
--- §10.7 lines 939-940 — the eval-submission contract accepts an
+-- §10.7 — the eval-submission contract accepts an
 -- optional `idempotency_key` (≤128 bytes) on POST /v1/sessions/{id}/eval.
 -- A repeat submission carrying the same key for the same session within
 -- 24h resolves to the originally-stored record rather than inserting a

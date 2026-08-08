@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 792-836 — the DeleteByUser dependency order is a
+// spec: §12.8 — the DeleteByUser dependency order is a
 // runtime contract; ValidateOrder pins it so a future reorder of the
 // store wiring cannot erase a foreign-key parent before its children.
 
@@ -39,7 +39,7 @@ func TestValidateOrder_canonicalConfigPasses(t *testing.T) {
 // credential_pool) follow it. This pins the gateway's orchestrator
 // wiring against the dependency contract.
 //
-// spec: §12.8 lines 792-836 (the 20-step DeleteByUser sequence).
+// spec: §12.8.
 func TestValidateOrder_fullProductionWiringPasses_spec_12_8_792(t *testing.T) {
 	cfg := Config{
 		SessionScoped: []SessionEraser{
@@ -105,7 +105,7 @@ func TestValidateOrder_evalAfterSessionsRejected(t *testing.T) {
 		},
 	}
 	if err := ValidateOrder(cfg); err == nil {
-		t.Fatal("eval_results after sessions must be rejected (§12.8 line 808 FK)")
+		t.Fatal("eval_results after sessions must be rejected (§12.8 FK)")
 	}
 }
 

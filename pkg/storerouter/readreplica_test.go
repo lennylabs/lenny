@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// spec: §12.3 line 146 — "Read-heavy queries (session status, task tree,
+// spec: §12.3 — "Read-heavy queries (session status, task tree,
 // audit reads, usage reports) should be routed to read replicas." When a
 // ReadPostgres pool is configured and the audit log lives on the primary,
 // AuditReadShard resolves to the replica while AuditShard (the write path)
@@ -40,7 +40,7 @@ func TestAuditReadShardRoutesToReplica_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 — with no read replica configured every read shares
+// spec: §12.3 — with no read replica configured every read shares
 // the primary pool, so a single-instance deployment is unchanged.
 func TestAuditReadShardFallsBackToPrimary_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)
@@ -57,7 +57,7 @@ func TestAuditReadShardFallsBackToPrimary_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 / line 103 — a separate billing/audit instance has no
+// spec: §12.3 — a separate billing/audit instance has no
 // reader split in v1: audit reads stay on that instance even when a primary
 // read replica is configured, because the replica replicates the primary,
 // not the separate billing/audit instance.
@@ -82,7 +82,7 @@ func TestAuditReadShardSeparateInstanceIgnoresReplica_spec_12_3_146(t *testing.T
 	}
 }
 
-// spec: §12.3 line 146 — an empty tenant id is rejected on the read path,
+// spec: §12.3 — an empty tenant id is rejected on the read path,
 // matching the write-path AuditShard contract.
 func TestAuditReadShardRejectsEmptyTenant_spec_12_3_146(t *testing.T) {
 	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: fakePool(t)})

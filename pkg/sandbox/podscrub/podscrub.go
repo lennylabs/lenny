@@ -20,7 +20,7 @@
 // The non-preConnect reuse path advances to `reserved` because, with the
 // per-pod occupancy claim, a successfully scrubbed pod is held for its
 // pinned tenant through the claim's `reserved` hold window rather than
-// returned straight to idle (spec: §5.2 recycle lifecycle, line 449). The
+// returned straight to idle (spec: §5.2 recycle lifecycle). The
 // host-node-schedulability retire (§6.39) applies to BOTH pool types: a
 // recycling pod on a cordoned host node is retired rather than held in
 // `reserved` or re-warmed, because either disposition would hand the next
@@ -66,21 +66,21 @@ type CleanupFailurePolicy string
 
 const (
 	// OnCleanupWarn returns the pod to the pool with a scrub_warning
-	// annotation when the scrub fails. spec: §6.2 lines 148/153/155.
+	// annotation when the scrub fails. spec: §6.2.
 	OnCleanupWarn CleanupFailurePolicy = "warn"
 	// OnCleanupFail retires and replaces the pod on any scrub failure.
-	// spec: §6.2 line 156.
+	// spec: §6.2.
 	OnCleanupFail CleanupFailurePolicy = "fail"
 )
 
-// Inputs carries everything the §6.2 lines 147-156 disposition branch
+// Inputs carries everything the §6.2 disposition branch
 // reads. All counts are evaluated AFTER the just-finished session: a pod
 // that has served its last permitted session has SessionsServed ==
 // MaxSessionsPerPod.
 type Inputs struct {
 	// PreConnect is true when the pool's runtime declares
 	// capabilities.preConnect: true, so idle pods are SDK-warm and the
-	// pod re-warms through sdk_connecting between tasks. spec: §6.2 line 76.
+	// pod re-warms through sdk_connecting between tasks. spec: §6.2.
 	PreConnect bool
 
 	// VMRestart is true when the pool's recycle policy sets
@@ -125,7 +125,7 @@ type Inputs struct {
 	PodUptimeSeconds int64
 
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds. A value
-	// <= 0 means no uptime cap. spec: §6.2 line 151.
+	// <= 0 means no uptime cap. spec: §6.2.
 	MaxPodUptimeSeconds int64
 
 	// HostSchedulable reflects the lenny.dev/host-schedulable pod label:
@@ -156,13 +156,13 @@ const (
 	// sdk_connecting). Not a retirement.
 	ReasonReuse RetireReason = "reuse"
 	// ReasonCleanupFailPolicy: onCleanupFailure: fail terminated the
-	// pod on a scrub failure. spec: §6.2 line 156.
+	// pod on a scrub failure. spec: §6.2.
 	ReasonCleanupFailPolicy RetireReason = "cleanup_fail_policy"
 	// ReasonScrubFailuresExhausted: the cumulative scrub-failure count
 	// reached maxScrubFailures. The emitted lenny_gateway_pod_retirement_total
 	// {reason} value is the scrub_failure_limit trigger from the spec/16
 	// retirement-reason vocabulary, so the counter and its emitter agree.
-	// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), spec/16
+	// spec: spec/06 §6.2, spec/16
 	// §16.1 (retirement reason vocabulary).
 	ReasonScrubFailuresExhausted RetireReason = "scrub_failure_limit"
 	// ReasonSessionCountLimit: the pod's served-session count reached
@@ -180,7 +180,7 @@ const (
 	// lenny_gateway_pod_retirement_total, so an over-uptime pod that reaches
 	// occupancy zero is not double-counted. Decide still returns this reason at
 	// the occupancy-zero recycle boundary as a draining-state backstop. spec:
-	// §6.2 line 151, spec/16 §16.1 (retirement reason vocabulary partitioned by
+	// §6.2, spec/16 §16.1 (retirement reason vocabulary partitioned by
 	// process across the two counters).
 	ReasonMaxUptimeExceeded RetireReason = "uptime_limit"
 	// ReasonHostUnschedulable: the pod's host node is cordoned, so the
@@ -438,7 +438,7 @@ func Decide(in Inputs) Disposition {
 	// pinned tenant through the claim's `reserved` hold window: with the
 	// per-pod occupancy claim a scrubbed pod is not returned straight to
 	// idle but reserved so a back-to-back same-tenant session rebinds
-	// without re-acquiring the pod (spec: §5.2 recycle lifecycle, line 449).
+	// without re-acquiring the pod (spec: §5.2 recycle lifecycle).
 	if !in.PreConnect {
 		return Disposition{
 			Ready:        true,

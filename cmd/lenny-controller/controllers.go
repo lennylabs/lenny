@@ -35,7 +35,7 @@ func (w *controllerWiring) registerCoreControllers() {
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Events: w.opsEmitter,
-		// §5.3 line 675: validate the pool's RuntimeClass exists before
+		// §5.3: validate the pool's RuntimeClass exists before
 		// sizing it. The reader-backed checker uses the manager's uncached
 		// API reader so the RuntimeClass get needs only the `get` verb the
 		// §4.6.3 controller RBAC grants, not a cluster-wide watch.
@@ -79,7 +79,7 @@ func (w *controllerWiring) registerCoreControllers() {
 		StatusDedup:               statusdedup.New(f.statusDedupWindow),
 		MaxConcurrentReconciles:   f.maxConcurrentReconciles,
 		QueueFactory:              w.queueFactory,
-		// spec: §5.2 / §6.4 line 413 — the resolved resource-class registry
+		// spec: §5.2 / §6.4 — the resolved resource-class registry
 		// the reconciler consults to stamp container CPU/memory requirements.
 		ResourceClasses: w.resourceClasses,
 	}).SetupWithManager(mgr); err != nil {

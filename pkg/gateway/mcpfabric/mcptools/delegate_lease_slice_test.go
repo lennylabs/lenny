@@ -21,7 +21,7 @@ import (
 // newDelegateMCPWithParentLease builds a delegate_task MCP server whose
 // `sess_parent` carries the granted §8.2 lease_slice `granted`, so a
 // child lease_slice can be validated against a real parent ceiling.
-// spec: §8.2 lines 38-48. F-8.2.2.
+// spec: §8.2. F-8.2.2.
 func newDelegateMCPWithParentLease(t *testing.T, granted *sessionstore.DelegationLease) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
@@ -51,7 +51,7 @@ func newDelegateMCPWithParentLease(t *testing.T, granted *sessionstore.Delegatio
 	return srv, store
 }
 
-// spec: §8.2 lines 38-48, 127 — a `leaseSlice` exceeding the parent's
+// spec: §8.2 — a `leaseSlice` exceeding the parent's
 // granted budget is rejected with the canonical BUDGET_EXHAUSTED code,
 // and no child session is committed.
 func TestDelegateTaskLeaseSliceOverBudget_spec_8_2(t *testing.T) {
@@ -74,7 +74,7 @@ func TestDelegateTaskLeaseSliceOverBudget_spec_8_2(t *testing.T) {
 	}
 }
 
-// spec: §8.2 lines 38-48 — a `leaseSlice` within the parent's granted
+// spec: §8.2 — a `leaseSlice` within the parent's granted
 // budget is admitted and the resolved slice is stamped on the child.
 func TestDelegateTaskLeaseSliceWithinBudget_spec_8_2(t *testing.T) {
 	srv, store := newDelegateMCPWithParentLease(t, &sessionstore.DelegationLease{

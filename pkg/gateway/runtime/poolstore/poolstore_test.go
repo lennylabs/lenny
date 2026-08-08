@@ -723,7 +723,7 @@ func TestValidateCrossTenantReuseTier_spec_5_2_396(t *testing.T) {
 				if err == nil {
 					t.Fatal("want rejection, got nil")
 				}
-				// The error string is verbatim from §5.2 line 396.
+				// The error string is verbatim from §5.2.
 				want := "allowCrossTenantReuse: true is not permitted for T4-tier pools " +
 					"(workspaceTier: T4); T4 workloads require dedicated node pools (Section 6.4)"
 				if err.Error() != want {

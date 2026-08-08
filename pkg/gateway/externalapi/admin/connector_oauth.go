@@ -139,14 +139,14 @@ type AuthorizeConnectorResponse struct {
 func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Request) {
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code.
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code.
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"connector OAuth authorization requires an authenticated caller",
 			map[string]any{"reason": "auth_required"})
 		return
 	}
 	id := req.PathValue("name")
-	// spec: §4.2 line 173 — connectors are tenant-scoped; OAuth
+	// spec: §4.2 — connectors are tenant-scoped; OAuth
 	// authorize resolves the connector under the caller's tenant.
 	conn, err := r.connectors.Get(req.Context(), principal.TenantID, id)
 	if err != nil {
@@ -200,7 +200,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 		return
 	}
 
-	// spec: §9.2 line 87 — URL domain validation is a hard enforcement
+	// spec: §9.2 — URL domain validation is a hard enforcement
 	// boundary. The authorization URL is the connector's url-mode
 	// elicitation; if its host does not match the registered
 	// expected_domain the flow is dropped and an error is returned to
@@ -228,7 +228,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 	if ttl <= 0 {
 		ttl = connectoroauth.DefaultStateTTL
 	}
-	// §4.3 line 202 environment scoping. The caller names the active
+	// §4.3 environment scoping. The caller names the active
 	// environment via the `environment` query parameter; an empty value
 	// stores the credential under the no-environment scope (the default
 	// access path). The credential row's environment column is bound to
@@ -246,7 +246,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 		RedirectURI:  r.connectorOAuth.CallbackURL,
 		Scopes:       conn.Auth.Scopes,
 		CreatedAt:    r.clock(),
-		// spec: §9.3 line 140 — audit logging is the prescribed
+		// spec: §9.3 — audit logging is the prescribed
 		// forensic surface. Record the authorize-time client IP / UA
 		// so the callback-time pair lets an operator investigate a
 		// state replay or session hijack. F-9.3.11.
@@ -258,7 +258,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 			"could not persist the OAuth flow state", nil)
 		return
 	}
-	// spec: §16.7 / §9.3 line 144-164 — emit through the typed catalog
+	// spec: §16.7 / §9.3 — emit through the typed catalog
 	// so audit-sink validators recognize the event type. Capture the
 	// initiator IP and user agent (F-9.3.11) so the callback's
 	// `completed_ip` / `completed_user_agent` can be cross-checked for
@@ -336,7 +336,7 @@ func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.R
 		return
 	}
 
-	// spec: §4.2 line 173 — the connector belongs to the tenant that
+	// spec: §4.2 — the connector belongs to the tenant that
 	// initiated the OAuth flow; resolve under that tenant context.
 	conn, err := r.connectors.Get(req.Context(), flow.TenantID, flow.ConnectorID)
 	if err != nil {
@@ -461,7 +461,7 @@ func (r *Router) connectorHTTPClient() connectoroauth.HTTPDoer {
 // authorize / callback time" so an operator investigating a state
 // replay can compare the pair.
 //
-// spec: §9.3 line 140 — audit logging is the prescribed forensic
+// spec: §9.3 — audit logging is the prescribed forensic
 // surface. F-9.3.11.
 func connectorRequestPeerIP(req *http.Request) string {
 	if xff := req.Header.Get("X-Forwarded-For"); xff != "" {

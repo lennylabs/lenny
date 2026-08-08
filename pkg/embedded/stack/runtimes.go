@@ -93,7 +93,7 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL, echoImageRef stri
 	granted, failures := grantDefaultTenantAccess(ctx, client, out, grantedRuntimeNames())
 	fmt.Fprintf(out, "  installed %d reference runtimes plus the echo runtime; granted default-tenant access to %d\n",
 		len(referenceRuntimes), granted)
-	// spec: §26.1 line 5 / §26.3 lines 215-223 — the reference-runtime
+	// spec: §26.1 / §26.3 — the reference-runtime
 	// images are published by their own first-party CI, so the digests are
 	// not known at lenny build time and the catalog ships placeholder-pinned.
 	// A placeholder-pinned image registers fine but fails to pull on the

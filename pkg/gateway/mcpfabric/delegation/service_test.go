@@ -27,7 +27,7 @@ func seedParent(t *testing.T, store sessionstore.Store, id, parentID, runtime, p
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: session.StateRunning,
-		// §8.2 line 58: child-token exchange requires a parent user
+		// §8.2: child-token exchange requires a parent user
 		// identity; tests seed `user_alice` so Delegate does not
 		// reject with ErrParentNoUser.
 		UserID:     "user_alice",
@@ -70,7 +70,7 @@ func seedEnrolledParent(t *testing.T, store sessionstore.Store, expID string) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
-		// §8.2 line 58: Delegate requires the parent carry an
+		// §8.2: Delegate requires the parent carry an
 		// authenticated user identity.
 		UserID:     "user_alice",
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
@@ -193,7 +193,7 @@ func TestDelegateHappyPath(t *testing.T) {
 }
 
 // TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010 pins
-// §8.9 line 1010: every node in a delegation tree shares the same
+// §8.9: every node in a delegation tree shares the same
 // RootSessionID. The child created by Delegate carries the parent's
 // RootSessionID rather than minting a fresh one. A grandchild
 // delegated from the child continues to inherit the same tree root.
@@ -236,8 +236,7 @@ func TestDelegateChildInheritsParentRootSessionID_spec_8_9_1010(t *testing.T) {
 	}
 }
 
-// TestDelegateStampsDelegationDepth_spec_10_7_905 pins §10.7 lines
-// 868/905: a delegated child's delegation_depth is parent.depth+1, fixed
+// TestDelegateStampsDelegationDepth_spec_10_7_905 pins §10.7: a delegated child's delegation_depth is parent.depth+1, fixed
 // at admission. A root parent is depth 0, its child depth 1, and a
 // grandchild depth 2. The eval endpoint copies this onto EvalResult so
 // the Results API delegation_depth filter operates on truthful data.
@@ -491,7 +490,7 @@ func (c *countingStore) CountActiveDelegatedChildrenByUser(ctx context.Context, 
 	return c.inner.CountActiveDelegatedChildrenByUser(ctx, tenantID, userID)
 }
 
-// spec: §8.2 line 57 — lineage walk uses ParentSessionID from parent
+// spec: §8.2 — lineage walk uses ParentSessionID from parent
 // up to root, defended against cycles by a visited set. F-8.2.16 —
 // the walk is additionally bounded by the active maxDepth ceiling
 // plus a safety margin so a pathological chain does not produce an
@@ -586,7 +585,7 @@ func TestDelegatePropagatesTracingContext(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 69 / §8.2 — the resolved target runtime's
+// spec: §5.1 / §8.2 — the resolved target runtime's
 // allowSelfRecursion flows into the cycle gate's LayerRuntime input. The
 // rejection's EffectiveSettings reflects the runtime's declared value
 // when a runtime registry is wired into the service.
@@ -674,7 +673,7 @@ func (r *recorder) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode str
 	r.blocks = append(r.blocks, blockObs{pool, tenantID, layer, mode})
 }
 
-// spec: §8.2 line 58 — the child-token exchange requires the parent's
+// spec: §8.2 — the child-token exchange requires the parent's
 // authenticated user JWT as `subject_token`. A userless parent must be
 // rejected at admission with ErrParentNoUser; an empty req.UserID
 // inherits-or-rejects but does NOT substitute the parent identity.
@@ -716,7 +715,7 @@ func TestDelegateRejectsUserlessParent(t *testing.T) {
 	}
 }
 
-// spec: §8.2 / §16.1 line 27 — Delegate observes the admitted child's
+// spec: §8.2 / §16.1 — Delegate observes the admitted child's
 // depth onto lenny_delegation_depth at admission time.
 func TestDelegateRecordsAdmittedDepth(t *testing.T) {
 	store := memstore.New()
@@ -748,11 +747,11 @@ func TestDelegateRecordsAdmittedDepth(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 70 — the gateway emits one
+// spec: §8.2 — the gateway emits one
 // lenny_delegation_would_have_blocked_total row per failing layer of
 // the three-layer AND gate on a self-recursive rejection (enforce
 // mode), so per-tenant rejection-attribution dashboards can read the
-// per-layer breakdown. spec: §16.1 line 79.
+// per-layer breakdown. spec: §16.1.
 func TestDelegateRecordsCycleRejectionAttribution(t *testing.T) {
 	store := memstore.New()
 	seedParent(t, store, "sess_root", "", "claude", "pool-a", isolation.ProfileSandboxed)
@@ -803,7 +802,7 @@ func TestDelegateRecordsCycleRejectionAttribution(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 70 — under mode=warn the delegation is admitted, but
+// spec: §8.2 — under mode=warn the delegation is admitted, but
 // the same per-layer breakdown is recorded for the diagnostic rollout.
 func TestDelegateRecordsCycleWarnModeAttribution(t *testing.T) {
 	store := memstore.New()
@@ -888,7 +887,7 @@ func (f *fakeExperimentRouter) ApplyExperimentRouting(_ context.Context, row *se
 	return nil
 }
 
-// spec: §8.2 line 90 / §10.7 — under `independent` propagation the
+// spec: §8.2 / §10.7 — under `independent` propagation the
 // gateway invokes the §10.7 ExperimentRouter on the child afresh; the
 // child may newly enroll in a different experiment. F-8.2.10.
 func TestDelegateIndependentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.T) {
@@ -919,7 +918,7 @@ func TestDelegateIndependentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 90 / §10.7 — when the parent carries no experiment
+// spec: §8.2 / §10.7 — when the parent carries no experiment
 // context, the child is still evaluated by the ExperimentRouter so it
 // may pick up a newly matching experiment.
 func TestDelegateUnenrolledParentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.T) {
@@ -945,7 +944,7 @@ func TestDelegateUnenrolledParentRoutesChildAfresh_spec_8_2_F_8_2_10(t *testing.
 	}
 }
 
-// spec: §8.2 line 90 / §10.7 — `inherit` and `control` propagation
+// spec: §8.2 / §10.7 — `inherit` and `control` propagation
 // modes leave the child with the parent's context and skip the
 // ExperimentRouter (the child must adopt the parent's variant
 // verbatim, not be re-routed).
@@ -978,7 +977,7 @@ func TestDelegateInheritSkipsExperimentRouter_spec_8_2_F_8_2_10(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 90 — when the router fails closed (e.g. §10.7
+// spec: §8.2 — when the router fails closed (e.g. §10.7
 // VARIANT_ISOLATION_UNAVAILABLE), the delegation must abort rather
 // than create an unenrolled child.
 func TestDelegateRouterFailureAbortsDelegation_spec_8_2_F_8_2_10(t *testing.T) {
@@ -1004,7 +1003,7 @@ func TestDelegateRouterFailureAbortsDelegation_spec_8_2_F_8_2_10(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+// spec: §8.2 — `lenny/delegate_task` rejects `type: mcp`
 // targets with `target_not_an_agent`. The delegation Service is the
 // defence-in-depth call site so non-MCP entry points (REST, future
 // SDKs) cannot bypass the check. F-8.2.8 / F-8.5.4.
@@ -1070,7 +1069,7 @@ func TestDelegateAdmitsTypeAgentTarget_spec_8_2_F_8_2_8(t *testing.T) {
 // three AND gates: a self-recursive hop is admitted only when every
 // layer is true.
 //
-// spec: §8.2 line 73 (LayerPlatform); F-8.1.3 / F-8.2.3.
+// spec: §8.2; F-8.1.3 / F-8.2.3.
 func TestDelegatePlatformLayerWiredFromOptions_spec_8_2_F_8_1_3(t *testing.T) {
 	newSvc := func(platformAllow, rtAllow, polAllow bool) *delegation.Service {
 		store := memstore.New()
@@ -1135,7 +1134,7 @@ func TestDelegatePlatformLayerWiredFromOptions_spec_8_2_F_8_1_3(t *testing.T) {
 // Runtime carries a DelegationPolicyRef. With platform+runtime both
 // true, the policy layer alone decides admission.
 //
-// spec: §8.2 line 75 (LayerPolicy); F-8.1.3 / F-8.2.3.
+// spec: §8.2; F-8.1.3 / F-8.2.3.
 func TestDelegatePolicyLayerWiredFromStore_spec_8_2_F_8_2_3(t *testing.T) {
 	build := func(polRef string, polAllow bool, withPolicy bool) *delegation.Service {
 		store := memstore.New()
@@ -1215,12 +1214,12 @@ func TestDelegatePolicyLayerWiredFromStore_spec_8_2_F_8_2_3(t *testing.T) {
 	})
 }
 
-// TestDelegateMaxDepthFallsThroughToHelmDefault verifies §8.2.bis line 89:
+// TestDelegateMaxDepthFallsThroughToHelmDefault verifies §8.2 .bis:
 // a delegation that omits explicit MaxDepth still receives a bounded
 // chain via the Helm fallback (DefaultMaxDepth). A child at depth equal
 // to the fallback is rejected; a child below it is admitted.
 //
-// spec: §8.2.bis line 89; F-8.1.4 / F-8.2.6.
+// spec: §8.2 .bis; F-8.1.4 / F-8.2.6.
 func TestDelegateMaxDepthFallsThroughToHelmDefault_spec_8_2_bis_F_8_1_4(t *testing.T) {
 	mk := func(fallback int, lineageLen int) (*delegation.Service, string) {
 		store := memstore.New()
@@ -1319,7 +1318,7 @@ func TestDelegateMaxDepthFallsThroughToHelmDefault_spec_8_2_bis_F_8_1_4(t *testi
 // fallback. A small explicit value can reject a chain the fallback
 // would have admitted.
 //
-// spec: §8.2.bis lines 81-89; F-8.1.4 / F-8.2.6.
+// spec: §8.2 .bis; F-8.1.4 / F-8.2.6.
 func TestDelegateExplicitMaxDepthBeatsHelmFallback_spec_8_2_bis(t *testing.T) {
 	store := memstore.New()
 	seedParent(t, store, "sess_root", "", "r0", "p0", isolation.ProfileSandboxed)
@@ -1363,7 +1362,7 @@ func (a *recordingAuditor) EmitDelegationEvent(_ context.Context, t string, d ma
 
 // TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8 verifies that
 // a successful Delegate call records a `delegation.spawned` audit row
-// carrying the §11.7 lineage tuple. spec: §11.7 line 62; F-8.5.8.
+// carrying the §11.7 lineage tuple. spec: §11.7; F-8.5.8.
 func TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8(t *testing.T) {
 	store := memstore.New()
 	seedParent(t, store, "sess_parent", "", "claude", "pool-a", isolation.ProfileSandboxed)
@@ -1412,8 +1411,7 @@ func TestDelegateEmitsSpawnedAuditEvent_spec_11_7_F_8_5_8(t *testing.T) {
 
 // TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9 verifies
 // that an admitted self-recursive hop under `enforce` mode emits the
-// §8.2 `delegation.self_recursion_allowed` audit row. spec: §8.2 lines
-// 70-79; §16.7 catalog; F-8.5.9.
+// §8.2 `delegation.self_recursion_allowed` audit row. spec: §8.2; §16.7 catalog; F-8.5.9.
 func TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9(t *testing.T) {
 	store := memstore.New()
 	// Lineage so the target (claude/pool-a) re-appears.
@@ -1473,7 +1471,7 @@ func TestDelegateEmitsSelfRecursionAllowedAudit_spec_8_2_F_8_5_9(t *testing.T) {
 // TestDelegateEmitsCycleWarningAudit_spec_8_2_F_8_5_9 verifies that a
 // `would_have_blocked` outcome under `warn` mode emits the
 // `delegation.cycle_warning` audit row, paired with
-// `would_have_blocked_layers`. spec: §8.2 lines 70-79; §16.7 catalog;
+// `would_have_blocked_layers`. spec: §8.2; §16.7 catalog;
 // F-8.5.9.
 func TestDelegateEmitsCycleWarningAudit_spec_8_2_F_8_5_9(t *testing.T) {
 	store := memstore.New()
@@ -1540,8 +1538,7 @@ func TestDelegateNoCycleAuditWithoutSelfRecursion_spec_F_8_5_9(t *testing.T) {
 	}
 }
 
-// TestDelegateRejectsDenyApprovalMode_spec_8_4_521 verifies §8.4 line
-// 521: an `approvalMode: "deny"` lease short-circuits the delegation
+// TestDelegateRejectsDenyApprovalMode_spec_8_4_521 verifies §8.4: an `approvalMode: "deny"` lease short-circuits the delegation
 // path before pod allocation and before the §4 PreDelegation
 // interceptor. The parent lookup, child token mint, lineage walk, and
 // store INSERT MUST NOT run; the service returns ErrDelegationDenied.
@@ -1579,7 +1576,7 @@ func TestDelegateRejectsDenyApprovalMode_spec_8_4_521(t *testing.T) {
 }
 
 // TestDelegateAcceptsApprovalAliasedToPolicy_spec_8_4_520 verifies
-// §8.4 line 520: `approvalMode: "approval"` is accepted at lease
+// §8.4: `approvalMode: "approval"` is accepted at lease
 // evaluation time and the gateway treats it identically to `policy`
 // mode in v1. The child session MUST be created and the audit record
 // MUST preserve `approval` so the v1 alias is observable. F-8.4.1,
@@ -1725,7 +1722,7 @@ func TestDelegateAcceptsCredentialPropagationEnum_spec_8_3(t *testing.T) {
 			if err != nil {
 				t.Fatalf("credentialPropagation=%q must commit a child session: %v", mode, err)
 			}
-			// §8.3 line 443: a `deny` hop stamps the child row so finalize
+			// §8.3: a `deny` hop stamps the child row so finalize
 			// grants it no LLM credentials; every other mode leaves the
 			// marker clear.
 			if got, want := child.CredentialDeny, mode == lease.CredentialPropagationDeny; got != want {
@@ -1774,7 +1771,7 @@ func TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7). The §8.3 cluster-scoped
+// spec: §8.3. The §8.3 cluster-scoped
 // `gateway.interceptorWeakeningCooldownSeconds` window opens when an
 // admin flips a DelegationPolicy's `scanExportedFiles` from true to
 // false. Every `delegate_task` whose effective DelegationPolicy

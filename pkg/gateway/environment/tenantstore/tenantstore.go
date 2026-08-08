@@ -68,14 +68,14 @@ type Tenant struct {
 	// Zero means the tenant has no token budget (unlimited).
 	TokenQuotaPerWindow int64
 
-	// QuotaResetPeriod is the §11.2 line 31 per-tenant token-quota reset
+	// QuotaResetPeriod is the §11.2 per-tenant token-quota reset
 	// period: `hourly`, `daily`, `monthly`, or `rolling`. Empty means
 	// the tenant inherits the platform-wide default period. The §4.8
 	// QuotaEvaluator reads this to scope the tenant's token-usage window
 	// independently of other tenants.
 	QuotaResetPeriod string
 
-	// GCPriority is the §12.5 line 317 per-tenant garbage-collection
+	// GCPriority is the §12.5 per-tenant garbage-collection
 	// priority: `normal` (the default) or `high`. A `high` tenant,
 	// intended for T4 erasure-SLA compliance, triggers an immediate
 	// tenant-scoped incremental GC sweep whenever an erasure job for the
@@ -156,7 +156,7 @@ type Tenant struct {
 	// erasure job pseudonymizes the tenant's billing events; the job
 	// destroys it immediately afterward so the pseudonymized records
 	// cannot be re-identified. The Postgres tenant store persists it in
-	// the erasure_salt column under §12.8 line 845 KMS envelope
+	// the erasure_salt column under §12.8 KMS envelope
 	// encryption (never plaintext); a destroyed salt is NULL. F-12.8.5.
 	ErasureSalt []byte
 
@@ -176,7 +176,7 @@ type Tenant struct {
 	// session creation once it leaves `active`, and a `deleted`
 	// tombstone backs the 410 Gone response on GET. An empty value
 	// (a row written before the lifecycle column existed) is read as
-	// `active`. spec: §12.8 line 865.
+	// `active`. spec: §12.8.
 	State string
 
 	// ForceDeleteHoldOverride records the §12.8 force-delete legal-hold
@@ -186,7 +186,7 @@ type Tenant struct {
 	// it at Phase 3.5 to segregate held evidence into the region-scoped
 	// escrow instead of blocking. It is durable so the override survives a
 	// gateway restart that reconstructs the deletion job from the tenant
-	// row. spec: §12.8 lines 880-889. F-12.8.2, F-24.10.2.
+	// row. spec: §12.8. F-12.8.2, F-24.10.2.
 	ForceDeleteHoldOverride bool
 
 	// ForceDeleteJustification is the required free-text override reason
@@ -199,7 +199,7 @@ type Tenant struct {
 	ForceDeleteBy string
 
 	// ForceDeleteAt is the UTC instant the override was authorized. Zero
-	// when no override. spec: §12.8 line 887.
+	// when no override. spec: §12.8.
 	ForceDeleteAt time.Time
 
 	// Suspended marks a tenant suspended by an operator via the §15.1
@@ -207,21 +207,20 @@ type Tenant struct {
 	// orthogonal to the §12.8 deletion lifecycle State: a suspended
 	// tenant rejects new session creation and message injection with
 	// TENANT_SUSPENDED until resumed, but its row is otherwise
-	// untouched. spec: §15.1 lines 818-819.
+	// untouched. spec: §15.1.
 	Suspended bool
 
 	// SuspendedReason is the operator-supplied justification recorded
 	// with a suspension. Empty when the tenant is not suspended or the
-	// operator supplied no reason. spec: §15.1 line 818.
+	// operator supplied no reason. spec: §15.1.
 	SuspendedReason string
 
 	// SuspendedAt is the UTC instant the tenant was last suspended. Zero
-	// when the tenant is not suspended. spec: §15.1 line 818.
+	// when the tenant is not suspended. spec: §15.1.
 	SuspendedAt time.Time
 
 	// SuspendedBy is the subject of the operator who suspended the
-	// tenant. Empty when the tenant is not suspended. spec: §15.1 line
-	// 818.
+	// tenant. Empty when the tenant is not suspended. spec: §15.1.
 	SuspendedBy string
 
 	// Version is the §15.1 ETag-based optimistic-concurrency counter: it
@@ -230,8 +229,7 @@ type Tenant struct {
 	// entity tag, enforced on PUT via the If-Match precondition and
 	// exposed on GET/list. The tenant's §10.6 rbac-config and §9.2
 	// elicitation-content-integrity sub-resources share this version
-	// because they are stored on the tenant row. spec: §15.1 lines
-	// 1207-1213.
+	// because they are stored on the tenant row. spec: §15.1.
 	Version int64
 }
 
@@ -241,8 +239,7 @@ func (t Tenant) IsActive() bool { return t.DeletedAt.IsZero() }
 // AcceptsNewWork reports whether the tenant's §12.8 TenantState permits
 // new session creation. Only `active` (and the empty pre-lifecycle
 // value, read as active) accepts work; `disabling`, `deleting`, and
-// `deleted` reject it per the §12.8 phase table. spec: §12.8 lines
-// 865-873.
+// `deleted` reject it per the §12.8 phase table. spec: §12.8.
 func (t Tenant) AcceptsNewWork() bool {
 	return t.State == "" || t.State == TenantStateActive
 }
@@ -250,10 +247,10 @@ func (t Tenant) AcceptsNewWork() bool {
 // IsSuspended reports whether the tenant is operator-suspended via the
 // §15.1 suspend action. A suspended tenant rejects new session creation
 // and message injection with TENANT_SUSPENDED regardless of its §12.8
-// deletion-lifecycle State. spec: §15.1 lines 818-819.
+// deletion-lifecycle State. spec: §15.1.
 func (t Tenant) IsSuspended() bool { return t.Suspended }
 
-// §12.8 TenantState lifecycle values. spec: §12.8 line 865.
+// §12.8 TenantState lifecycle values. spec: §12.8.
 const (
 	// TenantStateActive is a normally operating tenant; the empty value
 	// is treated as active for rows written before the column existed.
@@ -270,14 +267,13 @@ const (
 )
 
 // AllTenantStates returns the closed §12.8 TenantState enum in lifecycle
-// order. spec: §12.8 line 865.
+// order. spec: §12.8.
 func AllTenantStates() []string {
 	return []string{TenantStateActive, TenantStateDisabling, TenantStateDeleting, TenantStateDeleted}
 }
 
 // ValidTenantState reports whether s is one of the §12.8 TenantState
-// values. The empty string is valid and read as `active`. spec: §12.8
-// line 865.
+// values. The empty string is valid and read as `active`. spec: §12.8.
 func ValidTenantState(s string) bool {
 	if s == "" {
 		return true
@@ -290,7 +286,7 @@ func ValidTenantState(s string) bool {
 	return false
 }
 
-// §12.5 GCPriority values a tenant may carry. spec: §12.5 line 317.
+// §12.5 GCPriority values a tenant may carry. spec: §12.5.
 const (
 	// GCPriorityNormal collects the tenant's expired artifacts only on the
 	// global GC cycle. The empty string is read as normal.
@@ -301,20 +297,20 @@ const (
 )
 
 // ValidGCPriority reports whether s is a §12.5 GCPriority value: the empty
-// string (read as `normal`), `normal`, or `high`. spec: §12.5 line 317.
+// string (read as `normal`), `normal`, or `high`. spec: §12.5.
 func ValidGCPriority(s string) bool {
 	return s == "" || s == GCPriorityNormal || s == GCPriorityHigh
 }
 
 // TriggersImmediateGC reports whether the tenant's §12.5 GCPriority is
 // `high`, the state that fires a tenant-scoped sweep on erasure-job
-// completion. spec: §12.5 line 317.
+// completion. spec: §12.5.
 func (t Tenant) TriggersImmediateGC() bool { return t.GCPriority == GCPriorityHigh }
 
 // §12.9 data-classification tier values a tenant (or a stricter
 // environment override) may carry. T1/T2 classify other data categories
 // and are not tenant-settable workspace tiers; the tenant-settable set
-// per §15.1 is T3 (default) and T4. spec: §12.9 lines 1025-1033.
+// per §15.1 is T3 (default) and T4. spec: §12.9.
 const (
 	WorkspaceTierT3 = "T3"
 	WorkspaceTierT4 = "T4"
@@ -323,7 +319,7 @@ const (
 // workspaceTierRank maps the §12.9 tenant-settable classification tier to
 // a strictness ordinal. The empty string is the T3 default, so it shares
 // T3's rank. Off-ladder values (T1, T2, or any unrecognized string) are
-// absent from the map. spec: §12.9 lines 1033, 1048; §15.1 line 816.
+// absent from the map. spec: §12.9; §15.1.
 var workspaceTierRank = map[string]int{
 	"":              1,
 	WorkspaceTierT3: 1,
@@ -334,7 +330,7 @@ var workspaceTierRank = map[string]int{
 // data-classification tier: the empty string (the T3 default), T3, or T4.
 // Per §15.1 the tenant-settable values are restricted to T3 and T4; a
 // value like "T2", "T5", or "prod" is a misconfiguration that downstream
-// consumers would silently treat as "not T4". spec: §12.9 line 1048.
+// consumers would silently treat as "not T4". spec: §12.9.
 func ValidWorkspaceTier(s string) bool {
 	_, ok := workspaceTierRank[s]
 	return ok
@@ -347,14 +343,14 @@ func WorkspaceTierRank(tier string) (rank int, onLadder bool) {
 	return r, ok
 }
 
-// TierRetentionDefault returns the §12.9 line 1043 retention default for a
+// TierRetentionDefault returns the §12.9 retention default for a
 // data-classification tier and whether the spec fixes the value. T2 is 90
 // days and T4 is 24 hours (the spec's lease default, applied as the
 // Restricted-tier ceiling for session artifacts). T3 and the empty default
 // are deployer-configured, so fixed is false and the caller keeps its own
 // configured window. T1 retention is indefinite (zero duration, fixed). An
 // unrecognized tier returns (0, false) so the caller keeps the deployer
-// default rather than silently clamping. spec: §12.9 line 1043.
+// default rather than silently clamping. spec: §12.9.
 func TierRetentionDefault(tier string) (d time.Duration, fixed bool) {
 	switch tier {
 	case "T1":
@@ -375,7 +371,7 @@ func TierRetentionDefault(tier string) (d time.Duration, fixed bool) {
 // workspaceTier is ratcheted stricter-only, exactly as the §11.7
 // complianceProfile is. A transition that involves an off-ladder tier is
 // not treated as a downgrade (the enum validator rejects those values
-// before they reach the ratchet). spec: §12.9 line 1033; §15.1 line 816.
+// before they reach the ratchet). spec: §12.9; §15.1.
 func IsWorkspaceTierDowngrade(current, requested string) bool {
 	cur, curOnLadder := workspaceTierRank[current]
 	req, reqOnLadder := workspaceTierRank[requested]
@@ -387,14 +383,14 @@ func IsWorkspaceTierDowngrade(current, requested string) bool {
 
 // IdentityProvider is the §10.6 tenant identity-provider configuration.
 // v1 carries the OIDC provider type and the introspectionEnabled toggle
-// the §10.6 line 661 real-time group check reads. spec: §10.6 line 661.
+// the §10.6 real-time group check reads. spec: §10.6.
 type IdentityProvider struct {
 	// Type names the identity provider. The §10.6 identity model is
 	// OIDC; an empty Type means the tenant inherits the platform OIDC
 	// configuration.
 	Type string `json:"type,omitempty"`
 
-	// IntrospectionEnabled turns on the §10.6 line 661 real-time group
+	// IntrospectionEnabled turns on the §10.6 real-time group
 	// check (RFC 7662 token introspection) at the documented latency
 	// cost. The default is off — JWT group claims alone carry group
 	// identity.
@@ -404,7 +400,7 @@ type IdentityProvider struct {
 	// URL the gateway calls on the auth hot path when IntrospectionEnabled
 	// is true. Required (https) when introspection is enabled; the global
 	// OIDC issuer config carries no per-tenant introspection endpoint, so
-	// the real-time group check resolves it from here. spec: §10.6 line 661.
+	// the real-time group check resolves it from here. spec: §10.6.
 	IntrospectionEndpoint string `json:"introspectionEndpoint,omitempty"`
 
 	// IntrospectionClientID / IntrospectionClientSecret authenticate the
@@ -424,12 +420,12 @@ type IdentityProvider struct {
 
 // RBACConfig is the §10.6 tenant RBAC configuration carried by
 // PUT /v1/admin/tenants/{id}/rbac-config beyond the noEnvironmentPolicy
-// column. spec: §10.6 line 665.
+// column. spec: §10.6.
 type RBACConfig struct {
 	// IdentityProvider is the §10.6 OIDC identity-provider configuration.
 	IdentityProvider IdentityProvider `json:"identityProvider,omitempty"`
 
-	// TokenPolicy is the §10.6 tenant token policy. §10.6 line 665 names
+	// TokenPolicy is the §10.6 tenant token policy. §10.6 names
 	// the field but does not define its sub-fields; the gateway stores
 	// it verbatim as an opaque JSON object and round-trips it without
 	// interpreting fields the spec does not define. A nil or empty value
@@ -440,7 +436,7 @@ type RBACConfig struct {
 	// capability names this tenant adds on top of the platform defaults.
 	Capabilities []string `json:"capabilities,omitempty"`
 
-	// MCPAnnotationMapping is the §10.6 / §5.1 line 325 per-tenant
+	// MCPAnnotationMapping is the §10.6 / §5.1 per-tenant
 	// override of the MCP-annotation capability inference: a tool name
 	// maps to the §5.3 capability set the gateway assigns it, overriding
 	// the value inferred from the tool's MCP ToolAnnotations.
@@ -565,7 +561,7 @@ func (m *Memory) Create(_ context.Context, t Tenant) error {
 	if t.State == "" {
 		t.State = TenantStateActive
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if t.Version == 0 {
 		t.Version = 1
 	}
@@ -617,7 +613,7 @@ func (m *Memory) Update(_ context.Context, id string, mutate func(*Tenant) error
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	row.Version++
 	m.tenants[id] = row
 	return cloneTenant(row), nil
@@ -655,7 +651,7 @@ func (m *Memory) SoftDelete(_ context.Context, id string, at time.Time) error {
 	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
 	// TenantState is `deleted`.
 	row.State = TenantStateDeleted
-	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
 	row.Version++
 	m.tenants[id] = row
 	return nil

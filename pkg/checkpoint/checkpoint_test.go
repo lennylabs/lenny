@@ -89,7 +89,7 @@ func TestCheckpointTimeoutIs60s(t *testing.T) {
 }
 
 func TestRetryBudgetForFallback(t *testing.T) {
-	// spec: §4.4 line 277 — 500ms initial, 5s per-attempt cap, 60s total.
+	// spec: §4.4 — 500ms initial, 5s per-attempt cap, 60s total.
 	rb := RetryBudgetForFallback()
 	if rb.Initial != 500*time.Millisecond {
 		t.Errorf("Postgres fallback initial: want 500ms, got %v", rb.Initial)
@@ -210,7 +210,7 @@ func TestFreshnessCheckTreatsZeroIntervalAsUnbounded(t *testing.T) {
 // `lenny_checkpoint_duration_seconds` label depend on, so a Trigger added
 // without a matching wire value fails here.
 //
-// spec: §10.1 line 130 — the gateway carries the typed trigger in the
+// spec: §10.1 — the gateway carries the typed trigger in the
 // gateway-driven Checkpoint stream.
 func TestTriggerProtoMirrorsEveryTrigger(t *testing.T) {
 	seen := map[adapterv1.CheckpointTrigger]bool{}

@@ -19,7 +19,7 @@ import (
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the function under
 // test emitted, then restores the prior provider when the test ends.
-// spec: §16.3 line 343 (F-16.3.1).
+// spec: §16.3.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()
@@ -39,7 +39,7 @@ func findSpan(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan 
 	return nil
 }
 
-// TestDelegateEmitsSpawnChildSpan_spec_16_3 asserts the §16.3 line 343
+// TestDelegateEmitsSpawnChildSpan_spec_16_3 asserts the §16.3
 // `delegation.spawn_child` span is emitted on the gateway spawn-child
 // path for a successful delegation. The prior gap left
 // SpanDelegationSpawnChild a catalog-only constant with no tracer.Start

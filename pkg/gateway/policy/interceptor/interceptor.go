@@ -125,19 +125,19 @@ const DefaultTimeout = 500 * time.Millisecond
 // phases (PreLLMRequest, PostLLMResponse). These run on the LLM call
 // hot path where every millisecond of interceptor latency adds directly
 // to request latency, so the default is tighter than DefaultTimeout
-// (spec: §4.8 line 1075).
+// (spec: §4.8).
 const DefaultLLMTimeout = 100 * time.Millisecond
 
 // DefaultConnectorTimeout is the per-interceptor deadline for the
 // connector proxy phases (PreConnectorRequest, PostConnectorResponse).
 // The tool-call path is latency-sensitive but less extreme than
-// streaming LLM calls (spec: §4.8 line 1077).
+// streaming LLM calls (spec: §4.8).
 const DefaultConnectorTimeout = 200 * time.Millisecond
 
 // phaseDefaultTimeout returns the per-phase default per-interceptor
 // deadline selected when an interceptor declares a non-positive
 // Timeout(). The LLM and connector phases carry tighter budgets; every
-// other phase uses DefaultTimeout (spec: §4.8 lines 1075, 1077).
+// other phase uses DefaultTimeout (spec: §4.8).
 func phaseDefaultTimeout(phase Phase) time.Duration {
 	switch phase {
 	case PhasePreLLMRequest, PhasePostLLMResponse:
@@ -173,8 +173,7 @@ type Request struct {
 //
 // RejectedBy and TimeoutMs are set by Chain.Run so the §16.7
 // interceptor.rejected audit row identifies the actual rejecting
-// interceptor rather than assuming a fixed built-in (spec: §4.8 line
-// 981, §4.8 line 1032). RejectedBy is the Name() of the interceptor
+// interceptor rather than assuming a fixed built-in (spec: §4.8, §4.8). RejectedBy is the Name() of the interceptor
 // that returned ActionReject or failed closed. TimeoutMs is the
 // interceptor's effective per-call deadline in milliseconds, set only
 // on the fail-closed timeout/error path (Code == CodeInterceptorTimeout)
@@ -198,21 +197,19 @@ type Result struct {
 
 	// FailOpenSkips lists the interceptors the chain skipped on this run
 	// because they errored or timed out under a fail-open FailPolicy
-	// without crossing the §4.8 line 1030 escalation ceiling. It is
+	// without crossing the §4.8 escalation ceiling. It is
 	// populated only on the ALLOW/MODIFY return: a fail-open skip that is
 	// followed by a REJECT does not admit the request, so the skip is
 	// moot on that path and is not reported. The §8.7
 	// PreExportMaterialization caller reads this to emit
 	// delegation.export_scan_failed_open and the
 	// lenny_export_file_scans_total{outcome="failed_open"} metric, which
-	// it cannot otherwise tell apart from a clean ALLOW. spec: §11.7
-	// line 70.
+	// it cannot otherwise tell apart from a clean ALLOW. spec: §11.7.
 	FailOpenSkips []FailOpenSkip
 }
 
 // FailOpenSkip records one interceptor the chain skipped under its
-// fail-open FailPolicy after an error or timeout. Reason is the §11.7
-// line 122 classified cause: "timeout" for a context deadline,
+// fail-open FailPolicy after an error or timeout. Reason is the §11.7 classified cause: "timeout" for a context deadline,
 // otherwise "grpc_error". The transport-agnostic core reports the two
 // cases it can observe; the external-interceptor adapter is the layer
 // that can further distinguish "unreachable" from a call-level
@@ -220,7 +217,7 @@ type Result struct {
 type FailOpenSkip struct {
 	// Interceptor is the skipped interceptor's Name().
 	Interceptor string
-	// Reason is the §11.7 line 122 token: "timeout" or "grpc_error".
+	// Reason is the §11.7 token: "timeout" or "grpc_error".
 	Reason string
 }
 
@@ -261,11 +258,11 @@ var (
 // to. The gateway's interceptor-registration handler translates the
 // Register sentinel errors to these codes with HTTP 400.
 const (
-	// CodeInvalidInterceptorPriority is the §4.8 line 1021 code for an
+	// CodeInvalidInterceptorPriority is the §4.8 code for an
 	// external interceptor registered at a priority within the reserved
 	// built-in ceiling.
 	CodeInvalidInterceptorPriority = "INVALID_INTERCEPTOR_PRIORITY"
-	// CodeInvalidInterceptorPhase is the §4.8 line 1023 code for an
+	// CodeInvalidInterceptorPhase is the §4.8 code for an
 	// external interceptor that targets the PreAuth phase.
 	CodeInvalidInterceptorPhase = "INVALID_INTERCEPTOR_PHASE"
 )
@@ -273,7 +270,7 @@ const (
 // RegistrationErrorCode maps a Register error to its §15.1 error code
 // and HTTP status. It returns ok == false for an error that is not a
 // registration-validation sentinel (the caller then falls back to a
-// generic 400/500). spec: §4.8 lines 1021, 1023.
+// generic 400/500). spec: §4.8.
 func RegistrationErrorCode(err error) (code string, httpStatus int, ok bool) {
 	switch {
 	case errors.Is(err, ErrInvalidPriority):
@@ -298,7 +295,7 @@ type Chain struct {
 	byPhase map[Phase][]entry
 	count   int
 
-	// §4.8 line 1030 cumulative fail-open escalation state. Configured
+	// §4.8 cumulative fail-open escalation state. Configured
 	// via SetFailOpenEscalation; the zero value disables escalation
 	// (a fail-open error is always skipped). failMu guards failStates,
 	// the escalation config, and the observer so Run is concurrency-safe.
@@ -343,7 +340,7 @@ func (c *Chain) Len(phase Phase) int { return len(c.byPhase[phase]) }
 // LenRange returns the number of interceptors registered for phase whose
 // priority falls in the half-open window [minPriority, maxPriority). It
 // lets a caller short-circuit a RunRange that would select no
-// interceptor (spec: §4.8 line 12 priority ordering).
+// interceptor (spec: §4.8 priority ordering).
 func (c *Chain) LenRange(phase Phase, minPriority, maxPriority int32) int {
 	n := 0
 	for _, e := range c.byPhase[phase] {
@@ -374,11 +371,11 @@ func (c *Chain) Run(ctx context.Context, req Request) Result {
 // fail-policy semantics as Run. It is the building block for splitting a
 // single phase chain around an in-process built-in that sits at a fixed
 // priority: the §4.8 ExperimentRouter is a PreRoute built-in at priority
-// 300 (spec: §4.8 line 115), so the gateway runs the external PreRoute
+// 300 (spec: §4.8), so the gateway runs the external PreRoute
 // interceptors below 300 before it and those at or above 300 after it,
 // preserving the §4.8 line-12 ascending-priority order across the
 // built-in. An external interceptor registered at exactly the pivot
-// priority sorts after the equal-priority built-in (spec: §4.8 line 12,
+// priority sorts after the equal-priority built-in (spec: §4.8,
 // "built-in interceptors run before external ones"), so the at-or-above
 // window includes the pivot value itself.
 func (c *Chain) RunRange(ctx context.Context, req Request, minPriority, maxPriority int32) Result {
@@ -393,7 +390,7 @@ func (c *Chain) RunRange(ctx context.Context, req Request, minPriority, maxPrior
 // such external content scanner; RunPolicyScoped uses this to fail closed
 // when a DelegationPolicy references an interceptor that is not
 // registered in this gateway process rather than silently running no
-// content scan. spec: §8.3 line 183, §4.8 line 1036.
+// content scan. spec: §8.3, §4.8.
 func (c *Chain) HasExternalNamed(phase Phase, ref string) bool {
 	if ref == "" {
 		return false
@@ -414,7 +411,7 @@ func (c *Chain) HasExternalNamed(phase Phase, ref string) bool {
 // does not name are skipped, so a registered content scanner fires only
 // for the delegations and messages whose policy selects it, and a policy
 // with interceptorRef: null runs no external content scan. This realizes
-// the §4.8 line 1036/1040 model in which PreDelegation and
+// the §4.8 model in which PreDelegation and
 // PreMessageDelivery are the hook points for contentPolicy.interceptorRef
 // rather than phases at which every registered external interceptor runs
 // unconditionally.
@@ -422,8 +419,8 @@ func (c *Chain) HasExternalNamed(phase Phase, ref string) bool {
 // When interceptorRef is non-empty but no external interceptor of that
 // name is registered for the phase, the call fails closed with
 // CodeInterceptorTimeout: a configured content scanner the gateway cannot
-// reach is treated as a degraded interceptor (§4.8 line 1032) rather than
-// a silent bypass. spec: §8.3 lines 157-188; §4.8 lines 1032, 1036, 1040;
+// reach is treated as a degraded interceptor (§4.8) rather than
+// a silent bypass. spec: §8.3; §4.8;
 // §13.5 mitigations 2-3.
 func (c *Chain) RunPolicyScoped(ctx context.Context, req Request, interceptorRef string) Result {
 	if interceptorRef != "" && !c.HasExternalNamed(req.Phase, interceptorRef) {
@@ -459,7 +456,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 		res, err := invoke(ctx, ic, call)
 		if err != nil {
 			if ic.FailPolicy() == FailOpen {
-				// spec: §4.8 line 1030 — track fail-open errors in a
+				// spec: §4.8 — track fail-open errors in a
 				// rolling window; once the interceptor crosses the
 				// escalation ceiling it is auto-promoted to fail-closed so
 				// a persistently broken content filter cannot bypass
@@ -474,7 +471,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 						TimeoutMs:       effectiveTimeout(ic, req.Phase).Milliseconds(),
 					}
 				}
-				// spec: §11.7 line 70 — the interceptor was skipped under
+				// spec: §11.7 — the interceptor was skipped under
 				// its fail-open policy; record it so the export-scan caller
 				// can emit delegation.export_scan_failed_open for an admitted
 				// file rather than mistaking the skip for a clean ALLOW.
@@ -493,7 +490,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 				TimeoutMs:       effectiveTimeout(ic, req.Phase).Milliseconds(),
 			}
 		}
-		// spec: §4.8 line 1030 — an error-free call by a fail-open
+		// spec: §4.8 — an error-free call by a fail-open
 		// interceptor that had been escalated restores it to fail-open.
 		if ic.FailPolicy() == FailOpen {
 			c.recordFailOpenSuccess(ctx, ic, call)
@@ -503,7 +500,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 			if res.ModifiedContent == nil {
 				res.ModifiedContent = content
 			}
-			// spec: §4.8 line 981 — the audit row identifies the
+			// spec: §4.8 — the audit row identifies the
 			// rejecting interceptor. A built-in may leave RejectedBy
 			// empty; stamp the chain's view of which interceptor rejected.
 			if res.RejectedBy == "" {
@@ -511,7 +508,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 			}
 			return res
 		case ActionModify:
-			// spec: §4.8 line 1060 — validate the MODIFY against the
+			// spec: §4.8 — validate the MODIFY against the
 			// phase's immutable fields before applying it. A MODIFY that
 			// alters an identity/scope/routing field is rejected with
 			// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION, the chain
@@ -539,7 +536,7 @@ func (c *Chain) run(ctx context.Context, req Request, accept func(Interceptor) b
 	return Result{Action: ActionAllow, ModifiedContent: content, FailOpenSkips: failOpenSkips}
 }
 
-// classifyFailOpenReason maps an interceptor error to the §11.7 line 122
+// classifyFailOpenReason maps an interceptor error to the §11.7
 // delegation.export_scan_failed_open `reason` token. A context deadline
 // is reported as "timeout"; every other error is reported as
 // "grpc_error". The transport-agnostic core cannot distinguish a dial
@@ -555,7 +552,7 @@ func classifyFailOpenReason(err error) string {
 
 // effectiveTimeout returns the per-interceptor deadline, selecting the
 // phase-specific default when the interceptor declares a non-positive
-// value (spec: §4.8 lines 1075, 1077).
+// value (spec: §4.8).
 func effectiveTimeout(ic Interceptor, phase Phase) time.Duration {
 	if t := ic.Timeout(); t > 0 {
 		return t

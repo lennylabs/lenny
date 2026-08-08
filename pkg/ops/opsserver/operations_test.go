@@ -117,7 +117,7 @@ func operationsServer(src operations.Source) (*opsserver.Server, *captureAudit) 
 	return srv, audit
 }
 
-// spec §25.4 line 1740: platform-admin with actor=* sees every operation;
+// spec §25.4: platform-admin with actor=* sees every operation;
 // the metric and audit event fire.
 func TestListOperationsPlatformAdminActorAll(t *testing.T) {
 	src := fakeSource{
@@ -146,7 +146,7 @@ func TestListOperationsPlatformAdminActorAll(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1736: actor=me (the default) restricts to the caller's
+// spec §25.4: actor=me (the default) restricts to the caller's
 // own started operations.
 func TestListOperationsActorMeFiltersToCaller(t *testing.T) {
 	src := fakeSource{
@@ -169,7 +169,7 @@ func TestListOperationsActorMeFiltersToCaller(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1736: a tenant-admin sees their own operations and
+// spec §25.4: a tenant-admin sees their own operations and
 // their tenant's, never another principal's platform-scoped operation,
 // and is auto-restricted away from actor=*.
 func TestListOperationsTenantAdminVisibility(t *testing.T) {
@@ -199,7 +199,7 @@ func TestListOperationsTenantAdminVisibility(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1769: a source whose store is unreachable yields a 207
+// spec §25.4: a source whose store is unreachable yields a 207
 // with the degradation envelope.
 func TestListOperationsPartialReturns207(t *testing.T) {
 	src := fakeSource{
@@ -246,7 +246,7 @@ func TestGetOperation(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1745: a tenant-admin requesting an operation outside its
+// spec §25.4: a tenant-admin requesting an operation outside its
 // visibility gets a not-found, not a forbidden.
 func TestGetOperationHiddenIsNotFound(t *testing.T) {
 	src := fakeSource{

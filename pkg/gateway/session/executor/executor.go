@@ -61,7 +61,7 @@ type Message struct {
 // session id under kind `agent`). The zero value carries no attribution
 // and the executor stamps its default gateway-client identity.
 //
-// spec: §15.4.1 lines 1696-1707 — `from` is adapter-injected and the
+// spec: §15.4.1 — `from` is adapter-injected and the
 // runtime never supplies it; §13.5 mitigation 6 — `from` is always set
 // by the gateway from the calling session's authenticated identity.
 // F-13.5.11.
@@ -159,8 +159,7 @@ const (
 // before draining the pod. The gateway's terminal-state path prefers Release
 // over Close so the authoritative §6.2 state machine reflects the session
 // outcome; executors with no Sandbox phase to record (echo, subprocess) do not
-// implement it and the caller falls back to Close. spec: §6.2 lines 105-117,
-// 305.
+// implement it and the caller falls back to Close. spec: §6.2.
 type SessionReleaser interface {
 	// Release tears down the session like Close and records disposition on
 	// the backing Sandbox. Idempotent; releasing an unbound session is a
@@ -171,13 +170,13 @@ type SessionReleaser interface {
 // ReleaseSession tears a terminal session's executor state down, recording the
 // §6.2 terminal disposition on the backing Sandbox when the executor is a
 // SessionReleaser (pod-backed) and otherwise falling back to Close (echo,
-// subprocess). Draining the pod is the §11.4 line 258 clean-cancellation
+// subprocess). Draining the pod is the §11.4 clean-cancellation
 // mechanism: the §6.2 claimed → draining → terminated transition triggers the
 // adapter's graceful shutdown (SIGTERM, wait, then SIGKILL). This is the single
 // release entry point shared by the session-server terminal path, the §8.10
 // cascade, and the §8.5 lenny/cancel_child cascade so every cancellation route
 // drains the runtime the same way. A nil executor is a no-op.
-// spec: §6.2 lines 105-117, 305; §11.4 line 258.
+// spec: §6.2; §11.4.
 func ReleaseSession(ctx context.Context, exec Executor, sessionID string, disp Disposition) error {
 	if exec == nil {
 		return nil

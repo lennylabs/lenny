@@ -63,7 +63,7 @@ func seedManifest(t *testing.T, m *partialmanifeststore.MemoryStore, tenant, ses
 	}
 }
 
-// spec: §10.1 line 154 — the resume path selects the checkpoint to reassemble
+// spec: §10.1 — the resume path selects the checkpoint to reassemble
 // by MAX(coordination_generation) regardless of partial, with
 // WorkspaceSnapshot.Ref as a validation input only. A newer partial = true
 // drain row at a higher generation than the completed checkpoint the ref
@@ -105,7 +105,7 @@ func TestResolveResumeChunksSelectsHighestGenerationPartial(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 154 — when no active manifest row is selectable (the
+// spec: §10.1 — when no active manifest row is selectable (the
 // completed checkpoint was rotated out and no drain partial exists), the
 // resume falls back to the WorkspaceSnapshot.Ref identifier so a legacy or
 // GC-pruned session still resolves its last completed checkpoint.
@@ -131,7 +131,7 @@ func TestResolveResumeChunksFallsBackToRefWhenNoActiveRow(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — the WorkspaceSnapshot.Ref is kept in the four-segment
+// spec: §10.1 — the WorkspaceSnapshot.Ref is kept in the four-segment
 // object-path form (/{tenant}/checkpoints/{session}/{checkpoint_id}). When no
 // active manifest row is selectable and the resume falls back to the ref, the
 // ref must be normalized to its checkpoint_id (the last segment) before it is
@@ -166,7 +166,7 @@ func TestResolveResumeChunksNormalizesFourSegmentRefOnFallback(t *testing.T) {
 	}
 }
 
-// spec: §10.1 lines 154-155 — reassembly is manifest-driven and ref-independent.
+// spec: §10.1 — reassembly is manifest-driven and ref-independent.
 // A partial = true drain whose session never completed a full checkpoint writes
 // no WorkspaceSnapshot.Ref, yet LatestActiveAny still selects that partial row
 // and its NULL-baseline threshold is 0, so the resume must reassemble it. A
@@ -224,13 +224,13 @@ func (c *capturingRecoveryMetrics) IncCheckpointPartial(pool string, recovered b
 	c.calls = append(c.calls, recoveryEmit{pool, recovered, manifestReason, trigger})
 }
 
-// spec: §16.1 line 195 — a resume that reassembles an above-threshold partial
+// spec: §16.1 — a resume that reassembles an above-threshold partial
 // checkpoint stamps lenny_checkpoint_partial_total{recovered=true} exactly
 // once, carrying the session's pool, the recovered row's manifest_reason, and
 // a trigger inside the closed checkpoint.Trigger enum. The §10.1 manifest
 // column set does not persist the originating trigger, so the resume stamps
 // eviction as the enum-valid representative (the preStop drain is the recovery
-// mechanism this counter primarily serves, §10.1 line 172). A complete
+// mechanism this counter primarily serves, §10.1). A complete
 // (partial = false) restore emits nothing.
 //
 // diagnosis: a missing emission means the resume-side recovery signal is
@@ -280,9 +280,9 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 	if !got.trigger.IsValid() {
 		t.Errorf("trigger = %q, want a member of the closed checkpoint.Trigger enum", got.trigger)
 	}
-	// spec: §16.1 line 195 — the resume stamps eviction as the enum-valid
+	// spec: §16.1 — the resume stamps eviction as the enum-valid
 	// representative because the §10.1 manifest column set does not persist the
-	// originating trigger, and the preStop drain (§10.1 line 172) is the
+	// originating trigger, and the preStop drain (§10.1) is the
 	// recovery mechanism this counter primarily serves.
 	if got.trigger != checkpoint.TriggerEviction {
 		t.Errorf("trigger = %q, want %q (the enum-valid representative the resume stamps)",
@@ -290,7 +290,7 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 	}
 }
 
-// spec: §16.1 line 195 — the resume-side recovered=true emission fires on ANY
+// spec: §16.1 — the resume-side recovered=true emission fires on ANY
 // above-threshold partial the generation selector picks, regardless of the
 // trigger the aborting attempt was started with. finaliseAbort retains every
 // manifest_reason = "timeout" row for the resume path, so a partial whose
@@ -347,7 +347,7 @@ func TestResolveResumeChunksRecoversNonEvictionOriginPartial(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — a resume that restores a complete (partial = false)
+// spec: §16.1 — a resume that restores a complete (partial = false)
 // checkpoint is not a partial recovery, so the resume emits no recovered=true
 // counter.
 func TestResolveResumeChunksEmitsNothingOnCompleteRestore(t *testing.T) {

@@ -46,11 +46,11 @@ import (
 // flags to runTokenService, which constructs and starts every subsystem in
 // dependency order and serves until shutdown (proposal 0020 §4 Part A R11).
 //
-// spec: §16.4 lines 370-372 — structured JSON logs (component=token-service),
+// spec: §16.4 — structured JSON logs (component=token-service),
 // F-16.4.1; §4.1 — the composition root parses its inputs once and threads
 // them to each subsystem builder.
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs from the token
+	// spec: §16.4 — structured JSON logs from the token
 	// service; routes the stdlib log package through the §16.4 handler
 	// (component=token-service). F-16.4.1.
 	logging.Setup(os.Stderr, "token-service")
@@ -121,7 +121,7 @@ func envDuration(name string, def time.Duration) time.Duration {
 // by gateway.spiffe.enabled), the URI lands in the log line and
 // future audit emits can read it from the context.
 //
-// spec: §4.3 line 205 — "Each gateway replica has a distinct mTLS
+// spec: §4.3 — "Each gateway replica has a distinct mTLS
 // identity so compromise of one is attributable and revocable
 // independently."
 func spiffeAuditInterceptor() grpc.UnaryServerInterceptor {
@@ -157,14 +157,14 @@ type spiffeIDCtxKey struct{}
 // WithSPIFFEID returns a copy of ctx carrying id. Exposed so future
 // in-handler audit emits can record the caller's SPIFFE identity
 // without re-parsing the certificate.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func WithSPIFFEID(ctx context.Context, id spiffeid.ID) context.Context {
 	return context.WithValue(ctx, spiffeIDCtxKey{}, id)
 }
 
 // SPIFFEIDFromContext returns the SPIFFE ID the interceptor attached
 // to ctx, or the zero value and false when none is set.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func SPIFFEIDFromContext(ctx context.Context) (spiffeid.ID, bool) {
 	id, ok := ctx.Value(spiffeIDCtxKey{}).(spiffeid.ID)
 	return id, ok
@@ -174,7 +174,7 @@ func SPIFFEIDFromContext(ctx context.Context) (spiffeid.ID, bool) {
 // All three of certPath, keyPath, and caPath empty selects plaintext
 // (dev mode); any one set requires all three and returns mTLS server
 // credentials that require and verify the gateway's client cert.
-// spec: §4.3 line 195 "Gateway replicas call the Token Service over mTLS"
+// spec: §4.3
 func tokenServiceCreds(certPath, keyPath, caPath string) (credentials.TransportCredentials, error) {
 	switch {
 	case certPath == "" && keyPath == "" && caPath == "":

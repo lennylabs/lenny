@@ -16,7 +16,7 @@ const (
 	providerKEDA = "keda"
 )
 
-// burstArrivalRate names the §17.8.2 line 971-975 / 989-991 burst
+// burstArrivalRate names the §17.8.2 burst
 // arrival rate the SCL-036 formula expects per target tier (sessions
 // per second).
 var burstArrivalRate = map[Tier]int{
@@ -28,19 +28,18 @@ var burstArrivalRate = map[Tier]int{
 // pipelineLag names the §17.8.2 worst-case HPA pipeline-lag seconds
 // per autoscaling provider. The KEDA path holds the lag near 20s with
 // `pollingInterval: 10s`; the Prometheus Adapter path runs at ~60s.
-// spec: §17.8.2 lines 960, 965, 981.
+// spec: §17.8.2.
 var pipelineLag = map[string]int{
 	providerKEDA: 20,
 	providerHPA:  60,
 }
 
 // CheckAutoscalingProvider verifies the deployed autoscaling provider
-// is KEDA when the promotion target is Tier 3. §17.8.3 line 1285 makes
+// is KEDA when the promotion target is Tier 3. §17.8.3 makes
 // "KEDA is not deployed" a NO-GO criterion for Tier 3, mirroring
-// §17.8.2 Path A line 963 ("mandatory for Tier 3, optional for Tier
-// 1/2"). The check is SKIPPED for promotions whose target is Tier 1 or
+// §17.8.2 Path A. The check is SKIPPED for promotions whose target is Tier 1 or
 // Tier 2 (KEDA is optional there).
-// spec: §17.8.3 line 1285, §17.8.2 line 963.
+// spec: §17.8.3, §17.8.2.
 func CheckAutoscalingProvider(in Inputs) CheckResult {
 	const name = "autoscaling-provider"
 	if in.To != Tier3 {
@@ -48,7 +47,7 @@ func CheckAutoscalingProvider(in Inputs) CheckResult {
 			Name:   name,
 			Status: StatusSkip,
 			Detail: fmt.Sprintf(
-				"KEDA is optional for %s (mandatory only at Tier 3 per §17.8.2 line 963)",
+				"KEDA is optional for %s (mandatory only at Tier 3 per §17.8.2)",
 				in.To,
 			),
 		}
@@ -59,7 +58,7 @@ func CheckAutoscalingProvider(in Inputs) CheckResult {
 			Name:   name,
 			Status: StatusFail,
 			Detail: "autoscaling.provider is unset in the rendered chart values; Tier 3 requires " +
-				"\"keda\" (§17.8.3 line 1285 / §17.8.2 line 963)",
+				"\"keda\" (§17.8.3 / §17.8.2)",
 		}
 	}
 	if provider != providerKEDA {
@@ -68,7 +67,7 @@ func CheckAutoscalingProvider(in Inputs) CheckResult {
 			Status: StatusFail,
 			Detail: fmt.Sprintf(
 				"autoscaling.provider=%q is incompatible with Tier 3; KEDA is mandatory "+
-					"(§17.8.3 line 1285 / §17.8.2 line 963). The Prometheus Adapter path's 60s "+
+					"(§17.8.3 / §17.8.2). The Prometheus Adapter path's 60s "+
 					"pipeline lag would require minReplicas=30 (equal to maxReplicas, no headroom)",
 				in.AutoscalingProvider,
 			),
@@ -77,7 +76,7 @@ func CheckAutoscalingProvider(in Inputs) CheckResult {
 	return CheckResult{
 		Name:   name,
 		Status: StatusPass,
-		Detail: "autoscaling.provider=keda satisfies the §17.8.3 line 1285 Tier 3 NO-GO criterion",
+		Detail: "autoscaling.provider=keda satisfies the §17.8.3 Tier 3 NO-GO criterion",
 	}
 }
 
@@ -89,13 +88,13 @@ func CheckAutoscalingProvider(in Inputs) CheckResult {
 //
 // The check uses the §17.8.2 burst-arrival rate per tier (5/30/200)
 // and the pipeline-lag-seconds per provider (KEDA 20s, HPA 60s). The
-// Tier 3 KEDA path is a documented carve-out: §17.8.2 line 975 / 977
+// Tier 3 KEDA path is a documented carve-out: §17.8.2
 // allows `minReplicas: 5` because the aggressive scale-up policy
 // (100%/15s or 8 pods/15s) absorbs the remaining burst within one 15s
 // period; the carve-out applies only when `provider: keda` and the
 // computed raw floor is 10. The check is SKIPPED when the autoscaling
 // provider or required SCL-036 inputs are absent.
-// spec: §17.8.2 lines 950, 963-977.
+// spec: §17.8.2.
 func CheckBurstAbsorption(in Inputs) CheckResult {
 	const name = "burst-absorption"
 	provider := strings.ToLower(strings.TrimSpace(in.AutoscalingProvider))
@@ -140,7 +139,7 @@ func CheckBurstAbsorption(in Inputs) CheckResult {
 	requiredFloor := rawFloor
 	carveOutApplied := false
 	if in.To == Tier3 && provider == providerKEDA && rawFloor == 10 {
-		// §17.8.2 line 975-977: the Tier 3 KEDA path allows minReplicas=5
+		// §17.8.2: the Tier 3 KEDA path allows minReplicas=5
 		// because the aggressive 100%/15s or 8 pods/15s scale-up policy
 		// absorbs the remaining 2,000-attempt burst within one 15s period.
 		requiredFloor = 5
@@ -150,7 +149,7 @@ func CheckBurstAbsorption(in Inputs) CheckResult {
 		formula := fmt.Sprintf("ceil(%d * %d / %d) = %d", burst, lag, in.MaxSessionsPerReplica, rawFloor)
 		carveOutNote := ""
 		if carveOutApplied {
-			carveOutNote = " (with the §17.8.2 line 975 Tier 3 KEDA carve-out: 5)"
+			carveOutNote = " (with the §17.8.2 Tier 3 KEDA carve-out: 5)"
 		}
 		return CheckResult{
 			Name:   name,
@@ -169,7 +168,7 @@ func CheckBurstAbsorption(in Inputs) CheckResult {
 		in.MinReplicas, requiredFloor, provider, in.To, burst, lag, in.MaxSessionsPerReplica,
 	)
 	if carveOutApplied {
-		detail += " (§17.8.2 line 975 Tier 3 KEDA carve-out applied)"
+		detail += " (§17.8.2 Tier 3 KEDA carve-out applied)"
 	}
 	return CheckResult{Name: name, Status: StatusPass, Detail: detail}
 }
@@ -199,15 +198,15 @@ func CheckPhase135Attestations(in Inputs) CheckResult {
 	var missing []string
 	if !in.LLMProxyExtractionAttested {
 		missing = append(missing,
-			"LLM Proxy extraction ratio (§17.8.3 line 1263 / 1282)")
+			"LLM Proxy extraction ratio (§17.8.3)")
 	}
 	if !in.GatewayGCPauseAttested {
 		missing = append(missing,
-			"gateway GC pause P99 below 50 ms (§17.8.3 line 1264 / 1283)")
+			"gateway GC pause P99 below 50 ms (§17.8.3)")
 	}
 	if !in.MaxSessionsPerReplicaCalibrated {
 		missing = append(missing,
-			"maxSessionsPerReplica empirically calibrated (§17.8.3 line 1265 / 1284)")
+			"maxSessionsPerReplica empirically calibrated (§17.8.3)")
 	}
 	if len(missing) > 0 {
 		return CheckResult{

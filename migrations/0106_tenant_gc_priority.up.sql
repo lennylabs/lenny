@@ -1,4 +1,4 @@
--- §12.5 line 317 "gcPriority: high" — each tenant carries a GC priority
+-- §12.5 — each tenant carries a GC priority
 -- (normal | high) persisted in Postgres and configurable per tenant via
 -- the admin API. A 'high' tenant (intended for T4 erasure-SLA compliance)
 -- triggers an immediate tenant-scoped incremental GC sweep whenever an

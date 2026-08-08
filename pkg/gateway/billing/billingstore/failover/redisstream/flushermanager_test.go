@@ -86,7 +86,7 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition not met within deadline")
 }
 
-// spec: §11 line 144 — one flusher goroutine per tenant. reconcile
+// spec: §11 — one flusher goroutine per tenant. reconcile
 // starts exactly one flusher for each listed tenant and is idempotent.
 func TestFlusherManagerStartsOnePerTenant(t *testing.T) {
 	lister := &mutableLister{}
@@ -112,7 +112,7 @@ func TestFlusherManagerStartsOnePerTenant(t *testing.T) {
 	}
 }
 
-// spec: §11 line 144 — a tenant removed from the set has its flusher
+// spec: §11 — a tenant removed from the set has its flusher
 // goroutine cancelled.
 func TestFlusherManagerStopsRemovedTenant(t *testing.T) {
 	lister := &mutableLister{}
@@ -136,7 +136,7 @@ func TestFlusherManagerStopsRemovedTenant(t *testing.T) {
 	}
 }
 
-// spec: §11 line 144 — a transient tenant-store fault must not tear
+// spec: §11 — a transient tenant-store fault must not tear
 // down healthy flushers.
 func TestFlusherManagerListerErrorLeavesSetUntouched(t *testing.T) {
 	lister := &mutableLister{}
@@ -159,7 +159,7 @@ func TestFlusherManagerListerErrorLeavesSetUntouched(t *testing.T) {
 	}
 }
 
-// spec: §11 line 144 — Run cancels every per-tenant flusher on shutdown
+// spec: §11 — Run cancels every per-tenant flusher on shutdown
 // and waits for them to drain.
 func TestFlusherManagerRunCancelsAllOnShutdown(t *testing.T) {
 	lister := &mutableLister{}

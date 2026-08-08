@@ -1,4 +1,4 @@
--- §6.2 lines 273-300 / §11.3 line 199 — `maxIdleTime` enforcement.
+-- §6.2 / §11.3 — `maxIdleTime` enforcement.
 -- "Idle" is no qualifying agent activity since `last_agent_activity_at`.
 -- The §11.3 watchdog reads this column to expire a `running` session that
 -- has been idle longer than its effective `maxIdleTimeSeconds`. It cannot

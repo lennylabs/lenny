@@ -34,7 +34,7 @@ func repoRoot(t *testing.T) string {
 // TestSchemaIsCommitted is the build-time drift guard: the committed
 // charts/lenny/values.schema.json must byte-match the generator output.
 // CI runs `go run ./cmd/lenny-chart-schema-gen -check` for the same
-// invariant. spec: §17.6 line 655.
+// invariant. spec: §17.6.
 func TestSchemaIsCommitted_spec_17_6_655(t *testing.T) {
 	got, err := Generate()
 	if err != nil {
@@ -52,8 +52,7 @@ func TestSchemaIsCommitted_spec_17_6_655(t *testing.T) {
 
 // TestChartValuesYAMLConformsToSchema asserts the chart's own default
 // values.yaml validates against the generated schema. A regression here
-// means Helm would reject `helm install` with stock defaults. spec: §17.6
-// line 653.
+// means Helm would reject `helm install` with stock defaults. spec: §17.6.
 func TestChartValuesYAMLConformsToSchema_spec_17_6_653(t *testing.T) {
 	schema, err := Generate()
 	if err != nil {
@@ -71,7 +70,7 @@ func TestChartValuesYAMLConformsToSchema_spec_17_6_653(t *testing.T) {
 
 // TestPresetsConformToSchema lints every shipped tier preset against the
 // schema. The presets are chart-values fragments layered with `-f`, so
-// they must validate directly. spec: §17.9.2 line 1374.
+// they must validate directly. spec: §17.9.2.
 func TestPresetsConformToSchema_spec_17_9_2_1374(t *testing.T) {
 	schema, err := Generate()
 	if err != nil {
@@ -98,7 +97,7 @@ func TestPresetsConformToSchema_spec_17_9_2_1374(t *testing.T) {
 // present. Answer files are chart-values fragments layered with `-f`, so
 // each must validate directly; a fragment that drifts out of sync with
 // the chart values (a renamed key, a removed top-level section) fails
-// here rather than at `helm install`. spec: §17.9.2 lines 1360-1374.
+// here rather than at `helm install`. spec: §17.9.2.
 // F-17.9.1.
 func TestCatalogAnswerFilesConformToSchema_spec_17_9_2_1374(t *testing.T) {
 	schema, err := Generate()
@@ -123,7 +122,7 @@ func TestCatalogAnswerFilesConformToSchema_spec_17_9_2_1374(t *testing.T) {
 			t.Errorf("catalog answer file %s does not conform: %v", base, err)
 		}
 	}
-	// spec: §17.9.2 lines 1364-1372 — the curated catalog enumerates these
+	// spec: §17.9.2 — the curated catalog enumerates these
 	// nine files. A missing file means the documented composition is not
 	// reachable from the shipped chart.
 	for _, want := range []string{
@@ -154,7 +153,7 @@ func mustSchema(t *testing.T) []byte {
 
 // TestRejectsUnknownTopLevelKey is the operator-typo guard: a values
 // document with a key not in Root is rejected (root
-// additionalProperties:false). spec: §17.6 line 653.
+// additionalProperties:false). spec: §17.6.
 func TestRejectsUnknownTopLevelKey(t *testing.T) {
 	err := ValidateYAML(mustSchema(t), []byte("gatway:\n  replicas: 2\n"))
 	if err == nil {
@@ -162,7 +161,7 @@ func TestRejectsUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
-// TestRejectsDevTenantIDPattern enforces the §17.6 line 373 schema
+// TestRejectsDevTenantIDPattern enforces the §17.6 schema
 // constraint: devTenantId must match the canonical tenant_id regex.
 func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	schema := mustSchema(t)
@@ -177,7 +176,7 @@ func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	}
 }
 
-// TestRejectsNoEnvironmentPolicyEnum enforces the §17.6 line 365
+// TestRejectsNoEnvironmentPolicyEnum enforces the §17.6
 // security-affecting enum.
 func TestRejectsNoEnvironmentPolicyEnum_spec_17_6_365(t *testing.T) {
 	schema := mustSchema(t)
@@ -215,7 +214,7 @@ func TestAcceptsEmptyDeploymentTier(t *testing.T) {
 	}
 }
 
-// TestRejectsWrongType enforces the "wrong types" half of §17.6 line 653:
+// TestRejectsWrongType enforces the "wrong types" half of §17.6:
 // a scalar where the schema expects an object is rejected.
 func TestRejectsWrongType_spec_17_6_653(t *testing.T) {
 	if err := ValidateYAML(mustSchema(t), []byte("global: not-an-object\n")); err == nil {

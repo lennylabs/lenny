@@ -98,7 +98,7 @@ service Adapter {
   // guard when the Token Service circuit breaker is open and the lease
   // has not yet expired. Requires no Token Service call: the gateway
   // supplies the new deadline from the lease record it already holds.
-  // spec: §4.9 line 1470.
+  // spec: §4.9.
   rpc ExtendCredentialLease(ExtendCredentialLeaseRequest) returns (ExtendCredentialLeaseResponse) {}
 
   // RevokeCredentials removes a credential lease immediately. The agent
@@ -125,18 +125,18 @@ service Adapter {
   // terminates the stream with a gRPC FailedPrecondition status before any
   // grant is minted, and carries no CheckpointFailed frame. The adapter
   // never mints a `checkpoint_id`; the id the gateway
-  // sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+  // sends in CheckpointStart is authoritative (§10.1). Used for
   // eviction, drain, periodic, and pre-scale-down checkpoints — this is
   // the single upload path for every trigger.
   rpc Checkpoint(stream CheckpointRequest) returns (stream CheckpointResponse) {}
 
   // SignalDeadline warns the running session's runtime that the session is
-  // approaching its §11.3 line 240 deadline so the agent can checkpoint and
+  // approaching its §11.3 deadline so the agent can checkpoint and
   // the client can wrap up. The gateway watchdog fires it once, five minutes
   // before `maxSessionAge` expires. The adapter forwards it as a
   // DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
   // Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
-  // notice (§15 line 2141) and the call returns delivered=false rather than
+  // notice (§15) and the call returns delivered=false rather than
   // erroring so the watchdog's best-effort warning never fails. One-way: the
   // adapter does not block on a runtime acknowledgement.
   rpc SignalDeadline(SignalDeadlineRequest) returns (SignalDeadlineResponse) {}
@@ -148,7 +148,7 @@ service Adapter {
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
   // CoordinatorFence announces a new `coordination_generation` to the pod
-  // on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+  // on coordinator handoff (§4.7, §10.1). The pod records the new
   // generation and from this point rejects any RPC carrying an older one.
   // Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
   // received generation skips one or more values relative to the last
@@ -160,12 +160,12 @@ service Adapter {
   rpc CoordinatorFence(CoordinatorFenceRequest) returns (CoordinatorFenceResponse) {}
 
   // CheckpointBarrier dispatches a barrier signal during gateway graceful
-  // drain (§4.7 line 631, §10.1). The adapter validates the request's
+  // drain (§4.7, §10.1). The adapter validates the request's
   // `coordination_generation` against the last fenced generation, quiesces
   // tool-call dispatch, and holds the quiesced state open while the
   // gateway drives the Checkpoint stream against the held pod. The adapter
   // acknowledges via `CheckpointBarrierAck` on the AdapterEvents
-  // control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+  // control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
   // only after that gateway-driven stream terminates, then releases
   // quiescence. The RPC return value mirrors the ack so a synchronous
   // caller has the same information; the control-stream emit is the
@@ -182,7 +182,7 @@ service Adapter {
   // realpath escapes the workspace via symlink, strips the glob's base
   // path, and re-roots each file under the export's dest_prefix. The
   // gateway applies the lease's fileExportLimits and optional content
-  // scanning to the returned set. Spec: §4.7 line 633, §8.7.
+  // scanning to the returned set. Spec: §4.7, §8.7.
   rpc ExportPaths(ExportPathsRequest) returns (ExportPathsResponse) {}
 
   // ReportUsage returns token-usage and time-usage accounting since the
@@ -245,12 +245,11 @@ service Adapter {
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 service GatewayControl {
-  // ListPlatformTools returns the §9.1 platform tool catalog (lines
-  // 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+  // ListPlatformTools returns the §9.1 platform tool catalog the adapter's
   // intra-pod platform MCP server advertises to a type:agent runtime on
   // tools/list. The catalog is sourced from the gateway's platform tool
   // surface so the intra-pod server never duplicates the tool schemas.
-  // spec: §9.1 lines 14-31.
+  // spec: §9.1.
   rpc ListPlatformTools(ListPlatformToolsRequest) returns (ListPlatformToolsResponse) {}
 
   // CallPlatformTool dispatches one §9.1 platform tool call a type:agent
@@ -260,7 +259,7 @@ service GatewayControl {
   // handler the gateway-edge /mcp surface runs, so the intra-pod and
   // edge surfaces stay in lockstep. The response carries the JSON-encoded
   // MCP tool result; a tool-level failure is an is_error result rather
-  // than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+  // than a gRPC error. spec: §9.1; §4.7.
   rpc CallPlatformTool(CallPlatformToolRequest) returns (CallPlatformToolResponse) {}
 
   // ListSessionConnectors returns the §9.3 connectors a session's
@@ -270,7 +269,7 @@ service GatewayControl {
   // type:agent runtime can reach every external tool its policy admits.
   // The gateway filters the tenant's connector registry by the calling
   // session's delegation policy, so a connector the policy denies is
-  // never advertised to the pod. spec: §9.3 line 142.
+  // never advertised to the pod. spec: §9.3.
   rpc ListSessionConnectors(ListSessionConnectorsRequest) returns (ListSessionConnectorsResponse) {}
 
   // ListConnectorTools returns the tool catalog a single §9.3 connector
@@ -279,7 +278,7 @@ service GatewayControl {
   // external endpoint (the connector's mcpServerUrl), using the
   // gateway-held OAuth credential — the credential never transits the
   // pod. A connector the calling session's policy denies is rejected.
-  // spec: §9.3 lines 142-164.
+  // spec: §9.3.
   rpc ListConnectorTools(ListConnectorToolsRequest) returns (ListConnectorToolsResponse) {}
 
   // CallConnectorTool forwards one §9.3 external tool call a type:agent
@@ -289,7 +288,7 @@ service GatewayControl {
   // tools/call to the external MCP endpoint with the gateway-held
   // credential. The response carries the JSON-encoded MCP tool result; a
   // tool-level failure is an is_error result rather than a gRPC error.
-  // spec: §9.3 lines 142-164.
+  // spec: §9.3.
   rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
 
   // ReportSessionScrub reports the outcome of the per-slot cleanup the
@@ -605,7 +604,7 @@ message SlotId {
 // (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
-// RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
+// RunSetup RPC, which §5.2 specifies fires once per pod at
 // start (a recycled pod skips the second RunSetup on its subsequent
 // session assignments; the gateway owns the once-per-pod gate). See
 // also F-5.2.24.
@@ -631,7 +630,7 @@ message WorkspaceSource {
   string resolved_commit_sha = 13; // gateway-written, readonly
   // link_target is the symlink target for a gateway-produced `symlink`
   // source. The gateway extracts §14 uploadArchive sources in its own
-  // §4.1 Upload Handler subsystem (§7.4 line 448; §13.4 line 652 — the
+  // §4.1 Upload Handler subsystem (§7.4; §13.4 — the
   // pod never decompresses), validates each symlink target with
   // pkg/upload.ValidateSymlinkTarget against the workspace root, and
   // rewrites a symlink-bearing archive entry into a `symlink` source so
@@ -678,7 +677,7 @@ message PrepareWorkspaceRequest {
   // slot_id, when set, stages this slot's uploads into the §6.4 per-slot
   // staging area /workspace/slots/{slotId}/staging/ instead of the single
   // /workspace/staging. Empty when `maxConcurrentSessions: 1` (the base
-  // layout). spec: §6.4 lines 385-405.
+  // layout). spec: §6.4.
   SlotId slot_id = 4;
 }
 
@@ -695,10 +694,9 @@ message FinalizeWorkspaceRequest {
   WorkspacePlan workspace_plan = 2;
   // archive_policy is the §13.4 per-Runtime opt-in surface the gateway
   // delivers to the adapter for uploadArchive extraction. An unset
-  // message means "platform defaults" (symlinks rejected). spec: §7.4
-  // lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+  // message means "platform defaults" (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
   ArchivePolicy archive_policy = 3;
-  // mid_session marks a §7.4 line 433 mid-session upload: the session is
+  // mid_session marks a §7.4 mid-session upload: the session is
   // already running and the named sources are overlaid onto the existing
   // /workspace/current rather than replacing the whole tree. The adapter
   // builds the sources in /workspace/staging, validates them, atomically
@@ -706,13 +704,12 @@ message FinalizeWorkspaceRequest {
   // existing files), then emits a `files_updated` lifecycle signal to the
   // runtime so the agent re-reads the workspace only after promotion. The
   // proto3 default false is the pre-start whole-tree materialization the
-  // §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
+  // §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
   bool mid_session = 4;
   // slot_id, when set, materializes this slot's workspace under the §6.4
   // per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
   // current /workspace/slots/{slotId}/current/) instead of the single
-  // /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4
-  // lines 385-405.
+  // /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4.
   SlotId slot_id = 5;
 }
 
@@ -720,10 +717,9 @@ message FinalizeWorkspaceRequest {
 // The platform ceilings (256 MiB / 100:1 / 10 000 entries / 64 MiB per
 // entry / depth 32 / path 4096 bytes) are normative and non-tunable
 // per §13.4 — only the per-Runtime AllowSymlinks toggle and the
-// adapter's workspace_root path travel on the wire. spec: §7.4 lines
-// 448-462; §13.4 — F-7.4.2, F-7.4.4.
+// adapter's workspace_root path travel on the wire. spec: §7.4; §13.4 — F-7.4.2, F-7.4.4.
 message ArchivePolicy {
-  // allow_symlinks lifts the §7.4 line 458 default-deny on symlink
+  // allow_symlinks lifts the §7.4 default-deny on symlink
   // entries. The adapter still validates every symlink target with
   // pkg/upload.ValidateSymlinkTarget (relative-to-workspace canonical
   // path; rejects /proc, /sys, /dev, /run/lenny). False (the default)
@@ -740,12 +736,12 @@ message ArchivePolicy {
 // FinalizeWorkspaceResponse carries per-source advisory warnings the
 // adapter raised during materialization. The adapter returns a gRPC
 // error only on fatal materialization failures; non-fatal §14 plan
-// warnings (entries the §7.4 line 459 strip-components rule skipped,
+// warnings (entries the §7.4 strip-components rule skipped,
 // etc.) ride here so the gateway can republish them on the session's
 // SSE event stream and append them to the §11.7 audit trail.
 message FinalizeWorkspaceResponse {
   // workspace_plan_warnings transcribes the §14 closed warning enum
-  // for the adapter side of materialization. The §7.4 line 459
+  // for the adapter side of materialization. The §7.4
   // `workspace_plan_strip_components_skip` warning per skipped archive
   // entry is the only producer in v1; future codes ride the same
   // surface so the proto need not grow per warning kind. F-7.4.15.
@@ -763,11 +759,11 @@ message WorkspacePlanWarning {
   // `workspace_plan_strip_components_skip`.
   string code = 1;
   // source_index is the workspace plan's 0-based source index the
-  // warning refers to. spec: §14 line 100 — `sourceIndex` is the
+  // warning refers to. spec: §14 — `sourceIndex` is the
   // first field listed in the strip-components-skip warning fields.
   int32 source_index = 2;
   // entry_path is the archive entry path that triggered the warning.
-  // Empty when the warning is not entry-scoped. spec: §14 line 100 —
+  // Empty when the warning is not entry-scoped. spec: §14 —
   // `entryPath` is the per-entry path the strip-components rule
   // discarded. F-14.1.18.
   string entry_path = 3;
@@ -775,18 +771,18 @@ message WorkspacePlanWarning {
   string message = 4;
   // segment_count is the number of `/`-separated segments the rejected
   // entry path had after stripping any leading/trailing empty
-  // segments. spec: §14 line 100 — `segmentCount`. Populated on
+  // segments. spec: §14 — `segmentCount`. Populated on
   // `workspace_plan_strip_components_skip` warnings; zero on other
   // codes. F-14.1.18.
   int32 segment_count = 5;
   // strip_components is the configured `stripComponents` value the
-  // entry was tested against. spec: §14 line 100 —
+  // entry was tested against. spec: §14 —
   // `stripComponents`. Populated on
   // `workspace_plan_strip_components_skip` warnings; zero on other
   // codes. F-14.1.18.
   int32 strip_components = 6;
   // unknown_type is the open-string `source.type` discriminator the
-  // materializer did not recognize and skipped. spec: §14 line 334 —
+  // materializer did not recognize and skipped. spec: §14 —
   // `unknownType`. Populated only on `workspace_plan_unknown_source_type`
   // warnings the adapter raises when it is the live consumer of a plan
   // carrying a source type a newer gateway injected; empty on other
@@ -794,24 +790,24 @@ message WorkspacePlanWarning {
   string unknown_type = 7;
   // schema_version is the plan's declared §14.1 `schemaVersion`, copied
   // onto the warning so a consumer correlating warnings to plans does
-  // not have to re-read the request body. spec: §14 line 334 —
+  // not have to re-read the request body. spec: §14 —
   // `schemaVersion`. Populated only on
   // `workspace_plan_unknown_source_type` warnings; zero on other codes.
   // F-14.1.2.
   int32 schema_version = 8;
   // path is the workspace-relative path two sources resolved to during
-  // materialization. spec: §14 line 338 — `path`. Populated only on
+  // materialization. spec: §14 — `path`. Populated only on
   // `workspace_plan_path_collision` warnings; empty on other codes.
   // F-14.1.9.
   string path = 9;
   // winning_source_index is the later (last-writer-wins) source index
-  // whose content survives the collision. spec: §14 line 338 —
+  // whose content survives the collision. spec: §14 —
   // `winningSourceIndex`. Populated only on
   // `workspace_plan_path_collision` warnings; equals source_index.
   // F-14.1.9.
   int32 winning_source_index = 10;
   // losing_source_index is the earlier source index the later write
-  // overwrote. spec: §14 line 338 — `losingSourceIndex`. Populated only
+  // overwrote. spec: §14 — `losingSourceIndex`. Populated only
   // on `workspace_plan_path_collision` warnings. F-14.1.9.
   int32 losing_source_index = 11;
 }
@@ -834,12 +830,12 @@ message RunSetupRequest {
   SetupPolicy setup_policy = 3;
   // slot_id, when set, runs setup against this slot's materialized cwd
   // /workspace/slots/{slotId}/current/ instead of /workspace/current.
-  // Empty when `maxConcurrentSessions: 1`. spec: §6.4 lines 401-405.
+  // Empty when `maxConcurrentSessions: 1`. spec: §6.4.
   SlotId slot_id = 4;
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
-// captured. The §7.5 line 475 contract requires "Fully logged
+// captured. The §7.5 contract requires "Fully logged
 // (stdout/stderr captured)" so the gateway can persist the trail on the
 // session row and surface it through the §15.1 GET /v1/sessions/{id}
 // envelope and the §11.7 audit log. The returned outputs preserve the
@@ -861,7 +857,7 @@ message SetupCommandOutput {
   // cmd echoes the submitted command text so a downstream consumer can
   // correlate the record with the WorkspacePlan entry.
   string cmd = 1;
-  // exit_code is the §7.5 line 475 captured exit status. 0 is a clean
+  // exit_code is the §7.5 captured exit status. 0 is a clean
   // exit; non-zero is a failure (the §7.3 setup_command_failed signal).
   int32 exit_code = 2;
   // stdout is the captured standard output, truncated to a per-stream
@@ -914,7 +910,7 @@ message StartSessionRequest {
   // against /workspace/slots/{slotId}/current/. Set only when the pod
   // runs concurrent sessions (`maxConcurrentSessions > 1`); empty when
   // `maxConcurrentSessions: 1` (the one-session-per-pod claim). spec:
-  // §6.4 lines 385-405; §5.2.
+  // §6.4; §5.2.
   SlotId slot_id = 11;
 }
 
@@ -932,7 +928,7 @@ message SetupPolicy {
   // to the adapter. When true the adapter runs each command via
   // `/bin/sh -c`; when false the adapter splits the command on whitespace
   // and execs the argv directly, neutering pipes, backtick substitution,
-  // glob expansion, redirects, and `&&` chaining per §7.5 line 490. The
+  // glob expansion, redirects, and `&&` chaining per §7.5. The
   // proto3 default is false (argv-mode); the gateway sends `true` only
   // when the runtime's policy explicitly requests shell execution. F-7.5.2.
   bool shell = 3;
@@ -982,7 +978,7 @@ message AssignCredentialsRequest {
   // the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
   // instead of the single global /run/lenny/credentials.json, so a
   // rotation on one slot does not disrupt sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+  // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 3;
 }
 
@@ -995,13 +991,13 @@ message RotateCredentialsRequest {
   // rotation. It governs the §4.7 Full-level in-flight gate ceiling:
   // any value other than "proactive_renewal" caps the in-flight wait at
   // 300s and falls through to the standard rotation path on ceiling hit
-  // (spec §4.7 line 822). The renewal trigger keeps the unbounded wait
+  // (spec §4.7). The renewal trigger keeps the unbounded wait
   // because the old credential is still valid. Empty is treated as a
   // fault trigger (capped) for fail-closed safety.
   string rotation_trigger = 3;
   // slot_id, when set, rotates the lease in this slot's §6.1 per-slot
   // credential file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+  // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 4;
 }
 
@@ -1012,11 +1008,11 @@ message ExtendCredentialLeaseRequest {
   string provider = 2;
   string lease_id = 3;
   // expires_at_unix_ms is the new, later expiry deadline the adapter
-  // re-arms the direct-mode expiry timer to. spec: §4.9 line 1470.
+  // re-arms the direct-mode expiry timer to. spec: §4.9.
   int64 expires_at_unix_ms = 4;
   // slot_id, when set, extends this slot's §6.1 per-slot credential
   // lease timer independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+  // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 5;
 }
 
@@ -1028,7 +1024,7 @@ message RevokeCredentialsRequest {
   string reason = 3;
   // slot_id, when set, revokes from this slot's §6.1 per-slot credential
   // file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+  // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 4;
 }
 
@@ -1095,7 +1091,7 @@ message CheckpointRequest {
 }
 
 // CheckpointStart opens the stream. It carries the gateway-minted
-// `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
+// `checkpoint_id` (§10.1 — the adapter never mints one), the
 // typed trigger, the gateway-chosen chunk size and encoding, and the
 // applicable deadline.
 message CheckpointStart {
@@ -1207,7 +1203,7 @@ message CheckpointFailed {
 message SignalDeadlineRequest {
   SessionId session_id = 1;
   // remaining_ms is the wall-clock left before the session's deadline
-  // (~300000 for the §11.3 line 240 five-minute pre-expiry warning).
+  // (~300000 for the §11.3 five-minute pre-expiry warning).
   int32 remaining_ms = 2;
   // trigger names which deadline is approaching: "session_age" (the
   // §11.3 maxSessionAge cap), "budget", or "idle".
@@ -1216,7 +1212,7 @@ message SignalDeadlineRequest {
 
 message SignalDeadlineResponse {
   // delivered is true when the warning reached the runtime over the
-  // CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15 line 2141).
+  // CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15).
   bool delivered = 1;
 }
 
@@ -1279,8 +1275,7 @@ message ResumeRequest {
   // guard.
   string expected_workspace_root = 12;
   // chunks carries one presigned single-key GET capability per chunk of
-  // the checkpoint being restored, in ascending index order (§10.1 line
-  // 155). The gateway resolves the chunk set from the manifest row it owns
+  // the checkpoint being restored, in ascending index order (§10.1). The gateway resolves the chunk set from the manifest row it owns
   // and mints one capability per index in [0, chunk_count); the adapter
   // fetches each chunk directly from object storage and concatenates them
   // into the single tar (or tar.gz) byte stream. The gateway has no byte
@@ -1325,7 +1320,7 @@ message ResumeResponse {
 }
 
 // CoordinatorFenceRequest announces a new coordination generation to the
-// pod (§4.7 line 632 / §10.1). The pod records the new generation and
+// pod (§4.7 / §10.1). The pod records the new generation and
 // from this point rejects every RPC carrying a strictly older generation
 // with FailedPrecondition + a `coordinator_handoff_stale` detail string,
 // which the gateway counts on `lenny_coordinator_handoff_stale_total`.
@@ -1344,7 +1339,7 @@ message CoordinatorFenceRequest {
 // that the new generation skips one or more values relative to the last
 // fenced generation; the adapter still acknowledges (the new coordinator
 // can proceed) but logged a `coordinator_generation_gap` event and
-// reset transient tool-call state per §10.1 line 36.
+// reset transient tool-call state per §10.1.
 message CoordinatorFenceResponse {
   bool accepted = 1;
   int64 last_fenced_generation = 2;
@@ -1352,7 +1347,7 @@ message CoordinatorFenceResponse {
 }
 
 // CheckpointBarrierRequest dispatches a barrier during gateway graceful
-// drain (§4.7 line 631 / §10.1). barrier_id is the gateway's unique
+// drain (§4.7 / §10.1). barrier_id is the gateway's unique
 // identifier for this barrier (echoed in the ack). coordination_generation
 // must match the last fenced generation, or the adapter rejects with
 // FailedPrecondition; this is the same generation gate Coordinator
@@ -1370,9 +1365,9 @@ message CheckpointBarrierRequest {
 
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the AdapterEvents control
-// stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
+// stream (§4.7). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
-// CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1);
 // empty when the gateway drove no stream against the pod. The adapter
 // returns the ack only after that gateway-driven stream terminates.
 // quiesced_ms reports the time-to-quiescence measured inside the ack
@@ -1458,8 +1453,7 @@ message ShutdownRequest {
   // slot_id, when set, tears down just this §6.4 per-slot session (its
   // runtime, credential timers, and per-slot directory tree) while
   // sibling slots on the pod keep running. Empty when
-  // `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4 lines
-  // 401-405.
+  // `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4.
   SlotId slot_id = 4;
 
   // recycle, when set, marks this as the occupancy-zero recycle-boundary
@@ -1561,7 +1555,7 @@ message NegotiateVersionResponse {
   // True when the adapter could not satisfy the gateway's accepted
   // versions. The connection should be torn down and the pod evicted.
   bool incompatible = 4;
-  // workspace_root is the §7.3 line 408 / §6.1 absolute cwd path the
+  // workspace_root is the §7.3 / §6.1 absolute cwd path the
   // adapter mounts the session workspace into — the value of
   // `--workspace-root` on `lenny-adapter`. The gateway captures it on
   // the first Bind and persists it on the session row so a subsequent

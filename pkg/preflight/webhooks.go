@@ -9,13 +9,12 @@ import "fmt"
 // entry lenny-crd-conversion is a CRD conversion endpoint rather than a
 // ValidatingWebhookConfiguration; it is verified by the separate
 // conversion-webhook-availability check (CheckConversionWebhook) which
-// confirms the Service is present and the Deployment is ready per §15.5
-// line 2438. F-15.5.3 / F-17.2.4.
+// confirms the Service is present and the Deployment is ready per §15.5. F-15.5.3 / F-17.2.4.
 //
 // lenny-pod-security is a §13.1 pod-security baseline control: it
 // renders unconditionally and so belongs in the baseline set.
 //
-// lenny-direct-mode-isolation renders unconditionally (§13.2 line 440
+// lenny-direct-mode-isolation renders unconditionally (§13.2
 // step 2): its enforcement target is a pool's credential-delivery and
 // egress configuration — the §13.2 NET-006 proxy/provider-direct mutual
 // exclusivity (every tenancy mode) and the §4.9 direct/standard and
@@ -38,7 +37,7 @@ var baselineValidatingWebhooks = []string{
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",
 	"lenny-direct-mode-isolation",
-	// §10.5 line 508 — renders unconditionally and is fail-closed, so
+	// §10.5 — renders unconditionally and is fail-closed, so
 	// the inventory tracks it in the baseline set (F-10.5.14).
 	"lenny-sandboxtemplate-deletion-guard",
 }
@@ -62,7 +61,7 @@ type WebhookFeatureFlags struct {
 	// RegistryDigest gates lenny-registry-digest, the §5.2 / §25.8
 	// digest-pinning webhook, behind platform.registry.requireDigest. It
 	// is fail-closed (failurePolicy: Fail) and air-gap installs mandate
-	// it, so the preflight inventory must track it. spec: §17.2 line 56.
+	// it, so the preflight inventory must track it. spec: §17.2.
 	RegistryDigest bool
 }
 
@@ -94,9 +93,8 @@ func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 // rather than a ValidatingWebhookConfiguration, so it is verified by
 // CheckConversionWebhook rather than the inventory check; items 1-4 are
 // Restricted-PSS enforcement and namespace targeting, not standalone
-// ValidatingWebhookConfigurations. This slice is the §17.2 "canonical
-// enumeration" (line 40) the preflight inventory cross-checks against.
-// spec: §17.2 lines 46-54. F-17.2.12.
+// ValidatingWebhookConfigurations. This slice is the §17.2 "canonical enumeration" the preflight inventory cross-checks against.
+// spec: §17.2. F-17.2.12.
 var Spec17_2ValidatingWebhooks = []string{
 	"lenny-label-immutability",
 	"lenny-direct-mode-isolation",
@@ -111,7 +109,7 @@ var Spec17_2ValidatingWebhooks = []string{
 // implementationOnlyValidatingWebhooks are ValidatingWebhookConfigurations
 // the chart renders and the preflight inventory tracks that the §17.2
 // admission-policies catalogue does not enumerate by name. Naming them
-// here keeps the §17.2 "single source of truth" cross-check (line 40)
+// here keeps the §17.2 "single source of truth" cross-check
 // machine-checked: a new implementation-only webhook cannot enter the
 // preflight expected set without an explicit, reviewed entry, and
 // CatalogueCoverage fails the inventory check if one does.
@@ -124,13 +122,13 @@ var Spec17_2ValidatingWebhooks = []string{
 //     imageVerification.cosign.enabled.
 //   - lenny-registry-digest is the §5.2 / §25.8 digest-pinning webhook,
 //     gated by platform.registry.requireDigest.
-//   - lenny-sandboxtemplate-deletion-guard is the §10.5 line 508 runtime-
+//   - lenny-sandboxtemplate-deletion-guard is the §10.5 runtime-
 //     upgrade safety webhook (it blocks deleting a SandboxTemplate while
 //     a RuntimeUpgrade referencing its pool is active). It renders
 //     unconditionally and is part of the baseline set; the §17.2
 //     admission-policies catalogue does not enumerate it (F-10.5.14).
 //
-// spec: §17.2 line 40. F-17.2.12.
+// spec: §17.2. F-17.2.12.
 //   - lenny-tenant-label-immutability realizes the §17.2 item-5
 //     lenny.dev/tenant-id transition rules (§13.2 NET-003) as a separate
 //     ValidatingAdmissionWebhook rather than folded into
@@ -146,7 +144,7 @@ var implementationOnlyValidatingWebhooks = []string{
 
 // CatalogueCoverage cross-checks the preflight inventory against the
 // §17.2 admission-policies catalogue, making the chart-author cross-check
-// the spec mandates (§17.2 line 40) machine-verifiable rather than a
+// the spec mandates (§17.2) machine-verifiable rather than a
 // manual review step. It returns two slices:
 //
 //   - missingFromInventory: §17.2-enumerated ValidatingAdmissionWebhooks
@@ -161,7 +159,7 @@ var implementationOnlyValidatingWebhooks = []string{
 // Both empty means the inventory and the §17.2 catalogue agree. The
 // inventory union is taken with every feature flag enabled, since each
 // catalogue webhook is reachable under some flag combination. spec:
-// §17.2 line 40. F-17.2.12.
+// §17.2. F-17.2.12.
 func CatalogueCoverage() (missingFromInventory, undocumentedImplementationOnly []string) {
 	inventory := ExpectedValidatingWebhooks(WebhookFeatureFlags{
 		LLMProxy:       true,

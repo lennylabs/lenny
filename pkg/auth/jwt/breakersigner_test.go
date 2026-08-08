@@ -46,7 +46,7 @@ func (o *stubObserver) OnRejected()       { o.reject++ }
 func (o *stubObserver) OnCircuitOpen()    { o.opened++ }
 func (o *stubObserver) OnCircuitClosed()  { o.closed++ }
 
-// spec: §10.2 line 225 — > 3 consecutive failures inside the window
+// spec: §10.2 — > 3 consecutive failures inside the window
 // trip the breaker open. F-10.2.6.
 func TestBreakerSignerTripsAfterMoreThanThresholdFailures(t *testing.T) {
 	inner := &stubSigner{errOn: func(int) error { return errors.New("kms boom") }}
@@ -92,7 +92,7 @@ func TestBreakerSignerTripsAfterMoreThanThresholdFailures(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 225 — cooldown elapses; one half-open probe
+// spec: §10.2 — cooldown elapses; one half-open probe
 // admitted; success closes the breaker. F-10.2.6.
 func TestBreakerSignerHalfOpenProbeSuccessCloses(t *testing.T) {
 	calls := 0

@@ -16,7 +16,7 @@ import (
 // its backing store or seam is wired, mirroring the per-domain file
 // layout under pkg/gateway/externalapi/admin/.
 //
-// spec: §15.1 (admin API surface); §25.1 line 94 (scope enforcement point).
+// spec: §15.1 (admin API surface); §25.1.
 func (r *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
 	r.registerTenantRoutes(mux)
@@ -59,7 +59,7 @@ func (r *Router) Handler() http.Handler {
 	// rejected with 403 SCOPE_FORBIDDEN before it reaches a destructive
 	// admin handler at its full role ceiling. An absent scope claim, or
 	// a route the document declares no scope for, defers to the role
-	// gate on the matched handler. spec: §15.1 line 914,920; §25.1 line 94.
+	// gate on the matched handler. spec: §15.1; §25.1.
 	return r.enforceScopes(mux)
 }
 
@@ -80,11 +80,11 @@ func (r *Router) registerTenantRoutes(mux *http.ServeMux) {
 	// legal-hold escrow override. F-12.8.2, F-24.10.2.
 	mux.Handle("POST /v1/admin/tenants/{id}/force-delete", r.requireAdmin(http.HandlerFunc(r.handleForceDeleteTenant)))
 	if r.saltRotator != nil {
-		// §12.8 line 857: platform-admin compromise-response salt rotation.
+		// §12.8: platform-admin compromise-response salt rotation.
 		mux.Handle("POST /v1/admin/tenants/{id}/rotate-erasure-salt",
 			r.requireAdmin(http.HandlerFunc(r.handleRotateErasureSalt)))
 	}
-	// §15.1 line 823,824: GET/PUT elicitation-content-integrity admit
+	// §15.1: GET/PUT elicitation-content-integrity admit
 	// platform-admin or tenant-admin. The role gate widens to
 	// requireTenantResourceAdmin; each handler confines a non-platform
 	// caller to its own {id} via authorizeTenantPath. ADM-3.
@@ -103,7 +103,7 @@ func (r *Router) registerTenantRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /v1/admin/deployment/config-change",
 			r.requireAdmin(http.HandlerFunc(r.handleDeploymentConfigChange)))
 	}
-	// §15.1 lines 818-819: platform-admin tenant suspend/resume. Suspend
+	// §15.1: platform-admin tenant suspend/resume. Suspend
 	// rejects new session creation and message injection with
 	// TENANT_SUSPENDED and drains the tenant's active sessions; resume
 	// restores normal operation without un-terminating those sessions.
@@ -118,7 +118,7 @@ func (r *Router) registerTenantRoutes(mux *http.ServeMux) {
 		rbacConfigAdmin(http.HandlerFunc(r.handleGetRBACConfig)))
 	mux.Handle("PUT /v1/admin/tenants/{id}/rbac-config",
 		rbacConfigAdmin(http.HandlerFunc(r.handlePutRBACConfig)))
-	// §5.1 line 49: per-tenant runtime capability customization. A
+	// §5.1: per-tenant runtime capability customization. A
 	// tenant-scoped config sub-resource gated, like rbac-config, on
 	// manage_rbac_config (platform-admin or tenant-admin scoped to the
 	// path tenant). F-5.1.20.
@@ -173,7 +173,7 @@ func (r *Router) registerMigrationRoutes(mux *http.ServeMux) {
 	if r.migrations == nil {
 		return
 	}
-	// §15.1 lines 891-892 / §24.13 lines 150-151: schema-migration
+	// §15.1 / §24.13: schema-migration
 	// status read and last-resort down-migration. Both require
 	// platform-admin.
 	mux.Handle("GET /v1/admin/schema/migrations/status",
@@ -210,7 +210,7 @@ func (r *Router) registerSessionAdminRoutes(mux *http.ServeMux) {
 // unconditionally so the `lenny-ctl admin quota reconcile` command always
 // reaches a real endpoint.
 func (r *Router) registerQuotaRoutes(mux *http.ServeMux) {
-	// §15.1 line 879 / §24.6 line 99 — quota-counter re-aggregation. The
+	// §15.1 / §24.6 — quota-counter re-aggregation. The
 	// route is registered unconditionally so the `lenny-ctl admin quota
 	// reconcile` command always reaches a real endpoint; the handler
 	// answers 503 QUOTA_RECONCILE_UNAVAILABLE when the reconciler seam is
@@ -222,11 +222,11 @@ func (r *Router) registerQuotaRoutes(mux *http.ServeMux) {
 // registerArtifactReplicationRoutes registers the §25.11 ArtifactStore
 // replication resume and status endpoints unconditionally.
 func (r *Router) registerArtifactReplicationRoutes(mux *http.ServeMux) {
-	// §25.11 lines 3898-3899 — ArtifactStore replication resume and
+	// §25.11 — ArtifactStore replication resume and
 	// status. Registered unconditionally so the agent always reaches a
 	// real endpoint; the handlers answer 503 when the replication
 	// controller is unwired (the Tier-1 dev default). Both are
-	// platform-admin-only (§25.11 line 3898 narrows resume to
+	// platform-admin-only (§25.11 narrows resume to
 	// platform-admin; status follows for symmetry).
 	mux.Handle("POST /v1/admin/artifact-replication/{region}/resume",
 		r.requireAdmin(http.HandlerFunc(r.handleResumeArtifactReplication)))
@@ -247,7 +247,7 @@ func (r *Router) registerUserRoutes(mux *http.ServeMux) {
 	mux.Handle("PUT /v1/admin/users/{userId}", r.requireUserAdmin(http.HandlerFunc(r.handleUpdateUser)))
 	mux.Handle("POST /v1/admin/users/{userId}/invalidate", r.requireUserAdmin(http.HandlerFunc(r.handleInvalidateUser)))
 	mux.Handle("DELETE /v1/admin/users/{userId}", r.requireUserAdmin(http.HandlerFunc(r.handleDeleteUser)))
-	// §15.1 lines 826-828 — tenant-scoped user listing and the
+	// §15.1 — tenant-scoped user listing and the
 	// platform-managed role assignment surface. manage_users gate
 	// (platform-admin or tenant-admin); the handler scopes a
 	// tenant-admin to the path tenant.
@@ -270,13 +270,13 @@ func (r *Router) registerErasureJobRoutes(mux *http.ServeMux) {
 	// §12.8 erasure-job status query.
 	mux.Handle("GET /v1/admin/erasure-jobs/{jobId}",
 		r.requireUserAdmin(http.HandlerFunc(r.handleGetErasureJob)))
-	// §24.12 line 143 / §12.8 line 766 — operator retry of a failed
+	// §24.12 / §12.8 — operator retry of a failed
 	// erasure job. platform-admin only.
 	if r.erasureRunner != nil && r.users != nil {
 		mux.Handle("POST /v1/admin/erasure-jobs/{jobId}/retry",
 			r.requireAdmin(http.HandlerFunc(r.handleRetryErasureJob)))
 	}
-	// §24.12 line 144 / §12.8 line 764 — manual clear of the GDPR
+	// §24.12 / §12.8 — manual clear of the GDPR
 	// Article 18 processing restriction after a failed job.
 	// platform-admin only.
 	if r.users != nil {
@@ -291,12 +291,12 @@ func (r *Router) registerLegalHoldRoutes(mux *http.ServeMux) {
 	if r.sessions == nil {
 		return
 	}
-	// §15.1 line 865 / §10.2 line 280 — legal hold set / clear is
+	// §15.1 / §10.2 — legal hold set / clear is
 	// platform-admin or tenant-admin; a tenant-admin is confined to its
 	// own tenant by the body-tenant binding in handleSetLegalHold.
 	mux.Handle("POST /v1/admin/legal-hold",
 		r.requireTenantResourceAdmin(http.HandlerFunc(r.handleSetLegalHold)))
-	// §15.1 line 865 active-hold listing. platform-admin or
+	// §15.1 active-hold listing. platform-admin or
 	// tenant-admin; a tenant-admin is auto-scoped to its own tenant.
 	mux.Handle("GET /v1/admin/legal-holds",
 		r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListLegalHolds)))
@@ -392,7 +392,7 @@ func (r *Router) registerEnvironmentRoutes(mux *http.ServeMux) {
 		envAdmin(http.HandlerFunc(r.handleDeleteEnvironment)))
 	mux.Handle("GET /v1/admin/environments/{name}/runtime-exposure",
 		envAdmin(http.HandlerFunc(r.handleEnvironmentRuntimeExposure)))
-	// §15.1 line 840: environment billing rollup. Only mounted when a
+	// §15.1: environment billing rollup. Only mounted when a
 	// billing ledger is wired so the route is absent rather than
 	// silently returning zero usage on a billing-less deployment.
 	if r.billing != nil {
@@ -423,16 +423,16 @@ func (r *Router) registerPoolRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/pools", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleListPools)))
 	mux.Handle("GET /v1/admin/pools/{name}", r.requireTenantResourceAdmin(http.HandlerFunc(r.handleGetPool)))
 	mux.Handle("PUT /v1/admin/pools/{name}", poolManage(http.HandlerFunc(r.handleUpdatePool)))
-	// §25.17 lines 5232-5239: the agent-operability worked example and
+	// §25.17: the agent-operability worked example and
 	// the warm-pool-exhaustion runbook scale a pool through the dedicated
 	// warm-count sub-route with the `minWarm` field. It runs on the same
 	// manage_pools gate as the §15.1 PUT it delegates to.
 	mux.Handle("PUT /v1/admin/pools/{name}/warm-count", poolManage(http.HandlerFunc(r.handleUpdatePoolWarmCount)))
-	// §6.1 line 63, §15.1 line 801: override the SDK-warm circuit-breaker
+	// §6.1, §15.1: override the SDK-warm circuit-breaker
 	// state for a pool (enabled | disabled | auto). Runs on the same
 	// manage_pools gate as the §15.1 PUT it shares the resource with.
 	mux.Handle("PUT /v1/admin/pools/{name}/circuit-breaker", poolManage(http.HandlerFunc(r.handleUpdatePoolCircuitBreaker)))
-	// §15.1 line 797: drain a pool. Transitions the pool to `draining`
+	// §15.1: drain a pool. Transitions the pool to `draining`
 	// so the gateway stops admitting new sessions to it and reports the
 	// in-flight count + estimated drain seconds. Runs on the same
 	// manage_pools gate as the PUT it shares the resource with.
@@ -454,7 +454,7 @@ func (r *Router) registerPoolRoutes(mux *http.ServeMux) {
 		poolManage(http.HandlerFunc(r.handleResumeReconciliation)))
 	// §4.6.2 item 4: GET /v1/admin/pools/{name}/sync-status reports
 	// the Postgres vs CRD generation comparison. spec:
-	// spec/04_system-components.md line 560. The route is
+	// §4.6.2. The route is
 	// registered unconditionally; without a CRD reader wired the
 	// handler reports the Postgres-only generation and leaves
 	// crdGeneration / inSync at their zero values so operators can
@@ -472,23 +472,23 @@ func (r *Router) registerConnectorRoutes(mux *http.ServeMux) {
 	}
 	mux.Handle("POST /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleCreateConnector)))
 	mux.Handle("GET /v1/admin/connectors", r.requireAdmin(http.HandlerFunc(r.handleListConnectors)))
-	// spec: §15.1 line 767 — admin CRUD resources use `{name}` as the
+	// spec: §15.1 — admin CRUD resources use `{name}` as the
 	// path identifier; connectors are keyed by their registry name
 	// (F-15.1.12).
 	mux.Handle("GET /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleGetConnector)))
 	mux.Handle("PUT /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleUpdateConnector)))
 	mux.Handle("DELETE /v1/admin/connectors/{name}", r.requireAdmin(http.HandlerFunc(r.handleDeleteConnector)))
 	if r.connectorTester != nil {
-		// §15.1 line 791 live-connectivity test. The §15.1 line 1163
+		// §15.1 live-connectivity test. The §15.1
 		// contract grants this to platform-admin and tenant-admin.
 		mux.Handle("POST /v1/admin/connectors/{name}/test",
 			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleTestConnector)))
 	}
 	if r.connectorRefresher != nil {
-		// §9.3 line 136 capability inference. Like the test endpoint it
+		// §9.3 capability inference. Like the test endpoint it
 		// dials the external endpoint on the sanctioned outbound path,
 		// so it is granted to platform-admin and tenant-admin and shares
-		// the §15.1 line 1180 per-connector rate limit.
+		// the §15.1 per-connector rate limit.
 		mux.Handle("POST /v1/admin/connectors/{name}/refresh",
 			r.requireTenantResourceAdmin(http.HandlerFunc(r.handleRefreshConnectorCapabilities)))
 	}
@@ -516,8 +516,8 @@ func (r *Router) registerExternalAdapterRoutes(mux *http.ServeMux) {
 	if r.externalAdapters == nil {
 		return
 	}
-	// spec: §15.1 lines 850-855 — external-protocol adapter CRUD plus
-	// the §24.8 line 113 validate gate. All require platform-admin
+	// spec: §15.1 — external-protocol adapter CRUD plus
+	// the §24.8 validate gate. All require platform-admin
 	// (§24.8 grants `platform-admin`). The literal `validate` segment
 	// takes precedence over the `{name}` wildcard in Go's ServeMux.
 	mux.Handle("POST /v1/admin/external-adapters", r.requireAdmin(http.HandlerFunc(r.handleCreateExternalAdapter)))
@@ -598,7 +598,7 @@ func (r *Router) registerCredentialPoolRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleGetCredentialPool)))
 	mux.Handle("PUT /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleUpdateCredentialPool)))
 	mux.Handle("DELETE /v1/admin/credential-pools/{name}", credPoolAdmin(http.HandlerFunc(r.handleDeleteCredentialPool)))
-	// §15.1 lines 876-878 / §24.5 rows 3-5: per-credential subresource
+	// §15.1 / §24.5 rows 3-5: per-credential subresource
 	// CRUD (add / update / remove a single credential in a pool).
 	mux.Handle("POST /v1/admin/credential-pools/{name}/credentials",
 		credPoolAdmin(http.HandlerFunc(r.handleAddCredential)))
@@ -667,7 +667,7 @@ func (r *Router) registerCARotationRoutes(mux *http.ServeMux) {
 	if r.caRotation == nil {
 		return
 	}
-	// §10.3 lines 344-350 — operator-driven cluster-internal CA
+	// §10.3 — operator-driven cluster-internal CA
 	// rotation. The procedure is platform-global, so every route is
 	// platform-admin-only. F-10.3.21.
 	mux.Handle("GET /v1/admin/ca-rotation", r.requireAdmin(http.HandlerFunc(r.handleGetCARotation)))
@@ -682,9 +682,9 @@ func (r *Router) registerRuntimeUpgradeRoutes(mux *http.ServeMux) {
 	if r.runtimeUpgrade == nil {
 		return
 	}
-	// §10.5 lines 466-540 / §15.1 lines 869-874 — operator-driven
+	// §10.5 / §15.1 — operator-driven
 	// runtime image rollout for a pool. Every route is platform-admin
-	// only (§24 lines 65-71). F-10.5.1.
+	// only (§24). F-10.5.1.
 	mux.Handle("POST /v1/admin/pools/{name}/upgrade/start", r.requireAdmin(http.HandlerFunc(r.handleUpgradeStart)))
 	mux.Handle("POST /v1/admin/pools/{name}/upgrade/proceed", r.requireAdmin(http.HandlerFunc(r.handleUpgradeProceed)))
 	mux.Handle("POST /v1/admin/pools/{name}/upgrade/pause", r.requireAdmin(http.HandlerFunc(r.handleUpgradePause)))
@@ -699,7 +699,7 @@ func (r *Router) registerLeaseDenialRoutes(mux *http.ServeMux) {
 	if r.leaseDenials == nil {
 		return
 	}
-	// §15.1 line 868 — clear the §8.6 extension-denied flag on a
+	// §15.1 — clear the §8.6 extension-denied flag on a
 	// subtree, bypassing the rejection cool-off window. Requires
 	// platform-admin or tenant-admin.
 	mux.Handle("DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial",
@@ -747,23 +747,23 @@ func (r *Router) registerAuditRoutes(mux *http.ServeMux) {
 	// §25.9 Audit Log Query API. The summary route is registered
 	// before the {seq} route so the literal path segment is not parsed
 	// as a sequence number. Chain integrity is carried by the list
-	// response's chainIntegrityReport envelope (§25.9 line 3653); §25.9
+	// response's chainIntegrityReport envelope (§25.9); §25.9
 	// defines no standalone verify route. F-25.9.10.
-	// §25.9 line 3661 aggregate counts by type/actor/resource.
+	// §25.9 aggregate counts by type/actor/resource.
 	mux.Handle("GET /v1/admin/audit-events/summary", r.requireAuditReader(http.HandlerFunc(r.handleAuditSummary)))
 	mux.Handle("GET /v1/admin/audit-events", r.requireAuditReader(http.HandlerFunc(r.handleListAuditEvents)))
 	mux.Handle("GET /v1/admin/audit-events/{seq}", r.requireAuditReader(http.HandlerFunc(r.handleGetAuditEvent)))
-	// §25.9 line 3662 audit-recovery: re-queue a row for OCSF
+	// §25.9 audit-recovery: re-queue a row for OCSF
 	// translation after a translator-version bump. Scope-gated on
 	// audit:retranslate inside the handler.
 	mux.Handle("POST /v1/admin/audit-events/{seq}/retranslate",
 		r.requireAuditReader(http.HandlerFunc(r.handleRetranslateAuditEvent)))
-	// §25.9 line 3663 audit-recovery: re-queue a terminally-failed
+	// §25.9 audit-recovery: re-queue a terminally-failed
 	// audit row for §12.6 CloudEvents re-publication. Scope-gated on
 	// audit:republish inside the handler.
 	mux.Handle("POST /v1/admin/audit-events/{seq}/republish",
 		r.requireAuditReader(http.HandlerFunc(r.handleRepublishAuditEvent)))
-	// §16.4 line 378 / §25.9 — operator force-drop of audit rows the
+	// §16.4 / §25.9 — operator force-drop of audit rows the
 	// SIEM delivery guard is holding past their retention TTL, after
 	// an explicit data-loss acknowledgement. Platform-admin gated;
 	// only registered when a durable pruner is wired.
@@ -791,7 +791,7 @@ func (r *Router) registerPreflightRoutes(mux *http.ServeMux) {
 	if r.preflighter == nil {
 		return
 	}
-	// §15.1 line 890 / §24.2 — API-backed mode of `lenny-ctl
+	// §15.1 / §24.2 — API-backed mode of `lenny-ctl
 	// preflight`: active outbound Postgres/Redis/MinIO connectivity
 	// and schema-version probes against the gateway's configured
 	// backends. POST because it performs side-effecting outbound

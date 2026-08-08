@@ -88,7 +88,7 @@ var prodMigrationSchema = []struct {
 	// column).
 	{migration: "0046", table: "ops_event_subscriptions", create: true},
 	// 0047 extends lenny_tenant_guard() with the §4.2 platform-admin
-	// __all__ cross-tenant bypass and the §12.3 line 53 tenant-id
+	// __all__ cross-tenant bypass and the §12.3 tenant-id
 	// format validation. The trigger behavior is covered by the
 	// pgtenant.InAllTenants suite under
 	// tests/tier2_component/rls/all_tenants_test.go.
@@ -102,44 +102,43 @@ var prodMigrationSchema = []struct {
 	{migration: "0049", table: "artifact_store", create: true},
 	// 0050 adds the §4.2 session-record fields the spec lists: cwd,
 	// pod_assignment, recovery_generation, coordination_generation,
-	// and schema_version. spec: §4.2 line 156.
+	// and schema_version. spec: §4.2.
 	{migration: "0050", table: "sessions", columns: []string{
 		"cwd", "pod_assignment", "recovery_generation",
 		"coordination_generation", "schema_version",
 	}},
 	// 0051 rewrites every lenny_tenant_isolation policy in the
-	// hard-error current_setting(..., false) form per §4.2 line 163
+	// hard-error current_setting(..., false) form per §4.2
 	// so an unset GUC raises rather than silently filtering rows out.
 	// The policy bodies are covered by the §12.3 RLS suite under
 	// tests/tier2_component/rls.
-	// 0052 introduces the §4.2 line 177 admin-mode trigger that
+	// 0052 introduces the §4.2 admin-mode trigger that
 	// rejects writes to runtime_tenant_access / pool_tenant_access
 	// when lenny.admin_mode = 'true' is not set. The trigger behavior
 	// is covered by tests/tier2_component/rls/admin_mode_test.go.
-	// 0053 tenant-scopes the connectors table per §4.2 line 173;
+	// 0053 tenant-scopes the connectors table per §4.2;
 	// covered by the §4.2 RLS suite.
-	// 0054 tenant-scopes the delegation_policies table per §4.2
-	// line 172; covered by the §4.2 RLS suite.
-	// 0055 adds the §4.2 line 158-159 retry_count, policy enforcement
+	// 0054 tenant-scopes the delegation_policies table per §4.2; covered by the §4.2 RLS suite.
+	// 0055 adds the §4.2 retry_count, policy enforcement
 	// state, and resume window the Session Manager tracks on each
 	// session row.
 	{migration: "0055", table: "sessions", columns: []string{
 		"retry_count", "policy_enforcement_state", "resume_eligible_until",
 	}},
-	// 0056 creates the §4.2 line 179 session_dlq_archive scaffold —
+	// 0056 creates the §4.2 session_dlq_archive scaffold —
 	// the tenant-scoped table the future DLQ archive feature writes
 	// to. v1 has no consumer; the migration lands the table, the
 	// composite PK (tenant_id, session_id, message_id), the
 	// lenny_tenant_guard trigger, and the lenny_tenant_isolation
 	// policy.
 	{migration: "0056", table: "session_dlq_archive", create: true},
-	// 0057 extends lenny_tenant_guard() with the §4.2 line 165
+	// 0057 extends lenny_tenant_guard() with the §4.2
 	// LENNY_POOLER_MODE guard: the __all__ sentinel is rejected
 	// unless lenny.allow_all_sentinel = 'true' is opted in via SET
 	// LOCAL by pgtenant.InAllTenants. The trigger and policy
 	// behavior are covered by
 	// tests/tier2_component/rls/all_tenants_test.go.
-	// 0060 extends session_eviction_state with the §4.4 lines 268–273
+	// 0060 extends session_eviction_state with the §4.4
 	// columns the eviction fallback writer must populate so the §7.2
 	// resume path can fence coordinator handoffs and surface
 	// workspaceLost / context truncation to the runtime.
@@ -148,7 +147,7 @@ var prodMigrationSchema = []struct {
 		"conversation_cursor", "evicted_at",
 		"workspace_lost", "context_truncated",
 	}},
-	// 0061 adds the §4.4 line 258 freshness timestamp the
+	// 0061 adds the §4.4 freshness timestamp the
 	// `lenny_checkpoint_stale_sessions` gauge / `CheckpointStale`
 	// alert reads. The gateway updates it on every successful
 	// checkpoint regardless of trigger (periodic, eviction,
@@ -156,7 +155,7 @@ var prodMigrationSchema = []struct {
 	{migration: "0061", table: "sessions", columns: []string{
 		"last_successful_checkpoint_at",
 	}},
-	// 0062 created the §4.4 lines 234 / 236 partial-checkpoint manifest
+	// 0062 created the §4.4 partial-checkpoint manifest
 	// table session_partial_checkpoint_manifest. Migration 0178 drops
 	// that table and creates checkpoint_manifest with the full §10.1
 	// column set in its place, so at head the 0062 table is absent; its
@@ -253,7 +252,7 @@ var prodMigrationSchema = []struct {
 	{migration: "0094", table: "sessions", columns: []string{"tree_visibility"}},
 	// 0095 persists the §10.7 delegation_depth on sessions.
 	{migration: "0095", table: "sessions", columns: []string{"delegation_depth"}},
-	// 0097 adds the §10.6 line 665 tenant RBAC-config blob (identityProvider,
+	// 0097 adds the §10.6 tenant RBAC-config blob (identityProvider,
 	// tokenPolicy, capabilities taxonomy, mcpAnnotationMapping overrides)
 	// as the rbac_config jsonb column on tenants.
 	{migration: "0097", table: "tenants", columns: []string{"rbac_config"}},
@@ -292,14 +291,14 @@ var prodMigrationSchema = []struct {
 	// conditional fields to billing_events as a single nullable JSONB
 	// blob, completing the §11.2.1 event schema (F-11.2.12).
 	{migration: "0113", table: "billing_events", columns: []string{"conditional_fields"}},
-	// 0114 adds the §9.3 line 136 / §5.1 connector capability-inference
+	// 0114 adds the §9.3 / §5.1 connector capability-inference
 	// metadata to connectors: the inference mode, the inferred capability
 	// union, the per-tool capability map, and the last-refresh timestamp
 	// (F-9.3.8).
 	{migration: "0114", table: "connectors", columns: []string{
 		"capability_inference_mode", "capabilities", "tool_capabilities", "capabilities_refreshed_at",
 	}},
-	// 0115 creates the §11.2 line 29 / §12.4 line 218 durable checkpoint
+	// 0115 creates the §11.2 / §12.4 durable checkpoint
 	// of the §8.2 delegation tree budget counters (tree_size,
 	// token_budget_consumed, tree_memory_bytes) keyed by
 	// (tenant_id, root_session_id), so the Redis dlg:* counters are
@@ -324,11 +323,11 @@ var prodMigrationSchema = []struct {
 	// 0119 creates the §11.2 token_usage_checkpoint durable Redis counter
 	// checkpoint table.
 	{migration: "0119", table: "token_usage_checkpoint", create: true},
-	// 0120 adds the §15.1 line 797 draining_since timestamp to
+	// 0120 adds the §15.1 draining_since timestamp to
 	// sandbox_warm_pools so the pool-drain phase persists (F-15.1.8).
 	{migration: "0120", table: "sandbox_warm_pools", columns: []string{"draining_since"}},
 	// 0121-0125 add the remaining §25.4 / §25.8 / §25.9 / §25.11 ops_*
-	// platform-Postgres tables enumerated in §25.4 line 1455-1473
+	// platform-Postgres tables enumerated in §25.4
 	// (F-25.4.13). All platform-scoped (no RLS, no tenant column).
 	{migration: "0121", table: "ops_remediation_locks", create: true},
 	{migration: "0121", table: "ops_lock_epoch", create: true},
@@ -360,7 +359,7 @@ var prodMigrationSchema = []struct {
 		"ext_file_export_files", "ext_file_export_bytes", "updated_at",
 	}},
 	// 0131 / 0132 add the §15.5 item 7 schema_version column to the
-	// session_messages MessageEnvelope rows (§15.4.1 line 1694) and the
+	// session_messages MessageEnvelope rows (§15.4.1) and the
 	// session_checkpoints checkpoint-metadata catalog.
 	{migration: "0131", table: "session_messages", columns: []string{"schema_version"}},
 	{migration: "0132", table: "session_checkpoints", columns: []string{"schema_version"}},
@@ -423,7 +422,7 @@ var prodMigrationSchema = []struct {
 	// unique index partial_manifest_active_uniq to
 	// session_partial_checkpoint_manifest; migration 0178 supersedes it
 	// with the same-named index on checkpoint_manifest scoped to the
-	// §10.1 line 147 (session_id, slot_id) key. No column added; this
+	// §10.1 key. No column added; this
 	// comment keeps 0150 referenced for scripts/lint-migrations.sh.
 	// 0151 adds the §4.6.2 reconciliation_resume_epoch counter to
 	// sandbox_warm_pools.
@@ -539,13 +538,12 @@ var prodMigrationSchema = []struct {
 	//
 	// 0178 drops session_partial_checkpoint_manifest (migration 0062) and
 	// its partial unique index (migration 0150) and creates
-	// checkpoint_manifest with the full §10.1 lines 141-151 column set,
+	// checkpoint_manifest with the full §10.1 column set,
 	// its tenant-guard trigger, ENABLE/FORCE RLS + lenny_tenant_isolation
 	// policy, and lenny_app grants. Its .down.sql recreates the 0062
 	// table and the 0150 index. The RLS apparatus and column-set
 	// specifics are asserted directly in the rls suite and in
-	// migrations/0178_checkpoint_manifest_test.go. spec: §10.1 lines
-	// 141-151, §12.3.
+	// migrations/0178_checkpoint_manifest_test.go. spec: §10.1, §12.3.
 	{migration: "0178", table: "checkpoint_manifest", create: true},
 	// 0175 adds the §4.9 expires_at projection column to credential_leases:
 	// migration 0129 moved the lease body to an AES-256-GCM envelope, so the

@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §16.3 lines 336-356 — the gateway-side session-lifecycle spans
+// spec: §16.3 — the gateway-side session-lifecycle spans
 // (session.create, session.prompt, session.upload, session.seal_and_export)
 // must have a tracer.Start emit site, not just a catalog constant. These
 // tests install an SDK-backed span recorder over the global OTel provider
@@ -132,7 +132,7 @@ func TestMessagesStartsSessionPromptSpan_spec_16_3(t *testing.T) {
 }
 
 // erroringExecutor is an executor.Executor whose Send always fails, to
-// drive the §16.3 line 342 EXECUTOR_FAILURE error branch.
+// drive the §16.3 EXECUTOR_FAILURE error branch.
 type erroringExecutor struct{}
 
 func (erroringExecutor) Send(context.Context, string, []executor.Message) (executor.Response, error) {
@@ -196,7 +196,7 @@ func TestUploadSpanRecordsMissingSessionError_spec_16_3(t *testing.T) {
 
 	srv, issuer, _, _, _, _ := newUploadServer(t)
 	// No session is seeded: the store.Get returns ErrNotFound, driving the
-	// §16.3 line 338 RESOURCE_NOT_FOUND error branch on the upload span.
+	// §16.3 RESOURCE_NOT_FOUND error branch on the upload span.
 	tok, _ := issuer.Issue("sess_missing_upload", 0)
 
 	rr := uploadRequest(t, srv.Handler(), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")

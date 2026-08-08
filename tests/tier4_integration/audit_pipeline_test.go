@@ -176,7 +176,7 @@ func TestAuditPipeline(t *testing.T) {
 	})
 
 	t.Run("the chain survives a payload that jsonb reorders and renormalizes", func(t *testing.T) {
-		// spec: §11.7 item 3 line 364 — the hash is computed over the RFC
+		// spec: §11.7 item 3 — the hash is computed over the RFC
 		// 8785 canonical payload, so it must be stable across the key
 		// reordering and numeric renormalization a jsonb column applies.
 		// A payload with unsorted keys and a trailing-zero float would

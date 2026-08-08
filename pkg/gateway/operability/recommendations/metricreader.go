@@ -131,13 +131,12 @@ func (w *WindowStore) windowed(key string, window time.Duration) []sample {
 // approxSampleBytes is the per-sample memory estimate for the ring-buffer
 // gauge: a time.Time plus a float64 plus slice overhead. It backs the
 // §25.3 lenny_recommendations_ring_buffer_bytes gauge, which only needs
-// to be close enough to drive the >100 MB alert. spec: §25.3 line 598.
+// to be close enough to drive the >100 MB alert. spec: §25.3.
 const approxSampleBytes = 32
 
 // ApproxBytes estimates the store's current memory use: the retained
 // samples across every series plus the series-key strings. It backs the
-// §25.3 lenny_recommendations_ring_buffer_bytes gauge. spec: §25.3
-// line 598.
+// §25.3 lenny_recommendations_ring_buffer_bytes gauge. spec: §25.3.
 func (w *WindowStore) ApproxBytes() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()

@@ -250,13 +250,13 @@ func TestPutAppliesKMSResolver(t *testing.T) {
 	}
 }
 
-// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5
 // fail-closed contract: a resolver returning (requireKey=true, err)
 // for a T4 tenant rejects the write with
 // blobstore.ErrClassificationControlViolation, persists nothing, and
 // fires the KMS-unavailable hook.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 	f := newFakeGCS()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -280,7 +280,7 @@ func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 // resolver returns (requireKey=true) with an empty key fails closed
 // rather than falling through to the bucket default.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 	f := newFakeGCS()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -296,7 +296,7 @@ func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 // returns (requireKey=false) with an empty key admits the write under
 // the bucket default with no per-object KMS key.
 //
-// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+// spec: §12.5; §12.9.
 func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
 	f := newFakeGCS()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {

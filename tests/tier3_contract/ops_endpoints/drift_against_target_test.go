@@ -41,7 +41,7 @@ func opsServerWithTarget(t *testing.T) *opsserver.Server {
 	svc := driftservice.NewService(store, fixedRunningState{
 		state: map[string]any{"pools": map[string]any{"default-gvisor": map[string]any{"minWarm": float64(12)}}},
 	})
-	// §25.10 line 3788: write the target snapshot the OpsRoll startup hook
+	// §25.10: write the target snapshot the OpsRoll startup hook
 	// writes, so against=target and against=both resolve.
 	if err := svc.WriteTargetSnapshot(context.Background(), "upgrade-1", "lenny-ops",
 		map[string]any{"pools": map[string]any{"default-gvisor": map[string]any{"minWarm": float64(8)}}}); err != nil {

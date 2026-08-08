@@ -9,7 +9,7 @@ import (
 )
 
 // TestSoPeercredCounters_spec_4_7 verifies the §4.7 security-boundary
-// counters (spec/04_system-components.md lines 870-888) are registered
+// counters (§4.7.11) are registered
 // under their spec names and increment when the adapter records a
 // self-test failure or a nonce-only-mode start.
 func TestSoPeercredCounters_spec_4_7(t *testing.T) {

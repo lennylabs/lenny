@@ -21,7 +21,7 @@ import (
 // regardless of value (a replacement pod can be fenced into an existing
 // session's generation).
 //
-// spec: §4.7 line 632, §10.1 lines 33-37, 50-52.
+// spec: §4.7, §10.1.
 type coordinationState struct {
 	mu sync.Mutex
 	// lastFenced is the most recent generation the adapter accepted via
@@ -30,7 +30,7 @@ type coordinationState struct {
 	// initialized reports whether at least one fence has landed; the
 	// first fence is exempt from gap detection.
 	initialized bool
-	// quiesced bounces a §10.1 line 631 quiesce signal off the local
+	// quiesced bounces a §10.1 quiesce signal off the local
 	// state so the adapter can refuse new operational RPCs while a
 	// barrier is in flight. The check is currently advisory — the
 	// quiesce-strict enforcement against StartSession/SendMessage/etc.
@@ -59,8 +59,7 @@ func (s *Server) isQuiescedForBarrier() bool {
 // holding quiescence open, waiting for the gateway-driven Checkpoint
 // stream to link its checkpoint_id and terminate. A caller that observes
 // true can drive the Checkpoint stream against the held pod and know the
-// barrier's gate is open, so the stream's CheckpointStart links (§10.1
-// lines 163-172). Exposed for tests.
+// barrier's gate is open, so the stream's CheckpointStart links (§10.1). Exposed for tests.
 func (s *Server) BarrierWaiting() bool {
 	s.barrier.mu.Lock()
 	defer s.barrier.mu.Unlock()
@@ -68,20 +67,20 @@ func (s *Server) BarrierWaiting() bool {
 }
 
 // CoordinatorFence records the new coordination generation on the pod
-// per §4.7 line 632 / §10.1 lines 33-37. The fence is the precondition
+// per §4.7 / §10.1. The fence is the precondition
 // the §10.1 handoff protocol uses to close the split-brain window: from
 // this point the adapter rejects any RPC carrying a strictly older
 // generation with FailedPrecondition + a `coordinator_handoff_stale`
 // detail. The first fence on a pod's lifetime is recorded regardless of
 // value (a replacement pod can be fenced into an existing session's
 // generation); subsequent fences must be strictly greater. Skipping one
-// or more generations triggers the §10.1 line 36 gap-detection path:
+// or more generations triggers the §10.1 gap-detection path:
 // the adapter logs a `coordinator_generation_gap` event and returns
 // GapDetected: true while still acknowledging the new generation. The
-// §10.1 line 36 in-flight-RPC cancellation is an unimplemented spec
+// §10.1 in-flight-RPC cancellation is an unimplemented spec
 // requirement the adapter does not currently perform.
 //
-// spec: §4.7 line 632, §10.1 lines 33-37.
+// spec: §4.7, §10.1.
 func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.CoordinatorFenceRequest) (*adapterv1.CoordinatorFenceResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -108,7 +107,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	}
 	gap := s.coord.initialized && gen > s.coord.lastFenced+1
 	if gap {
-		// §10.1 line 36 — a skipped generation logs
+		// §10.1 — a skipped generation logs
 		// `coordinator_generation_gap` and reports GapDetected so the
 		// caller can react. The spec's in-flight-RPC cancellation is a
 		// requirement the adapter does not currently implement.
@@ -122,7 +121,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	s.coord.initialized = true
 	_ = prev
 
-	// spec: §10.1 line 49 — a successful fence from a new coordinator is
+	// spec: §10.1 — a successful fence from a new coordinator is
 	// the only way out of hold state. exitHoldState locks only hold.mu, so
 	// calling it while coord.mu is held is deadlock-free (enterHoldState
 	// reads the generation through the accessor before taking hold.mu, and
@@ -143,7 +142,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 // open gate on CheckpointStart and signals the gate when the stream
 // terminates. The barrier then returns the ack echoing that checkpoint_id.
 //
-// spec: §10.1 lines 163-172 — the adapter holds quiescence, the gateway
+// spec: §10.1 — the adapter holds quiescence, the gateway
 // drives the Checkpoint stream against the held pod, and the ack the
 // adapter returns after that stream terminates is the completion signal.
 type barrierGate struct {
@@ -199,16 +198,16 @@ func (g *barrierGate) complete() {
 	}
 }
 
-// CheckpointBarrier implements the §4.7 line 631 / §10.1 graceful-drain
+// CheckpointBarrier implements the §4.7 / §10.1 graceful-drain
 // barrier RPC as a quiesce-and-hold barrier. The adapter validates the
 // request's coordination generation against the last fenced value,
 // quiesces tool-call dispatch, and holds the quiesced state open while the
 // gateway drives the Checkpoint stream against the held pod. It returns
 // the ack only after that stream terminates, echoing the gateway-minted
 // checkpoint_id the stream carried and reporting the time-to-quiescence in
-// quiesced_ms. The ack is mirrored onto the §4.7 line 660 control stream.
+// quiesced_ms. The ack is mirrored onto the §4.7 control stream.
 //
-// spec: §4.7 line 631, §10.1 lines 163-172.
+// spec: §4.7, §10.1.
 func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.CheckpointBarrierRequest) (*adapterv1.CheckpointBarrierResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -226,7 +225,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 		return nil, status.Error(codes.InvalidArgument, "CheckpointBarrier requires a positive coordination_generation")
 	}
 
-	// §10.1: the barrier shares the §10.1 line 34 generation gate the
+	// §10.1: the barrier shares the §10.1 generation gate the
 	// CoordinatorFence installs. Reject when the gateway-supplied value
 	// does not match the last fenced generation; the gateway re-issues
 	// after the next fence.
@@ -242,12 +241,12 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	// Quiesce and hold: the quiesced state stays open across the
 	// gateway-driven Checkpoint stream and is released only on RPC return,
 	// so no new tool-call dispatch runs while the gateway drives the
-	// checkpoint (§10.1 line 163-166).
+	// checkpoint (§10.1).
 	startedAt := time.Now()
 	s.coord.mu.Lock()
 	s.coord.quiesced = true
 	s.coord.mu.Unlock()
-	// spec: §10.1 line 167 — quiesced_ms is the time-to-quiescence measured
+	// spec: §10.1 — quiesced_ms is the time-to-quiescence measured
 	// inside the ack window, so it is captured the instant quiescence is
 	// reached, not across the held gateway-driven upload that follows.
 	quiescedMs := time.Since(startedAt).Milliseconds()
@@ -275,7 +274,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 		QuiescedMs:    quiescedMs,
 	}
 
-	// Mirror the response onto the §4.7 line 660 control stream so the
+	// Mirror the response onto the §4.7 control stream so the
 	// gateway's barrier-target reconciler sees the ack without holding
 	// the synchronous RPC open. Drop-tolerant: if no control stream is
 	// attached the synchronous return is the gateway's signal.
@@ -284,12 +283,12 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	return resp, nil
 }
 
-// EmitCheckpointBarrierAck queues the §4.7 line 660 CheckpointBarrierAck
+// EmitCheckpointBarrierAck queues the §4.7 CheckpointBarrierAck
 // onto the active gateway control stream. Drop-tolerant: when no stream
 // is attached the synchronous CheckpointBarrier return value is the
 // gateway's signal.
 //
-// spec: §4.7 line 660.
+// spec: §4.7.
 func (s *Server) EmitCheckpointBarrierAck(barrierID, checkpointRef string, quiescedMs int64) {
 	s.emitControlEvent(controlEvent{
 		Type:          eventCheckpointBarrierAck,

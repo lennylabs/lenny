@@ -105,12 +105,12 @@ func testConfig(client *tls.Config) Config {
 	return Config{TLSConfig: client, HandshakeTimeout: 2 * time.Second, PlaintextTimeout: 500 * time.Millisecond}
 }
 
-// TestRedisTLSEnforcement_spec_10_3_373 asserts the §10.3 line 373
+// TestRedisTLSEnforcement_spec_10_3_373 asserts the §10.3
 // TestRedisTLSEnforcement contract: a plaintext connection attempt to
 // Redis is rejected. The probe passes against a TLS-only listener and
 // fails against a plaintext listener that answers an inline PING with
 // "+PONG" (a Redis still serving its plaintext port).
-// spec: §10.3 lines 359, 373.
+// spec: §10.3.
 func TestRedisTLSEnforcement_spec_10_3_373(t *testing.T) {
 	addr, clientCfg := newTLSListener(t)
 	if err := Probe(context.Background(), testConfig(clientCfg), Target{Backend: BackendRedis, Addr: addr}); err != nil {
@@ -130,12 +130,12 @@ func TestRedisTLSEnforcement_spec_10_3_373(t *testing.T) {
 	}
 }
 
-// TestPgBouncerTLSEnforcement_spec_10_3_373 asserts the §10.3 line 373
+// TestPgBouncerTLSEnforcement_spec_10_3_373 asserts the §10.3
 // TestPgBouncerTLSEnforcement contract: a plaintext connection attempt
 // to PgBouncer is rejected. A plaintext listener that declines the
 // Postgres SSLRequest with 'N' is detected as accepting non-TLS
 // clients; a TLS-only listener passes.
-// spec: §10.3 lines 359, 373.
+// spec: §10.3.
 func TestPgBouncerTLSEnforcement_spec_10_3_373(t *testing.T) {
 	addr, clientCfg := newTLSListener(t)
 	if err := Probe(context.Background(), testConfig(clientCfg), Target{Backend: BackendPgBouncer, Addr: addr}); err != nil {
@@ -158,7 +158,7 @@ func TestPgBouncerTLSEnforcement_spec_10_3_373(t *testing.T) {
 // TestPlaintextAcceptedDistinguishesSSLReply confirms the PgBouncer
 // plaintext probe treats an 'S' reply (SSL offered/required) as a
 // refusal and an 'N' reply (plaintext mode) as acceptance.
-// spec: §10.3 line 359.
+// spec: §10.3.
 func TestPlaintextAcceptedDistinguishesSSLReply(t *testing.T) {
 	sslOffered := newPlaintextListener(t, func(c net.Conn) {
 		drain(c, 8)
@@ -177,8 +177,7 @@ func TestPlaintextAcceptedDistinguishesSSLReply(t *testing.T) {
 	}
 }
 
-// TestProbeFailsOnHandshakeFailure asserts the §10.3 line 359 "wrong
-// port / missing cert" class: a probe against a plaintext-only endpoint
+// TestProbeFailsOnHandshakeFailure asserts the §10.3 class: a probe against a plaintext-only endpoint
 // fails at the TLS handshake leg.
 func TestProbeFailsOnHandshakeFailure(t *testing.T) {
 	plain := newPlaintextListener(t, func(c net.Conn) { drain(c, 16) })
@@ -193,7 +192,7 @@ func TestProbeFailsOnHandshakeFailure(t *testing.T) {
 
 // TestProbeSkipsEmptyAddr asserts a target with no Addr is skipped so a
 // dev-mode / in-memory gateway (no Redis or PgBouncer) passes trivially.
-// spec: §10.3 line 359 (probe runs per configured endpoint); §17.4.
+// spec: §10.3; §17.4.
 func TestProbeSkipsEmptyAddr(t *testing.T) {
 	if err := Probe(
 		context.Background(), testConfig(nil),

@@ -101,7 +101,7 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 	}
 }
 
-// spec: §10.1 lines 163-181 — the gateway-side CheckpointBarrier client
+// spec: §10.1 — the gateway-side CheckpointBarrier client
 // drives the graceful-drain barrier against a fenced, matched-generation
 // pod. The adapter quiesces and holds the barrier open, the gateway drives
 // the Checkpoint stream against the held pod, and the ack the client maps
@@ -168,7 +168,7 @@ func waitBarrierGateOpen(t *testing.T, srv *adapter.Server) {
 	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
 }
 
-// spec: §10.1 line 165 — a generation-stale barrier is rejected with
+// spec: §10.1 — a generation-stale barrier is rejected with
 // FailedPrecondition so the gateway can record it as a false-positive
 // without aborting the drain.
 func TestCheckpointBarrierGenerationStale_spec_10_1(t *testing.T) {

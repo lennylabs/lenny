@@ -83,7 +83,7 @@ func TestClassifySeverity(t *testing.T) {
 	}
 }
 
-// TestClassifyQuotaScalingSpec25_10_3773 pins the §25.10 line 3773
+// TestClassifyQuotaScalingSpec25_10_3773 pins the §25.10
 // "scaling parameters and quota values are medium" rule for the common
 // §6.x / §17.x field names operators actually drift. The implementation
 // matched these by default-falling to medium; the explicit keyword set
@@ -102,13 +102,12 @@ func TestClassifyQuotaScalingSpec25_10_3773(t *testing.T) {
 		"warmCount",
 	} {
 		if got := drift.Classify(path); got != drift.SeverityMedium {
-			t.Errorf("Classify(%q) = %q, want medium (§25.10 line 3773 scaling/quota)", path, got)
+			t.Errorf("Classify(%q) = %q, want medium (§25.10 scaling/quota)", path, got)
 		}
 	}
 }
 
-// TestClassifyDoesNotDowngradeLabelSelectorSpec25_10_3773 pins the §25.10
-// line 3773 distinction between metadata bags (low) and structural
+// TestClassifyDoesNotDowngradeLabelSelectorSpec25_10_3773 pins the §25.10 distinction between metadata bags (low) and structural
 // configuration whose name happens to contain "label" (medium). Before
 // F-25.10.11 a path like "pool.scaling.labelSelector" — structural
 // config — was downgraded to low because the classifier substring-

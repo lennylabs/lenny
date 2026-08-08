@@ -212,7 +212,7 @@ func TestCounterLabelSetIsCompliant_spec_16_1_1(t *testing.T) {
 	if err := metrics.Validate("lenny_gateway_token_usage_anomaly_total", []string{"tenant_id", "reason"}); err != nil {
 		t.Fatalf("the compliant {tenant_id, reason} label set failed Validate: %v", err)
 	}
-	// The pre-fix §11.2:42 label set included session_id, which §16.1.1
+	// The pre-fix §11.2 label set included session_id, which §16.1.1
 	// forbids: assert it would fail so a regression that re-adds it is caught.
 	if err := metrics.Validate("lenny_gateway_token_usage_anomaly_total", []string{"session_id", "tenant_id"}); err == nil {
 		t.Fatal("a session_id label passed Validate; §16.1.1 forbids it")

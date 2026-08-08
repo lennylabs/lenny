@@ -19,11 +19,10 @@ import (
 // cmdMe implements the §24.15 `me` group: the caller's own identity,
 // authorized tools, and in-flight operations. Identity (GET
 // /v1/admin/me) and authorized tools (GET /v1/admin/me/authorized-tools)
-// target the gateway admin API (§25 lines 4901-4902), while
+// target the gateway admin API (§25), while
 // `me operations` reads the operations inventory hosted by lenny-ops
-// (§15.1 line 909) via the §24.16 --ops-server auto-discovery. spec:
-// §24.15 line 180; §15.1 line 909 (operations inventory assigned to
-// lenny-ops). F-24.15.1.
+// (§15.1) via the §24.16 --ops-server auto-discovery. spec:
+// §24.15; §15.1. F-24.15.1.
 func cmdMe(ctx context.Context, flags globalFlags, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		// `lenny-ctl me` with no subcommand maps to GET /v1/admin/me.
@@ -31,11 +30,11 @@ func cmdMe(ctx context.Context, flags globalFlags, c *ctl.Client, args []string,
 	}
 	switch args[0] {
 	case "tools":
-		// §25 line 4902 — tools the caller can actually invoke.
+		// §25 — tools the caller can actually invoke.
 		return gatewayGet(ctx, c, "/v1/admin/me/authorized-tools", stdout, stderr)
 	case "operations":
-		// §25 line 4903 — caller's in-flight operations, served by the
-		// lenny-ops operations inventory (§15.1 line 909).
+		// §25 — caller's in-flight operations, served by the
+		// lenny-ops operations inventory (§15.1).
 		return withOps(ctx, flags, c, stderr, func(ops *ctl.Client) int {
 			return opsGet(ctx, ops, "/v1/admin/me/operations", stdout, stderr)
 		})
@@ -48,8 +47,7 @@ func cmdMe(ctx context.Context, flags globalFlags, c *ctl.Client, args []string,
 // cmdAudit implements the §24.15 `audit` group: scatter-gather query,
 // single-event lookup, summary aggregation, and the three remediation
 // verbs (OCSF retranslate, EventBus republish, force-drop a blocked
-// partition). All target the gateway admin audit surface. spec: §24.15
-// line 186; §25 lines 4930-4935; §25.9. F-24.15.5.
+// partition). All target the gateway admin audit surface. spec: §24.15; §25; §25.9. F-24.15.5.
 func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: audit requires a subcommand (query|get|summary|retranslate|republish|drop-partition)")
@@ -57,7 +55,7 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	}
 	switch args[0] {
 	case "query":
-		// §25 line 4930: GET /v1/admin/audit-events. A narrowing filter
+		// §25: GET /v1/admin/audit-events. A narrowing filter
 		// (typically --since) is required server-side; an unfiltered
 		// query is rejected AUDIT_QUERY_TOO_BROAD.
 		q := url.Values{}
@@ -80,14 +78,14 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		}
 		return gatewayGet(ctx, c, path, stdout, stderr)
 	case "get":
-		// §25 line 4931: GET /v1/admin/audit-events/{seq}.
+		// §25: GET /v1/admin/audit-events/{seq}.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: audit get requires <id>")
 			return 2
 		}
 		return gatewayGet(ctx, c, "/v1/admin/audit-events/"+url.PathEscape(args[1]), stdout, stderr)
 	case "summary":
-		// §25 line 4932: GET /v1/admin/audit-events/summary.
+		// §25: GET /v1/admin/audit-events/summary.
 		q := url.Values{}
 		for flagName, param := range map[string]string{
 			"--since": "since", "--until": "until", "--group-by": "groupBy",
@@ -102,7 +100,7 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		}
 		return gatewayGet(ctx, c, path, stdout, stderr)
 	case "retranslate":
-		// §25 line 4933: POST /v1/admin/audit-events/{seq}/retranslate
+		// §25: POST /v1/admin/audit-events/{seq}/retranslate
 		// with an optional translatorVersion.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: audit retranslate requires <id>")
@@ -115,7 +113,7 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return gatewaySend(ctx, c, "POST",
 			"/v1/admin/audit-events/"+url.PathEscape(args[1])+"/retranslate", body, stdout, stderr)
 	case "republish":
-		// §25 line 4934: POST /v1/admin/audit-events/{seq}/republish.
+		// §25: POST /v1/admin/audit-events/{seq}/republish.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: audit republish requires <id>")
 			return 2
@@ -123,7 +121,7 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		return gatewaySend(ctx, c, "POST",
 			"/v1/admin/audit-events/"+url.PathEscape(args[1])+"/republish", nil, stdout, stderr)
 	case "drop-partition":
-		// §25 line 4935: POST /v1/admin/audit-partitions/{partition}/drop
+		// §25: POST /v1/admin/audit-partitions/{partition}/drop
 		// ?force=true with {acknowledgeDataLoss,partition}. Both --force
 		// and --acknowledge-data-loss are mandatory so an unqualified
 		// invocation can never discard un-forwarded audit rows.
@@ -148,7 +146,7 @@ func cmdAudit(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 // cmdEvents implements the §24.15 `events` group. The poll, SSE tail,
 // and webhook-subscription subcommands target lenny-ops (§25.5); the
 // `buffer` subcommand targets the gateway's §25.3 in-memory buffer.
-// spec: §24.15 line 182; §25 lines 4920-4924. F-24.15.3.
+// spec: §24.15; §25. F-24.15.3.
 func cmdEvents(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: events requires a subcommand (list|tail|buffer|subscriptions)")
@@ -156,10 +154,10 @@ func cmdEvents(ctx context.Context, flags globalFlags, gateway *ctl.Client, args
 	}
 	switch args[0] {
 	case "buffer":
-		// §24.15 line 182 — query the gateway's in-memory event buffer.
+		// §24.15 — query the gateway's in-memory event buffer.
 		return gatewayGet(ctx, gateway, "/v1/admin/events/buffer", stdout, stderr)
 	case "list":
-		// §25 line 4921: GET /v1/admin/events (polling) on lenny-ops.
+		// §25: GET /v1/admin/events (polling) on lenny-ops.
 		q := url.Values{}
 		for flagName, param := range map[string]string{
 			"--since": "since", "--until": "until", "--type": "eventType",
@@ -180,7 +178,7 @@ func cmdEvents(ctx context.Context, flags globalFlags, gateway *ctl.Client, args
 			return opsGet(ctx, ops, path, stdout, stderr)
 		})
 	case "tail":
-		// §25 line 4920: GET /v1/admin/events/stream (SSE) on lenny-ops.
+		// §25: GET /v1/admin/events/stream (SSE) on lenny-ops.
 		// The stream runs until the server closes it or ctx is cancelled
 		// (operator interrupt). Frames are written verbatim so operators
 		// can pipe the raw SSE into downstream tooling.
@@ -200,8 +198,7 @@ func cmdEvents(ctx context.Context, flags globalFlags, gateway *ctl.Client, args
 }
 
 // cmdEventSubscriptions implements `events subscriptions list|get|create|
-// delete`, the §25.5 webhook-subscription CRUD on lenny-ops. spec: §25
-// lines 4922-4924. F-24.15.3.
+// delete`, the §25.5 webhook-subscription CRUD on lenny-ops. spec: §25. F-24.15.3.
 func cmdEventSubscriptions(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: events subscriptions requires a verb (list|get|create|delete)")
@@ -218,7 +215,7 @@ func cmdEventSubscriptions(ctx context.Context, flags globalFlags, gateway *ctl.
 			}
 			return opsGet(ctx, ops, "/v1/admin/event-subscriptions/"+url.PathEscape(args[1]), stdout, stderr)
 		case "create":
-			// §25 line 4923: POST {url, types[]}.
+			// §25: POST {url, types[]}.
 			target := flagValue(args[1:], "--url")
 			if target == "" {
 				fmt.Fprintln(stderr, "lenny-ctl: events subscriptions create requires --url <url>")
@@ -230,7 +227,7 @@ func cmdEventSubscriptions(ctx context.Context, flags globalFlags, gateway *ctl.
 			}
 			return opsSend(ctx, ops, "POST", "/v1/admin/event-subscriptions", body, stdout, stderr)
 		case "delete":
-			// §25 line 4924: DELETE /v1/admin/event-subscriptions/{id}.
+			// §25: DELETE /v1/admin/event-subscriptions/{id}.
 			if len(args) < 2 {
 				fmt.Fprintln(stderr, "lenny-ctl: events subscriptions delete requires <id>")
 				return 2
@@ -248,9 +245,9 @@ func cmdEventSubscriptions(ctx context.Context, flags globalFlags, gateway *ctl.
 // existing install (preflight → values diff → `helm upgrade`, F-24.20.2).
 // Otherwise it drives the platform-upgrade state machine on lenny-ops
 // (check/preflight/start/proceed/pause/rollback/status/verify,
-// F-24.15.4). spec: §24.15 line 185; §24.20 line 304; §25 lines 4967-4974.
+// F-24.15.4). spec: §24.15; §24.20; §25.
 func cmdUpgrade(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
-	// §24.20 line 304 — `upgrade --answers <file>` is the chart-level
+	// §24.20 — `upgrade --answers <file>` is the chart-level
 	// replay, distinct from the platform state-machine subcommands. It is
 	// selected by the presence of the answer-file flag rather than a
 	// subcommand verb.
@@ -292,7 +289,7 @@ func cmdUpgrade(ctx context.Context, flags globalFlags, gateway *ctl.Client, arg
 			body := reasonBody(args[1:])
 			return opsSend(ctx, ops, "POST", "/v1/admin/platform/upgrade/pause", body, stdout, stderr)
 		case "rollback":
-			// §25 line 4972 — rollback is destructive and takes --confirm;
+			// §25 — rollback is destructive and takes --confirm;
 			// an optional --reason is recorded on the transition.
 			path := "/v1/admin/platform/upgrade/rollback"
 			if hasFlag(args[1:], "--confirm") {
@@ -318,11 +315,10 @@ func reasonBody(args []string) any {
 }
 
 // cmdUpgradeReplay implements `lenny-ctl upgrade --answers <file>`: the
-// §24.20 line 304 answer-file replay against an existing install. It
+// §24.20 answer-file replay against an existing install. It
 // reuses the install wizard's answer parsing, value composition, and
 // preflight phases, then renders the chart with `helm upgrade --dry-run`
-// (the values diff) before applying with `helm upgrade`. spec: §24.20
-// line 304. F-24.20.2.
+// (the values diff) before applying with `helm upgrade`. spec: §24.20. F-24.20.2.
 func cmdUpgradeReplay(args []string, stdout, stderr io.Writer) int {
 	cfg, err := parseInstallFlags(args)
 	if err != nil {
@@ -390,7 +386,7 @@ func cmdUpgradeReplay(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Preflight against the resolved backends before mutating the
-	// release (§24.20 line 304 "Runs preflight").
+	// release (§24.20).
 	if code := runInstallPreflight(context.Background(), installPreflightConfig(answers), infra.RealProbers(), stdout, stderr); code != 0 {
 		return code
 	}
@@ -400,7 +396,7 @@ func cmdUpgradeReplay(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	// Render the values diff with `helm upgrade --dry-run` before the
-	// destructive apply (§24.20 line 304 "renders the values diff").
+	// destructive apply (§24.20).
 	diff := exec.Command("helm", helmUpgradeArgs(answers, cfg.chartDir, presetPath, tmp.Name(), true)...)
 	diff.Stdout = stdout
 	diff.Stderr = stderr

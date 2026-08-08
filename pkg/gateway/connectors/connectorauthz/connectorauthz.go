@@ -7,7 +7,7 @@
 // permit, even when a gateway-held credential exists for that connector
 // at the root level.
 //
-// spec: §9.3 line 164.
+// spec: §9.3.
 package connectorauthz
 
 import (
@@ -25,7 +25,7 @@ import (
 const CandidateType = "connector"
 
 // ErrConnectorNotPermitted reports that the calling session's effective
-// delegation policy denies the connector. spec: §9.3 line 164.
+// delegation policy denies the connector. spec: §9.3.
 var ErrConnectorNotPermitted = errors.New("connectorauthz: connector not permitted by effective delegation policy")
 
 // PolicyResolver resolves the §8.3 delegation policies that govern a
@@ -75,7 +75,7 @@ func New(policies PolicyResolver, sessions sessionstore.Store, environments envi
 // the conservative fall-through delegation and discovery apply to an
 // unresolved policy reference.
 //
-// spec: §9.3 line 164; §8.3 line 244; §10.6 line 601, line 629.
+// spec: §9.3; §8.3; §10.6.
 func (a *Authorizer) AuthorizeConnector(ctx context.Context, tenantID, sessionID, connectorID string, labels map[string]string) error {
 	if a == nil || a.policies == nil || sessionID == "" {
 		return nil

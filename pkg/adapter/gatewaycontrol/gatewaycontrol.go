@@ -23,7 +23,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// GatewayDNSName is the §10.3 line 322 (NET-060) DNS SAN that every
+// GatewayDNSName is the §10.3 DNS SAN that every
 // gateway replica's certificate carries — the Service DNS under which
 // all gateway replicas are reachable. The adapter pins it as
 // tls.Config.ServerName on the outbound GatewayControl dial (via
@@ -32,7 +32,7 @@ import (
 // particular certificates issued to the Token Service, controller, or
 // any other lenny-system workload. The gateway dial MUST pin this name
 // rather than fall back to CA-only trust (spec line 324).
-// spec: §10.3 line 322 (NET-060)
+// spec: §10.3
 const GatewayDNSName = "lenny-gateway.lenny-system.svc"
 
 // Client is an adapter-side connection to the gateway's GatewayControl
@@ -54,7 +54,7 @@ func New(conn *grpc.ClientConn) *Client {
 // at target and wraps it. The caller supplies the transport-credential
 // dial option.
 //
-// spec: §16.3 line 328 ("Pod → Gateway (delegation tool calls carry parent
+// spec: §16.3 ("Pod → Gateway (delegation tool calls carry parent
 // trace context)") — the OTel client stats handler injects the adapter's
 // current trace context into outgoing gRPC metadata so the gateway's
 // GatewayControl spans join the pod's trace. F-16.3.3.

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §12.4 line 206 — "Distributed session leases | Fall back to
+// spec: §12.4 — "Distributed session leases | Fall back to
 // Postgres advisory locks (higher latency)". The Failover wrapper
 // forwards lease-domain outcomes from the Redis primary unchanged and
 // routes only infrastructure failures to the Postgres fallback.

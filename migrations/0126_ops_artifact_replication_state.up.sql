@@ -6,11 +6,11 @@
 -- rows here through its StateStore seam.
 --
 -- The table is platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists the ops_* tables
+-- multi-tenanted at this boundary; §25.4 lists the ops_* tables
 -- among the PlatformPostgres() tables), so no tenant column or RLS policy
 -- applies.
 --
--- spec: §25.11 lines 4073-4098 (Runtime residency preflight), line 1492.
+-- spec: §25.11.
 
 CREATE TABLE ops_artifact_replication_state (
     region                       TEXT PRIMARY KEY,

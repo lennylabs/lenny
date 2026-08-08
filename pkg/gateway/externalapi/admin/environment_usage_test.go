@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §15.1 line 840 GET /v1/admin/environments/{name}/usage.
+// spec: §15.1 GET /v1/admin/environments/{name}/usage.
 
 func envUsageRouter(t *testing.T, billing billingstore.Store, envs ...environmentstore.Environment) *admin.Router {
 	t.Helper()
@@ -38,7 +38,7 @@ func envUsageRouter(t *testing.T, billing billingstore.Store, envs ...environmen
 
 // TestEnvironmentUsage_spec_15_1_840 verifies the rollup sums the
 // environment's billing events, applies a §11.2.1 correction, and
-// isolates other environments. spec: §15.1 line 840; §11.2.1. F-15.1.3.
+// isolates other environments. spec: §15.1; §11.2.1. F-15.1.3.
 func TestEnvironmentUsage_spec_15_1_840(t *testing.T) {
 	ctx := context.Background()
 	billing := billingstore.NewMemory()
@@ -87,7 +87,7 @@ func TestEnvironmentUsage_spec_15_1_840(t *testing.T) {
 }
 
 // TestEnvironmentUsageNotFound_spec_15_1_840 verifies an absent
-// environment returns 404. spec: §15.1 line 840. F-15.1.3.
+// environment returns 404. spec: §15.1. F-15.1.3.
 func TestEnvironmentUsageNotFound_spec_15_1_840(t *testing.T) {
 	router := envUsageRouter(t, billingstore.NewMemory())
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodGet,
@@ -100,8 +100,7 @@ func TestEnvironmentUsageNotFound_spec_15_1_840(t *testing.T) {
 }
 
 // TestEnvironmentUsageZero_spec_15_1_840 verifies an environment with no
-// billing events returns a zero-valued rollup, not an error. spec: §15.1
-// line 840. F-15.1.3.
+// billing events returns a zero-valued rollup, not an error. spec: §15.1. F-15.1.3.
 func TestEnvironmentUsageZero_spec_15_1_840(t *testing.T) {
 	router := envUsageRouter(t, billingstore.NewMemory(),
 		environmentstore.Environment{Name: "prod", TenantID: "acme"})
@@ -124,7 +123,7 @@ func TestEnvironmentUsageZero_spec_15_1_840(t *testing.T) {
 // TestEnvironmentUsageRouteAbsentWithoutBilling_spec_15_1_840 verifies the
 // usage route is not mounted on a deployment with no billing ledger, so a
 // request 404s rather than silently reporting a fabricated zero rollup.
-// spec: §15.1 line 840. F-15.1.3.
+// spec: §15.1. F-15.1.3.
 func TestEnvironmentUsageRouteAbsentWithoutBilling_spec_15_1_840(t *testing.T) {
 	router := envUsageRouter(t, nil,
 		environmentstore.Environment{Name: "prod", TenantID: "acme"})

@@ -305,8 +305,7 @@ type ClaimDispositionDriver interface {
 	// rewarmStartedAt on the recycling claim and coordinates the SDK re-warm
 	// before the claim enters reserved; on a non-preConnect pool it patches
 	// the claim directly to reserved. scrubWarning carries the warn-policy
-	// scrub_warning annotation through the transition. spec: §5.2 (recycle
-	// lifecycle, line 449), §6.2 (preConnect re-warm).
+	// scrub_warning annotation through the transition. spec: §5.2, §6.2 (preConnect re-warm).
 	Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error
 	// Retire writes the terminal disposition on the claim so the projection
 	// drains the pod. failed selects the claim's `failed` terminal versus its

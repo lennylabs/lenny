@@ -29,7 +29,7 @@ func (f *fakeDLQSweeper) SweepExpired(_ context.Context, _, sessionID string) (i
 	return f.count[sessionID], nil
 }
 
-// spec: §7.2 lines 294, 341 — the DLQ TTL trimmer is state-gated: the
+// spec: §7.2 — the DLQ TTL trimmer is state-gated: the
 // watchdog runs SweepExpired for every session in a recovering state
 // (resume_pending, awaiting_client_action) and for no other state, and
 // accumulates the expired count in Result.DLQExpired.

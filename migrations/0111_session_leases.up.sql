@@ -1,7 +1,6 @@
 -- §12.4 Postgres advisory-lock fallback for the §12.2 LeaseStore.
 --
--- spec: §12.4 line 206 "Distributed session leases | Fall back to
--- Postgres advisory locks (higher latency)" and §12.4 line 181
+-- spec: §12.4 and §12.4
 -- "t:{tenant_id}:lease:session:{session_id} | SET NX with TTL; falls
 -- back to Postgres on miss".
 --

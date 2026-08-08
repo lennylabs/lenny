@@ -38,7 +38,7 @@ type ReconciliationResumer interface {
 
 // PoolStatusReader reads a pool's live §5.2 bootstrap status from its
 // Kubernetes CRD pair so the admin pool GET can surface poolCondition
-// and idlePodCount (§5.2 line 629) without operators inspecting the CR
+// and idlePodCount (§5.2) without operators inspecting the CR
 // status directly. condition is "PoolWarmingUp" while the pool is
 // bootstrapping and the empty string otherwise; idlePodCount is the
 // ready-pod count. found is false when no SandboxWarmPool exists for
@@ -76,11 +76,11 @@ type BootstrapStatusPayload struct {
 
 // CRDGenerationReader reports the pool's CRD-side pool_config_generation
 // (read from the lenny.dev/config-generation annotation the
-// PoolScalingController stamps in §4.6.2 line 558). It backs the
-// §4.6.2 line 560 sync-status endpoint and the PUT response's
+// PoolScalingController stamps in §4.6.2). It backs the
+// §4.6.2 sync-status endpoint and the PUT response's
 // syncStatus field. A nil reader leaves the CRD generation unknown,
 // so the handler omits it and reports syncStatus="unknown". spec:
-// spec/04_system-components.md lines 557-560.
+// §4.6.2.
 type CRDGenerationReader interface {
 	// CRDGeneration returns the generation observed on the pool's
 	// SandboxTemplate annotation, the last successful reconciliation
@@ -142,7 +142,7 @@ type PoolPayload struct {
 	// concurrency bound lives on SessionPolicy.MaxConcurrentSessions.
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 
-	// PoolCondition and IdlePodCount are the §5.2 line 629 live
+	// PoolCondition and IdlePodCount are the §5.2 live
 	// bootstrap-status fields, populated on GET when the gateway is
 	// wired with a PoolStatusReader and the pool's SandboxWarmPool
 	// exists. PoolCondition is "PoolWarmingUp" during the bootstrap
@@ -151,30 +151,30 @@ type PoolPayload struct {
 	PoolCondition *string `json:"poolCondition,omitempty"`
 	IdlePodCount  *int    `json:"idlePodCount,omitempty"`
 
-	// SyncStatus is the §4.6.2 line 559 reconciliation-status flag.
+	// SyncStatus is the §4.6.2 reconciliation-status flag.
 	// "synced" means the CRD generation matches the Postgres
 	// generation; "pending" means the controller has not yet observed
 	// the latest write; "unknown" means no CRD reader is wired.
-	// spec: spec/04_system-components.md line 559.
+	// spec: §4.6.2.
 	SyncStatus string `json:"syncStatus,omitempty"`
 
-	// Phase is the §15.1 line 797 pool lifecycle phase: "active" or
+	// Phase is the §15.1 pool lifecycle phase: "active" or
 	// "draining". A pool reports "draining" after
 	// POST /v1/admin/pools/{name}/drain until its in-flight sessions
-	// complete. spec: §15.1 line 797.
+	// complete. spec: §15.1.
 	Phase string `json:"phase,omitempty"`
 
 	// ActiveSessions is the count of live (non-terminal) sessions bound
 	// to the pool. It is populated on GET while the pool is draining so
 	// operators can watch the drain converge; it is a pointer so a
 	// legitimate count of 0 (drain complete) is emitted distinctly from
-	// an active pool that omits the field. spec: §15.1 line 797.
+	// an active pool that omits the field. spec: §15.1.
 	ActiveSessions *int `json:"activeSessions,omitempty"`
 
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal pool_config_generation. List and GET responses carry it so
 	// a client can supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 
 	// BootstrapStatus is the §17.8.2 step-3 cold-start bootstrap status
@@ -191,28 +191,26 @@ type PoolPayload struct {
 	// that direction. spec: §5.2 (sessionPolicy block).
 	SessionPolicy *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
 
-	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool depth
+	// ElicitationDepthPolicy is the §9.2 per-pool depth
 	// policy (`allow_all`, `suppress_at_depth`, `block_all`) for
 	// agent-initiated elicitations raised by sessions in this pool. An
-	// omitted value resolves to the §9.2 line 92 platform default
-	// (suppress at depth 3). spec: §9.2 lines 90-98.
+	// omitted value resolves to the §9.2 platform default
+	// (suppress at depth 3). spec: §9.2.
 	ElicitationDepthPolicy string `json:"elicitationDepthPolicy,omitempty"`
 
-	// ElicitationSuppressAtDepth is the §9.2 line 92 threshold N for the
+	// ElicitationSuppressAtDepth is the §9.2 threshold N for the
 	// `suppress_at_depth` policy; ignored for the other policies.
 	ElicitationSuppressAtDepth int `json:"elicitationSuppressAtDepth,omitempty"`
 
-	// URLModeElicitation is the §9.2 line 86 per-pool agent-initiated
-	// url-mode elicitation allowlist. spec: §9.2 line 86.
+	// URLModeElicitation is the §9.2 per-pool agent-initiated
+	// url-mode elicitation allowlist. spec: §9.2.
 	URLModeElicitation *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
 
-	// SDKWarm is the §6.1 SDK-warm circuit-breaker operability block:
-	// the operator `circuitBreakerOverride` (line 63) and the
+	// SDKWarm is the §6.1 SDK-warm circuit-breaker operability block: the operator `circuitBreakerOverride` and the
 	// `acknowledgeHighDemotionRate` flag (line 48). It is populated on GET
 	// when the pool carries either setting. The override is set via the
 	// dedicated PUT /v1/admin/pools/{name}/circuit-breaker endpoint;
-	// acknowledgeHighDemotionRate is set via the main PUT. spec: §6.1
-	// lines 48, 63-65.
+	// acknowledgeHighDemotionRate is set via the main PUT. spec: §6.1.
 	SDKWarm *SDKWarmPayload `json:"sdkWarm,omitempty"`
 
 	CreatedAt string `json:"createdAt,omitempty"`
@@ -223,25 +221,25 @@ type PoolPayload struct {
 // SDKWarmPayload is the §6.1 `sdkWarm` block on the admin wire:
 // `{"circuitBreakerOverride": "enabled"|"disabled"|"auto",
 // "acknowledgeHighDemotionRate": bool, "demotionRateThreshold": 0.6}`.
-// spec: §6.1 lines 48, 63-65, §15.1 line 801.
+// spec: §6.1, §15.1.
 type SDKWarmPayload struct {
 	CircuitBreakerOverride      string   `json:"circuitBreakerOverride,omitempty"`
 	AcknowledgeHighDemotionRate bool     `json:"acknowledgeHighDemotionRate,omitempty"`
 	DemotionRateThreshold       *float64 `json:"demotionRateThreshold,omitempty"`
 }
 
-// URLModeElicitationPayload is the §9.2 line 86 per-pool
+// URLModeElicitationPayload is the §9.2 per-pool
 // `urlModeElicitation` block on the admin wire:
 // `{"enabled": bool, "domainAllowlist": ["accounts.example.com"]}`.
 // Setting enabled:true with an empty domainAllowlist is rejected with
-// 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED. spec: §9.2 line 86.
+// 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED. spec: §9.2.
 type URLModeElicitationPayload struct {
 	Enabled         bool     `json:"enabled,omitempty"`
 	DomainAllowlist []string `json:"domainAllowlist,omitempty"`
 }
 
 // PoolSyncStatus is the §15.1 GET /v1/admin/pools/{name}/sync-status
-// payload. spec: spec/04_system-components.md line 560.
+// payload. spec: §4.6.2.
 type PoolSyncStatus struct {
 	Pool               string `json:"pool"`
 	PostgresGeneration int64  `json:"postgresGeneration"`
@@ -286,14 +284,12 @@ type UpdatePoolRequest struct {
 	ClearSessionPolicy bool `json:"clearSessionPolicy,omitempty"`
 
 	// ElicitationDepthPolicy / ElicitationSuppressAtDepth / URLModeElicitation
-	// are the §9.2 per-pool elicitation policy fields. spec: §9.2 lines 86,
-	// 90-98.
+	// are the §9.2 per-pool elicitation policy fields. spec: §9.2.
 	ElicitationDepthPolicy     *string                    `json:"elicitationDepthPolicy,omitempty"`
 	ElicitationSuppressAtDepth *int                       `json:"elicitationSuppressAtDepth,omitempty"`
 	URLModeElicitation         *URLModeElicitationPayload `json:"urlModeElicitation,omitempty"`
 
-	// SDKWarm carries the §6.1 SDK-warm operability fields. The main PUT
-	// honors `acknowledgeHighDemotionRate` (line 48); the
+	// SDKWarm carries the §6.1 SDK-warm operability fields. The main PUT honors `acknowledgeHighDemotionRate`; the
 	// `circuitBreakerOverride` is set via the dedicated
 	// PUT /v1/admin/pools/{name}/circuit-breaker endpoint (line 63) which
 	// enforces the non-SDK-warm-pool 409 and emits the override audit
@@ -325,10 +321,10 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		CreatedAt:                           rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                           rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                           rfc3339Nano(p.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal
+		// spec: §15.1 — the ETag is the quoted decimal
 		// pool_config_generation (the per-resource version column).
 		ETag: formatETag(p.Generation),
-		// spec: §15.1 line 797 — GET surfaces the pool lifecycle phase so
+		// spec: §15.1 — GET surfaces the pool lifecycle phase so
 		// a client can see a drain in progress.
 		Phase: p.Phase(),
 	}
@@ -352,7 +348,7 @@ func fromPool(p poolstore.Pool) PoolPayload {
 
 // urlModeFromWire maps the §9.2 url-mode allowlist payload to the store
 // value. A nil payload reads as the zero value (agent-initiated url-mode
-// blocked, the §9.2 default). spec: §9.2 line 86.
+// blocked, the §9.2 default). spec: §9.2.
 func urlModeFromWire(in *URLModeElicitationPayload) elicitation.URLModeAllowlist {
 	if in == nil {
 		return elicitation.URLModeAllowlist{}
@@ -364,7 +360,7 @@ func urlModeFromWire(in *URLModeElicitationPayload) elicitation.URLModeAllowlist
 }
 
 // poolFromPayload builds a poolstore.Pool from the admin wire payload,
-// applying the §13.2 egress default, the §5.3 line 677 dev-mode
+// applying the §13.2 egress default, the §5.3 dev-mode
 // isolation default, and the §5.2 executionMode default. It is the
 // shared create-side build used by the POST /v1/admin/pools handler and
 // the §17.6 bootstrap pool seed so both paths resolve identical
@@ -397,7 +393,7 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		CreatedAt:                           r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
-	// spec: §6.1 lines 48, 63-65 — carry the SDK-warm operability block
+	// spec: §6.1 — carry the SDK-warm operability block
 	// onto a created pool so a bootstrap seed or POST can set the override,
 	// the demotion-rate acknowledgment, and the demotion-rate threshold up
 	// front.
@@ -413,7 +409,7 @@ func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 		pl.EgressProfile = egress.Default()
 	}
 	if pl.IsolationProfile == "" {
-		// spec: §5.3 line 677 — in dev mode the default isolation profile
+		// spec: §5.3 — in dev mode the default isolation profile
 		// falls back to `standard` (runc) so a developer can launch pods on
 		// a cluster without gVisor. A standard-isolation pool requires the
 		// explicit allowStandardIsolation opt-in; dev mode supplies it on
@@ -505,7 +501,7 @@ func (r *Router) WithReconciliationResumer(rr ReconciliationResumer) *Router {
 	return r
 }
 
-// WithPoolStatusReader wires the §5.2 line 629 live pool-status lookup
+// WithPoolStatusReader wires the §5.2 live pool-status lookup
 // onto the Router. Without it the admin pool GET omits poolCondition
 // and idlePodCount (the gateway has no Kubernetes client to read CRD
 // status, e.g. the minimal Postgres-only dev posture).
@@ -523,7 +519,7 @@ func (r *Router) WithPoolBootstrapStatusReader(rdr PoolBootstrapStatusReader) *R
 	return r
 }
 
-// WithCRDGenerationReader wires the §4.6.2 line 559/560 sync-status
+// WithCRDGenerationReader wires the §4.6.2 sync-status
 // data source. Without it the admin pool GET / PUT report
 // syncStatus="unknown" and the sync-status endpoint reports
 // crdGeneration=0 inSync=false — the §6.0 Postgres-only dev posture.
@@ -596,8 +592,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// Cross-resource consistency: if the runtimes store is wired,
 	// reject pools that reference a non-existent runtime so
 	// misconfigurations surface at admin time rather than at session
-	// creation. Capture the runtime's §12.9 workspace tier for the §5.2
-	// line 396 T4 cross-tenant-reuse check below.
+	// creation. Capture the runtime's §12.9 workspace tier for the §5.2 T4 cross-tenant-reuse check below.
 	var runtimeTier runtimestore.WorkspaceTier
 	var runtimePreConnect bool
 	var runtimeMultiTurn bool
@@ -622,7 +617,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 
 	pl := r.poolFromPayload(body)
-	// spec: §5.2 line 430, §6.1 lines 77-78 — reject an SDK-warm runtime
+	// spec: §5.2, §6.1 — reject an SDK-warm runtime
 	// (preConnect: true) bound to a service-mode pool or a concurrent
 	// session-mode pool (maxConcurrentSessions > 1) before storage;
 	// SDK-warm assumes a single pre-connected agent process.
@@ -631,7 +626,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
 	}
-	// spec: §5.2 line 396 — reject cross-tenant reuse on a pool whose
+	// spec: §5.2 — reject cross-tenant reuse on a pool whose
 	// runtime is T4 before storage, so a misconfigured pool never enters
 	// the registry.
 	if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
@@ -659,10 +654,10 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	// The remaining store-side validations (the checks Create would run)
 	// run here so the dry run is exhaustive; the preview carries the
-	// generation a persisted create would stamp (the §15.1 line 1207 ETag).
+	// generation a persisted create would stamp (the §15.1 ETag).
 	if req.URL.Query().Get("dryRun") == "true" {
 		if perr := validatePoolForStore(pl); perr != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", perr.Error(), nil)
@@ -676,13 +671,13 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	}
 	if err := r.pools.Create(req.Context(), pl); err != nil {
 		if errors.Is(err, poolstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"pool with this name already exists", nil)
 			return
 		}
 		if errors.Is(err, poolstore.ErrURLModeDomainRequired) {
-			// spec: §9.2 line 86 — a pool that enables agent-initiated
+			// spec: §9.2 — a pool that enables agent-initiated
 			// url-mode elicitation must name the permitted domains.
 			writeError(w, http.StatusBadRequest, "URL_MODE_ELICITATION_DOMAIN_REQUIRED", err.Error(),
 				map[string]any{"field": "urlModeElicitation.domainAllowlist"})
@@ -741,7 +736,7 @@ func (r *Router) maybeEmitMultiTurnServiceWarning(ctx context.Context, p authmw.
 // audit event when a pool runs under `standard` (runc) isolation via the
 // explicit `allowStandardIsolation: true` opt-in. The opt-in is the
 // deliberately-weak-isolation posture the §5.3 security note targets and
-// §4.9 line 1489 requires a warning signal for; the standard
+// §4.9 requires a warning signal for; the standard
 // `admin.pool.created` / `admin.pool.updated` event does not distinguish
 // it from a sandboxed pool, so this companion event gives compliance
 // teams an audit-trail signal that a runc pool was admitted. A pool that
@@ -792,7 +787,7 @@ func (r *Router) maybeEmitProxySpiffeDisabledWarning(ctx context.Context, p auth
 	})
 }
 
-// dispatchPoolIsolationAudit runs the §8.3 line 350 proactive
+// dispatchPoolIsolationAudit runs the §8.3 proactive
 // pool-registration isolation audit for a newly created or updated pool.
 // Per §8.3 the audit is emitted asynchronously and does not block pool
 // registration (the pool is persisted regardless), so it runs in a
@@ -807,14 +802,14 @@ func (r *Router) dispatchPoolIsolationAudit(ctx context.Context, p authmw.Princi
 	go r.emitPoolIsolationWarnings(detached, p, poolName)
 }
 
-// emitPoolIsolationWarnings performs the §8.3 lines 349-352 proactive
+// emitPoolIsolationWarnings performs the §8.3 proactive
 // monotonicity audit: for the registered pool, it emits one
 // pool.isolation_warning per active DelegationPolicy rule under which a
 // more-restrictive parent pool could delegate to this weaker pool. Each
 // warning lands on both the §11.7 audit chain (operator visibility) and
 // the §11.2.1 billing stream (the affected tenant's cost-attribution /
 // compliance record). All emissions are best-effort; the pool is already
-// persisted. spec: §8.3 lines 349-352; §11.2.1. F-11.2.1.
+// persisted. spec: §8.3; §11.2.1. F-11.2.1.
 func (r *Router) emitPoolIsolationWarnings(ctx context.Context, p authmw.Principal, poolName string) {
 	pools, err := r.pools.List(ctx, poolstore.ListFilter{})
 	if err != nil {
@@ -900,7 +895,7 @@ func (r *Router) handleListPools(w http.ResponseWriter, req *http.Request) {
 	for _, p := range rows {
 		out = append(out, fromPool(p))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// spec: §15.1 — canonical cursor-paginated envelope.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(p PoolPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -939,7 +934,7 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 	// object for a pool that carries a bootstrapMinWarm override.
 	r.attachBootstrapStatus(req.Context(), row, &payload)
 	payload.SyncStatus = r.resolveSyncStatus(req.Context(), row)
-	// spec: §15.1 line 797 — while a pool is draining, GET surfaces the
+	// spec: §15.1 — while a pool is draining, GET surfaces the
 	// live in-flight session count so operators can watch the drain
 	// converge, and the gauge is refreshed off the same read.
 	if row.IsDraining() {
@@ -949,20 +944,20 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 			r.poolDrainMetrics.SetPoolDrainingSessions(row.Name, active)
 		}
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry
+	// spec: §15.1 — GET responses for an admin resource carry
 	// the ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Generation))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-// attachPoolStatus populates the §5.2 line 629 live poolCondition and
+// attachPoolStatus populates the §5.2 live poolCondition and
 // idlePodCount on a pool payload when a PoolStatusReader is wired and
 // the pool has a reconciled SandboxWarmPool. A reader error is swallowed
 // so a transient Kubernetes lookup failure never fails the admin GET;
 // the live-status fields are simply omitted. poolCondition is set only
 // while the pool is in the PoolWarmingUp bootstrap window.
-// spec: §5.2 line 629 ("Operator visibility").
+// spec: §5.2.
 func (r *Router) attachPoolStatus(ctx context.Context, p *PoolPayload) {
 	if r.poolStatus == nil {
 		return
@@ -1026,7 +1021,7 @@ const scalingModeFormulaStatus = "formula"
 // (48h) the admin GET projects estimatedConvergenceAt against.
 const bootstrapMinHoursOfData = 48.0
 
-// handleSyncStatus implements the §4.6.2 line 560
+// handleSyncStatus implements the §4.6.2
 // GET /v1/admin/pools/{name}/sync-status endpoint. It compares the
 // pool's Postgres generation to the CRD-side generation stamped by the
 // PoolScalingController and reports the lag in seconds.
@@ -1052,9 +1047,9 @@ func (r *Router) handleSyncStatus(w http.ResponseWriter, req *http.Request) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-// buildSyncStatus assembles the §4.6.2 line 560 sync-status response
+// buildSyncStatus assembles the §4.6.2 sync-status response
 // from a pool row, looking up the CRD-side generation when a reader is
-// wired. spec: spec/04_system-components.md lines 557-560.
+// wired. spec: §4.6.2.
 func (r *Router) buildSyncStatus(ctx context.Context, row poolstore.Pool) PoolSyncStatus {
 	out := PoolSyncStatus{
 		Pool:               row.Name,
@@ -1086,7 +1081,7 @@ func (r *Router) buildSyncStatus(ctx context.Context, row poolstore.Pool) PoolSy
 	return out
 }
 
-// resolveSyncStatus reports the §4.6.2 line 559 syncStatus flag for one
+// resolveSyncStatus reports the §4.6.2 syncStatus flag for one
 // pool. "synced" means the CRD generation matches Postgres; "pending"
 // means a write has not been observed on the CRD yet; "unknown" means
 // no CRD reader is wired.
@@ -1262,7 +1257,7 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.URLModeElicitation != nil {
 		p.URLModeElicitation = urlModeFromWire(body.URLModeElicitation)
 	}
-	// spec: §6.1 line 48 — the main PUT honors acknowledgeHighDemotionRate
+	// spec: §6.1 — the main PUT honors acknowledgeHighDemotionRate
 	// and the deployer-configurable demotionRateThreshold. The
 	// circuitBreakerOverride is left to the dedicated /circuit-breaker
 	// endpoint (which enforces the non-SDK-warm 409 and the override audit
@@ -1280,7 +1275,7 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	// The pool's entity tag is its pool_config_generation; read the
 	// current row and enforce the optimistic-concurrency precondition
 	// before applying the mutation. A missing pool reads as 404 ahead of
@@ -1297,7 +1292,7 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 	if !enforceIfMatch(w, req, current.Generation) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	// The dry-run flag is resolved here, after the If-Match precondition, so
 	// dryRun=true combined with a stale If-Match still returns 412 above.
 	r.applyPoolUpdate(w, req, name, body, req.URL.Query().Get("dryRun") == "true")
@@ -1307,7 +1302,7 @@ func (r *Router) handleUpdatePool(w http.ResponseWriter, req *http.Request) {
 // body. The agent-operability worked example and the warm-pool-exhaustion
 // runbook address the pool's warm count by the field name `minWarm` and
 // gate the mutation behind a confirm flag, distinct from the §15.1
-// UpdatePoolRequest `warmCount` field name. spec: §25.17 lines 5232-5239.
+// UpdatePoolRequest `warmCount` field name. spec: §25.17.
 type WarmCountRequest struct {
 	MinWarm *int `json:"minWarm"`
 	Confirm bool `json:"confirm"`
@@ -1318,7 +1313,7 @@ type WarmCountRequest struct {
 // suggestedAction and the runbook point at. It maps the operability
 // `minWarm` field onto the §15.1 warm-count update and delegates to the
 // shared pool-update path so the same validation, audit emission, and
-// sync-status resolution apply. spec: §25.17 lines 5232-5239.
+// sync-status resolution apply. spec: §25.17.
 func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body WarmCountRequest
@@ -1334,7 +1329,7 @@ func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Requ
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "minWarm must not be negative", nil)
 		return
 	}
-	// spec: §25.17 line 5238 — the scale request carries confirm:true; the
+	// spec: §25.17 — the scale request carries confirm:true; the
 	// §25.2 dry-run/confirm convention returns a preview without confirm so
 	// a retried watchdog does not scale on an exploratory call.
 	if !body.Confirm {
@@ -1358,21 +1353,21 @@ func (r *Router) handleUpdatePoolWarmCount(w http.ResponseWriter, req *http.Requ
 	r.applyPoolUpdate(w, req, name, UpdatePoolRequest{WarmCount: &warmCount}, false)
 }
 
-// CircuitBreakerOverrideRequest is the §15.1 line 801
+// CircuitBreakerOverrideRequest is the §15.1
 // PUT /v1/admin/pools/{name}/circuit-breaker body:
 // `{"sdkWarm": {"circuitBreakerOverride": "enabled"|"disabled"|"auto"}}`.
-// spec: §6.1 lines 63-65, §15.1 line 801.
+// spec: §6.1, §15.1.
 type CircuitBreakerOverrideRequest struct {
 	SDKWarm *SDKWarmOverridePayload `json:"sdkWarm,omitempty"`
 }
 
 // SDKWarmOverridePayload carries the circuitBreakerOverride value of the
-// §15.1 line 801 request body.
+// §15.1 request body.
 type SDKWarmOverridePayload struct {
 	CircuitBreakerOverride string `json:"circuitBreakerOverride,omitempty"`
 }
 
-// handleUpdatePoolCircuitBreaker serves the §15.1 line 801
+// handleUpdatePoolCircuitBreaker serves the §15.1
 // PUT /v1/admin/pools/{name}/circuit-breaker endpoint. It overrides the
 // §6.1 SDK-warm circuit-breaker state: `enabled` clears a tripped breaker
 // ahead of its grace window, `disabled` forces SDK-warm off, and `auto`
@@ -1380,8 +1375,7 @@ type SDKWarmOverridePayload struct {
 // override via the §4.6.2 PoolStoreSource and applies it on its next
 // reconcile. The endpoint requires If-Match, returns 409
 // INVALID_STATE_TRANSITION for a non-SDK-warm pool, and emits the
-// pool.sdk_warm_circuit_breaker_override audit event. spec: §6.1 lines
-// 63-65, §15.1 line 801.
+// pool.sdk_warm_circuit_breaker_override audit event. spec: §6.1, §15.1.
 func (r *Router) handleUpdatePoolCircuitBreaker(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body CircuitBreakerOverrideRequest
@@ -1395,7 +1389,7 @@ func (r *Router) handleUpdatePoolCircuitBreaker(w http.ResponseWriter, req *http
 		return
 	}
 	override := poolstore.SDKWarmCircuitBreakerOverride(body.SDKWarm.CircuitBreakerOverride)
-	// spec: §15.1 line 801 — the request value must be one of the explicit
+	// spec: §15.1 — the request value must be one of the explicit
 	// override actions; the unset/empty value is not an accepted request.
 	if override == poolstore.SDKWarmOverrideUnset || !override.IsValid() {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
@@ -1412,12 +1406,12 @@ func (r *Router) handleUpdatePoolCircuitBreaker(w http.ResponseWriter, req *http
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — the override is a PUT and requires
+	// spec: §15.1 — the override is a PUT and requires
 	// If-Match against the pool_config_generation.
 	if !enforceIfMatch(w, req, current.Generation) {
 		return
 	}
-	// spec: §15.1 line 801 — circuit-breaker override has no effect on a
+	// spec: §15.1 — circuit-breaker override has no effect on a
 	// non-SDK-warm pool; reject with 409 INVALID_STATE_TRANSITION.
 	if !r.poolIsSDKWarm(req.Context(), current) {
 		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
@@ -1444,7 +1438,7 @@ func (r *Router) handleUpdatePoolCircuitBreaker(w http.ResponseWriter, req *http
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	// spec: §15.1 line 801 — record operator identity (carried by emit),
+	// spec: §15.1 — record operator identity (carried by emit),
 	// the previous override state, and the new value.
 	prevWire := string(previous)
 	if previous == poolstore.SDKWarmOverrideUnset {
@@ -1497,14 +1491,13 @@ func (r *Router) poolRuntimeMultiTurn(ctx context.Context, p poolstore.Pool) boo
 // the audit event, and writes the §4.6.2 sync-status response. It is the
 // shared core of the PUT /v1/admin/pools/{name} handler and the §25.17
 // warm-count sub-route. When dryRun is true the full validation runs but
-// the merged pool is previewed without persisting or auditing (§15.1 line
-// 1140); the warm-count sub-route always passes dryRun=false because it
+// the merged pool is previewed without persisting or auditing (§15.1); the warm-count sub-route always passes dryRun=false because it
 // does not support the query-parameter dry run.
 func (r *Router) applyPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest, dryRun bool) {
 	if !r.validatePoolUpdate(w, req, name, body) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or
+	// spec: §15.1 — ?dryRun=true validates without persisting or
 	// auditing. The dry-run branch runs after the full validation above
 	// (and, in handleUpdatePool, after the If-Match precondition) so a stale
 	// If-Match combined with dryRun=true still returns 412 before this point.
@@ -1595,7 +1588,7 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 			return false
 		}
 	}
-	// spec: §5.2 line 396 — reject a PUT that would leave the pool with
+	// spec: §5.2 — reject a PUT that would leave the pool with
 	// cross-tenant reuse enabled while its runtime is T4. The effective
 	// post-update runtimeRef and allowCrossTenantReuse are resolved from
 	// the body (when set) or the stored pool, so newly setting either
@@ -1642,7 +1635,7 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 				return false
 			}
 		}
-		// spec: §5.2 line 430, §6.1 lines 77-78 — reject a PUT that would
+		// spec: §5.2, §6.1 — reject a PUT that would
 		// leave the pool bound to a preConnect runtime in service mode or
 		// with maxConcurrentSessions > 1. The effective post-update
 		// executionMode, sessionPolicy, and runtimeRef are resolved from the
@@ -1697,7 +1690,7 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 // §15.1 ETag without persisting or auditing. spec: §15.1 (dryRun), §4.6.2 (sync status).
 func (r *Router) previewPoolUpdate(w http.ResponseWriter, req *http.Request, name string, body UpdatePoolRequest) {
 	// The preview reflects applying the body onto the current pool with the
-	// generation a persisted update would stamp (the §15.1 line 1210 ETag).
+	// generation a persisted update would stamp (the §15.1 ETag).
 	current, gerr := r.pools.Get(req.Context(), name)
 	if gerr != nil {
 		if errors.Is(gerr, poolstore.ErrNotFound) {
@@ -1739,7 +1732,7 @@ func (r *Router) persistPoolUpdate(w http.ResponseWriter, req *http.Request, nam
 			return
 		}
 		if errors.Is(err, poolstore.ErrURLModeDomainRequired) {
-			// spec: §9.2 line 86 — enabling agent-initiated url-mode
+			// spec: §9.2 — enabling agent-initiated url-mode
 			// elicitation requires a non-empty domainAllowlist.
 			writeError(w, http.StatusBadRequest, "URL_MODE_ELICITATION_DOMAIN_REQUIRED", err.Error(),
 				map[string]any{"field": "urlModeElicitation.domainAllowlist"})
@@ -1762,12 +1755,12 @@ func (r *Router) persistPoolUpdate(w http.ResponseWriter, req *http.Request, nam
 	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, updated,
 		r.poolRuntimeMultiTurn(req.Context(), updated))
 	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)
-	// spec: §15.1 line 1210 — on a successful PUT the response carries
+	// spec: §15.1 — on a successful PUT the response carries
 	// the new ETag reflecting the incremented version.
 	w.Header().Set("ETag", formatETag(updated.Generation))
 	w.Header().Set("Content-Type", "application/json")
 	payload := fromPool(updated)
-	// spec: §4.6.2 line 559 — a PUT immediately bumps the Postgres
+	// spec: §4.6.2 — a PUT immediately bumps the Postgres
 	// generation; the CRD has not yet reconciled, so syncStatus is
 	// "pending" until the controller catches up.
 	payload.SyncStatus = r.resolveSyncStatus(req.Context(), updated)
@@ -1798,7 +1791,7 @@ func (r *Router) handleDeletePool(w http.ResponseWriter, req *http.Request) {
 // DELETE /v1/admin/pools/{name}/bootstrap-override route. It clears the
 // pool's bootstrapMinWarm override so the PoolScalingController switches
 // to formula-driven scaling immediately, regardless of the 48-hour
-// window. A present If-Match is honoured (§15.1 line 1213). A pool with
+// window. A present If-Match is honoured (§15.1). A pool with
 // no override in force is a no-op success so the operation is
 // idempotent. The response carries the updated pool payload (now without
 // the bootstrapStatus object) and the bumped ETag. spec: §17.8.2 step 3.
@@ -1821,7 +1814,7 @@ func (r *Router) handleClearBootstrapOverride(w http.ResponseWriter, req *http.R
 			return
 		}
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present.
+	// spec: §15.1 — DELETE honours If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, current.Generation) {
 		return
 	}

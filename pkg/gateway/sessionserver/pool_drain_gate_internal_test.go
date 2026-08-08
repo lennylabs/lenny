@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// gateClock pins the wall clock for the §15.1 line 797 drain-gate tests.
+// gateClock pins the wall clock for the §15.1 drain-gate tests.
 var gateClock = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 func newDrainGateServer(t *testing.T, drainingPool string) (*Server, *memstore.Store, *poolstore.Memory) {
@@ -32,7 +32,7 @@ func newDrainGateServer(t *testing.T, drainingPool string) (*Server, *memstore.S
 	return s, store, pools
 }
 
-// TestRequirePoolNotDrainingRejects verifies the §15.1 line 797 gate
+// TestRequirePoolNotDrainingRejects verifies the §15.1 gate
 // rejects a create against a draining pool with 503 POOL_DRAINING, a
 // Retry-After header, and details.pool / details.estimatedDrainSeconds.
 func TestRequirePoolNotDrainingRejects_spec_15_1_797(t *testing.T) {
@@ -81,7 +81,7 @@ func TestRequirePoolNotDrainingRejects_spec_15_1_797(t *testing.T) {
 
 // TestRequirePoolNotDrainingAdmits verifies the gate is a pass-through
 // when the resolved pool is active, when the resolver finds no pool, and
-// when no pool store is wired. spec: §15.1 line 797.
+// when no pool store is wired. spec: §15.1.
 func TestRequirePoolNotDrainingAdmits_spec_15_1_797(t *testing.T) {
 	t.Run("active pool", func(t *testing.T) {
 		s, _, pools := newDrainGateServer(t, "p")

@@ -457,7 +457,7 @@ func TestReleaseCheckpointChunksIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 248 / §12.5 GC rule 6 — when a chunk object's delete fails
+// spec: §4.4 / §12.5 GC rule 6 — when a chunk object's delete fails
 // on a completed (partial = false) checkpoint, the release invokes
 // OnOrphanedObject for that object and leaves the finalised manifest row active
 // (step 3 never runs). No §12.5 backstop re-selects a partial = false
@@ -712,7 +712,7 @@ func TestReclaimAbandonedManifestRequiresEverySeam(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 / §12.5 GC rule 4 — successful cleanup releases every
+// spec: §4.4 / §12.5 GC rule 4 — successful cleanup releases every
 // confirmed chunk through the cataloging decorator (soft-delete its
 // artifact_store row, the exactly-once decrement) before deleting the object,
 // then soft-deletes the manifest row. Constructed to fail against a resume
@@ -746,7 +746,7 @@ func TestCleanupPartialManifestReleasesChunkRowsAndSoftDeletesManifest(t *testin
 	}
 }
 
-// spec: §4.4 line 236 — a MinIO failure leaves the row active so the
+// spec: §4.4 — a MinIO failure leaves the row active so the
 // §12.5 backstop sweep can retry on the next cycle.
 func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
@@ -768,7 +768,7 @@ func TestCleanupPartialManifestMinIOFailure(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 / §12.5 GC rule 4 — a re-run over an already-cleaned row
+// spec: §4.4 / §12.5 GC rule 4 — a re-run over an already-cleaned row
 // observes each catalog row already soft-deleted (no second decrement), each
 // object already absent, and the manifest already soft-deleted, so repeated
 // invocations converge and release the confirmed bytes exactly once.
@@ -794,7 +794,7 @@ func TestCleanupPartialManifestIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — the §12.5 backstop sweep emits
+// spec: §4.4 — the §12.5 backstop sweep emits
 // `gc_collected` rather than `success` so operators can distinguish
 // resume-path cleanups from GC-backstop cleanups.
 func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
@@ -812,7 +812,7 @@ func TestCleanupPartialManifestGCCollectedOutcome(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — a nil catalog / object store is honored as a "skip
+// spec: §4.4 — a nil catalog / object store is honored as a "skip
 // MinIO" path (tests / dev-mode with no durable backend); the row is still
 // soft-deleted.
 func TestCleanupPartialManifestNilReleaseSeamsSkipsMinIO(t *testing.T) {
@@ -829,7 +829,7 @@ func TestCleanupPartialManifestNilReleaseSeamsSkipsMinIO(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — input validation: an empty tenant id,
+// spec: §10.1 — input validation: an empty tenant id,
 // checkpoint id, or chunk_object_key_prefix is a programming error the
 // cleanup path rejects before touching either store.
 func TestCleanupPartialManifestRejectsEmptyFields(t *testing.T) {
@@ -869,7 +869,7 @@ func TestReleaseCheckpointChunksRejectsIncompleteRecord(t *testing.T) {
 	}
 }
 
-// spec: §12.5 GC rule 5 / §4.4 line 236 — a manifest soft-delete failure on
+// spec: §12.5 GC rule 5 / §4.4 — a manifest soft-delete failure on
 // the release's final step surfaces the wrapped error and leaves the row
 // active so a retry re-runs the release rather than dropping the prefix from
 // every reclaimer's selector.
@@ -976,7 +976,7 @@ func TestReclaimAbandonedManifestSurfacesFinalListError(t *testing.T) {
 	}
 }
 
-// spec: §12.5 partial-manifest backstop / §4.4 line 236 — a manifest
+// spec: §12.5 partial-manifest backstop / §4.4 — a manifest
 // soft-delete failure on the reclaim's final step surfaces the wrapped error,
 // leaves the row active, and emits failed_deleted.
 func TestReclaimAbandonedManifestSurfacesManifestSoftDeleteError(t *testing.T) {
@@ -997,7 +997,7 @@ func TestReclaimAbandonedManifestSurfacesManifestSoftDeleteError(t *testing.T) {
 	}
 }
 
-// spec: §12.5 partial-manifest backstop / §4.4 line 236 — the reclaim's
+// spec: §12.5 partial-manifest backstop / §4.4 — the reclaim's
 // discovery prefix list (the first ListByPrefix) surfaces its store error
 // wrapped and named by the chunk_object_key_prefix, aborting the reclaim
 // before any catalog row is soft-deleted or object deleted. The row is left
@@ -1041,7 +1041,7 @@ func TestReclaimAbandonedManifestSurfacesDiscoveryListError(t *testing.T) {
 	}
 }
 
-// spec: §12.5 GC rule 4 / §4.4 line 236 — a catalog row soft-delete failure
+// spec: §12.5 GC rule 4 / §4.4 — a catalog row soft-delete failure
 // inside the reclaim's per-chunk release loop surfaces the wrapped error named
 // by the chunk URI and aborts before the object hard-delete, so the §12.5 rule
 // 4 ordering (row soft-delete precedes the byte decrement and the object
@@ -1082,7 +1082,7 @@ func TestReclaimAbandonedManifestSurfacesChunkRowReleaseError(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 / §12.5 GC rule 4 — the resume-path PartialCleaner reads
+// spec: §4.4 / §12.5 GC rule 4 — the resume-path PartialCleaner reads
 // the latest active partial manifest for the session and runs the
 // catalog-decorated release: it soft-deletes the confirmed chunk's
 // artifact_store row (releasing its bytes), deletes the object, and
@@ -1110,7 +1110,7 @@ func TestPartialCleanerCleanupAfterResumeReleasesChunksAndRow(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — a session with no active partial manifest is a no-op:
+// spec: §4.4 — a session with no active partial manifest is a no-op:
 // CleanupAfterResume returns nil rather than erroring on the not-found read.
 func TestPartialCleanerCleanupAfterResumeNoActiveManifestIsNoOp(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
@@ -1120,7 +1120,7 @@ func TestPartialCleanerCleanupAfterResumeNoActiveManifestIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — a non-not-found store error on the latest-active read
+// spec: §4.4 — a non-not-found store error on the latest-active read
 // surfaces as a wrapped error so the resume path can retry rather than treat
 // an unreachable store as a clean session.
 func TestPartialCleanerCleanupAfterResumeSurfacesReadError(t *testing.T) {

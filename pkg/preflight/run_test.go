@@ -30,7 +30,7 @@ func runScheme(t *testing.T) *runtime.Scheme {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
-	// spec: §10 line 437 — the crd-schema-version check fetches the
+	// spec: §10 — the crd-schema-version check fetches the
 	// installed CRDs by name; tests register apiextensions.k8s.io/v1
 	// so the fake reader can deserialize the baseline CRD objects.
 	// F-15.5.12.
@@ -115,7 +115,7 @@ func TestRunPassesWhenWebhooksHealthyAndNoPhaseStamp(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1050 — Run always emits the volume-encryption check.
+// spec: §12.9 — Run always emits the volume-encryption check.
 // A default install (no devMode, no attestation) is non-blocking (WARNING);
 // devMode exempts it; attestation clears the warning.
 func TestRunEmitsVolumeEncryptionCheck_spec_12_9_1050(t *testing.T) {
@@ -271,7 +271,7 @@ func agentPod(ns, name string, fsGroup *int64, supp []int64, hostPID bool) *core
 	}
 }
 
-// spec: §13.1 lines 23/25 — a compliant agent pod passes both the
+// spec: §13.1 — a compliant agent pod passes both the
 // host-sharing and credential-fsGroup audits. F-13.1.7 / F-13.1.4.
 func TestRunPassesWhenAgentPodsCompliant(t *testing.T) {
 	objs := allBaselineWebhooks()
@@ -290,7 +290,7 @@ func TestRunPassesWhenAgentPodsCompliant(t *testing.T) {
 	}
 }
 
-// spec: §13.1 line 23 — an agent-namespace pod with hostPID escaped the
+// spec: §13.1 — an agent-namespace pod with hostPID escaped the
 // release-namespace-only scan; the audit must now catch it. F-13.1.7.
 func TestRunFailsOnAgentPodHostSharing(t *testing.T) {
 	objs := allBaselineWebhooks()
@@ -309,7 +309,7 @@ func TestRunFailsOnAgentPodHostSharing(t *testing.T) {
 	}
 }
 
-// spec: §13.1 line 25 — an agent pod missing the cred-readers fsGroup
+// spec: §13.1 — an agent pod missing the cred-readers fsGroup
 // fails the install-time backstop. F-13.1.4.
 func TestRunFailsOnAgentPodMissingFSGroup(t *testing.T) {
 	objs := allBaselineWebhooks()
@@ -328,7 +328,7 @@ func TestRunFailsOnAgentPodMissingFSGroup(t *testing.T) {
 	}
 }
 
-// spec: §13.1 line 23 — the host-sharing scan now covers Deployments in
+// spec: §13.1 — the host-sharing scan now covers Deployments in
 // the agent namespaces, not only the release namespace. F-13.1.7.
 func TestRunFailsOnHostSharingDeploymentInAgentNamespace(t *testing.T) {
 	objs := allBaselineWebhooks()
@@ -413,7 +413,7 @@ func TestRunWiresRedisMaxmemoryPolicyCheck_spec_12_4(t *testing.T) {
 	}
 }
 
-// Run runs the §17.6 line 488 cloud-pooler sentinel defense only when
+// Run runs the §17.6 cloud-pooler sentinel defense only when
 // the effective connectionPooler is external; an absent lenny_tenant_guard
 // trigger fails the install fail-closed, while a non-external pooler or a
 // nil prober short-circuits to a pass. F-17.9.2.
@@ -488,7 +488,7 @@ func networkProbeConfig(skip bool, called *[4]bool) preflight.Config {
 	}
 }
 
-// spec: §17.9.2 line 1372 / §17.9.11 — preflight.skipNetworkProbes drops
+// spec: §17.9.2 / §17.9.11 — preflight.skipNetworkProbes drops
 // the backend-reachability probes (MinIO SSE, BYO-Redis maxmemory, OTLP
 // TLS handshake, ops-admin internal-TLS handshake) for an air-gapped
 // install while the cluster-API checks still run. F-17.9.11.

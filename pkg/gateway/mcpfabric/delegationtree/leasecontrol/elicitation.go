@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Elicitor presents the §8.6 line 718 generic budget elicitation to the
+// Elicitor presents the §8.6 generic budget elicitation to the
 // requesting session's client and blocks until the user resolves it.
 //
 // The §8.6 elicitation is generic — "The agent needs more budget to
@@ -20,13 +20,13 @@ import (
 //   - approved=true, err=nil  — the user approved.
 //   - approved=false, err=nil — the user explicitly rejected. The
 //     coordinator marks the requesting subtree extension-denied and
-//     starts the §8.6 line 734 rejection cool-off.
+//     starts the §8.6 rejection cool-off.
 //   - approved=false, err!=nil — no decision was reached (timeout,
 //     dismiss, transport failure). The request is not granted and the
 //     subtree is NOT marked denied, because only an explicit user
-//     rejection persists a denial per §8.6 line 729.
+//     rejection persists a denial per §8.6.
 //
-// spec: §8.6 line 714, line 718, line 727
+// spec: §8.6
 type Elicitor interface {
 	Elicit(ctx context.Context, tenantID, requestingSessionID string) (approved bool, err error)
 }
@@ -37,7 +37,7 @@ type Elicitor interface {
 type consent struct {
 	// approved reports whether the request may proceed to the grant math.
 	approved bool
-	// approver is the §8.6 line 743 approver attribution: "client" when a
+	// approver is the §8.6 approver attribution: "client" when a
 	// user approved or rejected an elicitation, "gateway-auto" when the
 	// grant rode the post-approval cool-off window without a fresh
 	// elicitation.
@@ -45,11 +45,11 @@ type consent struct {
 }
 
 // successCoolOffProvider is the optional BudgetSource extension that
-// reports the tree's resolved §8.6 line 675 post-approval cool-off
+// reports the tree's resolved §8.6 post-approval cool-off
 // duration. MemoryBudgetSource implements it; a source that does not
 // falls back to DefaultSuccessCoolOff. The pattern mirrors
 // approvalModeProvider so the core BudgetSource interface stays minimal.
-// spec: §8.6 line 675
+// spec: §8.6
 type successCoolOffProvider interface {
 	SuccessCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration
 }
@@ -82,19 +82,19 @@ type elicitCoordinator struct {
 // treeConsent is one delegation tree's mutable elicitation-mode state.
 type treeConsent struct {
 	mu sync.Mutex
-	// coolOffUntil is the §8.6 line 722 success cool-off window end. A
+	// coolOffUntil is the §8.6 success cool-off window end. A
 	// request arriving before it is auto-granted without a fresh
 	// elicitation.
 	coolOffUntil time.Time
 	// pending is the in-flight elicitation batch, or nil when no
 	// elicitation is open. A concurrent request joins a non-nil batch
-	// rather than opening a second elicitation (§8.6 line 719).
+	// rather than opening a second elicitation (§8.6).
 	pending *consentBatch
 }
 
 // consentBatch is one elicitation episode. The driving request invokes
 // the Elicitor and records the outcome; concurrent requests that joined
-// the batch read the same outcome once done is closed. spec: §8.6 line 719.
+// the batch read the same outcome once done is closed. spec: §8.6.
 type consentBatch struct {
 	done     chan struct{}
 	approved bool
@@ -123,21 +123,21 @@ func (c *elicitCoordinator) requestConsent(ctx context.Context, tenantID, rootSe
 	tc := c.treeFor(rootSessionID)
 
 	tc.mu.Lock()
-	// §8.6 line 723 — during the post-approval cool-off, auto-grant
+	// §8.6 — during the post-approval cool-off, auto-grant
 	// without a fresh elicitation. The grant is gateway-issued with no
 	// client input, so the approver is gateway-auto.
 	if c.clock().Before(tc.coolOffUntil) {
 		tc.mu.Unlock()
 		return consent{approved: true, approver: "gateway-auto"}, nil
 	}
-	// §8.6 line 719 — a concurrent request arriving while an elicitation
+	// §8.6 — a concurrent request arriving while an elicitation
 	// is pending joins it silently; no duplicate elicitation is sent.
 	if tc.pending != nil {
 		batch := tc.pending
 		tc.mu.Unlock()
 		return c.await(ctx, batch)
 	}
-	// §8.6 line 718 — first request opens a new elicitation.
+	// §8.6 — first request opens a new elicitation.
 	batch := &consentBatch{done: make(chan struct{})}
 	tc.pending = batch
 	tc.mu.Unlock()
@@ -149,7 +149,7 @@ func (c *elicitCoordinator) requestConsent(ctx context.Context, tenantID, rootSe
 	batch.approved = approved
 	batch.err = err
 	if err == nil && approved {
-		// §8.6 line 722 — approval opens the success cool-off window.
+		// §8.6 — approval opens the success cool-off window.
 		tc.coolOffUntil = c.clock().Add(c.resolveSuccessCoolOff(ctx, tenantID, rootSessionID))
 	}
 	close(batch.done)
@@ -159,7 +159,7 @@ func (c *elicitCoordinator) requestConsent(ctx context.Context, tenantID, rootSe
 		return consent{}, err
 	}
 	if !approved {
-		// §8.6 line 729 — an explicit rejection marks the requesting
+		// §8.6 — an explicit rejection marks the requesting
 		// subtree extension-denied and starts the rejection cool-off. Only
 		// the driving request persists the denial; batched waiters echo
 		// the rejection without re-denying (their own subtrees may differ).
@@ -170,8 +170,7 @@ func (c *elicitCoordinator) requestConsent(ctx context.Context, tenantID, rootSe
 }
 
 // await blocks a batched (non-driving) request until the driving request
-// resolves the elicitation, then returns the shared outcome. spec: §8.6
-// line 719.
+// resolves the elicitation, then returns the shared outcome. spec: §8.6.
 func (c *elicitCoordinator) await(ctx context.Context, batch *consentBatch) (consent, error) {
 	select {
 	case <-ctx.Done():
@@ -202,7 +201,7 @@ func (c *elicitCoordinator) treeFor(rootSessionID string) *treeConsent {
 	return tc
 }
 
-// resolveSuccessCoolOff returns the §8.6 line 675 post-approval cool-off
+// resolveSuccessCoolOff returns the §8.6 post-approval cool-off
 // for the tree, falling back to DefaultSuccessCoolOff when the source
 // supplies no override.
 func (c *elicitCoordinator) resolveSuccessCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration {

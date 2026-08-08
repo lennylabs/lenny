@@ -55,11 +55,11 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
-	// spec: §4.2 line 156 — v1 sessions are written at schema_version=1.
+	// spec: §4.2 — v1 sessions are written at schema_version=1.
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
 	}
-	// spec: §8.9 line 1010 — root_session_id identifies the
+	// spec: §8.9 — root_session_id identifies the
 	// delegation-tree apex on every row in the tree. When the caller
 	// did not stamp one, the store inherits the parent's
 	// RootSessionID so children share the parent's root automatically;
@@ -97,7 +97,7 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 
 // GetByID returns the session row whose ID equals id regardless of
 // tenant, backing the §24.11 platform-admin session-investigation
-// surface. spec: §24.11 lines 135-136.
+// surface. spec: §24.11.
 func (s *Store) GetByID(_ context.Context, id string) (sessionstore.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -132,7 +132,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
 	}
-	// spec: §4.2 line 156 / line 158 — recovery_generation,
+	// spec: §4.2 — recovery_generation,
 	// coordination_generation, and retry_count are monotonically
 	// non-decreasing. Clamp the floor here so an accidental rollback
 	// in the mutate callback cannot violate the invariant; the
@@ -147,7 +147,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	if row.RetryCount < prevRetryCount {
 		row.RetryCount = prevRetryCount
 	}
-	// spec: §7.3 line 397 — sessions.last_seq is monotonic;
+	// spec: §7.3 — sessions.last_seq is monotonic;
 	// GREATEST-floor semantics match the pgstore so a late writer from
 	// a sibling replica cannot rewind a freshly published Seq.
 	// F-7.3.3.
@@ -191,17 +191,17 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 		if f.FailureClass != "" && row.FailureClass != f.FailureClass {
 			continue
 		}
-		// spec: §11.4 line 256 — full_revoke step 1 narrows to the
+		// spec: §11.4 — full_revoke step 1 narrows to the
 		// invalidation subject.
 		if f.UserID != "" && row.UserID != f.UserID {
 			continue
 		}
-		// spec: §15.1 line 598 — labels filter is AND-containment over
+		// spec: §15.1 — labels filter is AND-containment over
 		// the row's §14 Labels map. F-15.1.15.
 		if !labelsContain(row.Labels, f.Labels) {
 			continue
 		}
-		// spec: §15.1 lines 652, 661 — `?includeDeriveFailures=false`
+		// spec: §15.1 — `?includeDeriveFailures=false`
 		// drops the audit-only derive_failure rows. F-15.1.14.
 		if f.ExcludeDeriveFailures && row.FailureClass == session.FailureClassDeriveFailure {
 			continue
@@ -213,8 +213,7 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 }
 
 // labelsContain reports whether have contains every key=value pair in
-// want (AND-containment). An empty want matches every row. spec: §15.1
-// line 598. F-15.1.15.
+// want (AND-containment). An empty want matches every row. spec: §15.1. F-15.1.15.
 func labelsContain(have, want map[string]string) bool {
 	for k, v := range want {
 		if hv, ok := have[k]; !ok || hv != v {
@@ -227,7 +226,7 @@ func labelsContain(have, want map[string]string) bool {
 // ListByRoot implements Store — every row whose RootSessionID equals
 // rootSessionID within tenantID, ordered by CreatedAt ascending so a
 // caller can rebuild the §8.9 tree by walking ParentSessionID. An empty
-// rootSessionID returns no rows. spec: §8.9 line 1010. F-8.9.7.
+// rootSessionID returns no rows. spec: §8.9. F-8.9.7.
 func (s *Store) ListByRoot(_ context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error) {
 	if rootSessionID == "" {
 		return nil, nil
@@ -303,7 +302,7 @@ func (s *Store) GetActiveSlotsByPod(_ context.Context, podID string) (int, error
 // (the in-memory analogue of the Postgres per-pod advisory xact lock) so two
 // concurrent admissions during a Redis outage cannot both observe the same
 // free slot. The count predicate matches GetActiveSlotsByPod verbatim.
-// spec: §12.4 line 208; §5.2 line 541.
+// spec: §12.4; §5.2.
 func (s *Store) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
@@ -342,7 +341,7 @@ func (s *Store) podLock(podID string) *sync.Mutex {
 	return lock
 }
 
-// PoolDrainStats implements the §15.1 line 797 pool-drain accounting:
+// PoolDrainStats implements the §15.1 pool-drain accounting:
 // the count of live (non-terminal) sessions bound to poolRef across
 // every tenant and the create time of the longest-running such session
 // (the oldest created_at). An empty poolRef matches no session.

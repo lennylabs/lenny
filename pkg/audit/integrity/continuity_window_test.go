@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 )
 
-// spec: §12.3 line 101 — startup chain-continuity check windowed over the
+// spec: §12.3 — startup chain-continuity check windowed over the
 // most recent audit.startupChainCheckEntries rows. F-12.3.9.
 // spec: 11.7 (nextval sequence, prev_hash linkage is the tamper
 // authority), 12.3 (startup chain-continuity check). F-11.2.10.

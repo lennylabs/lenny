@@ -59,7 +59,7 @@ func newOrch(t *testing.T, rem Remediator, cfg Config) *Orchestrator {
 	return o
 }
 
-// spec: §25.6 line 2941 — read-only mode reports detected fixable
+// spec: §25.6 — read-only mode reports detected fixable
 // findings without applying any remediation or emitting fix events.
 func TestRun_ReadOnly_ReportsDetectedWithoutApplying_spec_25_6_2941(t *testing.T) {
 	rem := &fakeRemediator{detected: []Detected{
@@ -89,7 +89,7 @@ func TestRun_ReadOnly_ReportsDetectedWithoutApplying_spec_25_6_2941(t *testing.T
 	}
 }
 
-// spec: §25.6 lines 2975-2982 — fix mode applies the remediation and
+// spec: §25.6 — fix mode applies the remediation and
 // emits fix_started, fix_applied, fix_completed with the documented
 // fields.
 func TestRun_Fix_HappyPath_AppliesAndEmits_spec_25_6_2975(t *testing.T) {
@@ -140,7 +140,7 @@ func TestRun_Fix_HappyPath_AppliesAndEmits_spec_25_6_2975(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2974 — fixes never run when global.maintenanceMode is
+// spec: §25.6 — fixes never run when global.maintenanceMode is
 // true; the finding is skipped with reason maintenance_mode.
 func TestRun_Fix_MaintenanceMode_Skips_spec_25_6_2974(t *testing.T) {
 	rem := &fakeRemediator{detected: []Detected{{Code: FindingCoreDNSStuckEndpoint, Resource: "kube-system/coredns"}}}
@@ -165,7 +165,7 @@ func TestRun_Fix_MaintenanceMode_Skips_spec_25_6_2974(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2976 — admin.doctor.allowedFixes gates the fixable
+// spec: §25.6 — admin.doctor.allowedFixes gates the fixable
 // set; a finding outside the allowlist is skipped with reason not_allowed.
 func TestRun_Fix_NotAllowed_Skips_spec_25_6_2976(t *testing.T) {
 	rem := &fakeRemediator{detected: []Detected{{Code: FindingWarmPoolStuckReplenish, Resource: "p1"}}}
@@ -188,7 +188,7 @@ func TestRun_Fix_NotAllowed_Skips_spec_25_6_2976(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2974 — a resource carrying lenny.dev/doctor-optout is
+// spec: §25.6 — a resource carrying lenny.dev/doctor-optout is
 // skipped with reason doctor_optout.
 func TestRun_Fix_OptOut_Skips_spec_25_6_2974(t *testing.T) {
 	rem := &fakeRemediator{detected: []Detected{
@@ -212,7 +212,7 @@ func TestRun_Fix_OptOut_Skips_spec_25_6_2974(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2979 — a remediation that errors is recorded as failed
+// spec: §25.6 — a remediation that errors is recorded as failed
 // and emits fix_failed carrying the error.
 func TestRun_Fix_ApplyError_Fails_spec_25_6_2979(t *testing.T) {
 	rem := &fakeRemediator{
@@ -243,7 +243,7 @@ func TestRun_Fix_ApplyError_Fails_spec_25_6_2979(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2969 — a finding the remediator detects but cannot
+// spec: §25.6 — a finding the remediator detects but cannot
 // auto-apply (ErrManualRemediation) is reported manual, not failed.
 func TestRun_Fix_ManualRemediation_ReportedManual_spec_25_6_2969(t *testing.T) {
 	rem := &fakeRemediator{
@@ -268,7 +268,7 @@ func TestRun_Fix_ManualRemediation_ReportedManual_spec_25_6_2969(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2969 — a requested code outside the fixable table is
+// spec: §25.6 — a requested code outside the fixable table is
 // reported as a manual recommendation.
 func TestRun_Fix_NonFixableRequested_Manual_spec_25_6_2969(t *testing.T) {
 	rem := &fakeRemediator{}
@@ -332,7 +332,7 @@ func TestRun_Fix_AllDetected_OrderedByTable(t *testing.T) {
 	}
 }
 
-// spec: §25.6 lines 2949, 2968, 2985 — auto-remediation "applies a
+// spec: §25.6 — auto-remediation "applies a
 // narrow set of safe, idempotent fixes and reports what it did", and the
 // fix_applied event carries a per-`resource` payload. When a single
 // finding code is detected on more than one independent resource (two

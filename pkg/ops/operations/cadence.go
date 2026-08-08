@@ -6,7 +6,7 @@ import "time"
 
 // ExpectedCadence returns the §25.2 expected max inter-step cadence for
 // an operation kind. An operation whose progress has not advanced for
-// longer than this cadence is stalled (§25.2 line 396; the canonical
+// longer than this cadence is stalled (§25.2; the canonical
 // progress envelope's stalledForSeconds is the overrun beyond it). The
 // spec names two examples — "2 min per migration, 5 min per restore
 // shard" (line 396) — which anchor the platform_upgrade and restore
@@ -17,14 +17,14 @@ import "time"
 // (remediation locks, escalations, idempotency keys) return 0, which
 // disables stall detection for them — they are never reported stalled.
 //
-// spec: §25.2 line 391, line 396.
+// spec: §25.2.
 func ExpectedCadence(k Kind) time.Duration {
 	switch k {
 	case KindPlatformUpgrade:
-		// §25.2 line 396: 2 min per migration step.
+		// §25.2: 2 min per migration step.
 		return 2 * time.Minute
 	case KindRestore:
-		// §25.2 line 396: 5 min per restore shard.
+		// §25.2: 5 min per restore shard.
 		return 5 * time.Minute
 	case KindBackup, KindBackupVerification:
 		// A backup dump / verification advances per shard or per phase on

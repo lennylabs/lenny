@@ -288,13 +288,13 @@ func TestShorthandPartsAreCanonical(t *testing.T) {
 }
 
 // TestMessageEnvelopeAnnotationsRoundTrip asserts the §15.4.1 wire
-// MessageEnvelope carries the §15.5 line 2461 degradation-annotation
+// MessageEnvelope carries the §15.5 degradation-annotation
 // map verbatim. A runtime author reading
 // `env.Annotations[degradation.AnnotationSchemaVersionAhead]` must
 // see the producer's `{knownVersion, encounteredVersion}` body without
 // custom decoding.
 //
-// spec: §15.5 line 2461. F-15.5.5.
+// spec: §15.5. F-15.5.5.
 func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 	wire := []byte(`{
 		"type": "message",
@@ -310,7 +310,7 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 		t.Fatalf("decodeMessage: %v", err)
 	}
 	if env.Annotations == nil {
-		t.Fatal("Annotations is nil; spec §15.5 line 2461 catalog dropped")
+		t.Fatal("Annotations is nil; spec §15.5 catalog dropped")
 	}
 	body, ok := env.Annotations["schema_version_ahead"].(map[string]any)
 	if !ok {
@@ -339,7 +339,7 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 // catalog is opt-in: an unannotated envelope must not appear with an
 // empty `annotations: {}` object.
 //
-// spec: §15.4.1 / §15.5 line 2461. F-15.5.5.
+// spec: §15.4.1 / §15.5. F-15.5.5.
 func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
 	env := MessageEnvelope{Type: "message", ID: "m1"}
 	out, err := json.Marshal(env)

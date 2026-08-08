@@ -106,7 +106,7 @@ func (g *workspaceGateway) order() []string {
 // `session new --workspace <dir>` staging flow and confirms the CLI tars
 // the workspace, uploads it with the upload token, binds the plan at
 // finalize, starts the session, and delivers the prompt — in that order.
-// spec: §26.2 lines 95-114; §24.17 line 213. F-24.17.4 / F-26.2.4.
+// spec: §26.2; §24.17. F-24.17.4 / F-26.2.4.
 func TestSessionNewWorkspaceStagesAndStarts_spec_26_2(t *testing.T) {
 	srv, g := newWorkspaceGateway(t)
 	dir := t.TempDir()
@@ -152,7 +152,7 @@ func TestSessionNewWorkspaceStagesAndStarts_spec_26_2(t *testing.T) {
 
 // TestSessionNewFileStagesUploadFile_spec_26_2 confirms a `--file` is
 // uploaded via the plain /upload endpoint and bound as an uploadFile
-// source. spec: §26.2 line 213; §14 uploadFile.
+// source. spec: §26.2; §14 uploadFile.
 func TestSessionNewFileStagesUploadFile_spec_26_2(t *testing.T) {
 	srv, g := newWorkspaceGateway(t)
 	fp := filepath.Join(t.TempDir(), "config.yaml")

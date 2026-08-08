@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §12.8 line 810 — the redacted payload drops every PII-bearing
+// spec: §12.8 — the redacted payload drops every PII-bearing
 // field and carries only the redaction flags plus the preserved event
 // type and OCSF error class.
 func TestBuildRedactedPayload_spec_12_8_line810(t *testing.T) {
@@ -42,7 +42,7 @@ func TestBuildRedactedPayload_spec_12_8_line810(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 810 — the chain verifier and the §11.7 integrity check
+// spec: §12.8 — the chain verifier and the §11.7 integrity check
 // key on the `"redacted": true` marker to tell a lawful redaction apart
 // from a tamper.
 func TestIsRedactedPayload_spec_12_8_line810(t *testing.T) {
@@ -68,7 +68,7 @@ func TestIsRedactedPayload_spec_12_8_line810(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 810 — a redaction preserves the chain link by leaving
+// spec: §12.8 — a redaction preserves the chain link by leaving
 // the row's pre-redaction hash as the recorded value while the recomputed
 // hash over the redacted payload differs; the receipt pins the boundary.
 func TestRedactedPayloadChangesContentHash_spec_12_8_line810(t *testing.T) {

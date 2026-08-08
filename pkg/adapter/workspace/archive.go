@@ -22,7 +22,7 @@ import (
 // the workspace root. Restore-side path containment is Materialize's
 // responsibility.
 //
-// spec: §6.4 line 407 — single-session pods (maxConcurrentSessions == 1)
+// spec: §6.4 — single-session pods (maxConcurrentSessions == 1)
 // use the single `/workspace/current` tree, so callers pass that path and
 // Archive captures the whole session workspace in one snapshot. The
 // concurrent-workspace per-slot layout (`/workspace/slots/{slotId}/` plus

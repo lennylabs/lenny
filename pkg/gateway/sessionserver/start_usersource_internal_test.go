@@ -16,7 +16,7 @@ import (
 // userSourceFixture builds a Server whose tenant policy resolves a
 // provider to the user source and whose runtime declares the supplied
 // proxy dialects, wiring a userCredChecker that reports the named provider
-// available. It exercises the §4.9 user-source resolution + the line 1476
+// available. It exercises the §4.9 user-source resolution + the
 // runtime↔dialect boundary for a user provider.
 func userSourceFixture(t *testing.T, preferred credential.PreferredSource, runtimeDialects []string, availableProvider string, pools ...credentialpoolstore.CredentialPool) *Server {
 	t.Helper()

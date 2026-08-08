@@ -13,13 +13,13 @@
 //   - Both — a webhook and a queue sink registered together for
 //     redundancy.
 //
-// Per §11.2.1 line 137 the gateway publishes to the sinks asynchronously
+// Per §11.2.1 the gateway publishes to the sinks asynchronously
 // and only after the synchronous Postgres write confirms. The Publishing
 // store decorator enforces that ordering: it delivers a sealed event to
 // the configured sinks only after the wrapped Store.Append returns
 // success.
 //
-// spec: §11.2.1 — Delivery sinks (lines 132-138). F-11.2.14.
+// spec: §11.2.1 Delivery sinks. F-11.2.14.
 package billingsink
 
 import (
@@ -38,7 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
-// SignatureHeader is the §11.2.1 line 136 HMAC-SHA256 signature header
+// SignatureHeader is the §11.2.1 HMAC-SHA256 signature header
 // the webhook sink stamps on every delivery. The value is
 // `sha256=<hex>` over the exact request body, matching the de-facto
 // webhook-signature convention so subscribers verify by recomputing the
@@ -51,7 +51,7 @@ const EventTypeHeader = "X-Lenny-Event-Type"
 
 const (
 	// DefaultMaxAttempts bounds the exponential-backoff retry loop before
-	// a delivery is dead-lettered. spec: §11.2.1 line 136.
+	// a delivery is dead-lettered. spec: §11.2.1.
 	DefaultMaxAttempts = 5
 
 	// DefaultBaseBackoff is the first inter-attempt delay; each

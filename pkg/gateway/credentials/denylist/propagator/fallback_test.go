@@ -31,7 +31,7 @@ func (f *fakeFallback) count() int {
 	return len(f.published)
 }
 
-// spec: §4.9 line 1647 — with no Redis bus, a Revoke propagates over the
+// spec: §4.9 — with no Redis bus, a Revoke propagates over the
 // Postgres LISTEN/NOTIFY fallback. F-13.3.8.
 func TestRevokeUsesFallbackWhenNoRedisBus_F1338(t *testing.T) {
 	fb := &fakeFallback{}

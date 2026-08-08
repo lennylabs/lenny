@@ -35,7 +35,7 @@ func seedResumingRow(t *testing.T, store *memstore.Store, id string) {
 
 // spec: §7.3 (awaiting_client_action holding state for a retryable resume
 // failure), §15.1 (SETUP_COMMAND_FAILED), §6.2 (transient setup failure
-// retried on a fresh pod), §7.2 line 195 (resuming internal transient).
+// retried on a fresh pod), §7.2.
 // diagnosis: on a /resume failure the gateway must demote the row to terminal
 // `failed` exactly when the cause is the deterministic codes.FailedPrecondition
 // setup-command exit (the non-retryable 422 SETUP_COMMAND_FAILED), and hold the

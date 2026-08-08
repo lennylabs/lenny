@@ -1570,7 +1570,7 @@ func (x *SlotId) GetValue() string {
 // (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
-// RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
+// RunSetup RPC, which §5.2 specifies fires once per pod at
 // start (a recycled pod skips the second RunSetup on its subsequent
 // session assignments; the gateway owns the once-per-pod gate). See
 // also F-5.2.24.
@@ -1651,7 +1651,7 @@ type WorkspaceSource struct {
 	ResolvedCommitSha string                 `protobuf:"bytes,13,opt,name=resolved_commit_sha,json=resolvedCommitSha,proto3" json:"resolved_commit_sha,omitempty"` // gateway-written, readonly
 	// link_target is the symlink target for a gateway-produced `symlink`
 	// source. The gateway extracts §14 uploadArchive sources in its own
-	// §4.1 Upload Handler subsystem (§7.4 line 448; §13.4 line 652 — the
+	// §4.1 Upload Handler subsystem (§7.4; §13.4 — the
 	// pod never decompresses), validates each symlink target with
 	// pkg/upload.ValidateSymlinkTarget against the workspace root, and
 	// rewrites a symlink-bearing archive entry into a `symlink` source so
@@ -1973,7 +1973,7 @@ type PrepareWorkspaceRequest struct {
 	// slot_id, when set, stages this slot's uploads into the §6.4 per-slot
 	// staging area /workspace/slots/{slotId}/staging/ instead of the single
 	// /workspace/staging. Empty when `maxConcurrentSessions: 1` (the base
-	// layout). spec: §6.4 lines 385-405.
+	// layout). spec: §6.4.
 	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2098,10 +2098,9 @@ type FinalizeWorkspaceRequest struct {
 	WorkspacePlan *WorkspacePlan         `protobuf:"bytes,2,opt,name=workspace_plan,json=workspacePlan,proto3" json:"workspace_plan,omitempty"`
 	// archive_policy is the §13.4 per-Runtime opt-in surface the gateway
 	// delivers to the adapter for uploadArchive extraction. An unset
-	// message means "platform defaults" (symlinks rejected). spec: §7.4
-	// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+	// message means "platform defaults" (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
 	ArchivePolicy *ArchivePolicy `protobuf:"bytes,3,opt,name=archive_policy,json=archivePolicy,proto3" json:"archive_policy,omitempty"`
-	// mid_session marks a §7.4 line 433 mid-session upload: the session is
+	// mid_session marks a §7.4 mid-session upload: the session is
 	// already running and the named sources are overlaid onto the existing
 	// /workspace/current rather than replacing the whole tree. The adapter
 	// builds the sources in /workspace/staging, validates them, atomically
@@ -2109,13 +2108,12 @@ type FinalizeWorkspaceRequest struct {
 	// existing files), then emits a `files_updated` lifecycle signal to the
 	// runtime so the agent re-reads the workspace only after promotion. The
 	// proto3 default false is the pre-start whole-tree materialization the
-	// §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
+	// §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
 	MidSession bool `protobuf:"varint,4,opt,name=mid_session,json=midSession,proto3" json:"mid_session,omitempty"`
 	// slot_id, when set, materializes this slot's workspace under the §6.4
 	// per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
 	// current /workspace/slots/{slotId}/current/) instead of the single
-	// /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4
-	// lines 385-405.
+	// /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4.
 	SlotId        *SlotId `protobuf:"bytes,5,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2190,11 +2188,10 @@ func (x *FinalizeWorkspaceRequest) GetSlotId() *SlotId {
 // The platform ceilings (256 MiB / 100:1 / 10 000 entries / 64 MiB per
 // entry / depth 32 / path 4096 bytes) are normative and non-tunable
 // per §13.4 — only the per-Runtime AllowSymlinks toggle and the
-// adapter's workspace_root path travel on the wire. spec: §7.4 lines
-// 448-462; §13.4 — F-7.4.2, F-7.4.4.
+// adapter's workspace_root path travel on the wire. spec: §7.4; §13.4 — F-7.4.2, F-7.4.4.
 type ArchivePolicy struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// allow_symlinks lifts the §7.4 line 458 default-deny on symlink
+	// allow_symlinks lifts the §7.4 default-deny on symlink
 	// entries. The adapter still validates every symlink target with
 	// pkg/upload.ValidateSymlinkTarget (relative-to-workspace canonical
 	// path; rejects /proc, /sys, /dev, /run/lenny). False (the default)
@@ -2257,13 +2254,13 @@ func (x *ArchivePolicy) GetWorkspaceRoot() string {
 // FinalizeWorkspaceResponse carries per-source advisory warnings the
 // adapter raised during materialization. The adapter returns a gRPC
 // error only on fatal materialization failures; non-fatal §14 plan
-// warnings (entries the §7.4 line 459 strip-components rule skipped,
+// warnings (entries the §7.4 strip-components rule skipped,
 // etc.) ride here so the gateway can republish them on the session's
 // SSE event stream and append them to the §11.7 audit trail.
 type FinalizeWorkspaceResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// workspace_plan_warnings transcribes the §14 closed warning enum
-	// for the adapter side of materialization. The §7.4 line 459
+	// for the adapter side of materialization. The §7.4
 	// `workspace_plan_strip_components_skip` warning per skipped archive
 	// entry is the only producer in v1; future codes ride the same
 	// surface so the proto need not grow per warning kind. F-7.4.15.
@@ -2321,11 +2318,11 @@ type WorkspacePlanWarning struct {
 	// `workspace_plan_strip_components_skip`.
 	Code string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
 	// source_index is the workspace plan's 0-based source index the
-	// warning refers to. spec: §14 line 100 — `sourceIndex` is the
+	// warning refers to. spec: §14 — `sourceIndex` is the
 	// first field listed in the strip-components-skip warning fields.
 	SourceIndex int32 `protobuf:"varint,2,opt,name=source_index,json=sourceIndex,proto3" json:"source_index,omitempty"`
 	// entry_path is the archive entry path that triggered the warning.
-	// Empty when the warning is not entry-scoped. spec: §14 line 100 —
+	// Empty when the warning is not entry-scoped. spec: §14 —
 	// `entryPath` is the per-entry path the strip-components rule
 	// discarded. F-14.1.18.
 	EntryPath string `protobuf:"bytes,3,opt,name=entry_path,json=entryPath,proto3" json:"entry_path,omitempty"`
@@ -2333,18 +2330,18 @@ type WorkspacePlanWarning struct {
 	Message string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
 	// segment_count is the number of `/`-separated segments the rejected
 	// entry path had after stripping any leading/trailing empty
-	// segments. spec: §14 line 100 — `segmentCount`. Populated on
+	// segments. spec: §14 — `segmentCount`. Populated on
 	// `workspace_plan_strip_components_skip` warnings; zero on other
 	// codes. F-14.1.18.
 	SegmentCount int32 `protobuf:"varint,5,opt,name=segment_count,json=segmentCount,proto3" json:"segment_count,omitempty"`
 	// strip_components is the configured `stripComponents` value the
-	// entry was tested against. spec: §14 line 100 —
+	// entry was tested against. spec: §14 —
 	// `stripComponents`. Populated on
 	// `workspace_plan_strip_components_skip` warnings; zero on other
 	// codes. F-14.1.18.
 	StripComponents int32 `protobuf:"varint,6,opt,name=strip_components,json=stripComponents,proto3" json:"strip_components,omitempty"`
 	// unknown_type is the open-string `source.type` discriminator the
-	// materializer did not recognize and skipped. spec: §14 line 334 —
+	// materializer did not recognize and skipped. spec: §14 —
 	// `unknownType`. Populated only on `workspace_plan_unknown_source_type`
 	// warnings the adapter raises when it is the live consumer of a plan
 	// carrying a source type a newer gateway injected; empty on other
@@ -2352,24 +2349,24 @@ type WorkspacePlanWarning struct {
 	UnknownType string `protobuf:"bytes,7,opt,name=unknown_type,json=unknownType,proto3" json:"unknown_type,omitempty"`
 	// schema_version is the plan's declared §14.1 `schemaVersion`, copied
 	// onto the warning so a consumer correlating warnings to plans does
-	// not have to re-read the request body. spec: §14 line 334 —
+	// not have to re-read the request body. spec: §14 —
 	// `schemaVersion`. Populated only on
 	// `workspace_plan_unknown_source_type` warnings; zero on other codes.
 	// F-14.1.2.
 	SchemaVersion int32 `protobuf:"varint,8,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
 	// path is the workspace-relative path two sources resolved to during
-	// materialization. spec: §14 line 338 — `path`. Populated only on
+	// materialization. spec: §14 — `path`. Populated only on
 	// `workspace_plan_path_collision` warnings; empty on other codes.
 	// F-14.1.9.
 	Path string `protobuf:"bytes,9,opt,name=path,proto3" json:"path,omitempty"`
 	// winning_source_index is the later (last-writer-wins) source index
-	// whose content survives the collision. spec: §14 line 338 —
+	// whose content survives the collision. spec: §14 —
 	// `winningSourceIndex`. Populated only on
 	// `workspace_plan_path_collision` warnings; equals source_index.
 	// F-14.1.9.
 	WinningSourceIndex int32 `protobuf:"varint,10,opt,name=winning_source_index,json=winningSourceIndex,proto3" json:"winning_source_index,omitempty"`
 	// losing_source_index is the earlier source index the later write
-	// overwrote. spec: §14 line 338 — `losingSourceIndex`. Populated only
+	// overwrote. spec: §14 — `losingSourceIndex`. Populated only
 	// on `workspace_plan_path_collision` warnings. F-14.1.9.
 	LosingSourceIndex int32 `protobuf:"varint,11,opt,name=losing_source_index,json=losingSourceIndex,proto3" json:"losing_source_index,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -2502,7 +2499,7 @@ type RunSetupRequest struct {
 	SetupPolicy   *SetupPolicy           `protobuf:"bytes,3,opt,name=setup_policy,json=setupPolicy,proto3" json:"setup_policy,omitempty"`
 	// slot_id, when set, runs setup against this slot's materialized cwd
 	// /workspace/slots/{slotId}/current/ instead of /workspace/current.
-	// Empty when `maxConcurrentSessions: 1`. spec: §6.4 lines 401-405.
+	// Empty when `maxConcurrentSessions: 1`. spec: §6.4.
 	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2567,7 +2564,7 @@ func (x *RunSetupRequest) GetSlotId() *SlotId {
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
-// captured. The §7.5 line 475 contract requires "Fully logged
+// captured. The §7.5 contract requires "Fully logged
 // (stdout/stderr captured)" so the gateway can persist the trail on the
 // session row and surface it through the §15.1 GET /v1/sessions/{id}
 // envelope and the §11.7 audit log. The returned outputs preserve the
@@ -2630,7 +2627,7 @@ type SetupCommandOutput struct {
 	// cmd echoes the submitted command text so a downstream consumer can
 	// correlate the record with the WorkspacePlan entry.
 	Cmd string `protobuf:"bytes,1,opt,name=cmd,proto3" json:"cmd,omitempty"`
-	// exit_code is the §7.5 line 475 captured exit status. 0 is a clean
+	// exit_code is the §7.5 captured exit status. 0 is a clean
 	// exit; non-zero is a failure (the §7.3 setup_command_failed signal).
 	ExitCode int32 `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	// stdout is the captured standard output, truncated to a per-stream
@@ -2750,7 +2747,7 @@ type StartSessionRequest struct {
 	// against /workspace/slots/{slotId}/current/. Set only when the pod
 	// runs concurrent sessions (`maxConcurrentSessions > 1`); empty when
 	// `maxConcurrentSessions: 1` (the one-session-per-pod claim). spec:
-	// §6.4 lines 385-405; §5.2.
+	// §6.4; §5.2.
 	SlotId        *SlotId `protobuf:"bytes,11,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2857,7 +2854,7 @@ type SetupPolicy struct {
 	// to the adapter. When true the adapter runs each command via
 	// `/bin/sh -c`; when false the adapter splits the command on whitespace
 	// and execs the argv directly, neutering pipes, backtick substitution,
-	// glob expansion, redirects, and `&&` chaining per §7.5 line 490. The
+	// glob expansion, redirects, and `&&` chaining per §7.5. The
 	// proto3 default is false (argv-mode); the gateway sends `true` only
 	// when the runtime's policy explicitly requests shell execution. F-7.5.2.
 	Shell         bool `protobuf:"varint,3,opt,name=shell,proto3" json:"shell,omitempty"`
@@ -3183,7 +3180,7 @@ type AssignCredentialsRequest struct {
 	// the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
 	// instead of the single global /run/lenny/credentials.json, so a
 	// rotation on one slot does not disrupt sibling slots. Empty when
-	// `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+	// `maxConcurrentSessions: 1`. spec: §6.1.
 	SlotId        *SlotId `protobuf:"bytes,3,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3284,13 +3281,13 @@ type RotateCredentialsRequest struct {
 	// rotation. It governs the §4.7 Full-level in-flight gate ceiling:
 	// any value other than "proactive_renewal" caps the in-flight wait at
 	// 300s and falls through to the standard rotation path on ceiling hit
-	// (spec §4.7 line 822). The renewal trigger keeps the unbounded wait
+	// (spec §4.7). The renewal trigger keeps the unbounded wait
 	// because the old credential is still valid. Empty is treated as a
 	// fault trigger (capped) for fail-closed safety.
 	RotationTrigger string `protobuf:"bytes,3,opt,name=rotation_trigger,json=rotationTrigger,proto3" json:"rotation_trigger,omitempty"`
 	// slot_id, when set, rotates the lease in this slot's §6.1 per-slot
 	// credential file independently of sibling slots. Empty when
-	// `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+	// `maxConcurrentSessions: 1`. spec: §6.1.
 	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3396,11 +3393,11 @@ type ExtendCredentialLeaseRequest struct {
 	Provider  string                 `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
 	LeaseId   string                 `protobuf:"bytes,3,opt,name=lease_id,json=leaseId,proto3" json:"lease_id,omitempty"`
 	// expires_at_unix_ms is the new, later expiry deadline the adapter
-	// re-arms the direct-mode expiry timer to. spec: §4.9 line 1470.
+	// re-arms the direct-mode expiry timer to. spec: §4.9.
 	ExpiresAtUnixMs int64 `protobuf:"varint,4,opt,name=expires_at_unix_ms,json=expiresAtUnixMs,proto3" json:"expires_at_unix_ms,omitempty"`
 	// slot_id, when set, extends this slot's §6.1 per-slot credential
 	// lease timer independently of sibling slots. Empty when
-	// `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+	// `maxConcurrentSessions: 1`. spec: §6.1.
 	SlotId        *SlotId `protobuf:"bytes,5,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3514,7 +3511,7 @@ type RevokeCredentialsRequest struct {
 	Reason    string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	// slot_id, when set, revokes from this slot's §6.1 per-slot credential
 	// file independently of sibling slots. Empty when
-	// `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+	// `maxConcurrentSessions: 1`. spec: §6.1.
 	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3906,7 +3903,7 @@ func (*CheckpointRequest_Grant) isCheckpointRequest_Msg() {}
 func (*CheckpointRequest_Abort) isCheckpointRequest_Msg() {}
 
 // CheckpointStart opens the stream. It carries the gateway-minted
-// `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
+// `checkpoint_id` (§10.1 — the adapter never mints one), the
 // typed trigger, the gateway-chosen chunk size and encoding, and the
 // applicable deadline.
 type CheckpointStart struct {
@@ -4557,7 +4554,7 @@ type SignalDeadlineRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// remaining_ms is the wall-clock left before the session's deadline
-	// (~300000 for the §11.3 line 240 five-minute pre-expiry warning).
+	// (~300000 for the §11.3 five-minute pre-expiry warning).
 	RemainingMs int32 `protobuf:"varint,2,opt,name=remaining_ms,json=remainingMs,proto3" json:"remaining_ms,omitempty"`
 	// trigger names which deadline is approaching: "session_age" (the
 	// §11.3 maxSessionAge cap), "budget", or "idle".
@@ -4620,7 +4617,7 @@ func (x *SignalDeadlineRequest) GetTrigger() string {
 type SignalDeadlineResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// delivered is true when the warning reached the runtime over the
-	// CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15 line 2141).
+	// CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15).
 	Delivered     bool `protobuf:"varint,1,opt,name=delivered,proto3" json:"delivered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4718,8 +4715,7 @@ type ResumeRequest struct {
 	// guard.
 	ExpectedWorkspaceRoot string `protobuf:"bytes,12,opt,name=expected_workspace_root,json=expectedWorkspaceRoot,proto3" json:"expected_workspace_root,omitempty"`
 	// chunks carries one presigned single-key GET capability per chunk of
-	// the checkpoint being restored, in ascending index order (§10.1 line
-	// 155). The gateway resolves the chunk set from the manifest row it owns
+	// the checkpoint being restored, in ascending index order (§10.1). The gateway resolves the chunk set from the manifest row it owns
 	// and mints one capability per index in [0, chunk_count); the adapter
 	// fetches each chunk directly from object storage and concatenates them
 	// into the single tar (or tar.gz) byte stream. The gateway has no byte
@@ -5002,7 +4998,7 @@ func (x *ResumeResponse) GetRecoveryGeneration() int64 {
 }
 
 // CoordinatorFenceRequest announces a new coordination generation to the
-// pod (§4.7 line 632 / §10.1). The pod records the new generation and
+// pod (§4.7 / §10.1). The pod records the new generation and
 // from this point rejects every RPC carrying a strictly older generation
 // with FailedPrecondition + a `coordinator_handoff_stale` detail string,
 // which the gateway counts on `lenny_coordinator_handoff_stale_total`.
@@ -5068,7 +5064,7 @@ func (x *CoordinatorFenceRequest) GetCoordinationGeneration() int64 {
 // that the new generation skips one or more values relative to the last
 // fenced generation; the adapter still acknowledges (the new coordinator
 // can proceed) but logged a `coordinator_generation_gap` event and
-// reset transient tool-call state per §10.1 line 36.
+// reset transient tool-call state per §10.1.
 type CoordinatorFenceResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Accepted             bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
@@ -5130,7 +5126,7 @@ func (x *CoordinatorFenceResponse) GetGapDetected() bool {
 }
 
 // CheckpointBarrierRequest dispatches a barrier during gateway graceful
-// drain (§4.7 line 631 / §10.1). barrier_id is the gateway's unique
+// drain (§4.7 / §10.1). barrier_id is the gateway's unique
 // identifier for this barrier (echoed in the ack). coordination_generation
 // must match the last fenced generation, or the adapter rejects with
 // FailedPrecondition; this is the same generation gate Coordinator
@@ -5202,9 +5198,9 @@ func (x *CheckpointBarrierRequest) GetBarrierId() string {
 
 // CheckpointBarrierResponse is the synchronous mirror of the
 // CheckpointBarrierAck event emitted on the AdapterEvents control
-// stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
+// stream (§4.7). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
-// CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1);
 // empty when the gateway drove no stream against the pod. The adapter
 // returns the ack only after that gateway-driven stream terminates.
 // quiesced_ms reports the time-to-quiescence measured inside the ack
@@ -5648,8 +5644,7 @@ type ShutdownRequest struct {
 	// slot_id, when set, tears down just this §6.4 per-slot session (its
 	// runtime, credential timers, and per-slot directory tree) while
 	// sibling slots on the pod keep running. Empty when
-	// `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4 lines
-	// 401-405.
+	// `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4.
 	SlotId *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	// recycle, when set, marks this as the occupancy-zero recycle-boundary
 	// shutdown (§5.2): the adapter closes the ending session's runtime, keeps
@@ -6147,7 +6142,7 @@ type NegotiateVersionResponse struct {
 	// True when the adapter could not satisfy the gateway's accepted
 	// versions. The connection should be torn down and the pod evicted.
 	Incompatible bool `protobuf:"varint,4,opt,name=incompatible,proto3" json:"incompatible,omitempty"`
-	// workspace_root is the §7.3 line 408 / §6.1 absolute cwd path the
+	// workspace_root is the §7.3 / §6.1 absolute cwd path the
 	// adapter mounts the session workspace into — the value of
 	// `--workspace-root` on `lenny-adapter`. The gateway captures it on
 	// the first Bind and persists it on the session row so a subsequent

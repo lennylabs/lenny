@@ -11,7 +11,7 @@
 // output diverges from a fresh generation, so the generated schemas stay
 // structurally consistent with OpenAPI by construction.
 //
-// spec: §15.2.1 rule 4 line 1386.
+// spec: §15.2.1 rule 4.
 package main
 
 import (
@@ -48,7 +48,7 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("build schema for %s (%s): %w", ov.ToolName, ov.OperationID, err)
 		}
-		fmt.Fprintf(&body, "\n// %s is generated from the OpenAPI operation %q\n// (MCP tool %q). spec: §15.2.1 rule 4 line 1386.\nvar %s = json.RawMessage(%s)\n",
+		fmt.Fprintf(&body, "\n// %s is generated from the OpenAPI operation %q\n// (MCP tool %q). spec: §15.2.1 rule 4.\nvar %s = json.RawMessage(%s)\n",
 			varName(ov.ToolName), ov.OperationID, ov.ToolName, varName(ov.ToolName), backtick(string(schema)))
 	}
 
@@ -98,7 +98,7 @@ const header = `// SPDX-License-Identifier: MIT
 // document by the build-pipeline code generation step §15.2.1 rule 4
 // mandates. Regenerate with: go generate ./pkg/gateway/mcptools/...
 //
-// spec: §15.2.1 rule 4 line 1386.
+// spec: §15.2.1 rule 4.
 
 package mcptools
 

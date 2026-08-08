@@ -61,7 +61,7 @@ func TestUploadArchivePostsRawBodyWithToken(t *testing.T) {
 	}
 }
 
-// spec: §15.1 upload + §26.2 line 213 (--file) — UploadFile targets the
+// spec: §15.1 upload + §26.2 — UploadFile targets the
 // plain /upload endpoint with octet-stream content type.
 func TestUploadFileTargetsPlainUpload(t *testing.T) {
 	var gotPath, gotCT string
@@ -125,7 +125,7 @@ func TestUploadArchiveSurfacesAPIError(t *testing.T) {
 	}
 }
 
-// spec: §7.1 step 11 / §26.2 lines 95-114 — FinalizeWorkspace POSTs the
+// spec: §7.1 step 11 / §26.2 — FinalizeWorkspace POSTs the
 // plan under a workspacePlan envelope; a nil plan falls back to a no-body
 // finalize.
 func TestFinalizeWorkspacePostsPlan(t *testing.T) {

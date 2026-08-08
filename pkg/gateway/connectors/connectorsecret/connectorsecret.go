@@ -28,7 +28,7 @@ import (
 
 // DefaultSecretKey is the Kubernetes Secret data key the resolver reads
 // when a clientSecretRef names only `namespace/name`. The spec writes
-// the reference as `namespace/name` (spec §9.3 line 129) without naming
+// the reference as `namespace/name` (spec §9.3) without naming
 // a key, so the gateway adopts a conventional key that an operator can
 // override at wiring time, or address explicitly with a three-segment
 // `namespace/name/key` reference.

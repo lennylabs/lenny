@@ -23,7 +23,7 @@ import (
 // bounds memory against a hostile or buggy agent pod.
 const maxRequestBytes = 8 << 20
 
-// §4.8 lines 1055-1056, §15.1 lines 1012-1013. A deliberate REJECT by
+// §4.8, §15.1. A deliberate REJECT by
 // a PreLLMRequest interceptor returns LLM_REQUEST_REJECTED (HTTP 403);
 // a PostLLMResponse REJECT returns LLM_RESPONSE_REJECTED (HTTP 502).
 // Both are distinct from INTERCEPTOR_TIMEOUT (HTTP 503), which a
@@ -64,7 +64,7 @@ type DenyList interface {
 // Allow reports whether the session may issue another proxied request;
 // it returns false once the session has exhausted its token budget so
 // the proxy rejects the request with BUDGET_EXHAUSTED before any
-// upstream call (spec: §8.10 line 1108). A nil gate disables the check.
+// upstream call (spec: §8.10). A nil gate disables the check.
 type BudgetGate interface {
 	Allow(sessionID string) bool
 }
@@ -81,7 +81,7 @@ type BudgetGate interface {
 // does not itself dispatch the extension; it consumes the outcome the record
 // path already computed from its single dispatch.
 //
-// spec: §8.6 line 629 (the gateway LLM Proxy drives the trigger in-process);
+// spec: §8.6;
 // proposal 0023.
 type Outcome int
 
@@ -150,7 +150,7 @@ type UsageRecorder interface {
 // whose pool declares no enabled CachePolicy, leaves the path uncached
 // (§4.9 caching is disabled by default and opt-in per pool).
 //
-// spec: spec/04_system-components.md lines 1542-1556.
+// spec: §4.9.
 type ProxyCache interface {
 	// Lookup returns a cached upstream response body for reqBody, in the
 	// dialect the agent pod speaks, and true on a hit. It is scoped to
@@ -165,7 +165,7 @@ type ProxyCache interface {
 // Metrics receives §16.1 LLM-proxy telemetry. A nil Metrics disables
 // emission. *gatewaymetrics.Metrics satisfies it.
 //
-// spec: §16.1 lines 97, 99, 100.
+// spec: §16.1.
 type Metrics interface {
 	// IncLLMProxyConnections / DecLLMProxyConnections move the in-flight
 	// proxy-request gauge.
@@ -191,7 +191,7 @@ type Handler struct {
 	// backend.
 	Leases credleasestore.LeaseStore
 	// Translators dispatches each request to the translator for the
-	// lease's resolved §4.9 provider (spec: §4.9 lines 1525-1526 —
+	// lease's resolved §4.9 provider (spec: §4.9 —
 	// Phase 11 extends the proxy to anthropic_direct, aws_bedrock,
 	// vertex_ai, azure_openai, and openai_direct). When the registry
 	// is non-nil and carries no entry for the lease provider, the
@@ -229,7 +229,7 @@ type Handler struct {
 	// request path. A nil Cache disables caching (the §4.9 default).
 	Cache ProxyCache
 	// Interceptors is the §4.8 policy chain run at the PreLLMRequest and
-	// PostLLMResponse phases (spec: §4.8 lines 1055-1056, 1075). A nil
+	// PostLLMResponse phases (spec: §4.8). A nil
 	// chain, or a phase with no registered interceptors, is a no-op:
 	// these phases fire only in proxy mode and only when interceptors
 	// are registered.
@@ -246,7 +246,7 @@ type Handler struct {
 	// leaves the proxy on its pre-fallback behavior: the upstream error
 	// is surfaced to the pod with no rotation.
 	//
-	// spec: §4.9 lines 1383-1411 (Fallback Flow).
+	// spec: §4.9.
 	Fallback *credfallback.Controller
 	// FallbackRotator mints a replacement lease from the chain's next
 	// pool and pushes it to the session's pod via RotateCredentials
@@ -276,18 +276,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §16.1 line 97 — the active-connections gauge reflects
+	// spec: §16.1 — the active-connections gauge reflects
 	// in-flight proxy requests on the replica for the request's lifetime.
 	if h.Metrics != nil {
 		h.Metrics.IncLLMProxyConnections()
 		defer h.Metrics.DecLLMProxyConnections()
 	}
 
-	// spec: §16.3 line 354 — every LLM-proxy request runs under the
+	// spec: §16.3 — every LLM-proxy request runs under the
 	// credential.proxy_request span so distributed traces show the proxy
 	// leg between an agent pod and the upstream provider. The span is
 	// opened at the per-request entry; correlation attributes (tenant_id,
-	// session_id, …) auto-project from the request context. §16.4 line 376
+	// session_id, …) auto-project from the request context. §16.4
 	// excludes credential-sensitive payload from span attributes, so no
 	// lease token or upstream key is recorded here. The status the handler
 	// writes is captured so the defer records a categorized span error for
@@ -346,7 +346,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §8.10 line 1108 / §11.2 line 44 — a session that has already
+	// spec: §8.10 / §11.2 — a session that has already
 	// exhausted its token budget is terminated; any further proxied
 	// request it issues before the pod drains is rejected up front with
 	// BUDGET_EXHAUSTED (POLICY, non-retryable) before any upstream call.
@@ -363,7 +363,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §4.8 line 1055 — run the PreLLMRequest chain over the request
+	// spec: §4.8 — run the PreLLMRequest chain over the request
 	// body before credential headers are injected. A REJECT returns
 	// LLM_REQUEST_REJECTED; a MODIFY rewrites the body the proxy then
 	// translates and forwards.
@@ -372,7 +372,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §4.9 lines 1542-1556 — consult the per-pool semantic cache
+	// spec: §4.9 — consult the per-pool semantic cache
 	// before any upstream call. A hit replays the cached response in the
 	// pod's dialect (re-running the PostLLMResponse chain so policy still
 	// applies) and consumes no upstream tokens, so no usage is recorded.
@@ -405,7 +405,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §16.1 line 99 — measure the request-leg translator CPU time.
+	// spec: §16.1 — measure the request-leg translator CPU time.
 	reqStart := h.now()
 	upstreamReq, err := tr.TranslateRequest(Request{
 		Dialect:          DialectAnthropic,
@@ -434,7 +434,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §16.1 line 99 — measure the response-leg translator CPU time.
+	// spec: §16.1 — measure the response-leg translator CPU time.
 	respStart := h.now()
 	resp, err := tr.TranslateResponse(DialectAnthropic, *upstreamResp)
 	if err != nil {
@@ -443,7 +443,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.observeTranslation(lease, "response", h.now().Sub(respStart))
 
-	// spec: §4.9 lines 1542-1556 — record the upstream response for a
+	// spec: §4.9 — record the upstream response for a
 	// later cache hit. Store the translated (pre-PostLLMResponse) body so
 	// a hit replays it through the same interceptor chain as a miss. A
 	// nil Cache or a pool with caching off is a no-op.
@@ -451,7 +451,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Cache.Store(r.Context(), lease, body, resp.Body)
 	}
 
-	// spec: §4.8 line 1056 — run the PostLLMResponse chain over the
+	// spec: §4.8 — run the PostLLMResponse chain over the
 	// translated response before it reaches the pod. A REJECT returns
 	// LLM_RESPONSE_REJECTED; a MODIFY rewrites the response body.
 	respBody, ok := h.runLLMPhase(r.Context(), w, lease, interceptor.PhasePostLLMResponse, resp.Body)
@@ -459,7 +459,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §8.6 line 629 / §11.2 line 44 — settle the call's usage against
+	// spec: §8.6 / §11.2 — settle the call's usage against
 	// the session's token budget. Recording is what detects budget
 	// exhaustion and, inside the record path, dispatches the single §8.6
 	// extension and applies its side-effects; it returns the resolved
@@ -482,7 +482,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Not exhausted, or the extension was granted within the in-path wait:
 	// deliver the already-computed response. No second upstream call is
 	// issued and no duplicate usage is recorded, so the runtime sees a
-	// slightly slow LLM response rather than a failure (spec: §8.6 line 629).
+	// slightly slow LLM response rather than a failure (spec: §8.6).
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(respBody)
@@ -506,7 +506,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 	}
 	defer resp.Body.Close()
 
-	// spec: §4.8 line 1056, 1075 — for a streaming response the
+	// spec: §4.8 — for a streaming response the
 	// PostLLMResponse chain fires once on the initial response metadata
 	// before any chunk is relayed; individual stream chunks are not
 	// intercepted. A REJECT before the headers are committed converts the
@@ -525,7 +525,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request, lease cred
 		flush = f.Flush
 	}
 	usage, _ := RelayStream(w, resp.Body, flush)
-	// spec: §8.6 line 629 — settle the streamed usage against the session's
+	// spec: §8.6 — settle the streamed usage against the session's
 	// token budget. The 200/SSE response is already committed (WriteHeader
 	// and RelayStream have flushed the body to the pod), so a committed
 	// stream cannot be denied. On exhaustion the §8.6 extension still fires
@@ -566,8 +566,7 @@ func (h *Handler) runLLMPhase(ctx context.Context, w http.ResponseWriter, lease 
 }
 
 // writeLLMRejection maps a REJECT from an LLM proxy phase to its
-// pod-facing HTTP status and error code (spec: §4.8 line 1056, §15.1
-// lines 1012-1013). A fail-closed interceptor timeout or error carries
+// pod-facing HTTP status and error code (spec: §4.8, §15.1). A fail-closed interceptor timeout or error carries
 // CodeInterceptorTimeout and returns 503 INTERCEPTOR_TIMEOUT; a
 // deliberate PreLLMRequest REJECT returns 403 LLM_REQUEST_REJECTED and
 // a PostLLMResponse REJECT returns 502 LLM_RESPONSE_REJECTED.
@@ -586,7 +585,7 @@ func (h *Handler) writeLLMRejection(w http.ResponseWriter, phase interceptor.Pha
 // streamMetadata serializes the initial upstream streaming-response
 // metadata the PostLLMResponse chain inspects: the upstream HTTP status
 // and response headers. The full SSE stream is never buffered (spec:
-// §4.8 line 1075).
+// §4.8).
 func streamMetadata(resp *http.Response) []byte {
 	b, _ := json.Marshal(struct {
 		Status  int         `json:"status"`
@@ -716,7 +715,7 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 // completed translation. direction is `request` or `response`. It is a
 // no-op when no Metrics sink is set.
 //
-// spec: §16.1 line 99.
+// spec: §16.1.
 func (h *Handler) observeTranslation(lease credential.Lease, direction string, d time.Duration) {
 	if h.Metrics != nil {
 		h.Metrics.ObserveLLMTranslation(lease.PoolID, string(lease.Provider), string(DialectAnthropic), direction, d.Seconds())
@@ -725,8 +724,7 @@ func (h *Handler) observeTranslation(lease credential.Lease, direction string, d
 
 // writeTranslationError maps a §4.9 translator error to its pod-facing
 // HTTP status and error code, and counts the failure under the §16.1
-// lenny_gateway_llm_translation_errors_total taxonomy (spec: §16.1 line
-// 100). A non-TranslationError is an internal fault and is not counted
+// lenny_gateway_llm_translation_errors_total taxonomy (spec: §16.1). A non-TranslationError is an internal fault and is not counted
 // against the translator taxonomy.
 func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.Lease, err error) {
 	var te *TranslationError
@@ -737,7 +735,7 @@ func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.
 	if h.Metrics != nil {
 		h.Metrics.IncLLMTranslationError(lease.PoolID, string(lease.Provider), string(te.Type))
 	}
-	// spec: §4.9 lines 1383-1411 — an upstream credential fault drives
+	// spec: §4.9 — an upstream credential fault drives
 	// the Fallback Flow before the pod-facing error is written. When the
 	// chain is exhausted the terminal CREDENTIAL_FALLBACK_EXHAUSTED error
 	// is written here and no further mapping runs.

@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
 
-// spec: §24.12 lines 143-144 / §12.8 lines 764, 766 — operator retry of
+// spec: §24.12 / §12.8 — operator retry of
 // a failed erasure job and the manual clear of the GDPR Article 18
 // processing restriction.
 
@@ -227,7 +227,7 @@ func TestClearProcessingRestrictionUnknownJobNotFound_spec_24_12_144(t *testing.
 
 // TestClearProcessingRestrictionMemoryStore proves the userstore.Memory
 // privileged clear lifts the flag directly (the Article 18 trigger is a
-// Postgres-only control). spec: §12.8 line 764.
+// Postgres-only control). spec: §12.8.
 func TestClearProcessingRestrictionMemoryStore_spec_12_8_764(t *testing.T) {
 	users := userstore.NewMemory()
 	ctx := context.Background()

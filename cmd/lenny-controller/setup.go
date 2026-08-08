@@ -19,7 +19,7 @@ import (
 // buildManagerSetup constructs the §4.6.1 manager and its prerequisites: the
 // controller-runtime logger, the §16.3 tracer, the §17.5 RuntimeClass-name
 // override map, the §5.2/§6.4 resource-class registry, the §4.6.1 rate-limited
-// REST config, the manager itself, and the §10 line 437 CRD schema-version
+// REST config, the manager itself, and the §10 CRD schema-version
 // self-check. It records the manager, the REST config, the resolved overrides,
 // the resource-class registry, and the trace-shutdown closer on the accumulator
 // for the build steps that follow.
@@ -27,20 +27,20 @@ import (
 // spec: §4.6.1 — the manager carries leader election, the metrics endpoint, and
 // the health/readiness probes; §16.3 — the controller's spans reach the OTLP
 // Collector; §5.2/§6.4 — the resource-class registry fails closed when a class
-// memory limit does not clear the tmpfs reservation; §10 line 437 — the CRD
+// memory limit does not clear the tmpfs reservation; §10 — the CRD
 // schema-version self-check refuses to start against a stale CRD. F-15.5.12.
 func (w *controllerWiring) buildManagerSetup() {
 	f := w.f
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&f.zapOpts)))
 
-	// spec: §5.3 line 677 — log the dev-mode isolation warning once at
+	// spec: §5.3 — log the dev-mode isolation warning once at
 	// startup so an accidental production dev-mode install is visible.
 	if f.devMode {
 		log.Printf("lenny-controller: %s", isolation.DevModeIsolationWarning)
 	}
 
-	// spec: §16.3 line 359 — install the process-wide TracerProvider and
+	// spec: §16.3 — install the process-wide TracerProvider and
 	// W3C propagator so the controller's §16.3 spans (session.claim_pod)
 	// reach the OTLP Collector instead of the no-op provider. F-16.3.2.
 	traceShutdown, err := tracing.InitProvider(context.Background(), tracing.ProviderConfig{
@@ -53,7 +53,7 @@ func (w *controllerWiring) buildManagerSetup() {
 	}
 	w.traceShutdown = traceShutdown
 
-	// spec: §17.5 line 3 — assemble the §5.3 isolation-profile to
+	// spec: §17.5 — assemble the §5.3 isolation-profile to
 	// RuntimeClass-name override map. An unset flag leaves the chart-
 	// default literal (runc / gvisor / kata) in place.
 	w.runtimeClassOverrides = map[isolation.Profile]string{}
@@ -67,7 +67,7 @@ func (w *controllerWiring) buildManagerSetup() {
 		w.runtimeClassOverrides[isolation.ProfileMicrovm] = f.runtimeClassMicrovm
 	}
 
-	// spec: §5.2 / §6.4 line 413 — build the resource-class registry from
+	// spec: §5.2 / §6.4 — build the resource-class registry from
 	// the built-in small/medium/large defaults plus any operator overrides,
 	// failing closed if a class's memory limit does not clear the tmpfs
 	// reservation.
@@ -107,7 +107,7 @@ func (w *controllerWiring) buildManagerSetup() {
 	}
 	w.mgr = mgr
 
-	// spec: §10 line 437 / line 443 — assert every installed Lenny CRD
+	// spec: §10 — assert every installed Lenny CRD
 	// declares the expected `lenny.dev/schema-version` annotation before
 	// the controller starts reconciling. A mismatch logs the
 	// runbook-grep-anchored FATAL message and exits non-zero so a stale

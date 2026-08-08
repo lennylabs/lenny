@@ -8,7 +8,7 @@ import (
 )
 
 // Size returns the total on-disk byte count of the regular files under
-// root. The §4.4 line 254 pre-checkpoint workspace-size probe calls
+// root. The §4.4 pre-checkpoint workspace-size probe calls
 // this against `/workspace/current` (or the slot-specific path under
 // concurrent-workspace mode) before quiescing the runtime. A missing
 // root returns (0, nil) so an unconfigured workspace is treated as
@@ -20,7 +20,7 @@ import (
 // contribute zero bytes (the spec measures workspace contents, not
 // metadata overhead).
 //
-// spec: §4.4 line 254 — "it stats the total size of /workspace/current
+// spec: §4.4 — "it stats the total size of /workspace/current
 // (or the slot-specific path)".
 func Size(root string) (int64, error) {
 	if root == "" {

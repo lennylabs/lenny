@@ -18,7 +18,7 @@
 -- is exactly one row (scope = 'platform'), no lenny_tenant_guard trigger,
 -- and no RLS policy. The per-tenant floor-clamp audit rows the endpoint
 -- fans out land in the RLS-protected per-tenant audit chain through the
--- audit log, not here. spec: §16.7 lines 672, 676, 677, 682; §17.2 line 86.
+-- audit log, not here. spec: §16.7; §17.2.
 CREATE TABLE deployment_config_state (
     -- scope pins the table to a single row. 'platform' is the only value;
     -- the CHECK enforces the singleton invariant.

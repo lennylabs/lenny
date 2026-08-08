@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.6 line 577 — a delegated child copies the root session's 32-bit
+// spec: §12.6 — a delegated child copies the root session's 32-bit
 // routing prefix so the whole tree consistent-hashes to one shard. Two ids
 // with the same routing prefix select the same SessionShard, so asserting
 // prefix equality is the meaningful single-shard-agnostic form of
@@ -39,7 +39,7 @@ func TestNewChildID_CopiesRoutingPrefix_spec_12_6_577(t *testing.T) {
 	assertUUIDv8(t, child)
 }
 
-// spec: §12.6 line 577 — a grandchild built from a child still shares the
+// spec: §12.6 — a grandchild built from a child still shares the
 // apex root's prefix, so an N-deep tree co-locates.
 func TestNewChildID_GrandchildSharesRootPrefix_spec_12_6_577(t *testing.T) {
 	root := NewID()

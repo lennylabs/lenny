@@ -14,9 +14,7 @@
 // slot retry policy. The request body and response are opaque — the
 // proxy forwards them verbatim to the runtime's own HTTP surface.
 //
-// spec: §5.2 line 500 (tenant-affinity Service-bypass routing), §5.2
-// line 519 (WARM_POOL_EXHAUSTED on exhaustion), §5.2 line 502 (tenant
-// pinning).
+// spec: §5.2, §5.2, §5.2.
 package statelessproxy
 
 import (
@@ -39,7 +37,7 @@ import (
 // container port.
 const DefaultPodPort = 8080
 
-// PodLabeler applies the §5.2 line 500 lenny.dev/tenant-id pin label to
+// PodLabeler applies the §5.2 lenny.dev/tenant-id pin label to
 // the pod at podIP when the router newly pins it to a tenant. The
 // production implementation resolves podIP→pod via a status.podIP field
 // selector and JSON-merge-patches the label; tests inject a fake. A nil
@@ -78,7 +76,7 @@ type Proxy struct {
 
 // ServeHTTP routes the request to a tenant-pinned pod and reverse-
 // proxies it. On a routing failure (no available pod, or — defensively
-// — a tenant mismatch) it writes the §5.2 line 519 WARM_POOL_EXHAUSTED
+// — a tenant mismatch) it writes the §5.2 WARM_POOL_EXHAUSTED
 // envelope; on a pod dial failure it writes BAD_GATEWAY.
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.Router == nil || p.Tenant == nil {
@@ -155,7 +153,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // statelessRetryAfterSeconds is the Retry-After hint on a stateless
 // WARM_POOL_EXHAUSTED: the pool needs to scale a fresh pod in, which is
-// bounded by warm-pod startup. spec: §5.2 line 519.
+// bounded by warm-pod startup. spec: §5.2.
 const statelessRetryAfterSeconds = 5
 
 // errorEnvelope mirrors the §15.2.1 gateway error envelope so a

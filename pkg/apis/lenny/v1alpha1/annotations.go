@@ -9,10 +9,10 @@ package v1alpha1
 // reader (pkg/gateway/podsession sync-status lookup) share one literal
 // and cannot drift.
 const (
-	// AnnotationConfigGeneration carries the §4.6.2 line 558
+	// AnnotationConfigGeneration carries the §4.6.2
 	// pool_config_generation the gateway-side sync-status / PoolConfigDrift
 	// check compares against the Postgres counter.
-	// spec: spec/04_system-components.md line 558.
+	// spec: §4.6.2.
 	AnnotationConfigGeneration = "lenny.dev/config-generation"
 
 	// AnnotationLastReconciledAt carries the RFC3339Nano instant at which
@@ -21,7 +21,7 @@ const (
 	// the generation changes, so a steady-state pool does not rewrite the
 	// CRD every tick. The gateway sync-status endpoint reports it as
 	// lastReconciledAt and derives lagSeconds from it.
-	// spec: spec/04_system-components.md line 560.
+	// spec: §4.6.2.
 	AnnotationLastReconciledAt = "lenny.dev/last-reconciled-at"
 
 	// AnnotationDrainRequest is stamped by the gateway on an agent Pod when

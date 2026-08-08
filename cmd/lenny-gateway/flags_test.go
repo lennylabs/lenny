@@ -52,7 +52,7 @@ func TestParseFlagsPopulatesEveryField(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1671 (credential_leases expired-lease sweep cadence)
+// spec: §4.9
 //
 // TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval pins that
 // registerArtifactFlags binds the --credential-lease-gc-interval-seconds

@@ -15,7 +15,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §10.5 line 508 — the lenny-sandboxtemplate-deletion-guard
+// spec: §10.5 — the lenny-sandboxtemplate-deletion-guard
 // webhook blocks a SandboxTemplate DELETE while a RuntimeUpgrade
 // referencing the template's pool is still active.
 

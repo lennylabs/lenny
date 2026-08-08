@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// defaultTargetReadTimeout is the §10.1 line 165 deadline on the
+// defaultTargetReadTimeout is the §10.1 deadline on the
 // barrier-target Postgres read: the fan-out must not consume measurable
 // drain budget, so the read falls back to the in-memory lease cache on
 // expiry.
@@ -30,7 +30,7 @@ const defaultTargetReadTimeout = 2 * time.Second
 // binding on one replica, so the coordinator always reaches the pod through
 // its held connection and the barrier needs no fresh-dial fallback.
 //
-// spec: §10.1 lines 165-167.
+// spec: §10.1.
 type PodDispatcher struct {
 	// Conn resolves the live adapter connection the gateway already holds
 	// for a session it coordinates. ok is false when no local binding
@@ -70,12 +70,12 @@ func (d *PodDispatcher) resolve(t Target) (*adapterclient.Client, error) {
 }
 
 // MirrorTargetLister is the production TargetLister: it enumerates the
-// §10.1 line 165 barrier-target set from the coordination_lease Postgres
+// §10.1 barrier-target set from the coordination_lease Postgres
 // mirror under a 2-second deadline (source "postgres"), and falls back to
 // the in-memory lease cache (source "cache_fallback") when the mirror is
 // unset, errors, or exceeds the deadline.
 //
-// spec: §10.1 line 165.
+// spec: §10.1.
 type MirrorTargetLister struct {
 	// ReplicaID is this gateway replica's id — the coordinator_replica the
 	// barrier-target query filters on.
@@ -114,7 +114,7 @@ func (l *MirrorTargetLister) Targets(ctx context.Context) ([]Target, string, err
 			}
 			return out, SourcePostgres, nil
 		}
-		// §10.1 line 165 — a degraded barrier set from the in-memory cache
+		// §10.1 — a degraded barrier set from the in-memory cache
 		// is strictly better than none when the replica is terminating.
 	}
 	if l.Fallback != nil {

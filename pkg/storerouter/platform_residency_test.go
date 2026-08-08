@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// spec: §11.7 line 431 (CMP-058) — PlatformPostgresForRegion resolves a
+// spec: §11.7 — PlatformPostgresForRegion resolves a
 // region-set platform-tenant audit write to that region's platform-Postgres
 // from the storage.regions.<region>.postgresEndpoint map. The empty region
 // falls back to the global PlatformPostgres pool (residency rule 2).
@@ -59,7 +59,7 @@ func TestPlatformPostgresForRegionResolvesConfiguredRegion_spec_11_7_431(t *test
 	}
 }
 
-// spec: §11.7 line 433 (CMP-058 rule 3) — a region with no
+// spec: §11.7 — a region with no
 // storage.regions.<region>.postgresEndpoint entry is unresolvable and
 // PlatformPostgresForRegion fails closed with ErrPlatformRegionUnresolvable
 // so the audit write maps to PLATFORM_AUDIT_REGION_UNRESOLVABLE.
@@ -82,7 +82,7 @@ func TestPlatformPostgresForRegionFailsClosedOnMissingEntry_spec_11_7_433(t *tes
 
 // A single-region deployment with no PlatformRegions map fails closed for
 // any region-set target tenant — the empty region (global) still resolves.
-// spec: §11.7 lines 431-433.
+// spec: §11.7.
 func TestPlatformPostgresForRegionEmptyMapFailsClosedForRegion_spec_11_7_433(t *testing.T) {
 	global := fakePool(t)
 	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: global})

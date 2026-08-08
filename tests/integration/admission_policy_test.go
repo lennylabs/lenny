@@ -72,8 +72,7 @@ func buildAgentPod(t *testing.T, profile isolation.Profile, workspaceTier string
 	return *pod
 }
 
-// TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass is the §17.2
-// admission_policy_test.go suite (line 84): it verifies that
+// TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass is the §17.2 admission_policy_test.go suite: it verifies that
 // controller-generated pod specs for each RuntimeClass pass the deployed
 // admission policies, preventing policy/spec drift from causing warm-pool
 // deadlock (a controller building a spec the deployed lenny-pod-security
@@ -83,7 +82,7 @@ func buildAgentPod(t *testing.T, profile isolation.Profile, workspaceTier string
 // is admitted: standard→runc (full Restricted PSS), sandboxed→gvisor and
 // microvm→kata (RuntimeClass-relaxed PSS).
 //
-// spec: §17.2 line 84 (admission_policy_test.go); §13.1 (pod-security
+// spec: §17.2; §13.1 (pod-security
 // baseline); §17.2 items 1-2 (RuntimeClass-specific enforcement). F-17.2.15.
 func TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass(t *testing.T) {
 	profiles := []isolation.Profile{
@@ -113,7 +112,7 @@ func TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass(t *testing.T) {
 // isolation (nodeSelector, toleration, workspace-tier label) onto a
 // sandboxed pod, and that pod must still pass the pod-security policy.
 //
-// spec: §17.2 line 84; §6.4 (T4 dedicated-node placement). F-17.2.15.
+// spec: §17.2; §6.4 (T4 dedicated-node placement). F-17.2.15.
 func TestAdmissionPolicyAcceptsT4ControllerPodSpec(t *testing.T) {
 	pod := buildAgentPod(t, isolation.ProfileSandboxed, "T4")
 	resp := admitAgentPod(t, pod)

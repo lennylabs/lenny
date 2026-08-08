@@ -14,7 +14,7 @@ import (
 // or unreachable gateway cannot stall the Attach output relay.
 const setTracingContextForwardTimeout = 5 * time.Second
 
-// setTracingContextFrame is the §15.4.1 line 1455 outbound JSONL frame a
+// setTracingContextFrame is the §15.4.1 outbound JSONL frame a
 // runtime writes on stdout to register distributed-tracing identifiers:
 // `{"type":"set_tracing_context","context":{"langsmith_run_id":"..."}}`.
 type setTracingContextFrame struct {
@@ -22,7 +22,7 @@ type setTracingContextFrame struct {
 	Context map[string]string `json:"context"`
 }
 
-// handleSetTracingContext consumes a §15.4.1 line 1455 set_tracing_context
+// handleSetTracingContext consumes a §15.4.1 set_tracing_context
 // frame and registers its identifiers with the gateway so they propagate
 // through subsequent lenny/delegate_task calls. It reuses the gateway's
 // lenny/set_tracing_context platform tool — which merges the identifiers
@@ -32,7 +32,7 @@ type setTracingContextFrame struct {
 // the runtime's MCP client, so the frame works at all tiers including
 // Basic (which has no MCP access). The bound sessionID is injected, so a
 // runtime cannot register tracing context against a session it does not
-// own. spec: §15.4.1 line 1455, §8.3.
+// own. spec: §15.4.1, §8.3.
 func (s *Server) handleSetTracingContext(ctx context.Context, sessionID string, line []byte) {
 	if s.PlatformForwarder == nil {
 		// Dev path with no gateway link: there is nothing to register

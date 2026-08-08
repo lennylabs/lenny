@@ -82,7 +82,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 ---
 {{/*
-The release-namespace ConfigMap read (§25 line 3997: "get on ConfigMaps
+The release-namespace ConfigMap read (§25: "get on ConfigMaps
 in lenny-system"). The release namespace is lenny-system by default; the
 Role is scoped to it so the backup resolves platform configuration from
 the bundled ConfigMaps without any Secret access.

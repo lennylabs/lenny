@@ -43,7 +43,7 @@ func newSaltRotateAdmin(t *testing.T, rotator admin.ErasureSaltRotator) (*admin.
 	return router, tenants, aud
 }
 
-// spec: §12.8 line 857 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
+// spec: §12.8 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
 // rotates the salt and emits the security audit event. F-12.8.5.
 func TestRotateErasureSaltOK_spec_12_8_857(t *testing.T) {
 	rotator := &fakeSaltRotator{}
@@ -66,11 +66,11 @@ func TestRotateErasureSaltOK_spec_12_8_857(t *testing.T) {
 		}
 	}
 	if !sawAudit {
-		t.Error("§12.8 line 857: the security audit event tenant.erasure_salt_rotated was not emitted")
+		t.Error("§12.8: the security audit event tenant.erasure_salt_rotated was not emitted")
 	}
 }
 
-// spec: §12.8 line 855 — an exempt tenant has no salt; the handler maps the
+// spec: §12.8 — an exempt tenant has no salt; the handler maps the
 // sentinel to 409 BILLING_ERASURE_EXEMPT. F-12.8.5.
 func TestRotateErasureSaltExempt_spec_12_8_855(t *testing.T) {
 	rotator := &fakeSaltRotator{err: erasurejob.ErrBillingErasureExempt}
@@ -102,7 +102,7 @@ func TestRotateErasureSaltUnknownTenant(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 857 — without a rotator wired, the route is absent (404
+// spec: §12.8 — without a rotator wired, the route is absent (404
 // from the mux), so a deployment that cannot rotate never advertises the
 // endpoint. F-12.8.5.
 func TestRotateErasureSaltRouteAbsentWhenUnwired(t *testing.T) {

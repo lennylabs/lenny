@@ -20,7 +20,7 @@
 // circuits to ErrTokenServiceUnavailable without touching the Token Service
 // stub. The OnExtend dispatcher mirrors cmd/lenny-gateway's credRenewalWiring.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard).
+// spec: §4.9.
 package tier4_integration_test
 
 import (
@@ -60,7 +60,7 @@ const (
 	guardProvider = "anthropic_direct"
 	// guardDirectPayload is a direct-mode lease payload: a direct-mode
 	// lease with a positive expiry arms the adapter expiry timer the guard
-	// re-arms. spec: §4.9 line 1149.
+	// re-arms. spec: §4.9.
 	guardDirectPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 )
 
@@ -229,7 +229,7 @@ func guardDirectStoreRecord(leaseID, sessionID string, issuedAt, expiresAt time.
 // breaker-open worker sweep extends the enforced deadline far into the future,
 // so the file survives past the original deadline.
 //
-// spec: §4.9 (line 1470, direct-mode ExtendCredentialLease enforcement point)
+// spec: §4.9
 //
 // diagnosis: a transient Token Service outage terminated a still-valid direct-
 // mode session's credential at its original deadline instead of extending it,
@@ -323,7 +323,7 @@ func (noopUsage) RecordUsage(context.Context, credential.Lease, llmproxy.Usage) 
 // expiry, so an un-extended request is rejected LEASE_EXPIRED while an extended
 // one forwards upstream.
 //
-// spec: §4.9 (line 1470, proxy-mode lease-store enforcement point)
+// spec: §4.9
 //
 // diagnosis: a still-valid proxy session was rejected LEASE_EXPIRED under a
 // transient Token Service outage instead of being extended, or the extension

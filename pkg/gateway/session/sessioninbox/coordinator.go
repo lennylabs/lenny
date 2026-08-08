@@ -15,12 +15,12 @@ import (
 // rather than silently dropping the message.
 var ErrMessagingUnavailable = errors.New("sessioninbox: coordinator not wired")
 
-// DrainFailureRecorder records a §7.2 line 311 inbox-to-DLQ drain
+// DrainFailureRecorder records a §7.2 inbox-to-DLQ drain
 // failure for the `lenny_inbox_drain_failure_total{pool, session_state}`
 // counter. *gatewaymetrics.Metrics satisfies it; a nil recorder
 // disables the metric.
 //
-// spec: §7.2 line 311; §16.5 InboxDrainFailure alert.
+// spec: §7.2; §16.5 InboxDrainFailure alert.
 type DrainFailureRecorder interface {
 	RecordInboxDrainFailure(pool, sessionState string)
 }
@@ -32,7 +32,7 @@ type DrainFailureRecorder interface {
 // nil Coordinator is a no-op everywhere, so a gateway running without
 // Redis (or with messaging disabled) leaves transitions unaffected.
 //
-// spec: §7.2 lines 305-311 (migration), 343 (terminal drain), 341 (TTL).
+// spec: §7.2.
 type Coordinator struct {
 	inbox    Inbox
 	dlq      *DLQ
@@ -86,7 +86,7 @@ func NewCoordinator(cfg Config) *Coordinator {
 	}
 }
 
-// MigrateInboxToDLQ performs the §7.2 lines 305-311 atomic inbox drain
+// MigrateInboxToDLQ performs the §7.2 atomic inbox drain
 // on a `resume_pending` transition.
 //
 // In the default (in-memory) mode it reads every inbox message in FIFO
@@ -100,7 +100,7 @@ func NewCoordinator(cfg Config) *Coordinator {
 // coordinator crashes, so this applies an EXPIRE to the inbox key
 // (recovery-window cleanup) instead of draining, and returns 0.
 //
-// spec: §7.2 lines 305-311.
+// spec: §7.2.
 func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID, pool string) (preserved int, err error) {
 	if c == nil {
 		return 0, nil
@@ -143,7 +143,7 @@ func (c *Coordinator) MigrateInboxToDLQ(ctx context.Context, tenantID, sessionID
 // A nil msg.EnqueuedAt is stamped with the coordinator clock so FIFO
 // order and the durable-inbox per-message TTL are well defined.
 //
-// spec: §7.2 lines 319, 327, 329 (inbox buffering, queued receipt).
+// spec: §7.2.
 func (c *Coordinator) EnqueueInbox(ctx context.Context, tenantID, sessionID string, msg Message) (dropped *Message, err error) {
 	if c == nil {
 		return nil, ErrMessagingUnavailable
@@ -162,7 +162,7 @@ func (c *Coordinator) EnqueueInbox(ctx context.Context, tenantID, sessionID stri
 // was dropped) so the caller can return a `dropped` delivery receipt
 // with `reason: dlq_overflow`.
 //
-// spec: §7.2 line 331; the dead-letter table recovering and pre-running
+// spec: §7.2; the dead-letter table recovering and pre-running
 // rows.
 func (c *Coordinator) EnqueueDLQ(ctx context.Context, tenantID, sessionID string, msg Message, ttl time.Duration) (dropped *Message, err error) {
 	if c == nil {
@@ -184,7 +184,7 @@ func (c *Coordinator) InboxLen(ctx context.Context, tenantID, sessionID string) 
 	return c.inbox.Len(ctx, tenantID, sessionID)
 }
 
-// DrainOnTerminal performs the §7.2 line 343 / §7.3 line 425 inbox+DLQ
+// DrainOnTerminal performs the §7.2 / §7.3 inbox+DLQ
 // drain on a terminal transition. It reads every buffered message from
 // both the inbox and the DLQ, emits a `message_expired` event with
 // `reason: "target_terminated"` on each registered sender's event
@@ -192,7 +192,7 @@ func (c *Coordinator) InboxLen(ctx context.Context, tenantID, sessionID string) 
 // (external-client sources) are drained without an event, since there is
 // no sender stream to notify.
 //
-// spec: §7.2 line 343; §7.3 line 425; §15.4.1 reason target_terminated.
+// spec: §7.2; §7.3; §15.4.1 reason target_terminated.
 func (c *Coordinator) DrainOnTerminal(ctx context.Context, tenantID, sessionID string) (drained int, err error) {
 	if c == nil {
 		return 0, nil
@@ -213,7 +213,7 @@ func (c *Coordinator) DrainOnTerminal(ctx context.Context, tenantID, sessionID s
 	return len(all), nil
 }
 
-// ClearInboxOnAcquire emits the §7.2 line 284 `inbox_cleared` event on the
+// ClearInboxOnAcquire emits the §7.2 event on the
 // target session's own event stream when a new coordinator acquires a
 // session whose in-memory inbox did not survive the handoff. The gateway
 // calls it on the resume path (`POST /resume`), the v1 point at which a
@@ -228,7 +228,7 @@ func (c *Coordinator) DrainOnTerminal(ctx context.Context, tenantID, sessionID s
 // coordinator recovers it, so no `inbox_cleared` is emitted. A nil Emitter
 // or nil Coordinator is a no-op.
 //
-// spec: §7.2 line 284 (inbox_cleared on coordinator failover).
+// spec: §7.2.
 func (c *Coordinator) ClearInboxOnAcquire(ctx context.Context, tenantID, sessionID string) (preservedInDLQ int, err error) {
 	if c == nil || c.emit == nil {
 		return 0, nil
@@ -251,7 +251,7 @@ func (c *Coordinator) ClearInboxOnAcquire(ctx context.Context, tenantID, session
 // sender's stream. It is the periodic-sweeper hook a recovering session
 // runs while it waits to resume.
 //
-// spec: §7.2 line 341; §15.4.1 reason dlq_ttl_expired.
+// spec: §7.2; §15.4.1 reason dlq_ttl_expired.
 func (c *Coordinator) SweepExpired(ctx context.Context, tenantID, sessionID string) (expired int, err error) {
 	if c == nil {
 		return 0, nil

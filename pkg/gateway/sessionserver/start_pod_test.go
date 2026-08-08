@@ -283,7 +283,7 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 
 // spec: §4.1 (proposal: the §7.1-step-3 credential pre-check is moved into
 // createSession ahead of the step-4 claim and runs once before the claim),
-// §7.1 step 3, §4.9 lines 1216-1218.
+// §7.1 step 3, §4.9.
 // diagnosis: the combined one-call POST /v1/sessions/start runs claim,
 // prepare, and launch in a single call. The credential availability
 // pre-check must run exactly once (at the create-time claim), not again at
@@ -363,7 +363,7 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 348 (end-to-end span is pod claim through ready), §5
+// spec: §6.3, §5
 // (proposal: the combined create-and-start reuses the claim/prepare/launch
 // phases and the claim-to-ready span covers claim through ready).
 // diagnosis: the combined one-call POST /v1/sessions/start performs the
@@ -428,7 +428,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	if !ok || podClaim <= 0 {
 		t.Fatalf("pod_claim phase = %v (present=%v), want a positive sample recorded at create", podClaim, ok)
 	}
-	// spec: §6.3 line 348 — the end-to-end total is pod_claim +
+	// spec: §6.3 — the end-to-end total is pod_claim +
 	// credential_assignment + agent_session_start. The pod-claim component
 	// must be present, so the end-to-end observation is at least the
 	// pod_claim phase plus the agent_session_start phase (both measured).
@@ -446,7 +446,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 — the §7.1 atomicity contract demands "does NOT
+// spec: §7.1 — the §7.1 atomicity contract demands "does NOT
 // persist the session row" when the create-and-start atomic unit
 // (steps 2-8) fails. A claim failure on the §15.1 `POST
 // /v1/sessions/start` path returns SESSION_CREATION_FAILED with no
@@ -492,7 +492,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	if _, err := store.Get(context.Background(), "acme", "sess-pod-nomatch"); err == nil {
 		t.Fatalf("session row was persisted; §7.1 atomicity requires no row when the create-and-start atomic unit fails")
 	}
-	// §15.1 line 1138 — every retryable 503 carries Retry-After so a
+	// §15.1 — every retryable 503 carries Retry-After so a
 	// client retries with a deterministic budget.
 	if ra := rr.Header().Get("Retry-After"); ra == "" {
 		t.Errorf("Retry-After header missing on the SESSION_CREATION_FAILED reply")
@@ -605,8 +605,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 }
 
 // spec: §4.4 (proposal: /start is launch-only and does no credential work),
-// §15.1 (/start precondition), §4.9 lines 1216-1218 (pre-claim credential
-// resolution).
+// §15.1 (/start precondition), §4.9.
 // diagnosis: the two-step `POST /v1/sessions/{id}/start` exclusive-pool path
 // must launch only — the §4.9 credential resolution belongs at /create
 // (pre-check) and /finalize (lease assignment), never at /start. The router
@@ -761,7 +760,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475, §7.3 line 387 (setup_command_failed non-retryable),
+// spec: §7.5, §7.3,
 // §15.1 (SETUP_COMMAND_FAILED), §4.3 (proposal: finalize-failure reclaim),
 // §6.2 (pre-attached disposition).
 // diagnosis: a deterministic non-zero setup-command exit during the §4.3
@@ -1001,10 +1000,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1220 (check-to-assignment race), §7.3 line 138 / §7.6 line
-// 153 (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; a
-// check-to-assignment mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED at
-// /finalize), §4.3 (proposal: a finalize-step failure reclaims the create-time
+// spec: §4.9, §7.3 / §7.6, §4.3 (proposal: a finalize-step failure reclaims the create-time
 // pod), §6.2 (pre-attached disposition).
 // diagnosis: a credential source present at the create-time §7.1-step-3
 // pre-check but gone by /finalize is the check-to-assignment mismatch. It must
@@ -1300,8 +1296,7 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 
 // podResumeServer builds a sessionserver wired to a warm pool whose
 // §4.7 adapter can restore a session onto a fresh pod. The gateway-driven
-// restore fetches the checkpoint's presigned chunk capabilities (§10.1
-// line 155); a resume that carries no chunks restores an empty workspace,
+// restore fetches the checkpoint's presigned chunk capabilities (§10.1); a resume that carries no chunks restores an empty workspace,
 // which is all these placement tests require. It returns the server, the
 // session store for seeding `awaiting_client_action` rows, the pod
 // registry, and the cluster client.
@@ -1590,7 +1585,7 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 160 — the §4.2 pod-to-session binding is persisted on
+// spec: §4.2 — the §4.2 pod-to-session binding is persisted on
 // the sessions row so a fresh gateway replica can recover the binding
 // from Postgres after a coordinator handoff. The in-memory Registry is
 // a cache; the row column is the source of truth across replicas.
@@ -1636,7 +1631,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 		t.Fatalf("get session: %v", err)
 	}
 	if row.PodAssignment != "sbx-persist" {
-		t.Errorf("row.PodAssignment = %q, want sbx-persist (§4.2 line 160)", row.PodAssignment)
+		t.Errorf("row.PodAssignment = %q, want sbx-persist (§4.2)", row.PodAssignment)
 	}
 	// The Registry also holds the binding — the in-memory cache is
 	// authoritative for this replica's hot path.
@@ -1646,7 +1641,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 }
 
 // TestResumeKeepsAwaitingOnTransientPoolExhaustion covers F-7.3.23 /
-// §7.3 line 423: a transient warm-pool exhaustion during the client's
+// §7.3: a transient warm-pool exhaustion during the client's
 // explicit `POST /resume` retry must leave the row in
 // `awaiting_client_action` so the next retry can succeed once an idle
 // pod is available. The §15.1 envelope still surfaces a retryable 503.
@@ -1656,7 +1651,7 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// A pool with no idle sandbox triggers podclaim.ErrNoIdlePod and
-	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2 line 519
+	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2
 	// retryable response).
 	cluster := podBindClient(
 		t,
@@ -1688,7 +1683,7 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 		t.Fatalf("resume on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// spec: §7.3 line 423 — the row must stay in awaiting_client_action
+	// spec: §7.3 — the row must stay in awaiting_client_action
 	// so a retry can succeed once an idle pod returns to the pool.
 	// F-7.3.23.
 	row, err := store.Get(context.Background(), "acme", "sess-transient-pool")
@@ -1696,7 +1691,7 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 		t.Fatalf("get session: %v", err)
 	}
 	if row.State != session.StateAwaitingClientAction {
-		t.Errorf("state = %q, want awaiting_client_action (§7.3 line 423; transient pool exhaustion should not demote to failed)", row.State)
+		t.Errorf("state = %q, want awaiting_client_action (§7.3; transient pool exhaustion should not demote to failed)", row.State)
 	}
 }
 
@@ -1758,7 +1753,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — recovery_generation is incremented on each
+// spec: §4.2 — recovery_generation is incremented on each
 // pod recovery. The resume path bumps it by one and persists the new
 // pod assignment in the same Update.
 func TestResumeBumpsRecoveryGeneration(t *testing.T) {
@@ -1787,7 +1782,7 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 	// pod assignment reflects the new bound sandbox.
 	row, _ = store.Get(context.Background(), "acme", "sess-recovery-bump")
 	if row.RecoveryGeneration != 1 {
-		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2 line 156)",
+		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2)",
 			row.RecoveryGeneration)
 	}
 	if row.PodAssignment != "sbx-1" {
@@ -2034,7 +2029,7 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 }
 
 // spec: §5.2 (service mode is claimless: no SandboxClaim, no workspace
-// materialization), §3.6 (service-mode session contract), §7.1 line 74
+// materialization), §3.6 (service-mode session contract), §7.1
 // (conversationContinuity).
 // diagnosis: a service-mode start that claims a Sandbox or binds a pod
 // breaks the §5.2 claimless contract — every service-mode session would

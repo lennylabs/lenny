@@ -10,7 +10,7 @@ import (
 )
 
 // scriptedQuerier answers each PromQL query from a map keyed by a
-// substring of the query, so the test asserts the §5.2 line 573 query
+// substring of the query, so the test asserts the §5.2 query
 // shapes without an exact string match.
 type scriptedQuerier struct {
 	answers map[string]float64

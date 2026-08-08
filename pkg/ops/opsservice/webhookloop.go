@@ -50,7 +50,7 @@ type WebhookSubscription struct {
 	// concrete tenant id matches only events labeled with that tenant.
 	// spec: 25.5
 	TenantFilter string
-	// Generation is the §25.5 line 2751 per-subscription invalidation
+	// Generation is the §25.5 per-subscription invalidation
 	// counter. The worker re-checks it against the cache immediately
 	// before each delivery so a subscription deleted or updated since the
 	// tick's snapshot was taken is skipped (or not delivered with stale
@@ -108,7 +108,7 @@ type SubscriptionSource interface {
 
 // GenerationChecker, when implemented by a SubscriptionSource, lets the
 // worker verify a subscription is still current immediately before
-// delivery. spec: §25.5 line 2751 — "Delivery goroutines check
+// delivery. spec: §25.5 — "Delivery goroutines check
 // generation before each delivery; a deleted-but-not-yet-invalidated
 // subscription will be skipped because its generation mismatches."
 type GenerationChecker interface {
@@ -123,7 +123,7 @@ type GenerationChecker interface {
 // each terminal delivery: the lenny_ops_events_webhook_delivery_total
 // counter (by status) and the
 // lenny_ops_events_webhook_delivery_latency_seconds histogram. A nil
-// observer disables the instruments. spec: §25.5 lines 2790-2791.
+// observer disables the instruments. spec: §25.5.
 type DeliveryMetrics interface {
 	// ObserveDelivery records one terminal delivery: its subscription,
 	// "delivered" or "failed" status, and end-to-end latency.
@@ -222,7 +222,7 @@ func NewWebhookWorker(cfg WebhookWorkerConfig) *WebhookWorker {
 	}
 	// A SubscriptionSource that also tracks generations lets the worker
 	// re-verify each subscription is still current immediately before
-	// delivery (§25.5 line 2751).
+	// delivery (§25.5).
 	if gc, ok := cfg.Subscriptions.(GenerationChecker); ok {
 		w.generations = gc
 	}
@@ -277,7 +277,7 @@ func (w *WebhookWorker) Tick(ctx context.Context) error {
 				w.backlog.Add(-pending)
 				return ctx.Err()
 			}
-			// §25.5 line 2751: re-check the subscription is still current
+			// §25.5: re-check the subscription is still current
 			// right before delivery. A subscription deleted or updated since
 			// this tick's snapshot (its generation advanced, or it left the
 			// active set) is skipped so it does not receive one more event.

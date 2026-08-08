@@ -97,7 +97,7 @@ func targetingFailedCount(emitter *eventbuffer.Emitter) int {
 	return len(page.Events)
 }
 
-// spec: §10.7 lines 779-782, 825 — a tenant configured for a built-in
+// spec: §10.7 — a tenant configured for a built-in
 // OpenFeature SDK provider (launchdarkly) now actually evaluates its
 // mode:external experiments and enrolls the session, instead of the
 // prior silent route-to-control. F-10.7.3.
@@ -120,7 +120,7 @@ func TestApplyExperimentRoutingEnrollsViaSDKProvider_spec_10_7(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 833 — an SDK-provider evaluation error is the
+// spec: §10.7 — an SDK-provider evaluation error is the
 // targeting_failed condition: no enrollment is made and the
 // experiment.targeting_failed event is emitted. The prior code never
 // reached this path for launchdarkly/statsig/unleash (F-10.7.3 gap).

@@ -24,7 +24,7 @@ func baseClient(t *testing.T) redis.UniversalClient {
 // separately).
 var insecureTemplate = redisconn.Config{AllowInsecure: true}
 
-// spec: §12.4 lines 237-245 — with no per-concern URLs every concern
+// spec: §12.4 — with no per-concern URLs every concern
 // resolves to the base client (the single Tier 1/2 topology). F-12.4.16.
 func TestBuildNoSplit_spec_12_4_245(t *testing.T) {
 	base := baseClient(t)
@@ -115,7 +115,7 @@ func TestBuildNilBase(t *testing.T) {
 
 // A per-concern URL that violates the §12.4 AUTH/TLS invariant fails the
 // build (the template here enforces, so a plaintext passwordless URL is
-// rejected). F-12.4.16 / §12.4 line 197.
+// rejected). F-12.4.16 / §12.4.
 func TestBuildPerConcernHonorsAuthInvariant_spec_12_4_197(t *testing.T) {
 	base := baseClient(t)
 	_, err := redistopology.Build(base, map[storerouter.RedisConcern]string{

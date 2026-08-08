@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §4.8 lines 1055-1056, 1075, §15.1 lines 1012-1013 — the
+// spec: §4.8, §15.1 — the
 // PreLLMRequest and PostLLMResponse interceptor phases on the §4.9 LLM
 // reverse proxy: a REJECT returns LLM_REQUEST_REJECTED / LLM_RESPONSE_
 // REJECTED, a MODIFY rewrites the request body and the response body,

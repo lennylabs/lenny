@@ -1,4 +1,4 @@
--- §16.4 line 378: the EventStore tables (audit events, session logs,
+-- §16.4: the EventStore tables (audit events, session logs,
 -- stream cursors) are partitioned by time using native Postgres range
 -- partitioning so a background job can drop whole partitions beyond the
 -- retention window (30 days for session logs, 7 days for stream
@@ -7,7 +7,7 @@
 -- range-partitioned on created_at.
 --
 -- audit_log is the third EventStore table. It is NOT converted to
--- native range partitioning here: §12.8 line 815 mandates a foreign key
+-- native range partitioning here: §12.8 mandates a foreign key
 -- audit_redaction_receipts.audit_event_id -> audit_log.id, which
 -- requires a single-column UNIQUE (id) on audit_log; Postgres forbids a
 -- unique constraint that omits the partition key (created_at) on a
@@ -31,14 +31,14 @@
 -- parent). tenant_id is a plain column rather than a foreign key,
 -- matching the other append-only EventStore ledgers.
 --
--- spec: §16.4 line 378 (EventStore partitioning + retention windows);
--- §12.2 line 16 (EventStore stores session logs and stream cursors);
--- §16.4 line 373 (setup stdout/stderr captured in EventStore).
+-- spec: §16.4;
+-- §12.2;
+-- §16.4.
 
 -- --- session_logs -------------------------------------------------------
 -- The durable per-session operational log (setup command stdout/stderr,
 -- runtime stderr, and session event records). Retention window: 30 days
--- (§16.4 line 378; §17.8 line 877). seq is the per-session monotonic
+-- (§16.4; §17.8). seq is the per-session monotonic
 -- ordering the §15.1 GET /v1/sessions/{id}/logs cursor pages over.
 CREATE TABLE session_logs (
     tenant_id   TEXT        NOT NULL,
@@ -73,7 +73,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON session_logs TO lenny_app;
 -- --- stream_cursors -----------------------------------------------------
 -- SSE / streaming resumption cursors: the last delivered sequence number
 -- per (session, consumer) so a reconnecting consumer resumes without
--- gap or duplication. Retention window: 7 days (§16.4 line 378); a
+-- gap or duplication. Retention window: 7 days (§16.4); a
 -- cursor older than the window belongs to a connection that will not
 -- resume.
 CREATE TABLE stream_cursors (

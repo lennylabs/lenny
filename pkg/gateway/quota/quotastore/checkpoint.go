@@ -19,7 +19,7 @@ import (
 // still current rather than reviving a bucket that has already rolled
 // over. Only the fixed-interval periods carry a stable label; the rolling
 // period returns an error because a sliding-window sum spans many buckets
-// with no single label. spec: §11.2 line 44; §12.4.
+// with no single label. spec: §11.2; §12.4.
 func WindowLabel(period quota.ResetPeriod, at time.Time) (string, error) {
 	label, _, err := window(period, at)
 	return label, err
@@ -36,14 +36,14 @@ func WindowLength(period quota.ResetPeriod, at time.Time) (time.Duration, error)
 // TenantRollupUsage returns the §11.2 per-tenant rollup window total for
 // the fixed-interval window of period containing at. It reads the same
 // reserved tenant-rollup slot AddHierarchical advances, so the checkpoint
-// persists the tenant-scope counter the §11.2 line 48 reconstruction
+// persists the tenant-scope counter the §11.2 reconstruction
 // restores ("for each active session and tenant scope"). A window with no
-// recorded usage reads as 0. spec: §11.2 line 44.
+// recorded usage reads as 0. spec: §11.2.
 func (c *Counter) TenantRollupUsage(ctx context.Context, tenantID string, period quota.ResetPeriod, at time.Time) (int64, error) {
 	return c.Usage(ctx, tenantID, tenantRollupUser, period, at)
 }
 
-// restoreScript applies the §11.2 line 44 MAX rule to a single fixed-window
+// restoreScript applies the §11.2 MAX rule to a single fixed-window
 // counter: it raises the key to ARGV[1] only when the checkpoint exceeds
 // the live Redis value, so a stale checkpoint (up to quotaSyncIntervalSeconds
 // old) can never lower a counter below its actual accumulated usage and
@@ -64,23 +64,23 @@ end
 return val
 `)
 
-// RestoreUserWindow applies the §11.2 line 48 MAX rule to the per-user
+// RestoreUserWindow applies the §11.2 MAX rule to the per-user
 // token-usage window of period containing at:
 // restored = MAX(redis_current, checkpointValue). It is the write half of
 // the Redis-recovery reconstruction and the operator-driven §24.6
 // reconcile — the counter is raised to the durable checkpoint when Redis
 // came back empty (or with a value below the checkpoint) and left intact
 // when the live value is already higher. It returns the resulting window
-// total. A negative checkpointValue is rejected. spec: §11.2 line 48;
-// §24.6 line 99.
+// total. A negative checkpointValue is rejected. spec: §11.2;
+// §24.6.
 func (c *Counter) RestoreUserWindow(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time, checkpointValue int64) (int64, error) {
 	return c.restoreWindow(ctx, tenantID, userID, period, at, checkpointValue)
 }
 
-// RestoreTenantRollupWindow applies the §11.2 line 48 MAX rule to the
+// RestoreTenantRollupWindow applies the §11.2 MAX rule to the
 // per-tenant rollup window (the tenant-scope counter the spec names
 // alongside the per-session scope). It returns the resulting total.
-// spec: §11.2 line 48; §24.6 line 99.
+// spec: §11.2; §24.6.
 func (c *Counter) RestoreTenantRollupWindow(ctx context.Context, tenantID string, period quota.ResetPeriod, at time.Time, checkpointValue int64) (int64, error) {
 	return c.restoreWindow(ctx, tenantID, tenantRollupUser, period, at, checkpointValue)
 }

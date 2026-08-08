@@ -86,7 +86,7 @@ func TestDelegationAwaitChildren(t *testing.T) {
 
 		c.terminateSession(childA)
 
-		// spec: §8.5 line 530 / §8.8 lines 947-950 — "any" returns as
+		// spec: §8.5 / §8.8 — "any" returns as
 		// soon as any child reaches a terminal state, returning the
 		// first TaskResult.
 		results := c.awaitChildren(parent, []string{childA, childB}, "any")
@@ -100,7 +100,7 @@ func TestDelegationAwaitChildren(t *testing.T) {
 			t.Errorf("await_children mode=any result state = %q, want completed", results[0].State)
 		}
 
-		// spec: §8.8 lines 947-950 — "Remaining children continue
+		// spec: §8.8 — "Remaining children continue
 		// running — they are not auto-cancelled."
 		code, body := c.rest(http.MethodGet, "/v1/sessions/"+childB, nil)
 		if code != http.StatusOK {
@@ -121,7 +121,7 @@ func TestDelegationAwaitChildren(t *testing.T) {
 		c.terminateSession(childA)
 		c.terminateSession(childB)
 
-		// spec: §8.5 line 530 / §8.8 lines 947-950 — "all" waits until
+		// spec: §8.5 / §8.8 — "all" waits until
 		// all children reach a terminal state and returns the list of
 		// every child's TaskResult.
 		results := c.awaitChildren(parent, []string{childA, childB}, "all")

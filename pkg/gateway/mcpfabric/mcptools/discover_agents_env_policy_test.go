@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §10.6 line 601, line 629 — defaultDelegationPolicy is the
+// spec: §10.6 — defaultDelegationPolicy is the
 // DelegationPolicy applied to sessions created in an environment, and the
 // §10.6 effective scope is `(environment definition ∪ cross-environment
 // permitted runtimes) ∩ delegation policy`. lenny/discover_agents
@@ -119,8 +119,7 @@ func TestDiscoverAgentsAppliesEnvironmentDefaultPolicy_spec_10_6_601(t *testing.
 
 func TestDiscoverAgentsIntersectsRuntimeAndEnvironmentPolicy_spec_10_6_629(t *testing.T) {
 	// Two governing policies: the runtime-level rt-policy allows tier:gold,
-	// the environment default env-scoped allows access:read. The §10.6 line
-	// 629 intersection admits only a target both permit.
+	// the environment default env-scoped allows access:read. The §10.6 intersection admits only a target both permit.
 	srv, runtimes, policies := envPolicyHarness(t, "orchestrator", "security-team", "env-scoped")
 	ctx := context.Background()
 	seedAgent(t, runtimes, "orchestrator", nil, "rt-policy")

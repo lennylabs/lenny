@@ -40,7 +40,7 @@ type poolLeaseStore interface {
 // upstream request. The lease is retained rather than removed because under
 // the shared-Postgres lease store a delete would remove the row every
 // replica reads, making the deny-list check unreachable and degrading the
-// rejection to LEASE_TOKEN_INVALID. spec: §4.9 lines 1640-1652, 1671.
+// rejection to LEASE_TOKEN_INVALID. spec: §4.9.
 type poolCredentialRevoker struct {
 	leases   poolLeaseStore
 	denyList credentialDenyList
@@ -73,7 +73,7 @@ func (p *poolCredentialRevoker) RevokePoolCredentials(_ context.Context, poolID 
 var _ admin.PoolCredentialRevoker = (*poolCredentialRevoker)(nil)
 
 // directModeRevocationRotator implements §4.9 emergency revocation step 5
-// (spec/04_system-components.md line 1649): for a revoked pool credential
+// (§4.9): for a revoked pool credential
 // it sends a RotateCredentials RPC to every direct-delivery pod holding a
 // lease against the credential, so the pod is proactively pushed off the
 // materialized key rather than waiting for the lease's natural TTL.
@@ -93,7 +93,7 @@ type directModeRevocationRotator struct {
 	leases poolLeaseStore
 	// markRevoked marks the credential unselectable in the credential-
 	// assignment service so the replacement mint draws a *different*
-	// credential from the pool (§4.9 line 1649: "a different credential in
+	// credential from the pool (§4.9: "a different credential in
 	// the pool"). It runs before the rotate is dispatched.
 	markRevoked func(poolID, credentialID string)
 	// rotate mints a replacement lease from nextPool and pushes it to the
@@ -110,7 +110,7 @@ type directModeRevocationRotator struct {
 // onRevoke rotates every direct-delivery pod on this replica off a
 // revoked pool credential. It first marks the credential unselectable so
 // the replacement mint skips it, then re-mints from the lease's own pool
-// (the §4.9 line 1649 "different credential in the pool" path) under the
+// (the §4.9 path) under the
 // emergency_revocation trigger and pushes it to the pod. A user-backed
 // revocation (§11.4 full_revoke) carries no pool credential and is
 // ignored. When the pool has no other assignable credential the rotate

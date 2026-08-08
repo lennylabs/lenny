@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §4.4 line 246 — every non-Linux entry point returns
+// spec: §4.4 — every non-Linux entry point returns
 // ErrNotSupported because /proc/{pid}/stat is unavailable.
 
 func TestPauseReturnsNotSupportedOnNonLinux(t *testing.T) {

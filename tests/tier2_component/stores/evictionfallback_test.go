@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-2 component test for the §4.4 lines 263–289 eviction-fallback
+// Tier-2 component test for the §4.4 eviction-fallback
 // writer driving the production Postgres-backed EvictionStateStore.
 // The unit tests in pkg/gateway/evictionfallback already cover the
 // inline / MinIO-key / truncation chooser against the in-memory
@@ -10,7 +10,7 @@
 // migration 0045 + 0060 schema so the column projection round-trips
 // through pgx end-to-end.
 //
-// spec: §4.4 lines 263–289.
+// spec: §4.4.
 package stores_test
 
 import (
@@ -62,7 +62,7 @@ func (c *captureMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keys strin
 // IncCheckpointEvictionFallback satisfies the
 // pkg/gateway/evictionfallback.MetricsSink contract. The captureMetrics
 // fake records every fallback-entry call so the test can assert on the
-// §4.4 line 263 counter alongside the existing total-loss and
+// §4.4 counter alongside the existing total-loss and
 // partial-keys assertions.
 func (c *captureMetrics) IncCheckpointEvictionFallback(pool string, hadPrior bool) {
 	tag := "no"
@@ -80,7 +80,7 @@ func (c *captureEvents) EmitSessionLost(_ context.Context, sessionID, reason str
 	c.calls = append(c.calls, sessionID+"|"+reason)
 }
 
-// spec: §4.4 lines 263-289.
+// spec: §4.4.
 // diagnosis: a failure means the eviction-fallback writer does not
 // round-trip an inline-stored last-message context, so a small fallback
 // payload would be lost or corrupted across the Postgres write and read.
@@ -135,7 +135,7 @@ func TestEvictionFallbackWriterPostgresInlineRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: §4.4 lines 263-289.
+// spec: §4.4.
 // diagnosis: a failure means the writer does not record the MinIO
 // key-path form of the fallback context, so a large payload offloaded to
 // the artifact store would not be resolvable on read.
@@ -182,7 +182,7 @@ func TestEvictionFallbackWriterPostgresMinIOKeyPath(t *testing.T) {
 	}
 }
 
-// spec: §4.4 lines 263-289.
+// spec: §4.4.
 // diagnosis: a failure means the writer does not truncate the inline
 // context when the MinIO offload fails, so a partial or oversized row
 // could be written instead of a bounded fallback record.
@@ -238,8 +238,7 @@ func (r *recordingQuotaCounterTier2) Adjust(_ context.Context, _ string, delta i
 	return nil
 }
 
-// TestEvictionFallbackWriterRecordsArtifactStoreRow drives the §4.4
-// line 291 path against the production artifact_store catalog so the
+// TestEvictionFallbackWriterRecordsArtifactStoreRow drives the §4.4 path against the production artifact_store catalog so the
 // `artifact_type = eviction_context` row is committed end-to-end. The
 // quota counter is a recording fake — the spec calls for a Redis bump
 // after both rows commit, and the bump is exercised by the unit tests
@@ -247,7 +246,7 @@ func (r *recordingQuotaCounterTier2) Adjust(_ context.Context, _ string, delta i
 // schema regression that would only surface against the real pgx
 // driver (e.g., a NULL constraint on the new column).
 //
-// spec: §4.4 line 291.
+// spec: §4.4.
 // diagnosis: a failure means a SQL schema regression breaks the
 // artifact-store row write against the real pgx driver (e.g., a NULL
 // constraint on a new column), which unit tests with fakes would miss.
@@ -319,7 +318,7 @@ func TestEvictionFallbackWriterRecordsArtifactStoreRow(t *testing.T) {
 // store at construction. (We use the nil-store path because forcing a
 // real Postgres failure in a tier-2 test is unreliable.)
 //
-// spec: §4.4 lines 263-289.
+// spec: §4.4.
 // diagnosis: a failure means the total-loss path does not log CRITICAL,
 // bump the loss metric, and emit session.lost when the writer has no
 // Postgres store, so an unrecoverable eviction would pass silently.

@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration coverage for the §10.1 line 155 / §15.1 line 671
+// Tier-4 integration coverage for the §10.1 / §15.1
 // chunked workspace download and the §7.1 derive chunk-copy, driven against
 // a live MinIO container.
 //
@@ -15,7 +15,7 @@
 //     writes a derived manifest row, so no object is shared with the parent
 //     and the derived session survives the parent's GC.
 //
-// spec: §10.1 line 155; §15.1 line 671; §7.1 derive copy semantics.
+// spec: §10.1; §15.1; §7.1 derive copy semantics.
 
 package tier4_integration_test
 
@@ -33,7 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §15.1 line 671 / §10.1 line 155 — the workspace download returns
+// spec: §15.1 / §10.1 — the workspace download returns
 // the concatenation of the manifest row's chunks in index order.
 // diagnosis: the workspace download did not return the manifest chunks
 // concatenated in index order, so a derived workspace is corrupt or
@@ -67,7 +67,7 @@ func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
 	}
 }
 
-// spec: §7.1 derive / §10.1 line 155 — deriving from a multi-chunk parent
+// spec: §7.1 derive / §10.1 — deriving from a multi-chunk parent
 // copies every chunk into the derived session's own prefix and writes a
 // derived manifest row, so no object is shared with the parent.
 //
@@ -111,7 +111,7 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 
 	// The derived session's ref is the four-segment object-path form whose
 	// last segment is the fresh derived checkpoint id.
-	// spec: §10.1 line 155 / §4.5 line 312.
+	// spec: §10.1 / §4.5.
 	derived, err := sessions.Get(ctx, tenant, "sess_derived")
 	if err != nil {
 		t.Fatalf("get derived session: %v", err)
@@ -166,7 +166,7 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 / §4.5 line 312 — the stored WorkspaceSnapshot.Ref
+// spec: §10.1 / §4.5 — the stored WorkspaceSnapshot.Ref
 // is the four-segment object-path form /{tenant}/checkpoints/{session}/
 // {checkpoint_id} the snapshot parsers accept; the workspace download
 // resolves the manifest row from its trailing checkpoint_id segment and
@@ -203,7 +203,7 @@ func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
 	}
 }
 
-// spec: §7.1 derive / §10.1 line 155 — deriving from a parent whose
+// spec: §7.1 derive / §10.1 — deriving from a parent whose
 // WorkspaceSnapshot.Ref is the four-segment object-path form resolves the
 // parent manifest from the trailing checkpoint_id segment and copies every
 // chunk into the derived session's own prefix.

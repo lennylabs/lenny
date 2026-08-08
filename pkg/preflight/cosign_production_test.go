@@ -10,7 +10,7 @@ import (
 )
 
 // TestCheckCosignProductionDevPasses_spec_5_3 confirms a dev install is
-// not warned: §5.3 line 669 scopes the prerequisite to production and
+// not warned: §5.3 scopes the prerequisite to production and
 // staging, and a stock dev install renders without the signing material
 // configured.
 func TestCheckCosignProductionDevPasses_spec_5_3(t *testing.T) {
@@ -30,7 +30,7 @@ func TestCheckCosignProductionDevPasses_spec_5_3(t *testing.T) {
 // non-blocking WARNING (Passed stays true) so the install is not aborted
 // but the operator is notified.
 //
-// spec: §5.3 line 669.
+// spec: §5.3.
 func TestCheckCosignProductionWarnsWhenDisabled_F_5_3_5(t *testing.T) {
 	for _, env := range []string{"prod", "production", "staging", "stage", "PROD", " Staging "} {
 		d := preflight.CheckCosignProduction(env, false)

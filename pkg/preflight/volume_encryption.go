@@ -10,7 +10,7 @@ import (
 )
 
 // VolumeEncryptionResult reports the encryption posture of one persistent
-// volume the §12.9 line 1050 check inspects (the Postgres or Redis data
+// volume the §12.9 check inspects (the Postgres or Redis data
 // volume). Detail carries the StorageClass or provider note backing the
 // verdict.
 type VolumeEncryptionResult struct {
@@ -22,7 +22,7 @@ type VolumeEncryptionResult struct {
 	Detail string
 }
 
-// VolumeEncryptionProber reports the §12.9 line 1050 encryption posture of
+// VolumeEncryptionProber reports the §12.9 encryption posture of
 // the Postgres and Redis persistent volumes. A real implementation queries
 // the cloud provider's volume API (or inspects the bound StorageClass) and
 // returns one result per volume. It returns a non-nil error when the check
@@ -32,7 +32,7 @@ type VolumeEncryptionResult struct {
 // topology has no in-cluster Postgres/Redis volumes for the chart to probe,
 // so v1 relies on the operator attestation the spec provides.
 //
-// spec: §12.9 line 1050.
+// spec: §12.9.
 type VolumeEncryptionProber interface {
 	ProbeVolumeEncryption(ctx context.Context) ([]VolumeEncryptionResult, error)
 }
@@ -45,7 +45,7 @@ func (f VolumeEncryptionProbeFunc) ProbeVolumeEncryption(ctx context.Context) ([
 	return f(ctx)
 }
 
-// VolumeEncryptionCheck is the §12.9 line 1050 T2 storage-layer encryption
+// VolumeEncryptionCheck is the §12.9 T2 storage-layer encryption
 // audit. The spec requires the preflight Job to validate that the Redis and
 // Postgres volumes are backed by encrypted storage. The decision tree is:
 //
@@ -60,7 +60,7 @@ func (f VolumeEncryptionProbeFunc) ProbeVolumeEncryption(ctx context.Context) ([
 //     install is not blocked (the monitoring.acknowledgeNoPrometheus /
 //     playground.acknowledgeApiKeyMode precedent).
 //
-// spec: §12.9 line 1050.
+// spec: §12.9.
 type VolumeEncryptionCheck struct {
 	// DevMode is the global.devMode chart value; true exempts the check.
 	DevMode bool
@@ -73,14 +73,14 @@ type VolumeEncryptionCheck struct {
 	Prober VolumeEncryptionProber
 }
 
-// Decide evaluates the §12.9 line 1050 volume-encryption posture.
+// Decide evaluates the §12.9 volume-encryption posture.
 //
-// spec: §12.9 line 1050.
+// spec: §12.9.
 func (c VolumeEncryptionCheck) Decide(ctx context.Context) Decision {
 	if c.DevMode {
 		return Decision{
 			Passed: true,
-			Reason: "§12.9 line 1050: volume-encryption check exempt under global.devMode",
+			Reason: "§12.9: volume-encryption check exempt under global.devMode",
 		}
 	}
 	if c.Prober == nil {
@@ -107,17 +107,17 @@ func (c VolumeEncryptionCheck) Decide(ctx context.Context) Decision {
 		sort.Strings(unencrypted)
 		return Decision{
 			Passed: false,
-			Reason: fmt.Sprintf("§12.9 line 1050: T2 data requires volume-level encryption; unencrypted volume(s): %s",
+			Reason: fmt.Sprintf("§12.9: T2 data requires volume-level encryption; unencrypted volume(s): %s",
 				strings.Join(unencrypted, ", ")),
 		}
 	}
 	return Decision{
 		Passed: true,
-		Reason: "§12.9 line 1050: Postgres and Redis volumes are backed by encrypted storage",
+		Reason: "§12.9: Postgres and Redis volumes are backed by encrypted storage",
 	}
 }
 
-// cannotPerform returns the §12.9 line 1050 non-blocking decision used when
+// cannotPerform returns the §12.9 non-blocking decision used when
 // the live posture cannot be determined. An attested install passes
 // cleanly; an unattested install passes with a WARNING that records the
 // obligation to attest. Neither blocks the install, matching the spec's "a
@@ -126,13 +126,13 @@ func (c VolumeEncryptionCheck) cannotPerform(reason string) Decision {
 	if c.Attested {
 		return Decision{
 			Passed: true,
-			Reason: "§12.9 line 1050: volume encryption not directly verified (" + reason +
+			Reason: "§12.9: volume encryption not directly verified (" + reason +
 				"); accepted on preflight.attestVolumeEncryption attestation",
 		}
 	}
 	return Decision{
 		Passed: true,
-		Reason: "WARNING: §12.9 line 1050 cannot verify Postgres/Redis volume encryption (" + reason +
+		Reason: "WARNING: §12.9 cannot verify Postgres/Redis volume encryption (" + reason +
 			"); set preflight.attestVolumeEncryption: true to attest the T2 storage-layer encryption baseline",
 	}
 }

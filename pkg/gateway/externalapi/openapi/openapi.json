@@ -21,7 +21,7 @@
     "schemas": {
       "Error": {
         "type": "object",
-        "description": "§15.1 line 972 / §15.2.1 line 1376 REST↔MCP error envelope. Every gateway error response carries this shape verbatim; SDK generators must surface category and retryable so callers can distinguish a transient network blip from a permanent validation failure.",
+        "description": "REST↔MCP error envelope. Every gateway error response carries this shape verbatim; SDK generators must surface category and retryable so callers can distinguish a transient network blip from a permanent validation failure.",
         "required": ["error"],
         "properties": {
           "error": {
@@ -29,9 +29,9 @@
             "required": ["code", "category", "message", "retryable"],
             "properties": {
               "code":      { "type": "string", "description": "§15.1 canonical error code (e.g. VALIDATION_ERROR, UNAUTHORIZED, MCP_PROTOCOL_VERSION_RETIRED)." },
-              "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "§15.1 line 972 — coarse classification used by SDK retry logic." },
+              "category":  { "type": "string", "enum": ["VALIDATION", "AUTH", "AUTHZ", "NOT_FOUND", "CONFLICT", "TRANSIENT", "RATE_LIMIT", "INTERNAL", "UNAVAILABLE", "TIMEOUT"], "description": "coarse classification used by SDK retry logic." },
               "message":   { "type": "string", "description": "Human-readable failure summary." },
-              "retryable": { "type": "boolean", "description": "§15.1 line 972 — true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
+              "retryable": { "type": "boolean", "description": "true when the client should retry, with backoff bounded by suggestedRetryAfter when present." },
               "details":   { "type": "object", "additionalProperties": true, "description": "Optional structured per-error context (fields, runbook, suggestedRetryAfter, …)." }
             }
           }
@@ -129,7 +129,7 @@
           },
           "metadata": {
             "type": "object",
-            "description": "§7.1 line 6 client-supplied CreateSession metadata, a flat string→string map echoed verbatim across the session lifetime.",
+            "description": "client-supplied CreateSession metadata, a flat string→string map echoed verbatim across the session lifetime.",
             "additionalProperties": { "type": "string" }
           },
           "retryPolicy": { "$ref": "#/components/schemas/RetryPolicy" }
@@ -146,7 +146,7 @@
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
           "metadata": {
             "type": "object",
-            "description": "§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 VALIDATION_ERROR.",
+            "description": "client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 VALIDATION_ERROR.",
             "additionalProperties": { "type": "string" }
           },
           "retryPolicy": { "$ref": "#/components/schemas/RetryPolicy" }
@@ -156,12 +156,12 @@
         "type": "object",
         "description": "§7.3 client-supplied retry policy. The gateway clamps each populated field against the deployer caps at admission; a missing/zero value falls through to the cap as the effective value. Negative values reject with 400 VALIDATION_ERROR.",
         "properties": {
-          "mode": { "type": "string", "enum": ["auto_then_client", "client_only"], "description": "§7.3 line 382 retry mode. Defaults to auto_then_client." },
-          "maxRetries": { "type": "integer", "minimum": 0, "description": "§7.3 line 383 auto-retry budget." },
-          "retryableFailures": { "type": "array", "items": { "type": "string" }, "description": "§7.3 line 384 retryable failure class advisory list." },
-          "nonRetryableFailures": { "type": "array", "items": { "type": "string" }, "description": "§7.3 line 385 non-retryable failure class advisory list." },
-          "maxSessionAgeSeconds": { "type": "integer", "minimum": 0, "description": "§7.3 line 389 per-session total-lifetime cap, clamped against the deployer cap." },
-          "maxResumeWindowSeconds": { "type": "integer", "minimum": 0, "description": "§7.3 line 390 resume-window timer, clamped against the deployer cap." }
+          "mode": { "type": "string", "enum": ["auto_then_client", "client_only"], "description": "retry mode. Defaults to auto_then_client." },
+          "maxRetries": { "type": "integer", "minimum": 0, "description": "auto-retry budget." },
+          "retryableFailures": { "type": "array", "items": { "type": "string" }, "description": "retryable failure class advisory list." },
+          "nonRetryableFailures": { "type": "array", "items": { "type": "string" }, "description": "non-retryable failure class advisory list." },
+          "maxSessionAgeSeconds": { "type": "integer", "minimum": 0, "description": "per-session total-lifetime cap, clamped against the deployer cap." },
+          "maxResumeWindowSeconds": { "type": "integer", "minimum": 0, "description": "resume-window timer, clamped against the deployer cap." }
         }
       },
       "CreateSessionResponse": {
@@ -208,7 +208,7 @@
           "uploadRef":   { "type": "string", "description": "§4.5 lenny-blob:// URI" },
           "mimeType":    { "type": "string" },
           "size":        { "type": "integer", "format": "int64" },
-          "contentHash": { "type": "string", "description": "Hex-encoded SHA-256 of the streamed bytes (§4.5 line 311)" },
+          "contentHash": { "type": "string", "description": "Hex-encoded SHA-256 of the streamed bytes" },
           "isArchive":   { "type": "boolean", "description": "True when the body was uploaded via /upload-archive; consumed by the §7.4 extraction pipeline." }
         }
       },
@@ -458,7 +458,7 @@
           "role":      { "type": "string" },
           "content":   { "$ref": "#/components/schemas/MessageContent" },
           "inReplyTo": { "type": "string" },
-          "delivery":  { "type": "string", "enum": ["queued", "immediate"], "description": "§15.4 line 1715 closed delivery enum. Absent defaults to queued." }
+          "delivery":  { "type": "string", "enum": ["queued", "immediate"], "description": "closed delivery enum. Absent defaults to queued." }
         }
       },
       "MessageRequest": {
@@ -529,9 +529,9 @@
                   "required": ["items", "hasMore"],
                   "properties": {
                     "items": { "type": "array", "items": { "$ref": "#/components/schemas/Session" } },
-                    "cursor": { "type": "string", "nullable": true, "description": "§15.1 line 1251 — opaque cursor for the next page; null when no more results." },
-                    "hasMore": { "type": "boolean", "description": "§15.1 line 1251 — true when additional pages exist beyond this one." },
-                    "total": { "type": "integer", "description": "§15.1 line 1252 — total match count across all pages; present only when cheaply computable." }
+                    "cursor": { "type": "string", "nullable": true, "description": "opaque cursor for the next page; null when no more results." },
+                    "hasMore": { "type": "boolean", "description": "true when additional pages exist beyond this one." },
+                    "total": { "type": "integer", "description": "total match count across all pages; present only when cheaply computable." }
                   }
                 }
               }
@@ -1835,9 +1835,9 @@
                         }
                       }
                     },
-                    "cursor": { "type": "string", "nullable": true, "description": "§15.1 line 1251 — opaque cursor for the next page; null when no more results." },
-                    "hasMore": { "type": "boolean", "description": "§15.1 line 1251 — true when additional pages exist beyond this one." },
-                    "total": { "type": "integer", "description": "§15.1 line 1252 — total match count across all pages." }
+                    "cursor": { "type": "string", "nullable": true, "description": "opaque cursor for the next page; null when no more results." },
+                    "hasMore": { "type": "boolean", "description": "true when additional pages exist beyond this one." },
+                    "total": { "type": "integer", "description": "total match count across all pages." }
                   }
                 }
               }
@@ -2197,7 +2197,7 @@
     "/v1/admin/pools/{name}/drain": {
       "post": {
         "operationId": "postV1AdminPoolsByNameDrain",
-        "summary": "Drain a pool (§15.1 line 797 — stop admitting new sessions, report in-flight count)",
+        "summary": "Drain a pool (stop admitting new sessions, report in-flight count)",
         "x-lenny-mcp-tool": "admin.drain_pool",
         "x-lenny-scope": "tools:pool:write",
         "x-lenny-required-role": "platform-admin",

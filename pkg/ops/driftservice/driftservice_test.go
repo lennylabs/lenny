@@ -204,8 +204,7 @@ func TestRefreshSnapshotRejectsEmptyDesiredState(t *testing.T) {
 	}
 }
 
-// TestRefreshSnapshotCarriesByteSizeSpec25_10_3871 pins the §25.10 line
-// 3871 drift.snapshot_refreshed audit-event detail: the RefreshResult
+// TestRefreshSnapshotCarriesByteSizeSpec25_10_3871 pins the §25.10 drift.snapshot_refreshed audit-event detail: the RefreshResult
 // carries the JSON-encoded byteSize of the new desired state so the
 // audit emitter can render the event without re-marshalling. F-25.10.8.
 func TestRefreshSnapshotCarriesByteSizeSpec25_10_3871(t *testing.T) {
@@ -241,7 +240,7 @@ func TestRefreshSnapshotCarriesByteSizeSpec25_10_3871(t *testing.T) {
 	}
 }
 
-// TestReportColdStartReturns404Spec25_10_3866 pins the §25.10 line 3866
+// TestReportColdStartReturns404Spec25_10_3866 pins the §25.10
 // table: DRIFT_DESIRED_STATE_MISSING resolves to 404 when no snapshot
 // exists at all (cold start). The Error.HTTPStatus override carries the
 // signal end-to-end so the HTTP layer can distinguish cold-start (404)
@@ -257,12 +256,11 @@ func TestReportColdStartReturns404Spec25_10_3866(t *testing.T) {
 		t.Errorf("err code = %q, want DRIFT_DESIRED_STATE_MISSING", de.Code)
 	}
 	if de.HTTPStatus != 404 {
-		t.Errorf("HTTPStatus = %d, want 404 (§25.10 line 3866 cold-start)", de.HTTPStatus)
+		t.Errorf("HTTPStatus = %d, want 404 (§25.10 cold-start)", de.HTTPStatus)
 	}
 }
 
-// TestValidateColdStartReturns404Spec25_10_3866 pins the same §25.10
-// line 3866 distinction for the validate path. The cold-start case sets
+// TestValidateColdStartReturns404Spec25_10_3866 pins the same §25.10 distinction for the validate path. The cold-start case sets
 // HTTPStatus=404; the caller can recover by supplying a stored snapshot
 // in the request body (the F-25.10.12 offline-validation path).
 func TestValidateColdStartReturns404Spec25_10_3866(t *testing.T) {
@@ -280,8 +278,7 @@ func TestValidateColdStartReturns404Spec25_10_3866(t *testing.T) {
 	}
 }
 
-// TestReportStoreFailureMapsTo503_spec_25_10_3866 pins the §25.10 line
-// 3866 "Postgres down" case: a snapshot-store error wraps as
+// TestReportStoreFailureMapsTo503_spec_25_10_3866 pins the §25.10 case: a snapshot-store error wraps as
 // DRIFT_DESIRED_STATE_MISSING with the default code mapping (HTTPStatus
 // unset) so the HTTP layer renders 503. F-25.10.10.
 func TestReportStoreFailureMapsTo503_spec_25_10_3866(t *testing.T) {
@@ -321,8 +318,7 @@ func TestValidateAcceptsCallerSuppliedStoredSpec25_10_3782(t *testing.T) {
 	}
 }
 
-// TestReportHonorsRunningStateCacheSpec25_10_3822 pins the §25.10 line
-// 3822-3824 running-state caching: when a cache is configured the
+// TestReportHonorsRunningStateCacheSpec25_10_3822 pins the §25.10 running-state caching: when a cache is configured the
 // second Report call returns the cached state without re-reading from
 // the running-state reader. F-25.10.7.
 func TestReportHonorsRunningStateCacheSpec25_10_3822(t *testing.T) {
@@ -342,7 +338,7 @@ func TestReportHonorsRunningStateCacheSpec25_10_3822(t *testing.T) {
 	}
 }
 
-// TestReportFreshBypassesCacheSpec25_10_3762 pins the §25.10 line 3762
+// TestReportFreshBypassesCacheSpec25_10_3762 pins the §25.10
 // ?fresh=true contract: a Fresh=true report bypasses the cache and
 // reads from the running-state reader every time. F-25.10.7.
 func TestReportFreshBypassesCacheSpec25_10_3762(t *testing.T) {
@@ -385,8 +381,7 @@ func TestMemRunningStateCacheTTLExpiresSpec25_10_3824(t *testing.T) {
 	}
 }
 
-// TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824 pins the §25.10
-// line 3824 "0 disables" posture: a zero TTL causes Lookup to always
+// TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824 pins the §25.10 posture: a zero TTL causes Lookup to always
 // miss and Store to be a no-op. F-25.10.7.
 func TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824(t *testing.T) {
 	cache := driftservice.NewMemRunningStateCache(0)
@@ -400,15 +395,15 @@ func TestMemRunningStateCacheZeroTTLDisablesSpec25_10_3824(t *testing.T) {
 // and cache TTL constants the binary uses. F-25.10.7, F-25.10.9.
 func TestDefaultsMatchSpec25_10(t *testing.T) {
 	if driftservice.DefaultStaleWarningDays != 7 {
-		t.Errorf("DefaultStaleWarningDays = %d, want 7 (§25.10 line 3801)", driftservice.DefaultStaleWarningDays)
+		t.Errorf("DefaultStaleWarningDays = %d, want 7 (§25.10)", driftservice.DefaultStaleWarningDays)
 	}
 	if driftservice.DefaultRunningStateCacheTTL != 60*time.Second {
-		t.Errorf("DefaultRunningStateCacheTTL = %v, want 60s (§25.10 line 3824)", driftservice.DefaultRunningStateCacheTTL)
+		t.Errorf("DefaultRunningStateCacheTTL = %v, want 60s (§25.10)", driftservice.DefaultRunningStateCacheTTL)
 	}
 }
 
 // failingStore is a SnapshotStore that always returns an error — used to
-// pin the §25.10 line 3866 "Postgres down" case.
+// pin the §25.10 case.
 type failingStore struct{}
 
 func (failingStore) Get(context.Context, string) (driftservice.Snapshot, bool, error) {
@@ -438,7 +433,7 @@ func seedTarget(t *testing.T, store *driftservice.MemSnapshotStore, upgradeID st
 	}
 }
 
-// TestDeleteTargetSnapshot_Match_spec_25_8 covers §25.8 line 3551: a
+// TestDeleteTargetSnapshot_Match_spec_25_8 covers §25.8: a
 // rollback deletes the target snapshot whose upgrade_id matches.
 func TestDeleteTargetSnapshot_Match_spec_25_8(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -508,7 +503,7 @@ func (c *countingRunningState) RunningState(context.Context, string) (map[string
 // completion)
 //
 // TestWriteTargetSnapshotMakesAgainstTargetResolve_spec_25_10_3788 pins
-// the §25.10 line 3788 write: before the write, against=target returns
+// the §25.10 write: before the write, against=target returns
 // DRIFT_NO_TARGET_SNAPSHOT; after the write, the target report resolves
 // against the written desired state. The pre-write assertion is the
 // regression: F-DR-3 is the unwired writer, so a pre-fix build that never
@@ -557,8 +552,7 @@ func TestWriteTargetSnapshotRejectsNilDesired_spec_25_10_3788(t *testing.T) {
 	}
 }
 
-// TestPromoteTargetToLiveSwapsRows_spec_25_10_3789 pins the §25.10 line
-// 3789 promote: the target row becomes the live row and the target row is
+// TestPromoteTargetToLiveSwapsRows_spec_25_10_3789 pins the §25.10 promote: the target row becomes the live row and the target row is
 // removed, so against=target then reports DRIFT_NO_TARGET_SNAPSHOT and the
 // live row carries the promoted desired state. F-DR-3.
 func TestPromoteTargetToLiveSwapsRows_spec_25_10_3789(t *testing.T) {

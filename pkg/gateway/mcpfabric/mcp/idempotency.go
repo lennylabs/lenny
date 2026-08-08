@@ -17,7 +17,7 @@ import (
 // IdempotencyConfig wires the §11.5 idempotency primitives onto MCP
 // tool calls so a client supplying `idempotencyKey` inside a tool's
 // arguments collapses retries to a single execution, mirroring the
-// REST `Idempotency-Key` header path. spec: §11.5 line 277; F-11.5.1,
+// REST `Idempotency-Key` header path. spec: §11.5; F-11.5.1,
 // F-11.5.6.
 //
 // The MCP transport uses the same Postgres-backed Store as the REST
@@ -52,7 +52,7 @@ func (c IdempotencyConfig) now() time.Time {
 
 // SetIdempotency installs the §11.5 idempotency hook for tool calls.
 // A zero IdempotencyConfig (Store == nil) disables the path; the
-// server behaves exactly as it did before. spec: §11.5 line 277.
+// server behaves exactly as it did before. spec: §11.5.
 func (s *Server) SetIdempotency(cfg IdempotencyConfig) {
 	s.idem = cfg
 }
@@ -76,7 +76,7 @@ func extractIdempotencyKey(arguments json.RawMessage) string {
 }
 
 // mcpKey namespaces caller keys per tool so REST and MCP do not share
-// rows whose response payload shapes differ. spec: §11.5 line 277;
+// rows whose response payload shapes differ. spec: §11.5;
 // F-11.5.1.
 func mcpKey(tool, caller string) string {
 	return "mcp/" + tool + "/" + caller
@@ -87,7 +87,7 @@ func mcpKey(tool, caller string) string {
 // ToolResult directly to the client; the in-flight path returns a
 // transient IDEMPOTENCY_KEY_IN_FLIGHT ToolError. The contract caps the
 // stored payload at the configured Tools allow-list and namespaces
-// keys per tool. spec: §11.5 line 277; F-11.5.1, F-11.5.2, F-11.5.6.
+// keys per tool. spec: §11.5; F-11.5.1, F-11.5.2, F-11.5.6.
 func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey string, arguments json.RawMessage, run func(context.Context, json.RawMessage) (ToolResult, error)) (ToolResult, bool, error) {
 	if s.idem.Store == nil || tool == "" || callerKey == "" {
 		return ToolResult{}, false, nil
@@ -139,7 +139,7 @@ func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey
 	// We won the slot; execute and persist (or release on tool error).
 	res, runErr := run(ctx, arguments)
 	if runErr != nil {
-		// spec: §11.5 line 277 — a tool error is the MCP analogue of a
+		// spec: §11.5 — a tool error is the MCP analogue of a
 		// 5xx: do not cache, release the pending row so a retry can
 		// re-execute. The caller sees the ToolError directly.
 		if relErr := s.idem.Store.Release(ctx, tenant, key); relErr != nil {

@@ -192,7 +192,7 @@ func WalkChain(in ChainInput) (ChainResult, error) {
 	// elicitation is exempt (gateway-initiated OAuth flows are never
 	// suppressed). A suppressed elicitation does not advance.
 	//
-	// spec: §9.2 line 92 — when a pool ships no elicitationDepthPolicy
+	// spec: §9.2 — when a pool ships no elicitationDepthPolicy
 	// the platform default is `suppress_at_depth: 3`, NOT `allow_all`.
 	// The pool can opt back to `allow_all` explicitly; an unset value
 	// must take the safe-by-default policy. F-9.2.16.
@@ -410,7 +410,7 @@ const (
 	URLModeRejectNotAllowlisted URLModeRejectReason = "domain_not_allowlisted"
 	// URLModeRejectConnectorDomainMismatch: a connector-initiated url-mode
 	// elicitation carries a URL whose host does not match the registered
-	// connector's expected_domain. §9.2 line 87 makes this a hard
+	// connector's expected_domain. §9.2 makes this a hard
 	// enforcement boundary — the elicitation is dropped and an error is
 	// returned to the originator.
 	URLModeRejectConnectorDomainMismatch URLModeRejectReason = "connector_domain_mismatch"
@@ -438,7 +438,7 @@ const (
 // check applies only to elicitations that carry a URL. Returns
 // *URLModeRejection when the elicitation must be dropped.
 //
-// spec: §9.2 lines 87, line 1 (url-mode security controls 1-2).
+// spec: §9.2.
 func CheckURLModeProvenance(initiator InitiatorType, rawURL, connectorExpectedDomain string, allow URLModeAllowlist) error {
 	if rawURL == "" {
 		// Not a url-mode elicitation; §9.2 url-mode controls do not apply.
@@ -450,7 +450,7 @@ func CheckURLModeProvenance(initiator InitiatorType, rawURL, connectorExpectedDo
 	}
 	if initiator == InitiatorConnector {
 		// §9.2 control 1: url-mode is reserved for gateway-registered
-		// connectors. §9.2 control 2 line 87: the connector's
+		// connectors. §9.2 control 2: the connector's
 		// expected_domain is a hard enforcement boundary — the host must
 		// match it (when one is registered) or the elicitation is dropped.
 		return CheckConnectorURLDomain(rawURL, connectorExpectedDomain)
@@ -476,7 +476,7 @@ func CheckURLModeProvenance(initiator InitiatorType, rawURL, connectorExpectedDo
 	return nil
 }
 
-// CheckConnectorURLDomain enforces the §9.2 line 87 hard boundary on a
+// CheckConnectorURLDomain enforces the §9.2 hard boundary on a
 // connector-bound url-mode URL: the URL's effective host must match the
 // registered connector's expected_domain. expectedDomain is either an
 // exact host (`accounts.example.com`) or a `*.suffix` wildcard
@@ -489,7 +489,7 @@ func CheckURLModeProvenance(initiator InitiatorType, rawURL, connectorExpectedDo
 // originator. A non-url-mode URL (empty rawURL) is admitted; a malformed
 // URL is rejected so a non-URL string cannot bypass the boundary.
 //
-// spec: §9.2 line 87 — "URL domain validation is a hard enforcement
+// spec: §9.2 — "URL domain validation is a hard enforcement
 // boundary. The gateway rejects any URL-mode elicitation whose URL
 // domain does not match the registered connector's expected_domain."
 func CheckConnectorURLDomain(rawURL, expectedDomain string) error {

@@ -32,7 +32,7 @@ CREATE TABLE session_partial_checkpoint_manifest (
     -- suffix.
     chunk_encoding            TEXT        NOT NULL DEFAULT 'tar',
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- deleted_at is the §4.4 line 236 soft-delete tombstone. The
+    -- deleted_at is the §4.4 soft-delete tombstone. The
     -- cleanup path issues
     -- `UPDATE ... SET deleted_at = now() ... WHERE ... AND deleted_at IS NULL`
     -- so stale-leader retries / GC-backstop races converge to a
@@ -69,7 +69,7 @@ CREATE POLICY lenny_tenant_isolation ON session_partial_checkpoint_manifest
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON session_partial_checkpoint_manifest TO lenny_app;
 
--- §10.1 lines 143-151: the migration 0150 at-most-one-active-partial-
+-- §10.1: the migration 0150 at-most-one-active-partial-
 -- manifest partial unique index, scoped on (tenant_id, session_id)
 -- because the recreated table carries no slot_id column.
 CREATE UNIQUE INDEX partial_manifest_active_uniq

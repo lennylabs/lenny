@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §15.1 lines 876-878 / §24.5 rows 3-5 — per-credential
+// spec: §15.1 / §24.5 rows 3-5 — per-credential
 // subresource CRUD (add / update / remove a single credential in a
 // pool) and §24.5 row 2 per-credential health and lease counts.
 
@@ -54,7 +54,7 @@ func auditTypes(audit *recordingAudit) map[string]bool {
 
 // TestAddCredentialAppendsAndAudits asserts POST .../credentials appends
 // a new credential, returns 201 with the updated pool, and emits the
-// credential_added audit event. spec: §15.1 line 876, §24.5 row 3.
+// credential_added audit event. spec: §15.1, §24.5 row 3.
 func TestAddCredentialAppendsAndAudits(t *testing.T) {
 	router, store, audit := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -79,7 +79,7 @@ func TestAddCredentialAppendsAndAudits(t *testing.T) {
 }
 
 // TestAddCredentialDuplicateIDConflicts asserts a duplicate credential
-// id is rejected with 409 RESOURCE_ALREADY_EXISTS. spec: §15.1 line 876, 983.
+// id is rejected with 409 RESOURCE_ALREADY_EXISTS. spec: §15.1.
 func TestAddCredentialDuplicateIDConflicts(t *testing.T) {
 	router, store, _ := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -124,8 +124,8 @@ func TestAddCredentialMissingPool404(t *testing.T) {
 
 // TestAddCredentialRBACProbeDenied asserts the §4.9 admin-time RBAC
 // live-probe runs on the new secretRef and a DENIED verdict rejects the
-// add with 422 CREDENTIAL_SECRET_RBAC_MISSING. spec: §4.9 line 1212,
-// §15.1 line 990.
+// add with 422 CREDENTIAL_SECRET_RBAC_MISSING. spec: §4.9,
+// §15.1.
 func TestAddCredentialRBACProbeDenied(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
 		"lenny-system/forbidden": admin.SecretProbeDenied,
@@ -155,7 +155,7 @@ func TestAddCredentialRBACProbeDenied(t *testing.T) {
 // TestUpdateCredentialReplacesFieldsPreservingRevocation asserts the
 // row-level PUT updates the addressed credential's secretRef in place
 // while preserving its revocation status (an update is not a re-enable).
-// spec: §15.1 line 877, §24.5 row 4.
+// spec: §15.1, §24.5 row 4.
 func TestUpdateCredentialReplacesFieldsPreservingRevocation(t *testing.T) {
 	router, store, audit := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -188,7 +188,7 @@ func TestUpdateCredentialReplacesFieldsPreservingRevocation(t *testing.T) {
 }
 
 // TestUpdateCredentialMissingCredential404 asserts updating an unknown
-// credential id 404s. spec: §15.1 line 877.
+// credential id 404s. spec: §15.1.
 func TestUpdateCredentialMissingCredential404(t *testing.T) {
 	router, store, _ := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -204,7 +204,7 @@ func TestUpdateCredentialMissingCredential404(t *testing.T) {
 
 // TestUpdateCredentialProbesChangedSecretRef asserts the §4.9 RBAC probe
 // runs only when the PUT changes secretRef, and a DENIED verdict rejects
-// the update. spec: §15.1 line 877 (probe on secretRef change).
+// the update. spec: §15.1.
 func TestUpdateCredentialProbesChangedSecretRef(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
 		"lenny-system/forbidden": admin.SecretProbeDenied,
@@ -238,7 +238,7 @@ func TestUpdateCredentialProbesChangedSecretRef(t *testing.T) {
 
 // TestRemoveCredentialDropsAndAudits asserts DELETE .../credentials/{id}
 // removes the credential, returns the updated pool, and audits.
-// spec: §15.1 line 878, §24.5 row 5.
+// spec: §15.1, §24.5 row 5.
 func TestRemoveCredentialDropsAndAudits(t *testing.T) {
 	router, store, audit := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -259,7 +259,7 @@ func TestRemoveCredentialDropsAndAudits(t *testing.T) {
 }
 
 // TestRemoveCredentialMissing404 asserts removing an unknown credential
-// 404s. spec: §15.1 line 878.
+// 404s. spec: §15.1.
 func TestRemoveCredentialMissing404(t *testing.T) {
 	router, store, _ := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")
@@ -274,7 +274,7 @@ func TestRemoveCredentialMissing404(t *testing.T) {
 
 // TestGetPoolSurfacesHealthAndLeaseCounts asserts the §24.5 row-2 GET
 // surfaces per-credential health and lease counts when a health reader
-// is wired. spec: §24.5 line 87.
+// is wired. spec: §24.5.
 func TestGetPoolSurfacesHealthAndLeaseCounts(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
 	health := &fakeCredHealth{counts: map[string]int{"key-1": 4}}
@@ -316,7 +316,7 @@ func TestGetPoolSurfacesHealthAndLeaseCounts(t *testing.T) {
 
 // TestGetPoolHealthOmittedWithoutReader asserts the GET derives a health
 // string from the persisted status even when no lease-count reader is
-// wired, and omits leaseCount. spec: §24.5 line 87.
+// wired, and omits leaseCount. spec: §24.5.
 func TestGetPoolHealthOmittedWithoutReader(t *testing.T) {
 	router, store, _ := newCredEntryAdmin(t)
 	seedRevocationPool(t, store, "claude-prod")

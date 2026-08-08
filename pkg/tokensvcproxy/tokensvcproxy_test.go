@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §4.3 line 193 / F-4.3.12 — the gateway reverse-proxies
+// spec: §4.3 / F-4.3.12 — the gateway reverse-proxies
 // /v1/oauth/* to the Token Service unchanged; the Token Service sees
 // the original method, path, body, and headers.
 func TestProxyForwardsRequest(t *testing.T) {

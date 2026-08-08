@@ -13,7 +13,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §6.1 lines 5, 16, 24 — "After a session completes or fails in
+// spec: §6.1 — "After a session completes or fails in
 // `executionMode: session`, the pod is terminated and replaced — never
 // recycled for a different session." The adapter is the last line of
 // defense for this invariant: a pod that somehow survives the

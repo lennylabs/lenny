@@ -35,7 +35,7 @@ func (f fakeRow) Scan(dest ...any) error {
 	return nil
 }
 
-// spec: §10.3 lines 344-350 — scanRecord maps a ca_rotation row into a
+// spec: §10.3 — scanRecord maps a ca_rotation row into a
 // carotationstore.Record in the SELECT column order: a mid-rotation row
 // carries a non-NULL overlap_started_at that round-trips as UTC, the
 // version widens, and the stage/CA-id strings re-type.

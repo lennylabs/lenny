@@ -78,7 +78,7 @@ func newStubClient(t *testing.T, respond func(req *tokensv1.AssignCredentialsReq
 	return client, stub, closer
 }
 
-// spec: §4.3 line 211 — consecutive Unavailable failures trip the
+// spec: §4.3 — consecutive Unavailable failures trip the
 // breaker, and subsequent Assign calls fail fast with
 // ErrTokenServiceUnavailable rather than re-issuing the gRPC.
 func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
@@ -121,7 +121,7 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 211 — NotFound (user-classified) errors must not
+// spec: §4.3 — NotFound (user-classified) errors must not
 // count against the breaker.
 func TestClientBreakerSkipsNotFound(t *testing.T) {
 	sub := &subsystem.Subsystem{
@@ -148,7 +148,7 @@ func TestClientBreakerSkipsNotFound(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 211 — a successful response resets consecutive
+// spec: §4.3 — a successful response resets consecutive
 // failure count so a transient blip does not cumulatively trip the
 // breaker.
 func TestClientBreakerResetsOnSuccess(t *testing.T) {
@@ -214,7 +214,7 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 211 — nil breaker is a no-op: tests/dev mode without
+// spec: §4.3 — nil breaker is a no-op: tests/dev mode without
 // the breaker continue to receive raw gRPC errors.
 func TestClientWithoutBreakerPassesRawErrors(t *testing.T) {
 	client, _, closer := newStubClient(

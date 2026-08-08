@@ -51,13 +51,13 @@ type slotWorker struct {
 // loop.
 //
 // The slot's cwd is derived from slotId via slotCwd
-// (/workspace/slots/{slotId}/current/ per spec §6.4 line 384). It is an
+// (/workspace/slots/{slotId}/current/ per spec §6.4). It is an
 // internal filesystem derivation the runtime would use for per-slot file
 // operations; an echo runtime performs none, so the derivation is not
 // plumbed onto the wire. The §15.4.1 outbound frame schema carries slotId
 // alone for concurrent multiplexing, never cwd.
 //
-// spec: §6.4 line 384 — per-slot cwd /workspace/slots/{slotId}/current/;
+// spec: §6.4 — per-slot cwd /workspace/slots/{slotId}/current/;
 // the runtime MUST NOT assume a global /workspace/current when
 // maxConcurrentSessions > 1.
 func newSlotWorker(ctx context.Context, slotID string, d *demux, stderr io.Writer) *slotWorker {
@@ -67,7 +67,7 @@ func newSlotWorker(ctx context.Context, slotID string, d *demux, stderr io.Write
 		pw:     pw,
 		done:   make(chan struct{}),
 	}
-	// Derive the slot's cwd up front (spec §6.4 line 384). An echo runtime
+	// Derive the slot's cwd up front (spec §6.4). An echo runtime
 	// performs no file operations, so the derivation only surfaces as a
 	// diagnostic line on stderr; a runtime that read or wrote the workspace
 	// would root every per-slot file operation at this path instead of the
@@ -118,7 +118,7 @@ func (w *slotWorker) wait() { <-w.done }
 // the per-slot tree /workspace/slots/{slotId}/current/; the empty default
 // session keeps the global /workspace/current path.
 //
-// spec: §6.4 line 384 — per-slot cwd derivation.
+// spec: §6.4 — per-slot cwd derivation.
 func slotCwd(slotID string) string {
 	if slotID == "" {
 		return "/workspace/current"
@@ -143,8 +143,7 @@ type slotWriter struct {
 // encoder contract), so a single Write maps to a single frame.
 func (s *slotWriter) Write(p []byte) (int, error) {
 	if s.slotID == "" {
-		// Whole-pod default session: no slotId on the wire (§15.4.1 line
-		// 1459 — runtimes on a maxConcurrentSessions: 1 pod never see it).
+		// Whole-pod default session: no slotId on the wire (§15.4.1 — runtimes on a maxConcurrentSessions: 1 pod never see it).
 		if err := s.out.writeFrame(p); err != nil {
 			return 0, err
 		}
@@ -169,7 +168,7 @@ func (s *slotWriter) Write(p []byte) (int, error) {
 // multiplexing; the per-slot cwd is an internal derivation (slotCwd) the
 // runtime never emits on the wire.
 //
-// spec: §15.4.1 line 1451-1452 (slotId on response/tool_call).
+// spec: §15.4.1.
 func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(frame)
 	if len(trimmed) == 0 || trimmed[0] != '{' {

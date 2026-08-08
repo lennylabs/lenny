@@ -15,13 +15,13 @@ import (
 	tokencache "github.com/lennylabs/lenny/pkg/tokenservice/cache"
 )
 
-// buildDriftMonitor constructs the §13.3 line 595 NTP drift self-monitor and
+// buildDriftMonitor constructs the §13.3 NTP drift self-monitor and
 // starts its sampling loop. The source returns the clockinject-injected offset
 // for v1 (zero in production unless an operator wires a real adjtimex/chrony
 // probe). The exchange path consults driftMonitor.Degraded() and returns
 // 503 token_validation_unavailable when |drift| >= 5s.
 //
-// spec: §13.3 line 595 / F-13.3.5.
+// spec: §13.3 / F-13.3.5.
 func (w *tokenServiceWiring) buildDriftMonitor() {
 	w.driftMonitor = driftmonitor.New(func() time.Duration {
 		off, _ := clockinject.Offset()
@@ -66,7 +66,7 @@ func (w *tokenServiceWiring) buildServer() {
 // to local-only delivery rather than dropping events. The Redis client close
 // is recorded on the accumulator so runTokenService can defer it.
 //
-// spec: §4.0 line 13, §25.5, §4.3 line 201.
+// spec: §4.0, §25.5, §4.3.
 func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	w.replicaID = os.Getenv("HOSTNAME")
 	if w.replicaID == "" {
@@ -74,7 +74,7 @@ func (w *tokenServiceWiring) buildEventEmitterAndCache() {
 	}
 	opsEventBuffer := eventbuffer.NewEventBuffer(0)
 	w.opsEmitter = eventbuffer.NewEmitter(opsEventBuffer, w.replicaID)
-	// §4.3 line 201 Redis-backed encrypted access-token cache. Wired
+	// §4.3 Redis-backed encrypted access-token cache. Wired
 	// only when --redis-url is set; the cache short-circuits Postgres
 	// revocation lookups on the validation hot path. With no Redis,
 	// the validator falls back to the authoritative Postgres lookup.

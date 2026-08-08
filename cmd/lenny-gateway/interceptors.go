@@ -58,7 +58,7 @@ func (w *gatewayWiring) buildQuotaCheckpoint() {
 			// §12.4 source (2): fold the in-memory fail-open accumulator into
 			// the MAX rule on the Redis-recovery edge. F-12.4.20.
 			FailOpen: quotaFailOpenAccum,
-			// §11.2 line 46 source: fold each bound direct-mode session's
+			// §11.2 source: fold each bound direct-mode session's
 			// pod-reported cumulative total into the MAX rule on the
 			// Redis-recovery edge so a reconnected replica reconstructs a
 			// direct-mode counter as MAX(redis, postgres, failopen,
@@ -83,14 +83,13 @@ func (w *gatewayWiring) buildQuotaCheckpoint() {
 	}
 }
 
-// buildDirectUsageRecoveryReader constructs the §11.2 line 46 crash-recovery
+// buildDirectUsageRecoveryReader constructs the §11.2 crash-recovery
 // pod-usage source for the quota checkpoint Service. It is active only when
 // the pod registry, the §4.9 credential-lease store, and the SessionStore are
 // all wired; otherwise it returns a genuinely nil quotacheckpoint.PodUsageReader
 // so a minimal gateway degrades to the MAX(redis, postgres, failopen) rule.
 // Returning the concrete typed nil directly would wrap into a non-nil
-// interface, so the guard returns the untyped nil explicitly. spec: §11.2 line
-// 46; §4.7 (ReportUsage cumulative read).
+// interface, so the guard returns the untyped nil explicitly. spec: §11.2; §4.7 (ReportUsage cumulative read).
 func (w *gatewayWiring) buildDirectUsageRecoveryReader(periods quotacheckpoint.PeriodResolver) quotacheckpoint.PodUsageReader {
 	if w.podRegistry == nil || w.llmLeases == nil || w.sessions == nil {
 		return nil
@@ -154,7 +153,7 @@ func (w *gatewayWiring) buildInterceptorRegistration() {
 		observe:     gwMetrics.ObserveInterceptorMTLSHandshake,
 	}
 
-	// §4.8 line 1019: register each deployer-supplied external
+	// §4.8: register each deployer-supplied external
 	// interceptor. The gateway dials the service's endpoint, builds the
 	// generated RequestInterceptor client, and registers an External on
 	// the named phase. Registration applies the reserved-priority
@@ -183,7 +182,7 @@ func (w *gatewayWiring) buildInterceptorRegistration() {
 			spec.Name, spec.Phase, spec.Endpoint, spec.Priority)
 	}
 
-	// §4.8 line 1070: the GuardrailsInterceptor is the built-in hook for
+	// §4.8: the GuardrailsInterceptor is the built-in hook for
 	// a deployer-wired external content classifier, disabled by default.
 	// When --guardrails-classifier is set the gateway dials the
 	// classifier, wraps it at the fixed priority 400 across the guardrails

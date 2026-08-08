@@ -66,7 +66,7 @@ func TestGRPCAssignCredentialsReturnsMaterializedLease(t *testing.T) {
 	if _, found := leases.GetByID(got.LeaseId); !found {
 		t.Errorf("lease %q not recorded in the lease store", got.LeaseId)
 	}
-	// spec: §4.9 line 1145 — the wire lease carries issued_at so the
+	// spec: §4.9 — the wire lease carries issued_at so the
 	// gateway can record the lease's wall-clock duration. It must be set
 	// and not after expires_at.
 	if got.IssuedAt == nil || got.IssuedAt.AsTime().IsZero() {
@@ -182,7 +182,7 @@ func TestGRPCRotateCredentialsReissuesFromSamePool(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1413 — an invalid rotation_trigger is rejected so a
+// spec: §4.9 — an invalid rotation_trigger is rejected so a
 // typo cannot silently disable the §4.7 ceiling discipline. F-13.3.10.
 func TestGRPCRotateCredentialsRejectsInvalidTrigger_F13310(t *testing.T) {
 	_, leases, srv := proxyPool(t, "claude-prod")
@@ -205,7 +205,7 @@ func TestGRPCRotateCredentialsRejectsInvalidTrigger_F13310(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1413 / §13.3 line 597 — a valid trigger is accepted and
+// spec: §4.9 / §13.3 — a valid trigger is accepted and
 // recorded as the revocation reason; an empty trigger defaults to a fault
 // trigger (fail-closed) and still rotates. F-13.3.10.
 func TestGRPCRotateCredentialsRecordsTrigger_F13310(t *testing.T) {
@@ -321,7 +321,7 @@ func directPool(t *testing.T, name string, p credential.Provider, mc credential.
 	return leases, NewGRPCServer(svc, leases)
 }
 
-// spec: §4.9 lines 1246-1298
+// spec: §4.9
 // diagnosis: a direct-mode lease carries its per-provider
 // materializedConfig on the wire (and no proxy lease token) so the
 // gateway can forward it to the pod through the adapter credential file.
@@ -353,7 +353,7 @@ func TestGRPCAssignCredentialsDirectModeCarriesMaterializedConfig(t *testing.T) 
 	}
 }
 
-// spec: §4.9 line 1298
+// spec: §4.9
 // diagnosis: a direct-mode pool whose materializedConfig is missing a
 // Required:yes field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR
 // (category INTERNAL), which the Token Service surfaces as

@@ -161,11 +161,11 @@ func TestBuildBootstrapSeed(t *testing.T) {
 		if rt.Image == "" {
 			t.Errorf("runtime %s seeded without an image", rt.Name)
 		}
-		// §5.1 line 51: labels are required from v1. The gateway bootstrap
+		// §5.1: labels are required from v1. The gateway bootstrap
 		// handler rejects a create without them, so every seeded runtime
 		// must carry at least one label or `lenny up` fails to install.
 		if len(rt.Labels) == 0 {
-			t.Errorf("runtime %s seeded without labels (§5.1 line 51 requires them)", rt.Name)
+			t.Errorf("runtime %s seeded without labels (§5.1 requires them)", rt.Name)
 		}
 		// The §26 reference runtimes carry the reference-runtime marker;
 		// echo is the §15.4.4 conformance exemplar rather than a §26

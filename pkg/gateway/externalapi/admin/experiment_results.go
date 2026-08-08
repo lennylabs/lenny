@@ -28,7 +28,7 @@ func (r *Router) WithEvalResults(s evalstore.Store) *Router {
 // schedules the periodic REFRESH); with it enabled and the store
 // implementing evalstore.AggregateReader, an unfiltered no-breakdown
 // results request is served from the matview instead of recomputing
-// from eval_results. spec: §10.7 lines 954, 1088.
+// from eval_results. spec: §10.7.
 func (r *Router) WithEvalAggregateView(enabled bool) *Router {
 	r.evalMatview = enabled
 	return r
@@ -113,7 +113,7 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 			"breakdown_by must be delegation_depth, inherited, or submitted_after_conclusion", nil)
 		return
 	}
-	// spec: §10.7 line 952 — breakdown_by is not combinable with the
+	// spec: §10.7 — breakdown_by is not combinable with the
 	// equality/exclusion filter on the same field, since filtering a field
 	// to a single value and then bucketing by it yields a degenerate
 	// single-bucket response. F-10.7.10.
@@ -132,7 +132,7 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 	}
 	variantIDs = append(variantIDs, experiment.ControlVariantID)
 
-	// spec: §10.7 lines 954, 1088 — when the gateway enables the
+	// spec: §10.7 — when the gateway enables the
 	// lenny_eval_aggregates matview (evalAggregationRefreshSeconds > 0),
 	// route the unfiltered, no-breakdown request to it; filtered or
 	// broken-down requests always recompute from the base table.
@@ -171,8 +171,7 @@ func (r *Router) handleExperimentResults(w http.ResponseWriter, req *http.Reques
 // serveResultsFromMatview answers the §10.7 results request from the
 // lenny_eval_aggregates materialized view. It reports true when it has
 // written the response (success or a surfaced 500); false signals the
-// caller to fall back to the base-table aggregation. spec: §10.7 lines
-// 954, 1088.
+// caller to fall back to the base-table aggregation. spec: §10.7.
 func (r *Router) serveResultsFromMatview(w http.ResponseWriter, req *http.Request,
 	ar evalstore.AggregateReader, exp experimentstore.Experiment,
 	tenant, name string, variantIDs []string,
@@ -212,7 +211,7 @@ func variantResultsFromAggregate(variantID string, agg evalstore.VariantAggregat
 // validateResultsFilters reports a non-empty error message when any
 // §10.7 results filter parameter is malformed. It mirrors the parse
 // checks in filterEvalRows so both read paths reject the same
-// malformed input. spec: §10.7 line 950.
+// malformed input. spec: §10.7.
 func validateResultsFilters(q url.Values) string {
 	if v := q.Get("delegation_depth"); v != "" {
 		if _, err := strconv.ParseUint(v, 10, 32); err != nil {
@@ -236,7 +235,7 @@ func validateResultsFilters(q url.Values) string {
 // with a §10.7 equality/exclusion filter. A present-but-false
 // exclude_post_conclusion is not a filter (it excludes nothing), so the
 // matview path still applies. Callers must validate the parameters with
-// validateResultsFilters first. spec: §10.7 line 954.
+// validateResultsFilters first. spec: §10.7.
 func hasResultsFilter(q url.Values) bool {
 	if q.Get("delegation_depth") != "" || q.Get("inherited") != "" {
 		return true
@@ -348,7 +347,7 @@ func validBreakdownField(field string) bool {
 // query parameter that operates on the same field as a breakdown_by
 // dimension, or "" when breakdownBy names no field with such a filter.
 // The Results API rejects breakdown_by combined with this filter
-// (§10.7 line 952): exclude_post_conclusion restricts
+// (§10.7): exclude_post_conclusion restricts
 // submitted_after_conclusion to a single value, the analogue of an
 // equality filter for the boolean and numeric fields. F-10.7.10.
 func conflictingFilterParam(breakdownBy string) string {

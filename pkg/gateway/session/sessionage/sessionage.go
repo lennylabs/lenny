@@ -2,7 +2,7 @@
 
 // Package sessionage resolves the §5.1 per-runtime / §5.2 per-pool
 // maxSessionAge cap for a session row. The §11.3 watchdog uses it so a
-// deployer who tunes `maxSessionAge` per runtime (the §11.3 line 242
+// deployer who tunes `maxSessionAge` per runtime (the §11.3
 // guidance) or per pool sees that value enforced, instead of every session
 // expiring at the single platform default.
 //
@@ -20,7 +20,7 @@
 // "no per-config cap" so a transient store blip never lengthens or shortens
 // a session's deadline unexpectedly — the platform default still bounds it.
 //
-// spec: §11.3 line 198 — `maxSessionAge` is a deployer cap tuned per
+// spec: §11.3 — `maxSessionAge` is a deployer cap tuned per
 // runtime; §5.1 limits; §5.2 pool. F-11.3.3.
 package sessionage
 
@@ -47,7 +47,7 @@ func New(runtimes runtimestore.Store, pools poolstore.Store) *Resolver {
 
 // EffectiveMaxSessionAgeSeconds returns the most-restrictive per-runtime /
 // per-pool maxSessionAge cap (in seconds) declared for sess, or 0 when
-// neither surface sets one. spec: §11.3 line 198. F-11.3.3.
+// neither surface sets one. spec: §11.3. F-11.3.3.
 func (r *Resolver) EffectiveMaxSessionAgeSeconds(ctx context.Context, sess sessionstore.Session) int {
 	cap := 0
 	if r.runtimes != nil && sess.RuntimeRef != "" {
@@ -61,7 +61,7 @@ func (r *Resolver) EffectiveMaxSessionAgeSeconds(ctx context.Context, sess sessi
 			cap = minPositive(cap, p.MaxSessionAgeSeconds)
 		}
 	}
-	// spec: §14 line 154 — a §14 per-session maxSessionAge override (also the
+	// spec: §14 — a §14 per-session maxSessionAge override (also the
 	// carrier for the §27.6 playground duration cap the create path stamps,
 	// F-27.6.2) tightens the runtime/pool cap. Admission already bounds it by
 	// the runtime's limits.maxSessionAge, so it only ever narrows; minPositive

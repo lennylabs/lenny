@@ -30,7 +30,7 @@ func newFencedServer(t *testing.T) *Server {
 }
 
 // TestCoordinatorFenceRejectsMissingSessionID verifies that the
-// adapter rejects a fence RPC missing a session id. spec: §4.7 line 632.
+// adapter rejects a fence RPC missing a session id. spec: §4.7.
 func TestCoordinatorFenceRejectsMissingSessionID(t *testing.T) {
 	s := newFencedServer(t)
 	_, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
@@ -43,7 +43,7 @@ func TestCoordinatorFenceRejectsMissingSessionID(t *testing.T) {
 
 // TestCoordinatorFenceRejectsZeroGeneration verifies that the adapter
 // rejects a fence with a non-positive coordination_generation. spec:
-// §10.1 line 33.
+// §10.1.
 func TestCoordinatorFenceRejectsZeroGeneration(t *testing.T) {
 	s := newFencedServer(t)
 	_, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
@@ -55,7 +55,7 @@ func TestCoordinatorFenceRejectsZeroGeneration(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceFirstFenceNeverGap verifies the §10.1 line 36
+// TestCoordinatorFenceFirstFenceNeverGap verifies the §10.1
 // rule that the first fence on a pod's lifetime is recorded regardless
 // of value and never treated as a gap.
 func TestCoordinatorFenceFirstFenceNeverGap(t *testing.T) {
@@ -75,7 +75,7 @@ func TestCoordinatorFenceFirstFenceNeverGap(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceMonotonicIncrement verifies the §10.1 line 33
+// TestCoordinatorFenceMonotonicIncrement verifies the §10.1
 // strict-monotonic rule and that the no-gap path doesn't set
 // gap_detected.
 func TestCoordinatorFenceMonotonicIncrement(t *testing.T) {
@@ -99,7 +99,7 @@ func TestCoordinatorFenceMonotonicIncrement(t *testing.T) {
 
 // TestCoordinatorFenceStaleGenerationRejected verifies that a fence
 // carrying a generation not strictly greater than the last fenced
-// value is rejected with FailedPrecondition. spec: §10.1 line 33.
+// value is rejected with FailedPrecondition. spec: §10.1.
 func TestCoordinatorFenceStaleGenerationRejected(t *testing.T) {
 	s := newFencedServer(t)
 	ctx := context.Background()
@@ -122,16 +122,16 @@ func TestCoordinatorFenceStaleGenerationRejected(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceGapDetected verifies §10.1 line 36 gap detection:
+// TestCoordinatorFenceGapDetected verifies §10.1 gap detection:
 // a generation that skips one or more values still logs
 // `coordinator_generation_gap` and returns gap_detected=true after the
 // dead last_tool_call_id reset was removed (proposal 0026), since gap
 // detection has no dependence on last_tool_call_id. It also pins the
 // proposal-0026 Pass-14 doc reconciliation: the gap path does not cancel
-// in-flight RPCs (the §10.1 line 36 cancellation is an unimplemented
+// in-flight RPCs (the §10.1 cancellation is an unimplemented
 // requirement), so the fence's own context is left un-cancelled.
 //
-// spec: §10.1 lines 33-37 (CoordinatorFence gap), §4.2 (coordination_generation handoff).
+// spec: §10.1, §4.2 (coordination_generation handoff).
 func TestCoordinatorFenceGapDetected(t *testing.T) {
 	// Redirect the default slog logger so the gap warning line is
 	// observable; CoordinatorFence emits it via slog.WarnContext.
@@ -166,7 +166,7 @@ func TestCoordinatorFenceGapDetected(t *testing.T) {
 		t.Fatalf("gap path should log coordinator_generation_gap, got %q", logBuf.String())
 	}
 	if gapCtx.Err() != nil {
-		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1 line 36); ctx.Err()=%v", gapCtx.Err())
+		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1); ctx.Err()=%v", gapCtx.Err())
 	}
 }
 
@@ -184,7 +184,7 @@ func TestCheckpointBarrierRequiresSession(t *testing.T) {
 
 // TestCheckpointBarrierRejectsWithoutFence verifies that the barrier
 // path requires a prior CoordinatorFence; without one the gate is
-// closed. spec: §10.1 line 34 — fence is a precondition for any
+// closed. spec: §10.1 — fence is a precondition for any
 // subsequent operational RPC.
 func TestCheckpointBarrierRejectsWithoutFence(t *testing.T) {
 	s := newFencedServer(t)
@@ -232,15 +232,14 @@ func waitBarrierWaiting(t *testing.T, s *Server) {
 	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
 }
 
-// TestCheckpointBarrierAcksEchoedCheckpointID verifies the §10.1 lines
-// 163-172 quiesce-and-hold contract: fence sets generation N, the barrier
+// TestCheckpointBarrierAcksEchoedCheckpointID verifies the §10.1 quiesce-and-hold contract: fence sets generation N, the barrier
 // with N quiesces and holds, and it returns only after the gateway-driven
 // Checkpoint stream terminates, echoing the checkpoint_id that stream
 // carried on its CheckpointStart. A pre-fix barrier that drove its own
 // in-adapter checkpoint would return an adapter-minted ref rather than the
 // gateway's id, or return before the stream ran.
 //
-// spec: §4.7 line 660, §10.1 lines 163-172.
+// spec: §4.7, §10.1.
 func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	s := newFencedServer(t)
 	ctx := context.Background()
@@ -324,14 +323,14 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	}
 }
 
-// TestCheckpointBarrierQuiescedMsIsTimeToQuiescence pins §10.1 line 167:
+// TestCheckpointBarrierQuiescedMsIsTimeToQuiescence pins §10.1:
 // quiesced_ms is the time to reach quiescence measured inside the ack window,
 // not the full hold duration across the gateway-driven Checkpoint stream. The
 // barrier holds quiescence open for a wall-clock span before the stream
 // links and terminates; a pre-fix barrier measured time.Since(startedAt)
 // after that hold and reported the whole window instead.
 //
-// spec: §10.1 line 167.
+// spec: §10.1.
 func TestCheckpointBarrierQuiescedMsIsTimeToQuiescence(t *testing.T) {
 	s := newFencedServer(t)
 	ctx := context.Background()
@@ -368,7 +367,7 @@ func TestCheckpointBarrierQuiescedMsIsTimeToQuiescence(t *testing.T) {
 // barrier whose wall-clock window expires without the gateway driving a
 // Checkpoint stream returns an empty checkpoint_ref, so the gateway
 // finalises a partial manifest rather than blocking the drain. spec:
-// §10.1 lines 169-172 — partial-capture path.
+// §10.1 — partial-capture path.
 func TestCheckpointBarrierEmptyCheckpointWhenNoStreamDriven(t *testing.T) {
 	s := newFencedServer(t)
 	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{

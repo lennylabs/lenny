@@ -9,7 +9,7 @@ import (
 )
 
 // TestCmdSLOExportRendersOpenSLO confirms `slo export` prints OpenSLO v1
-// documents for the requested tier offline. spec: §16.10 lines 732-736.
+// documents for the requested tier offline. spec: §16.10.
 func TestCmdSLOExportRendersOpenSLO(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	if code := cmdSLO([]string{"export", "--tier", "tier3"}, &out, &errBuf); code != 0 {
@@ -29,7 +29,7 @@ func TestCmdSLOExportRendersOpenSLO(t *testing.T) {
 // TestCmdSLOExportEmitsConcreteNotificationTarget confirms the CLI threads
 // the concrete OpenSLODefaultNotificationTarget through the renderer so the
 // offline export carries a schema-valid AlertNotificationTarget with no
-// placeholder target name. spec: §16.10 lines 732-736.
+// placeholder target name. spec: §16.10.
 func TestCmdSLOExportEmitsConcreteNotificationTarget(t *testing.T) {
 	var out, errBuf bytes.Buffer
 	if code := cmdSLO([]string{"export"}, &out, &errBuf); code != 0 {

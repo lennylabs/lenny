@@ -40,8 +40,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	// health probe lets the read surface attach the degradation envelope
 	// (Redis-down → gateway-buffer fall-back) and the dual-outage 503.
 	// Without Redis there is no meaningful "outage" to signal, so the
-	// probe is omitted and the read surface stays healthy. spec: §25.5
-	// lines 2768-2780. F-25.5.14.
+	// probe is omitted and the read surface stays healthy. spec: §25.5. F-25.5.14.
 	streamOpts := opsstream.Options{ReplicaID: w.replicaID, OnGap: observeStreamGap}
 	if w.redisClient != nil {
 		w.srcHealth = newSourceHealthProbe()
@@ -95,7 +94,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	}
 	w.eventSource = eventSource
 
-	// §25.5 line 2753: the cold-start health signal. When the subscription
+	// §25.5: the cold-start health signal. When the subscription
 	// cache cannot reach Postgres no webhook delivery occurs, so lenny-ops
 	// emits ops_health_status_changed with subscriptionsUnavailable; a
 	// later recovery emits the clear.
@@ -125,7 +124,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		}
 	}
 
-	// §25.5 line 2751: the invalidate-RPC token derives from the shared
+	// §25.5: the invalidate-RPC token derives from the shared
 	// HMAC key both replicas mount; an empty path (dev) disables the RPC.
 	var webhookSharedKey []byte
 	if *w.f.bearerTrustHMACKeyFile != "" {
@@ -137,7 +136,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	if i := strings.LastIndex(*w.f.addr, ":"); i >= 0 {
 		adminPort, _ = strconv.Atoi((*w.f.addr)[i+1:])
 	}
-	// §25.5 lines 2735-2745 ops.webhooks SSRF policy. The validator gates
+	// §25.5 ops.webhooks SSRF policy. The validator gates
 	// subscription create/update and every delivery attempt. F-25.4.9.
 	webhookSSRF := buildWebhookSSRF(*w.f.webhookAllowHTTP, *w.f.webhookBlockedCIDRs, *w.f.webhookDomainAllowlist)
 	w.delivery = buildWebhookDelivery(w.ctx, webhookDeliveryDeps{

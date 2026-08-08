@@ -15,25 +15,24 @@ import (
 
 // defaultDirectUsagePollIntervalSeconds is the §11.2 direct-mode
 // ReportUsage poll cadence when the operator has not tuned one. It matches
-// the §11.2 line 44 quotaSyncIntervalSeconds default (30s) without being
+// the §11.2 quotaSyncIntervalSeconds default (30s) without being
 // coupled to it: this loop pulls direct-mode token deltas, while the quota
-// checkpoint loop persists Redis counters to Postgres. spec: §11.2 line 44
+// checkpoint loop persists Redis counters to Postgres. spec: §11.2
 // (default 30s).
 const defaultDirectUsagePollIntervalSeconds = 30
 
 // minDirectUsagePollIntervalSeconds is the §11.2 floor on the direct-mode
-// poll interval. A tighter interval narrows the §8.3 line 435 over-run
-// window and the §6.2 line 253 false-idle window, but the RPC fans out to
+// poll interval. A tighter interval narrows the §8.3 over-run
+// window and the §6.2 false-idle window, but the RPC fans out to
 // every bound session on the replica, so the floor keeps the pull from
-// busy-looping. It matches the §11.2 line 44 quotaSyncIntervalSeconds
-// minimum (10s). spec: §11.2 line 44 (minimum 10s).
+// busy-looping. It matches the §11.2 quotaSyncIntervalSeconds
+// minimum (10s). spec: §11.2.
 const minDirectUsagePollIntervalSeconds = 10
 
 // clampDirectUsagePollIntervalSeconds applies the §11.2 bounds to a
 // configured direct-mode poll interval: a non-positive value selects the
 // 30s default, and a positive value below the 10s minimum is raised to the
-// floor. Any value at or above the floor is returned unchanged. spec: §11.2
-// line 44 (default 30, minimum 10).
+// floor. Any value at or above the floor is returned unchanged. spec: §11.2.
 func clampDirectUsagePollIntervalSeconds(seconds int) int {
 	if seconds <= 0 {
 		return defaultDirectUsagePollIntervalSeconds
@@ -50,7 +49,7 @@ func clampDirectUsagePollIntervalSeconds(seconds int) int {
 // so a long interval does not carry a disproportionately short deadline;
 // the cap keeps a short interval from letting a slow adapter overrun the
 // tick. A hung pod that never answers is bounded by this deadline and still
-// idle-terminates through the §6.2 line 253 non-zero-delta gate (a timed-out
+// idle-terminates through the §6.2 non-zero-delta gate (a timed-out
 // pull records no delta, so the idle clock is untouched).
 func directUsagePullTimeout(interval time.Duration) time.Duration {
 	const cap = 5 * time.Second
@@ -95,8 +94,7 @@ type directUsageRecorder interface {
 // from its pod's adapter, filtering proxy-mode leases. adapterclient.Client
 // satisfies it via ReportUsageForLease. It is defined at the consumer so the
 // loop does not depend on the adapter-client construction and a test can
-// substitute a stub. spec: §4.7 (ReportUsage), §4.9 line 1468 (proxy-mode
-// filter).
+// substitute a stub. spec: §4.7 (ReportUsage), §4.9.
 type directUsagePuller interface {
 	ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode, cumulative bool) (adapterclient.UsageReport, error)
 }
@@ -113,13 +111,12 @@ type directUsagePuller interface {
 //
 // The mid-session enforcer, the in-path extension, and the terminal
 // FINAL_USAGE_REPORT settlement are out of scope: the recorder excludes the
-// enforcer breach path (§11.2 line 44 / §8.3 line 631 forbid an in-path
+// enforcer breach path (§11.2 / §8.3 forbid an in-path
 // termination or extension for a direct-mode session), and the adapter's
 // terminal FINAL_USAGE_REPORT push keeps its distinct §8.3 quiescence role.
 //
-// spec: §11.2 line 42 (direct-mode integrity control), §8.3 line 435
-// (over-run bounded against the poll interval), §6.2 line 253 (idle reset on
-// non-zero delta), §4.7 (ReportUsage pull). F-15.3.7, F-11.2.20.
+// spec: §11.2, §8.3
+// (over-run bounded against the poll interval), §6.2, §4.7 (ReportUsage pull). F-15.3.7, F-11.2.20.
 type directUsageLoop struct {
 	registry *podsession.Registry
 	leases   directUsageLeaseLookup
@@ -239,7 +236,7 @@ func (l *directUsageLoop) pollOnce(ctx context.Context) {
 		if !ok || lease.DeliveryMode != credential.DeliveryDirect {
 			// No lease resolved, or the session is proxy-mode: proxy-extracted
 			// counts are already authoritative and recorded on the §4.9 path,
-			// so pulling here would double-count. Skip. spec: §4.9 line 1468.
+			// so pulling here would double-count. Skip. spec: §4.9.
 			continue
 		}
 		l.pullSession(ctx, b.SessionID, lease, timeout)
@@ -252,7 +249,7 @@ func (l *directUsageLoop) pollOnce(ctx context.Context) {
 // since the snapshot is skipped and the loop never dials a closed adapter.
 // The pull runs under a per-call timeout derived from the poll interval so a
 // wedged adapter cannot pin the loop; a failed or timed-out pull records no
-// delta, so the §6.2 line 253 idle clock is untouched and a hung pod still
+// delta, so the §6.2 idle clock is untouched and a hung pod still
 // idle-terminates.
 func (l *directUsageLoop) pullSession(ctx context.Context, sessionID string, lease credential.Lease, timeout time.Duration) {
 	b, ok := l.registry.Get(sessionID)

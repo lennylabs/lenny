@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/compliance"
 )
 
-// spec: §24.8 line 113 / §15 line 1414 — RunSuite is the non-testing
+// spec: §24.8 / §15 — RunSuite is the non-testing
 // core the gateway validate handler drives. A passing run returns a
 // report with no error.
 func TestRunSuiteHappyPath(t *testing.T) {
@@ -50,7 +50,7 @@ func TestRunSuiteFailingConformanceIsNotError(t *testing.T) {
 	}
 }
 
-// spec: §15 line 1414 — when the harness cannot be located RunSuite
+// spec: §15 — when the harness cannot be located RunSuite
 // returns ErrHarnessNotFound so the gate reports "cannot validate"
 // rather than failing the adapter.
 func TestRunSuiteHarnessNotFound(t *testing.T) {

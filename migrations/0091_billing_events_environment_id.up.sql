@@ -1,4 +1,4 @@
--- §10.6 line 663 / §10.6 line 674 — `environmentId` populated on all
+-- §10.6 / §10.6 — `environmentId` populated on all
 -- billing events for sessions created in an environment context; v1
 -- accommodation that lets downstream rollups aggregate by environment
 -- without re-joining the (eventually-erased) session row. Stored as a

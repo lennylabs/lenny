@@ -14,7 +14,7 @@ import (
 
 // blockingSDKWarmRuntime is an SDK-warm runtime whose DemoteSDK blocks
 // indefinitely until ForceTerminate releases it, so a test can drive the
-// §6.1 line 67 bounded-teardown timeout path deterministically.
+// §6.1 bounded-teardown timeout path deterministically.
 type blockingSDKWarmRuntime struct {
 	fakeRuntime
 	release chan struct{}
@@ -45,7 +45,7 @@ func (b *blockingSDKWarmRuntime) ForceTerminate() {
 
 var _ adapter.ForceTerminator = (*blockingSDKWarmRuntime)(nil)
 
-// spec: §6.1 line 67 — on SIGTERM the adapter runs a bounded DemoteSDK to
+// spec: §6.1 — on SIGTERM the adapter runs a bounded DemoteSDK to
 // tear the pre-connected SDK down; within the timeout it completes cleanly
 // and the pod returns to pod-warm.
 func TestShutdownDemoteSDKDemotesPreConnected_spec_6_1_67(t *testing.T) {
@@ -69,7 +69,7 @@ func TestShutdownDemoteSDKDemotesPreConnected_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 step 2 — when the bounded DemoteSDK overruns its
+// spec: §6.1 step 2 — when the bounded DemoteSDK overruns its
 // timeout, the adapter force-terminates the SDK process so it is not
 // abandoned mid-connection.
 func TestShutdownDemoteSDKForceTerminatesOnTimeout_spec_6_1_67(t *testing.T) {
@@ -89,7 +89,7 @@ func TestShutdownDemoteSDKForceTerminatesOnTimeout_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — ShutdownDemoteSDK is a no-op for a pod-warm pod
+// spec: §6.1 — ShutdownDemoteSDK is a no-op for a pod-warm pod
 // (there is no pre-connected SDK to tear down), so a SIGTERM handler may
 // call it unconditionally.
 func TestShutdownDemoteSDKPodWarmNoop_spec_6_1_67(t *testing.T) {
@@ -101,7 +101,7 @@ func TestShutdownDemoteSDKPodWarmNoop_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — an SDK-warm pod that never pre-connected has no SDK
+// spec: §6.1 — an SDK-warm pod that never pre-connected has no SDK
 // to tear down, so ShutdownDemoteSDK does not call the runtime's DemoteSDK.
 func TestShutdownDemoteSDKNotConnectedNoop_spec_6_1_67(t *testing.T) {
 	s, rt := sdkWarmServer(t)
@@ -112,7 +112,7 @@ func TestShutdownDemoteSDKNotConnectedNoop_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — the bounded-teardown timeout is read from
+// spec: §6.1 — the bounded-teardown timeout is read from
 // LENNY_DEMOTE_TIMEOUT_SECONDS, defaulting to 5s when unset or invalid.
 func TestDemoteTimeoutFromEnv_spec_6_1_67(t *testing.T) {
 	cases := []struct {
@@ -141,7 +141,7 @@ func TestDemoteTimeoutFromEnv_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — the SDK-warm in-process runtime's force-terminate
+// spec: §6.1 — the SDK-warm in-process runtime's force-terminate
 // hook hard-stops a loop blocked on its input pipe without waiting for it to
 // drain, the substitute for SIGKILLing a real SDK subprocess.
 func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {

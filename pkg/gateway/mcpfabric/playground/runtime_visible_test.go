@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestRuntimeVisibleGlob_spec_27_5_190 pins the §27.5 line 190
+// TestRuntimeVisibleGlob_spec_27_5_190 pins the §27.5
 // playground.allowedRuntimes glob semantics RuntimeVisible enforces: `*` is
 // the only metacharacter and matches any sequence; a pattern with no `*` is an
 // exact match; the default ["*"] (applied by withDefaults) makes every runtime
@@ -86,7 +86,7 @@ func TestPlaygroundSDKSnippetCoversThreeLanguages_spec_27_4_item3(t *testing.T) 
 			t.Errorf("app.js SDK-snippet generator must contain %q", marker)
 		}
 	}
-	// §27.9 line 256: a snippet must reference credentials via environment
+	// §27.9: a snippet must reference credentials via environment
 	// variables only, never embed one.
 	if !strings.Contains(app, "LENNY_BEARER_TOKEN") {
 		t.Errorf("SDK snippets must source the bearer from an environment variable")

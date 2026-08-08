@@ -13,8 +13,7 @@ import (
 // signature-verifying RedactionReceipt in audit_redaction_receipts. The
 // §11.7 periodic background integrity check turns each non-zero count into
 // a lenny_audit_redaction_receipt_missing_total increment, which fires the
-// §16.5 AuditRedactionReceiptMissing critical alert. spec: §12.8 lines
-// 810-827; §16.5 line 467. F-11.7.15.
+// §16.5 AuditRedactionReceiptMissing critical alert. spec: §12.8; §16.5. F-11.7.15.
 type RedactionReceiptResult struct {
 	// TenantID is the tenant whose audit chain carries the orphaned
 	// redaction(s).
@@ -31,7 +30,7 @@ type RedactionReceiptResult struct {
 // (tenant_id, sequence_number). The receipt is the sole provenance token
 // that distinguishes an authorized GDPR redaction from a tamper that
 // merely cleared `payload`; a redaction-marked row without one MUST be
-// treated as a compliance incident (§12.8 line 810, §16.5 line 467).
+// treated as a compliance incident (§12.8, §16.5).
 //
 // A receipt counts as missing when the row exists but has no receipt, or
 // the receipt carries no signature (the absent / signature-invalid cases
@@ -46,8 +45,8 @@ type RedactionReceiptResult struct {
 // (steady-state zero), so it does not walk the full ledger. A query error
 // (for example, the audit_redaction_receipts relation not yet existing on
 // a partially-migrated deployment) is returned to the caller, which treats
-// it as a non-fatal skipped cycle rather than drift. spec: §11.7 line 370;
-// §12.8 lines 810-827. F-11.7.15.
+// it as a non-fatal skipped cycle rather than drift. spec: §11.7;
+// §12.8. F-11.7.15.
 func CheckRedactionReceipts(ctx context.Context, db Querier) ([]RedactionReceiptResult, error) {
 	rows, err := db.Query(ctx, `
 		SELECT a.tenant_id, COUNT(*)

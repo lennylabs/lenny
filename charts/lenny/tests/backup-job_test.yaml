@@ -18,7 +18,7 @@ tests:
           path: metadata.name
           value: lenny-backup-sa
 
-  - it: grants cluster-scoped get/list on CRDs and lenny.dev resources only (§25 line 3997)
+  - it: grants cluster-scoped get/list on CRDs and lenny.dev resources only (§25)
     documentIndex: 1
     asserts:
       - isKind:

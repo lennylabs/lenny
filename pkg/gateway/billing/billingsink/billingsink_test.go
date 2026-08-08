@@ -66,7 +66,7 @@ func sampleEvent() billingstore.Event {
 	}
 }
 
-// spec: §11.2.1 line 136 — the webhook sink POSTs each event with an
+// spec: §11.2.1 — the webhook sink POSTs each event with an
 // HMAC-SHA256 signature header over the exact body.
 func TestWebhookSink_SignsAndDelivers_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{statuses: []int{http.StatusOK}}
@@ -98,7 +98,7 @@ func TestWebhookSink_SignsAndDelivers_spec_11_2_1_136(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 136 — an empty secret omits the signature header
+// spec: §11.2.1 — an empty secret omits the signature header
 // (an internal collector behind mTLS may opt out).
 func TestWebhookSink_NoSecretOmitsSignature_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{statuses: []int{http.StatusNoContent}}
@@ -114,7 +114,7 @@ func TestWebhookSink_NoSecretOmitsSignature_spec_11_2_1_136(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 136 — failed deliveries are retried with
+// spec: §11.2.1 — failed deliveries are retried with
 // exponential backoff; a transient failure followed by success counts as
 // delivered without a dead-letter.
 func TestWebhookSink_RetriesThenSucceeds_spec_11_2_1_136(t *testing.T) {
@@ -140,7 +140,7 @@ func TestWebhookSink_RetriesThenSucceeds_spec_11_2_1_136(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 136 — deliveries are dead-lettered after the retry
+// spec: §11.2.1 — deliveries are dead-lettered after the retry
 // budget is exhausted; Deliver returns the terminal error.
 func TestWebhookSink_DeadLettersOnExhaustion_spec_11_2_1_136(t *testing.T) {
 	doer := &fakeDoer{errs: []error{errors.New("dial"), errors.New("dial"), errors.New("dial")}}
@@ -190,7 +190,7 @@ func TestNewWebhookSink_RequiresURL(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 137 — the message-queue sink publishes through the
+// spec: §11.2.1 — the message-queue sink publishes through the
 // injected QueuePublisher, retrying and dead-lettering like the webhook.
 func TestQueueSink_DeliversAndRetries_spec_11_2_1_137(t *testing.T) {
 	var calls int
@@ -228,7 +228,7 @@ func TestNewQueueSink_RequiresTopicAndPublisher(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 138 — registering a webhook and a queue sink
+// spec: §11.2.1 — registering a webhook and a queue sink
 // together delivers each event to both for redundancy; one sink's
 // terminal failure does not suppress the other.
 func TestPublisher_FansOutToAllSinks_spec_11_2_1_138(t *testing.T) {

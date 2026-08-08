@@ -17,8 +17,7 @@ import (
 // for the operational event stream. It caches the reachability of the
 // Redis ops:events:stream and the gateway event buffer, refreshed by a
 // background ticker so the per-request poll / SSE path never blocks on a
-// network probe. It satisfies opsstream.SourceHealth. spec: §25.5 lines
-// 2768-2780.
+// network probe. It satisfies opsstream.SourceHealth. spec: §25.5.
 type sourceHealthProbe struct {
 	redisUp   atomic.Bool
 	gatewayUp atomic.Bool
@@ -64,8 +63,7 @@ func (p *sourceHealthProbe) GatewayAvailable() bool { return p.gatewayUp.Load() 
 // response only during an actual Redis outage, and the probe rides on an
 // unauthenticated endpoint so a gateway authorization regression cannot
 // re-classify the read surface's degradation state. A nil gwClient leaves the
-// gateway reported reachable (no probe wired). spec: §25.5 lines
-// 2768-2780.
+// gateway reported reachable (no probe wired). spec: §25.5.
 //
 // run also drives the §25.5 best-effort recovery flush on the Redis
 // reachability edges it observes: the up-to-down edge opens the flush's outage

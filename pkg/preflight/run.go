@@ -45,8 +45,7 @@ type Config struct {
 	// scoped to the release namespace only and the agent-pod credential
 	// audit is skipped.
 	//
-	// spec: §13.1 line 23 (host-sharing scan covers all Lenny-managed
-	// Deployments, DaemonSets, and Jobs), §13.1 line 25
+	// spec: §13.1, §13.1
 	// (fsGroup/supplementalGroups audit on every agent-pod template).
 	// F-13.1.7 / F-13.1.4.
 	AgentNamespaces []string
@@ -55,7 +54,7 @@ type Config struct {
 	// value falls back to the podspec package default; the lenny-preflight
 	// Job passes the chart's security.podUIDs.credReadersGID so the audit
 	// stays in lock-step with the operator-tunable UID the controller and
-	// webhooks use. spec: §13.1 line 7. F-13.1.16.
+	// webhooks use. spec: §13.1. F-13.1.16.
 	CredReadersGID int64
 	// Features are the incoming chart feature-flag values.
 	Features WebhookFeatureFlags
@@ -74,17 +73,17 @@ type Config struct {
 	// (soc2 | fedramp | hipaa) the chart is being installed under.
 	// Empty selects no profile.
 	ComplianceProfile string
-	// MinIOBucket is the artifact bucket the §12.5 line 297 SSE
+	// MinIOBucket is the artifact bucket the §12.5 SSE
 	// preflight check audits. Empty skips the check.
 	MinIOBucket string
 	// MinIOEncryptionProber, when non-nil and a bucket name is
-	// configured, runs the §12.5 line 297 SSE check against the
+	// configured, runs the §12.5 SSE check against the
 	// artifact bucket. The lenny-preflight Job constructs a real
 	// prober against MinIO; tests pass a fake.
 	MinIOEncryptionProber MinIOEncryptionProber
 	// RequiredRuntimeClasses lists the §5.3 RuntimeClasses the install
 	// requires (one per enabled, externally-managed
-	// runtimeClasses.profiles entry). Empty skips the §5.3 line 676
+	// runtimeClasses.profiles entry). Empty skips the §5.3
 	// RuntimeClass presence check.
 	RequiredRuntimeClasses []RuntimeClassRequirement
 	// Playground holds the §27.2 playground.* chart values the
@@ -96,15 +95,15 @@ type Config struct {
 	// `lenny.dev/schema-version` annotation. Empty falls back to
 	// CurrentCRDSchemaVersion so the chart can rely on the binary's
 	// embedded default until a future release bumps the value.
-	// spec: §10 line 443. F-15.5.12.
+	// spec: §10. F-15.5.12.
 	CRDSchemaVersion string
 	// CRDNames overrides the default LennyCRDNames set the
 	// schema-version check fans across. Empty falls back to the
 	// chart-shipped CRDs.
-	// spec: §10 line 443. F-15.5.12.
+	// spec: §10. F-15.5.12.
 	CRDNames []string
 	// Environment is the chart `environment` value (dev | staging |
-	// prod). It feeds the §5.3 line 669 cosign-production advisory; a
+	// prod). It feeds the §5.3 cosign-production advisory; a
 	// production-or-staging install with cosign disabled gets a
 	// non-blocking WARNING. F-5.3.5.
 	Environment string
@@ -136,8 +135,7 @@ type Config struct {
 	// a configured endpoint, runs the §25.4 NET-070 live TLS handshake +
 	// SAN-coverage probe against the gateway internal admin API. F-25.4.19.
 	OpsAdminTLSProber OpsAdminTLSProber
-	// DevMode is the global.devMode chart value. It exempts the §12.9
-	// line 1050 volume-encryption check (local development volumes). F-12.9.12.
+	// DevMode is the global.devMode chart value. It exempts the §12.9 volume-encryption check (local development volumes). F-12.9.12.
 	DevMode bool
 	// TenancyMode is the tenancy.mode chart value (single | multi). The
 	// §4.9 credential-delivery scan enforces only when it is "multi"; a
@@ -148,17 +146,16 @@ type Config struct {
 	TenancyMode string
 	// AttestVolumeEncryption is the preflight.attestVolumeEncryption chart
 	// value: the operator's attestation that the BYO Postgres and Redis
-	// volumes are backed by encrypted storage when the §12.9 line 1050
+	// volumes are backed by encrypted storage when the §12.9
 	// check cannot verify it directly. F-12.9.12.
 	AttestVolumeEncryption bool
-	// VolumeEncryptionProber, when non-nil, determines the live §12.9
-	// line 1050 encryption posture of the Postgres and Redis volumes. The
+	// VolumeEncryptionProber, when non-nil, determines the live §12.9 encryption posture of the Postgres and Redis volumes. The
 	// §17.3 BYO topology has no in-cluster volumes to probe, so v1 leaves
 	// it nil and the check routes through the attestation path. F-12.9.12.
 	VolumeEncryptionProber VolumeEncryptionProber
 	// CertManagerEnabled is the certmanager.enabled chart value: when
 	// true the chart relies on the cert-manager-backed mTLS PKI, so the
-	// §10.3 line 304 version check requires cert-manager >= v1.12.0. When
+	// §10.3 version check requires cert-manager >= v1.12.0. When
 	// false the operator manages mTLS through a service mesh and the
 	// check is a no-op. F-10.3.12.
 	CertManagerEnabled bool
@@ -189,8 +186,7 @@ type Config struct {
 	// §13.2 OTLP collector TLS handshake, and the §25.4 lenny-ops ->
 	// gateway internal-TLS handshake. The cluster-API checks still run.
 	// The §17.9.2 airgap answer file sets this so the preflight Job
-	// succeeds with no egress to the managed backends. spec: §17.9.2 line
-	// 1372. F-17.9.11.
+	// succeeds with no egress to the managed backends. spec: §17.9.2. F-17.9.11.
 	SkipNetworkProbes bool
 	// ObjectStorage carries the §17.9.4 cloud object-storage lifecycle
 	// inputs (objectStorage.provider, objectStorage.bucket). An empty or
@@ -204,7 +200,7 @@ type Config struct {
 	// cannot bind per request. The check is a no-op unless a gcs or azure
 	// backend serves a workspaceTier T4 tenant.
 	//
-	// spec: §12.5 line 315; §17.9.7; §17.6.
+	// spec: §12.5; §17.9.7; §17.6.
 	ObjectStorageT4 ObjectStorageT4Config
 	// CloudObjectStorageLifecycleProber, when non-nil and ObjectStorage
 	// names a cloud provider, reads the live §17.9.4 lifecycle posture
@@ -213,10 +209,10 @@ type Config struct {
 	// the advisory path. F-17.9.3.
 	CloudObjectStorageLifecycleProber CloudObjectStorageLifecycleProber
 	// KubernetesVersion is the API server GitVersion the binary read via
-	// the discovery client. Empty skips the §17.6 line 503 minimum-version
+	// the discovery client. Empty skips the §17.6 minimum-version
 	// gate. F-17.6.1.
 	KubernetesVersion string
-	// Environment is reused by the §17.6 line 517 SIEM advisory (already
+	// Environment is reused by the §17.6 SIEM advisory (already
 	// defined above for the cosign-production advisory).
 	//
 	// SIEMEndpoint is the audit.siem.endpoint chart value. Empty in a
@@ -224,44 +220,43 @@ type Config struct {
 	// F-17.6.1.
 	SIEMEndpoint string
 	// StorageRouterRegions are the §12.6 data-residency regions the chart
-	// declares, each with its configured backends. Empty skips the §17.6
-	// line 504 region-coverage audit. F-17.6.1.
+	// declares, each with its configured backends. Empty skips the §17.6 region-coverage audit. F-17.6.1.
 	StorageRouterRegions []StorageRouterRegion
-	// LegalHold carries the §17.6 line 505 legal-hold per-region escrow
+	// LegalHold carries the §17.6 legal-hold per-region escrow
 	// inputs. Disabled skips the check. F-17.6.1.
 	LegalHold LegalHoldConfig
-	// PgBouncerConfigProber, when non-nil, runs the §17.6 lines 487-488
+	// PgBouncerConfigProber, when non-nil, runs the §17.6
 	// PgBouncer pool_mode / connect_query audit against the live PgBouncer
 	// admin console. Nil skips the check. F-17.6.1.
 	PgBouncerConfigProber PgBouncerConfigProber
-	// BillingTriggerProber, when non-nil, runs the §17.6 line 489
+	// BillingTriggerProber, when non-nil, runs the §17.6
 	// billing/audit integrity-trigger audit. Nil skips the check.
 	// F-17.6.1.
 	BillingTriggerProber BillingTriggerProber
 	// ConnectionPooler is the effective postgres.connectionPooler value
-	// (pgbouncer | external). When "external" the §17.6 line 488
+	// (pgbouncer | external). When "external" the §17.6
 	// cloud-managed pooler sentinel defense verifies the lenny_tenant_guard
 	// trigger over PoolerSentinelProber. F-17.9.2.
 	ConnectionPooler string
 	// PoolerSentinelProber, when non-nil and ConnectionPooler is
-	// "external", runs the §17.6 line 488 live Postgres probe for the
+	// "external", runs the §17.6 live Postgres probe for the
 	// lenny_tenant_guard tenant-isolation trigger. A nil prober (no DSN
 	// wired, or --skip-network-probes) routes the check through the
 	// runtime-defense advisory. F-17.9.2.
 	PoolerSentinelProber PoolerSentinelProber
 	// OpsIngressClusterIssuer is the cert-manager.io/cluster-issuer
-	// annotation value on ops.ingress. When set, the §17.6 line 520
+	// annotation value on ops.ingress. When set, the §17.6
 	// advisory verifies the ClusterIssuer exists. Empty skips it.
 	// F-17.6.1.
 	OpsIngressClusterIssuer string
-	// Monitoring carries the §17.6 line 521 monitoring-namespace advisory
+	// Monitoring carries the §17.6 monitoring-namespace advisory
 	// inputs. F-17.6.1.
 	Monitoring MonitoringConfig
 	// OpsServiceAccount is the fully-qualified lenny-ops SA username
-	// (system:serviceaccount:<ns>:lenny-ops-sa) the §17.6 line 519 RBAC
+	// (system:serviceaccount:<ns>:lenny-ops-sa) the §17.6 RBAC
 	// audit reviews. F-17.6.1.
 	OpsServiceAccount string
-	// OpsSARBACProber, when non-nil, runs the §17.6 line 519 lenny-ops-sa
+	// OpsSARBACProber, when non-nil, runs the §17.6 lenny-ops-sa
 	// SubjectAccessReview audit. Nil skips the check. F-17.6.1.
 	OpsSARBACProber OpsSARBACProber
 	// IngressController carries the §13.2 NET-038 ingress-controller
@@ -273,7 +268,7 @@ type Config struct {
 
 // credReadersGID resolves the §13.1 lenny-cred-readers GID the agent-pod
 // fsGroup audit checks against: the operator-tunable Config override when
-// set, else the podspec package default. spec: §13.1 line 7. F-13.1.16.
+// set, else the podspec package default. spec: §13.1. F-13.1.16.
 func (c Config) credReadersGID() int64 {
 	if c.CredReadersGID != 0 {
 		return c.CredReadersGID
@@ -284,7 +279,7 @@ func (c Config) credReadersGID() int64 {
 // IngressControllerConfig carries the §13.2 NET-038 chart values the
 // ingress-controller advisory evaluates against the cluster.
 //
-// spec: §13.2 line 292. F-13.2.8.
+// spec: §13.2. F-13.2.8.
 type IngressControllerConfig struct {
 	// Namespace is the ingressControllerNamespace value.
 	Namespace string
@@ -294,10 +289,10 @@ type IngressControllerConfig struct {
 	PodLabelValue string
 }
 
-// MonitoringConfig carries the §17.6 line 521 monitoring.* chart values
+// MonitoringConfig carries the §17.6 monitoring.* chart values
 // the monitoring-namespace advisory evaluates.
 //
-// spec: §17.6 line 521. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 type MonitoringConfig struct {
 	// Namespace is the monitoring.namespace value.
 	Namespace string
@@ -305,10 +300,10 @@ type MonitoringConfig struct {
 	PodLabel string
 }
 
-// LegalHoldConfig carries the §17.6 line 505 legal-hold per-region
+// LegalHoldConfig carries the §17.6 legal-hold per-region
 // escrow chart values the legal-hold-escrow check evaluates.
 //
-// spec: §17.6 line 505; §12.8 Phase 3.5. F-17.6.1.
+// spec: §17.6; §12.8 Phase 3.5. F-17.6.1.
 type LegalHoldConfig struct {
 	// Enabled is the legalHold.enabled chart value.
 	Enabled bool
@@ -321,7 +316,7 @@ type LegalHoldConfig struct {
 // ObjectStorageConfig carries the §17.9.4 chart objectStorage.* values
 // the cloud-object-storage-lifecycle check evaluates.
 //
-// spec: §17.9.4; §17.6 line 494. F-17.9.3.
+// spec: §17.9.4; §17.6. F-17.9.3.
 type ObjectStorageConfig struct {
 	// Provider is the objectStorage.provider value
 	// (minio | s3 | gcs | azure).
@@ -335,7 +330,7 @@ type ObjectStorageConfig struct {
 // check evaluates against a gcs or azure backend serving a workspaceTier
 // T4 tenant.
 //
-// spec: §12.5 line 315; §17.9.7; §17.6.
+// spec: §12.5; §17.9.7; §17.6.
 type ObjectStorageT4Config struct {
 	// ServesT4Tenant is true when the deployment serves any workspaceTier
 	// T4 tenant. False leaves the T4 default-encryption check a no-op.
@@ -417,7 +412,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	return report
 }
 
-// runCosignChecks evaluates the §5.3 line 669 image-provenance advisory.
+// runCosignChecks evaluates the §5.3 image-provenance advisory.
 // A production-or-staging install with cosign disabled gets a
 // non-blocking WARNING, mirroring the §17.6 disk-encryption posture
 // warning. The check is a pure function over the chart values. F-5.3.5.
@@ -472,12 +467,11 @@ func runPhaseStampChecks(ctx context.Context, reader client.Reader, cfg Config) 
 // scan covers all Lenny-managed Deployments, DaemonSets, and Jobs in the
 // release namespace and the §17.2 agent namespaces, plus the bare agent
 // Pods the controller spawns from Sandbox CRs. The same agent-Pod scan
-// feeds the §13.1 line 25 credential-fsGroup audit, so it is read once and
+// feeds the §13.1 credential-fsGroup audit, so it is read once and
 // its error is reused across both audits. A failed read surfaces as a
 // failed check (fail-closed).
 //
-// spec: §13.1 line 23 (host-sharing scan covers all Lenny-managed
-// workloads), §13.1 line 25 (credential-fsGroup audit), §13.1 lines 6-8
+// spec: §13.1, §13.1, §13.1
 // (pod-security baseline). F-13.1.7 / F-13.1.4 / F-13.1.12.
 func runWorkloadSecurityChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 	var report []CheckResult
@@ -513,7 +507,7 @@ func runWorkloadSecurityChecks(ctx context.Context, reader client.Reader, cfg Co
 		})
 	}
 
-	// §13.1 line 25 — the lenny-preflight Job validates the presence of
+	// §13.1 — the lenny-preflight Job validates the presence of
 	// the lenny-cred-readers fsGroup and supplementalGroups on every
 	// agent-pod template, the install-time backstop to the admission
 	// webhook's per-CREATE check (F-13.1.4). The audit runs only when the
@@ -533,7 +527,7 @@ func runWorkloadSecurityChecks(ctx context.Context, reader client.Reader, cfg Co
 		}
 	}
 
-	// §13.1 lines 6-8 — the pod-security baseline (non-root, all
+	// §13.1 — the pod-security baseline (non-root, all
 	// capabilities dropped, read-only root filesystem) on every
 	// Lenny-managed workload in the release namespace. The chart authors
 	// these settings, so a failure means a value override, a patched Job,
@@ -625,7 +619,7 @@ func runDeploymentIdentityChecks(ctx context.Context, reader client.Reader, cfg 
 func runStorageChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
 	var report []CheckResult
 
-	// §12.5 line 297 — MinIO server-side encryption posture audit.
+	// §12.5 — MinIO server-side encryption posture audit.
 	// A regulated complianceProfile (soc2 | fedramp | hipaa) fails closed
 	// on absent SSE; non-regulated installs surface the posture as advisory
 	// and pass.
@@ -640,7 +634,7 @@ func runStorageChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckR
 		})
 	}
 
-	// §17.9.4 / §17.6 line 494 — cloud object-storage lifecycle rules.
+	// §17.9.4 / §17.6 — cloud object-storage lifecycle rules.
 	// The check self-skips for objectStorage.provider=minio (the
 	// post-install Job configures MinIO via `mc ilm add`). For a cloud
 	// provider it verifies bucket versioning + noncurrent-version /
@@ -674,7 +668,7 @@ func runStorageChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckR
 // over the chart values; it is a no-op unless a gcs/azure backend serves
 // a T4 tenant.
 //
-// spec: §12.5 line 315; §17.9.7; §17.6.
+// spec: §12.5; §17.9.7; §17.6.
 func runObjectStoreT4EncryptionChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
 	return []CheckResult{{
 		Name: "checkpoint-t4-default-encryption",
@@ -688,7 +682,7 @@ func runObjectStoreT4EncryptionChecks(_ context.Context, _ client.Reader, cfg Co
 	}}
 }
 
-// runRuntimeClassChecks runs the §5.3 line 676 required-RuntimeClass
+// runRuntimeClassChecks runs the §5.3 required-RuntimeClass
 // presence audit. The chart passes one requirement per enabled,
 // externally-managed isolation profile; an absent RuntimeClass fails the
 // install fail-closed before the first warm pod create would be rejected
@@ -710,7 +704,7 @@ func runRuntimeClassChecks(ctx context.Context, reader client.Reader, cfg Config
 	}}
 }
 
-// runPoolGracePeriodChecks runs the §5.2 line 516 node-drain-timeout
+// runPoolGracePeriodChecks runs the §5.2 node-drain-timeout
 // warning. Existing pools (on upgrade) whose terminationGracePeriodSeconds
 // exceeds the common 600s node drain timeout get an advisory warning. A
 // fresh install has no pools and the check passes cleanly. The check is
@@ -765,22 +759,22 @@ func runCredentialDeliveryChecks(ctx context.Context, reader client.Reader, cfg 
 }
 
 // runPlaygroundChecks runs the §27.2 / §27.3 install-time playground
-// configuration cross-field rejection and the §27.9 line 255 apiKey-mode
+// configuration cross-field rejection and the §27.9 apiKey-mode
 // acknowledgement advisory. Both are pure functions over the chart values,
 // so the group runs without any cluster gather.
 //
-// spec: §27.2 lines 41-42, §27.3, §27.9 line 255. F-27.2.2 / F-27.2.4 /
+// spec: §27.2, §27.3, §27.9. F-27.2.2 / F-27.2.4 /
 // F-27.2.5 / F-27.2.6 / F-27.9.2 / F-27.9.3.
 func runPlaygroundChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
 	return []CheckResult{
-		// §27.2 lines 41-42 + §27.3 — install-time cross-field rejection of
+		// §27.2 + §27.3 — install-time cross-field rejection of
 		// malformed playground configuration plus the non-blocking
 		// apiKey-mode acknowledgement warning.
 		{
 			Name:     "playground-config",
 			Decision: CheckPlaygroundConfig(cfg.Playground),
 		},
-		// §27.9 line 255 — the `playground.apiKeyMode` row emits a
+		// §27.9 — the `playground.apiKeyMode` row emits a
 		// non-blocking WARNING when the playground ships apiKey auth mode
 		// outside dev mode without playground.acknowledgeApiKeyMode, the
 		// single install-time touchpoint for the paste-form phishing-surface
@@ -793,7 +787,7 @@ func runPlaygroundChecks(_ context.Context, _ client.Reader, cfg Config) []Check
 	}
 }
 
-// runCRDSchemaChecks runs the §10 line 443 CRD schema-version audit. Every
+// runCRDSchemaChecks runs the §10 CRD schema-version audit. Every
 // installed Lenny CRD MUST carry the schema-version annotation matching the
 // version the chart release expects; a stale or absent CRD aborts the
 // install before the gateway and controllers roll. F-15.5.12.
@@ -820,7 +814,7 @@ func runPrometheusOperatorChecks(ctx context.Context, reader client.Reader, cfg 
 	}}
 }
 
-// runCertManagerChecks runs the §10.3 line 304 cert-manager version audit.
+// runCertManagerChecks runs the §10.3 cert-manager version audit.
 // When the cert-manager-backed mTLS PKI is enabled, cert-manager >= v1.12.0
 // must be installed; an absent or stale cert-manager aborts the install
 // rather than failing silently at the first Certificate-resource creation.
@@ -835,7 +829,7 @@ func runCertManagerChecks(ctx context.Context, _ client.Reader, cfg Config) []Ch
 	}}
 }
 
-// runConversionWebhookChecks verifies the §15.5 line 2438 / §17.2 line 58
+// runConversionWebhookChecks verifies the §15.5 / §17.2
 // lenny-crd-conversion webhook Service presence and Deployment readiness.
 // The admission-webhook-inventory check excludes it (it is a CRD conversion
 // endpoint rather than a ValidatingWebhookConfiguration). A missing or
@@ -871,7 +865,7 @@ func runRedisMaxmemoryChecks(ctx context.Context, _ client.Reader, cfg Config) [
 	}}
 }
 
-// runCloudPoolerSentinelChecks runs the §17.6 line 488 / §17.9.7
+// runCloudPoolerSentinelChecks runs the §17.6 / §17.9.7
 // cloud-managed pooler sentinel defense. When postgres.connectionPooler is
 // "external" the managed proxy cannot run the connect_query __unset__
 // sentinel, so the lenny_tenant_guard per-transaction trigger is the
@@ -976,7 +970,7 @@ func runPrometheusReachabilityChecks(ctx context.Context, _ client.Reader, cfg C
 	}}
 }
 
-// runVolumeEncryptionChecks runs the §12.9 line 1050 storage-layer
+// runVolumeEncryptionChecks runs the §12.9 storage-layer
 // encryption baseline: the Postgres and Redis volumes must be backed by
 // encrypted storage. The check runs unconditionally; global.devMode exempts
 // it, and the §17.3 BYO topology routes through the
@@ -993,7 +987,7 @@ func runVolumeEncryptionChecks(ctx context.Context, _ client.Reader, cfg Config)
 	}}
 }
 
-// runKubernetesVersionChecks runs the §17.6 line 503 minimum-version gate.
+// runKubernetesVersionChecks runs the §17.6 minimum-version gate.
 // The API server must be >= 1.27; the binary reads the version via the
 // discovery client, and an empty/unparseable value is non-blocking.
 // F-17.6.1.
@@ -1013,20 +1007,20 @@ func runKubernetesVersionChecks(_ context.Context, _ client.Reader, cfg Config) 
 // when its prober is nil. F-17.6.1.
 func runInstallPrereqChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
 	return []CheckResult{
-		// §17.6 line 517 — non-blocking SIEM-endpoint advisory: a production
+		// §17.6 — non-blocking SIEM-endpoint advisory: a production
 		// install with no audit.siem.endpoint stores audit logs in Postgres
 		// only, which is below the compliance-grade integrity bar.
 		{
 			Name:     "siem-endpoint",
 			Decision: SIEMEndpointCheck{Environment: cfg.Environment, SIEMEndpoint: cfg.SIEMEndpoint}.Decide(),
 		},
-		// §17.6 line 504 — every declared StorageRouter region must carry a
+		// §17.6 — every declared StorageRouter region must carry a
 		// Postgres and an object-storage backend. Empty region set skips.
 		{
 			Name:     "storagerouter-region-coverage",
 			Decision: StorageRouterRegionCoverageCheck{Regions: cfg.StorageRouterRegions}.Decide(),
 		},
-		// §17.6 line 505 — when legal hold is enabled every region must have
+		// §17.6 — when legal hold is enabled every region must have
 		// a region-scoped escrow KEK (§12.8 Phase 3.5). Disabled skips.
 		{
 			Name: "legal-hold-escrow",
@@ -1036,14 +1030,14 @@ func runInstallPrereqChecks(ctx context.Context, _ client.Reader, cfg Config) []
 				EscrowRegions: cfg.LegalHold.EscrowRegions,
 			}.Decide(),
 		},
-		// §17.6 lines 487-488 — PgBouncer pool_mode==transaction + tenant
+		// §17.6 — PgBouncer pool_mode==transaction + tenant
 		// sentinel connect_query. Runs only when a live PgBouncer admin
 		// connection is wired (nil prober skips).
 		{
 			Name:     "pgbouncer-config",
 			Decision: PgBouncerConfigCheck{Prober: cfg.PgBouncerConfigProber}.Decide(ctx),
 		},
-		// §17.6 line 489 — billing/audit integrity triggers enabled. Runs
+		// §17.6 — billing/audit integrity triggers enabled. Runs
 		// only when a billing-database connection is wired (nil prober
 		// skips).
 		{
@@ -1053,7 +1047,7 @@ func runInstallPrereqChecks(ctx context.Context, _ client.Reader, cfg Config) []
 	}
 }
 
-// runNamespaceGovernanceChecks runs the §17.6 lines 501-502 agent-namespace
+// runNamespaceGovernanceChecks runs the §17.6 agent-namespace
 // ResourceQuota and LimitRange audits. Every existing agent namespace must
 // carry both; not-yet-created namespaces (fresh install, chart applies them
 // in the main phase) are skipped. A failed read surfaces as a failed check
@@ -1075,7 +1069,7 @@ func runNamespaceGovernanceChecks(ctx context.Context, reader client.Reader, cfg
 	}
 }
 
-// runOpsIngressIssuerChecks runs the §17.6 line 520 non-blocking
+// runOpsIngressIssuerChecks runs the §17.6 non-blocking
 // ops.ingress ClusterIssuer advisory. Runs only when the annotation names
 // an issuer; a failed read surfaces as a failed check (fail-closed).
 // F-17.6.1.
@@ -1093,7 +1087,7 @@ func runOpsIngressIssuerChecks(ctx context.Context, reader client.Reader, cfg Co
 	}}
 }
 
-// runMonitoringNamespaceChecks runs the §17.6 line 521 non-blocking
+// runMonitoringNamespaceChecks runs the §17.6 non-blocking
 // monitoring-namespace advisory. Runs only when both a monitoring namespace
 // and a pod label are configured; a failed read surfaces as a failed check
 // (fail-closed). F-17.6.1.
@@ -1115,7 +1109,7 @@ func runMonitoringNamespaceChecks(ctx context.Context, reader client.Reader, cfg
 	}}
 }
 
-// runOpsSARBACChecks runs the §17.6 line 519 lenny-ops-sa RBAC audit. Runs
+// runOpsSARBACChecks runs the §17.6 lenny-ops-sa RBAC audit. Runs
 // only when a SubjectAccessReview prober is wired (a nil prober makes the
 // check self-skip). F-17.6.1.
 func runOpsSARBACChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckResult {
@@ -1129,7 +1123,7 @@ func runOpsSARBACChecks(ctx context.Context, _ client.Reader, cfg Config) []Chec
 	}}
 }
 
-// runIngressControllerChecks runs the §13.2 line 292 NET-038 non-blocking
+// runIngressControllerChecks runs the §13.2 NET-038 non-blocking
 // ingress-controller advisory. It validates that the
 // ingressControllerNamespace exists and runs at least one pod carrying the
 // configured controllerPodLabel, so the allow-gateway-ingress
@@ -1189,8 +1183,8 @@ func gatherGatewayIdentities(ctx context.Context, reader client.Reader) ([]Gatew
 // forEachLennyWorkload visits the pod template of every Lenny-managed
 // Deployment, DaemonSet, and Job in each namespace, passing a
 // namespace-scoped workload identifier so a per-workload finding is
-// unambiguous. It is the shared lister the host-sharing (§13.1 line 23)
-// and pod-security-baseline (§13.1 lines 6-8) projections both build on,
+// unambiguous. It is the shared lister the host-sharing (§13.1)
+// and pod-security-baseline (§13.1) projections both build on,
 // so each gather makes one pass over the same workloads.
 func forEachLennyWorkload(ctx context.Context, reader client.Reader, namespaces []string, visit func(workload string, spec *corev1.PodSpec)) error {
 	for _, namespace := range namespaces {
@@ -1228,7 +1222,7 @@ func forEachLennyWorkload(ctx context.Context, reader client.Reader, namespaces 
 // DaemonSets, and Jobs in each namespace and projects each pod template
 // onto a HostSharingPodSpec.
 //
-// spec: §13.1 line 23 — the audit covers every Lenny-managed workload,
+// spec: §13.1 — the audit covers every Lenny-managed workload,
 // not only those in the release namespace. F-13.1.7.
 func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespaces []string) ([]HostSharingPodSpec, error) {
 	var out []HostSharingPodSpec
@@ -1247,7 +1241,7 @@ func gatherWorkloadPodSpecs(ctx context.Context, reader client.Reader, namespace
 // for agent-namespace pods is enforced by the controller podspec and the
 // agent-pod host-sharing / credential audits.
 //
-// spec: §13.1 lines 6-8, 16. F-13.1.12.
+// spec: §13.1. F-13.1.12.
 func gatherWorkloadPodSecurity(ctx context.Context, reader client.Reader, namespaces []string) ([]WorkloadPodSecurity, error) {
 	var out []WorkloadPodSecurity
 	err := forEachLennyWorkload(ctx, reader, namespaces, func(workload string, spec *corev1.PodSpec) {
@@ -1263,7 +1257,7 @@ func gatherWorkloadPodSecurity(ctx context.Context, reader client.Reader, namesp
 // CIDR-discovery check validates: the kubernetes.default Service
 // ClusterIP (NET-040) and every node-reported pod CIDR (NET-022).
 //
-// spec: §13.2 lines 230-262. F-13.2.13.
+// spec: §13.2. F-13.2.13.
 func gatherClusterCIDRDiscovery(ctx context.Context, reader client.Reader) (clusterIP string, podCIDRs []string, err error) {
 	var svc corev1.Service
 	if err := reader.Get(ctx, client.ObjectKey{Namespace: "default", Name: "kubernetes"}, &svc); err != nil {
@@ -1300,9 +1294,7 @@ var agentManagedLabel = client.MatchingLabels{"lenny.dev/managed": "true"}
 // returns no pods so a deployment that does not declare agentNamespaces
 // runs neither agent-scoped audit.
 //
-// spec: §13.1 line 16 (CRD-driven RuntimePool pods are in the
-// forbidden-flag set), §13.1 line 25 (fsGroup/supplementalGroups on every
-// agent-pod template). F-13.1.7 / F-13.1.4.
+// spec: §13.1, §13.1. F-13.1.7 / F-13.1.4.
 func gatherAgentPods(ctx context.Context, reader client.Reader, namespaces []string) ([]AgentPodSpec, error) {
 	var out []AgentPodSpec
 	for _, namespace := range namespaces {

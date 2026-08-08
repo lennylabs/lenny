@@ -14,7 +14,7 @@ import (
 	sessionmem "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §12.8 line 865, lines 872-889 — the gateway-hosted §12.8
+// spec: §12.8 — the gateway-hosted §12.8
 // tenant-deletion reconciler drives a tenant out of `disabling`/`deleting`
 // through the erasure phases to the `deleted` tombstone, and pauses at
 // Phase 3.5 while an active legal hold is in force. F-12.8.1, F-24.10.3.

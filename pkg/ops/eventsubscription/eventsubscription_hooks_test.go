@@ -10,7 +10,7 @@ import (
 	es "github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )
 
-// TestServiceFiresChangeAndSecretHooks is the §25.5 lines 2747-2756
+// TestServiceFiresChangeAndSecretHooks is the §25.5
 // contract: Create and RotateSecret hand the plaintext secret to the
 // reveal cache and signal a cache change; Delete signals a removal and a
 // change.
@@ -58,7 +58,7 @@ func TestServiceFiresChangeAndSecretHooks_spec_25_5_2751(t *testing.T) {
 	}
 }
 
-// TestMemoryStoreDeleteExpired is the §25.5 lines 2649-2664 retention
+// TestMemoryStoreDeleteExpired is the §25.5 retention
 // contract: DeleteExpired removes only rows whose expires_at is at or
 // before the cutoff, bounded by limit.
 func TestMemoryStoreDeleteExpired_spec_25_5_2661(t *testing.T) {

@@ -23,12 +23,12 @@ import (
 // a non-2xx surfaces the §15.1 error envelope (code/category/retryable)
 // so the §15.2.1 rule-3/5(d) parity holds on both surfaces.
 //
-// spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// spec: §15.2.1 rule 1. F-15.2.3.
 type SessionService interface {
 	ServiceCall(ctx context.Context, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (sessionserver.ServiceResult, *sessionserver.ServiceError)
 }
 
-// registerClientFacingTools installs the §15.2 lines 1284-1306
+// registerClientFacingTools installs the §15.2
 // client-facing tools that map to an overlapping REST operation. They
 // register only when a SessionService is wired; the minimal in-process
 // gateway and the unit suite leave it nil. spec: §15.2. F-15.2.3.
@@ -86,7 +86,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		})
 	}
 
-	// spec: §15.2 line 1289 — create, upload inline files, and start in one
+	// spec: §15.2 — create, upload inline files, and start in one
 	// call. The full POST /v1/sessions/start body is forwarded verbatim.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_and_start_session",
@@ -97,18 +97,18 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		return dispatch(ctx, "POST", "/v1/sessions/start", body, jsonBody, nil)
 	})
 
-	// spec: §15.2 lines 1291-1304 — per-session lifecycle transitions.
+	// spec: §15.2 — per-session lifecycle transitions.
 	postByID("lenny/start_session", "Start the agent runtime for a created session.", "/start")
 	postByID("lenny/finalize_workspace", "Seal the session workspace and run setup.", "/finalize")
 	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate")
 	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume")
 
-	// spec: §15.2 lines 1296-1300 — per-session reads.
+	// spec: §15.2 — per-session reads.
 	getByID("lenny/get_session_status", "Query a session's state (including suspended).", "")
 	getByID("lenny/list_artifacts", "List the artifacts for a session.", "/artifacts")
 	getByID("lenny/get_token_usage", "Get the reconciled token usage for a session.", "/usage")
 
-	// spec: §15.2 line 1298 — get_session_logs (paginated). `since` and
+	// spec: §15.2 — get_session_logs (paginated). `since` and
 	// `limit` map to the GET /v1/sessions/{id}/logs query parameters.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/get_session_logs",
@@ -140,7 +140,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		return dispatch(ctx, "GET", target, nil, "", nil)
 	})
 
-	// spec: §15.2 line 1305 — list_sessions (filterable). `state`,
+	// spec: §15.2 — list_sessions (filterable). `state`,
 	// `runtime`, and repeatable `label` map to the GET /v1/sessions query.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/list_sessions",
@@ -174,7 +174,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		return dispatch(ctx, "GET", target, nil, "", nil)
 	})
 
-	// spec: §15.2 line 1301 — download_artifact. The blob bytes are
+	// spec: §15.2 — download_artifact. The blob bytes are
 	// base64-encoded into a JSON result (MCP tool content is text-only),
 	// alongside the blob's mime type and size so a client can reconstruct
 	// the artifact.
@@ -207,7 +207,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		return textResult(string(out)), nil
 	})
 
-	// spec: §15.2 line 1290 — upload_files. The file bytes arrive
+	// spec: §15.2 — upload_files. The file bytes arrive
 	// base64-encoded; the §7.1 uploadToken minted at create authorizes the
 	// POST /v1/sessions/{id}/upload, carried on the X-Lenny-Upload-Token
 	// header the REST handler reads.

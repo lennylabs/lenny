@@ -21,7 +21,7 @@ import (
 // durable store. It downloads the PostgreSQL bundle, so it is skipped
 // under -short.
 //
-// spec: §25.10 lines 3811-3820.
+// spec: §25.10.
 func TestPgStoreRoundTrip_spec_25_10(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
@@ -123,7 +123,7 @@ func TestPgStoreRoundTrip_spec_25_10(t *testing.T) {
 		t.Errorf("target upgradeId = %q, want upgrade-42", gotTarget.UpgradeID)
 	}
 
-	// §25.10 line 3789: PromoteTargetToLive atomically swaps the target row
+	// §25.10: PromoteTargetToLive atomically swaps the target row
 	// into the live row and removes the target row. After the promote the
 	// live row carries the target's desired state and upgrade id, and the
 	// target row is gone, so GET /v1/admin/drift?against=target returns
@@ -167,7 +167,7 @@ func TestPgStoreRoundTrip_spec_25_10(t *testing.T) {
 // issues a write. This pins the fail-closed behavior on a malformed
 // desired-state document rather than persisting a partial or empty row.
 //
-// spec: §25.10 lines 3811-3820 (desired-state snapshot persistence).
+// spec: §25.10.
 func TestPutRejectsUnmarshalableDesiredState(t *testing.T) {
 	// A nil pool is never reached: the marshal error returns first.
 	s := pgstore.New(nil)

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
-// spec: §15.1 lines 1207-1224 — ETag-based optimistic concurrency for the
+// spec: §15.1 — ETag-based optimistic concurrency for the
 // delegation-policies admin resource.
 
 // putDelegationPolicyRaw issues a PUT carrying the given If-Match header
@@ -61,10 +61,10 @@ func seedEtagDelegationPolicy(t *testing.T, name string) (*admin.Router, *delega
 }
 
 // TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207 covers the
-// §15.1 lines 1207-1224 ETag optimistic-concurrency contract for the
+// §15.1 ETag optimistic-concurrency contract for the
 // delegation-policies resource.
 func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
-	// spec: §15.1 line 1209 — single-item GET carries the ETag header and
+	// spec: §15.1 — single-item GET carries the ETag header and
 	// the body carries the per-item etag field.
 	t.Run("GetCarriesETag", func(t *testing.T) {
 		router, _ := seedEtagDelegationPolicy(t, "dp_etag")
@@ -84,7 +84,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		}
 	})
 
-	// spec: §15.1 line 1209 — list responses include a per-item ETag.
+	// spec: §15.1 — list responses include a per-item ETag.
 	t.Run("ListCarriesPerItemETag", func(t *testing.T) {
 		router, _ := seedEtagDelegationPolicy(t, "dp_etag")
 		g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/delegation-policies", nil))
@@ -107,7 +107,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		}
 	})
 
-	// spec: §15.1 line 1210 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
+	// spec: §15.1 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
 	t.Run("PutMissingIfMatch", func(t *testing.T) {
 		router, _ := seedEtagDelegationPolicy(t, "dp_etag")
 		rr := putDelegationPolicyRaw(t, router.Handler(), "dp_etag", "", validDelegationPolicy("dp_etag"))
@@ -117,7 +117,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		assertErrorCode(t, rr, "ETAG_REQUIRED")
 	})
 
-	// spec: §15.1 line 1210 — a malformed If-Match (weak validator, unquoted,
+	// spec: §15.1 — a malformed If-Match (weak validator, unquoted,
 	// non-decimal, or `*`) is 400 VALIDATION_ERROR naming the header.
 	t.Run("PutMalformedIfMatch", func(t *testing.T) {
 		for _, bad := range []string{"3", "abc", "W/\"3\"", "*", `"1.5"`} {
@@ -144,7 +144,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		}
 	})
 
-	// spec: §15.1 line 1210 — a stale If-Match is 412 ETAG_MISMATCH and
+	// spec: §15.1 — a stale If-Match is 412 ETAG_MISMATCH and
 	// carries details.currentEtag set to the live ETag.
 	t.Run("PutStaleIfMatch", func(t *testing.T) {
 		router, _ := seedEtagDelegationPolicy(t, "dp_etag")
@@ -167,7 +167,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		}
 	})
 
-	// spec: §15.1 line 1211 — a matching If-Match succeeds and the response
+	// spec: §15.1 — a matching If-Match succeeds and the response
 	// returns the new (incremented) ETag; a retried PUT with the now-stale
 	// tag loses the race with 412.
 	t.Run("PutMatchingIfMatchBumpsETag", func(t *testing.T) {
@@ -196,7 +196,7 @@ func TestDelegationPolicyETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) 
 		}
 	})
 
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412, an absent header proceeds.
 	t.Run("DeleteStaleIfMatchIs412", func(t *testing.T) {
 		router, store := seedEtagDelegationPolicy(t, "dp_del")

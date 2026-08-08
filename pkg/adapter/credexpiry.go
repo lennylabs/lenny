@@ -24,7 +24,7 @@ import (
 // boundary. Proxy-mode leases get no timer: the gateway rejects expired
 // proxy requests server-side.
 //
-// spec: §4.9 line 1149.
+// spec: §4.9.
 
 // expiryTimerHandle is the subset of *time.Timer the expiry tracker
 // needs; the test seam swaps in a fake.
@@ -116,7 +116,7 @@ func (s *Server) armExpiryTimer(provider string, lease *adapterv1.CredentialLeas
 // provider's credential-file entry exactly as before, at the extended
 // deadline. Callers hold s.mu.
 //
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func (s *Server) extendExpiryTimer(provider, leaseID string, newExpiresAt time.Time) {
 	existing, ok := s.expiryTimers[provider]
 	if !ok || existing.leaseID != leaseID {
@@ -153,7 +153,7 @@ func (s *Server) cancelAllExpiryTimers() {
 // the gateway runs the standard fallback flow. A timer whose lease was
 // already replaced or revoked is a no-op.
 //
-// spec: §4.9 line 1149.
+// spec: §4.9.
 func (s *Server) onLeaseExpired(provider, leaseID string) {
 	s.mu.Lock()
 	t, ok := s.expiryTimers[provider]

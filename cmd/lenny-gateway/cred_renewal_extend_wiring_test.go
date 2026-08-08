@@ -40,7 +40,7 @@ import (
 // onExtensionCapReached tears the capped session down to the §8.8 expired state
 // with the expired:lease reason rather than entering the Fallback Flow.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard); §8.8 line 869
+// spec: §4.9; §8.8
 // (expired:lease surfacing).
 
 // extendRecorder is a minimal Adapter gRPC server that captures the
@@ -429,7 +429,7 @@ func TestStampsLeaseTTLOnTrackAndRenew_spec_4_9(t *testing.T) {
 // which the §8.8 MCP adapter surfaces to clients as a failed task carrying
 // the expired:lease error code. It does not re-enter the Fallback Flow. A
 // regression that stamped a non-expired:* reason would surface a
-// non-conformant client-facing task error code (§8.8 line 869).
+// non-conformant client-facing task error code (§8.8).
 func TestOnExtensionCapReachedTerminatesSession_spec_4_9_8_8(t *testing.T) {
 	term := &recordingReasonTerminator{}
 	wiring := newCredRenewalWiring(&fakeExtendAssigner{}, podsession.NewRegistry(), nil, nil, term)

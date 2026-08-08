@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
-// spec: §13.3 line 591 — during a Postgres outage token issuance is
+// spec: §13.3 — during a Postgres outage token issuance is
 // unavailable by design: the caller receives 503 token_store_unavailable
 // and the §16.5 TokenStoreUnavailable alert fires
 // (lenny_oauth_token_5xx_total{error_type="token_store_unavailable"}).
@@ -70,9 +70,7 @@ func TestHandlerPostgresOutageReturns503TokenStoreUnavailable_F1334(t *testing.T
 // token_store_unavailable (a constraint violation is not an outage), and
 // it must still feed the §16.1 5xx counter so a genuine store-failure 500
 // is visible to the TokenStoreUnavailable alert.
-// spec: §13.3 line 589 (500 token_exchange_failed on a failed exchange
-// write), §16.1 line 243 (lenny_oauth_token_5xx_total carries every 5xx
-// class). F-13.3.4.
+// spec: §13.3, §16.1. F-13.3.4.
 func TestHandlerNonOutageStoreFailureReturns500_F1334(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	metrics := &recordingMetrics{}
@@ -123,9 +121,7 @@ func (f *failingAuditor) Append(context.Context, string, string, json.RawMessage
 // signal (the 5xx telemetry) and operators can reconstruct the attempt.
 // Pre-fix this path discarded the auditor.Append error and returned the
 // 4xx, silently swallowing the rejection.
-// spec: §13.3 line 589 (500 token_exchange_failed on a failed
-// rejection-audit write), §16.1 line 243 (lenny_oauth_token_5xx_total
-// carries every 5xx class).
+// spec: §13.3, §16.1.
 // diagnosis: a failure here means a rejected token exchange whose audit
 // write fails is returned as a retryable 4xx with no durable record,
 // reopening the silent-swallow fail-open the §13.3 write-before-issue

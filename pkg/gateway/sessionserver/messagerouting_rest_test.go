@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
-// spec: §7.2 paths 1-7 (lines 313-331) — message-delivery routing.
+// spec: §7.2 paths 1-7 — message-delivery routing.
 // F-7.2.5.
 
 // newRoutingServer builds a Server wired with the §7.2 inbox + DLQ

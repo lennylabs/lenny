@@ -71,7 +71,7 @@ func TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed(t *testing.T) {
 	}
 }
 
-// spec: §4.4 / §10.1 line 157 — a PUT that fails past the retry budget
+// spec: §4.4 / §10.1 — a PUT that fails past the retry budget
 // leaves partial = true and the DeleteObject sweep removes the chunks the
 // aborted attempt confirmed before the failure.
 // diagnosis: a PUT that exhausted its retry budget either finalised the
@@ -107,7 +107,7 @@ func TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 132 / §4.4 line 235 — a deadline-fire abort finalises
+// spec: §10.1 / §4.4 — a deadline-fire abort finalises
 // manifest_reason = 'timeout' and RETAINS its row and confirmed chunks for
 // the resume path, rather than sweeping them the way a stream_truncated
 // abort does. A pod lost at the drain deadline must leave chunks to restore
@@ -207,7 +207,7 @@ func TestCheckpointAbortSweepSoftDeletesRowAfterPrefixEmpty(t *testing.T) {
 	}
 }
 
-// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 — when a chunk
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 — when a chunk
 // DeleteObject fails during the abort sweep the gateway increments
 // lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for that
 // object and leaves the manifest row active (deleted_at IS NULL) so the §12.5

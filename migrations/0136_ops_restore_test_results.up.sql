@@ -13,11 +13,11 @@
 -- lenny_backup_last_successful_timestamp sampling path.
 --
 -- The table is platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists the §25.11
+-- multi-tenanted at this boundary; §25.4 lists the §25.11
 -- backup/restore tables among the PlatformPostgres() tables), so no
 -- tenant column or RLS policy applies.
 --
--- spec: §25.11 lines 4098, 4128-4133, 4254-4256; §16.1 restore-test gates.
+-- spec: §25.11; §16.1 restore-test gates.
 
 CREATE TABLE ops_restore_test_results (
     id                     TEXT PRIMARY KEY,

@@ -90,7 +90,7 @@ type RunbookSource interface {
 // requires, q — filter the index; an unfiltered request lists every
 // runbook.
 //
-// spec: §25.7 lines 3140-3143 — the five combinable filter parameters
+// spec: §25.7 — the five combinable filter parameters
 // (`alert`, `component`, `tag`, `requires`, `q`); `requires` narrows to
 // runbooks the caller can execute and `q` is the full-text search across
 // symptoms, tags, and title.
@@ -145,8 +145,8 @@ func (s *Server) handleRunbookSteps(w http.ResponseWriter, r *http.Request) {
 // suggestedAction.runbook) fetches the document in one round-trip
 // without having to scrape the §25.7 index.
 //
-// spec: §25.7 lines 3055-3057 — "GET /v1/admin/runbooks/{name}
-// returning full markdown content"; §17.7 line 741 — "/v1/admin/-
+// spec: §25.7 — "GET /v1/admin/runbooks/{name}
+// returning full markdown content"; §17.7 — "/v1/admin/-
 // runbooks/* … served as structured JSON".
 func (s *Server) handleRunbookMarkdown(w http.ResponseWriter, r *http.Request) {
 	if s.runbooks == nil {

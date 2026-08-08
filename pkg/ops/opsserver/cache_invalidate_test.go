@@ -22,7 +22,7 @@ func (c *countingInvalidator) Invalidate(context.Context) error {
 	return nil
 }
 
-// TestCacheInvalidateRPC is the §25.5 line 2751 contract: a peer that
+// TestCacheInvalidateRPC is the §25.5 contract: a peer that
 // presents the shared-secret-derived token triggers a cache refresh
 // (204); a missing or wrong token is rejected (401) without refreshing.
 func TestCacheInvalidateRPC_spec_25_5_2751(t *testing.T) {
@@ -63,7 +63,7 @@ func TestCacheInvalidateRPC_spec_25_5_2751(t *testing.T) {
 
 // TestCacheInvalidateRPCUnmappedWithoutToken confirms the internal route
 // is not registered when no invalidate token is configured (dev mode),
-// so the surface is not advertised. spec: §25.5 line 2751.
+// so the surface is not advertised. spec: §25.5.
 func TestCacheInvalidateRPCUnmappedWithoutToken(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{
 		EventSubscriptions: eventsubscription.NewService(eventsubscription.NewMemoryStore()),

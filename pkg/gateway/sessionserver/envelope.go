@@ -20,8 +20,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
-// maxRuntimeOptionsBytes is the §14 line 155 runtimeOptions size ceiling.
-// spec: §14 line 155 — "Maximum size: 64 KB". F-14.1.14.
+// maxRuntimeOptionsBytes is the §14 runtimeOptions size ceiling.
+// spec: §14 — "Maximum size: 64 KB". F-14.1.14.
 const maxRuntimeOptionsBytes = 64 * 1024
 
 // validateRequestEnvelope validates the §14 CreateSessionRequest envelope
@@ -29,10 +29,9 @@ const maxRuntimeOptionsBytes = 64 * 1024
 // runtimeOptions) and copies the accepted values onto row. It returns the
 // §14 warnings that admission produced (currently the
 // RuntimeOptionsUnschematized warning) and ok=false after writing the
-// §15.1 error envelope when any field is rejected. spec: §14 lines 47-79,
-// 154-155. F-14.1.12 / F-14.1.14 / F-14.1.15.
+// §15.1 error envelope when any field is rejected. spec: §14. F-14.1.12 / F-14.1.14 / F-14.1.15.
 func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID string, row *sessionstore.Session) ([]workspaceplan.Warning, bool) {
-	// spec: §14 lines 47-50, 105 — every env key is matched against the
+	// spec: §14 — every env key is matched against the
 	// deployer blocklist (exact names and `*` globs). A blocked key is
 	// rejected with 400 ENV_VAR_BLOCKLISTED identifying the offending key
 	// and the matching pattern. F-14.1.12.
@@ -53,7 +52,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Env = cloneMetadata(req.Env)
 	}
 
-	// spec: §14 line 311 / §15.1 line 598 — copy the client labels onto
+	// spec: §14 / §15.1 — copy the client labels onto
 	// the row so the list endpoint can filter on them. Keys must be
 	// non-empty so the on-row selector set stays well-formed. F-15.1.15.
 	if len(req.Labels) > 0 {
@@ -67,7 +66,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Labels = cloneMetadata(req.Labels)
 	}
 
-	// spec: §7.1 line 6 — reject an empty metadata key so the on-row
+	// spec: §7.1 — reject an empty metadata key so the on-row
 	// annotation map stays well-formed, mirroring the §14 env and label
 	// key checks above. The metadata round-trips to the §15.1 GET
 	// envelope, so an empty key would echo back an unkeyed annotation.
@@ -86,7 +85,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 	// scheduling. validateRequestEnvelope runs before the §7.1 claim, so the
 	// gate fails fast before any pod is claimed. F-CS2 (0018).
 	//
-	// spec: §7.1 line 18 / line 75 — when a pool is pinned, the named pool's
+	// spec: §7.1 — when a pool is pinned, the named pool's
 	// own profile governs the session's isolation (the pin overrides the
 	// default pool selection and the resolved level is populated from the
 	// assigned pool's configuration). Pass the client's raw request profile
@@ -101,7 +100,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 	}
 	row.Pool = req.Pool
 
-	// spec: §14 line 154 — per-session timeouts are non-negative and
+	// spec: §14 — per-session timeouts are non-negative and
 	// cannot exceed the runtime's limits.maxSessionAge. F-14.1.14.
 	if req.Timeouts != nil {
 		if req.Timeouts.MaxSessionAgeSeconds < 0 || req.Timeouts.MaxIdleSeconds < 0 {
@@ -122,7 +121,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.Timeouts = &t
 	}
 
-	// spec: §14 credentialPolicy; §4.9 lines 1310, 1336 — the per-session
+	// spec: §14 credentialPolicy; §4.9 — the per-session
 	// preferredSource must be a valid enum value and may only restrict,
 	// not expand, the tenant credentialPolicy. F-14.1.14.
 	if req.CredentialPolicy != nil {
@@ -144,7 +143,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.CredentialPolicyOverride = &c
 	}
 
-	// spec: §14 lines 75-79 — delegation lease bounds are non-negative.
+	// spec: §14 — delegation lease bounds are non-negative.
 	// F-14.1.14.
 	if req.DelegationLease != nil {
 		if req.DelegationLease.MaxDepth != nil && *req.DelegationLease.MaxDepth < 0 {
@@ -162,7 +161,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		row.DelegationLeaseRequest = cloneDelegationLeaseRequest(req.DelegationLease)
 	}
 
-	// spec: §14 line 155 — runtimeOptions is ≤64 KB and validated against
+	// spec: §14 — runtimeOptions is ≤64 KB and validated against
 	// the runtime's runtimeOptionsSchema when one is registered; when no
 	// schema is registered the options pass through and a
 	// RuntimeOptionsUnschematized warning is emitted. F-14.1.14 / F-14.1.15.
@@ -171,7 +170,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 		return nil, false
 	}
 
-	// spec: §14 lines 108-139 — validate the callbackUrl against the SSRF
+	// spec: §14 — validate the callbackUrl against the SSRF
 	// mitigations and KMS-seal the callbackSecret. F-14.1.11.
 	if !s.validateCallback(w, r, req.CallbackURL, req.CallbackSecret, tenantID, row) {
 		return nil, false
@@ -183,8 +182,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 // a callbackSecret is supplied, KMS-envelope-seals it onto the row. An
 // empty callbackURL is a no-op (a bare callbackSecret is rejected). It
 // returns ok=false after writing the §15.1 INVALID_CALLBACK_URL (or
-// VALIDATION_ERROR) envelope on rejection. spec: §14 lines 108-139; §15.1
-// line 1097. F-14.1.11 / F-15.1.11.
+// VALIDATION_ERROR) envelope on rejection. spec: §14; §15.1. F-14.1.11 / F-15.1.11.
 func (s *Server) validateCallback(w http.ResponseWriter, r *http.Request, callbackURL, callbackSecret, tenantID string, row *sessionstore.Session) bool {
 	if callbackURL == "" {
 		if callbackSecret != "" {
@@ -207,7 +205,7 @@ func (s *Server) validateCallback(w http.ResponseWriter, r *http.Request, callba
 	}
 	row.CallbackURL = res.URL
 	row.CallbackPinnedIP = res.PinnedIP.String()
-	// spec: §14 line 139 — the callbackSecret is KMS-envelope-encrypted at
+	// spec: §14 — the callbackSecret is KMS-envelope-encrypted at
 	// admission; the gateway never persists or returns the plaintext.
 	if callbackSecret != "" {
 		if s.callbackSeal == nil {
@@ -229,7 +227,7 @@ func (s *Server) validateCallback(w http.ResponseWriter, r *http.Request, callba
 
 // runtimeMaxSessionAge returns the resolved runtime's
 // limits.maxSessionAge in seconds, or 0 when no runtime / limit is
-// registered (no cap). spec: §14 line 154; §5.1 limits. F-14.1.14.
+// registered (no cap). spec: §14; §5.1 limits. F-14.1.14.
 func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) int {
 	if s.runtimes == nil || runtimeRef == "" {
 		return 0
@@ -249,7 +247,7 @@ func (s *Server) runtimeMaxSessionAge(ctx context.Context, runtimeRef string) in
 // idle-clock default that supersedes the removed limits.maxIdleTimeSeconds
 // knob. The §27.6 playground idle override is resolved min-wins against this
 // value at create time. spec: §5.2 (sessionPolicy.maxClientIdleSeconds); §6.2
-// (idle clock defaults to the effective maxSessionAgeSeconds); §27.6 line 201.
+// (idle clock defaults to the effective maxSessionAgeSeconds); §27.6.
 func (s *Server) runtimeMaxClientIdle(ctx context.Context, runtimeRef string) int {
 	if s.runtimes == nil || runtimeRef == "" {
 		return 0
@@ -270,12 +268,12 @@ func (s *Server) runtimeMaxClientIdle(ctx context.Context, runtimeRef string) in
 // capabilities.preConnect flag and the sdkWarmBlockingPaths glob list the
 // binder uses to decide demotion. A pod-warm or unresolvable runtime
 // returns (false, nil) so the binder takes the pod-warm path. spec: §5.1
-// capabilities.preConnect / sdkWarmBlockingPaths; §6.1 lines 30-40.
+// capabilities.preConnect / sdkWarmBlockingPaths; §6.1.
 func (s *Server) runtimeSDKWarm(ctx context.Context, tenantID, runtimeRef string) (preConnect bool, blockingPaths []string) {
 	if s.runtimes == nil || runtimeRef == "" {
 		return false, nil
 	}
-	// §5.1 line 49: a tenant may toggle preConnect or add demotion blockers
+	// §5.1: a tenant may toggle preConnect or add demotion blockers
 	// to sdkWarmBlockingPaths for this runtime; overlay the override before
 	// the binder reads the SDK-warm inputs. F-5.1.20.
 	rt, err := runtimecapoverride.ResolveForTenant(ctx, s.runtimes, s.capOverrides, tenantID, runtimeRef)
@@ -292,7 +290,7 @@ func (s *Server) runtimeSDKWarm(ctx context.Context, tenantID, runtimeRef string
 // not use them (and does not enable them) is an expansion the §14
 // "restrict, not expand" rule forbids. A narrowing override (e.g. tenant
 // allows user-then-pool, session pins to pool) is permitted. spec: §14
-// credentialPolicy; §4.9 line 1362. F-14.1.14.
+// credentialPolicy; §4.9. F-14.1.14.
 func (s *Server) overrideExpandsTenantPolicy(ctx context.Context, tenantID string, override credential.PreferredSource) bool {
 	if s.tenants == nil {
 		return false
@@ -308,7 +306,7 @@ func (s *Server) overrideExpandsTenantPolicy(ctx context.Context, tenantID strin
 	return false
 }
 
-// validateRuntimeOptions enforces the §14 line 155 runtimeOptions size
+// validateRuntimeOptions enforces the §14 runtimeOptions size
 // ceiling and the per-runtime discriminated-union schema. When the
 // runtime registered a runtimeOptionsSchema the blob is validated against
 // it (400 RUNTIME_OPTIONS_INVALID on failure). When no schema is
@@ -342,7 +340,7 @@ func (s *Server) validateRuntimeOptions(w http.ResponseWriter, r *http.Request, 
 	row.RuntimeOptions = append(json.RawMessage(nil), req.RuntimeOptions...)
 
 	if len(schema) == 0 {
-		// spec: §14 line 155 — no schema registered: pass through and
+		// spec: §14 — no schema registered: pass through and
 		// emit the RuntimeOptionsUnschematized warning. F-14.1.15.
 		return []workspaceplan.Warning{{
 			Code:    workspaceplan.WarnRuntimeOptionsUnschematized,
@@ -364,7 +362,7 @@ func (s *Server) validateRuntimeOptions(w http.ResponseWriter, r *http.Request, 
 // validates value against it, returning a human-readable validation
 // report on failure or "" on success. A schema that fails to compile is
 // treated as "no constraint" (the runtime author owns the schema; a
-// malformed one must not wedge session creation). spec: §14 line 155.
+// malformed one must not wedge session creation). spec: §14.
 func validateAgainstSchema(schema json.RawMessage, value any) string {
 	c := jsonschema.NewCompiler()
 	if err := c.AddResource("runtimeOptions.json", bytes.NewReader(schema)); err != nil {

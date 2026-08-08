@@ -48,7 +48,7 @@ func TestResolveMatchesSpecPaths_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 28 — the per-slot credential file replaces the single
+// spec: §6.1 — the per-slot credential file replaces the single
 // global /run/lenny/credentials.json so a rotation on one slot does not
 // rewrite a sibling's file.
 func TestResolveCredentialFileIsPerSlot_spec_6_1(t *testing.T) {
@@ -132,7 +132,7 @@ func TestEnsureTreeCreatesAllDirs_spec_6_4(t *testing.T) {
 }
 
 // EnsureTree pins the exact mode so the inherited umask cannot strip the
-// runtime/group bits. spec: §6.1 line 28 (credential dir) / §6.1 line 11.
+// runtime/group bits. spec: §6.1 / §6.1.
 func TestEnsureTreeSetsExactModes_spec_6_4(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes not meaningful on windows")

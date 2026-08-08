@@ -1,4 +1,4 @@
-suite: dedicated lenny-system CoreDNS (§13.2 lines 452-536)
+suite: dedicated lenny-system CoreDNS (§13.2)
 release:
   name: lenny
   namespace: lenny-system
@@ -7,7 +7,7 @@ templates:
   - coredns-service.yaml
   - coredns-deployment.yaml
 tests:
-  # spec: §13.2 line 486 — the chart fails the render when clusterIP is
+  # spec: §13.2 — the chart fails the render when clusterIP is
   # empty while agent namespaces are configured. F-13.2.3.
   - it: fails the render when coredns.clusterIP is empty with agent namespaces
     templates:
@@ -20,7 +20,7 @@ tests:
       - failedTemplate:
           errorMessage: "coredns.clusterIP must be set to a free address in the cluster service CIDR when agentNamespaces is non-empty: every agent pod's dnsConfig nameserver targets it (§13.2 K8S-033)."
 
-  # spec: §13.2 line 470 (NET-018) — a single replica blackholes agent DNS
+  # spec: §13.2 — a single replica blackholes agent DNS
   # on disruption; the chart requires >= 2. F-13.2.3.
   - it: fails the render when coredns.replicas is below 2
     templates:
@@ -40,7 +40,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  # spec: §13.2 line 486 — the Service pins the configured ClusterIP and
+  # spec: §13.2 — the Service pins the configured ClusterIP and
   # selects the coredns component on UDP/TCP 53 plus the metrics port.
   - it: pins the Service ClusterIP and DNS ports
     templates:
@@ -77,7 +77,7 @@ tests:
             protocol: TCP
             targetPort: metrics
 
-  # spec: §13.2 lines 452-472 — HA Deployment (>= 2 replicas) and a PDB
+  # spec: §13.2 — HA Deployment (>= 2 replicas) and a PDB
   # minAvailable 1. F-13.2.3.
   - it: renders both the Deployment and the PodDisruptionBudget
     templates:
@@ -131,7 +131,7 @@ tests:
           path: spec.replicas
           value: 3
 
-  # spec: §13.2 line 536 — the readiness probe queries the CoreDNS health
+  # spec: §13.2 — the readiness probe queries the CoreDNS health
   # endpoint so a pod whose image lacks the plugins never joins the Service.
   - it: probes the CoreDNS health endpoint for readiness
     templates:
@@ -149,7 +149,7 @@ tests:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/lennylabs/lenny-coredns:1.11.3-lenny1
 
-  # spec: §13.2 lines 498-536 — the Corefile enables the log, ratelimit,
+  # spec: §13.2 — the Corefile enables the log, ratelimit,
   # filter, forward, health, prometheus, cache, reload, and errors plugins.
   # F-13.2.3 / F-13.2.14.
   - it: ships the Corefile with the ratelimit and filter plugins

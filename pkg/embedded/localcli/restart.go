@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
-// cmdRestart implements `lenny restart <component>` (§24.19 line 264): it
+// cmdRestart implements `lenny restart <component>` (§24.19): it
 // rolls a single in-cluster control-plane Deployment without tearing down the
 // rest of the stack. The §17.4 control plane runs as in-cluster pods, so the
 // restartable components are the gateway, controller, and ops Deployments, and

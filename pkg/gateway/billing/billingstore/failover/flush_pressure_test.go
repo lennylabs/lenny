@@ -11,10 +11,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover"
 )
 
-// spec: §12.3 line 76 — billingFlushIntervalMs / billingFlushBatchSize /
+// spec: §12.3 — billingFlushIntervalMs / billingFlushBatchSize /
 // billingFlushMaxPending and the billing_flush_pressure metric. F-12.3.13.
 
-// TestFlushDefaultsMatchSpec12_3 pins the §12.3 line 76 defaults so a
+// TestFlushDefaultsMatchSpec12_3 pins the §12.3 defaults so a
 // future edit cannot silently drift the buffering contract.
 func TestFlushDefaultsMatchSpec12_3(t *testing.T) {
 	if failover.DefaultFlushInterval != 500*time.Millisecond {
@@ -28,7 +28,7 @@ func TestFlushDefaultsMatchSpec12_3(t *testing.T) {
 	}
 }
 
-// TestFlushPressureFiresWhenBufferExceedsMaxPending covers §12.3 line 76:
+// TestFlushPressureFiresWhenBufferExceedsMaxPending covers §12.3:
 // once the Tier 2 buffer grows past billingFlushMaxPending, every
 // further buffering Append emits billing_flush_pressure.
 func TestFlushPressureFiresWhenBufferExceedsMaxPending(t *testing.T) {
@@ -62,7 +62,7 @@ func TestFlushPressureFiresWhenBufferExceedsMaxPending(t *testing.T) {
 }
 
 // TestFlushPressureCallbackOptionalAndImmediateFlushDrainsOnRecovery
-// covers the immediate-flush half of §12.3 line 76: when the primary has
+// covers the immediate-flush half of §12.3: when the primary has
 // recovered, the over-threshold Append flushes the backlog without
 // waiting for the interval tick, and a nil OnFlushPressure is tolerated.
 func TestFlushPressureImmediateFlushDrainsOnRecovery(t *testing.T) {

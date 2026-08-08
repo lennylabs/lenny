@@ -109,7 +109,7 @@ async function mcpHandler(req, res) {
         return;
       }
       if (name === 'lenny/send_message') {
-        // §8.5 line 537 wire contract: the tool arguments are `to`
+        // §8.5 wire contract: the tool arguments are `to`
         // (target session id) and `message` (content). F-8.5.16 renamed
         // them from the legacy `sessionId`/`content`.
         if (!args.to) {

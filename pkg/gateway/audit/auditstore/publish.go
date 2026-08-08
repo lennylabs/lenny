@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
-// PublishingAppender wraps a Store with the §4.4 line 232 / §12.3.7
+// PublishingAppender wraps a Store with the §4.4 / §12.3.7
 // audit-bearing EventBus first-publish path. On a successful Append it
 // translates the row to OCSF, wraps the record in a CloudEvents v1.0.2
 // envelope, publishes it on the §12.4 tenant-prefixed
@@ -28,13 +28,13 @@ import (
 //
 // The audit row is durable as soon as Append returns; the publish path
 // is a best-effort first-attempt that the worker covers. The pair
-// matches the §4.4 line 232 contract: "the CloudEvents-wrapped audit
+// matches the §4.4 contract: "the CloudEvents-wrapped audit
 // events published on the EventBus" are emitted via OCSF in the data
 // field of the envelope (datacontenttype = application/ocsf+json),
 // with the same translator the §11.7 SIEM forwarder and §25.9 admin
 // query API use.
 //
-// spec: §4.4 line 232 — "CloudEvents-wrapped audit events published on
+// spec: §4.4 — "CloudEvents-wrapped audit events published on
 // the EventBus".
 type PublishingAppender struct {
 	// Store is the §11.7 Postgres-backed audit chain. Required.

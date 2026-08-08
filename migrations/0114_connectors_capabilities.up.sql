@@ -1,6 +1,6 @@
--- §9.3 line 136 / §5.1 — connector tool-capability metadata derived from
+-- §9.3 / §5.1 — connector tool-capability metadata derived from
 -- MCP ToolAnnotations. The synchronous registration path makes no
--- outbound call (§15.1 line 1144), so capability inference runs as a
+-- outbound call (§15.1), so capability inference runs as a
 -- separate post-create refresh on the sanctioned outbound path; these
 -- columns hold its result.
 --

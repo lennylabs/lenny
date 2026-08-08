@@ -216,7 +216,7 @@ func TestParserEmitsPathCollisionWarning(t *testing.T) {
 	}
 }
 
-// spec: §14 line 338 — workspace_plan_path_collision warning carries
+// spec: §14 — workspace_plan_path_collision warning carries
 // the structured fields `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so consumers can distinguish overwriter from
 // overwritten without re-parsing the plan. F-14.1.23.
@@ -275,8 +275,7 @@ func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
 // matches the spec catalog character-for-character, so observability
 // sinks keyed on the spec-named value would silently miss the warning.
 func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
-	// The closed §14 catalog: line 100 (strip-components-skip),
-	// line 334 (unknown-source-type), line 338 (path-collision).
+	// The closed §14 catalog.
 	want := map[string]workspaceplan.WarningCode{
 		"workspace_plan_unknown_source_type":   workspaceplan.WarnUnknownSourceType,
 		"workspace_plan_strip_components_skip": workspaceplan.WarnStripComponentsSkip,
@@ -297,7 +296,7 @@ func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
 	// pkg/adapter/workspace/strip_skip_warnings_test.go.
 }
 
-// spec: §14 line 91 — gitClone.path default is `.` (the repo root).
+// spec: §14 — gitClone.path default is `.` (the repo root).
 // The parser must surface the default explicitly so the round-tripped
 // plan stored in Postgres carries the canonical value and downstream
 // consumers do not need to mirror the spec default themselves.

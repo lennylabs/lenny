@@ -13,7 +13,7 @@ import (
 // clamps every populated value against the deployer caps so a client
 // cannot grow its budget past the platform's published bounds.
 //
-// The §7.3 line 381 worked example:
+// The §7.3 worked example:
 //
 //	{
 //	  "mode": "auto_then_client",
@@ -24,7 +24,7 @@ import (
 //	  "maxResumeWindowSeconds": 900
 //	}
 //
-// spec: §7.3 lines 377-393.
+// spec: §7.3.
 type RetryPolicy struct {
 	// Mode governs whether the gateway runs the auto-retry path before
 	// surfacing the failure to the client. The §7.3 worked example pins
@@ -40,7 +40,7 @@ type RetryPolicy struct {
 	MaxRetries int `json:"maxRetries,omitempty"`
 
 	// RetryableFailures enumerates the §7.3 failure classes the auto-
-	// retry path applies to. An empty slice selects the §7.3 line 384
+	// retry path applies to. An empty slice selects the §7.3
 	// platform default. Unknown values are preserved verbatim so a
 	// later platform version can extend the catalog without a client-
 	// side migration.
@@ -48,7 +48,7 @@ type RetryPolicy struct {
 
 	// NonRetryableFailures enumerates the §7.3 failure classes that
 	// bypass the auto-retry path and go straight to awaiting_client_action.
-	// An empty slice selects the §7.3 line 385 platform default.
+	// An empty slice selects the §7.3 platform default.
 	NonRetryableFailures []string `json:"nonRetryableFailures,omitempty"`
 
 	// MaxSessionAgeSeconds is the §7.3 per-session total-lifetime cap.
@@ -57,7 +57,7 @@ type RetryPolicy struct {
 	// bound is the upper limit. Zero selects the deployer default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
-	// MaxResumeWindowSeconds is the §7.3 line 404 resume-window timer
+	// MaxResumeWindowSeconds is the §7.3 resume-window timer
 	// that bounds how long a session may sit in resume_pending while
 	// the gateway tries to allocate a fresh warm pod before falling
 	// back to awaiting_client_action. Zero selects the deployer default.
@@ -68,7 +68,7 @@ type RetryPolicy struct {
 type RetryMode string
 
 const (
-	// RetryModeAutoThenClient is the §7.3 line 382 default: the
+	// RetryModeAutoThenClient is the §7.3 default: the
 	// gateway runs up to maxRetries automatic recovery attempts before
 	// surfacing the failure to the client via awaiting_client_action.
 	RetryModeAutoThenClient RetryMode = "auto_then_client"
@@ -77,7 +77,7 @@ const (
 	RetryModeClientOnly RetryMode = "client_only"
 )
 
-// DefaultRetryMode is the §7.3 line 382 worked-example default.
+// DefaultRetryMode is the §7.3 worked-example default.
 const DefaultRetryMode = RetryModeAutoThenClient
 
 // AllRetryModes returns the closed §7.3 mode enum in declaration order.
@@ -109,7 +109,7 @@ func (m RetryMode) Resolve() RetryMode {
 // zero/unset client value falls through to the cap as the effective
 // value.
 //
-// spec: §7.3 line 377 — "Retry policy is set per session by the
+// spec: §7.3 — "Retry policy is set per session by the
 // client, bounded by deployer caps".
 type RetryPolicyCaps struct {
 	// MaxRetries is the deployer's upper bound on RetryPolicy.MaxRetries.
@@ -128,7 +128,7 @@ type RetryPolicyCaps struct {
 // caller maps the error to its 400 envelope. Modes are restricted to
 // the closed enum; unknown values reject.
 //
-// spec: §7.3 lines 377-393.
+// spec: §7.3.
 func ValidateRetryPolicy(p *RetryPolicy) error {
 	if p == nil {
 		return nil
@@ -161,7 +161,7 @@ func ValidateRetryPolicy(p *RetryPolicy) error {
 // auto-retry path consults; the deployer admission gates entries via
 // the runtime-registry policy at registration time, not here.
 //
-// spec: §7.3 lines 377-393.
+// spec: §7.3.
 func ClampRetryPolicy(p *RetryPolicy, caps RetryPolicyCaps) RetryPolicy {
 	out := RetryPolicy{Mode: DefaultRetryMode}
 	if p != nil {
@@ -209,31 +209,31 @@ func modeStrings() []string {
 	return out
 }
 
-// FailureReason is one of the §7.3 line 384/385 failure labels the
+// FailureReason is one of the §7.3 failure labels the
 // classifier matches against retryPolicy.retryableFailures /
 // nonRetryableFailures. The values are not a closed enum — any string
 // may appear on a session-failure report — but the worked-example
 // platform defaults below are normative.
 //
-// spec: §7.3 lines 384-388.
+// spec: §7.3.
 type FailureReason string
 
 const (
-	// FailurePodEvicted is the §7.3 line 384 default-retryable label for
+	// FailurePodEvicted is the §7.3 default-retryable label for
 	// a pod that lost its node (preempted, node-pressure eviction, etc.).
 	FailurePodEvicted FailureReason = "pod_evicted"
-	// FailureNodeLost is the §7.3 line 384 default-retryable label for a
+	// FailureNodeLost is the §7.3 default-retryable label for a
 	// node that has become unreachable or has been removed from the
 	// cluster.
 	FailureNodeLost FailureReason = "node_lost"
-	// FailureRuntimeCrash is the §7.3 line 384 default-retryable label
+	// FailureRuntimeCrash is the §7.3 default-retryable label
 	// for an in-pod runtime/adapter crash.
 	FailureRuntimeCrash FailureReason = "runtime_crash"
-	// FailureWorkspaceValidationFailed is the §7.3 line 385 default-non-
+	// FailureWorkspaceValidationFailed is the §7.3 default-non-
 	// retryable label for an extraction/validation failure on workspace
 	// restoration.
 	FailureWorkspaceValidationFailed FailureReason = "workspace_validation_failed"
-	// FailureSetupCommandFailed is the §7.3 line 385 default-non-
+	// FailureSetupCommandFailed is the §7.3 default-non-
 	// retryable label for a non-zero exit from a §7.5 setup command.
 	FailureSetupCommandFailed FailureReason = "setup_command_failed"
 
@@ -244,30 +244,28 @@ const (
 	// is wall-clock elapsed time. The §8.8 MCP adapter surfaces this as
 	// `failed` with error code `expired:deadline` so external clients
 	// can distinguish time-driven expiry from budget/lease expiry.
-	// spec: §8.8 line 867.
+	// spec: §8.8.
 	FailureExpiredDeadline FailureReason = "expired:deadline"
 
 	// FailureExpiredBudget marks a session driven to `expired` because
 	// a §8.1 token / cost / call budget was exhausted. The §8.8 MCP
 	// adapter surfaces this as `failed` with error code
-	// `expired:budget`. spec: §8.8 line 867.
+	// `expired:budget`. spec: §8.8.
 	FailureExpiredBudget FailureReason = "expired:budget"
 
 	// FailureExpiredLease marks a session driven to `expired` because a
 	// §4.9 credential lease or §8.7 delegation lease expired. The §8.8
 	// MCP adapter surfaces this as `failed` with error code
-	// `expired:lease`. spec: §8.8 line 867.
+	// `expired:lease`. spec: §8.8.
 	FailureExpiredLease FailureReason = "expired:lease"
 
-	// FailureExpiredIdle marks a session driven to `expired` by the §11.3
-	// line 199 `maxIdleTime` watchdog — a `running` session that has had
-	// no qualifying agent activity (§6.2 lines 273-278) for longer than
+	// FailureExpiredIdle marks a session driven to `expired` by the §11.3 watchdog — a `running` session that has had
+	// no qualifying agent activity (§6.2) for longer than
 	// its effective `maxIdleTimeSeconds`. The §8.8 MCP adapter surfaces
 	// this as `failed` with error code `expired:idle` (the open-ended
-	// `expired:*` prefix per §8.8 line 867) so external clients can
+	// `expired:*` prefix per §8.8) so external clients can
 	// distinguish idle reclamation from the wall-clock `maxSessionAge`
-	// deadline (`expired:deadline`). spec: §6.2 lines 273-300; §11.3 line
-	// 199; §8.8 line 867.
+	// deadline (`expired:deadline`). spec: §6.2; §11.3; §8.8.
 	FailureExpiredIdle FailureReason = "expired:idle"
 
 	// FailureOrphanPodTerminated marks a non-terminal session whose
@@ -276,7 +274,7 @@ const (
 	// lost and never reconnected. The §10.1 orphan-session reconciler
 	// forcibly transitions such a session to `failed` with this reason
 	// so it stops holding quota indefinitely.
-	// spec: §10.1 line 51 — "forcibly transitioned to `failed` with
+	// spec: §10.1 — "forcibly transitioned to `failed` with
 	// reason `orphan_pod_terminated`".
 	FailureOrphanPodTerminated FailureReason = "orphan_pod_terminated"
 
@@ -286,11 +284,11 @@ const (
 	// detector fails the deepest blocked tasks in the subtree with this
 	// reason so the §8.8 `DEADLOCK_TIMEOUT` contract fires; the MCP
 	// adapter surfaces it as `failed` with error code `DEADLOCK_TIMEOUT`.
-	// spec: §8.8 line 981. F-8.8.6.
+	// spec: §8.8. F-8.8.6.
 	FailureDeadlockTimeout FailureReason = "deadlock_timeout"
 )
 
-// DefaultRetryableFailures is the §7.3 line 384 platform default the
+// DefaultRetryableFailures is the §7.3 platform default the
 // classifier consults when the per-session retryPolicy supplies an
 // empty RetryableFailures list. Returned as a fresh slice so callers
 // can mutate freely.
@@ -302,7 +300,7 @@ func DefaultRetryableFailures() []string {
 	}
 }
 
-// DefaultNonRetryableFailures is the §7.3 line 385 platform default the
+// DefaultNonRetryableFailures is the §7.3 platform default the
 // classifier consults when the per-session retryPolicy supplies an
 // empty NonRetryableFailures list.
 func DefaultNonRetryableFailures() []string {
@@ -313,7 +311,7 @@ func DefaultNonRetryableFailures() []string {
 }
 
 // FailureClassification is the closed enum produced by ClassifyFailure.
-// The §7.3 line 402 "Classify failure" step branches on it: Retryable
+// The §7.3 step branches on it: Retryable
 // flows into resume_pending and the auto-retry chain, NonRetryable
 // short-circuits to awaiting_client_action, and Unknown also short-
 // circuits to awaiting_client_action so an unclassified cause cannot
@@ -326,7 +324,7 @@ const (
 	// path treats it as non-retryable (no retry budget consumed).
 	FailureUnclassified FailureClassification = iota
 	// FailureRetryable matches RetryableFailures (per-session or the
-	// platform default). §7.3 line 403 admits the auto-retry chain only
+	// platform default). §7.3 admits the auto-retry chain only
 	// for this disposition.
 	FailureRetryable
 	// FailureNonRetryable matches NonRetryableFailures or, when the
@@ -358,7 +356,7 @@ func (c FailureClassification) String() string {
 // ClassifyFailure resolves reason against the §7.3 retryable /
 // non-retryable lists on p. Match semantics:
 //
-//   - A nil or empty p uses the platform defaults — §7.3 line 384/385.
+//   - A nil or empty p uses the platform defaults — §7.3.
 //   - A non-empty per-session list replaces the corresponding platform
 //     default; the spec frames the per-session lists as overrides, not
 //     additions. A retryPolicy that names only retryableFailures keeps
@@ -366,14 +364,14 @@ func (c FailureClassification) String() string {
 //   - Reason matching is exact and case-sensitive. Whitespace is not
 //     trimmed because the cause labels are normalised at the call site.
 //   - retryPolicy.Mode == "client_only" forces every classifiable
-//     reason to NonRetryable per §7.3 line 382 — the mode is "no auto
+//     reason to NonRetryable per §7.3 — the mode is "no auto
 //     retry; every failure surfaces to the client immediately".
 //
 // An empty reason returns FailureUnclassified — the caller MUST treat
 // this as non-retryable (no retry budget consumed).
 //
-// spec: §7.3 lines 377-393 (retry policy and lists);
-// §6.2 line 250 (non-retryable surfaces to awaiting_client_action).
+// spec: §7.3;
+// §6.2.
 func ClassifyFailure(reason string, p *RetryPolicy) FailureClassification {
 	if reason == "" {
 		return FailureUnclassified
@@ -389,7 +387,7 @@ func ClassifyFailure(reason string, p *RetryPolicy) FailureClassification {
 		}
 	}
 	if p != nil && p.Mode == RetryModeClientOnly {
-		// spec: §7.3 line 382 — client_only suppresses the auto-retry
+		// spec: §7.3 — client_only suppresses the auto-retry
 		// chain; every classifiable cause behaves as non-retryable. An
 		// unknown label still degrades to FailureUnknown so the caller
 		// can log the gap rather than treat it as an explicit choice.

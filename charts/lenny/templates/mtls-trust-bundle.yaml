@@ -1,5 +1,5 @@
 {{- /*
-§10.3 lines 344-349 CA-rotation overlap. During a rotation an operator
+§10.3 CA-rotation overlap. During a rotation an operator
 sets mtls.previousCA to the PEM of the outgoing CA certificate. This
 ConfigMap materializes it so the gateway, controller, and Token Service
 trust bundles can include both the current and the previous CA during

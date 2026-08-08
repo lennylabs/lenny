@@ -97,7 +97,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 
 	// Step: push to a real local OCI registry. install.sh's own images
 	// deliberately avoid a registry (kind load + pullPolicy: Never), but
-	// §26 line 8 requires "CI that publishes OCI images to the canonical
+	// §26 requires "CI that publishes OCI images to the canonical
 	// Lenny registry", so this test stands up a real one rather than
 	// reusing that shortcut.
 	registryAddr := startLocalRegistry(t)
@@ -109,7 +109,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// Step: publish. `lenny runtime publish` (no --skip-push) both
 	// pushes pushTag with a real `docker push` and registers it against
 	// the gateway, reusing the `admin runtimes register` path. spec:
-	// §24.18 line 233.
+	// §24.18.
 	// The shared tier-5 Kind cluster accumulates concurrent load across
 	// the whole suite; a freshly created pool's first claim can take
 	// longer than the driver's 30s default under that load, so this
@@ -128,8 +128,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// (pkg/controller/runtime's doc comment).
 
 	// The registration response's image field is the digest-pinned
-	// reference cmdRuntimePublish resolved after the push (§5.1 line
-	// 690: registered images must be digest-pinned). Reading it back
+	// reference cmdRuntimePublish resolved after the push (§5.1: registered images must be digest-pinned). Reading it back
 	// from the actual response, rather than recomputing it locally,
 	// asserts what the CLI genuinely registered.
 	registeredImage := registeredImageField(t, pubOut, name)
@@ -146,7 +145,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// locally on each node.
 	pinImageOnNodes(t, c, pushTag, registeredImage)
 
-	// Step: apply the Runtime CRD. §26 line 3 requires it explicitly: a
+	// Step: apply the Runtime CRD. §26 requires it explicitly: a
 	// session against a placeholder-pinned reference-runtime record
 	// "requires a runnable image digest, an applied Runtime CRD
 	// instance, and a warm pool before it starts." The admin
@@ -181,7 +180,7 @@ spec:
 	})
 
 	// Step: create a warm pool for the runtime via POST /v1/admin/pools
-	// (§15.1 line 792), the same admin surface an operator uses. The
+	// (§15.1), the same admin surface an operator uses. The
 	// PoolScalingController reconciles this Postgres-authoritative pool
 	// row into a SandboxTemplate/SandboxWarmPool CRD pair, and the
 	// Sandbox reconciler then produces a real agent pod from it.
@@ -215,7 +214,7 @@ spec:
 		t.Fatalf("bootstrap tenant %q: %v", tenantID, err)
 	}
 
-	// Step: grant the tenant access to the runtime. spec: §26 line 30 —
+	// Step: grant the tenant access to the runtime. spec: §26 —
 	// "Operators grant access per tenant via POST
 	// /v1/admin/runtimes/{name}/tenant-access ... after install."
 	if out, err := runCLI(t, lennyCtl, repo,
@@ -297,7 +296,7 @@ func overrideIsolationProfile(t *testing.T, manifestPath string) {
 
 // buildImage runs `docker build` against repo, tagging the result as
 // tag. A missing docker binary or a build failure fails the test; both
-// are genuine external dependencies of this journey (§26 line 8: "CI
+// are genuine external dependencies of this journey (§26: "CI
 // that publishes OCI images to the canonical Lenny registry").
 func buildImage(t *testing.T, repo, tag string) {
 	t.Helper()

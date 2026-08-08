@@ -147,7 +147,7 @@ func TestMaterializeRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-// spec: §14 line 334 — an unknown source.type is skipped with a
+// spec: §14 — an unknown source.type is skipped with a
 // workspace_plan_unknown_source_type warning, not rejected. A newer
 // gateway can inject a source type this adapter predates during a
 // rolling upgrade; aborting the whole materialization would crash the
@@ -175,7 +175,7 @@ func TestMaterializeSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// spec: §14 line 334 — a known source preceding an unknown one is still
+// spec: §14 — a known source preceding an unknown one is still
 // materialized; only the unknown entry is skipped. This guards against a
 // regression where an unknown type short-circuits the source loop.
 // F-14.1.2.

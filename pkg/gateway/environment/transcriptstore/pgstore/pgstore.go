@@ -62,7 +62,7 @@ func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries 
 			if ts.IsZero() {
 				ts = time.Now().UTC()
 			}
-			// The gateway owns schema_version per §15.4.1 line 1694;
+			// The gateway owns schema_version per §15.4.1;
 			// normalize a zero-value caller field to the v1 baseline.
 			schemaVer := e.SchemaVersion
 			if schemaVer == 0 {
@@ -164,7 +164,7 @@ func (s *Store) Page(ctx context.Context, tenantID, sessionID string, afterSeq u
 // user's sessions and calls DeleteBySession. DeleteByUser at this
 // layer returns (0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -175,7 +175,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // session deletion via the FK, so this is a defensive direct delete
 // for the §12.8 Phase 4 path.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("transcriptstore: DeleteByTenant requires a concrete tenant_id")

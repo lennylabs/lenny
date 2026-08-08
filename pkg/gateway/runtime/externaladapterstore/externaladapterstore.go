@@ -2,13 +2,13 @@
 
 // Package externaladapterstore is the §15.1 / §15.4 external-protocol
 // adapter registry. It backs the admin CRUD endpoints at
-// `/v1/admin/external-adapters` (spec: §15.1 lines 850-855) and the
+// `/v1/admin/external-adapters` (spec: §15.1) and the
 // §24.8 `validate` registration gate.
 //
-// Per §15 line 10 the ExternalAdapterRegistry routes client-facing
+// Per §15 the ExternalAdapterRegistry routes client-facing
 // traffic to simultaneously-active protocol adapters (MCP, OpenAI
 // Completions, Open Responses, and third-party adapters) by path
-// prefix. Per §15 line 1414 a newly registered adapter is created in
+// prefix. Per §15 a newly registered adapter is created in
 // `pending_validation` status and does not receive traffic until
 // `POST /v1/admin/external-adapters/{name}/validate` runs the
 // conformance suite and transitions it to `active`. Adapters in
@@ -29,7 +29,7 @@ import (
 	"time"
 )
 
-// Status is the §15 line 1414 adapter lifecycle state.
+// Status is the §15 adapter lifecycle state.
 type Status string
 
 const (
@@ -51,14 +51,14 @@ func (s Status) IsValid() bool {
 }
 
 // Routable reports whether an adapter in status s may receive traffic.
-// Per §15 line 1414 only an adapter that has passed the
+// Per §15 only an adapter that has passed the
 // RegisterAdapterUnderTest conformance suite (StatusActive) routes;
 // adapters in pending_validation or validation_failed are excluded from
 // all traffic routing. This is the machine-enforceable production gate
 // the §15.0 ExternalAdapterRegistry consults before dispatching to a
 // runtime-registered adapter.
 //
-// spec: §15 line 1414.
+// spec: §15.
 func (s Status) Routable() bool {
 	return s == StatusActive
 }
@@ -76,7 +76,7 @@ type ExternalAdapter struct {
 	// metadata; the registry routes by PathPrefix.
 	Protocol string
 
-	// PathPrefix is the §15 line 10 routing prefix this adapter claims
+	// PathPrefix is the §15 routing prefix this adapter claims
 	// (e.g. `/a2a`). Active adapters route traffic arriving under this
 	// prefix.
 	PathPrefix string
@@ -91,7 +91,7 @@ type ExternalAdapter struct {
 	// matching battery.
 	Level string
 
-	// Status is the §15 line 1414 gate state. Always set by the store
+	// Status is the §15 gate state. Always set by the store
 	// (Create forces pending_validation); never accepted from the wire.
 	Status Status
 
@@ -107,14 +107,13 @@ type ExternalAdapter struct {
 	// 1 and increments on every successful Update (including a validate
 	// transition). The quoted decimal version is the resource's strong
 	// ETag, enforced on the admin PUT via the If-Match precondition and
-	// exposed on GET/list responses. spec: §15.1 lines 1207-1213.
+	// exposed on GET/list responses. spec: §15.1.
 	Version int64
 }
 
 // ValidationReport is the per-test outcome of a validate run, persisted
 // on the adapter record and returned on the validate wire response.
-// spec: §24.8 line 113 ("validation report cites the specific schema
-// assertion that failed"); §15 line 1414 ("per-test failure details").
+// spec: §24.8; §15.
 type ValidationReport struct {
 	Level       string
 	Total       int
@@ -192,7 +191,7 @@ func NewMemory() *Memory {
 }
 
 // Create inserts a new adapter. The status is always forced to
-// pending_validation regardless of the supplied value (§15 line 1414).
+// pending_validation regardless of the supplied value (§15).
 func (m *Memory) Create(_ context.Context, a ExternalAdapter) error {
 	if err := Validate(a); err != nil {
 		return err
@@ -208,7 +207,7 @@ func (m *Memory) Create(_ context.Context, a ExternalAdapter) error {
 		a.CreatedAt = time.Now().UTC()
 	}
 	a.UpdatedAt = a.CreatedAt
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if a.Version == 0 {
 		a.Version = 1
 	}
@@ -254,7 +253,7 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*ExternalAda
 	}
 	a.Name = name
 	a.UpdatedAt = time.Now().UTC()
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match compares against it.
 	a.Version++
 	m.rows[name] = a

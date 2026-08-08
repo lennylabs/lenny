@@ -56,7 +56,7 @@ func (s StaticToken) Token(context.Context) (string, error) { return string(s), 
 // OpsAdminAPIPlaintextDetected alert (§16.5) fires on a "plaintext"
 // result. Tests pass a recording stub or the Noop.
 //
-// spec: §25.4 lines 2538-2546.
+// spec: §25.4.
 type TLSMetrics interface {
 	// Handshake records one connection attempt. result is "plaintext"
 	// when the admin-API URL is http://, "tls" on a completed HTTPS

@@ -98,7 +98,7 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	if tenant == "" {
 		tenant = "platform"
 	}
-	// spec: §11.7 lines 347-348 — operation_id and caller_kind are
+	// spec: §11.7 — operation_id and caller_kind are
 	// optional correlation fields the OCSF translator projects onto
 	// metadata.correlation_uid and actor.user.type. Prefer the values
 	// the emitter set explicitly; fall back to the request context so
@@ -109,7 +109,7 @@ func (s *ChainAuditSink) EmitAdminEvent(ctx context.Context, event AuditEvent) {
 	if operationID == "" {
 		operationID = corr.From(ctx).OperationID
 	}
-	// spec: §15.1 line 938 — X-Lenny-Agent-Name is propagated to audit
+	// spec: §15.1 — X-Lenny-Agent-Name is propagated to audit
 	// records. Prefer the value the emitter set; fall back to the
 	// request context so direct EmitAdminEvent callers still carry it.
 	// F-15.1.10.

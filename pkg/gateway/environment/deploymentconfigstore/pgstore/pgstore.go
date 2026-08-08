@@ -8,7 +8,7 @@
 //
 // The table is platform-operational singleton state (scope = 'platform'),
 // not tenant-isolated, so this store operates on the pool directly without
-// a per-tenant transaction context. spec: §16.7 lines 672, 676, 677, 682.
+// a per-tenant transaction context. spec: §16.7.
 package pgstore
 
 import (

@@ -11,7 +11,7 @@ import (
 )
 
 // TestValidateMessagePart_spec_15_4_1_inline_ref_conflict exercises the
-// §15.4.1 lines 1542-1548 MessagePart ingress invariants the gateway
+// §15.4.1 MessagePart ingress invariants the gateway
 // enforces on every `lenny/output` part. F-15.4.1 (15.4-HIGH-007).
 func TestValidateMessagePart_spec_15_4_1_inline_ref_conflict(t *testing.T) {
 	cases := []struct {
@@ -51,7 +51,7 @@ func TestValidateMessagePart_spec_15_4_1_inline_ref_conflict(t *testing.T) {
 }
 
 // TestValidateMessagePart_spec_15_4_1_too_large rejects a part above the
-// §15.4.1 line 1548 50 MB ceiling. F-15.4.1 (15.4-HIGH-007).
+// §15.4.1 50 MB ceiling. F-15.4.1 (15.4-HIGH-007).
 func TestValidateMessagePart_spec_15_4_1_too_large(t *testing.T) {
 	// Build a part whose marshaled length exceeds 50 MB by inlining a
 	// payload one byte past the ceiling.

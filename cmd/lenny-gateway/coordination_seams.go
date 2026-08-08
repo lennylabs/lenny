@@ -194,8 +194,7 @@ func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, ten
 // honors the §10.1 precondition that no operational RPC (the executor's first
 // Attach) reaches the pod until the fence acknowledges; the held connection
 // keeps the pod continuously coordinated so it does not re-enter hold state.
-// spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3
-// line 209, §4.7.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3, §4.7.
 func readoptAndFence(
 	ctx context.Context,
 	dialer readoptDialer,
@@ -230,7 +229,7 @@ func readoptAndFence(
 	// failure (relinquished) already released the lease; a best-effort failure
 	// (a coordination_generation read error or a context cancellation) leaves
 	// the lease held, so release it here so its lapse surfaces for a subsequent
-	// re-adopt. spec: §10.1 (relinquish-and-backoff), §11.3 line 209.
+	// re-adopt. spec: §10.1 (relinquish-and-backoff), §11.3.
 	relinquished, ferr := fencer.Fence(ctx, adapter, tenantID, sessionID)
 	if ferr != nil {
 		_ = adapter.Close()

@@ -87,7 +87,7 @@ func TestTargetingConfigEffectiveTimeout(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 841-843 (SCL-023) — the circuit-breaker accessors
+// spec: §10.7 — the circuit-breaker accessors
 // return the configured value when positive, else the default.
 func TestTargetingConfigBreakerAccessors(t *testing.T) {
 	zero := TargetingConfig{}
@@ -114,7 +114,7 @@ func TestTargetingConfigBreakerAccessors(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 840 — the circuitBreaker block is deep-copied by Clone
+// spec: §10.7 — the circuitBreaker block is deep-copied by Clone
 // and a negative field is rejected by Validate.
 func TestTargetingConfigBreakerCloneAndValidate(t *testing.T) {
 	c := TargetingConfig{

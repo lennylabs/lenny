@@ -68,7 +68,7 @@ func opsPodFixture(name, opsDeployment string) *corev1.Pod {
 // ops Deployment label scheme and prints "no running pods for ops" even when the
 // mandatory lenny-ops Deployment is running, so an operator cannot read ops logs.
 //
-// spec: §17.4 line 179 (ops streams from the in-cluster pods), §13.2 (the
+// spec: §17.4, §13.2 (the
 // lenny-ops pod-label exception).
 func TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4(t *testing.T) {
 	env := envtest.Start(t)
@@ -186,7 +186,7 @@ func markDeploymentReady(t *testing.T, cs kubernetes.Interface, name string) {
 // Deployment's desired spec changed, so a restart either does nothing or
 // mutates the component.
 //
-// spec: §24.19 line 264 (the restart is a Deployment rollout-restart), §17.4.
+// spec: §24.19, §17.4.
 func TestRolloutRestartBumpsDeploymentTemplate_spec_24_19(t *testing.T) {
 	env := envtest.Start(t)
 	ctx := context.Background()

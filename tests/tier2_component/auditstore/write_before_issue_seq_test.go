@@ -64,7 +64,7 @@ func auditSeqLastValue(t *testing.T, ctx context.Context, pg *containers.Postgre
 	return last, called
 }
 
-// spec: §13.3 line 597 / §11.7 / §10.2 — RecordWithRotationAudit binds the
+// spec: §13.3 / §11.7 / §10.2 — RecordWithRotationAudit binds the
 // new issued_tokens INSERT, the token.exchanged audit row, and the prior
 // token's revoked_at stamp in one Postgres transaction. Under Path A the
 // audit row's sequence_number is drawn by nextval on the tenant's own
@@ -156,7 +156,7 @@ func TestRotationWriteBeforeIssueCommitsUnderNextval(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 / §11.7 / §10.2 — RevokeWithAudit binds the
+// spec: §13.3 / §11.7 / §10.2 — RevokeWithAudit binds the
 // revoked_at stamp and the token.revoked audit row in one transaction, and
 // under Path A draws the audit row's sequence_number by nextval on the
 // tenant's own audit sequence on the store's own pool. The revoke must

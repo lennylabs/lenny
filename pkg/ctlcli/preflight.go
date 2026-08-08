@@ -28,7 +28,7 @@ import (
 //
 //   - Standalone (the default when the gateway is unreachable): it
 //     resolves the Postgres / Redis / MinIO connection strings from the
-//     §24.2 line 47 precedence (CLI flags, then env vars, then the
+//     §24.2 precedence (CLI flags, then env vars, then the
 //     values file) and probes each backend directly from the operator's
 //     machine. No running Lenny deployment is required, which is the
 //     primary use case (CI pre-deployment validation and manual checks
@@ -38,7 +38,7 @@ import (
 //     `POST /v1/admin/preflight` Admin API, which runs the same probes
 //     server-side.
 //
-// spec: §24.2 lines 39-47; §15.1 line 890; §10.5 line 443.
+// spec: §24.2; §15.1; §10.5.
 // F-24.2.1 / F-17.6.6 / F-24.2.4 / F-24.2.7 / F-10.5.4.
 func cmdPreflight(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
@@ -54,7 +54,7 @@ func cmdPreflight(ctx context.Context, c *ctl.Client, args []string, stdout, std
 		return 2
 	}
 
-	// §24.2 line 47 — resolve each connection field with precedence: CLI
+	// §24.2 — resolve each connection field with precedence: CLI
 	// flags, then environment variables, then the values file.
 	valuesCfg, useSSL, err := loadPreflightValues(*configPath)
 	if err != nil {
@@ -72,7 +72,7 @@ func cmdPreflight(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	cfg := infra.Resolve(flagCfg, preflightEnvConfig(), valuesCfg)
 	cfg.MinIOUseSSL = useSSL
 
-	// §24.2 line 39 — mode selection. When the gateway is reachable,
+	// §24.2 — mode selection. When the gateway is reachable,
 	// delegate to the Admin API; otherwise probe locally.
 	if preflightGatewayReachable(ctx, c) {
 		fmt.Fprintln(stdout, "lenny-ctl preflight: gateway reachable — running API-backed preflight")
@@ -109,7 +109,7 @@ type preflightValues struct {
 // loadPreflightValues reads the --config values file into an infra.Config
 // and the resolved MinIO TLS setting. An empty path returns an empty
 // config and useSSL=true (MinIO defaults to HTTPS everywhere except
-// §17.4 Embedded Mode). spec: §24.2 line 47.
+// §17.4 Embedded Mode). spec: §24.2.
 func loadPreflightValues(path string) (infra.Config, bool, error) {
 	if path == "" {
 		return infra.Config{}, true, nil
@@ -137,7 +137,7 @@ func loadPreflightValues(path string) (infra.Config, bool, error) {
 	return cfg, useSSL, nil
 }
 
-// preflightEnvConfig reads the §24.2 line 47 environment-variable layer.
+// preflightEnvConfig reads the §24.2 environment-variable layer.
 func preflightEnvConfig() infra.Config {
 	return infra.Config{
 		PostgresDSN:    os.Getenv("LENNY_POSTGRES_DSN"),
@@ -159,7 +159,7 @@ func firstNonEmpty(vals ...string) string {
 
 // preflightGatewayReachable probes the gateway's unauthenticated
 // liveness endpoint with a short timeout so the mode-selection decision
-// does not block on a hung or absent gateway. spec: §24.2 line 39.
+// does not block on a hung or absent gateway. spec: §24.2.
 func preflightGatewayReachable(ctx context.Context, c *ctl.Client) bool {
 	rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -179,7 +179,7 @@ type apiPreflightResponse struct {
 }
 
 // runAPIPreflight delegates to POST /v1/admin/preflight and renders the
-// returned report. spec: §15.1 line 890; §24.2 line 43.
+// returned report. spec: §15.1; §24.2.
 func runAPIPreflight(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int {
 	var resp apiPreflightResponse
 	if err := c.Do(ctx, "POST", "/v1/admin/preflight", nil, &resp); err != nil {
@@ -202,7 +202,7 @@ func runAPIPreflight(ctx context.Context, c *ctl.Client, stdout, stderr io.Write
 // CRD-currency check. It is split from cmdPreflight so a test can drive
 // it with fake probers and a fake cluster reader.
 //
-// spec: §24.2 lines 39-47; §10.5 line 443.
+// spec: §24.2; §10.5.
 func runStandalonePreflight(ctx context.Context, cfg infra.Config, probers infra.Probers, crdReader client.Reader, stdout, stderr io.Writer) int {
 	failed := false
 	if !cfg.Configured() {
@@ -215,7 +215,7 @@ func runStandalonePreflight(ctx context.Context, cfg infra.Config, probers infra
 		}
 	}
 
-	// §10.5 line 443 CRD-currency check. It applies only to an upgrade
+	// §10.5 CRD-currency check. It applies only to an upgrade
 	// (CRDs already installed); a fresh install or a pure infrastructure
 	// preflight with no reachable cluster skips it, matching §24.2's
 	// "no running Lenny deployment is required".
@@ -264,7 +264,7 @@ func anyLennyCRDInstalled(ctx context.Context, reader client.Reader) bool {
 // ambientCRDReader builds a controller-runtime client from the ambient
 // kubeconfig (KUBECONFIG / in-cluster). It returns nil when no cluster
 // config is available, so a pure pre-deployment preflight runs without a
-// cluster. spec: §24.2 line 39.
+// cluster. spec: §24.2.
 func ambientCRDReader() client.Reader {
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -283,7 +283,7 @@ func ambientCRDReader() client.Reader {
 // against reader and reports the outcome. It is split out so a test can
 // drive it with a fake client.
 //
-// spec: §10.5 line 443. F-10.5.4.
+// spec: §10.5. F-10.5.4.
 func runPreflightCRDCheck(ctx context.Context, reader client.Reader, stdout, stderr io.Writer) int {
 	decision := preflight.CRDSchemaVersionCheck{
 		Expected: preflight.CurrentCRDSchemaVersion,

@@ -55,7 +55,7 @@ func TestPipelinePseudonymizeCoversBuffer_spec_12_8(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5, §12.8 Phase 4 — DeleteByTenant removes the
+// spec: §12.1, §12.8 Phase 4 — DeleteByTenant removes the
 // tenant's durable events and drops the tenant's buffered events so a
 // teardown that races an outage does not flush deleted-tenant rows.
 func TestPipelineDeleteByTenantDropsBuffer_spec_12_1(t *testing.T) {
@@ -94,7 +94,7 @@ func TestPipelineDeleteByTenantDropsBuffer_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — billing DeleteByUser is the documented no-op; the
+// spec: §12.1 — billing DeleteByUser is the documented no-op; the
 // Pipeline delegates to the primary and reports (0, nil).
 func TestPipelineDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	primary := newFlakyStore()

@@ -65,7 +65,7 @@ func receiptFromResult(t *testing.T, resp map[string]any) session.DeliveryReceip
 
 // TestSendMessageScopeDirectRejectsSibling_spec_7_2_240 — under the
 // default `direct` scope a sibling target is rejected with SCOPE_DENIED.
-// This is the §7.2 line 240 default (siblings are opt-in), correcting the
+// This is the §7.2 default (siblings are opt-in), correcting the
 // pre-fix behaviour that admitted siblings unconditionally. F-7.2.6.
 func TestSendMessageScopeDirectRejectsSibling_spec_7_2_240(t *testing.T) {
 	srv, store := newMCP(t) // default config resolves to `direct`
@@ -98,7 +98,7 @@ func TestSendMessageScopeSiblingsAdmitsSibling_spec_7_2_241(t *testing.T) {
 
 // TestSendMessageRateLimitedReceipt_spec_7_2_371 — a send that exceeds
 // the §8.3 maxInboundPerMinute cap returns a RATE_LIMITED delivery
-// receipt (not a tool error). spec: §7.2 line 371; §8.3 line 309.
+// receipt (not a tool error). spec: §7.2; §8.3.
 // F-7.2.6.
 func TestSendMessageRateLimitedReceipt_spec_7_2_371(t *testing.T) {
 	srv, store := newMCPMessaging(t, "", "", mcptools.MessagingRateLimit{MaxInboundPerMinute: 1})
@@ -118,7 +118,7 @@ func TestSendMessageRateLimitedReceipt_spec_7_2_371(t *testing.T) {
 }
 
 // foreignTenantStore returns a cross-tenant row for one designated id so
-// the §7.2 line 268 cross-tenant guard can be exercised at the handler
+// the §7.2 cross-tenant guard can be exercised at the handler
 // level — the production tenant-scoped store never surfaces a foreign
 // row (its Get returns ErrNotFound and never leaks foreign sessions).
 type foreignTenantStore struct {

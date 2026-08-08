@@ -178,7 +178,7 @@ compose-tls: ## §17.4 credential-testing profile: generate self-signed mTLS mat
 	LENNY_DEV_TLS=true docker compose --profile credentials up
 
 .PHONY: test-smoke
-test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
+test-smoke: ## §17.4 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...
 
 ECHO_TARBALL ?= $(CURDIR)/bin/runtime-echo-embedded.tar
@@ -233,7 +233,7 @@ platform-bundle: images ## Build and docker-save the §17.4 platform image bundl
 	@docker save $(foreach b,$(PLATFORM_BUNDLE_IMAGES),ghcr.io/lennylabs/$(b):$(PLATFORM_BUNDLE_TAG)) -o $(PLATFORM_BUNDLE)
 
 .PHONY: test-smoke-embedded
-test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball platform-bundle ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar runtime tarballs and the platform image bundle first.
+test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball platform-bundle ## §17.4 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar runtime tarballs and the platform image bundle first.
 	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_SIDECAR_RUNTIME_TARBALL=$${LENNY_SIDECAR_RUNTIME_TARBALL:-$(SIDECAR_RUNTIME_TARBALL)} LENNY_PLATFORM_BUNDLE=$${LENNY_PLATFORM_BUNDLE:-$(PLATFORM_BUNDLE)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
 
 .PHONY: test-smoke-embedded-security

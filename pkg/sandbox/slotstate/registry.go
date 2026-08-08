@@ -7,8 +7,7 @@ import "sync"
 // Registry is a concurrency-safe tracker of per-slot sub-states keyed by
 // slotId, scoped to the slots' owning pods. It is the in-process record of
 // each slot's §6.2 sub-state so the gateway can report the per-pod
-// leaked-slot count (the lenny_adapter_leaked_slots gauge, spec §6.2 line
-// 179). The Redis slot counter is the sole occupancy authority that keeps
+// leaked-slot count (the lenny_adapter_leaked_slots gauge, spec §6.2). The Redis slot counter is the sole occupancy authority that keeps
 // a leaked slot counted against further assignment (spec §6.2), so the
 // registry exposes only the leaked count, not a pod-wide occupancy count.
 //
@@ -93,7 +92,7 @@ func (r *Registry) MarkReleased(slotID string) {
 
 // MarkLeaked records a slot whose cleanup timed out, so it remains counted
 // in the pod's active_slots and leaked_slots until the pod terminates
-// (spec §6.2 line 176, line 179). It seeds the slot at Leaked if the
+// (spec §6.2). It seeds the slot at Leaked if the
 // registry was not already tracking it. MarkLeaked returns the pod's
 // resulting leaked-slot count so the caller can publish the
 // lenny_adapter_leaked_slots gauge.

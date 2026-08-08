@@ -53,8 +53,7 @@ type Options struct {
 	// this persisted key (creating it on first use) instead of a fresh
 	// per-process random seed, so envelope-encrypted state survives a
 	// restart — the §17.4 Embedded Mode "lenny down preserves state"
-	// guarantee. Empty keeps the zero-config random KEK. spec: §17.4
-	// line 163 / F-17.4.7.
+	// guarantee. Empty keeps the zero-config random KEK. spec: §17.4 / F-17.4.7.
 	MasterKeyFile string
 
 	// AliasToKey is the binary-level alias-to-KMS-key map shared
@@ -89,7 +88,7 @@ func Resolve(ctx context.Context, opts Options) (kms.Provider, error) {
 	}
 	switch prov {
 	case ProviderLocal:
-		// §17.4 line 163: a file-backed master key makes the local KEK
+		// §17.4: a file-backed master key makes the local KEK
 		// survive a restart (Embedded Mode). Without one the seed is
 		// random per process, which is the zero-config dev/test posture.
 		if opts.MasterKeyFile != "" {
@@ -187,7 +186,7 @@ func Bind(fs *flag.FlagSet, env func(string) string, defaults Options) (*Options
 			"to start with --kms-provider=local. Override via LENNY_ENV.")
 	fs.StringVar(&opts.MasterKeyFile, "kms-master-key-file",
 		def("LENNY_KMS_MASTER_KEY_FILE", defaults.MasterKeyFile),
-		"§17.4 line 163 file-backed soft-HSM master key path for "+
+		"§17.4 file-backed soft-HSM master key path for "+
 			"--kms-provider=local. When set, the local KEK seed is loaded "+
 			"(or generated 0600 on first use) from this file so "+
 			"envelope-encrypted state survives a restart. Empty uses a "+

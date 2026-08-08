@@ -48,7 +48,7 @@ func (e *errOnCreate) Create(context.Context, sessionstore.Session) error {
 // *resvOut, or Delegate dropping &budgetReservation), the reservation
 // would leak and the counter would stay at 1, failing this test.
 //
-// spec: §8.2 lines 57, 127; §12.4 line 213. F-8.2.18 / F-8.2.12.
+// spec: §8.2; §12.4. F-8.2.18 / F-8.2.12.
 func TestDelegate_BudgetReleasedOnPostReserveError_spec_8_2_18(t *testing.T) {
 	base := memstore.New()
 	seedParentWithLease(t, base, "sess_parent", &sessionstore.DelegationLease{MaxTreeSize: 10})

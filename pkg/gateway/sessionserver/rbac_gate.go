@@ -50,7 +50,7 @@ import (
 // deployments retain the historical fall-through so a `lenny up`-style
 // no-OIDC posture, the X-Lenny-Tenant-ID dev-header path, and pre-RBAC
 // service tokens still reach the handler.
-// spec: §10.2 lines 256–264.
+// spec: §10.2.
 
 // requireSessionPermission wraps a session handler with the §10.2
 // permission check for perm. It returns the http.HandlerFunc the mux
@@ -81,7 +81,7 @@ func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission)
 		return true
 	}
 	if len(p.Roles) == 0 {
-		// spec: §10.2 lines 256–264. Multi-tenant deployments fail
+		// spec: §10.2. Multi-tenant deployments fail
 		// closed for an authenticated principal with an empty roles
 		// claim — the permission matrix is unconditional and a
 		// no-role caller is outside every row. Single-tenant

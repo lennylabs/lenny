@@ -25,7 +25,7 @@ func newStore() (*MemoryStore, *fixedClock) {
 	return NewMemoryStore(c.now), c
 }
 
-// spec: §4.4 line 234 — Insert validates tenant + session + ref.
+// spec: §4.4 — Insert validates tenant + session + ref.
 func TestInsert_Validates(t *testing.T) {
 	store, _ := newStore()
 	cases := []Record{
@@ -40,7 +40,7 @@ func TestInsert_Validates(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 234 — Insert is idempotent at the composite key.
+// spec: §4.4 — Insert is idempotent at the composite key.
 func TestInsert_RejectsDuplicate(t *testing.T) {
 	store, _ := newStore()
 	r := Record{TenantID: "acme", SessionID: "s1", Ref: "ref-1"}
@@ -102,7 +102,7 @@ func TestRotate_RetainsLatestTwo(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — Rotate is idempotent (second call is a no-op).
+// spec: §4.4 — Rotate is idempotent (second call is a no-op).
 func TestRotate_Idempotent(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
@@ -125,7 +125,7 @@ func TestRotate_Idempotent(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 234 — Rotate handles fewer than RetainedCount rows.
+// spec: §4.4 — Rotate handles fewer than RetainedCount rows.
 func TestRotate_FewerThanCap(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
@@ -139,7 +139,7 @@ func TestRotate_FewerThanCap(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 234 — Rotate scopes by (tenant, session).
+// spec: §4.4 — Rotate scopes by (tenant, session).
 func TestRotate_ScopedBySession(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
@@ -251,7 +251,7 @@ func TestDeleteByTenant(t *testing.T) {
 	}
 }
 
-// spec: §12.5 lines 313, 326 — in concurrent-workspace mode the
+// spec: §12.5 — in concurrent-workspace mode the
 // "latest 2" cap applies independently per slot. A session with two
 // slots each carrying three checkpoints retains two per slot (four
 // total), not two for the whole session.
@@ -296,7 +296,7 @@ func TestRotate_PerSlotIndependent(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 236 — Rotate stamps deleted_at on transitioned rows.
+// spec: §4.4 — Rotate stamps deleted_at on transitioned rows.
 func TestRotate_StampsDeletedAt(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()

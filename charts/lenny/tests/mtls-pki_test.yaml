@@ -141,7 +141,7 @@ tests:
           path: spec.duration
           value: 48h
 
-  # F-10.3.3 / §10.3 NET-063 line 327: an in-cluster interceptor
+  # F-10.3.3 / §10.3 NET-063: an in-cluster interceptor
   # Certificate is rendered per declared interceptor namespace, carrying
   # both the SPIFFE URI SAN and the DNS SAN the gateway validates.
   - it: renders no interceptor certificate by default

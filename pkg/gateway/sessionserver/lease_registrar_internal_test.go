@@ -37,7 +37,7 @@ func defaultsForTest() LeaseExtensionDefaults {
 	}
 }
 
-// spec: §8.6 lines 660-678 — a newly created root session registers a
+// spec: §8.6 — a newly created root session registers a
 // lease-extension budget tree seeded with the deployment-level defaults,
 // so the first in-process budget-exhaustion extension (the gateway LLM
 // Proxy's ExtendForBudget trigger) resolves the tree instead of failing
@@ -95,7 +95,7 @@ func TestRegisterLeaseTree_SeedsCurrentFromGrantedLease(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 648 — a delegated child (ParentSessionID set) is
+// spec: §8.6 — a delegated child (ParentSessionID set) is
 // registered by the delegation Service, not the session server; the
 // session-server helper skips it to avoid registering a child as a fresh
 // root tree. F-15.3.5.

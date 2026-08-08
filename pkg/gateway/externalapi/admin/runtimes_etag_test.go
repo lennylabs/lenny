@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §15.1 lines 1207-1224 — ETag-based optimistic concurrency for the
+// spec: §15.1 — ETag-based optimistic concurrency for the
 // runtimes admin resource.
 
 func putRuntimeRaw(t *testing.T, h http.Handler, name, ifMatch string, body any) *httptest.ResponseRecorder {
@@ -56,9 +56,8 @@ func seedEtagRuntime(t *testing.T, name string) (*admin.Router, runtimestore.Sto
 	return router, store
 }
 
-// TestRuntimeETagOptimisticConcurrency_spec_15_1_1207 covers the §15.1 lines
-// 1207-1224 ETag optimistic-concurrency contract for the runtimes resource,
-// including the interaction with the §15.1 line 1140 ?dryRun=true branch.
+// TestRuntimeETagOptimisticConcurrency_spec_15_1_1207 covers the §15.1 ETag optimistic-concurrency contract for the runtimes resource,
+// including the interaction with the §15.1 ?dryRun=true branch.
 func TestRuntimeETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 	desc := func(s string) *string { return &s }
 
@@ -106,7 +105,7 @@ func TestRuntimeETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		assertErrorCode(t, rr, "ETAG_REQUIRED")
 	})
 
-	// spec: §15.1 lines 1140, 1202-1203 — ?dryRun=true combined with a
+	// spec: §15.1 — ?dryRun=true combined with a
 	// missing If-Match still returns 428 (the precondition is checked
 	// before the dry-run branch).
 	t.Run("DryRunMissingIfMatchIs428", func(t *testing.T) {
@@ -120,7 +119,7 @@ func TestRuntimeETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 lines 1202-1203 — ?dryRun=true with a stale If-Match
+	// spec: §15.1 — ?dryRun=true with a stale If-Match
 	// returns 412 without mutating the resource.
 	t.Run("DryRunStaleIfMatchIs412", func(t *testing.T) {
 		router, store := seedEtagRuntime(t, "rt_etag")

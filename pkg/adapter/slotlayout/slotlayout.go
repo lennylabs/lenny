@@ -6,7 +6,7 @@
 // Under session mode with `sessionPolicy.maxConcurrentSessions > 1` the
 // single `/workspace/current` layout does not apply. Instead each active
 // slot owns an isolated tree the adapter creates on slot assignment and
-// removes on slot cleanup (spec §6.4 lines 385-405):
+// removes on slot cleanup (spec §6.4):
 //
 //	/workspace/slots/{slotId}/current/    this slot's cwd
 //	/workspace/slots/{slotId}/staging/    this slot's upload staging area
@@ -15,11 +15,11 @@
 //	/run/lenny/slots/{slotId}/credentials.json   this slot's credential file
 //
 // The runtime derives its per-slot cwd from `slotId` using the same
-// `/workspace/slots/{slotId}/current/` pattern (spec §6.4 line 404), so
+// `/workspace/slots/{slotId}/current/` pattern (spec §6.4), so
 // this package is the single source of truth both the adapter (tree
 // creation, credential write) and the runtime (cwd derivation) agree on.
 //
-// spec: §6.4 lines 385-409; §6.1 line 28.
+// spec: §6.4; §6.1.
 package slotlayout
 
 import (
@@ -35,7 +35,7 @@ import (
 // listable so a reader opens the known credentials.json path while other
 // slots' directory names stay unenumerable.
 const (
-	// CurrentMode is the per-slot cwd directory mode (spec §6.1 line 11
+	// CurrentMode is the per-slot cwd directory mode (spec §6.1
 	// "/workspace/current ... 0755 for the runtime").
 	CurrentMode = 0o755
 	// StagingMode is the per-slot upload-staging directory mode: only the
@@ -48,17 +48,17 @@ const (
 	// CredentialsDirMode is the per-slot /run/lenny/slots/{slotId} directory
 	// mode: the adapter owns it; the lenny-cred-readers group may traverse
 	// (execute) into it to open the 0440 credentials.json but may not list
-	// it. spec: §6.1 line 28.
+	// it. spec: §6.1.
 	CredentialsDirMode = 0o710
 )
 
 // CredentialsFileName is the per-slot credential file the runtime reads,
-// matching the single-slot credfile.FileName. spec: §6.1 line 28.
+// matching the single-slot credfile.FileName. spec: §6.1.
 const CredentialsFileName = "credentials.json"
 
 // slotsSegment is the fixed directory level the per-slot trees nest
-// under within the workspace and credentials roots (spec §6.4 line 385:
-// `/workspace/slots/{slotId}/`; §6.1 line 28:
+// under within the workspace and credentials roots (spec §6.4:
+// `/workspace/slots/{slotId}/`; §6.1:
 // `/run/lenny/slots/{slotId}/credentials.json`).
 const slotsSegment = "slots"
 
@@ -110,7 +110,7 @@ type SlotPaths struct {
 // rejecting separators, dot segments, and NUL prevents a malformed or
 // hostile id from escaping the per-slot tree via path traversal.
 //
-// spec: §6.4 lines 385-405 (the adapter materializes `slots/{slotId}/`).
+// spec: §6.4.
 func ValidateSlotID(slotID string) error {
 	if slotID == "" {
 		return fmt.Errorf("slotlayout: slot id is empty")

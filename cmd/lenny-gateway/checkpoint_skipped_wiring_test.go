@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
-// spec: §4.4 line 255 — on the adapter's workspace-size-probe rejection the
+// spec: §4.4 — on the adapter's workspace-size-probe rejection the
 // gateway emits a checkpoint.skipped{reason} session event on the session-event
 // bus so the client is aware. This pins the gateway-side emitter the
 // checkpointer's SkippedEventFunc is wired to. Against the pre-fix wiring, where

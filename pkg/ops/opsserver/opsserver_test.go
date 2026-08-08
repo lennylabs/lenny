@@ -30,7 +30,7 @@ func TestHealthzReportsOK(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. The strict gate (?strict=true)
+// spec: §25.4 — F-25.4.10. The strict gate (?strict=true)
 // returns 200 only when both Postgres and the Kubernetes API are
 // reachable; the readiness probe uses it so traffic is not routed to a
 // replica that cannot serve the full §25 API.
@@ -58,7 +58,7 @@ func TestHealthzStrictReadyWhenCriticalDepsUp(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// spec: §25.4 — F-25.4.10. A strict-gate dependency that is
 // down yields 503 with the degraded dependency named.
 func TestHealthzStrict503WhenCriticalDepDown(t *testing.T) {
 	probes := map[string]probe.Func{
@@ -93,7 +93,7 @@ func TestHealthzStrict503WhenCriticalDepDown(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// spec: §25.4 — F-25.4.10. A strict-gate dependency that is
 // not even registered cannot be confirmed reachable and counts as
 // degraded (the production binary always wires both).
 func TestHealthzStrict503WhenCriticalDepAbsent(t *testing.T) {
@@ -123,7 +123,7 @@ func TestHealthzStrict503WhenCriticalDepAbsent(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 1054-1057 — F-25.4.10. The permissive /healthz
+// spec: §25.4 — F-25.4.10. The permissive /healthz
 // (liveness, startup) stays 200 even when a dependency is down so a
 // transient outage does not restart an otherwise-healthy pod.
 func TestHealthzPermissiveIgnoresDependencyOutage(t *testing.T) {

@@ -1,5 +1,5 @@
 {{- /*
-lenny-migrate pre-install/pre-upgrade Job (§10.5 line 408). Applies the
+lenny-migrate pre-install/pre-upgrade Job (§10.5). Applies the
 embedded Postgres schema migrations before the gateway and controller
 Deployments roll out, so the schema the binaries expect is in place when
 they start. `lenny-migrate up` is idempotent (golang-migrate ErrNoChange
@@ -64,7 +64,7 @@ spec:
           env:
             - name: LENNY_POSTGRES_DSN
               value: {{ $pg.dsn | quote }}
-            # §24.13 line 150: record the applying Job name in the
+            # §24.13: record the applying Job name in the
             # schema_migration_phase table so `lenny-ctl migrate status`
             # reports `migrationJobName`. The downward API resolves the
             # generated Job name (the `job-name` label Kubernetes stamps

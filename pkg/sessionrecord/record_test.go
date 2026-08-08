@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// spec: §15.4.1 line 1889 — RuntimeCrash synthesizes a RUNTIME_CRASH
-// error from a non-zero exit code and stderr; §8.8 lines 936-938 classify
+// spec: §15.4.1 — RuntimeCrash synthesizes a RUNTIME_CRASH
+// error from a non-zero exit code and stderr; §8.8 classify
 // it TRANSIENT.
 func TestRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
 	e := RuntimeCrash(7, "panic: nil deref\n")
@@ -34,7 +34,7 @@ func TestRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 line 1889 — a runtime that emits no stderr still
+// spec: §15.4.1 — a runtime that emits no stderr still
 // produces a RUNTIME_CRASH naming the exit code, and an oversized stderr
 // dump is capped to its tail.
 func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 lines 1530-1531 — a `text` MessagePart guarantees type,
+// spec: §15.4.1 — a `text` MessagePart guarantees type,
 // inline, mimeType (text/plain) and carries its own schemaVersion.
 func TestTextPart_spec_15_4_1(t *testing.T) {
 	p := TextPart("hello")
@@ -70,7 +70,7 @@ func TestTextPart_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 825-827; §15.5 item 7 — the envelope schemaVersion is
+// spec: §8.8; §15.5 item 7 — the envelope schemaVersion is
 // immutable once the first writer sets it. ReconcileSchemaVersion keeps
 // an existing non-zero version and only fills in the producer version
 // for a brand-new record.
@@ -90,7 +90,7 @@ func TestReconcileSchemaVersion_spec_8_8_825(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 936-938 — retriesExhausted is the precise
+// spec: §8.8 — retriesExhausted is the precise
 // budget-consumed comparison when maxRetries is known, and the
 // row-only "retried at least once" witness when it is not.
 func TestRetriesExhausted_spec_8_8_936(t *testing.T) {
@@ -156,7 +156,7 @@ func TestRecord_JSON_spec_8_8_806(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 904-917 — treeUsage flattens the usage fields and
+// spec: §8.8 — treeUsage flattens the usage fields and
 // adds totalTasks; the embedded Usage promotes inline rather than
 // nesting under a "usage" key.
 func TestTreeUsage_JSON_spec_8_8_904(t *testing.T) {
@@ -177,7 +177,7 @@ func TestTreeUsage_JSON_spec_8_8_904(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 922-940 — the failure example carries an output: null
+// spec: §8.8 — the failure example carries an output: null
 // (absent) and a populated error block; the completed example carries
 // output and a nil error.
 func TestResult_JSON_outputErrorMutualExclusion_spec_8_8_922(t *testing.T) {

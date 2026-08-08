@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup/runner"
 )
 
-// spec: §25.11 line 4343 — every backup terminal transition is audited;
+// spec: §25.11 — every backup terminal transition is audited;
 // §16.7 backup.completed / backup.failed are written from the Job pod.
 
 // recordingSink captures the §16.7 audit events the runner emits so a

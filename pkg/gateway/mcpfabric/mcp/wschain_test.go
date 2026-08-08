@@ -20,7 +20,7 @@ import (
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
-// spec: §27.5 / §27.3.1 line 142 — the MCP WebSocket transport at
+// spec: §27.5 / §27.3.1 — the MCP WebSocket transport at
 // /mcp/v1/ws upgrades through the gateway's full middleware chain.
 // nhooyr.io/websocket performs a direct http.Hijacker type assertion on
 // the ResponseWriter it is handed, so every writer-wrapping middleware on

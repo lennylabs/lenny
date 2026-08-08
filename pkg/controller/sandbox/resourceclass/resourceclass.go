@@ -7,7 +7,7 @@
 // resulting corev1.ResourceRequirements onto every agent container so the
 // pod has a per-pod cgroup memory and CPU boundary.
 //
-// spec: §5.2 line 369 names the small/medium/large classes; §6.4 line 413
+// spec: §5.2 names the small/medium/large classes; §6.4
 // requires that "Resource class definitions must account for tmpfs usage
 // in memory requests" — the agent pod's memory-backed /sessions, /tmp, and
 // /dev/shm tmpfs volumes charge against the pod memory cgroup, so a class's
@@ -28,15 +28,15 @@ import (
 
 // TmpfsReservationMiB is the sum of the §6.4 memory-backed tmpfs size caps
 // the pod builder applies: /sessions (256Mi) + /tmp (256Mi) + /dev/shm
-// (64Mi) = 576Mi. spec: §6.4 lines 413, 420. The credential tmpfs is a
+// (64Mi) = 576Mi. spec: §6.4. The credential tmpfs is a
 // handful of KiB and is not counted. A class's memory limit must exceed
 // this value so the agent process has working memory after tmpfs growth;
 // Registry.Validate enforces the invariant.
 const TmpfsReservationMiB = 256 + 256 + 64
 
-// DefaultClass is the §5.1 line 357 deployer-safe default resource class a
+// DefaultClass is the §5.1 deployer-safe default resource class a
 // Sandbox resolves to when it declares none and its SandboxTemplate
-// declares none. It matches the §5.2 line 100 canonical pool example
+// declares none. It matches the §5.2 canonical pool example
 // (`resourceClass: medium`).
 const DefaultClass = "medium"
 
@@ -52,7 +52,7 @@ type Registry map[string]corev1.ResourceRequirements
 // same value. CPU request is below the CPU limit so a pod may burst.
 //
 // Every class's memory limit clears TmpfsReservationMiB (576Mi) with
-// headroom for the agent process, satisfying the §6.4 line 413 tmpfs
+// headroom for the agent process, satisfying the §6.4 tmpfs
 // accounting requirement.
 func DefaultRegistry() Registry {
 	return Registry{
@@ -109,10 +109,10 @@ func (r Registry) Validate() error {
 	for class, req := range r {
 		lim, ok := req.Limits[corev1.ResourceMemory]
 		if !ok || lim.IsZero() {
-			return fmt.Errorf("resource class %q: memory limit is required (must exceed the %dMi tmpfs reservation, §6.4 line 413)", class, TmpfsReservationMiB)
+			return fmt.Errorf("resource class %q: memory limit is required (must exceed the %dMi tmpfs reservation, §6.4)", class, TmpfsReservationMiB)
 		}
 		if lim.Cmp(floor) <= 0 {
-			return fmt.Errorf("resource class %q: memory limit %s does not exceed the %dMi tmpfs reservation (§6.4 line 413)", class, lim.String(), TmpfsReservationMiB)
+			return fmt.Errorf("resource class %q: memory limit %s does not exceed the %dMi tmpfs reservation (§6.4)", class, lim.String(), TmpfsReservationMiB)
 		}
 	}
 	return nil

@@ -44,8 +44,7 @@ func newMCPWithPools(t *testing.T, pools poolstore.Store, timeout time.Duration)
 }
 
 // mkPooledSession seeds a session bound to poolRef so the §9.2 dispatch
-// path can resolve the per-pool elicitation policy. spec: §9.2 lines 86,
-// 90-98; F-9.2.12.
+// path can resolve the per-pool elicitation policy. spec: §9.2; F-9.2.12.
 func mkPooledSession(t *testing.T, store sessionstore.Store, id, user, parent, poolRef string) {
 	t.Helper()
 	now := time.Now()
@@ -65,7 +64,7 @@ func seedPool(t *testing.T, pools poolstore.Store, p poolstore.Pool) {
 }
 
 // TestRequestElicitationPerPoolURLModeAllowsConfiguredDomain_spec_9_2_F_9_2_12
-// proves the §9.2 line 86 per-pool agent-initiated url-mode allowlist is
+// proves the §9.2 per-pool agent-initiated url-mode allowlist is
 // resolved from the raising session's pool: a session in a pool that
 // allowlists accounts.example.com may raise a url-mode elicitation to
 // that domain even though the Register-time Deps allowlist is empty.
@@ -122,7 +121,7 @@ func TestRequestElicitationPerPoolURLModeBlocksUnconfiguredPool_spec_9_2_F_9_2_1
 }
 
 // TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12 proves the
-// §9.2 line 96 `block_all` depth policy is resolved from the raising
+// §9.2 depth policy is resolved from the raising
 // session's pool: a delegated session (depth > 0) whose pool blocks all
 // elicitations is suppressed.
 func TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12(t *testing.T) {
@@ -132,7 +131,7 @@ func TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12(t *testing.T) 
 		ElicitationDepthPolicy: elicitation.DepthBlockAll,
 	})
 	srv, store, interactions := newMCPWithPools(t, pools, time.Second)
-	// §9.2 line 96: block_all suppresses delegated sessions; the leaf is
+	// §9.2: block_all suppresses delegated sessions; the leaf is
 	// at depth 1.
 	mkPooledSession(t, store, "sess_root", "alice", "", "pool-locked")
 	mkPooledSession(t, store, "sess_leaf", "alice", "sess_root", "pool-locked")
@@ -151,7 +150,7 @@ func TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12(t *testing.T) 
 }
 
 // TestRequestElicitationPerPoolAllowAllOverridesDefault_spec_9_2_F_9_2_12
-// proves a pool's explicit `allow_all` overrides the §9.2 line 92
+// proves a pool's explicit `allow_all` overrides the §9.2
 // platform default (suppress at depth 3): a depth-3 session in an
 // allow_all pool is NOT suppressed, whereas the Register-time default
 // (empty depth policy coerced to suppress_at_depth=3 by WalkChain) would
@@ -181,7 +180,7 @@ func TestRequestElicitationPerPoolAllowAllOverridesDefault_spec_9_2_F_9_2_12(t *
 
 // TestRequestElicitationDefaultPoolSuppressesAtDepth3_spec_9_2_F_9_2_12
 // is the companion to the allow_all test: a depth-3 session in a pool
-// with no explicit depth policy inherits the §9.2 line 92 platform
+// with no explicit depth policy inherits the §9.2 platform
 // default and is suppressed.
 func TestRequestElicitationDefaultPoolSuppressesAtDepth3_spec_9_2_F_9_2_12(t *testing.T) {
 	pools := poolstore.NewMemory()

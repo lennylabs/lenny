@@ -26,8 +26,7 @@ const webhookNameLabel = "lenny.dev/webhook-name"
 // platformComponents is the set of lenny-system platform components
 // §13.2 (NET-047/NET-050) governs: a NetworkPolicy clause targeting any
 // of these must use the canonical lenny.dev/component key. The
-// operability plane (lenny-ops, lenny-backup) is excluded because §13.2
-// line 201 Exception 1 permits it to select on the app: key.
+// operability plane (lenny-ops, lenny-backup) is excluded because §13.2 Exception 1 permits it to select on the app: key.
 var platformComponents = map[string]bool{
 	"gateway":           true,
 	"token-service":     true,
@@ -38,7 +37,7 @@ var platformComponents = map[string]bool{
 	"coredns":           true,
 }
 
-// opsAppValues is the set of app: label values §13.2 line 201
+// opsAppValues is the set of app: label values §13.2
 // Exception 1 reserves for the operability plane. A NetworkPolicy
 // clause may select these through the app: key without that being
 // counted as selector drift.
@@ -47,8 +46,7 @@ var opsAppValues = map[string]bool{
 	"lenny-backup": true,
 }
 
-// storageMonitoringAppValues is the set of app: label values §13.2
-// line 201 / NET-061 permits for storage and monitoring destinations
+// storageMonitoringAppValues is the set of app: label values §13.2 / NET-061 permits for storage and monitoring destinations
 // rendered by upstream subcharts. Operability-plane egress clauses may
 // target these through the app: key without that being selector drift.
 var storageMonitoringAppValues = map[string]bool{

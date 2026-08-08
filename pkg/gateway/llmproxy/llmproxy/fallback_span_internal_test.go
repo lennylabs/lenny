@@ -17,7 +17,7 @@ import (
 )
 
 // recordSpans installs an SDK span recorder over the global provider so
-// the test can read the spans driveFallback emitted. spec: §16.3 line 353.
+// the test can read the spans driveFallback emitted. spec: §16.3.
 func recordSpans(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()

@@ -9,17 +9,17 @@ import (
 )
 
 // CredentialLease is the §4.9 credential lease a CredentialGenerator
-// returns. Per the §12.6 line 432 cross-reference it is the existing
+// returns. Per the §12.6 cross-reference it is the existing
 // credential.Lease; no §12.6-specific envelope is introduced.
 type CredentialLease = credential.Lease
 
-// CredentialRequest is the input to GenerateCredential. The §12.6 line 431
+// CredentialRequest is the input to GenerateCredential. The §12.6
 // key fields are TenantID, Provider, PoolID, and the required scopes.
 // SessionID and SpiffeURI are the §4.9 lease-mint inputs the v1
 // StaticPoolGenerator threads to the underlying Assigner; a Tier-4
 // dynamic generator may ignore them.
 type CredentialRequest struct {
-	// TenantID is the lease's owning tenant (§4.9 line 1468 attribution).
+	// TenantID is the lease's owning tenant (§4.9 attribution).
 	TenantID string
 	// Provider is the requested upstream credential provider. v1 pools
 	// pin one provider, so the field is advisory; a future selector that
@@ -39,7 +39,7 @@ type CredentialRequest struct {
 	Scopes []string
 }
 
-// CredentialGenerator is the §12.6 lines 631-633 scaling extension
+// CredentialGenerator is the §12.6 scaling extension
 // interface that abstracts credential acquisition from a pool. The v1
 // implementation (StaticPoolGenerator) wraps the existing CredentialPool
 // lease-allocation path; a Tier-4 implementation (Vault / STS dynamic
@@ -49,7 +49,7 @@ type CredentialGenerator interface {
 	GenerateCredential(ctx context.Context, req CredentialRequest) (*CredentialLease, error)
 }
 
-// StaticPoolGenerator is the §12.6 line 634 v1 CredentialGenerator: a thin
+// StaticPoolGenerator is the §12.6 v1 CredentialGenerator: a thin
 // adapter over the existing §4.9 Assigner. It selects an available
 // credential from the named pool using the existing lease-based allocation
 // path. Construct it over the in-process Service or the gateway-side
@@ -67,7 +67,7 @@ var _ CredentialGenerator = (*StaticPoolGenerator)(nil)
 
 // GenerateCredential mints a §4.9 credential lease from req.PoolID through
 // the underlying Assigner and returns it. It honors a cancelled context
-// before touching the pool. spec: §12.6 lines 631-634.
+// before touching the pool. spec: §12.6.
 func (g *StaticPoolGenerator) GenerateCredential(ctx context.Context, req CredentialRequest) (*CredentialLease, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -5,21 +5,21 @@
 // singleton (migration 0124) and the upgradeservice.CheckCache over the
 // platform_upgrade_check_cache singleton.
 //
-// The upgrade-state store is the durability backbone §25.8 line 3560
+// The upgrade-state store is the durability backbone §25.8
 // requires: the in-flight phase lives in Postgres, not in process
 // memory, so a lenny-ops restart or a leader-election handoff during a
 // long pause resumes the upgrade from its persisted phase rather than
-// losing it. The check cache realizes the §25.8 line 3413-3414
+// losing it. The check cache realizes the §25.8
 // release-channel cache: a successful upgrade-check writes the cache, an
 // unreachable channel serves the cached manifest with cached=true, and
 // an air-gapped install can pre-populate the row.
 //
 // Both tables are platform-scoped (the §25 control plane is not
-// multi-tenanted at this boundary; §25.4 line 1492 lists them among the
+// multi-tenanted at this boundary; §25.4 lists them among the
 // PlatformPostgres() tables), so the store runs no tenant-scoped
 // transaction and the tables carry no RLS policy.
 //
-// spec: §25.8 lines 3560, 3413-3414, 3579-3605.
+// spec: §25.8.
 package pgstore
 
 import (
@@ -68,7 +68,7 @@ type stateMeta struct {
 
 // Load returns the platform_upgrade_state singleton. ok is false when no
 // upgrade has ever been recorded (the cold-start condition). A transport
-// error is returned so the caller surfaces the §25.8 line 3610
+// error is returned so the caller surfaces the §25.8
 // "Postgres down: upgrade state machine operations fail" case.
 func (s *Store) Load(ctx context.Context) (upgradeservice.State, bool, error) {
 	var (

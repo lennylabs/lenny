@@ -51,7 +51,7 @@ func (d Decision) String() string {
 // EventType is the §16.7 audit event type (diagnostics.session_diagnosed,
 // diagnostics.pool_diagnosed, diagnostics.credential_pool_diagnosed,
 // diagnostics.connectivity_checked); OperationID is the cross-cutting
-// §25.9 line 3703 X-Lenny-Operation-ID correlation stamped on the
+// §25.9 X-Lenny-Operation-ID correlation stamped on the
 // emitted event.
 type Call struct {
 	ServiceAccount string

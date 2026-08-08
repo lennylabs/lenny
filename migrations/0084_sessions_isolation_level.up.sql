@@ -1,4 +1,4 @@
--- §7.1 line 75 — sessionIsolationLevel persistence. The execution
+-- §7.1 — sessionIsolationLevel persistence. The execution
 -- mode and scrub-policy halves of the §7.1 session-creation isolation
 -- envelope are resolved against the assigned pool at create time, and
 -- the spec mandates they do not change for the lifetime of the
@@ -12,7 +12,7 @@
 -- migration treat the gap as session-mode; the gateway backfills from
 -- the pool resolver on the next read path it touches.
 --
--- scrub_policy is the §7.1 line 72 scrub-policy string — '',
+-- scrub_policy is the §7.1 scrub-policy string — '',
 -- 'best-effort', 'vm-restart', 'best-effort-in-place',
 -- 'best-effort-per-slot', or 'none'. It is empty for a non-reuse pool
 -- (a session-mode pool with maxConcurrentSessions == 1 and recycle

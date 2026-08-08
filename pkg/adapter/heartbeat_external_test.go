@@ -14,7 +14,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §15.4.1 line 1826 — a runtime that does not answer a heartbeat
+// spec: §15.4.1 — a runtime that does not answer a heartbeat
 // within the ack window is hung; the adapter sends SIGTERM (the clean
 // Interrupt) and ends the Attach stream with DeadlineExceeded.
 func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
@@ -64,7 +64,7 @@ func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 line 1453 — heartbeat_ack is protocol-level and is never
+// spec: §15.4.1 — heartbeat_ack is protocol-level and is never
 // relayed to the gateway. A normal frame after it still reaches the
 // gateway.
 func TestAttachConsumesHeartbeatAck_spec_15_4_1_1453(t *testing.T) {
@@ -102,7 +102,7 @@ func TestAttachConsumesHeartbeatAck_spec_15_4_1_1453(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 line 1455 — the adapter consumes an outbound
+// spec: §15.4.1 — the adapter consumes an outbound
 // set_tracing_context frame and registers it with the gateway's
 // lenny/set_tracing_context tool (scoped to the bound session); the frame
 // is never relayed as content.

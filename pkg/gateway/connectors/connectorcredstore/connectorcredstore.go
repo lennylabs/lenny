@@ -49,12 +49,11 @@ var (
 // marshalled to the wire — handlers project ConnectorCredential into a
 // token-free payload.
 type ConnectorCredential struct {
-	// TenantID, ConnectorID, UserID, and Environment are the §4.3
-	// line 202 four-tuple the credential is keyed by. ConnectorID is
+	// TenantID, ConnectorID, UserID, and Environment are the §4.3 four-tuple the credential is keyed by. ConnectorID is
 	// the connectorstore registry id; UserID is the OAuth-completing
 	// user; Environment is the §10.6 environment name (empty string
 	// scopes the row to "no environment" / the default access path).
-	// spec: §4.3 line 202.
+	// spec: §4.3.
 	TenantID    string
 	ConnectorID string
 	UserID      string
@@ -90,7 +89,7 @@ func (c ConnectorCredential) HasToken() bool { return c.AccessToken != "" }
 
 // Store is the §9.3 connector-credential registry contract.
 //
-// spec: §4.3 line 202 — credentials are scoped by (tenant, connector,
+// spec: §4.3 — credentials are scoped by (tenant, connector,
 // user, environment). The Environment argument carries the §10.6
 // environment name; the empty string selects the no-environment scope.
 type Store interface {
@@ -124,9 +123,9 @@ type Store interface {
 	// is the lookup key; ErrNotFound is returned when the row is
 	// absent.
 	//
-	// spec: §4.3 line 200 (refresh tokens stored encrypted),
-	// §4.3 line 202 (environment-scoped credentials),
-	// §9.3 lines 152–155 (connector token lifecycle).
+	// spec: §4.3,
+	// §4.3,
+	// §9.3.
 	RotateAccessToken(ctx context.Context, rot RotationRecord) error
 
 	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
@@ -139,21 +138,21 @@ type Store interface {
 	// removed; an erasure for a user with no stored credentials returns
 	// (0, nil).
 	//
-	// spec: §12.1 line 5, §12.8 step `TokenStore`.
+	// spec: §12.1, §12.8 step `TokenStore`.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 	// Hard-deletes every connector credential owned by tenantID — the
 	// §12.8 Phase 4 tenant-teardown path for the TokenStore role.
 	//
-	// spec: §12.1 line 5, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // RotationRecord carries the new token material produced by an RFC 6749
 // §6 refresh-token grant. The four-tuple (tenant, connector, user,
 // environment) is the lookup key.
-// spec: §4.3 line 202.
+// spec: §4.3.
 type RotationRecord struct {
 	// TenantID, ConnectorID, UserID, and Environment identify the row
 	// to rotate. Environment is the §10.6 environment name; empty
@@ -185,7 +184,7 @@ type RotationRecord struct {
 }
 
 // fourKey is the in-memory map key for the (tenant, connector, user,
-// environment) four-tuple. spec: §4.3 line 202.
+// environment) four-tuple. spec: §4.3.
 func fourKey(tenantID, connectorID, userID, environment string) string {
 	return tenantID + "\x00" + connectorID + "\x00" + userID + "\x00" + environment
 }
@@ -277,8 +276,7 @@ func (m *Memory) ListByConnector(_ context.Context, tenantID, connectorID string
 	return out, nil
 }
 
-// RotateAccessToken implements Store. spec: §4.3 line 200, §4.3 line
-// 202, §9.3.
+// RotateAccessToken implements Store. spec: §4.3, §4.3, §9.3.
 func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error {
 	switch {
 	case rot.TenantID == "":
@@ -319,7 +317,7 @@ func (m *Memory) RotateAccessToken(_ context.Context, rot RotationRecord) error 
 // DeleteByUser implements Store. It removes every credential keyed to
 // (tenantID, userID), regardless of connector or environment.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("connectorcredstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -339,7 +337,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 // DeleteByTenant implements Store. It removes every credential owned by
 // tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("connectorcredstore: DeleteByTenant requires a concrete tenant_id")

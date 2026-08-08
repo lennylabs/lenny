@@ -223,7 +223,7 @@ func TestErasureJobJourney(t *testing.T) {
 			t.Fatalf("erasure job phase = %v, want completed (job=%v)", job["phase"], job)
 		}
 
-		// spec: §12.8 line 821 — "Each step is individually idempotent to
+		// spec: §12.8 — "Each step is individually idempotent to
 		// support crash recovery" and the FK-ordered sequence deletes
 		// child stores (transcripts) before the parent (sessions). Both
 		// rows must now be gone from the real, constraint-enforcing
@@ -273,7 +273,7 @@ func TestErasureJobJourney(t *testing.T) {
 			t.Fatal("session id missing")
 		}
 
-		// spec: §12.8 line 735 — set a session-level legal hold.
+		// spec: §12.8 — set a session-level legal hold.
 		code, holdResp := do(t, http.MethodPost, "/v1/admin/legal-hold", "platform-admin", map[string]any{
 			"tenantId": "acme", "sessionId": sid, "hold": true,
 			"note": "preservation order pending litigation",
@@ -282,7 +282,7 @@ func TestErasureJobJourney(t *testing.T) {
 			t.Fatalf("set legal hold: %d (%v)", code, holdResp)
 		}
 
-		// spec: §12.8 line 823 — the step-0 preflight MUST abort before
+		// spec: §12.8 — the step-0 preflight MUST abort before
 		// step 1 with ERASURE_BLOCKED_BY_LEGAL_HOLD (HTTP 409) when the
 		// user has a session under an active hold.
 		code, blocked := do(t, http.MethodPost, "/v1/admin/users/"+user+"/erase", "platform-admin",
@@ -300,7 +300,7 @@ func TestErasureJobJourney(t *testing.T) {
 			t.Error("no gdpr.erasure_blocked_by_hold audit event for the blocked attempt")
 		}
 
-		// spec: §12.8 line 825 — a platform-admin overrides the preflight
+		// spec: §12.8 — a platform-admin overrides the preflight
 		// with acknowledgeHoldOverride + a non-empty justification; the
 		// erasure proceeds to step 1 and the override is recorded in the
 		// completion receipt and its own audit event.
@@ -340,7 +340,7 @@ func TestErasureJobJourney(t *testing.T) {
 			t.Fatal("no gdpr.erasure_completed audit event for the overridden job")
 		}
 		if receipt["legalHoldOverride"] != true {
-			t.Errorf("completion receipt legalHoldOverride = %v, want true (§12.8 line 796)", receipt["legalHoldOverride"])
+			t.Errorf("completion receipt legalHoldOverride = %v, want true (§12.8)", receipt["legalHoldOverride"])
 		}
 	})
 }

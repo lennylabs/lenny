@@ -34,7 +34,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §4.2 line 164 — "An integration test must verify tenant
+// spec: §4.2 — "An integration test must verify tenant
 // isolation at startup by confirming that a query without SET LOCAL is
 // rejected and that cross-tenant reads return zero rows." The primary
 // isolation mechanism is PostgreSQL Row-Level Security tied to the

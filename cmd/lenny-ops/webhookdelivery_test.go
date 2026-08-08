@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )
 
-// TestDeliveryRetentionJobPurgesExpired is the §25.5 lines 2649-2664
+// TestDeliveryRetentionJobPurgesExpired is the §25.5
 // contract: the leader-only delivery-retention cron deletes expired
 // ops_event_deliveries rows and leaves future-dated rows intact. The job
 // is scheduled at the off-peak 03:45 UTC slot.

@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// spec: §27.3.1 line 94 / §27.6 line 201/204 — the idle-timeout sweep
+// spec: §27.3.1 / §27.6 — the idle-timeout sweep
 // enumerates playground session records idle past the reclamation window
 // and revokes each through the shared revocation primitive with reason
 // idle_timeout. These tests cover the store enumeration and the handler

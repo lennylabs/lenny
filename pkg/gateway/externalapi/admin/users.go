@@ -30,7 +30,7 @@ type UserPayload struct {
 	DeletedAt   string      `json:"deletedAt,omitempty"`
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. A list consumer reads it per item to supply
-	// If-Match on a later PUT without a follow-up GET. spec: §15.1 line 1209.
+	// If-Match on a later PUT without a follow-up GET. spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -73,7 +73,7 @@ func fromUser(u userstore.User) UserPayload {
 		CreatedAt:   rfc3339Nano(u.CreatedAt),
 		UpdatedAt:   rfc3339Nano(u.UpdatedAt),
 		DeletedAt:   rfc3339Nano(u.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		// spec: §15.1 — the ETag is the quoted decimal version.
 		ETag: formatETag(u.Version),
 	}
 }
@@ -224,10 +224,10 @@ func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 		Email:       body.Email,
 		DisplayName: body.DisplayName,
 		Roles:       body.Roles,
-		// spec: §10.2 line 294 — a row created through the admin user
+		// spec: §10.2 — a row created through the admin user
 		// surface is a platform-managed record whose Roles override the
 		// OIDC claim (including the empty downgrade). Mark the assignment
-		// present so the §15.1 line 828 role resolver honors it; only the
+		// present so the §15.1 role resolver honors it; only the
 		// dedicated `DELETE .../role` path clears it.
 		RoleAssigned: true,
 		Disabled:     body.Disabled,
@@ -236,7 +236,7 @@ func (r *Router) handleCreateUser(w http.ResponseWriter, req *http.Request) {
 	u.UpdatedAt = u.CreatedAt
 	if err := r.users.Create(req.Context(), u); err != nil {
 		if errors.Is(err, userstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"user with this subject already exists in tenant", nil)
 			return
@@ -274,7 +274,7 @@ func (r *Router) handleListUsers(w http.ResponseWriter, req *http.Request) {
 	for _, u := range rows {
 		out = append(out, fromUser(u))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x UserPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -304,7 +304,7 @@ func (r *Router) handleGetUser(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -340,7 +340,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	// Resolve the current user so the entity tag (its version) is known
 	// before applying the mutation; a missing user 404s ahead of the
 	// precondition.
@@ -365,7 +365,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		}
 		if body.Roles != nil {
 			u.Roles = *body.Roles
-			// spec: §10.2 line 294 — a role change through the generic user
+			// spec: §10.2 — a role change through the generic user
 			// surface (re)establishes the platform-managed override.
 			u.RoleAssigned = true
 		}
@@ -386,7 +386,7 @@ func (r *Router) handleUpdateUser(w http.ResponseWriter, req *http.Request) {
 		"tenantId":      tenant,
 		"changedFields": changedUserFields(body),
 	})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -400,7 +400,7 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// spec: §15.1 — DELETE honours If-Match when present. Resolve
 	// the current user so the precondition reads the stored entity tag; a
 	// missing user 404s ahead of the precondition.
 	current, gerr := r.users.Get(req.Context(), tenant, subject)
@@ -441,7 +441,7 @@ func (r *Router) handleDeleteUser(w http.ResponseWriter, req *http.Request) {
 // session this step cancelled was non-terminal, so its pod may still be
 // running and its leases may still be live.
 func (r *Router) terminateUserSessions(ctx context.Context, tenantID, userID string) ([]string, error) {
-	// spec: §11.4 line 256 — narrow the SessionStore lookup to the
+	// spec: §11.4 — narrow the SessionStore lookup to the
 	// invalidation subject. The Postgres-backed store pushes the filter
 	// to `idx_sessions_tenant_user` so a tenant with many sessions does
 	// not scan tenant-wide on every full_revoke.

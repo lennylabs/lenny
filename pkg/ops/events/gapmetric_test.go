@@ -10,7 +10,7 @@ import (
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
-// TestOnGapFiresOnEvictedCursor is the §25.5 line 2788 contract: a poll
+// TestOnGapFiresOnEvictedCursor is the §25.5 contract: a poll
 // (or stream) request that resolves an evicted cursor — returning
 // gapDetected — invokes the OnGap hook that backs
 // lenny_ops_events_stream_gaps_total.

@@ -18,7 +18,7 @@
 // re-run after a partial failure re-keys only the rows still pending and
 // never corrupts a row that was already advanced.
 //
-// spec: spec/04_system-components.md §4.9.1 lines 1714-1730.
+// spec: §4.9.1 (KMS key rotation procedure)
 package rekey
 
 import (
@@ -45,13 +45,13 @@ type TenantRekeyer interface {
 	// current KEK version and returns the number of rows advanced.
 	// Rows already at the current version are left untouched, so the
 	// call is idempotent: a second call on a fully re-keyed tenant
-	// returns 0. spec: §4.9.1 lines 1718-1721.
+	// returns 0. spec: §4.9.1.
 	RekeyTenant(ctx context.Context, tenantID string) (int, error)
 
 	// CountStale returns the number of rows still sealed under a KEK
 	// version below the current one — the §4.9.1 verification query
 	// (`SELECT COUNT(*) ... WHERE key_version < current_version`).
-	// spec: §4.9.1 line 1723.
+	// spec: §4.9.1.
 	CountStale(ctx context.Context, tenantID string) (int, error)
 }
 
@@ -114,7 +114,7 @@ func (j *Job) WithObserver(fn func(Result)) *Job {
 // offending store named; stores already processed keep their committed
 // progress, which a subsequent Run resumes.
 //
-// spec: §4.9.1 lines 1718-1723.
+// spec: §4.9.1.
 func (j *Job) Run(ctx context.Context, tenantID string) (Summary, error) {
 	sum := Summary{TenantID: tenantID}
 	for _, st := range j.stores {
@@ -142,7 +142,7 @@ func (j *Job) Run(ctx context.Context, tenantID string) (Summary, error) {
 // re-keying. It returns the total number of rows still below the current
 // KEK version and ErrRekeyIncomplete when that total is non-zero. A nil
 // error means every sealed row is at the current version and the
-// operator may disable the old KEK version. spec: §4.9.1 lines 1723-1724.
+// operator may disable the old KEK version. spec: §4.9.1.
 func (j *Job) Verify(ctx context.Context, tenantID string) (int, error) {
 	stale := 0
 	for _, st := range j.stores {

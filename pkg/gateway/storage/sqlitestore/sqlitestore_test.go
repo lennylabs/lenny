@@ -60,7 +60,7 @@ func tmpDBPath(t *testing.T) string {
 	return filepath.Join(t.TempDir(), "lenny.db")
 }
 
-// spec: §17.4 line 199 — embedded SQLite for session and metadata
+// spec: §17.4 — embedded SQLite for session and metadata
 // storage. A store flushed to the file and then loaded into a fresh
 // process (a second Open of the same path) recovers its contents.
 func TestDB_RoundTripAcrossReopen_spec_17_4_199(t *testing.T) {
@@ -93,7 +93,7 @@ func TestDB_RoundTripAcrossReopen_spec_17_4_199(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 199 — the periodic flush must not rewrite a store
+// spec: §17.4 — the periodic flush must not rewrite a store
 // whose contents did not change, so an idle gateway does not churn the
 // file. now() is called only on an actual write, so its call count is a
 // proxy for the number of rows written.

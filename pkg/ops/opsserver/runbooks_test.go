@@ -85,7 +85,7 @@ func TestListRunbooks(t *testing.T) {
 		t.Errorf("component filter = %+v, want only warm-pool-exhaustion", byComponent.Runbooks)
 	}
 
-	// spec: §25.7 line 3142 — `requires` narrows to runbooks the caller
+	// spec: §25.7 — `requires` narrows to runbooks the caller
 	// can execute. admin-api is unique to warm-pool-exhaustion.
 	byRequires := getRunbooks(t, srv, "/v1/admin/runbooks?requires=admin-api")
 	if len(byRequires.Runbooks) != 1 || byRequires.Runbooks[0].Name != "warm-pool-exhaustion" {
@@ -96,7 +96,7 @@ func TestListRunbooks(t *testing.T) {
 		t.Errorf("requires=cluster-access returned %d, want 2", len(bothRequire.Runbooks))
 	}
 
-	// spec: §25.7 line 3143 — `q` full-text over symptoms, tags, title.
+	// spec: §25.7 — `q` full-text over symptoms, tags, title.
 	byQuerySymptom := getRunbooks(t, srv, "/v1/admin/runbooks?q=RUNTIME_UNAVAILABLE")
 	if len(byQuerySymptom.Runbooks) != 1 || byQuerySymptom.Runbooks[0].Name != "warm-pool-exhaustion" {
 		t.Errorf("q symptom filter = %+v, want only warm-pool-exhaustion", byQuerySymptom.Runbooks)
@@ -156,7 +156,7 @@ func TestRunbookStepsNotFound(t *testing.T) {
 // TestRunbookMarkdownEndpoint covers the §25.7 GET
 // /v1/admin/runbooks/{name} endpoint: an agent that already holds the
 // runbook name reads the full markdown plus front matter in one hop.
-// spec: §25.7 lines 3055-3057.
+// spec: §25.7.
 func TestRunbookMarkdownEndpoint_spec_25_7_3055(t *testing.T) {
 	body := "# Warm pool exhausted\n\nRemediation goes here.\n"
 	src := fakeRunbookSource{
@@ -196,7 +196,7 @@ func TestRunbookMarkdownEndpoint_spec_25_7_3055(t *testing.T) {
 
 // TestRunbookMarkdownNotFound covers the canonical 404 path so a stale
 // alert pointing at a removed runbook does not crash the agent.
-// spec: §25.7 line 3055.
+// spec: §25.7.
 func TestRunbookMarkdownNotFound_spec_25_7_3055(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{Runbooks: fakeRunbookSource{md: map[string][]byte{}}})
 	rec := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestRunbookMarkdownNotFound_spec_25_7_3055(t *testing.T) {
 // TestRunbookMarkdownUnavailable covers the 503 path so an agent
 // receives the canonical error envelope when the runbook index has
 // not been loaded.
-// spec: §25.7 line 3055.
+// spec: §25.7.
 func TestRunbookMarkdownUnavailable_spec_25_7_3055(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{})
 	rec := httptest.NewRecorder()

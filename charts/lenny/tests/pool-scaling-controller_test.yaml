@@ -61,7 +61,7 @@ tests:
           path: spec.template.spec.serviceAccountName
           value: lenny-pool-scaling-controller
 
-  # spec: §16.5 lines 590-601 / F-16.5.6 — the PSC reads the
+  # spec: §16.5 / F-16.5.6 — the PSC reads the
   # capacityPlanning.* workload-profile values at startup. The chart
   # renders the stock defaults and the tier as env vars.
   - it: renders the capacityPlanning workload-profile env with stock defaults
@@ -91,7 +91,7 @@ tests:
             name: LENNY_CAPACITY_SESSION_IDLE_FRACTION
             value: "0.3"
 
-  # spec: §16.5 line 601 / F-16.5.6 — a Tier 3 deployment substituting
+  # spec: §16.5 / F-16.5.6 — a Tier 3 deployment substituting
   # observed workload values renders them so the PSC's at-defaults
   # warning stays silent.
   - it: renders operator-substituted capacityPlanning values at Tier 3
@@ -112,7 +112,7 @@ tests:
             name: LENNY_CAPACITY_AVG_SESSION_DURATION_SECONDS
             value: "600"
 
-  # spec: §17.8.2 line 1008 / F-17.8.4 — poolScaling.safetyFactor renders
+  # spec: §17.8.2 / F-17.8.4 — poolScaling.safetyFactor renders
   # as LENNY_POOL_SCALING_SAFETY_FACTOR. The base default 0 lets the
   # controller resolve the per-tier default from LENNY_CAPACITY_TIER.
   - it: renders the default safety_factor env (0 = auto from tier)
@@ -126,7 +126,7 @@ tests:
             name: LENNY_POOL_SCALING_SAFETY_FACTOR
             value: "0"
 
-  # spec: §17.8.2 line 1010 / F-17.8.4 — an operator pins the safety
+  # spec: §17.8.2 / F-17.8.4 — an operator pins the safety
   # factor universally (e.g. when the failover-warm-serve SLO is not met).
   - it: renders an operator-pinned safety_factor
     template: pool-scaling-controller-deployment.yaml
@@ -140,7 +140,7 @@ tests:
             name: LENNY_POOL_SCALING_SAFETY_FACTOR
             value: "1.3"
 
-  # spec: §6.1 lines 48, 50 / F-6.2.21 — the SDK-warm circuit-breaker
+  # spec: §6.1 / F-6.2.21 — the SDK-warm circuit-breaker
   # demotion source is wired only when prometheusURL is set; the v1
   # bootstrap default omits LENNY_PROMETHEUS_URL so the breaker never
   # auto-trips.

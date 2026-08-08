@@ -344,8 +344,7 @@ func TestCloudEventsAlertFiredPayloadFields(t *testing.T) {
 // concrete minWarm value depends on the pool's live claim rate, which
 // the static rule catalog compiled at build time has no way to know;
 // only the runtime §25.6 pool diagnostic can compute it). The §25.7
-// Path B canonical alert_fired example (spec/25_agent-operability.md
-// around line 3238) goes further and omits suggestedAction from the
+// Path B canonical alert_fired example (§25.7 around) goes further and omits suggestedAction from the
 // payload entirely, conflicting with §25.17's fuller illustration.
 // Reconciling whether §25.17's example should drop `body` (matching
 // the deliberate rule-level design) or whether the catalog should grow

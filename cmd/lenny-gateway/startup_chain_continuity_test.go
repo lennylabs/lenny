@@ -21,7 +21,7 @@ import (
 )
 
 // chainRowsQuerier is a minimal integrity.Querier that serves the two
-// queries the §12.3 line 101 startup chain-continuity check issues: the
+// queries the §12.3 startup chain-continuity check issues: the
 // distinct-tenant scan and the per-tenant recent-rows load. It returns
 // one tenant's rows built from an audit.Row slice, encoding each row's
 // columns exactly as audit_log stores them (prev_hash as bytea, id as
@@ -169,7 +169,7 @@ func captureLog(fn func()) string {
 // the S9 rework: a committed-row removal leaves a non-linking prev_hash
 // across the resulting sequence gap, so verifyChainWindow returns a
 // boundary-populated ChainBroken and the startup check must emit the
-// §12.3 line 101 committed-row-tamper-or-removal WARN string — not the
+// §12.3 committed-row-tamper-or-removal WARN string — not the
 // pre-fix "T2 audit events were lost from the in-memory batch buffer"
 // wording, which misclassified a tamper as benign buffered-T2 loss. This
 // test fails against the pre-S9 code because that code emitted the
@@ -179,7 +179,7 @@ func captureLog(fn func()) string {
 // linkage is the tamper authority), 25.9. F-11.2.10.
 //
 // diagnosis: the reworked GapHighSeq()>0 WARN branch no longer emits the
-// §12.3 line 101 committed-row-tamper string, or still emits the retired
+// §12.3 committed-row-tamper string, or still emits the retired
 // buffered-T2-loss string, so an operator would treat a committed-row
 // tamper as a benign compliance gap instead of escalating it.
 func TestRunStartupChainContinuityCheckTamperEmitsCommittedRowMessage(t *testing.T) {

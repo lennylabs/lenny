@@ -81,7 +81,7 @@ func twoRegions() map[string]backup.RegionBackupConfig {
 }
 
 // TestPerRegionDispatchLaunchesOneJobPerRegion_spec_12_8_935 covers the
-// §12.8 line 935 requirement that a multi-region backup runs one pg_dump
+// §12.8 requirement that a multi-region backup runs one pg_dump
 // Job per region, each scoped to that region's MinIO endpoint, KMS key,
 // bucket, and access-credential Secret, with one component per region.
 func TestPerRegionDispatchLaunchesOneJobPerRegion_spec_12_8_935(t *testing.T) {
@@ -142,8 +142,7 @@ func TestPerRegionDispatchLaunchesOneJobPerRegion_spec_12_8_935(t *testing.T) {
 	}
 }
 
-// TestPerRegionUnresolvableFailsClosed_spec_25_11_4336 covers the §25.11
-// line 4336 / §12.8 line 936 fail-closed control: a shard whose resolved
+// TestPerRegionUnresolvableFailsClosed_spec_25_11_4336 covers the §25.11 / §12.8 fail-closed control: a shard whose resolved
 // region has no backups.regions entry aborts with
 // BACKUP_REGION_UNRESOLVABLE, marks the row failed, emits a
 // DataResidencyViolationAttempt audit event, increments the residency
@@ -189,7 +188,7 @@ func TestPerRegionUnresolvableFailsClosed_spec_25_11_4336(t *testing.T) {
 		t.Errorf("row error = %q, want BACKUP_REGION_UNRESOLVABLE for us-east-1", all[0].Error)
 	}
 
-	// The §12.8 line 936 DataResidencyViolationAttempt is audited with the
+	// The §12.8 DataResidencyViolationAttempt is audited with the
 	// backup operation, requested region, and shard id.
 	viol := rec.byType(string(audit.EventDataResidencyViolationAttempt))
 	if len(viol) != 1 {
@@ -212,8 +211,7 @@ func TestPerRegionUnresolvableFailsClosed_spec_25_11_4336(t *testing.T) {
 }
 
 // TestPerRegionIncompleteEntryFailsClosed_spec_25_11_4336 covers the
-// §25.11 line 4336 "or the region's MinIO endpoint / KMS key is
-// unreachable" branch: a region present in the map but missing its
+// §25.11 branch: a region present in the map but missing its
 // endpoint or credential Secret is unresolvable, the same as an absent
 // entry.
 func TestPerRegionIncompleteEntryFailsClosed_spec_25_11_4336(t *testing.T) {

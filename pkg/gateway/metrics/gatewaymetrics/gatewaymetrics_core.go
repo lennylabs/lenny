@@ -27,7 +27,7 @@ type coreMetrics struct {
 	// in-memory replay buffer in use relative to capacity (0..1; 1.0
 	// means the buffer is full and oldest events are being evicted).
 	// The gateway samples the worst per-session ratio across the
-	// session SSE bus periodically. spec: §10.4 line 389, §16 catalog.
+	// session SSE bus periodically. spec: §10.4, §16 catalog.
 	// F-10.4.11.
 	replayBufferUtilization prometheus.Gauge
 	// pdbBlockedEvictions is the §16.1
@@ -156,12 +156,12 @@ func newCoreMetrics(reg *prometheus.Registry) (coreMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.4 line 389 / §16 catalog — operator-facing visibility
+	// spec: §10.4 / §16 catalog — operator-facing visibility
 	// signal for the per-session SSE replay buffer. The gateway samples
 	// MaxReplayBufferUtilization on the periodic poller cadence. F-10.4.11.
 	replayBufferUtilization, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_event_bus_replay_buffer_utilization",
-		Help: "Ratio of in-memory replay buffer in use relative to capacity (0..1); 1.0 means full and oldest events are being evicted (§10.4 line 389 / §16).",
+		Help: "Ratio of in-memory replay buffer in use relative to capacity (0..1); 1.0 means full and oldest events are being evicted (§10.4 / §16).",
 	}, nil)
 	if err != nil {
 		return m, err

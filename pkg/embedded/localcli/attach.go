@@ -28,7 +28,7 @@ var terminalSessionStates = map[string]bool{
 // attachExitCode maps a terminal session state onto the CLI exit code.
 // A completed session exits 0; a failed, cancelled, or expired session
 // exits 1 so a script driving `lenny session new --attach` can branch on
-// the disposition. spec: §24.17 line 213.
+// the disposition. spec: §24.17.
 func attachExitCode(state string) int {
 	if state == string(lenny.StateCompleted) {
 		return 0
@@ -37,7 +37,7 @@ func attachExitCode(state string) int {
 }
 
 // stdoutIsTTY reports whether w is an interactive terminal. It backs the
-// §24.17 line 213 rule that `--attach` defaults on in interactive TTYs:
+// §24.17 rule that `--attach` defaults on in interactive TTYs:
 // a piped or redirected stdout (the common scripting and test path) is
 // not a TTY, so attach stays off unless the flag is passed explicitly.
 func stdoutIsTTY(w io.Writer) bool {
@@ -52,7 +52,7 @@ func stdoutIsTTY(w io.Writer) bool {
 	return info.Mode()&os.ModeCharDevice != 0
 }
 
-// attachWanted resolves the §24.17 line 213 attach decision: attach when
+// attachWanted resolves the §24.17 attach decision: attach when
 // `--attach` is passed explicitly, or when stdout is an interactive TTY
 // (the documented default). A non-interactive stdout without the flag
 // keeps the non-attached behavior so piped and scripted callers still get
@@ -64,7 +64,7 @@ func attachWanted(f sessionFlags, stdout io.Writer) bool {
 	return stdoutIsTTY(stdout)
 }
 
-// streamSession implements the §24.17 line 213 attach render loop. It
+// streamSession implements the §24.17 attach render loop. It
 // opens the §15.1 Server-Sent Events stream for the session and renders
 // the session's output, elicitation prompts, and lifecycle transitions
 // inline until the session reaches a terminal state, the stream fails, or
@@ -150,7 +150,7 @@ func renderDelivered(data json.RawMessage, stderr io.Writer) {
 	}
 }
 
-// renderStatusChange renders a §7.2 line 137 `status_change(state)` event
+// renderStatusChange renders a §7.2 event
 // as a lifecycle annotation on stderr and returns the new state so the
 // caller can detect a terminal transition.
 func renderStatusChange(data json.RawMessage, stderr io.Writer) string {

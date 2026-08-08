@@ -8,12 +8,12 @@
 // the actor because it holds the three capabilities the credential needs:
 // the §10.2 JWT signer (mints a token the gateway's own verifier
 // accepts), the §15.1 user registry (creates the admin user row), and an
-// in-cluster Kubernetes client (writes the Secret). The §17.6 line 459
+// in-cluster Kubernetes client (writes the Secret). The §17.6
 // idempotence contract is enforced by reading the Secret first: a re-run
 // preserves the existing token rather than regenerating it, so existing
 // integrations do not break on `helm upgrade`.
 //
-// spec: §17.6 lines 455-474 — F-17.6.3, F-24.1.7.
+// spec: §17.6 — F-17.6.3, F-24.1.7.
 package admintoken
 
 import (
@@ -31,16 +31,16 @@ import (
 )
 
 const (
-	// DefaultSecretName is the §17.6 line 463 Secret name the bootstrap
+	// DefaultSecretName is the §17.6 Secret name the bootstrap
 	// flow writes the initial admin token to.
 	DefaultSecretName = "lenny-admin-token"
-	// DefaultUsername is the §17.6 line 455 initial admin username.
+	// DefaultUsername is the §17.6 initial admin username.
 	DefaultUsername = "lenny-admin"
 	// ManagedByLabel / ManagedByValue mark the Secret as bootstrap-owned
-	// per the §17.6 line 467 `metadata.labels` block.
+	// per the §17.6 block.
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 	ManagedByValue = "lenny-bootstrap"
-	// TokenKey / CreatedAtKey / jtiKey are the §17.6 line 470 `data`
+	// TokenKey / CreatedAtKey / jtiKey are the §17.6
 	// fields. jtiKey is a Lenny addition: it records the token's `jti`
 	// so Rotate can revoke the superseded token (the spec's "old token
 	// is immediately invalidated" clause).
@@ -110,10 +110,7 @@ type MintedToken struct {
 // then lapses only at its own expiry. The degraded behavior is acceptable
 // for dev/in-memory deployments that have no durable token store.
 //
-// spec: §13.3 (gateway-mediated admin-credential rotation ordering and
-// mandatory exchange/revoke audit, lines 587/599), §16.7 (token.exchanged
-// exchange_type=admin_rotation, line 672; token.revoked rotation_replaced,
-// line 673).
+// spec: §13.3, §16.7.
 type IssuedTokens interface {
 	// Record persists a minted token with no audit row. Provision's
 	// bootstrap first mint uses it: the initial credential issuance is not
@@ -137,7 +134,7 @@ type IssuedTokens interface {
 	// advisory lock so the whole non-atomic rotation read-modify-write
 	// (Secret patch plus the separate store transactions) serializes for
 	// one subject and two concurrent rotations cannot drop a successor jti
-	// through the Secret's blind full-map replace. spec: §13.3 line 605.
+	// through the Secret's blind full-map replace. spec: §13.3.
 	WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error
 }
 
@@ -226,8 +223,7 @@ func (p *Provisioner) SecretRef() (namespace, name string) {
 // trusted to receive it (Provision via the §15.1 admin API does not
 // echo it; the credential lives only in the Secret).
 type Result struct {
-	// Created is true when this call wrote the Secret. The §17.6 line
-	// 473 first-use prompt fires only when Created is true.
+	// Created is true when this call wrote the Secret. The §17.6 first-use prompt fires only when Created is true.
 	Created bool
 	// Token is the raw token value, populated only on a write. Callers
 	// that must not surface the credential leave it unread.
@@ -240,7 +236,7 @@ type Result struct {
 // upserted on every call so a Secret that outlives its user row is
 // healed.
 //
-// spec: §17.6 lines 455-471 — F-17.6.3.
+// spec: §17.6 — F-17.6.3.
 func (p *Provisioner) Provision(ctx context.Context) (Result, error) {
 	if err := p.ensureUser(ctx); err != nil {
 		return Result{}, err
@@ -250,7 +246,7 @@ func (p *Provisioner) Provision(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("admintoken: read secret: %w", err)
 	}
 	if exists {
-		// §17.6 line 459 — the token is not regenerated on re-run; the
+		// §17.6 — the token is not regenerated on re-run; the
 		// existing Secret's token is preserved.
 		return Result{Created: false}, nil
 	}
@@ -270,18 +266,16 @@ func (p *Provisioner) Provision(ctx context.Context) (Result, error) {
 // durably revokes the superseded token. When no Secret exists yet Rotate
 // provisions one (so an operator can rotate before the first bootstrap has
 // run). The old token stops validating as soon as the revocation
-// propagates; there is no grace period (§13.3 line 599, §17.6 line 507).
+// propagates; there is no grace period (§13.3, §17.6).
 //
 // The whole read-modify-write runs under a per-subject session-scoped
-// Postgres advisory lock (§13.3 line 605) so two concurrent rotations
+// Postgres advisory lock (§13.3) so two concurrent rotations
 // cannot interleave the K8s Secret patch and the separate store
 // transactions and drop a successor jti through the Secret's blind
 // full-map replace. With no store wired (dev/in-memory), the lock is a
 // pass-through and the durable-revoke steps are no-ops.
 //
-// spec: §13.3 (gateway-mediated admin-credential rotation ordering, lines
-// 599/601/605), §16.7 (token.exchanged exchange_type=admin_rotation, line
-// 672; token.revoked rotation_replaced, line 673), §17.6 — F-17.6.3.
+// spec: §13.3, §16.7, §17.6 — F-17.6.3.
 func (p *Provisioner) Rotate(ctx context.Context) (Result, error) {
 	if err := p.ensureUser(ctx); err != nil {
 		return Result{}, err
@@ -405,7 +399,7 @@ func (p *Provisioner) ensureUser(ctx context.Context) error {
 		Email:       p.cfg.Username,
 		DisplayName: "Initial platform administrator",
 		Roles:       []auth.Role{auth.RolePlatformAdmin},
-		// spec: §10.2 line 294 — the initial admin's platform-managed role
+		// spec: §10.2 — the initial admin's platform-managed role
 		// must override any OIDC claim for the bootstrap subject.
 		RoleAssigned: true,
 		CreatedAt:    now,
@@ -474,13 +468,13 @@ func (p *Provisioner) sign() (mintedToken, error) {
 
 // mintForProvision signs and records the §17.6 bootstrap first token
 // through the non-audited Record path. The bootstrap first mint is not a
-// token exchange (there is no prior token to replace), so §13.3 line 587
+// token exchange (there is no prior token to replace), so §13.3
 // scopes no mandatory `token.exchanged` audit row to it; recording it
 // keeps the issued-token row a later Rotate revokes precisely. A record
 // failure aborts the mint: an un-recorded token could not be revoked,
 // which would silently break the §17.6 rotation guarantee.
 //
-// spec: §13.3 line 587 (audit coverage scoped to exchanges), §17.6.
+// spec: §13.3, §17.6.
 func (p *Provisioner) mintForProvision(ctx context.Context) (mintedToken, error) {
 	m, err := p.sign()
 	if err != nil {
@@ -500,7 +494,7 @@ func (p *Provisioner) mintForProvision(ctx context.Context) (mintedToken, error)
 // not revoke the prior token, so the §13.3 persist-Secret-before-revoke
 // ordering is preserved: Rotate patches the Secret, then durably revokes.
 //
-// spec: §13.3 line 599, §16.7 line 672.
+// spec: §13.3, §16.7.
 func (p *Provisioner) mintForRotation(ctx context.Context) (mintedToken, error) {
 	m, err := p.sign()
 	if err != nil {
@@ -520,12 +514,12 @@ func (p *Provisioner) mintForRotation(ctx context.Context) (mintedToken, error) 
 // orphaned by a crash between the Secret patch and the in-request durable
 // revoke, without duplicating the prevJtiKey string outside this package.
 //
-// spec: §13.3 (named predecessor and leader-gated reclaimer, line 603).
+// spec: §13.3.
 func PredecessorJTI(data map[string][]byte) string {
 	return string(data[prevJtiKey])
 }
 
-// secretData builds the §17.6 line 470 Secret `data` map. prevJTI is the
+// secretData builds the §17.6 Secret `data` map. prevJTI is the
 // predecessor the new token supersedes; it is empty on a first Secret
 // creation (no predecessor) and carries the read-time current jti on a
 // rotation, so the §13.3 reclaimer sweep can name the predecessor.

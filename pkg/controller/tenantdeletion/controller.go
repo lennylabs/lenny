@@ -79,7 +79,7 @@ type SoftDisabler interface {
 // artifacts, audit-range, workspace-snapshot). When nil, the controller
 // treats the tenant as unheld and advances straight to Phase 4 — the
 // fail-open posture is acceptable only for a deployment that has no
-// legal-hold surface wired. spec: §12.8 line 878.
+// legal-hold surface wired. spec: §12.8.
 type LegalHoldEnumerator interface {
 	// ActiveTenantHolds enumerates the tenant's active legal holds. An
 	// empty result means the deletion may proceed into Phase 4.
@@ -89,7 +89,7 @@ type LegalHoldEnumerator interface {
 // DeletionBlockedSink receives the §12.8 admin.tenant.deletion_blocked
 // audit event the controller emits when Phase 3.5 pauses on an active
 // legal hold. It is optional and called once per block transition (not
-// on every re-evaluation pass). spec: §12.8 line 878.
+// on every re-evaluation pass). spec: §12.8.
 type DeletionBlockedSink interface {
 	// DeletionBlocked records that tenantID's deletion is paused on the
 	// given active holds.
@@ -129,7 +129,7 @@ type EscrowOutcome struct {
 // the fail-closed standard-path block. EscrowHolds MUST return an error
 // wrapping ErrEscrowRegionUnresolvable when the tenant's region has no
 // escrow configuration, so the controller pauses rather than fails.
-// spec: §12.8 lines 880-889.
+// spec: §12.8.
 type EscrowMigrator interface {
 	EscrowHolds(ctx context.Context, req EscrowRequest) (EscrowOutcome, error)
 }
@@ -172,7 +172,7 @@ type Reconciler struct {
 	// gateway, whose provider is the §4 wrap/unwrap data path and cannot
 	// run control-plane DestroyKey) passes nil, in which case Phase 4a is
 	// a no-op and the T4 key is destroyed out-of-band against the cloud
-	// KMS API per §12.5 line 301. A non-T4 tenant never touches KMS.
+	// KMS API per §12.5. A non-T4 tenant never touches KMS.
 	KMS *tenantkms.Lifecycle
 
 	// Phase action seams. Eraser and Receipts are required; Disabler,
@@ -198,7 +198,7 @@ type Reconciler struct {
 	// Escrow segregates held evidence into the region-scoped escrow on the
 	// §12.8 force-delete override path. Optional: a nil migrator cannot
 	// honor an override, so a held tenant with the override set still
-	// blocks fail-closed. spec: §12.8 lines 880-889.
+	// blocks fail-closed. spec: §12.8.
 	Escrow EscrowMigrator
 	// Override receives the §12.8 gdpr.legal_hold_overridden_tenant event
 	// after the override sub-steps complete. Optional.
@@ -288,7 +288,7 @@ func (r *Reconciler) ReconcileTenant(ctx context.Context, tenantID string) error
 		if errors.Is(err, ErrBlockedByLegalHold) {
 			return r.block(ctx, &job)
 		}
-		// §12.8 Phase 3.5 override, sub-step 2 (line 883): an unresolvable
+		// §12.8 Phase 3.5 override, sub-step 2: an unresolvable
 		// escrow region leaves the tenant paused at Phase 3.5 pending
 		// operator remediation (fix the region config and re-enter), not
 		// failed — the migrator already emitted DataResidencyViolationAttempt.
@@ -355,8 +355,7 @@ func (r *Reconciler) block(ctx context.Context, job *Job) error {
 	return nil
 }
 
-// pauseEscrowUnresolvable records the §12.8 Phase 3.5 override-path pause
-// when the escrow region is unresolvable (line 883). Unlike block, it
+// pauseEscrowUnresolvable records the §12.8 Phase 3.5 override-path pause when the escrow region is unresolvable. Unlike block, it
 // does not emit admin.tenant.deletion_blocked — the EscrowMigrator
 // already emitted DataResidencyViolationAttempt and raised the
 // LegalHoldEscrowResidencyViolation alert. The job stays at

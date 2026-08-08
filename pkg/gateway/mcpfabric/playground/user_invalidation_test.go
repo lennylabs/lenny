@@ -13,7 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// spec: §27.3.1 line 148 / §27.6 line 204 — user.invalidated drives the
+// spec: §27.3.1 / §27.6 — user.invalidated drives the
 // playground revocation primitive for every session the user holds. The
 // §11.4 user-invalidation fan-out (Handler.RevokeSessionsForUser) looks
 // the user's sessions up through the user index and revokes each.

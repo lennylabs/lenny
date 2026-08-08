@@ -27,7 +27,7 @@ func resolverWith(secrets ...*corev1.Secret) *KubeResolver {
 	return NewKubeResolver(b.Build(), "")
 }
 
-// spec: §9.3 line 129 — a two-segment clientSecretRef resolves the
+// spec: §9.3 — a two-segment clientSecretRef resolves the
 // conventional default Secret key.
 func TestKubeResolver_DefaultKey_spec_9_3_129(t *testing.T) {
 	r := resolverWith(secretObj("lenny-system", "github-client-secret",

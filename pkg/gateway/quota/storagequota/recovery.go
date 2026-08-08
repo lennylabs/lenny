@@ -22,9 +22,7 @@ type ReachabilityProbe func(ctx context.Context) bool
 // already uses for the startup rehydration.
 type TenantLister func(ctx context.Context) ([]string, error)
 
-// RecoveryReconciler implements the §12.4 line 210 "On Redis recovery,
-// the rehydrated counter is written back to Redis and normal fast-path
-// enforcement resumes" obligation for the storage-quota counter.
+// RecoveryReconciler implements the §12.4 obligation for the storage-quota counter.
 //
 // It probes Redis reachability on a fixed interval and, on a
 // down-to-up edge (Redis was unreachable on the prior tick and is
@@ -42,8 +40,7 @@ type TenantLister func(ctx context.Context) ([]string, error)
 // Postgres-derived values during the outage window, and the reconciler
 // restores the Redis fast path the moment Redis returns.
 //
-// spec: §12.4 line 210; §12.5 line 309 ("rehydrate counters on Redis
-// restart").
+// spec: §12.4; §12.5.
 type RecoveryReconciler struct {
 	// Probe reports whether Redis is reachable this tick. Required; a nil
 	// probe makes Run a no-op (nothing can detect a recovery edge).

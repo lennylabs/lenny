@@ -541,7 +541,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `2` | Protocol error (could not parse messages) |
 | `137` | SIGKILL (pod not reused) |
 
-For the complete binary protocol specification, including `MessagePart` format, `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4.
+For the complete binary protocol specification, including the `MessagePart` format, see the technical design document Section 28.5.3, the `CH-MSGSOCK` card. For the `MessageEnvelope` schema and level-specific behavior, see the technical design document Section 15.4.
 
 ---
 

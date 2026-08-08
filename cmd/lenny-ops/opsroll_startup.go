@@ -39,13 +39,12 @@ type opsRollHeartbeater interface {
 	// has ever been recorded.
 	Status(ctx context.Context) (upgradeservice.State, bool, error)
 	// AdvanceOpsRoll self-advances the active upgrade from OpsRoll to
-	// CRDUpdate on the new pod, the §25.8 line 3508 transition the new
+	// CRDUpdate on the new pod, the §25.8 transition the new
 	// binary performs after it becomes Ready.
 	AdvanceOpsRoll(ctx context.Context) (upgradeservice.State, error)
 }
 
-// targetSnapshotWriter writes the §25.10 bootstrap_seed_snapshot_target
-// row from the rendered Helm values (spec line 3788). driftservice.Service
+// targetSnapshotWriter writes the §25.10 bootstrap_seed_snapshot_target row from the rendered Helm values. driftservice.Service
 // satisfies it. A nil writer skips the write (cold-start posture for a
 // deployment whose drift service is not wired).
 type targetSnapshotWriter interface {
@@ -64,9 +63,7 @@ type helmValuesReader interface {
 	RenderedValues(ctx context.Context) (values map[string]any, ok bool, err error)
 }
 
-// opsRollStartupHook is the §25.8 new-pod OpsRoll startup path (spec lines
-// 3508, 3511) joined with the §25.10 target-snapshot write (spec line
-// 3788). On the new lenny-ops pod's startup, when the persisted upgrade is
+// opsRollStartupHook is the §25.8 new-pod OpsRoll startup path joined with the §25.10 target-snapshot write. On the new lenny-ops pod's startup, when the persisted upgrade is
 // in OpsRoll and its target_version matches this binary's compiled-in
 // version, the hook stamps the ops_healthy heartbeat, writes the target
 // snapshot from the rendered Helm values, then self-advances
@@ -80,9 +77,8 @@ type helmValuesReader interface {
 // prevents an old binary that was rolled into OpsRoll from self-advancing
 // before the new pod takes over).
 //
-// spec: §25.8 lines 3508 (self-advance OpsRoll→CRDUpdate), 3511
-// (ops_healthy heartbeat); §25.10 line 3788 (write
-// bootstrap_seed_snapshot_target early in OpsRoll).
+// spec: §25.8
+// (ops_healthy heartbeat); §25.10.
 type opsRollStartupHook struct {
 	upgrades  opsRollHeartbeater
 	snapshot  targetSnapshotWriter
@@ -106,7 +102,7 @@ func (h opsRollStartupHook) run(ctx context.Context) (advanced bool, err error) 
 		// ordinary startup case. Nothing to do.
 		return false, nil
 	}
-	// §25.8 line 3508: the new pod only self-advances when the persisted
+	// §25.8: the new pod only self-advances when the persisted
 	// target_version matches its own compiled-in version. An old binary
 	// that K8s rolled into OpsRoll (target_version != its version) must not
 	// advance; it leaves the roll for the new pod and the watchdog times it
@@ -117,13 +113,13 @@ func (h opsRollStartupHook) run(ctx context.Context) (advanced bool, err error) 
 		return false, nil
 	}
 
-	// §25.8 line 3511: stamp the ops_healthy heartbeat so the watchdog
+	// §25.8: stamp the ops_healthy heartbeat so the watchdog
 	// suppresses its OpsRoll-timeout rollback while this new pod is alive.
 	if _, err := h.upgrades.RecordOpsHeartbeat(ctx); err != nil {
 		return false, fmt.Errorf("record ops_healthy heartbeat: %w", err)
 	}
 
-	// §25.10 line 3788: write bootstrap_seed_snapshot_target from the
+	// §25.10: write bootstrap_seed_snapshot_target from the
 	// rendered Helm values. The new binary is required because only it
 	// understands the new configuration structure. A missing values source
 	// (unwired ConfigMap reader) leaves the target write skipped rather than
@@ -134,7 +130,7 @@ func (h opsRollStartupHook) run(ctx context.Context) (advanced bool, err error) 
 		return false, err
 	}
 
-	// §25.8 line 3508: self-advance OpsRoll→CRDUpdate now that the heartbeat
+	// §25.8: self-advance OpsRoll→CRDUpdate now that the heartbeat
 	// and target snapshot are recorded.
 	next, err := h.upgrades.AdvanceOpsRoll(ctx)
 	if err != nil {

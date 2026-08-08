@@ -7,14 +7,14 @@ import "context"
 // StoreEraser is the §12.1 canonical mandatory-erasure contract that
 // every store role interface MUST expose: DeleteByUser(ctx, tenantID,
 // userID) and DeleteByTenant(ctx, tenantID), each returning a single
-// error. This is the exact signature §12.1 line 5 and §9.4 pin for the
+// error. This is the exact signature §12.1 and §9.4 pin for the
 // pluggable roles (MemoryStore, SemanticCache) — the roles a deployer
 // may swap for a custom backend, where the compile-time guarantee
 // matters most. Those store interfaces are asserted against
 // erasure.StoreEraser, so a substitute backend that omits either method
 // does not compile into the gateway binary.
 //
-// spec: §12.1 line 5 ("Every store role interface ... MUST expose the
+// spec: §12.1 ("Every store role interface ... MUST expose the
 // erasure primitives DeleteByUser(ctx, tenantID, userID) error and
 // DeleteByTenant(ctx, tenantID) error ... enforced at compile time by Go
 // interface satisfaction").
@@ -42,7 +42,7 @@ type StoreEraser interface {
 // compile-checked against evictionstatestore.Store and is a justified,
 // documented exception rather than an unchecked divergence.
 //
-// spec: §12.8 ("DeleteByUser ... erasure receipt"); §12.1 line 5.
+// spec: §12.8 ("DeleteByUser ... erasure receipt"); §12.1.
 type CountingEraser interface {
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
@@ -55,7 +55,7 @@ type CountingEraser interface {
 // gateway binary fails to compile, rather than being silently registered
 // as a no-op function pointer.
 //
-// spec: §12.1 line 5 (compile-time erasure-method enforcement).
+// spec: §12.1.
 func FromCounting(name string, e CountingEraser) Eraser {
 	return Eraser{Name: name, DeleteByUser: e.DeleteByUser}
 }
@@ -68,7 +68,7 @@ func FromCounting(name string, e CountingEraser) Eraser {
 // substitute backend that omits a method fails to satisfy StoreEraser at
 // this call site.
 //
-// spec: §12.1 line 5; §9.4.
+// spec: §12.1; §9.4.
 func FromStore(name string, e StoreEraser) Eraser {
 	return Eraser{Name: name, DeleteByUser: func(ctx context.Context, tenantID, userID string) (int, error) {
 		return 0, e.DeleteByUser(ctx, tenantID, userID)

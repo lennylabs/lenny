@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §24.13 line 150 — the expand-contract phase-tracking table that
+// spec: §24.13 — the expand-contract phase-tracking table that
 // backs `GET /v1/admin/schema/migrations/status`. Migration 0134 creates
 // schema_migration_phase with the spec-named columns (`version`, `phase`,
 // `appliedAt`, `gateCheckResult`, `migrationJobName`); the migration Job

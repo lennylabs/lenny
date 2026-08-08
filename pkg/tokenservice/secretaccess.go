@@ -7,7 +7,7 @@ import "context"
 // SecretAccessVerdict is the §4.9 admin-time RBAC-probe outcome the
 // Token Service returns for a named Kubernetes Secret.
 //
-// spec: spec/04_system-components.md §4.9 line 1212.
+// spec: spec/04_system-components.md §4.9.
 type SecretAccessVerdict int
 
 const (

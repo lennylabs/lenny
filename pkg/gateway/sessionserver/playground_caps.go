@@ -11,20 +11,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// originPlayground is the §27.3 line 63 origin claim value stamped on every
+// originPlayground is the §27.3 origin claim value stamped on every
 // session-capability JWT minted for a /playground/* request, in all three
 // playground auth modes. The session server keys the §27.6 idle/duration caps
 // and the audit label on this claim rather than on the playground auth mode.
 // It mirrors playground.PlaygroundOrigin as a single string literal so the
 // session server carries no dependency on the playground package.
-// spec: §27.3 line 63.
+// spec: §27.3.
 const originPlayground = "playground"
 
 // PlaygroundCapResolver computes the §27.6 effective idle-timeout and
 // session-duration caps for a playground-origin session from the runtime's
 // own caps. *playground.Config satisfies it via its EffectiveIdleSeconds and
 // EffectiveSessionMinutes methods; the gateway wires it post-construction
-// through SetPlaygroundCaps. spec: §27.6 lines 200-201. F-27.6.1 / F-27.6.2.
+// through SetPlaygroundCaps. spec: §27.6. F-27.6.1 / F-27.6.2.
 type PlaygroundCapResolver interface {
 	// EffectiveIdleSeconds returns min(maxClientIdleSeconds, playground idle
 	// cap) in seconds, treating a zero maxClientIdleSeconds as "no idle bound
@@ -40,8 +40,7 @@ type PlaygroundCapResolver interface {
 	// server consults it only for origin=playground requests, on the shared
 	// §9.1 GET /v1/runtimes discovery surface and at session create, so the
 	// playground value never narrows a non-playground caller. *playground.Config
-	// satisfies it via its glob-matching RuntimeVisible method. spec: §27.5
-	// line 190; §27.9 line 250. F-27.4.1.
+	// satisfies it via its glob-matching RuntimeVisible method. spec: §27.5; §27.9. F-27.4.1.
 	RuntimeVisible(name string) bool
 }
 
@@ -50,7 +49,7 @@ type PlaygroundCapResolver interface {
 // mode-agnostic claim the §27.3 mint stamps on every /playground/* token. The
 // §27.4 allowedRuntimes filter and the session-create admission key on it so a
 // non-playground caller on the shared §9.1 discovery surface is never affected.
-// spec: §27.3 line 63. F-27.4.1.
+// spec: §27.3. F-27.4.1.
 func (s *Server) isPlaygroundOrigin(r *http.Request) bool {
 	principal, ok := getPrincipal(r)
 	return ok && principal.Origin == originPlayground
@@ -59,10 +58,9 @@ func (s *Server) isPlaygroundOrigin(r *http.Request) bool {
 // filterPlaygroundAllowedRuntimes drops every runtime the §27.2
 // playground.allowedRuntimes glob list excludes. It is applied on the §9.1 GET
 // /v1/runtimes discovery surface (after the §10.6 environment filter) only when
-// the request is origin=playground and a cap resolver is wired, so the §27.5
-// line 190 "filtered by playground.allowedRuntimes" rule holds for the picker
+// the request is origin=playground and a cap resolver is wired, so the §27.5 rule holds for the picker
 // while non-playground discovery is untouched. A nil resolver leaves the list
-// unchanged. spec: §27.4 line 176; §27.5 line 190. F-27.4.1.
+// unchanged. spec: §27.4; §27.5. F-27.4.1.
 func (s *Server) filterPlaygroundAllowedRuntimes(r *http.Request, rows []runtimestore.Runtime) []runtimestore.Runtime {
 	if s.playgroundCaps == nil || !s.isPlaygroundOrigin(r) {
 		return rows
@@ -82,8 +80,7 @@ func (s *Server) filterPlaygroundAllowedRuntimes(r *http.Request, rows []runtime
 // with 403 FORBIDDEN rather than admitting a runtime the playground picker
 // would never surface — closing the §27.5 "see and select" gap that discovery
 // filtering alone leaves open. It returns true (admit) for a non-playground
-// caller, a nil resolver, or a visible runtime. spec: §27.5 line 190; §27.9
-// line 250. F-27.4.1.
+// caller, a nil resolver, or a visible runtime. spec: §27.5; §27.9. F-27.4.1.
 func (s *Server) requirePlaygroundRuntimeVisible(w http.ResponseWriter, r *http.Request, runtimeRef string) bool {
 	if s.playgroundCaps == nil || runtimeRef == "" || !s.isPlaygroundOrigin(r) {
 		return true
@@ -116,7 +113,7 @@ func (s *Server) SetPlaygroundCaps(caps PlaygroundCapResolver, incSessionCreated
 // usercreds.Materializer after the session server is built. A nil fn
 // leaves user-source resolution disabled.
 //
-// spec: §4.9 lines 1347-1351, 1368-1372.
+// spec: §4.9.
 func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userID, provider string) bool) {
 	s.userCredChecker = fn
 }
@@ -127,13 +124,13 @@ func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userI
 // of the mode-agnostic claim the §27.3 mint already produces (the producer
 // side that this finding cluster found unread):
 //
-//   - origin=playground is recorded on the row for the §27.6 line 203 audit
+//   - origin=playground is recorded on the row for the §27.6 audit
 //     label and the §27.8 dashboard slice (F-27.6.8);
-//   - the §27.6 line 200 hard duration cap
+//   - the §27.6 hard duration cap
 //     min(runtime.maxSessionAge, playground.maxSessionMinutes) is stamped onto
 //     Timeouts.MaxSessionAgeSeconds so the §11.3 watchdog (via the sessionage
 //     resolver) expires the session at the playground bound (F-27.6.2);
-//   - the §27.6 line 201 idle override
+//   - the §27.6 idle override
 //     min(maxClientIdleSeconds, playground.maxIdleTimeSeconds) is stamped onto
 //     Timeouts.MaxIdleSeconds (F-27.6.1), where maxClientIdleSeconds is the
 //     pool's effective sessionPolicy.maxClientIdleSeconds (its declared value,
@@ -143,7 +140,7 @@ func (s *Server) SetUserCredChecker(fn func(ctx context.Context, tenantID, userI
 // a tighter client value is never loosened. A non-playground caller, or a
 // context with no resolved principal, is a no-op.
 //
-// spec: §27.3 line 63; §27.6 lines 200-203. F-27.3.3 / F-27.6.1 / F-27.6.2 /
+// spec: §27.3; §27.6. F-27.3.3 / F-27.6.1 / F-27.6.2 /
 // F-27.6.8.
 func (s *Server) applyPlaygroundCaps(ctx context.Context, runtimeRef string, row *sessionstore.Session) {
 	principal, ok := authmw.FromContext(ctx)
@@ -165,7 +162,7 @@ func (s *Server) applyPlaygroundCaps(ctx context.Context, runtimeRef string, row
 		row.Timeouts = &sessionstore.SessionTimeouts{}
 	}
 
-	// §27.6 line 200 duration cap. The runtime cap is stored in seconds; the
+	// §27.6 duration cap. The runtime cap is stored in seconds; the
 	// playground cap is configured in minutes. Invoke the §27.6 helper in its
 	// minute basis, then resolve the final value in seconds and re-clamp by
 	// the exact runtime seconds so a sub-minute runtime cap (which rounds to
@@ -178,7 +175,7 @@ func (s *Server) applyPlaygroundCaps(ctx context.Context, runtimeRef string, row
 	}
 	row.Timeouts.MaxSessionAgeSeconds = minPositiveInt64(row.Timeouts.MaxSessionAgeSeconds, capSeconds)
 
-	// §27.6 line 201 idle override. The pool's effective
+	// §27.6 idle override. The pool's effective
 	// `sessionPolicy.maxClientIdleSeconds` (its declared value, or the
 	// effective `maxSessionAgeSeconds` default) is resolved min-wins against
 	// the playground idle cap, so a runtime that already declares a tighter

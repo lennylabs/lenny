@@ -51,21 +51,21 @@ type ProxyConfig struct {
 // declared proxyDialect is not one of the canonical values, returning
 // INVALID_POOL_PROXY_DIALECT per spec lines 1473-1476.
 //
-// spec: §4.9 lines 1473-1476; §26.6 line 297 (cursor); §26.5/§26.8/§26.9
+// spec: §4.9; §26.6; §26.5/§26.8/§26.9
 // (google).
 type ProxyDialect string
 
 const (
 	// ProxyDialectAnthropic exposes POST {proxyUrl}/v1/messages with the
-	// Anthropic Messages API request body (§4.9 line 1474).
+	// Anthropic Messages API request body (§4.9).
 	ProxyDialectAnthropic ProxyDialect = "anthropic"
 	// ProxyDialectOpenAI exposes POST {proxyUrl}/v1/chat/completions and
-	// /v1/embeddings with the OpenAI request body (§4.9 line 1473).
+	// /v1/embeddings with the OpenAI request body (§4.9).
 	ProxyDialectOpenAI ProxyDialect = "openai"
 	// ProxyDialectGoogle is the §26.5/§26.8/§26.9 Google dialect covering
 	// Gemini's inference surface for codex, langgraph, and mastra.
 	ProxyDialectGoogle ProxyDialect = "google"
-	// ProxyDialectCursor is the §26.6 line 297 cursor dialect covering
+	// ProxyDialectCursor is the §26.6 cursor dialect covering
 	// Cursor's inference surface for the cursor-cli reference runtime.
 	ProxyDialectCursor ProxyDialect = "cursor"
 )
@@ -80,7 +80,7 @@ func AllProxyDialects() []ProxyDialect {
 }
 
 // IsValid reports whether d is one of the canonical proxy dialects.
-// spec: §4.9 line 1475.
+// spec: §4.9.
 func (d ProxyDialect) IsValid() bool {
 	for _, v := range AllProxyDialects() {
 		if d == v {
@@ -105,7 +105,7 @@ func (d ProxyDialect) IsValid() bool {
 // (github, vault_transit). The user-source path does not deliver those in
 // v1; the §4.9 router falls through to pool per the fallback configuration.
 //
-// spec: §4.9 lines 1340-1381 (Pre-Authorized Credential Flow), 1473-1475
+// spec: §4.9
 // (proxy dialects).
 func UserProxyDialect(p Provider) (ProxyDialect, bool) {
 	switch p {
@@ -147,7 +147,7 @@ type Lease struct {
 	// DeliveryMode is the lease's §4.9 credential delivery mode.
 	DeliveryMode DeliveryMode
 	// IssuedAt is the lease-mint instant. The §4.9 expiry rule
-	// (spec/04_system-components.md line 1145) computes ExpiresAt as
+	// (§4.9) computes ExpiresAt as
 	// `issuedAt + min(leaseTTLSeconds, providerMaxTTL)`; recording it
 	// makes the lease's wall-clock duration auditable and feeds the
 	// §16.1 `lenny_credential_lease_duration_seconds` histogram.
@@ -176,7 +176,7 @@ type Lease struct {
 	// matching the proxy-mode model where the upstream secret lives only
 	// in the in-memory credential cache.
 	//
-	// spec: §4.9 lines 1246-1298.
+	// spec: §4.9.
 	Direct MaterializedConfig `json:"-"`
 	// SpiffeURI is the issuing pod's SPIFFE identity, recorded at
 	// AssignCredentials for the §4.9 proxy-mode SPIFFE-binding check.
@@ -257,7 +257,7 @@ func (l Lease) Expired(now time.Time) bool {
 // lease is released. A zero IssuedAt (a lease minted before issuedAt
 // was recorded) yields a zero duration.
 //
-// spec: §4.9 line 1145 — `expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL)`.
+// spec: §4.9 — `expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL)`.
 func (l Lease) Duration(now time.Time) time.Duration {
 	if l.IssuedAt.IsZero() || now.Before(l.IssuedAt) {
 		return 0

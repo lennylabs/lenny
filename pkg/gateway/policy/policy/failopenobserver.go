@@ -10,14 +10,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// EventTypeInterceptorFailOpenEscalated and ...Restored are the §4.8
-// line 1030 audit event types for cumulative fail-open escalation.
+// EventTypeInterceptorFailOpenEscalated and ...Restored are the §4.8 audit event types for cumulative fail-open escalation.
 const (
 	EventTypeInterceptorFailOpenEscalated = "interceptor.fail_open_escalated"
 	EventTypeInterceptorFailOpenRestored  = "interceptor.fail_open_restored"
 )
 
-// FailOpenObserver writes the §4.8 line 1030 fail-open escalation audit
+// FailOpenObserver writes the §4.8 fail-open escalation audit
 // events to the per-tenant §11.7 hash chain. It satisfies
 // interceptor.FailOpenObserver so the gateway hands it to
 // Chain.SetFailOpenEscalation. The append is gateway-originated and
@@ -53,7 +52,7 @@ func (o *FailOpenObserver) emit(ctx context.Context, eventType string, ev interc
 	if o.appender == nil {
 		return
 	}
-	// spec: §4.8 line 1030 — payload fields are interceptor_ref,
+	// spec: §4.8 — payload fields are interceptor_ref,
 	// failure_count, and window_seconds. The phase is carried as an
 	// operator aid for which chain the interceptor runs on.
 	payload, _ := json.Marshal(map[string]any{

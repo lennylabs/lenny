@@ -9,7 +9,7 @@ import (
 )
 
 // §4.7 Adapter-Agent Security Boundary counters
-// (spec/04_system-components.md lines 870-888). Both are registered with
+// (§4.7.11). Both are registered with
 // the default Prometheus registry at package init so they appear on the
 // adapter's metrics endpoint once a scrape target is wired.
 var (
@@ -23,7 +23,7 @@ var (
 		Help: "Pod starts in nonce-only mode with --require-so-peercred=false " +
 			"(§4.7). Deployers MUST alert on a non-zero value.",
 	})
-	// §4.7 line 820: per-provider count of outbound LLM requests the
+	// §4.7: per-provider count of outbound LLM requests the
 	// runtime reported via llm_request_started without a matching
 	// llm_request_completed. The Full-level rotation gate clears when it
 	// reaches zero.
@@ -32,7 +32,7 @@ var (
 		Help: "Outbound LLM requests in flight per provider (§4.7 direct-mode " +
 			"in-flight gate), tracked from llm_request_started / completed.",
 	}, []string{"provider"})
-	// §4.7 lines 820-829: Full-level credential-rotation in-flight gate
+	// §4.7: Full-level credential-rotation in-flight gate
 	// observability. The wait histogram records how long the gate blocked
 	// for in-flight LLM requests to drain; the ceiling counter records
 	// fault/revocation rotations that hit the 300s cap; the timeout
@@ -63,7 +63,7 @@ var (
 			"release (§4.7), labelled by pool and provider.",
 		Buckets: []float64{0.01, 0.1, 1, 5, 15, 30, 60},
 	}, []string{"pool", "provider"})
-	// §4.7 lines 652-662: adapter→gateway control events surfaced over the
+	// §4.7: adapter→gateway control events surfaced over the
 	// gRPC AdapterEvents stream (RATE_LIMITED, AUTH_EXPIRED,
 	// PROVIDER_UNAVAILABLE, LEASE_REJECTED, AdapterTerminating,
 	// FINAL_USAGE_REPORT). Sent counts the events delivered onto the stream.
@@ -80,7 +80,7 @@ var (
 		Help: "Adapter→gateway control events that could not be delivered " +
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
-	// §10.1 line 52: 1 while the adapter is in the coordinator-loss hold
+	// §10.1: 1 while the adapter is in the coordinator-loss hold
 	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
 	coordinatorHold = mustGauge(prometheus.GaugeOpts{
 		Name: "lenny_adapter_coordinator_hold",

@@ -1,4 +1,4 @@
--- spec: §12.1 line 5, §12.8 Phase 4 tenant deletion, §11.7 immutability.
+-- spec: §12.1, §12.8 Phase 4 tenant deletion, §11.7 immutability.
 -- billing_events is append-only: migration 0002 grants lenny_erasure
 -- UPDATE (user_id) for the §12.8 user-erasure pseudonymize path, but no
 -- DELETE. The §12.8 Phase 4 tenant-teardown path

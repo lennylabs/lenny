@@ -26,7 +26,7 @@
 // and is reported unavailable, so the §4.9 router falls through to pool
 // per the fallback configuration.
 //
-// spec: §4.9 lines 1340-1381 (Pre-Authorized Credential Flow), 1246-1262
+// spec: §4.9
 // (proxy-mode delivery), 1640-1652 (deny list).
 package usercreds
 
@@ -70,7 +70,7 @@ type CredCache interface {
 // upstream request. A nil Revoker degrades RevokeUser to a local-replica
 // drop (single-replica or development deployments).
 //
-// spec: §4.9 lines 1640-1652.
+// spec: §4.9.
 type Revoker interface {
 	Revoke(key credential.CredentialKey)
 }
@@ -133,11 +133,11 @@ func (m *Materializer) SetRevoker(r Revoker) { m.revoker = r }
 // is the §4.9 router's userCredChecker. It reports false when the LLM
 // proxy is not configured, the provider has no canonical proxy dialect,
 // no credential is registered for the four-tuple, or the registered
-// credential is revoked (treated as not-found per §4.9 line 1379). The
-// runtime-dialect compatibility check (§4.9 line 1476) is applied
+// credential is revoked (treated as not-found per §4.9). The
+// runtime-dialect compatibility check (§4.9) is applied
 // downstream at the session's pre-claim provider intersection.
 //
-// spec: §4.9 lines 1347-1351, 1368-1372, 1379.
+// spec: §4.9.
 func (m *Materializer) Available(ctx context.Context, tenantID, userID, provider string) bool {
 	if m.proxyURL == "" {
 		return false
@@ -168,7 +168,7 @@ var ErrProxyUnavailable = errors.New("usercreds: LLM proxy URL is not configured
 // The minted lease is SPIFFE-bound to the issuing pod (spiffeURI) for the
 // §4.9 proxy-mode binding check, exactly as a pool proxy lease is.
 //
-// spec: §4.9 lines 1347-1351 (resolution), 1246-1262 (proxy delivery).
+// spec: §4.9.
 func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionID, spiffeURI, provider string) (*adapterv1.CredentialLease, error) {
 	if m.proxyURL == "" {
 		return nil, ErrProxyUnavailable
@@ -183,7 +183,7 @@ func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionI
 		return nil, err
 	}
 	if cred.Status != credentialstore.StatusActive {
-		// A revoked credential is treated as not-found per §4.9 line 1379;
+		// A revoked credential is treated as not-found per §4.9;
 		// it must not produce a deliverable lease.
 		return nil, credentialstore.ErrNotFound
 	}
@@ -212,7 +212,7 @@ func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionI
 	// only the proxy materializedConfig (proxyUrl, proxyDialect,
 	// leaseToken) in the wire lease below.
 	m.creds.Put(lease.CredentialKey(), cred.Secret)
-	// spec: §4.9 lines 1349, 1365 — last_used_at is updated on each
+	// spec: §4.9 — last_used_at is updated on each
 	// successful resolution.
 	_ = m.store.MarkUsed(ctx, tenantID, cred.Ref, m.now())
 	return credassign.ProtoLease(lease)
@@ -227,7 +227,7 @@ func (m *Materializer) MintProto(ctx context.Context, tenantID, userID, sessionI
 // new material immediately (the proxy-mode equivalent of the §4.9 "rotated
 // via RotateCredentials RPC ... within one rotation cycle" guarantee).
 //
-// spec: §4.9 line 1350 (PUT rotates active leases), 1423
+// spec: §4.9
 // (user_credential_rotated trigger).
 func (m *Materializer) RotateUser(ctx context.Context, tenantID, credentialRef string) (int, error) {
 	cred, err := m.store.Get(ctx, tenantID, credentialRef)
@@ -257,7 +257,7 @@ func (m *Materializer) RotateUser(ctx context.Context, tenantID, credentialRef s
 // retaining the lease is defense in depth: the proxy denies the request at
 // the deny-list check before it would inject a secret.
 //
-// spec: §4.9 lines 1350-1351 (revoke invalidates active leases), 1640-1652
+// spec: §4.9
 // (user-shaped deny-list entry), 1671 (the deny-list entry shadows the
 // retained lease until its TTL lapses), 1424 (user_credential_revoked
 // trigger).

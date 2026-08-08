@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.8 lines 3579-3605. Migration 0124 creates the
+// spec: §25.8. Migration 0124 creates the
 // platform_upgrade_state orchestration singleton and the
 // platform_upgrade_check_cache release-channel cache. Platform-scoped
 // (no RLS, no tenant column); the down migration drops both.

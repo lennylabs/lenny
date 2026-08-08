@@ -41,7 +41,7 @@ func getLogs(srv *opsserver.Server, target string) *httptest.ResponseRecorder {
 	return rec
 }
 
-// spec: §25.4 lines 2528-2534 — the proxy streams pod logs as text and
+// spec: §25.4 — the proxy streams pod logs as text and
 // resolves the ?container/since/tail/previous params onto PodLogOptions.
 func TestPodLogsStreamsAndParsesParams(t *testing.T) {
 	fake := &fakePodLogs{body: "line-1\nline-2\n"}

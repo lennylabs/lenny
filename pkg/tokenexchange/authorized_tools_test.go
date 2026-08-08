@@ -20,7 +20,7 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// §13.3 line 580: a rotation that requests no authorized_tools narrowing
+// §13.3: a rotation that requests no authorized_tools narrowing
 // preserves the subject's allowlist onto the issued token rather than
 // dropping it (the F-13.3.11 defect).
 func TestValidatePreservesAuthorizedTools_spec_13_3_580(t *testing.T) {
@@ -41,7 +41,7 @@ func TestValidatePreservesAuthorizedTools_spec_13_3_580(t *testing.T) {
 	}
 }
 
-// §13.3 line 583(e): an exchange may further narrow authorized_tools to a
+// §13.3: an exchange may further narrow authorized_tools to a
 // subset of the subject's.
 func TestValidateNarrowsAuthorizedTools_spec_13_3_583(t *testing.T) {
 	subject := validSubject()
@@ -65,7 +65,7 @@ func TestValidateNarrowsAuthorizedTools_spec_13_3_583(t *testing.T) {
 	}
 }
 
-// §13.3 line 580: broadening authorized_tools (requesting a tool the
+// §13.3: broadening authorized_tools (requesting a tool the
 // subject did not hold) is rejected.
 func TestValidateRejectsAuthorizedToolsBroadening_spec_13_3_580(t *testing.T) {
 	subject := validSubject()
@@ -87,7 +87,7 @@ func TestValidateRejectsAuthorizedToolsBroadening_spec_13_3_580(t *testing.T) {
 	}
 }
 
-// §13.3 line 583(e): a child-minting exchange (actor_token present) copies
+// §13.3: a child-minting exchange (actor_token present) copies
 // the parent's authorized_tools intersected with the issued scope, so a
 // tool whose scope the child did not inherit is dropped from the allowlist.
 func TestValidateChildMintingIntersectsAuthorizedToolsWithScope_spec_13_3_583(t *testing.T) {

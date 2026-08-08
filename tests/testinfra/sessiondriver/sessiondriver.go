@@ -123,7 +123,7 @@ type MessageResponse struct {
 	Output          json.RawMessage `json:"output,omitempty"`
 }
 
-// DeliveryReceipt mirrors the §15.4 lines 1725-1737 schema returned by
+// DeliveryReceipt mirrors the §15.4 schema returned by
 // every send_message call (the MCP tool and the REST endpoint).
 type DeliveryReceipt struct {
 	MessageID   string `json:"messageId"`
@@ -337,9 +337,8 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 // the gateway's sessionstore.
 //
 // Retries up to 6 times with linear backoff while the gateway returns a
-// transient 503 pool-not-ready envelope: POD_CLAIM_FAILED, the §5.2
-// line 519 WARM_POOL_EXHAUSTED (no idle pods or no free concurrent
-// slot), or the §5.2 lines 602-625 RUNTIME_UNAVAILABLE (the pool is
+// transient 503 pool-not-ready envelope: POD_CLAIM_FAILED, the §5.2 WARM_POOL_EXHAUSTED (no idle pods or no free concurrent
+// slot), or the §5.2 RUNTIME_UNAVAILABLE (the pool is
 // still bootstrapping). The §4.6 WarmPoolController scales the pool
 // asynchronously after a claim drains it, so a follow-up test that
 // arrives before the next warm pod settles sees one of these envelopes.
@@ -403,8 +402,8 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 		if res.StatusCode != http.StatusServiceUnavailable || !isRetryableCreateFailure(rb) {
 			break
 		}
-		// A retryable 503 (a §5.2 pool-not-ready envelope or a §7.1 line 28
-		// SESSION_CREATION_FAILED atomic-unit failure) carries a §15.1 line 1138
+		// A retryable 503 (a §5.2 pool-not-ready envelope or a §7.1
+		// SESSION_CREATION_FAILED atomic-unit failure) carries a §15.1
 		// Retry-After header; honor it as the backoff floor so the wait matches
 		// the platform's own budget, otherwise fall back to the linear schedule.
 		backoff := time.Duration(attempt+1) * 500 * time.Millisecond
@@ -448,9 +447,9 @@ func isPoolNotReady(body []byte) bool {
 // isRetryableCreateFailure reports whether a 503 body carries a transient
 // session-create envelope the platform marks retryable, so the driver should
 // keep trying within its window rather than fail on the first hit. It covers
-// the pool-not-ready codes and the §7.1 line 28 SESSION_CREATION_FAILED
+// the pool-not-ready codes and the §7.1 SESSION_CREATION_FAILED
 // atomic-unit fallback: the gateway returns SESSION_CREATION_FAILED (with a
-// §15.1 line 1138 Retry-After header) for a generic step 2-8 failure such as
+// §15.1 Retry-After header) for a generic step 2-8 failure such as
 // the gateway failing to dial a freshly-claimed pod's adapter on :50051 while
 // the pod's network is still settling on a loaded cluster. That is the same
 // transient class as a pool-not-ready churn, so a client is expected to back

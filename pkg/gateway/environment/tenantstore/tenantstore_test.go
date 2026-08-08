@@ -15,7 +15,7 @@ import (
 
 // spec: §12.5/§12.8 tenant registry; §10.2 IsRegistered consumer.
 
-// spec: §10.6 line 665 — the §10.6 RBACConfig sub-objects (tokenPolicy,
+// spec: §10.6 — the §10.6 RBACConfig sub-objects (tokenPolicy,
 // capabilities, mcpAnnotationMapping) must deep-copy so a stored row and
 // a returned copy never share backing memory. A Get-mutate-Get round
 // trip must not leak the mutation back into the registry. F-10.6.6.

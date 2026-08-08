@@ -54,8 +54,7 @@ func doJSONReq(t *testing.T, s *opsserver.Server, method, path string, body any)
 	return rr, out
 }
 
-// spec: §25.5 lines 2702-2713 (create returns the secret once; reads
-// redact it)
+// spec: §25.5
 // diagnosis: POST /v1/admin/event-subscriptions creates a row, generates
 // the secret server-side, returns it once with the rotation warning, and
 // the same row is reachable via GET with the secret omitted.
@@ -96,7 +95,7 @@ func TestEventSubscriptionCreateRevealsSecretOnceAndRedactsOnRead(t *testing.T) 
 	}
 }
 
-// spec: §25.5 lines 2795-2802 (canonical error codes)
+// spec: §25.5
 // diagnosis: a non-http scheme and an SSRF-failing callback are rejected
 // with the canonical §25.5 codes (INVALID/422-WEBHOOK_VALIDATION_FAILED),
 // and an empty type entry is INVALID_EVENT_FILTER (400).
@@ -127,7 +126,7 @@ func TestEventSubscriptionCanonicalErrorCodes(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2758-2766 (tenant isolation)
+// spec: §25.5
 // diagnosis: a tenant-admin caller may only register its own tenant; a
 // wildcard or a cross-tenant filter returns 403
 // SUBSCRIPTION_TENANT_FORBIDDEN. A platform-admin may register the
@@ -178,7 +177,7 @@ func TestEventSubscriptionTenantIsolation(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2568 (PUT update) + line 2751 (generation bump)
+// spec: §25.5
 func TestEventSubscriptionUpdateBumpsGeneration(t *testing.T) {
 	srv, _ := newServerWithSubs(t)
 	rr, body := doJSONReq(t, srv, http.MethodPost, "/v1/admin/event-subscriptions", map[string]any{
@@ -207,7 +206,7 @@ func TestEventSubscriptionUpdateBumpsGeneration(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2723-2733 (rotate-secret)
+// spec: §25.5
 func TestEventSubscriptionRotateSecret(t *testing.T) {
 	srv, _ := newServerWithSubs(t)
 	rr, body := doJSONReq(t, srv, http.MethodPost, "/v1/admin/event-subscriptions", map[string]any{
@@ -233,7 +232,7 @@ func TestEventSubscriptionRotateSecret(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2569 (deliveries list)
+// spec: §25.5
 func TestEventSubscriptionDeliveriesEndpoint(t *testing.T) {
 	srv, svc := newServerWithSubs(t)
 	rr, body := doJSONReq(t, srv, http.MethodPost, "/v1/admin/event-subscriptions", map[string]any{

@@ -24,8 +24,7 @@ func billingSinkDeadLetter(sink string, meta billingsink.EventMeta, _ []byte, er
 // message-queue sink (SQS / Pub/Sub / Kafka) is available in
 // pkg/gateway/billingsink and plugs in once a broker QueuePublisher is
 // supplied. An empty configuration returns a nil publisher so the
-// gateway leaves the billing write path unwrapped. spec: §11.2.1 lines
-// 132-138. F-11.2.14.
+// gateway leaves the billing write path unwrapped. spec: §11.2.1. F-11.2.14.
 func buildBillingPublisher(webhookURL string, webhookSecret []byte) (*billingsink.Publisher, error) {
 	if webhookURL == "" {
 		return nil, nil
@@ -47,7 +46,7 @@ func buildBillingPublisher(webhookURL string, webhookSecret []byte) (*billingsin
 // approverWebhookNotifier adapts a billingsink.WebhookSink to the
 // admin.ApproverNotifier interface so the §11.2.1 dual-control approval
 // notification rides the same HMAC-signed, retried, dead-lettered
-// webhook delivery as billing events. spec: §11.2.1 line 175. F-11.2.14.
+// webhook delivery as billing events. spec: §11.2.1. F-11.2.14.
 type approverWebhookNotifier struct {
 	sink *billingsink.WebhookSink
 }

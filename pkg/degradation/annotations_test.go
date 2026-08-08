@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/degradation"
 )
 
-// spec: §15.5 line 2465 — `schema_version_ahead` carries
+// spec: §15.5 — `schema_version_ahead` carries
 // `knownVersion` and `encounteredVersion`. F-15.5.5.
 func TestSchemaVersionAheadFieldShape_spec_15_5_2465(t *testing.T) {
 	body := degradation.SchemaVersionAhead(1, 3)
@@ -25,7 +25,7 @@ func TestSchemaVersionAheadFieldShape_spec_15_5_2465(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2466 — `durable_schema_version_ahead` carries
+// spec: §15.5 — `durable_schema_version_ahead` carries
 // `knownVersion`, `encounteredVersion`, and `recordType`. F-15.5.5.
 func TestDurableSchemaVersionAheadFieldShape_spec_15_5_2466(t *testing.T) {
 	body := degradation.DurableSchemaVersionAhead(2, 4, "TaskRecord")
@@ -40,7 +40,7 @@ func TestDurableSchemaVersionAheadFieldShape_spec_15_5_2466(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2467 — `mcp_protocol_version_retired` carries
+// spec: §15.5 — `mcp_protocol_version_retired` carries
 // `retiredVersion` and `currentVersions`; the list MUST be sorted so
 // dashboards see a stable identity for the alert. F-15.5.5.
 func TestMcpProtocolVersionRetiredFieldShape_spec_15_5_2467(t *testing.T) {
@@ -55,7 +55,7 @@ func TestMcpProtocolVersionRetiredFieldShape_spec_15_5_2467(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2469 — annotations MUST NOT be conflated; the three
+// spec: §15.5 — annotations MUST NOT be conflated; the three
 // keys are distinct. The catalog constants must therefore stay
 // non-equal. F-15.5.5.
 func TestAnnotationKeysAreDistinct_spec_15_5_2469(t *testing.T) {
@@ -78,7 +78,7 @@ func TestAnnotationKeysAreDistinct_spec_15_5_2469(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 lines 1575-1579 — `blob_ref_unresolvable` carries
+// spec: §15.4.1 — `blob_ref_unresolvable` carries
 // `partId`, `ref`, and `reason`.
 func TestBlobRefUnresolvableFieldShape_spec_15_4_1(t *testing.T) {
 	body := degradation.BlobRefUnresolvable("part_7", "lenny-blob://acme/sess/part_7", "blob expired")
@@ -96,7 +96,7 @@ func TestBlobRefUnresolvableFieldShape_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 lines 1503, 1522 — `unregistered_platform_type` carries
+// spec: §15.4.1 — `unregistered_platform_type` carries
 // the unrecognized type string.
 func TestUnregisteredPlatformTypeFieldShape_spec_15_4_1(t *testing.T) {
 	body := degradation.UnregisteredPlatformType("heatmap")
@@ -124,7 +124,7 @@ func TestNonCatalogAnnotationKeysAreDistinct_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2461 — Stamp returns the (possibly newly allocated)
+// spec: §15.5 — Stamp returns the (possibly newly allocated)
 // annotations map so producers can drop the result back into the
 // MessageEnvelope.Annotations field. F-15.5.5.
 func TestStampAllocatesNilAndPreservesExisting(t *testing.T) {
@@ -143,7 +143,7 @@ func TestStampAllocatesNilAndPreservesExisting(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2461 — Stamp panics on nil body to surface a
+// spec: §15.5 — Stamp panics on nil body to surface a
 // producer-side bug rather than silently erasing an annotation.
 // F-15.5.5.
 func TestStampPanicsOnNilBody(t *testing.T) {
@@ -161,7 +161,7 @@ func TestHasNilSafe(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2461 — the wire shape of an annotation body must
+// spec: §15.5 — the wire shape of an annotation body must
 // JSON-round-trip cleanly so downstream durable consumers can decode
 // it without manual parsing. F-15.5.5.
 func TestAnnotationJSONRoundTrip(t *testing.T) {

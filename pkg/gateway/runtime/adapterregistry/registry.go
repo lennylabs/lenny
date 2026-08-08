@@ -73,7 +73,7 @@ const (
 // AllSessionEventKinds returns the §15.0 closed SessionEventKind enum in
 // spec order. The gateway will never dispatch a kind outside this set and
 // third-party adapters MUST NOT rely on receiving unknown kinds
-// (§15.0 "SessionEvent Kind Registry"). spec: §15 line 318.
+// (§15.0 "SessionEvent Kind Registry"). spec: §15.
 func AllSessionEventKinds() []SessionEventKind {
 	return []SessionEventKind{
 		SessionEventStateChange,
@@ -103,7 +103,7 @@ func (k SessionEventKind) IsValid() bool {
 // that gate elicitation-dependent workflows on SupportsElicitation. The check
 // also rejects any kind outside the closed enum, which the spec calls a
 // gateway-internal bug rather than an adapter-extension point.
-// spec: §15 line 559.
+// spec: §15.
 func ValidateCapabilityConsistency(caps Capabilities, out OutboundCapabilitySet) error {
 	declaresElicitation := false
 	for _, k := range out.SupportedEventKinds {

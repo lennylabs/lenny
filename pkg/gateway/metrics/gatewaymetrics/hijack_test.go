@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
-// spec: §27.5 / §27.3.1 line 142 — the request-metrics wrapper
+// spec: §27.5 / §27.3.1 — the request-metrics wrapper
 // (statusRecorder) sits on the MCP WebSocket upgrade path at /mcp/v1/ws.
 // nhooyr.io/websocket performs a direct http.Hijacker assertion, so the
 // wrapper must re-expose Hijack or the upgrade fails.

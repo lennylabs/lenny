@@ -41,7 +41,7 @@ func sampleEnvironment(tenant, name string) environmentstore.Environment {
 			},
 		},
 		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "security"}},
-		// spec: §10.6 lines 595-599 — the connectorSelector carries the
+		// spec: §10.6 — the connectorSelector carries the
 		// tag selector plus the capability allow/deny lists. F-10.6.3.
 		ConnectorSelector: environmentstore.ConnectorSelector{
 			Selector:            environment.Selector{MatchLabels: map[string]string{"tier": "internal"}},

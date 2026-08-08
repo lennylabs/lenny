@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component test for the §12.8 line 739 legal-hold checkpoint-gap
+// Component test for the §12.8 legal-hold checkpoint-gap
 // reconciler against a real Postgres container with the production
 // migrations applied. It exercises the §12.5 scoping rule: a rotated
 // chunk row that belongs to a §10.1 checkpoint_manifest finalised
@@ -123,7 +123,7 @@ func seedRotatedCheckpointChunk(t *testing.T, ctx context.Context, cat *artifact
 	}
 }
 
-// spec: §12.8 line 739; §10.1 line 141 — the reconciler counts a rotated
+// spec: §12.8; §10.1 — the reconciler counts a rotated
 // chunk of a complete checkpoint as a gap and excludes a rotated chunk of
 // a partial-manifest attempt.
 // diagnosis: a failure means the legal-hold reconciler mis-scopes the gap

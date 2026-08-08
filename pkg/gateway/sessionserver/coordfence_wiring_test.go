@@ -23,7 +23,7 @@ func (f *stubFencer) Fence(_ context.Context, _ *adapterclient.Client, _, _ stri
 	return f.relinquished, f.err
 }
 
-// spec: §10.1 lines 33-37 — a nil fencer (dev / in-memory mode) makes the
+// spec: §10.1 — a nil fencer (dev / in-memory mode) makes the
 // resume fence a no-op rather than a panic.
 func TestFenceResumedPodNilFencerIsNoOp(t *testing.T) {
 	s := &Server{}
@@ -45,7 +45,7 @@ func TestFenceResumedPodNilAdapterSkips(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 209 — a relinquish propagates as an error so the
+// spec: §11.3 — a relinquish propagates as an error so the
 // caller aborts the resume (another replica owns the session).
 func TestFenceResumedPodRelinquishAbortsResume(t *testing.T) {
 	f := &stubFencer{relinquished: true, err: coordfence.ErrRelinquished}
@@ -54,7 +54,7 @@ func TestFenceResumedPodRelinquishAbortsResume(t *testing.T) {
 	if !errors.Is(err, coordfence.ErrRelinquished) {
 		t.Fatalf("relinquish: want ErrRelinquished, got %v", err)
 	}
-	// spec: §7.3 line 423 — the relinquish must classify transient so the
+	// spec: §7.3 — the relinquish must classify transient so the
 	// row holds in awaiting_client_action for the client's resume retry.
 	if !isTransientPodClaimError(err) {
 		t.Errorf("ErrRelinquished should classify as a transient pod-claim error")

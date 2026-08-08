@@ -251,7 +251,7 @@ func errorCode(t *testing.T, resp *http.Response) string {
 //	CREDENTIAL_FALLBACK_EXHAUSTED and the credential.fallback_exhausted
 //	audit event is emitted)
 //
-// spec: spec/04_system-components.md lines 1408-1423.
+// spec: §4.9.
 //
 // diagnosis: the §4.9 Fallback Flow diverged end to end. A rate-limit
 //
@@ -267,7 +267,7 @@ func TestCredentialFallbackChainWalkToExhaustion(t *testing.T) {
 	// is the binding constraint, so the third fault terminates the
 	// session even though a fourth pool remains available. This isolates
 	// the maxRotationsPerSession terminal condition from cooldown
-	// exhaustion. spec: spec/04_system-components.md lines 1414-1417.
+	// exhaustion. spec: §4.9.
 	const maxRotations = 2
 	order := []string{"pool-primary", "pool-b1", "pool-b2", "pool-b3"}
 	fx := startFallbackFixture(t, maxRotations, time.Hour, order)
@@ -335,7 +335,7 @@ func TestCredentialFallbackChainWalkToExhaustion(t *testing.T) {
 	// maxRotationsPerSession (2), so the chain is exhausted even though
 	// pool-b3 was never faulted and is not on cooldown. The pod receives
 	// the terminal CREDENTIAL_FALLBACK_EXHAUSTED error (403 / POLICY).
-	// spec: spec/04_system-components.md lines 1415-1419.
+	// spec: §4.9.
 	resp = fx.post(t, token)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("fault 3 status = %d, want 403 (terminal); code=%s", resp.StatusCode, errorCode(t, resp))
@@ -353,7 +353,7 @@ func TestCredentialFallbackChainWalkToExhaustion(t *testing.T) {
 	}
 
 	// The credential.fallback_exhausted audit event carries the
-	// spec-named fields. spec: spec/04_system-components.md lines 1417-1420.
+	// spec-named fields. spec: §4.9.
 	if n := len(fx.audit.events); n != 1 {
 		t.Fatalf("fallback_exhausted audit events = %d, want 1", n)
 	}
@@ -395,7 +395,7 @@ func TestCredentialFallbackChainWalkToExhaustion(t *testing.T) {
 //	consecutive faults walk to distinct pools rather than re-selecting the
 //	degraded one)
 //
-// spec: spec/04_system-components.md lines 1413, 1423-1427.
+// spec: §4.9.
 //
 // diagnosis: the §4.9 cooldown accounting diverged. A pool that reported
 //
@@ -408,7 +408,7 @@ func TestCredentialFallbackCooldownSkipsDegradedPool(t *testing.T) {
 	token := fx.mint(t, "pool-primary")
 
 	// Fault 1 on primary rotates to pool-b1 and places primary on
-	// cooldown. spec: spec/04_system-components.md line 1413.
+	// cooldown. spec: §4.9.
 	resp := fx.post(t, token)
 	resp.Body.Close()
 	if got := fx.rotator.calls[0].nextPool; got != "pool-b1" {

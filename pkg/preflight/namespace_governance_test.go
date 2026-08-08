@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §17.6 lines 501-502; §17.2. F-17.6.1.
+// spec: §17.6; §17.2. F-17.6.1.
 func TestCheckNamespaceResourceGovernance_spec_17_6_501(t *testing.T) {
 	statuses := []NamespaceGovernanceStatus{
 		// A not-yet-created namespace (fresh install) is skipped.

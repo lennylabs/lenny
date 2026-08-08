@@ -34,7 +34,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root and runtime")
 	}
-	// spec: §10.1 line 155 — the gateway resolves the checkpoint's chunk
+	// spec: §10.1 — the gateway resolves the checkpoint's chunk
 	// set and hands the adapter one presigned single-key GET capability per
 	// chunk on ResumeRequest.chunks; the adapter fetches them directly from
 	// object storage. A restore that carries chunks needs the transport; a
@@ -48,7 +48,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, err
 	}
 
-	// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
+	// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
 	// The gateway carries the original session's cwd on
 	// `expected_workspace_root`; the adapter MUST refuse a Resume whose
 	// replacement pod was provisioned with a different mount path so a
@@ -65,7 +65,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 			expected, s.WorkspaceRoot)
 	}
 
-	// spec: §7.3 line 397 — the gateway passes `last_checkpoint_workspace_bytes`
+	// spec: §7.3 — the gateway passes `last_checkpoint_workspace_bytes`
 	// (expected_workspace_bytes) and the §4.4 hard workspace size limit so the
 	// adapter refuses a restore that would exceed the pod's emptyDir budget
 	// before quiescing the runtime. The kubelet emptyDir guard remains the
@@ -83,13 +83,12 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "workspace size precheck: %v", err)
 	}
 
-	// spec: §7.3 line 408 step (e) "Replay latest workspace checkpoint" +
-	// line 409 step (f) "Restore session file to expected path" + §10.1
-	// line 155 reassembly. The gateway resolved the checkpoint's chunk set
+	// spec: §7.3 step (e) "Replay latest workspace checkpoint" and
+	// step (f) "Restore session file to expected path", with §10.1 reassembly. The gateway resolved the checkpoint's chunk set
 	// and passed one presigned GET capability per index; the adapter
 	// fetches them in ascending index order, concatenates the chunk bodies
 	// into a single tar (or tar.gz) byte stream, and ExtractTree replays
-	// the workspace under workspace.WorkspacePrefix and the §6.4 line 380
+	// the workspace under workspace.WorkspacePrefix and the §6.4
 	// /sessions session file under workspace.SessionsPrefix. A resume that
 	// carries no chunks (conversation-only) restores nothing.
 	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
@@ -98,7 +97,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
-	// §9.3 line 142: re-resolve the session's permitted connectors so the
+	// §9.3: re-resolve the session's permitted connectors so the
 	// restored runtime gets the same per-connector MCP servers it had
 	// before the resume. Best-effort.
 	connectors := s.sessionConnectors(ctx, sessionID)
@@ -121,7 +120,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 	}
-	// §9.3 lines 142-164: re-open the per-connector MCP servers. F-9.1.2.
+	// §9.3: re-open the per-connector MCP servers. F-9.1.2.
 	s.startConnectorMCPServers(sessionID, nonce, connectors)
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
 		s.releaseSession()
@@ -147,7 +146,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 // uncompressed bytes restored. An empty chunk set restores nothing (a
 // conversation-only or coordinator-handoff resume), which is not an error.
 //
-// spec: §10.1 line 155 — the concatenation of all chunks in index order is
+// spec: §10.1 — the concatenation of all chunks in index order is
 // consumed as a single tar (or tar.gz) stream fed end-to-end into one
 // decompress→untar pipeline; chunk boundaries are never parsed in
 // isolation.

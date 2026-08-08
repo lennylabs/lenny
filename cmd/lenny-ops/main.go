@@ -70,7 +70,7 @@ func main() {
 // existing log.Printf call sites also surface as structured records and
 // no log line escapes the §25.4 format.
 //
-// spec: §25.4 lines 2499-2526; §16.4 lines 370-372. Delegates to the shared
+// spec: §25.4; §16.4. Delegates to the shared
 // logging.Setup so the gateway, lenny-ops, and every other binary install
 // the identical §16.4 handler and stdlib-log bridge (component, ts in UTC,
 // and any context-borne correlation fields). lenny-ops logs to stderr.
@@ -90,7 +90,7 @@ func envOr(name, fallback string) string {
 // the ops.webhooks.{allowHTTP,blockedCIDRs,domainAllowlist} Helm values.
 // blockedCIDRs and domainAllowlist are comma-separated; a malformed CIDR
 // entry is logged and skipped so one typo does not disable the whole
-// policy. spec: §25.5 lines 2735-2745. F-25.4.9.
+// policy. spec: §25.5. F-25.4.9.
 func buildWebhookSSRF(allowHTTP bool, blockedCIDRs, domainAllowlist string) *eventsubscription.SSRFValidator {
 	cfg := eventsubscription.SSRFConfig{
 		AllowHTTP:       allowHTTP,
@@ -153,13 +153,13 @@ func durationOrDefault(seconds int, def time.Duration) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-// buildAuthConfig assembles the §25.4 lines 1562-1564 OIDC
+// buildAuthConfig assembles the §25.4 OIDC
 // authentication + role gate for the operability surface.
 //
 // The v1 verify key is the shared HMAC signing key at hmacKeyFile (the
 // gateway Token Service / §17.4 embedded OIDC key). When an issuer is
 // supplied the verifier additionally asserts the iss claim. The per-
-// service-account rate limiter (§25.4 line 2001) is always attached when
+// service-account rate limiter (§25.4) is always attached when
 // auth is enabled.
 //
 // When no key file is configured the surface is unauthenticated: that is
@@ -171,7 +171,7 @@ func durationOrDefault(seconds int, def time.Duration) time.Duration {
 func buildAuthConfig(hmacKeyFile, issuer string, multiTenant, production bool, rps float64, burst int) (*opsserver.AuthConfig, error) {
 	if hmacKeyFile == "" {
 		if production {
-			return nil, errors.New("§25.4 line 1562 requires authentication in production: set --bearer-trust-hmac-key-file (LENNY_BEARER_TRUST_HMAC_KEY_FILE)")
+			return nil, errors.New("§25.4 requires authentication in production: set --bearer-trust-hmac-key-file (LENNY_BEARER_TRUST_HMAC_KEY_FILE)")
 		}
 		log.Printf("lenny-ops: §25.4 WARNING — no bearer verify key configured; the operability surface is UNAUTHENTICATED (dev only)")
 		return nil, nil

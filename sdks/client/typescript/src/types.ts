@@ -135,14 +135,14 @@ export interface SessionPage {
 }
 
 /**
- * The §15.4 lines 1715-1723 delivery enum on an inbound MessagePayload.
+ * The §15.4 delivery enum on an inbound MessagePayload.
  * Unknown values reject with `400 INVALID_DELIVERY_VALUE`.
  */
 export type DeliveryMode = 'queued' | 'immediate';
 
 /**
  * One §15.4 inbound MessageEnvelope on the
- * POST /v1/sessions/{id}/messages batch. spec: §15.4 lines 1672-1721.
+ * POST /v1/sessions/{id}/messages batch. spec: §15.4.
  */
 export interface MessagePayload {
   /** Optional client-supplied id; gateway stamps `msg_<random>` when absent. */
@@ -177,8 +177,7 @@ export interface SendMessagesRequest {
 }
 
 /**
- * The §15.4 lines 1725-1737 delivery_receipt envelope. spec: §7.2 line
- * 345.
+ * The §15.4 delivery_receipt envelope. spec: §7.2.
  */
 export interface DeliveryReceipt {
   /** Gateway-stamped or sender-supplied message id. */

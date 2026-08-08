@@ -43,7 +43,7 @@ func (r *recordingObserver) FailOpenRestored(_ context.Context, ev interceptor.F
 	r.restored = append(r.restored, ev)
 }
 
-// spec: §4.8 line 1030 — a fail-open interceptor below the ceiling is
+// spec: §4.8 — a fail-open interceptor below the ceiling is
 // skipped (ALLOW); crossing the ceiling auto-escalates to fail-closed
 // (REJECT) and emits interceptor.fail_open_escalated once.
 func TestFailOpenEscalation(t *testing.T) {
@@ -88,7 +88,7 @@ func TestFailOpenEscalation(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1030 — an error-free call after escalation restores
+// spec: §4.8 — an error-free call after escalation restores
 // the interceptor to fail-open and emits interceptor.fail_open_restored.
 func TestFailOpenRestore(t *testing.T) {
 	ic := &failingOpen{name: "g", fail: true}

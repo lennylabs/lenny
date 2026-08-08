@@ -77,7 +77,7 @@ func PathVersionPrefix(path string) string {
 // because the deprecation policy is keyed on URL path version
 // prefixes.
 //
-// spec: §15.5 item 1; docs/api/index.md line 124. F-15.5.11.
+// spec: §15.5 item 1; docs/api/index.md. F-15.5.11.
 func Wrap(next http.Handler, deprecated ...string) http.Handler {
 	set := map[string]struct{}{}
 	for _, v := range deprecated {

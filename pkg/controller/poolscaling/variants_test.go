@@ -185,7 +185,7 @@ func TestResolveVariantRolesRejectsDuplicateVariantPool(t *testing.T) {
 // a non-positive or ≥ 1 weight is invalid and must be rejected with the
 // failure attributable to the named experiment.
 func TestResolveVariantRolesRejectsOutOfRangeWeight(t *testing.T) {
-	// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0); 1.0 and
+	// spec: §10.7 — weight in [0.0, 1.0); 1.0 and
 	// negative values are rejected. 0.0 is accepted (a staged variant
 	// with no traffic) — see TestResolveVariantRolesAcceptsZeroWeight.
 	// F-10.7.16.
@@ -200,7 +200,7 @@ func TestResolveVariantRolesRejectsOutOfRangeWeight(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 694 / line 743 — weight=0.0 admits a staged variant
+// spec: §10.7 — weight=0.0 admits a staged variant
 // before traffic is turned on. F-10.7.16.
 func TestResolveVariantRolesAcceptsZeroWeight(t *testing.T) {
 	configs := []poolscaling.PoolConfig{poolNamed("base"), poolNamed("variant-a")}
@@ -216,7 +216,7 @@ func TestResolveVariantRolesAcceptsZeroWeight(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 695, 705-710
+// spec: §10.7
 // diagnosis: a variant's initialMinWarm is the bootstrap-mode static
 // minWarm floor. ResolveVariantRoles must stamp it onto the variant
 // pool's PoolConfig.MinWarm (which the controller feeds the strategy as
@@ -242,7 +242,7 @@ func TestResolveVariantRolesAppliesInitialMinWarm_spec_10_7(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 709
+// spec: §10.7
 // diagnosis: an omitted initialMinWarm defaults to 0 and must leave the
 // variant pool's MinWarm untouched rather than zeroing it, so the
 // no-history formula result governs the floor.

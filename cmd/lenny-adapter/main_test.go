@@ -29,7 +29,7 @@ func TestNewScrubOpsWiresRealScrub_spec_5_2(t *testing.T) {
 }
 
 // TestResolveRuntimeUID_spec_4_7 covers the §4.7/§13 SO_PEERCRED peer-UID
-// resolution (spec/04_system-components.md lines 866-868): the flag wins,
+// resolution (§4.7.10): the flag wins,
 // a zero flag falls back to LENNY_RUNTIME_UID, and an unparseable or
 // missing value leaves the check disabled (UID 0).
 func TestResolveRuntimeUID_spec_4_7(t *testing.T) {

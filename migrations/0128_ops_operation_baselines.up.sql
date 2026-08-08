@@ -8,11 +8,11 @@
 -- method.
 --
 -- The table is platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists the ops_* tables
+-- multi-tenanted at this boundary; §25.4 lists the ops_* tables
 -- among the PlatformPostgres() set), so no tenant column or RLS policy
 -- applies.
 --
--- spec: §25.2 lines 393-394.
+-- spec: §25.2.
 
 CREATE TABLE ops_operation_baselines (
     kind            TEXT PRIMARY KEY,

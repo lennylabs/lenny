@@ -62,7 +62,7 @@ func Clone(ctx context.Context, url, commitSHA, destDir string, opts CloneOption
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// §14 line 95: the authenticated fetch carries the credential in the
+	// §14: the authenticated fetch carries the credential in the
 	// process environment, so the token never lands in argv or in the
 	// archived .git/config. init and checkout need no remote contact, so
 	// they run with the no-prompt base environment only.

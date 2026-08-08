@@ -36,6 +36,18 @@ entries:
     reason: |-
       an agent workflow driver, which no test tier is selected from
   - member: |-
+      .claude/workflows/fidelity-review.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/fix-line-citations.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
       .claude/workflows/implement-proposal-build.js
     class: change-graph-coverage
     disposition: excluded
@@ -43,6 +55,12 @@ entries:
       an agent workflow driver, which no test tier is selected from
   - member: |-
       .claude/workflows/implement-proposal.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/proposal-conformance.js
     class: change-graph-coverage
     disposition: excluded
     reason: |-

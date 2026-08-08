@@ -177,7 +177,7 @@ func TestValidateApprovalModeRejectsUnknownValue_spec_8_4(t *testing.T) {
 	}
 }
 
-// spec: §8.4 line 520 — `approval` is accepted at registration time
+// spec: §8.4 — `approval` is accepted at registration time
 // but the gateway treats it identically to `policy` mode in v1.
 // EffectiveApprovalMode encodes the alias so the §8.5 service can
 // share the policy auto-approval path for both inputs. F-8.4.1.
@@ -237,7 +237,7 @@ func TestValidateCredentialPropagationRejectsUnknownValue_spec_8_3(t *testing.T)
 	}
 }
 
-// spec: §8.3 line 470 — the provider-intersection primitive returns
+// spec: §8.3 — the provider-intersection primitive returns
 // the a-ordered intersection, deduplicated, and preserves the order of
 // the first list so a credential can be assigned deterministically
 // from the parent pool.

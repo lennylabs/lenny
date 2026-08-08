@@ -33,7 +33,7 @@ func runController(f *controllerFlags) {
 
 	// §4.6.1 manager setup: the §16.3 tracer, the §17.5 RuntimeClass-name
 	// overrides, the §5.2/§6.4 resource-class registry, the §4.6.1 rate-limited
-	// REST config, the controller-runtime manager, and the §10 line 437 CRD
+	// REST config, the controller-runtime manager, and the §10 CRD
 	// schema-version self-check.
 	w.buildManagerSetup()
 	defer func() {
@@ -90,7 +90,7 @@ func (w *controllerWiring) runManager() {
 //   - setup.go: the §4.6.1 manager setup (the §16.3 tracer, the §17.5
 //     RuntimeClass-name overrides, the §5.2/§6.4 resource-class registry, the
 //     §4.6.1 rate-limited REST config, the controller-runtime manager, and the
-//     §10 line 437 CRD schema-version self-check) — buildManagerSetup.
+//     §10 CRD schema-version self-check) — buildManagerSetup.
 //   - stores.go: the §4.6.1 Postgres-backed stores (the agent_pod_state mirror,
 //     the session lookup, the Runtime CRD registry, and the §10.7 pool-scaling
 //     pool/experiment registries), the §16.6 / §25.5 ops emitter, and the

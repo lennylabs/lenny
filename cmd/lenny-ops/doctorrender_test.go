@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §25.6 lines 2953, 2955 — the file-backed Helm-render source
+// spec: §25.6 — the file-backed Helm-render source
 // reads the operator-mounted bootstrap ConfigMap and monitoring
 // manifests the two F-DR-1 fixes re-apply.
 //

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )
 
-// spec: §25.17 lines 5185-5186, 5264 — a watchdog that sends the
+// spec: §25.17 — a watchdog that sends the
 // X-Lenny-Operation-ID header on every call expects every recorded
 // resource to carry that operationId so "show every action taken by
 // this remediation effort" resolves. The handlers fall back to the

@@ -10,7 +10,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// condTypeConcurrentSharing is the §13.1 line 29 warning-class condition
+// condTypeConcurrentSharing is the §13.1 warning-class condition
 // the WarmPoolController stamps on a concurrent-workspace pool bound to a
 // credential-bearing Runtime. The literal also guards the wire-visible
 // condition name. F-13.1.5.
@@ -44,7 +44,7 @@ func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition,
 	return metav1.Condition{}, false
 }
 
-// spec: §13.1 line 29 — the cross-slot credential-sharing warning fires
+// spec: §13.1 — the cross-slot credential-sharing warning fires
 // when a pool runs more than one session per pod
 // (`maxConcurrentSessions > 1`). That trigger lives on the gateway-side
 // sessionPolicy mirror in the poolstore, which the SandboxTemplate CRD

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 884-885 — migration 0166 creates the durable escrow
+// spec: §12.8 — migration 0166 creates the durable escrow
 // ledger record store that marks an escrowed resource for Phase 4's
 // DeleteByTenant skip logic and indexes it for the escrow-GC release path.
 // The table is platform-operational (it must survive the tenant tombstone),

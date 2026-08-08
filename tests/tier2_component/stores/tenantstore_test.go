@@ -59,7 +59,7 @@ func TestTenantStoreContract(t *testing.T) {
 			DisplayName:         "Acme Corporation",
 			ComplianceProfile:   "soc2",
 			DataResidencyRegion: "us-east-1",
-			// spec: §12.9 line 1048 / migration 0103 — workspace_tier is a
+			// spec: §12.9 / migration 0103 — workspace_tier is a
 			// closed enum {'', 'T3', 'T4'}; T3 is the lowest classified tier.
 			WorkspaceTier:         "T3",
 			MaxConcurrentSessions: 25,
@@ -92,7 +92,7 @@ func TestTenantStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.6 line 665 — the rbac_config jsonb column persists the
+	// spec: §10.6 — the rbac_config jsonb column persists the
 	// identityProvider, tokenPolicy, capabilities, and mcpAnnotationMapping
 	// fields through Create and Update. F-10.6.6.
 	t.Run("rbac config round-trip", func(t *testing.T) {
@@ -144,7 +144,7 @@ func TestTenantStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 823,824 — the PUT
+	// spec: §15.1 — the PUT
 	// /v1/admin/tenants/{id}/elicitation-content-integrity records mode,
 	// justification, changedAt, and changedBy on the tenant, and the GET
 	// returns them. Migration 0172 adds the three provenance columns; the

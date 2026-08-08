@@ -48,7 +48,7 @@ func runtimePodContainer(t *testing.T, c client.Client) corev1.Container {
 // TestReconcileStampsTemplateResourceClass verifies the warm-pod path:
 // Sandbox.spec.resourceClass empty, so the reconciler resolves the class
 // from the pool's SandboxTemplate and stamps the resolved limits on the
-// container. spec: §5.2, §6.4 line 413.
+// container. spec: §5.2, §6.4.
 func TestReconcileStampsTemplateResourceClass_spec_6_4_413(t *testing.T) {
 	s := newScheme(t)
 	tmpl := &lennyv1.SandboxTemplate{
@@ -83,8 +83,7 @@ func TestReconcileStampsSandboxResourceClass_spec_12_6(t *testing.T) {
 	}
 }
 
-// TestReconcileDefaultsResourceClassWhenUnspecified verifies the §5.1 line
-// 357 deployer-safe default: neither the Sandbox nor any template names a
+// TestReconcileDefaultsResourceClassWhenUnspecified verifies the §5.1 deployer-safe default: neither the Sandbox nor any template names a
 // class, so the medium default applies.
 func TestReconcileDefaultsResourceClassWhenUnspecified_spec_5_1_357(t *testing.T) {
 	s := newScheme(t)

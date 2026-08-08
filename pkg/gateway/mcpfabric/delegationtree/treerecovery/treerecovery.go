@@ -41,7 +41,7 @@ type TreeLister interface {
 // fresh pod — the §7.3 resume action the recovery traversal calls per
 // node, leaves-first. A nil error means the node was reattached; a
 // non-nil error fails the node, exactly as an elapsed recovery budget
-// does. spec: §8.10 line 1016.
+// does. spec: §8.10.
 type NodeReattacher interface {
 	ReattachNode(ctx context.Context, node sessionstore.Session) error
 }
@@ -49,13 +49,12 @@ type NodeReattacher interface {
 // TerminalMarker transitions an unrecovered node to a terminal state.
 // It is called for every node the traversal could not recover — a
 // reattach error, an exhausted per-node resume window, or an exhausted
-// level/tree budget. spec: §8.10 line 1025 ("marked as terminally
-// failed").
+// level/tree budget. spec: §8.10.
 type TerminalMarker interface {
 	FailNode(ctx context.Context, node sessionstore.Session, reason string)
 }
 
-// Metrics records the §16.1 line 144-145 tree-recovery telemetry.
+// Metrics records the §16.1 tree-recovery telemetry.
 // *gatewaymetrics.Metrics satisfies it.
 type Metrics interface {
 	ObserveTreeRecoveryDuration(pool, outcome string, seconds float64)
@@ -70,7 +69,7 @@ const (
 )
 
 // recovery.Recover failure reasons the traversal returns. The driver
-// maps the two budget-exhaustion reasons onto the §16.1 line 145
+// maps the two budget-exhaustion reasons onto the §16.1
 // timeout_type label.
 const (
 	reasonLevelTimeout = "level recovery deadline exceeded"
@@ -226,7 +225,7 @@ func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string)
 	return summary, nil
 }
 
-// outcomeFor maps a pass summary to the §16.1 line 144 outcome label.
+// outcomeFor maps a pass summary to the §16.1 outcome label.
 // A tree-budget exhaustion is the strongest signal (total_timeout); any
 // other partial loss is partial_failure; a clean sweep is full_success.
 func outcomeFor(s Summary, treeTimedOut bool) string {
@@ -252,7 +251,7 @@ func poolLabel(root sessionstore.Session) string {
 	return "unknown"
 }
 
-// remainingResumeWindow is the §8.10 line 1027 per-node
+// remainingResumeWindow is the §8.10 per-node
 // maxResumeWindowSeconds budget that runs concurrently with tree
 // recovery: the wall-clock left until the node's ResumeEligibleUntil. A
 // zero or past deadline yields zero, which the traversal reads as "no

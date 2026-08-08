@@ -19,7 +19,7 @@ import (
 
 // spec: §11.2.1 / §15.1 GET /v1/metering/events.
 //
-// The canonical §15.1 line 1228 envelope shape is {items, cursor,
+// The canonical §15.1 envelope shape is {items, cursor,
 // hasMore}; the metering wire schema honours both `eventType` and
 // per-event fields below as it surfaces §11.2.1 billing events.
 
@@ -70,7 +70,7 @@ func decodeMeteringPage(t *testing.T, rr *httptest.ResponseRecorder) meteringPag
 	return page
 }
 
-// TestMeteringEventsLabelFilter_spec_14_106 drives the §14 line 106
+// TestMeteringEventsLabelFilter_spec_14_106 drives the §14
 // label-scoped billing stream end to end: events carrying distinct labels
 // are seeded and GET /v1/metering/events?label=team=search returns only
 // the matching events, echoing the labels on the wire. The label
@@ -227,7 +227,7 @@ func TestMeteringEventsRejectsBadSinceSequence(t *testing.T) {
 }
 
 // TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236 confirms the
-// §15.1 line 1236 [1, 200] limit clamp applies to the metering
+// §15.1 [1, 200] limit clamp applies to the metering
 // endpoint. F-15.1.20.
 func TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	srv := meteringServer(t, 250)
@@ -237,15 +237,14 @@ func TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	}
 	page := decodeMeteringPage(t, rr)
 	if len(page.Items) != 200 {
-		t.Errorf("limit=500: got %d items, want 200 (spec §15.1 line 1236 clamp)", len(page.Items))
+		t.Errorf("limit=500: got %d items, want 200 (spec §15.1 clamp)", len(page.Items))
 	}
 	if !page.HasMore {
 		t.Errorf("250-event ledger with clamped limit=200 should report hasMore=true")
 	}
 }
 
-// TestMeteringEventsRejectsBadSort_spec_15_1_1236 confirms the §15.1
-// line 1236 sort-validation rule rejects unknown fields with
+// TestMeteringEventsRejectsBadSort_spec_15_1_1236 confirms the §15.1 sort-validation rule rejects unknown fields with
 // VALIDATION_ERROR. F-15.1.20.
 func TestMeteringEventsRejectsBadSort_spec_15_1_1236(t *testing.T) {
 	srv := meteringServer(t, 3)

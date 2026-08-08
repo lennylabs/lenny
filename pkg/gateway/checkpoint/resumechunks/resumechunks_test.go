@@ -92,7 +92,7 @@ func newResolver(chunkCount int, encoding partialmanifeststore.ChunkEncoding, ob
 	}, p
 }
 
-// spec: §10.1 line 155 — a contiguous [0, chunk_count) set mints one GET
+// spec: §10.1 — a contiguous [0, chunk_count) set mints one GET
 // capability per index in ascending order at the canonical zero-padded key.
 func TestResolveMintsOneCapabilityPerChunkInOrder(t *testing.T) {
 	objs := []blobstore.BlobInfo{
@@ -124,7 +124,7 @@ func TestResolveMintsOneCapabilityPerChunkInOrder(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — an index at or beyond chunk_count is expected
+// spec: §10.1 — an index at or beyond chunk_count is expected
 // residue; reassembly consumes exactly the contiguous prefix [0, chunk_count).
 func TestResolveToleratesResidueBeyondChunkCount(t *testing.T) {
 	objs := []blobstore.BlobInfo{
@@ -144,7 +144,7 @@ func TestResolveToleratesResidueBeyondChunkCount(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a gap (a missing intermediate index below
+// spec: §10.1 — a gap (a missing intermediate index below
 // chunk_count) fails reassembly atomically before any chunk body is fetched.
 // diagnosis: a failure here means a gapped chunk set is spliced into the
 // decompress→untar pipeline, corrupting the gzip deflate stream and tar
@@ -165,7 +165,7 @@ func TestResolveFailsOnGapBeforeMintingAnyCapability(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — an out-of-order index below chunk_count fails the
+// spec: §10.1 — an out-of-order index below chunk_count fails the
 // same way as a gap, before any chunk body is fetched.
 func TestResolveFailsOnOutOfOrderBeforeMintingAnyCapability(t *testing.T) {
 	// A stray non-zero-padded chunk-1 sorts after chunk-00002 (lexicographic
@@ -188,7 +188,7 @@ func TestResolveFailsOnOutOfOrderBeforeMintingAnyCapability(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a partial checkpoint below the recovery threshold
+// spec: §10.1 — a partial checkpoint below the recovery threshold
 // (baseline * partialRecoveryThresholdFraction) is not reassembled; the
 // resolver returns ErrBelowRecoveryThreshold so the caller falls back to
 // the last full checkpoint. A partial at or above threshold reassembles.
@@ -229,7 +229,7 @@ func TestResolveHonoursPartialRecoveryThreshold(t *testing.T) {
 	if len(res.Grants) != 2 {
 		t.Fatalf("grants = %d, want 2 (partial above threshold reassembles)", len(res.Grants))
 	}
-	// spec: §16.1 line 195 — an above-threshold partial reassembly is a
+	// spec: §16.1 — an above-threshold partial reassembly is a
 	// recovered partial checkpoint, so Resolve surfaces Recovered = true and
 	// the recovered row's manifest_reason for the recovered=true counter.
 	if !res.Recovered {
@@ -240,7 +240,7 @@ func TestResolveHonoursPartialRecoveryThreshold(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a partial checkpoint that never confirmed a chunk
+// spec: §10.1 — a partial checkpoint that never confirmed a chunk
 // (chunk_count == 0, workspace_bytes_uploaded == 0) is below any recovery
 // threshold, so it returns ErrBelowRecoveryThreshold rather than resolving
 // to an empty restore. Without this the zero-chunk short-circuit would run
@@ -267,7 +267,7 @@ func TestResolveZeroChunkPartialFallsBackNotEmptyRestore(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a manifest read failure aborts the resolve and
+// spec: §10.1 — a manifest read failure aborts the resolve and
 // surfaces the wrapped store error so the caller falls back to the last full
 // checkpoint rather than resuming from an unresolvable manifest.
 func TestResolveSurfacesManifestGetError(t *testing.T) {
@@ -284,7 +284,7 @@ func TestResolveSurfacesManifestGetError(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — when the manifest's chunk_encoding column is empty
+// spec: §10.1 — when the manifest's chunk_encoding column is empty
 // the resolver falls back to the tar encoding for the object key, so a
 // legacy manifest with no recorded encoding still resolves to the canonical
 // tar chunk keys.
@@ -308,7 +308,7 @@ func TestResolveDefaultsChunkEncodingWhenColumnEmpty(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a store-side list failure aborts the resolve and
+// spec: §10.1 — a store-side list failure aborts the resolve and
 // surfaces the wrapped error before any capability is minted.
 func TestResolveSurfacesListError(t *testing.T) {
 	sentinel := errors.New("minio unreachable")
@@ -328,7 +328,7 @@ func TestResolveSurfacesListError(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a signer failure aborts the resolve and surfaces the
+// spec: §10.1 — a signer failure aborts the resolve and surfaces the
 // wrapped error so the caller falls back rather than resuming from a partial
 // grant set.
 func TestResolveSurfacesPresignError(t *testing.T) {
@@ -349,7 +349,7 @@ func TestResolveSurfacesPresignError(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — parseChunkIndex accepts only a chunk key under the
+// spec: §10.1 — parseChunkIndex accepts only a chunk key under the
 // resolving checkpoint of the form "{checkpoint_id}/chunk-{n}.{enc}". A key
 // under a different checkpoint, one that is not a chunk object, one with no
 // encoding suffix, and one with a non-numeric index are all rejected so an
@@ -390,7 +390,7 @@ func TestResolveZeroChunkManifestRestoresNothing(t *testing.T) {
 	if len(res.Grants) != 0 {
 		t.Errorf("grants = %d, want 0", len(res.Grants))
 	}
-	// spec: §16.1 line 195 — a complete (partial = false) restore is not a
+	// spec: §16.1 — a complete (partial = false) restore is not a
 	// recovery, so Recovered stays false and the resume emits nothing.
 	if res.Recovered {
 		t.Errorf("Recovered = true, want false for a complete restore")

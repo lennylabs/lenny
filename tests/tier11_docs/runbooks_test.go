@@ -186,8 +186,7 @@ func TestRunbookStructure(t *testing.T) {
 // new entry — outside this allowlist — appears. The allowlist
 // shrinks as F-17.7.4 is remediated.
 //
-// spec: §17.7 line 850 ("Each runbook references the relevant
-// alerts") — the reverse mapping (alert → runbook filename) must
+// spec: §17.7 — the reverse mapping (alert → runbook filename) must
 // resolve to an on-disk file under docs/runbooks/. F-17.7.10.
 var knownBrokenRunbookSlugs = map[string]bool{
 	// F-17.7.4 closed the 26 §17.7-cataloged alert→file mismatches by
@@ -226,7 +225,7 @@ var knownBrokenRunbookSlugs = map[string]bool{
 // or when an alert listed in the baseline silently regains
 // (the baseline row should then be removed alongside the fix).
 //
-// spec: §17.7 line 850 (runbooks in docs/runbooks/);
+// spec: §17.7;
 // pkg/alerting/rules/rules.go runbook() returns
 // "https://docs.lenny.dev/runbooks/<slug>". F-17.7.10.
 func TestAlertCatalogRunbookSlugsResolveToDocs(t *testing.T) {
@@ -281,7 +280,7 @@ func TestAlertCatalogRunbookSlugsResolveToDocs(t *testing.T) {
 // this allowlist — appears. The allowlist shrinks as the underlying
 // F-IDs close.
 //
-// spec: §11.8 deployer guidance pointing at runbooks; §17.7 line 850
+// spec: §11.8 deployer guidance pointing at runbooks; §17.7
 // (each runbook references the relevant alerts). F-11.8.2 /
 // F-11.8.3 cover the reverse-mapping convention; F-11.8.4 closed
 // the EmergencyCredentialRevoked orphan by repointing the runbook
@@ -348,7 +347,7 @@ var knownBrokenRunbookTriggers = map[string]bool{
 // baseline names a missing alert, or when a baseline row silently
 // regains (rename or alert-add should drop the row).
 //
-// spec: §11.8 + §17.7 line 850. F-11.8.2 / F-11.8.3.
+// spec: §11.8 + §17.7. F-11.8.2 / F-11.8.3.
 func TestRunbookTriggersResolveToAlertCatalog(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "docs", "runbooks")

@@ -2,7 +2,7 @@
 -- migrated to the region-scoped legal-hold escrow bucket during a Phase 3.5
 -- force-delete override. The row is the durable marker Phase 4's
 -- DeleteByTenant skip logic reads (legal_hold_escrow: true) and the index
--- the §12.8 line 884 escrow-GC release path queries when the hold is later
+-- the §12.8 escrow-GC release path queries when the hold is later
 -- cleared via POST /v1/admin/legal-hold (hold: false) on the tombstoned
 -- tenant.
 --
@@ -16,7 +16,7 @@
 -- region (the escrowed payload itself lives in the escrow bucket under the
 -- region-scoped escrow KEK, not here).
 --
--- spec: §12.8 lines 884-885; §16.7 line 694.
+-- spec: §12.8; §16.7.
 CREATE TABLE legal_hold_escrow_records (
     tenant_id            TEXT        NOT NULL,
     -- The §12.8 escrow object key (legal-hold-escrow/{tenant}/{type}/{id}),

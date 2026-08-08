@@ -38,7 +38,7 @@ const (
 	StateTombstoned  State = "tombstoned"
 )
 
-// ArtifactType is the §4.4 / §12.5 artifact-kind tag. The §4.4 line 291
+// ArtifactType is the §4.4 / §12.5 artifact-kind tag. The §4.4
 // eviction-context accounting path writes rows with
 // ArtifactTypeEvictionContext so the §12.5 GC sweep can drive the
 // matching MinIO delete on the session-level cleanup boundary.
@@ -51,7 +51,7 @@ const (
 	// ArtifactTypeEvictionContext: the §4.4 eviction-fallback
 	// last-message context object (> 2 KB) at the canonical key
 	// `/{tenant_id}/eviction/{session_id}/context`.
-	// spec: §4.4 line 291.
+	// spec: §4.4.
 	ArtifactTypeEvictionContext ArtifactType = "eviction_context"
 	// ArtifactTypeCheckpoint: a workspace-checkpoint blob (full or
 	// partial-manifest chunks). Reserved for the §10.1 wiring.
@@ -59,13 +59,13 @@ const (
 	// ArtifactTypeExport: an exported file subset for delegation
 	// (§8.7).
 	ArtifactTypeExport ArtifactType = "export"
-	// ArtifactTypeSessionLog: the §4.4 line 226 runtime-stderr session
+	// ArtifactTypeSessionLog: the §4.4 runtime-stderr session
 	// log object at the canonical key
 	// `/{tenant_id}/sessions/{session_id}/stderr.log`. Written by the
 	// session-log shipper on session terminal state; included in the
 	// §12.5 GC sweep on the same lifecycle as every other artifact
 	// kind.
-	// spec: §4.4 line 226.
+	// spec: §4.4.
 	ArtifactTypeSessionLog ArtifactType = "session_log"
 )
 
@@ -76,7 +76,7 @@ type Record struct {
 	SessionID string
 	PartID    string
 	MimeType  string
-	// SizeBytes maps to the §12.5 line 309 artifact_size_bytes column.
+	// SizeBytes maps to the §12.5 artifact_size_bytes column.
 	SizeBytes int64
 	State     State
 	// ArtifactType is the §4.4 / §12.5 artifact-kind tag. Empty maps
@@ -85,11 +85,10 @@ type Record struct {
 	ArtifactType ArtifactType
 	KMSKeyAlias  string
 	LegalHold    bool
-	// LegalHoldSetBy, LegalHoldSetAt, and LegalHoldNote carry the §15.1
-	// line 865 provenance the `GET /v1/admin/legal-holds` list reports
+	// LegalHoldSetBy, LegalHoldSetAt, and LegalHoldNote carry the §15.1 provenance the `GET /v1/admin/legal-holds` list reports
 	// for an artifact-scoped hold. Populated when LegalHold flips true,
 	// cleared when it flips false. Zero values when no hold is active.
-	// spec: §15.1 lines 864-865.
+	// spec: §15.1.
 	LegalHoldSetBy    string
 	LegalHoldSetAt    time.Time
 	LegalHoldNote     string
@@ -108,46 +107,46 @@ type Store interface {
 	HardPruneExpired(ctx context.Context, now time.Time) (int, error)
 	// ListPrunable returns the URIs HardPruneExpired would delete; the
 	// §12.5 catalog-driven sweep deletes those bucket objects then
-	// drops the rows via HardPruneURIs. spec: §12.5 line 320.
+	// drops the rows via HardPruneURIs. spec: §12.5.
 	ListPrunable(ctx context.Context, now time.Time) ([]string, error)
 	// HardPruneURIs deletes the named non-live, non-held rows and
-	// returns the count removed. spec: §12.5 lines 320, 341.
+	// returns the count removed. spec: §12.5.
 	HardPruneURIs(ctx context.Context, uris []string) (int, error)
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]Record, error)
 	// SetLegalHold flips the legal_hold flag for uri. When hold is true,
-	// setBy/setAt/note record the §15.1 line 865 provenance the
+	// setBy/setAt/note record the §15.1 provenance the
 	// GET /v1/admin/legal-holds list reports; when hold is false they are
-	// cleared. spec: §12.8 line 735; §15.1 lines 864-865.
+	// cleared. spec: §12.8; §15.1.
 	SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error
 	// ListLegalHeld returns every catalog row scoped to tenantID that
 	// carries legal_hold=true, with provenance, ordered by uri. It backs
-	// the artifact half of the §15.1 line 865 GET /v1/admin/legal-holds
-	// list. spec: §15.1 lines 864-865.
+	// the artifact half of the §15.1 GET /v1/admin/legal-holds
+	// list. spec: §15.1.
 	ListLegalHeld(ctx context.Context, tenantID string) ([]Record, error)
 	// IsLegalHeldAt reports whether any row scoped to (tenant, session)
 	// carries legal_hold=true. The MinIO blob store calls it at
 	// DeleteBySession time so a blob whose §12.5 catalog row records a
 	// §12.8 hold survives the per-session sweep.
 	//
-	// spec: §12.8 line 735.
+	// spec: §12.8.
 	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
-	// SessionsWithLegalHoldAndCheckpoints returns the §12.8 line 739
+	// SessionsWithLegalHoldAndCheckpoints returns the §12.8
 	// legal-hold reconciler's candidate set: every (tenant, session)
 	// pair where legal_hold=true and the session has at least one
 	// recorded checkpoint row in the catalog. The reconciler then
 	// asks for the per-session row set via ListBySession to detect
 	// rotation gaps.
 	//
-	// spec: §12.8 line 739.
+	// spec: §12.8.
 	SessionsWithLegalHoldAndCheckpoints(ctx context.Context) ([]SessionRef, error)
 	// SumLiveBytes returns the total artifact_size_bytes across the
-	// tenant's live (non-deleted) catalog rows. It is the §11 line 37
+	// tenant's live (non-deleted) catalog rows. It is the §11
 	// rehydration source: on a Redis restart the gateway reconstructs the
 	// per-tenant storage-quota counter from this authoritative Postgres
 	// sum. Soft-deleted and tombstoned rows are excluded because their
 	// bytes were already released from the counter at soft-delete time.
 	//
-	// spec: §11 line 37 — rehydrate per-tenant storage counters from the
+	// spec: §11 — rehydrate per-tenant storage counters from the
 	// sum of artifact_size_bytes across active (non-deleted) artifacts.
 	SumLiveBytes(ctx context.Context, tenantID string) (int64, error)
 
@@ -158,7 +157,7 @@ type Store interface {
 	// DeleteByTenant on the bucket side. Rows carrying legal_hold=true
 	// are preserved so a §12.8 hold survives tenant erasure. Idempotent.
 	//
-	// spec: §12.5 ll. 295; §12.8 Phase 4, line 735.
+	// spec: §12.5 ll. 295; §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
@@ -230,7 +229,7 @@ func (s *PgStore) Insert(ctx context.Context, r Record) error {
 }
 
 // recordColumns is the shared read projection for the artifact_store
-// row, including the §15.1 line 865 legal-hold provenance trailer added
+// row, including the §15.1 legal-hold provenance trailer added
 // in migration 0145.
 const recordColumns = `uri, tenant_id, session_id, part_id,
 	mime_type, artifact_size_bytes, state, kms_key_alias,
@@ -302,7 +301,7 @@ func (s *PgStore) Get(ctx context.Context, uri string) (Record, error) {
 // decrement. The catalog's `uri` primary key serves the spec's `id`
 // role; `state = 'live'` is the spec's `deleted_at IS NULL`. F-12.5.24.
 //
-// spec: §12.5 lines 333, 335.
+// spec: §12.5.
 func (s *PgStore) SoftDelete(ctx context.Context, uri string, deadline time.Time) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE artifact_store
@@ -343,7 +342,7 @@ func (s *PgStore) Tombstone(ctx context.Context, uri string) error {
 // count removed so the caller can also delete the matching bucket
 // objects.
 //
-// The §12.5 GC concurrency model (lines 333, 341) is written against a
+// The §12.5 GC concurrency model is written against a
 // binary soft-delete column: a row is either live (`deleted_at IS NULL`)
 // or removed (`deleted_at IS NOT NULL`), and the hard-prune deletes any
 // non-live row past the retention window. This catalog records the same
@@ -357,7 +356,7 @@ func (s *PgStore) Tombstone(ctx context.Context, uri string) error {
 // independent of the intermediate transition and matches the spec's
 // binary predicate. F-12.5.25.
 //
-// spec: §12.5 lines 333, 341 — `deleted_at IS NOT NULL AND deleted_at <
+// spec: §12.5 — `deleted_at IS NOT NULL AND deleted_at <
 // now() - retention` hard-prune; the catalog's `uri` primary key serves
 // the spec's `WHERE id = $1` role (the migration has no `id` column).
 // F-12.5.24.
@@ -383,7 +382,7 @@ func (s *PgStore) HardPruneExpired(ctx context.Context, now time.Time) (int, err
 // with this Postgres-supplied set rather than with the bucket-wide
 // object count.
 //
-// spec: §12.5 line 320 — the GC job queries Postgres for artifacts
+// spec: §12.5 — the GC job queries Postgres for artifacts
 // past their TTL and deletes exactly that set.
 func (s *PgStore) ListPrunable(ctx context.Context, now time.Time) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
@@ -418,7 +417,7 @@ func (s *PgStore) ListPrunable(ctx context.Context, now time.Time) ([]string, er
 // over the same uri a safe no-op even if the row's state changed
 // between ListPrunable and this delete.
 //
-// spec: §12.5 lines 320, 341 — delete the object, then the row.
+// spec: §12.5 — delete the object, then the row.
 func (s *PgStore) HardPruneURIs(ctx context.Context, uris []string) (int, error) {
 	if len(uris) == 0 {
 		return 0, nil
@@ -443,7 +442,7 @@ func (s *PgStore) HardPruneURIs(ctx context.Context, uris []string) (int, error)
 // DeleteByTenant first (which aborts on a hold) so a held tenant never
 // reaches this delete.
 //
-// spec: §12.5 ll. 295; §12.8 Phase 4, line 735.
+// spec: §12.5 ll. 295; §12.8 Phase 4.
 func (s *PgStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM artifact_store
@@ -456,12 +455,12 @@ func (s *PgStore) DeleteByTenant(ctx context.Context, tenantID string) (int, err
 }
 
 // SumLiveBytes implements Store. It sums artifact_size_bytes across the
-// tenant's live rows so the §11 line 37 Redis-restart recovery can
+// tenant's live rows so the §11 Redis-restart recovery can
 // rehydrate the per-tenant storage-quota counter from the authoritative
 // Postgres total. COALESCE makes a tenant with no live rows return 0
 // rather than a NULL scan error.
 //
-// spec: §11 line 37.
+// spec: §11.
 func (s *PgStore) SumLiveBytes(ctx context.Context, tenantID string) (int64, error) {
 	var sum int64
 	err := s.pool.QueryRow(ctx, `
@@ -497,9 +496,9 @@ func (s *PgStore) ListBySession(ctx context.Context, tenantID, sessionID string)
 
 // ListLegalHeld returns every catalog row scoped to tenantID that carries
 // legal_hold=true, with provenance, ordered by uri. It backs the artifact
-// half of the §15.1 line 865 GET /v1/admin/legal-holds list.
+// half of the §15.1 GET /v1/admin/legal-holds list.
 //
-// spec: §15.1 lines 864-865.
+// spec: §15.1.
 func (s *PgStore) ListLegalHeld(ctx context.Context, tenantID string) ([]Record, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+recordColumns+` FROM artifact_store
@@ -521,11 +520,11 @@ func (s *PgStore) ListLegalHeld(ctx context.Context, tenantID string) ([]Record,
 }
 
 // SetLegalHold flips the §12.5 legal_hold flag for uri. When hold is
-// true the §15.1 line 865 provenance (setBy, setAt, note) is recorded;
+// true the §15.1 provenance (setBy, setAt, note) is recorded;
 // clearing the hold blanks it so a released artifact reports no stale
 // provenance.
 //
-// spec: §12.8 line 735; §15.1 lines 864-865.
+// spec: §12.8; §15.1.
 func (s *PgStore) SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error {
 	now := s.clock().UTC()
 	var (
@@ -560,7 +559,7 @@ func (s *PgStore) SetLegalHold(ctx context.Context, uri string, hold bool, setBy
 // IsLegalHeldAt implements Store. Returns true when any catalog row
 // scoped to (tenantID, sessionID) carries legal_hold=true.
 //
-// spec: §12.8 line 735.
+// spec: §12.8.
 func (s *PgStore) IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error) {
 	var held bool
 	err := s.pool.QueryRow(ctx, `
@@ -576,11 +575,11 @@ func (s *PgStore) IsLegalHeldAt(ctx context.Context, tenantID, sessionID string)
 
 // SessionsWithLegalHoldAndCheckpoints implements Store. Returns every
 // (tenant, session) pair with legal_hold=true and at least one
-// checkpoint row in the catalog. The §12.8 line 739 reconciler walks
+// checkpoint row in the catalog. The §12.8 reconciler walks
 // the result set looking for gaps in each session's checkpoint
 // sequence.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func (s *PgStore) SessionsWithLegalHoldAndCheckpoints(ctx context.Context) ([]SessionRef, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT tenant_id, session_id

@@ -2,12 +2,12 @@
 -- metadata: the barrier_id, the checkpoint_ref the barrier flush
 -- produced, and the workspace_recovery_fraction. The gateway writes a
 -- row after receiving a CheckpointBarrierAck during a graceful drain
--- (§10.1 line 166 records the barrier_id in the session's checkpoint
+-- (§10.1 records the barrier_id in the session's checkpoint
 -- metadata).
 --
 -- One row per session holds the latest barrier metadata: the
 -- BarrierAck handler upserts on every barrier, overwriting the prior
--- generation's row. `workspace_recovery_fraction` is the §10.1 line 393
+-- generation's row. `workspace_recovery_fraction` is the §10.1
 -- value the `session.resumed{resumeMode: coordinator_handoff}` event is
 -- sourced from.
 --
@@ -17,7 +17,7 @@
 -- `current_setting('app.current_tenant', false)`, and `lenny_app` gets
 -- the standard grants.
 --
--- spec: §10.1 lines 165-166, 393.
+-- spec: §10.1.
 
 CREATE TABLE session_checkpoint_meta (
     tenant_id                   TEXT        NOT NULL REFERENCES tenants(id),
@@ -29,14 +29,13 @@ CREATE TABLE session_checkpoint_meta (
     -- tuples.
     coordination_generation     BIGINT      NOT NULL DEFAULT 0,
     -- barrier_id is the gateway's monotonically-increasing-per-session
-    -- correlation id for the barrier that produced this row (§10.1 line
-    -- 165). Stored so the next barrier on the same session can advance
+    -- correlation id for the barrier that produced this row (§10.1). Stored so the next barrier on the same session can advance
     -- the counter across a coordinator handoff.
     barrier_id                  TEXT        NOT NULL DEFAULT '',
     -- checkpoint_ref is the MinIO checkpoint manifest the barrier flush
     -- stored (empty when the best-effort flush produced no checkpoint).
     checkpoint_ref              TEXT        NOT NULL DEFAULT '',
-    -- workspace_recovery_fraction is the §10.1 line 393 value the
+    -- workspace_recovery_fraction is the §10.1 value the
     -- coordinator-handoff `session.resumed` event reports. NULL when the
     -- session had no prior full checkpoint to compute a fraction
     -- against; the event omits the field per §7.2 optional-fraction

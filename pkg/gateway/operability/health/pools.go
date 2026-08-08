@@ -10,7 +10,7 @@ import (
 )
 
 // PoolHealth is the §25.17 pool-keyed health body the watchdog reads to
-// confirm recovery. The §25.17 worked example (Step 6, spec line 5254)
+// confirm recovery. The §25.17 worked example
 // issues `GET /v1/admin/health/default-gvisor` immediately after the
 // gateway diagnostic call and reads off whether the WarmPoolExhausted
 // alert has resolved. The gateway's /v1/admin/health/{component} route
@@ -19,7 +19,7 @@ import (
 // holds (the call lands on the same gateway host as the rest of the
 // admin health surface).
 //
-// spec: §25.17 line 5254.
+// spec: §25.17.
 type PoolHealth struct {
 	// Pool is the §5.2 pool identifier the call resolved.
 	Pool string `json:"pool"`
@@ -29,7 +29,7 @@ type PoolHealth struct {
 	// draining, otherwise "degraded".
 	Status string `json:"status"`
 
-	// Phase mirrors the §15.1 line 797 pool lifecycle phase the admin
+	// Phase mirrors the §15.1 pool lifecycle phase the admin
 	// pool GET surfaces ("active" or "draining").
 	Phase string `json:"phase"`
 
@@ -53,7 +53,7 @@ type PoolHealth struct {
 // PoolHealthResolver resolves a warm-pool name to its §25.17 health view.
 // The health Handler consults it for an /v1/admin/health/{component}
 // request whose component is not a registered subsystem. A nil resolver
-// disables pool resolution, so an unknown name returns the §25.3 line 547
+// disables pool resolution, so an unknown name returns the §25.3
 // UNKNOWN_HEALTH_COMPONENT 404 as before.
 type PoolHealthResolver interface {
 	// PoolHealth returns the named pool's health view. ok is false when
@@ -109,7 +109,7 @@ func (f FuncPoolHealthResolver) PoolHealth(ctx context.Context, name string) (Po
 	}, true
 }
 
-// PhaseDraining is the §15.1 line 797 pool lifecycle phase string the
+// PhaseDraining is the §15.1 pool lifecycle phase string the
 // resolver treats as degraded. It matches poolstore.PhaseDraining; it is
 // duplicated here so the health package does not depend on poolstore.
 const PhaseDraining = "draining"
@@ -121,7 +121,7 @@ const PhaseDraining = "draining"
 // and the PgBouncer connection-pool alert are a different concern and are
 // excluded by the prefix test.
 //
-// spec: §16.5 (alert catalogue); §25.17 line 5254 (pool health view).
+// spec: §16.5 (alert catalogue); §25.17.
 func IsWarmPoolAlert(name string) bool {
 	return strings.HasPrefix(name, "WarmPool") || strings.HasPrefix(name, "Pool")
 }

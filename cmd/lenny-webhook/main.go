@@ -83,16 +83,14 @@ type webhookMetrics struct {
 
 // newWebhookMetrics constructs a private Prometheus registry holding
 // the metric vectors the lenny-webhook binary owns. The
-// lenny_drain_readiness_checks_total counter lands here so the §12.5
-// line 291 metric surfaces on the webhook's own /metrics scrape target
-// even before any traffic reaches the gateway, alongside the §10.1
-// line 122 / §16.1 line 129 lenny_pool_termination_budget_exceeded_total
+// lenny_drain_readiness_checks_total counter lands here so the §12.5 metric surfaces on the webhook's own /metrics scrape target
+// even before any traffic reaches the gateway, alongside the §10.1 / §16.1 lenny_pool_termination_budget_exceeded_total
 // counter the pool-config-validator increments on a budget rejection.
 func newWebhookMetrics() (*webhookMetrics, error) {
 	reg := prometheus.NewRegistry()
 	drain, err := obsmetrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_drain_readiness_checks_total",
-		Help: "Drain readiness admission decisions (§12.5 line 291) by outcome.",
+		Help: "Drain readiness admission decisions (§12.5) by outcome.",
 	}, []string{"outcome"})
 	if err != nil {
 		return nil, err
@@ -117,7 +115,7 @@ func (s drainCounterSink) IncDrainReadinessCheck(outcome string) {
 }
 
 // poolConfigCounterSink adapts a Prometheus CounterVec to the
-// PoolConfigMetricsSink interface, emitting the §16.1 line 129
+// PoolConfigMetricsSink interface, emitting the §16.1
 // lenny_pool_termination_budget_exceeded_total counter labeled by pool.
 type poolConfigCounterSink struct{ vec *prometheus.CounterVec }
 
@@ -139,7 +137,7 @@ func (s poolConfigCounterSink) IncPoolTerminationBudgetExceeded(pool string) {
 func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadinessURL string, drainAuditURL string, runtimeUpgradeActiveURL string, declaredRegions []string, cosignDecider webhook.Decider, requireDigest bool, rcPolicy podsecurity.RuntimeClassPolicy, adapterUID int64, agentUID int64, credReadersGID int64, metricsReg *prometheus.Registry, drainSink webhook.DrainReadinessMetricsSink, poolBudgetSink webhook.PoolConfigMetricsSink) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
-	// §5.2 line 392 — lenny-tenant-label-immutability is a sibling
+	// §5.2 — lenny-tenant-label-immutability is a sibling
 	// ValidatingWebhookConfiguration that enforces only the tenant-id
 	// transition rules. The handler shares the binary and Service so the
 	// HA properties (replicas: 2 + PodDisruptionBudget) cover both.
@@ -154,7 +152,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		adapterUID, agentUID, credReadersGID, podspec.CredVolumeName,
 	)))
 	mux.Handle("/direct-mode-isolation", webhook.Handler(webhook.DirectModeIsolation(tenancyMode, devMode)))
-	// §12.5 line 291 — every drain-readiness decision increments the
+	// §12.5 — every drain-readiness decision increments the
 	// per-outcome counter, and a drain-force override fires a
 	// synchronous §16.7 node.drain.forced audit append via the gateway
 	// audit endpoint. If the audit POST fails the webhook denies the
@@ -165,7 +163,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		drainSink,
 		webhook.HTTPForcedDrainAuditSink{URL: drainAuditURL},
 	)))
-	// §10.5 line 508 sandboxtemplate-deletion-guard: blocks a
+	// §10.5 sandboxtemplate-deletion-guard: blocks a
 	// SandboxTemplate DELETE while a RuntimeUpgrade referencing the
 	// template's pool is still active. The decider lists referencing
 	// SandboxWarmPools via the API-server reader and probes the gateway
@@ -213,7 +211,7 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		w.WriteHeader(http.StatusOK)
 	})
 	if metricsReg != nil {
-		// §12.5 line 291 — expose lenny_drain_readiness_checks_total on
+		// §12.5 — expose lenny_drain_readiness_checks_total on
 		// the webhook's own /metrics scrape target.
 		mux.Handle("/metrics", promhttp.HandlerFor(metricsReg, promhttp.HandlerOpts{}))
 	}
@@ -302,7 +300,7 @@ func buildCosignDecider(enabled bool, publicKeyFile, policyFile, verifiedRegistr
 }
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=webhook). F-16.4.1.
 	logging.Setup(os.Stderr, "webhook")
 
@@ -339,7 +337,7 @@ func main() {
 		"the RuntimeClass name mapped to the sandboxed (gVisor) profile. §17.2: pods with this runtimeClassName skip the pod-security seccomp check. Matches the chart's runtimeClasses.profiles.sandboxed.name.")
 	kataRuntimeClass := flag.String("kata-runtime-class", envOr("LENNY_KATA_RUNTIME_CLASS", isolation.MustRuntimeClassName(isolation.ProfileMicrovm)),
 		"the RuntimeClass name mapped to the microvm (Kata) profile. §17.2: pods with this runtimeClassName may set allowPrivilegeEscalation: true. Matches the chart's runtimeClasses.profiles.microvm.name.")
-	// spec: §13.1 line 7 — the non-root pod UIDs the pod-security and
+	// spec: §13.1 — the non-root pod UIDs the pod-security and
 	// ephemeral-container-cred-guard webhooks enforce are operator-tunable
 	// (default 65532/65533/65534). They MUST match the lenny-controller
 	// --adapter-uid/--agent-uid/--cred-readers-gid (the chart wires both

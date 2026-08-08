@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
-// connectorTestRateLimit is the §15.1 line 1180 cap: the connector live
+// connectorTestRateLimit is the §15.1 cap: the connector live
 // test runs at most this many times per connector per minute, so the
 // endpoint cannot be abused as a network scanner.
 const connectorTestRateLimit = 10
@@ -38,13 +38,13 @@ func (r *Router) WithConnectorTest(tester ConnectorTester, creds connectorcredst
 	return r
 }
 
-// handleTestConnector implements §15.1 line 791:
+// handleTestConnector implements §15.1:
 // `POST /v1/admin/connectors/{name}/test`. It performs a live connectivity
 // check (DNS, TLS, MCP initialize, auth validation) against an
 // already-registered connector using the connector's stored credential.
-// It does not accept inline credential overrides (§15.1 line 1180).
+// It does not accept inline credential overrides (§15.1).
 //
-// spec: §15.1 line 791, lines 1163-1180.
+// spec: §15.1.
 func (r *Router) handleTestConnector(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("name")
 	principal, ok := authmw.FromContext(req.Context())
@@ -68,7 +68,7 @@ func (r *Router) handleTestConnector(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// §15.1 line 1180 — 10 requests per connector per minute. The key is
+	// §15.1 — 10 requests per connector per minute. The key is
 	// scoped by the connector's owning tenant so one tenant's tests do
 	// not consume another tenant's budget for a same-named connector.
 	if r.connectorTestLimiter != nil {
@@ -91,8 +91,7 @@ func (r *Router) handleTestConnector(w http.ResponseWriter, req *http.Request) {
 
 // connectorTestBearer returns the calling principal's stored credential
 // for the connector, or empty when none exists. The test uses the
-// connector's stored credentials and never an inline override (§15.1
-// line 1180); the no-environment scope is used because the admin test is
+// connector's stored credentials and never an inline override (§15.1); the no-environment scope is used because the admin test is
 // not run inside an environment-scoped session.
 func (r *Router) connectorTestBearer(ctx context.Context, conn connectorstore.Connector, userID string) string {
 	if r.connectorCreds == nil || conn.Auth == nil || userID == "" {

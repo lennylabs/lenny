@@ -27,8 +27,7 @@ const platformAuditTenant = "platform"
 // operator-supplied justifications and feature-flag downgrade
 // acknowledgements for this release. The gateway diffs it against the
 // persisted baseline and emits the §16.7 deployment-transition audit
-// events under the authenticated operator's identity. spec: §16.7 lines
-// 672, 676, 677, 682; §17.2 line 86. F-8.2.5, F-9.2.10, F-17.2.8.
+// events under the authenticated operator's identity. spec: §16.7; §17.2. F-8.2.5, F-9.2.10, F-17.2.8.
 type DeploymentConfigChangeRequest struct {
 	// ReleaseRevision is the Helm .Release.Revision of this upgrade. A
 	// revision at or below the persisted baseline is treated as an
@@ -92,7 +91,7 @@ var validCycleModes = map[string]bool{"enforce": true, "warn": true, "permissive
 // persisted baseline survives a gateway restart, so a transition is audited
 // once per upgrade rather than re-emitted on every replica reconcile —
 // which is exactly why a gateway-runtime ConfigMap watch (F-17.2.9) could
-// not satisfy these events. spec: §16.7 lines 672, 676, 677, 682.
+// not satisfy these events. spec: §16.7.
 func (r *Router) handleDeploymentConfigChange(w http.ResponseWriter, req *http.Request) {
 	if r.auditLog == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -271,7 +270,7 @@ func (r *Router) handleDeploymentConfigChange(w http.ResponseWriter, req *http.R
 		pairedID := row.ID
 		for _, ct := range clampTargets {
 			// Written under the target tenant so the record is co-located
-			// with the tenant it governs (§16.7 line 677).
+			// with the tenant it governs (§16.7).
 			crow, ce := r.appendDeploymentAudit(req.Context(), ct.tenantID, sub,
 				"tenant.elicitation_content_integrity_floor_clamp", ct.tenantID,
 				map[string]any{
@@ -348,7 +347,7 @@ type floorClampTarget struct {
 // computeFloorClamps lists active tenants and returns those whose effective
 // mode `max(floor, stored)` is strictly stricter under newFloor than under
 // oldFloor. A floor lowering returns no targets (stored modes are preserved
-// and the stricter tenant value continues to dominate). spec: §16.7 line 676.
+// and the stricter tenant value continues to dominate). spec: §16.7.
 func (r *Router) computeFloorClamps(ctx context.Context, oldFloor, newFloor string) ([]floorClampTarget, error) {
 	tenants, err := r.tenants.List(ctx, tenantstore.ListFilter{})
 	if err != nil {
@@ -423,7 +422,7 @@ func nullableInt(n int, found bool) any {
 
 // WithDeploymentConfig wires the §16.7 deployment-transition audit emitter
 // onto the Router. A nil store leaves POST /v1/admin/deployment/config-change
-// unregistered. spec: §16.7 lines 672, 676, 677, 682. F-8.2.5, F-9.2.10, F-17.2.8.
+// unregistered. spec: §16.7. F-8.2.5, F-9.2.10, F-17.2.8.
 func (r *Router) WithDeploymentConfig(store deploymentconfigstore.Store) *Router {
 	r.deploymentConfig = store
 	return r

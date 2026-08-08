@@ -54,7 +54,7 @@ func TestPostgresChecker(t *testing.T) {
 		}
 		// The checker stamps the Issue code; the aggregator's catalog
 		// resolves the structured suggestedAction and Path B runbook from
-		// it. spec: §25.3 lines 459-501; §25.7 line 3234.
+		// it. spec: §25.3; §25.7.
 		if comp.Issue == "" {
 			t.Errorf("unhealthy component missing §25.3 issue code: %+v", comp)
 		}
@@ -94,7 +94,7 @@ func TestRedisChecker(t *testing.T) {
 		}
 		// The checker stamps the Issue code; the aggregator's catalog
 		// resolves the structured suggestedAction and Path B runbook from
-		// it. spec: §25.3 lines 459-501; §25.7 line 3234.
+		// it. spec: §25.3; §25.7.
 		if comp.Issue == "" {
 			t.Errorf("unhealthy component missing §25.3 issue code: %+v", comp)
 		}

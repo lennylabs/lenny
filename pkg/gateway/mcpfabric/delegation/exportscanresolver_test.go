@@ -44,7 +44,7 @@ func (r *recordingExportObserver) ExportFileScanned(_ context.Context, ev interc
 	r.events = append(r.events, ev)
 }
 
-// spec: §13.5 mitigation 4 / §8.3 lines 160-181 — the resolver turns a
+// spec: §13.5 mitigation 4 / §8.3 — the resolver turns a
 // contentPolicy.interceptorRef into the PreExportMaterialization sub-chain
 // plus an observer-bearing ExportScanContext. F-13.5.5.
 func TestChainExportScanResolverResolves_spec_13_5_5(t *testing.T) {

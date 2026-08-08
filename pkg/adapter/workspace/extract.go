@@ -20,7 +20,7 @@ const maxExtractBytes = 2 << 30
 // into the workspace directory at root. It is the inverse of Archive:
 // the §4.7 adapter calls it to restore a session workspace from a §4.4
 // checkpoint or a §7.1 snapshot. The §14 uploadArchive source type is
-// extracted in the gateway (§7.4 line 448), not here; this Extract
+// extracted in the gateway (§7.4), not here; this Extract
 // restores gateway-produced checkpoint/snapshot archives, which are
 // trusted gateway output rather than untrusted client uploads.
 //
@@ -107,7 +107,7 @@ func extractRegular(dest string, r io.Reader, mode os.FileMode, remaining int64)
 // extractSymlink restores a symlink entry, rejecting a target that
 // resolves outside the workspace root or that traverses any of the
 // §13.4 forbidden pseudo-filesystem mounts (`/proc`, `/sys`, `/dev`,
-// `/run/lenny`). spec: §7.4 line 458; §13.4 line 665 — F-13.4.4.
+// `/run/lenny`). spec: §7.4; §13.4 — F-13.4.4.
 func extractSymlink(rootClean, dest, linkname string) error {
 	if linkname == "" {
 		return fmt.Errorf("symlink target is empty")

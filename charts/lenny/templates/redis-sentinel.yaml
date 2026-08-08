@@ -2,7 +2,7 @@
 The §17.9.5 self-managed Redis, rendered on the §17.8 "Sentinel
 (3 sentinels, 1+1)" topology: a data StatefulSet (1 primary + replicas)
 and a separate Sentinel StatefulSet that monitors the primary and drives
-< 15s failover (§17.3 line 117). Each tier has a headless Service for
+< 15s failover (§17.3). Each tier has a headless Service for
 stable pod DNS and a ClusterIP Service; the data tier and Sentinel tier
 each carry a PodDisruptionBudget.
 
@@ -21,9 +21,9 @@ reads, so the credentials match by construction).
 The pods carry the `lenny.dev/component: redis` label the §13.2 system
 NetworkPolicies select.
 
-spec: §17.9.5 lines 1497-1530 (self-managed Redis = Sentinel/Cluster),
-§17.8 line 1149 (3 sentinels, 1+1), §17.3 line 117 (< 15s Sentinel
-failover), §12.4 (Redis HA + TLS + AUTH), §17.9.7 line 1521.
+spec: §17.9.5,
+§17.8, §17.3 (< 15s Sentinel
+failover), §12.4 (Redis HA + TLS + AUTH), §17.9.7.
 */ -}}
 {{- if and .Values.redis.deploy (eq (include "lenny.redisProvider" .) "sentinel") }}
 {{- $r := .Values.redis }}

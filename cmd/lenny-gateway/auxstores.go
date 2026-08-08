@@ -64,7 +64,7 @@ func (w *gatewayWiring) buildAuxStores() {
 		credentialPools = credentialpoolpg.New(w.pgPool)
 	}
 
-	// §14 line 95: the VCS credential resolver materializes a gitClone
+	// §14: the VCS credential resolver materializes a gitClone
 	// source's short-lived token on the gateway (binding the URL host to
 	// one of the tenant's VCS credential pools, then reading the token
 	// from the credential's Kubernetes Secret) so the ref-pinning
@@ -99,14 +99,14 @@ func (w *gatewayWiring) buildAuxStores() {
 		usage = usagepg.New(w.pgPool, usagepg.WithReadPool(w.readPool))
 	}
 
-	// spec: §8.8 lines 897-917 — the per-session token accumulator the
+	// spec: §8.8 — the per-session token accumulator the
 	// §4.9 proxy folds proxy-extracted counts into; the §8.8 TaskResult
 	// usage / treeUsage rollups read it at settle time.
 	var sessionUsage sessionusage.Store = sessionusage.NewMemory()
 	if w.pgPool != nil {
 		sessionUsage = sessionusagepg.New(w.pgPool, sessionusagepg.WithReadPool(w.readPool))
 	}
-	// spec: §8.8 lines 897-917 — the shared usage Builder both the
+	// spec: §8.8 — the shared usage Builder both the
 	// sessionserver materialization path and the MCP lenny/await_children
 	// path use to stamp usage / treeUsage on every TaskResult.
 	taskUsageBuilder := resultrollup.New(w.sessions, sessionUsage, w.treeArchive, clockinject.Now)
@@ -134,13 +134,13 @@ func (w *gatewayWiring) buildAuxStores() {
 func (w *gatewayWiring) buildOpsEvents() {
 	opsNonceCheckpointPath := w.f.opsNonceCheckpointPath
 
-	// §25.3 lines 705-710 / 766-772: the operational-event emission and
+	// §25.3: the operational-event emission and
 	// buffer metrics, registered on the gateway's Prometheus registry.
 	opsEventsMetrics, err := events.NewMetrics(w.gwMetrics.Registerer())
 	if err != nil {
 		log.Fatalf("lenny-gateway: §25.3 ops-events metrics: %v", err)
 	}
-	// §25.3 line 748: the optional on-disk nonce checkpoint so the
+	// §25.3: the optional on-disk nonce checkpoint so the
 	// eventKey stays unique across a restart with a pinned replica id.
 	var nonceCheckpoint *events.NonceCheckpoint
 	if *opsNonceCheckpointPath != "" {

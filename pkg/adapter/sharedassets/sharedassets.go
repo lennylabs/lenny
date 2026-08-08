@@ -12,7 +12,7 @@
 // decodes at startup (Decode), and the warm-time materializer the
 // adapter runs against its read-write mount (Materialize).
 //
-// spec: §6.4 line 409 — F-6.4.3.
+// spec: §6.4 — F-6.4.3.
 package sharedassets
 
 import (

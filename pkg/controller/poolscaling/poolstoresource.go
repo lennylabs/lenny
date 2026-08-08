@@ -108,7 +108,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		MaxWarm:     warm,
 		Generation:  p.Generation,
 		ResumeEpoch: p.ReconciliationResumeEpoch,
-		// spec: §6.1 lines 48, 63-65 — carry the operator SDK-warm
+		// spec: §6.1 — carry the operator SDK-warm
 		// circuit-breaker override, the demotion-rate-high acknowledgment,
 		// and the deployer-configurable demotion-rate threshold so the
 		// controller can apply them in its breaker decision and its

@@ -17,7 +17,7 @@ import (
 
 // fakeConnectorForwarder records the session/connector/tool it is
 // forwarded with and returns a canned ref list, catalog, and result.
-// spec: §9.3 lines 142-164. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 type fakeConnectorForwarder struct {
 	refs       []mcp.ConnectorRef
 	list       []mcp.Tool
@@ -45,7 +45,7 @@ func (f *fakeConnectorForwarder) CallConnectorTool(_ context.Context, sessionID,
 	return f.result, nil
 }
 
-// spec: §9.3 line 142 + lines 142-164 — when a ConnectorForwarder is
+// spec: §9.3 — when a ConnectorForwarder is
 // wired, StartSession lists each policy-permitted connector in the
 // manifest connectorServers array and opens a per-connector MCP server
 // whose tools/list and tools/call forward to the gateway scoped to the

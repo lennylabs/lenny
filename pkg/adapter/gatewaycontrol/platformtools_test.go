@@ -10,7 +10,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §9.1 lines 14-31 — the client maps the GatewayControl
+// spec: §9.1 — the client maps the GatewayControl
 // ListPlatformTools response into mcp.Tool descriptors the intra-pod
 // platform MCP server advertises. F-9.1.1.
 func TestClientListPlatformTools_spec_9_1(t *testing.T) {
@@ -37,7 +37,7 @@ func TestClientListPlatformTools_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 line 14 — the client forwards the session, tool name, and
+// spec: §9.1 — the client forwards the session, tool name, and
 // arguments and returns the gateway's MCP result bytes verbatim.
 func TestClientCallPlatformTool_spec_9_1(t *testing.T) {
 	stub := &stubGatewayControl{callResp: &adapterv1.CallPlatformToolResponse{

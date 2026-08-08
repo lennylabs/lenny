@@ -17,10 +17,10 @@ import (
 // single checkpoint archive can carry more than one tree, and
 // ExtractTree routes each entry back to the root that owns its prefix.
 //
-// spec: §7.3 lines 408-409 — a session resume replays the workspace
+// spec: §7.3 — a session resume replays the workspace
 // checkpoint (step e) and restores the session file to its expected
-// path (step f). The workspace (`/workspace/current`, §6.4 line 407)
-// and the session-file tmpfs (`/sessions`, §6.4 line 380 / §6.1 line 13)
+// path (step f). The workspace (`/workspace/current`, §6.4)
+// and the session-file tmpfs (`/sessions`, §6.4 / §6.1)
 // are distinct mounts, so the checkpoint bundles both under distinct
 // prefixes rather than archiving a single tree.
 type NamedRoot struct {

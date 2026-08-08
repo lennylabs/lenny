@@ -39,7 +39,7 @@ func (s *recordingSink) snapshot() []AuthFailureEvent {
 }
 
 // captureLog redirects the standard logger to buf for the duration of
-// the test and restores it on cleanup. Used to assert the §4.2 line 185
+// the test and restores it on cleanup. Used to assert the §4.2
 // INFO log line fires alongside the audit emission.
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
@@ -63,7 +63,7 @@ type erroringRegistry struct{}
 
 func (erroringRegistry) IsRegistered(string) (bool, error) { return false, errors.New("lookup failed") }
 
-// spec: §4.2 line 185 — TENANT_CLAIM_MISSING rejection emits an
+// spec: §4.2 — TENANT_CLAIM_MISSING rejection emits an
 // auth_failure audit event and an INFO log line carrying user_id + jti.
 func TestAuthFailureClaimMissingEmitsAuditAndLog(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
@@ -134,7 +134,7 @@ func TestAuthFailureClaimMissingEmitsAuditAndLog(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 185 — TENANT_NOT_FOUND rejection emits an
+// spec: §4.2 — TENANT_NOT_FOUND rejection emits an
 // auth_failure audit event carrying the inferred tenant id.
 func TestAuthFailureTenantNotFoundEmitsAuditAndLog(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
@@ -185,7 +185,7 @@ func TestAuthFailureTenantNotFoundEmitsAuditAndLog(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 185 — TENANT_CLAIM_INVALID_FORMAT rejection emits an
+// spec: §4.2 — TENANT_CLAIM_INVALID_FORMAT rejection emits an
 // auth_failure audit event carrying the rejected claim value.
 func TestAuthFailureClaimInvalidFormatEmitsAuditAndLog(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
@@ -235,7 +235,7 @@ func TestAuthFailureClaimInvalidFormatEmitsAuditAndLog(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 185 — the dev-header transport also emits the audit
+// spec: §4.2 — the dev-header transport also emits the audit
 // event so the observability contract is uniform across transports.
 func TestAuthFailureDevHeadersTransportEmitsAudit(t *testing.T) {
 	sink := &recordingSink{}
@@ -273,7 +273,7 @@ func TestAuthFailureDevHeadersTransportEmitsAudit(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 185 — a tenant claim that the registry can resolve
+// spec: §4.2 — a tenant claim that the registry can resolve
 // produces no audit_failure event (the contract is rejection-only).
 func TestAuthFailureNoEventOnSuccess(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
@@ -310,7 +310,7 @@ func TestAuthFailureNoEventOnSuccess(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 185 — internal registry errors fall through to a 500
+// spec: §4.2 — internal registry errors fall through to a 500
 // envelope and do NOT emit an audit_failure event (the spec scopes
 // auth_failure to the three rejection reasons, not transport-level
 // outages).

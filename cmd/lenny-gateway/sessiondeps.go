@@ -76,7 +76,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
-	// §7.4 line 448 / §13.4 line 652 — archive extraction runs inside the
+	// §7.4 / §13.4 — archive extraction runs inside the
 	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
 	// same subsystem gate that bounds the upload HTTP path so a hostile
 	// archive's decompression cannot starve session attachment, and feed
@@ -91,10 +91,10 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// sessionserver REST surface and the MCP tools so a REST
 	// POST /v1/sessions/{id}/messages with `inReplyTo` resolves the
 	// blocked tool call the MCP `lenny/request_input` registered.
-	// spec: §7.2 line 317 (path 1); F-7.2.14.
+	// spec: §7.2; F-7.2.14.
 	inputWaits := inputwait.NewRegistry()
 
-	// spec: §10.7 lines 831, 1096 / §12.4 (`t:{tenant}:exp:{exp}:sticky:*`) —
+	// spec: §10.7 / §12.4 (`t:{tenant}:exp:{exp}:sticky:*`) —
 	// the `sticky: user` variant-assignment cache. Backed by the cache/pubsub
 	// Redis concern; nil without Redis, in which case the ExperimentRouter
 	// re-evaluates every experiment fresh (the §12.4 fail-open path) and the
@@ -120,14 +120,14 @@ func (w *gatewayWiring) buildSessionDeps() {
 		erasureSticky = stickyCache
 	}
 
-	// §10.7 lines 779-782: the built-in OpenFeature SDK providers
+	// §10.7: the built-in OpenFeature SDK providers
 	// (launchdarkly, statsig, unleash) linked into the gateway binary. The
 	// cache constructs one vendor OpenFeature client per distinct tenant
 	// targeting config and reuses it across sessions; OFREP-targeted
 	// experiments do not touch it. F-10.7.3.
 	experimentProviders := experimentprovider.NewCache()
 
-	// spec: §14 lines 108-150 — the session-completion webhook subsystem.
+	// spec: §14 — the session-completion webhook subsystem.
 	// The SSRF validator enforces the §14 callbackUrl rules at admission;
 	// the seal/open closures KMS-envelope-encrypt the callbackSecret under
 	// the same per-tenant KEK alias ("tenant:{id}") as credential pool
@@ -159,7 +159,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	}
 	callbackFinalize := func(ctx context.Context, tenantID, sessionID string, undelivered *sessioncallback.DeliveryRecord) error {
 		_, err := w.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
-			// spec: §14 line 139 — clear the sealed secret once the
+			// spec: §14 — clear the sealed secret once the
 			// session is terminal and the delivery has settled.
 			row.CallbackSecret = nil
 			if undelivered != nil {
@@ -184,17 +184,17 @@ func (w *gatewayWiring) buildSessionDeps() {
 		Finalizer: callbackFinalize,
 	})
 
-	// spec: §11.2 line 44 — the mid-session token-budget enforcer. The
+	// spec: §11.2 — the mid-session token-budget enforcer. The
 	// §4.9 LLM-proxy recorder feeds it each session's cumulative
 	// proxy-recorded tokens; on exhaustion the terminator transitions the
-	// session to `expired` (§7.1 line 175) and the pre-flight gate rejects
-	// further proxied requests with BUDGET_EXHAUSTED (§8.10 line 1108). The
+	// session to `expired` (§7.1) and the pre-flight gate rejects
+	// further proxied requests with BUDGET_EXHAUSTED (§8.10). The
 	// terminator's terminal hook is set after the session server exists
 	// (the same deferred wiring sessionAdminAdapter uses).
 	budgetTerminator := &budgetSessionTerminator{store: w.sessions}
 	// The §8.6 extension seam is nil here: with no seam wired the enforcer
 	// denies and terminates immediately on exhaustion, preserving the
-	// §11.2 line 44 behavior. The proxy-mode extension trigger is injected
+	// §11.2 behavior. The proxy-mode extension trigger is injected
 	// by buildControlServer through SetExtendOnExhaustion once the
 	// leasecontrol.Service exists, and that service takes this enforcer as
 	// its episode fan-out SessionReclaimer (proposal 0023 S6).
@@ -204,7 +204,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// §8.6 lease-extension budget state. Created here, when the
 	// GatewayControl listener is enabled via --grpc-addr, so the same
 	// per-tree denial flags are shared between the in-process
-	// leasecontrol.ExtendLease dispatch and the §15.1 line 868 admin
+	// leasecontrol.ExtendLease dispatch and the §15.1 admin
 	// extension-denial clear endpoint — the admin handler must mutate the
 	// very state the dispatch reads. The session server registers each root
 	// tree (RegisterTree) and the delegation Service registers each child
@@ -213,7 +213,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	var leaseBudgets *leasecontrol.MemoryBudgetSource
 	if *grpcAddr != "" {
 		leaseBudgets = leasecontrol.NewMemoryBudgetSource()
-		// §8.6 lines 730-733 durability: when Postgres is configured the
+		// §8.6 durability: when Postgres is configured the
 		// extension-denied flag, cool-off expiry, and grant counters are
 		// persisted to delegation_tree_budget through the denialpg store,
 		// so a coordinator handoff or gateway restart cannot bypass a
@@ -223,7 +223,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 			leaseBudgets = leaseBudgets.WithDenialStore(denialpg.New(w.pgPool))
 		}
 	}
-	// §8.6 lines 660-678: resolve the deployment-level lease-extension
+	// §8.6: resolve the deployment-level lease-extension
 	// defaults the root tree's budget ceiling is registered with. nil
 	// leaseBudgets (no GatewayControl listener) leaves leaseRegistrar
 	// unset, so RegisterTree is never called. F-15.3.5.
@@ -242,7 +242,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 		childLeaseRegistrar = leaseBudgets
 	}
 
-	// spec: §6.2 lines 273-300 / §11.3 line 199 — the activity stamper
+	// spec: §6.2 / §11.3 — the activity stamper
 	// records qualifying agent activity (agent_output / tool_use events,
 	// await_children polls, proxied LLM responses) onto each session's
 	// last_agent_activity_at so the §11.3 idle watchdog (sweepIdle) does

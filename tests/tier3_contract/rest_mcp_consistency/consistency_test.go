@@ -48,11 +48,11 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store: store,
-		// spec: §15.2.1 rule 1 line 1380 — wire the shared §15.1 service
+		// spec: §15.2.1 rule 1 — wire the shared §15.1 service
 		// so lenny/create_session runs the same gates and returns the same
 		// envelope as REST POST /v1/sessions. F-15.2.4.
 		SessionCreator: rest,
-		// spec: §15.2.1 rule 1 line 1380 — the shared service layer the
+		// spec: §15.2.1 rule 1 — the shared service layer the
 		// overlapping client-facing lifecycle/read tools (start_session,
 		// terminate_session, get_session_status, list_sessions,
 		// list_artifacts) dispatch through, so the RegisterAdapterUnderTest
@@ -229,7 +229,7 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 	if mcpID == "" {
 		t.Fatalf("MCP create returned no sessionId: %v", mcpPayload)
 	}
-	// spec: §15.2.1 rule 1 line 1380 — the MCP tool now routes through the
+	// spec: §15.2.1 rule 1 — the MCP tool now routes through the
 	// shared §15.1 service, so it returns the same initial `created` state
 	// the REST surface returns and mints the §7.1 uploadToken (previously
 	// the MCP path jumped straight to `running` with no token). F-15.2.4.
@@ -337,7 +337,7 @@ func TestRESTMCPTasks(t *testing.T) {
 	if restResp.StatusCode != http.StatusOK {
 		t.Fatalf("REST tree status: %d", restResp.StatusCode)
 	}
-	// spec: §8.5 line 540 — "Each node includes `taskId`, `state`, and
+	// spec: §8.5 — "Each node includes `taskId`, `state`, and
 	// `runtimeRef`". §15.2.1 REST↔MCP semantic equivalence requires the
 	// REST `/tree` projection to use the same wire field. F-8.9.5.
 	var restTree struct {
@@ -486,8 +486,7 @@ func TestRESTMCPMemory(t *testing.T) {
 	}
 
 	// MCP user-scoped query sees at least both. (It is a superset of
-	// the session-scoped read by spec.) `query` is required (§8.5 line
-	// 596); both seeded memories contain "the", so the substring search
+	// the session-scoped read by spec.) `query` is required (§8.5); both seeded memories contain "the", so the substring search
 	// returns both.
 	mcpQuery := mcpCall(t, tsMCP.URL+"/mcp", "lenny/memory_query", map[string]any{
 		"sessionId": "sess_mem",
@@ -527,7 +526,7 @@ func TestRESTMCPDelegation(t *testing.T) {
 
 // spec: §15.2.1
 // diagnosis: §15.2.1 names webhook subscription CRUD as a candidate
-// overlapping operation. §15.1 line 763 states "Webhook delivery
+// overlapping operation. §15.1 states "Webhook delivery
 // (callbackUrl) is a per-session field, not a platform-admin-managed
 // subscription resource" (the per-session callbackUrl has no MCP
 // counterpart), but the platform-admin-managed event-subscription CRUD

@@ -16,7 +16,7 @@ import (
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// spec: §11.7 line 428 — write-time tenant validation rejects an audit
+// spec: §11.7 — write-time tenant validation rejects an audit
 // row whose tenant differs from the authenticated caller's scope.
 // F-11.7.6.
 

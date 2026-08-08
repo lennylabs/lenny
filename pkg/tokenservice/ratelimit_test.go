@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §13.3 line 607 — per-(tenant, sub) and global per-tenant
+// spec: §13.3 — per-(tenant, sub) and global per-tenant
 // rate-limit invariants on /v1/oauth/token.
 func TestRateLimiter_CallerPerSecondAllowsUpToLimit(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -30,7 +30,7 @@ func TestRateLimiter_CallerPerSecondAllowsUpToLimit(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — different subs share neither caller bucket
+// spec: §13.3 — different subs share neither caller bucket
 // nor sample state.
 func TestRateLimiter_CallerPerSecondIsolatedPerSub(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -46,7 +46,7 @@ func TestRateLimiter_CallerPerSecondIsolatedPerSub(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — caller-per-minute defends against burst
+// spec: §13.3 — caller-per-minute defends against burst
 // patterns that would slip past the per-second budget.
 func TestRateLimiter_CallerPerMinute(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -69,7 +69,7 @@ func TestRateLimiter_CallerPerMinute(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — tenant-per-second is independent of the
+// spec: §13.3 — tenant-per-second is independent of the
 // caller bucket.
 func TestRateLimiter_TenantPerSecond(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -89,7 +89,7 @@ func TestRateLimiter_TenantPerSecond(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 609 — the first rejection per (tenant, sub, tier)
+// spec: §13.3 — the first rejection per (tenant, sub, tier)
 // inside a rolling window emits a sampled audit row; subsequent
 // rejections in the window do not.
 func TestRateLimiter_SamplingFirstRejectionThenSuppressed(t *testing.T) {
@@ -131,7 +131,7 @@ func TestRateLimiter_SamplingFirstRejectionThenSuppressed(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — buckets reset at the second boundary so a
+// spec: §13.3 — buckets reset at the second boundary so a
 // caller that paces at the limit is never denied.
 func TestRateLimiter_PerSecondBucketRollover(t *testing.T) {
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

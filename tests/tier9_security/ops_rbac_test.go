@@ -123,7 +123,7 @@ var opsReadEndpoints = []struct {
 	{"operations list", http.MethodGet, "/v1/admin/operations"},
 }
 
-// spec: §25.4 line 1567 — "Requires platform-admin or tenant-admin role
+// spec: §25.4 — "Requires platform-admin or tenant-admin role
 // on all endpoints. No anonymous access except /healthz." A request with
 // no bearer is rejected 401 on every operability endpoint.
 //
@@ -157,7 +157,7 @@ func TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1567 — /healthz is the sole exemption from the auth
+// spec: §25.4 — /healthz is the sole exemption from the auth
 // requirement so the kubelet can probe an unauthenticated liveness path.
 //
 // diagnosis: the §25.4 /healthz exemption regressed — the auth gate now
@@ -173,7 +173,7 @@ func TestOpsHealthzAnonymousAdmitted_spec_25_4_1567(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1567 — the role ceiling admits only platform-admin
+// spec: §25.4 — the role ceiling admits only platform-admin
 // and tenant-admin. A verified bearer whose only role is below the
 // ceiling is rejected 403 on every operability endpoint even though
 // authentication succeeded.
@@ -199,7 +199,7 @@ func TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1567 — platform-admin passes the role gate (neither
+// spec: §25.4 — platform-admin passes the role gate (neither
 // 401 nor 403) on every operability endpoint.
 //
 // diagnosis: the §25.4 role ceiling is over-restrictive — a
@@ -223,7 +223,7 @@ func TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2128 — "tenant-admin attempts on platform-scoped
+// spec: §25.4 — "tenant-admin attempts on platform-scoped
 // locks return 403 LOCK_SCOPE_FORBIDDEN." A verified tenant-admin JWT
 // acquiring a platform-scoped lock is denied by the scope-based lock
 // authorization; the same JWT acquiring a lock on a pool in its own
@@ -327,10 +327,10 @@ func authedDriftOpsServer(t *testing.T) (*opsserver.Server, *jwt.HMACSigner) {
 func TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1(t *testing.T) {
 	// The §12.9.1 matrix names drift detection as a cross-tenant-rejection
 	// code path, but §25.10 defines drift as platform-scoped with no
-	// tenant dimension and no isolation error, while §25.4 line 1567
+	// tenant dimension and no isolation error, while §25.4
 	// admits tenant-admin on every lenny-ops endpoint. The control this
 	// test asserts (deny a tenant-admin the platform-scoped drift surface,
-	// mirroring the §25.4 line 2128 LOCK_SCOPE_FORBIDDEN control for
+	// mirroring the §25.4 LOCK_SCOPE_FORBIDDEN control for
 	// platform-scoped locks) is not yet defined by the spec. Left skipped
 	// until the spec resolves how drift enforces cross-tenant isolation.
 	t.Skip("drift cross-tenant isolation control is unresolved: §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface")
@@ -362,7 +362,7 @@ func TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 62, 1569 — the RFC 9068 scope claim narrows the
+// spec: §25.4 — the RFC 9068 scope claim narrows the
 // caller's effective surface below the role ceiling. A platform-admin
 // token whose scope claim grants only tools:locks:read is rejected 403
 // SCOPE_FORBIDDEN when it attempts a write (lock acquire requires

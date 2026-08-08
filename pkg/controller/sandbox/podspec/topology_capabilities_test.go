@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
-// spec: §5.2 lines 631-636 — the builder stamps the resolved topology
+// spec: §5.2 — the builder stamps the resolved topology
 // spread constraints onto the agent pod so the scheduler distributes
 // the pool's pods across zones and nodes.
 func TestBuildStampsTopologyConstraints_spec_5_2_631(t *testing.T) {

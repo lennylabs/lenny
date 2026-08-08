@@ -167,7 +167,7 @@ func TestExtract_StripComponents_spec_7_4(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 459 — an entry with fewer than stripComponents
+// spec: §7.4 — an entry with fewer than stripComponents
 // segments is skipped with a workspace_plan_strip_components_skip
 // warning. F-7.4.15.
 func TestExtract_StripSkipWarning_spec_7_4_15(t *testing.T) {
@@ -240,7 +240,7 @@ func TestExtract_MaxEntrySize_StreamingOverrun_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 457 — a hardlink entry aborts extraction with
+// spec: §7.4 — a hardlink entry aborts extraction with
 // non_regular_entry. F-7.4.3.
 func TestExtract_NonRegularEntry_Hardlink_spec_7_4_457(t *testing.T) {
 	data := buildTar(t, false, []tentry{{name: "h", typeflag: tar.TypeLink, link: "other"}})
@@ -261,7 +261,7 @@ func TestExtract_PathEscapesRoot_spec_13_4(t *testing.T) {
 
 // --- symlinks ---------------------------------------------------------
 
-// spec: §7.4 line 458 — symlinks rejected by default.
+// spec: §7.4 — symlinks rejected by default.
 func TestExtract_SymlinkRejectedByDefault_spec_7_4_458(t *testing.T) {
 	data := buildTar(t, false, []tentry{{name: "link", typeflag: tar.TypeSymlink, link: "a.txt"}})
 	_, err := archive.Extract(data, "tar", 0, 0, "", upload.RuntimeAllow{WorkspaceRoot: wsRoot})
@@ -270,7 +270,7 @@ func TestExtract_SymlinkRejectedByDefault_spec_7_4_458(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 458 — with allowSymlinks the link is admitted when the
+// spec: §7.4 — with allowSymlinks the link is admitted when the
 // target stays within the workspace root.
 func TestExtract_SymlinkAllowedWithinRoot_spec_7_4_458(t *testing.T) {
 	data := buildTar(t, false, []tentry{
@@ -286,7 +286,7 @@ func TestExtract_SymlinkAllowedWithinRoot_spec_7_4_458(t *testing.T) {
 	}
 }
 
-// spec: §13.4 line 665 — a symlink whose target escapes the workspace
+// spec: §13.4 — a symlink whose target escapes the workspace
 // root is rejected even with allowSymlinks.
 func TestExtract_SymlinkEscapeRejected_spec_13_4_665(t *testing.T) {
 	data := buildTar(t, false, []tentry{{name: "link", typeflag: tar.TypeSymlink, link: "../../etc/passwd"}})
@@ -321,7 +321,7 @@ func TestExtract_NegativeStrip_spec_7_4(t *testing.T) {
 
 // --- decompression ratio ---------------------------------------------
 
-// spec: §13.4 line 659 — a highly compressible payload that exceeds the
+// spec: §13.4 — a highly compressible payload that exceeds the
 // 100:1 ratio aborts with max_decompression_ratio. A run of identical
 // bytes gzips far below 1% of its size. F-7.4.2.
 func TestExtract_DecompressionRatio_spec_13_4_659(t *testing.T) {

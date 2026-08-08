@@ -27,7 +27,7 @@ type ActiveVariant struct {
 	Weight float64
 	// InitialMinWarm is the §10.7 optional per-variant static minWarm
 	// floor the PoolScalingController applies during bootstrap mode only
-	// (spec: §10.7 lines 695, 705-710). It seeds the variant pool's
+	// (spec: §10.7). It seeds the variant pool's
 	// bootstrap warm-pod floor before any demand history exists, so the
 	// first sessions routed to a freshly created variant pool do not pay
 	// the full cold-start penalty. The strategy consumes it as
@@ -95,7 +95,7 @@ func ResolveVariantRoles(configs []PoolConfig, variants []ActiveVariant) ([]Pool
 
 	for _, v := range variants {
 		if v.Weight < 0 || v.Weight >= 1 {
-			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
+			// spec: §10.7 — weight in [0.0, 1.0);
 			// 0.0 admits staged variants with no traffic.
 			return nil, fmt.Errorf("variant pool %q of experiment %q: weight must be in [0,1), got %g",
 				v.VariantPool, v.ExperimentID, v.Weight)
@@ -117,7 +117,7 @@ func ResolveVariantRoles(configs []PoolConfig, variants []ActiveVariant) ([]Pool
 
 		out[vi].PoolType = strategy.PoolVariant
 		out[vi].VariantWeight = v.Weight
-		// spec: §10.7 lines 695, 705-710 — the variant's initialMinWarm is
+		// spec: §10.7 — the variant's initialMinWarm is
 		// the bootstrap-mode static minWarm floor. PoolConfig.MinWarm feeds
 		// the strategy as BootstrapMinWarm (controller.targetMinWarm), which
 		// the strategy returns only while the pool is in bootstrap mode and

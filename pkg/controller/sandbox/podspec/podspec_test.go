@@ -98,7 +98,7 @@ func TestBuildAppliesPodSecurityPosture(t *testing.T) {
 
 // TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1 asserts the
 // agent pod declares the lenny-cred-readers GID in the pod-level
-// supplementalGroups list — the §13.1 line 25 explicit membership the
+// supplementalGroups list — the §13.1 explicit membership the
 // cross-UID credential-delivery path requires, rather than relying on
 // the kubelet's implicit fsGroup-to-supplementary-group propagation
 // (F-13.1.11).
@@ -118,12 +118,11 @@ func TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("pod supplementalGroups = %v, want it to include the lenny-cred-readers GID %d (§13.1 line 25)", sc.SupplementalGroups, podspec.CredReadersGID)
+		t.Errorf("pod supplementalGroups = %v, want it to include the lenny-cred-readers GID %d (§13.1)", sc.SupplementalGroups, podspec.CredReadersGID)
 	}
 }
 
-// TestBuildDisablesDefaultSATokenAutomount_spec_13_1 asserts §13.1 line
-// 12 ("No standing credentials"): the agent pod disables the kubelet's
+// TestBuildDisablesDefaultSATokenAutomount_spec_13_1 asserts §13.1: the agent pod disables the kubelet's
 // default ServiceAccount-token automount so the long-lived
 // cluster-audience token is not mounted; the only token present is the
 // §10.3 audience-bound projected token (F-13.1.9).
@@ -525,7 +524,7 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 
 // TestBuildAppliesTerminationGraceBaseOverride_spec_5_2 confirms the
 // deployer-set TerminationGraceSeconds replaces the 120s default base
-// (§5.2 line 516) and that the ceiling still clamps the override down.
+// (§5.2) and that the ceiling still clamps the override down.
 func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -555,8 +554,7 @@ func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67 confirms the §6.1
-// line 67 SDK-warm grace floor: a preConnect pod's
+// TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67 confirms the §6.1 SDK-warm grace floor: a preConnect pod's
 // terminationGracePeriodSeconds is at least LENNY_DEMOTE_TIMEOUT_SECONDS
 // (default 5s) + 5s = 10s so the adapter can run its bounded DemoteSDK
 // teardown on SIGTERM. The floor takes precedence over a lower §5.2 base or
@@ -594,8 +592,7 @@ func TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// TestBuildCapsDevShm_spec_6_4 confirms the §6.4 line 420 "/dev/shm is
-// limited to 64MB" invariant: a memory-backed emptyDir with an explicit
+// TestBuildCapsDevShm_spec_6_4 confirms the §6.4 invariant: a memory-backed emptyDir with an explicit
 // 64Mi SizeLimit, mounted at /dev/shm in every agent container.
 func TestBuildCapsDevShm_spec_6_4(t *testing.T) {
 	for _, model := range []string{"", "embedded"} {
@@ -657,8 +654,7 @@ func mountsPath(c corev1.Container, name, path string) bool {
 	return false
 }
 
-// TestBuildMountsSessionsAndArtifacts_spec_6_4 confirms the §6.4 lines
-// 380-381 / §13.1 line 10 filesystem layout: /sessions is a memory-backed
+// TestBuildMountsSessionsAndArtifacts_spec_6_4 confirms the §6.4 / §13.1 filesystem layout: /sessions is a memory-backed
 // (tmpfs) volume, /artifacts is disk-backed, and every agent container
 // mounts both so a runtime write does not land on the read-only root
 // filesystem (EROFS).
@@ -671,12 +667,12 @@ func TestBuildMountsSessionsAndArtifacts_spec_6_4(t *testing.T) {
 			t.Fatalf("Build(%q): %v", model, err)
 		}
 
-		// spec: §6.4 line 380 — /sessions is tmpfs (Memory medium).
+		// spec: §6.4 — /sessions is tmpfs (Memory medium).
 		sessions := findVolume(t, pod, "sessions").VolumeSource.EmptyDir
 		if sessions == nil || sessions.Medium != corev1.StorageMediumMemory {
 			t.Errorf("model %q: sessions volume must be a memory-backed emptyDir, got %+v", model, sessions)
 		}
-		// spec: §6.4 line 414 — /artifacts is disk-backed (no Memory medium).
+		// spec: §6.4 — /artifacts is disk-backed (no Memory medium).
 		artifacts := findVolume(t, pod, "artifacts").VolumeSource.EmptyDir
 		if artifacts == nil || artifacts.Medium != "" {
 			t.Errorf("model %q: artifacts volume must be a disk-backed emptyDir, got %+v", model, artifacts)
@@ -693,7 +689,7 @@ func TestBuildMountsSessionsAndArtifacts_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildCapsTmpfs_spec_6_4 confirms the §6.4 line 413 recommended
+// TestBuildCapsTmpfs_spec_6_4 confirms the §6.4 recommended
 // tmpfs size caps: /sessions and /tmp carry a 256Mi SizeLimit so tmpfs
 // growth has a predictable OOM boundary. The disk-backed /workspace and
 // /artifacts volumes carry no Memory medium.
@@ -723,8 +719,7 @@ func TestBuildCapsTmpfs_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMasksProc_spec_6_4 confirms the §6.4 line 420 "procfs and
-// sysfs are masked/read-only" invariant: each agent container sets the
+// TestBuildMasksProc_spec_6_4 confirms the §6.4 invariant: each agent container sets the
 // default masked /proc mount explicitly.
 func TestBuildMasksProc_spec_6_4(t *testing.T) {
 	pod, err := podspec.Build(inputs())
@@ -760,7 +755,7 @@ func TestBuildCredentialsVolumeIsTmpfs_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMountsTheWorkspaceVolume_spec_6_4 confirms the §6.4 line 377
+// TestBuildMountsTheWorkspaceVolume_spec_6_4 confirms the §6.4
 // "/workspace" mount: a disk-backed emptyDir mounted at /workspace on
 // every agent container, so the §7.4 staging→current promotion and the
 // FinalizeWorkspace handoff are within one volume.
@@ -780,7 +775,7 @@ func TestBuildMountsTheWorkspaceVolume_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMountsSharedReadOnly_spec_6_4 confirms the §6.4 line 409
+// TestBuildMountsSharedReadOnly_spec_6_4 confirms the §6.4
 // /workspace/shared layout: a separate disk-backed emptyDir is always
 // present, mounted read-only on the runtime container (the EROFS write
 // boundary) and read-write on the adapter container (the populator). The
@@ -791,12 +786,12 @@ func TestBuildMountsSharedReadOnly_spec_6_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	// spec: §6.4 line 409 — a separate disk-backed emptyDir backs the mount.
+	// spec: §6.4 — a separate disk-backed emptyDir backs the mount.
 	shared := findVolume(t, pod, "shared").VolumeSource.EmptyDir
 	if shared == nil || shared.Medium != "" {
 		t.Errorf("shared volume must be a disk-backed emptyDir, got %+v", shared)
 	}
-	// spec: §6.4 line 409 — read-only on the runtime container (EROFS).
+	// spec: §6.4 — read-only on the runtime container (EROFS).
 	if !mountsPathReadOnly(container(t, pod, "runtime"), "shared", "/workspace/shared", true) {
 		t.Error("runtime container must mount shared at /workspace/shared read-only")
 	}
@@ -825,7 +820,7 @@ func TestBuildEmbeddedMountsShared_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildWiresSharedAssetsArgs_spec_6_4 confirms the §6.4 line 409
+// TestBuildWiresSharedAssetsArgs_spec_6_4 confirms the §6.4
 // adapter wiring: --shared-assets-dir is always passed, and the inline
 // asset set rides --shared-assets only when the Runtime declares any.
 func TestBuildWiresSharedAssetsArgs_spec_6_4(t *testing.T) {
@@ -894,7 +889,7 @@ func hasArgPrefix(args []string, prefix string) bool {
 	return false
 }
 
-// TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4 lines 416-419
+// TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4
 // dedicated-node injection: a Runtime declared at `workspaceTier: T4`
 // produces a pod carrying the `lenny.dev/workspace-tier: t4` label, the T4
 // nodeSelector, and the T4 NoSchedule toleration so the
@@ -996,7 +991,7 @@ func TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4(t *testing.T) {
 }
 
 // TestBuildInjectsKataNodeIsolation_spec_17_2 confirms a microvm (Kata)
-// pod carries the §17.2 lines 99-101 control 2 (required node affinity on
+// pod carries the §17.2 control 2 (required node affinity on
 // lenny.dev/node-pool=kata) and control 3 (NoSchedule toleration for the
 // lenny.dev/isolation=kata taint) in both deployment models.
 func TestBuildInjectsKataNodeIsolation_spec_17_2(t *testing.T) {

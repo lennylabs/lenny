@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
-// spec: §4.4 line 225 — durable event cursors across replicas.
+// spec: §4.4 — durable event cursors across replicas.
 // spec: §12.4 — the lenny:events: cross-replica relay stream row in the
 // canonical key-prefix table.
 
@@ -101,7 +101,7 @@ func TestRelayNilClientIsNoOp(t *testing.T) {
 // to the Redis relay so a reader on a sibling replica reading via
 // Relay.History sees the event.
 //
-// spec: §4.4 line 225 — durable cursors across replicas.
+// spec: §4.4 — durable cursors across replicas.
 func TestBusWithRelayPublishFanout(t *testing.T) {
 	_, cli := newMiniRedis(t)
 	relay := sessionevents.NewRedisRelay(cli)
@@ -130,7 +130,7 @@ func TestBusWithRelayPublishFanout(t *testing.T) {
 // client on this replica sees events originally published on a
 // sibling replica via the cross-replica history merge.
 //
-// spec: §4.4 line 225 — durable cursors across replicas.
+// spec: §4.4 — durable cursors across replicas.
 func TestBusSubscribeMergesCrossReplicaHistory(t *testing.T) {
 	_, cli := newMiniRedis(t)
 	relay := sessionevents.NewRedisRelay(cli)
@@ -198,7 +198,7 @@ func TestBusWithoutRelayKeepsExistingBehaviour(t *testing.T) {
 // MaxLen trim so a long-running session does not grow the Redis
 // stream unbounded.
 //
-// spec: §4.4 line 225 — the cross-replica replay buffer is bounded.
+// spec: §4.4 — the cross-replica replay buffer is bounded.
 func TestRelayStreamRetentionIsBounded(t *testing.T) {
 	_, cli := newMiniRedis(t)
 	relay := &sessionevents.RedisRelay{

@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §15.1 lines 818-819 — platform-admin tenant suspend/resume.
+// spec: §15.1 — platform-admin tenant suspend/resume.
 // F-15.1.3.
 
 var suspendClock = time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
@@ -276,7 +276,7 @@ func TestResumeTenant_NotFound_spec_15_1_819(t *testing.T) {
 }
 
 // Resume restores normal operation but does not un-terminate the
-// sessions drained by the suspension. spec: §15.1 line 819.
+// sessions drained by the suspension. spec: §15.1.
 func TestResumeTenant_DoesNotTouchSessions_spec_15_1_819(t *testing.T) {
 	store := tenantstore.NewMemory()
 	seedSuspendTenant(t, store, tenantstore.Tenant{ID: "acme", Suspended: true})

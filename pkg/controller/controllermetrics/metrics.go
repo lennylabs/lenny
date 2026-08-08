@@ -57,7 +57,7 @@ var (
 		Help: "Configured controller work-queue max depth.",
 	}, nil)
 
-	// certExpirySeconds is the §10.3 line 342/343 lenny_cert_expiry_seconds
+	// certExpirySeconds is the §10.3 lenny_cert_expiry_seconds
 	// gauge: seconds remaining until an agent pod's mTLS certificate
 	// expires, one series per managed pod. The §16.5 CertExpiryImminent
 	// alert fires when min(lenny_cert_expiry_seconds) < 3600 — a cert
@@ -80,7 +80,7 @@ var (
 // min(lenny_cert_expiry_seconds) below the CertExpiryImminent threshold
 // forever.
 //
-// spec: §10.3 lines 342–343 (warm-pool cert awareness, CertExpiryImminent).
+// spec: §10.3.
 type CertExpiry struct{}
 
 // Set records the remaining certificate validity (seconds) for one pod.

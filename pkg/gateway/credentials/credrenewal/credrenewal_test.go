@@ -241,7 +241,7 @@ var errTokenServiceBreakerOpen = fmt.Errorf(
 // extension therefore covers every subsequent tick at the same instant, and
 // no tick reaches the Fallback Flow while the breaker stays open.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard)
+// spec: §4.9
 func TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9(t *testing.T) {
 	// Breaker-open is modeled as the Renewer failing with the mapped
 	// sentinel; the lease's expiresAt is well in the future.
@@ -305,7 +305,7 @@ func TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9(t *testing.T) {
 // Fallback path, exhausting after MaxRenewalRetries. The deadline never
 // advances, so every attempt targets the same newExpiresAt.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard)
+// spec: §4.9
 func TestTickExhaustsWhenExtensionEnforcementFails_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -351,7 +351,7 @@ func TestTickExhaustsWhenExtensionEnforcementFails_spec_4_9(t *testing.T) {
 // and fires OnExtensionCapReached without ever entering the Fallback Flow
 // (no OnExhausted, no re-mint).
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickCapsCumulativeExtensionAtLeaseTTL_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -396,7 +396,7 @@ func TestTickCapsCumulativeExtensionAtLeaseTTL_spec_4_9(t *testing.T) {
 // follows the existing recordFailure/exhaust path rather than hanging or
 // extending past the cap.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickFallsThroughWhenExtensionCapCallbackUnset_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -440,7 +440,7 @@ func TestTickFallsThroughWhenExtensionCapCallbackUnset_spec_4_9(t *testing.T) {
 // renewal, then a full run of extensions on the fresh lease reaches the cap
 // only after another maxExtensions extensions rather than sooner.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickResetsExtensionCountOnSuccessfulRenewal_spec_4_9(t *testing.T) {
 	r := &togglingRenewer{buffer: time.Hour, leaseTTL: 3 * time.Hour, open: true}
 	var extended int
@@ -539,13 +539,12 @@ func (r *flakyRenewer) Renew(_ context.Context, lease credrenewal.Lease) (credre
 	}, nil
 }
 
-// TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215 pins the §11.3
-// line 215 default (3600s) at the package layer so any future drift
+// TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215 pins the §11.3 default (3600s) at the package layer so any future drift
 // breaks the test rather than silently shrinking the lead time.
 // F-11.3.20.
 func TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215(t *testing.T) {
 	if credrenewal.DefaultExpiryWarningLead != 3600*time.Second {
-		t.Errorf("DefaultExpiryWarningLead = %s, want 3600s per §11.3 line 215",
+		t.Errorf("DefaultExpiryWarningLead = %s, want 3600s per §11.3",
 			credrenewal.DefaultExpiryWarningLead)
 	}
 }

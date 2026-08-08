@@ -1,5 +1,5 @@
 suite: lenny-ops Ingress and PodDisruptionBudget
-# spec: §25.4 lines 991-1024, 1313-1324 — F-25.4.10. The lenny-ops
+# spec: §25.4 — F-25.4.10. The lenny-ops
 # Ingress (opt-in) and the always-rendered PodDisruptionBudget.
 templates:
   - ops-ingress.yaml
@@ -12,7 +12,7 @@ tests:
           path: kind
           value: PodDisruptionBudget
 
-  - it: renders minAvailable 1 regardless of replica count per §25.4 line 1316
+  - it: renders minAvailable 1 regardless of replica count per §25.4
     documentSelector:
       path: kind
       value: PodDisruptionBudget
@@ -65,7 +65,7 @@ tests:
           path: spec.tls[0].secretName
           value: lenny-ops-tls
 
-  - it: renders the SSE idle-timeout proxy annotations per §25.4 line 1004
+  - it: renders the SSE idle-timeout proxy annotations per §25.4
     set:
       ops:
         ingress:

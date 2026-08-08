@@ -65,7 +65,7 @@ func newMCPContentPolicy(t *testing.T, chain *interceptor.Chain, cp mcptools.Con
 	return srv, store
 }
 
-// spec: §4.8 line 1040 / §13.5 mitigation 3 — lenny/send_message enforces
+// spec: §4.8 / §13.5 mitigation 3 — lenny/send_message enforces
 // the target session's effective contentPolicy.maxInputSize on the
 // message body, rejecting an oversize body with INPUT_TOO_LARGE before
 // delivery. F-13.5.2.
@@ -80,7 +80,7 @@ func TestSendMessage_maxInputSize_spec_4_8_1040(t *testing.T) {
 	}
 }
 
-// spec: §8.3 lines 157-188 / §4.8 line 1040 — only the policy-named
+// spec: §8.3 / §4.8 — only the policy-named
 // external scanner runs at PreMessageDelivery; an external interceptor the
 // policy does not name is not invoked. The named scanner's MODIFY rewrites
 // the delivered body. F-8.2.9 / F-13.5.2.
@@ -122,7 +122,7 @@ func TestSendMessage_runsOnlyNamedScanner_spec_8_3_157(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 157 — a policy with interceptorRef: null runs no external
+// spec: §8.3 — a policy with interceptorRef: null runs no external
 // content scanner; the message is delivered without invoking any registered
 // scanner. F-13.5.2.
 func TestSendMessage_nullRef_runsNoScanner_spec_8_3_157(t *testing.T) {
@@ -146,7 +146,7 @@ func TestSendMessage_nullRef_runsNoScanner_spec_8_3_157(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1032 — a contentPolicy.interceptorRef naming an
+// spec: §4.8 — a contentPolicy.interceptorRef naming an
 // interceptor not registered in this gateway process fails closed with
 // INTERCEPTOR_TIMEOUT rather than silently delivering unscanned content.
 // F-8.2.9 / F-13.5.2.

@@ -1,4 +1,4 @@
--- §4.4 lines 265–273 mandate seven structural columns on the
+-- §4.4 mandate seven structural columns on the
 -- session_eviction_state minimal-state record so a resume on a fresh
 -- pod can identify which session generation the eviction state
 -- belongs to, replay conversation history from a known cursor, and
@@ -18,7 +18,7 @@
 --                             the column is the canonical signal the
 --                             §7.2 session.resumed event echoes as
 --                             `workspaceLost`
---   context_truncated       — §4.4 line 271 truncation flag set when
+--   context_truncated       — §4.4 truncation flag set when
 --                             MinIO is unavailable and the gateway
 --                             stored a 2KB-truncated payload inline
 --

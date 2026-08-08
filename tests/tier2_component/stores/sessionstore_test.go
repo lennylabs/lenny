@@ -144,7 +144,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §24.11 lines 135-136 — GetByID resolves a session by its
+	// spec: §24.11 — GetByID resolves a session by its
 	// global id under the platform-admin cross-tenant context
 	// (app.current_tenant = '__all__'), backing the admin
 	// session-investigation surface where the operator supplies only the
@@ -418,7 +418,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 line 258 — `last_successful_checkpoint_at` round-trips
+	// spec: §4.4 — `last_successful_checkpoint_at` round-trips
 	// through Postgres and is nullable so a session that has never
 	// been checkpointed reads as zero rather than the UNIX epoch.
 	t.Run("last_successful_checkpoint_at round-trip", func(t *testing.T) {
@@ -454,7 +454,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §6.2 lines 273-300 — `last_agent_activity_at` round-trips
+	// spec: §6.2 — `last_agent_activity_at` round-trips
 	// through Postgres and is nullable so a session with no recorded
 	// qualifying activity reads as zero (the idle watchdog then anchors on
 	// updated_at). F-11.3.7.
@@ -504,7 +504,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §6.49, §7.1 line 74, §7.2 line 230, §8.8 — the §7.1
+	// spec: §6.49, §7.1, §7.2, §8.8 — the §7.1
 	// conversation_continuity envelope half and the §7.2 / §8.8
 	// Terminated/Suspended session-condition facts relocated off
 	// Sandbox.status.conditions must round-trip through pgstore's
@@ -597,7 +597,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 line 258 — never-checkpointed sessions read NULL on
+	// spec: §4.4 — never-checkpointed sessions read NULL on
 	// the column, which the sessionstore maps to the zero time.Time
 	// so the `FreshnessCheck` helper can treat them as stale.
 	t.Run("last_successful_checkpoint_at defaults to zero when unset", func(t *testing.T) {
@@ -617,7 +617,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.2 line 52 / §8.3 line 286 — the gateway copies the
+	// spec: §8.2 / §8.3 — the gateway copies the
 	// parent's registered tracingContext onto every delegated child so
 	// child traces stitch into the parent's trace tree. A pod restart
 	// that triggers a Postgres reload must round-trip the context.
@@ -664,7 +664,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.2 line 52 — a session registered with no tracingContext
+	// spec: §8.2 — a session registered with no tracingContext
 	// reads back as a nil map (the "no context registered" case). The
 	// pgstore stores SQL NULL for that case. F-8.2.14.
 	t.Run("tracing_context absent reads as nil F_8_2_14", func(t *testing.T) {
@@ -684,7 +684,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.3 line 266 / §8.10 — cascadeOnFailure persists per-tree
+	// spec: §8.3 / §8.10 — cascadeOnFailure persists per-tree
 	// so a Postgres-backed reload returns the same policy the lease
 	// declared. F-8.2.15.
 	t.Run("cascade_on_failure round-trip through pgstore F_8_2_15", func(t *testing.T) {
@@ -843,7 +843,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §14.1 line 311 (request-envelope bundle), §15 (built-in adapter
+	// spec: §14.1, §15 (built-in adapter
 	// single-shot compute model) — the OpenResponsesAdapter
 	// previous_response_id lineage rides the §14.1 request-envelope JSONB
 	// bundle rather than a dedicated column. A session carrying only a

@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §13.3 line 603 / §8.3 recursive token
+// Contract test for the §13.3 / §8.3 recursive token
 // revocation (issuedtokenstore.RevokeCascade) against a real Postgres
 // container with the production migrations applied. Lives in its own
 // package so a stale unrelated test in tests/tier2_component/stores
@@ -56,7 +56,7 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
-// spec: §13.3 line 603 / §8.3 — RevokeCascade revokes the root token
+// spec: §13.3 / §8.3 — RevokeCascade revokes the root token
 // and every delegation descendant reachable through parent_jti, stamps
 // the root with the explicit reason and descendants with the cascade
 // reason, is idempotent (a second call revokes nothing already
@@ -165,7 +165,7 @@ func TestRevokeCascadeContract_spec_13_3_603(t *testing.T) {
 	})
 }
 
-// spec: §13.3 line 597 — RecordWithRotationAudit binds the new
+// spec: §13.3 — RecordWithRotationAudit binds the new
 // issued-token INSERT, the token.exchanged audit row, and the revoked_at
 // stamp on the previous token into one transaction: after it returns the
 // replacement exists and the previous token is revoked with

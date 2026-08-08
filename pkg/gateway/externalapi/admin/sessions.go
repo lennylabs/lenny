@@ -19,13 +19,13 @@ import (
 // type. It mirrors observability/audit.EventSessionForceTerminated; the
 // admin emit path serializes event-type strings (see r.emit), so the
 // constant is duplicated here as a string to avoid importing the catalog
-// package into the router. spec: §24.11 line 136 — F-24.11.3.
+// package into the router. spec: §24.11 — F-24.11.3.
 const eventSessionForceTerminated = "session.force_terminated"
 
 // SessionAdmin backs the §24.11 platform-admin session-investigation
 // surface. The operator supplies only the session id (a globally-unique
 // UUID), so both methods resolve across tenants; the router gates them
-// behind requireAdmin (platform-admin). spec: §24.11 lines 135-136.
+// behind requireAdmin (platform-admin). spec: §24.11.
 type SessionAdmin interface {
 	// GetByID returns the session row whose id equals id, across every
 	// tenant. Returns sessionstore.ErrNotFound when no row exists.
@@ -39,7 +39,7 @@ type SessionAdmin interface {
 	// is true only when the call actually transitioned the row — a repeat
 	// call against an already-terminal session is a no-op returning
 	// transitioned=false, so the endpoint is idempotent. Returns
-	// sessionstore.ErrNotFound when no row exists. spec: §24.11 line 136.
+	// sessionstore.ErrNotFound when no row exists. spec: §24.11.
 	ForceTerminate(ctx context.Context, id string) (sess sessionstore.Session, previousState session.State, transitioned bool, err error)
 }
 
@@ -51,7 +51,7 @@ func (r *Router) WithSessionAdmin(s SessionAdmin) *Router {
 	return r
 }
 
-// adminSessionPayload is the §24.11 line 135 investigation view: session
+// adminSessionPayload is the §24.11 investigation view: session
 // state, the failure cause when terminal, scheduling metadata, and the
 // assigned pod. It is a read-only projection of the persisted row.
 type adminSessionPayload struct {
@@ -92,7 +92,7 @@ func newAdminSessionPayload(s sessionstore.Session) adminSessionPayload {
 
 // handleGetSession implements GET /v1/admin/sessions/{id} — the §24.11
 // platform-admin read-through used to investigate a stuck, orphaned, or
-// unexpectedly terminated session. spec: §24.11 line 135.
+// unexpectedly terminated session. spec: §24.11.
 func (r *Router) handleGetSession(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -112,13 +112,13 @@ func (r *Router) handleGetSession(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleForceTerminateSession implements POST
-// /v1/admin/sessions/{id}/force-terminate — the §24.11 line 136
+// /v1/admin/sessions/{id}/force-terminate — the §24.11
 // operator-driven forced terminal transition. The session transitions
 // immediately to `failed` and the assigned pod is released to the pool.
 // An optional `reason` in the request body is recorded in the
 // session.force_terminated audit event. The endpoint is idempotent: a
 // force against an already-terminal session returns 200 with the current
-// state and emits no audit event. spec: §24.11 line 136.
+// state and emits no audit event. spec: §24.11.
 func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -148,7 +148,7 @@ func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Re
 	}
 
 	if transitioned {
-		// spec: §24.11 line 136 / §16.7 — record operator identity, the
+		// spec: §24.11 / §16.7 — record operator identity, the
 		// session, and the pre-force state so an auditor can reconstruct
 		// the forced transition. The justification (reason) is optional.
 		p, _ := authmw.FromContext(req.Context())

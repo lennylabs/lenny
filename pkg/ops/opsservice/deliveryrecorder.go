@@ -11,8 +11,7 @@ import (
 )
 
 // RetentionPolicy is the §25.5 delivery-tracking retention configuration
-// the recorder uses to stamp each row's expires_at. spec: §25.5 lines
-// 2649-2664.
+// the recorder uses to stamp each row's expires_at. spec: §25.5.
 type RetentionPolicy struct {
 	// Retention is the lifetime of a recorded delivery row (the chart's
 	// ops.webhooks.deliveryRetentionDays). A non-positive value defaults
@@ -39,8 +38,7 @@ func (p RetentionPolicy) ttl(failed bool) time.Duration {
 // StoreDeliveryRecorder is the production §25.5 DeliveryRecorder: it
 // writes each terminal webhook delivery to ops_event_deliveries via the
 // eventsubscription.Store, stamping expires_at from the retention
-// policy so the §25.5 retention cron can purge it. spec: §25.5 lines
-// 2701-2713, 2649-2664.
+// policy so the §25.5 retention cron can purge it. spec: §25.5.
 type StoreDeliveryRecorder struct {
 	store  eventsubscription.Store
 	policy RetentionPolicy
@@ -57,8 +55,7 @@ func NewStoreDeliveryRecorder(store eventsubscription.Store, policy RetentionPol
 	return &StoreDeliveryRecorder{store: store, policy: policy, now: time.Now, logger: logger}
 }
 
-// RecordDelivery persists one terminal delivery outcome. spec: §25.5
-// line 2713 — a delivery exhausting its retries is marked failed.
+// RecordDelivery persists one terminal delivery outcome. spec: §25.5 — a delivery exhausting its retries is marked failed.
 func (r *StoreDeliveryRecorder) RecordDelivery(ctx context.Context, subID, eventID string, attempts int, failed bool) {
 	if r == nil || r.store == nil {
 		return
@@ -77,7 +74,7 @@ func (r *StoreDeliveryRecorder) RecordDelivery(ctx context.Context, subID, event
 		CreatedAt:      now,
 		ExpiresAt:      now.Add(r.policy.ttl(failed)),
 	}); err != nil {
-		// §25.5 line 2774: delivery tracking is best-effort. A failed
+		// §25.5: delivery tracking is best-effort. A failed
 		// write must not stop delivery, so it is logged, not returned.
 		r.logger.Warn("ops webhook delivery tracking write failed",
 			"subscription_id", subID, "event_id", eventID, "error", err)

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §24.15 line 192 — `lenny-ctl logs pods <namespace> <name>` proxies
+// spec: §24.15 — `lenny-ctl logs pods <namespace> <name>` proxies
 // a pod's container logs from the §25.4 lenny-ops log-proxy endpoint. The
 // `pods` subcommand disambiguates the clustered proxy from the §24.19
 // embedded `logs <component>` stack-log tailer.

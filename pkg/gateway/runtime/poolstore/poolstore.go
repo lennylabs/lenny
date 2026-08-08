@@ -61,7 +61,7 @@ type Pool struct {
 	// deployment-wide checkpointGrantWindow: the number of chunk-upload
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. Nil leaves the checkpoint driver on the
-	// deployment-wide default. spec: §10.1 line 131 chunk-grant window;
+	// deployment-wide default. spec: §10.1 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int
 
@@ -161,7 +161,7 @@ type Pool struct {
 	// on every admin-API write and stamped onto the pool's CRD pair as
 	// the lenny.dev/config-generation annotation so the §4.6.2
 	// PoolConfigDrift alert can compare Postgres-side and CRD-side
-	// generations. spec: spec/04_system-components.md lines 558-560.
+	// generations. spec: §4.6.2.
 	Generation int64
 
 	// ReconciliationResumeEpoch is the §4.6.2 item 3 condition (c)
@@ -176,38 +176,38 @@ type Pool struct {
 	// item 3 condition (c).
 	ReconciliationResumeEpoch int64
 
-	// DrainingSince records when the pool entered the §15.1 line 797
+	// DrainingSince records when the pool entered the §15.1
 	// `draining` phase. A zero value means the pool is `active`. While
 	// it is set the gateway stops admitting new sessions to the pool
 	// (POST /v1/admin/pools/{name}/drain → GET reports `phase: draining`),
 	// and session creation that would select the pool is rejected with
-	// 503 POOL_DRAINING. spec: §15.1 line 797.
+	// 503 POOL_DRAINING. spec: §15.1.
 	DrainingSince time.Time
 
-	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool
+	// ElicitationDepthPolicy is the §9.2 per-pool
 	// `elicitationDepthPolicy` that governs whether agent-initiated
 	// elicitations raised by a session in this pool are suppressed by
 	// delegation depth (`allow_all`, `suppress_at_depth`, `block_all`).
-	// Empty defaults to the §9.2 line 92 platform default
+	// Empty defaults to the §9.2 platform default
 	// (`suppress_at_depth` at depth 3) when the dispatcher resolves it.
-	// spec: §9.2 lines 90-98.
+	// spec: §9.2.
 	ElicitationDepthPolicy elicitation.DepthPolicy
 
-	// ElicitationSuppressAtDepth is the §9.2 line 92 threshold N for the
+	// ElicitationSuppressAtDepth is the §9.2 threshold N for the
 	// `suppress_at_depth` policy; ignored for the other policies. Zero
 	// with a `suppress_at_depth` policy resolves to the platform default
 	// (DefaultSuppressAtDepth=3) at the dispatcher.
 	ElicitationSuppressAtDepth int
 
-	// URLModeElicitation is the §9.2 line 86 per-pool agent-initiated
+	// URLModeElicitation is the §9.2 per-pool agent-initiated
 	// url-mode elicitation allowlist. The zero value (Enabled:false)
 	// blocks every agent-initiated url-mode elicitation, the §9.2
 	// default. Enabled:true with an empty DomainAllowlist is rejected at
 	// store admission with URL_MODE_ELICITATION_DOMAIN_REQUIRED.
-	// spec: §9.2 line 86.
+	// spec: §9.2.
 	URLModeElicitation elicitation.URLModeAllowlist
 
-	// SDKWarmCircuitBreakerOverride is the §6.1 line 63 operator override
+	// SDKWarmCircuitBreakerOverride is the §6.1 operator override
 	// of the SDK-warm circuit breaker. The empty value leaves the breaker
 	// under automatic control (equivalent to `auto`). `enabled` clears a
 	// tripped breaker ahead of its grace window and evaluates SDK-warm on
@@ -215,28 +215,28 @@ type Pool struct {
 	// the rate; `auto` restores automatic control. The PoolScalingController
 	// reads it via the PoolStoreSource and applies it in its breaker
 	// decision. The admin API mutates it via
-	// PUT /v1/admin/pools/{name}/circuit-breaker. spec: §6.1 lines 63-65,
-	// §15.1 line 801.
+	// PUT /v1/admin/pools/{name}/circuit-breaker. spec: §6.1,
+	// §15.1.
 	SDKWarmCircuitBreakerOverride SDKWarmCircuitBreakerOverride
 
-	// AcknowledgeHighDemotionRate is the §6.1 line 48
+	// AcknowledgeHighDemotionRate is the §6.1
 	// `sdkWarm.acknowledgeHighDemotionRate` flag. When true the
 	// PoolScalingController suppresses the SDKWarmDemotionRateHigh warning
 	// event for this pool: the operator has accepted that the rolling
 	// 1-hour demotion rate exceeds demotionRateThreshold (60%). It does not
-	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1 line 48.
+	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1.
 	AcknowledgeHighDemotionRate bool
 
-	// DemotionRateThreshold is the §6.1 line 48 `sdkWarm.demotionRateThreshold`:
+	// DemotionRateThreshold is the §6.1:
 	// the rolling 1-hour SDK-warm demotion-rate fraction above which the
 	// PoolScalingController emits the SDKWarmDemotionRateHigh warning event.
 	// A nil value inherits the platform default (0.60); a set value must be
 	// in the open-closed interval (0, 1]. It does not affect the hardcoded
-	// 90% circuit-breaker trip. spec: §6.1 line 48.
+	// 90% circuit-breaker trip. spec: §6.1.
 	DemotionRateThreshold *float64
 }
 
-// SDKWarmCircuitBreakerOverride is the §6.1 line 63 closed enum of
+// SDKWarmCircuitBreakerOverride is the §6.1 closed enum of
 // operator overrides for the SDK-warm circuit breaker.
 type SDKWarmCircuitBreakerOverride string
 
@@ -250,18 +250,18 @@ const (
 	// bypasses the breaker's minOpenUntil grace window and evaluates the
 	// live demotion rate, so a tripped breaker clears immediately and only
 	// re-trips if the rate is still at or above the 90% safety threshold.
-	// spec: §6.1 lines 63-65, §15.1 line 801.
+	// spec: §6.1, §15.1.
 	SDKWarmOverrideEnabled SDKWarmCircuitBreakerOverride = "enabled"
 	// SDKWarmOverrideDisabled forces SDK-warm off regardless of the
 	// demotion rate (the PoolScalingController writes spec.sdkWarmDisabled
-	// with an operator_manual reason). spec: §15.1 line 801.
+	// with an operator_manual reason). spec: §15.1.
 	SDKWarmOverrideDisabled SDKWarmCircuitBreakerOverride = "disabled"
 	// SDKWarmOverrideAuto clears any override and restores automatic
-	// circuit-breaker control. spec: §15.1 line 801.
+	// circuit-breaker control. spec: §15.1.
 	SDKWarmOverrideAuto SDKWarmCircuitBreakerOverride = "auto"
 )
 
-// AllSDKWarmCircuitBreakerOverrides returns the closed §15.1 line 801
+// AllSDKWarmCircuitBreakerOverrides returns the closed §15.1
 // override vocabulary the admin endpoint accepts (the unset value is not
 // an accepted request value; it is the stored default).
 func AllSDKWarmCircuitBreakerOverrides() []SDKWarmCircuitBreakerOverride {
@@ -288,7 +288,7 @@ func (o SDKWarmCircuitBreakerOverride) IsValid() bool {
 // IsActive reports whether the pool has not been soft-deleted.
 func (p Pool) IsActive() bool { return p.DeletedAt.IsZero() }
 
-// Phase reports the §15.1 line 797 pool lifecycle phase the admin GET
+// Phase reports the §15.1 pool lifecycle phase the admin GET
 // surfaces: "draining" once DrainingSince is set, "active" otherwise.
 // Soft-deleted pools still report their drain phase; IsActive gates
 // deletion separately.
@@ -299,11 +299,11 @@ func (p Pool) Phase() string {
 	return PhaseActive
 }
 
-// IsDraining reports whether the pool has entered the §15.1 line 797
+// IsDraining reports whether the pool has entered the §15.1
 // draining phase and is therefore closed to new session admission.
 func (p Pool) IsDraining() bool { return !p.DrainingSince.IsZero() }
 
-// EstimatedDrainSeconds returns the §15.1 line 797 drain-completion
+// EstimatedDrainSeconds returns the §15.1 drain-completion
 // estimate for a draining pool given the longest active session age in
 // the pool (in seconds). The spec derives the estimate from the longest
 // active session age, capped at the pool's maxSessionAgeSeconds because
@@ -311,7 +311,7 @@ func (p Pool) IsDraining() bool { return !p.DrainingSince.IsZero() }
 // (maxSessionAgeSeconds == 0) returns the uncapped age. The value feeds
 // the Retry-After header on a POOL_DRAINING rejection; ages are whole
 // seconds so the ceil() the spec names is already satisfied. spec:
-// §15.1 line 797.
+// §15.1.
 func EstimatedDrainSeconds(p Pool, longestAgeSeconds int) int {
 	if longestAgeSeconds < 0 {
 		longestAgeSeconds = 0
@@ -322,8 +322,7 @@ func EstimatedDrainSeconds(p Pool, longestAgeSeconds int) int {
 	return longestAgeSeconds
 }
 
-// Pool lifecycle phases surfaced on the §15.1 admin GET. spec: §15.1
-// line 797.
+// Pool lifecycle phases surfaced on the §15.1 admin GET. spec: §15.1.
 const (
 	PhaseActive   = "active"
 	PhaseDraining = "draining"
@@ -445,7 +444,7 @@ func ValidateServiceConfig(p Pool) error {
 	return nil
 }
 
-// ErrURLModeDomainRequired is the §9.2 line 86 admission rejection
+// ErrURLModeDomainRequired is the §9.2 admission rejection
 // returned when a pool sets urlModeElicitation.enabled:true with an
 // empty or absent domainAllowlist. The admin handler maps it to the
 // 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED error code.
@@ -457,17 +456,16 @@ var ErrURLModeDomainRequired = errors.New("poolstore: urlModeElicitation.enabled
 // at the §17.6 bootstrap seed rather than at the first elicitation:
 //
 //   - urlModeElicitation.enabled:true requires a non-empty
-//     domainAllowlist (§9.2 line 86). A pool that enables agent-
+//     domainAllowlist (§9.2). A pool that enables agent-
 //     initiated url-mode elicitation without naming the permitted
 //     domains is rejected with ErrURLModeDomainRequired, which the
 //     admin handler surfaces as 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED.
 //
-//   - elicitationDepthPolicy, when set, must be one of the §9.2 line
-//     94-96 enum values (`allow_all`, `suppress_at_depth`, `block_all`).
-//     An empty value is permitted and resolves to the §9.2 line 92
+//   - elicitationDepthPolicy, when set, must be one of the §9.2 enum values (`allow_all`, `suppress_at_depth`, `block_all`).
+//     An empty value is permitted and resolves to the §9.2
 //     platform default at the dispatcher.
 //
-// spec: §9.2 lines 86, 90-98.
+// spec: §9.2.
 func ValidateElicitationPolicy(p Pool) error {
 	if err := p.URLModeElicitation.Validate(); err != nil {
 		return ErrURLModeDomainRequired
@@ -479,10 +477,10 @@ func ValidateElicitationPolicy(p Pool) error {
 }
 
 // ValidateSDKWarmConfig rejects a pool whose §6.1 SDK-warm
-// circuit-breaker override is outside the closed §15.1 line 801
+// circuit-breaker override is outside the closed §15.1
 // vocabulary, or whose `sdkWarm.demotionRateThreshold` is outside the
 // open-closed interval (0, 1]. The unset values pass (they are the stored
-// defaults). spec: §6.1 lines 48, 63-65, §15.1 line 801.
+// defaults). spec: §6.1, §15.1.
 func ValidateSDKWarmConfig(p Pool) error {
 	if !p.SDKWarmCircuitBreakerOverride.IsValid() {
 		return errors.New("poolstore: sdkWarm.circuitBreakerOverride is not a recognised §15.1 value (enabled, disabled, auto)")
@@ -635,7 +633,7 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	return nil
 }
 
-// ValidateCrossTenantReuseTier enforces the §5.2 line 396 T4 cross-tenant
+// ValidateCrossTenantReuseTier enforces the §5.2 T4 cross-tenant
 // reuse prohibition: a pool whose associated Runtime is configured with
 // workspaceTier: T4 may not set allowCrossTenantReuse, because T4
 // workloads require dedicated node pools for per-tenant key isolation
@@ -645,10 +643,9 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 // runtimeTier is the resolved workspace tier of the pool's runtime; the
 // caller looks it up (the pure poolstore record carries no runtime).
 // The check is a no-op when the pool does not request cross-tenant reuse
-// or the runtime is not T4. The error string is verbatim from §5.2 line
-// 396 so operators see the exact spec language.
+// or the runtime is not T4. The error string is verbatim from §5.2 so operators see the exact spec language.
 //
-// spec: §5.2 line 396 — "The pool controller additionally rejects
+// spec: §5.2 — "The pool controller additionally rejects
 // allowCrossTenantReuse: true on any pool whose associated Runtime is
 // configured with workspaceTier: T4".
 func ValidateCrossTenantReuseTier(p Pool, runtimeTier runtimestore.WorkspaceTier) error {
@@ -678,8 +675,8 @@ func (p Pool) RequestsCrossTenantReuse() bool {
 // runtime. The check runs at pool admission with the effective post-update
 // executionMode and sessionPolicy; preConnect reports the referenced
 // runtime's resolved capabilities.preConnect. A nil sessionPolicy resolves
-// to the §5.2 default maxConcurrentSessions of 1. spec: §5.2 line 430,
-// §6.1 lines 77-78.
+// to the §5.2 default maxConcurrentSessions of 1. spec: §5.2,
+// §6.1.
 func ValidatePreConnectExecutionMode(preConnect bool, mode runtimestore.ExecutionMode, sp *runtimestore.SessionPolicy) error {
 	if !preConnect {
 		return nil

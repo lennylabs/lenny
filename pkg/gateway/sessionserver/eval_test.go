@@ -130,8 +130,7 @@ func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTena
 	return srv.Handler()
 }
 
-// TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7
-// line 936: the eval endpoint is gated on session:eval:write. A role
+// TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7: the eval endpoint is gated on session:eval:write. A role
 // without it (tenant-viewer) is rejected with 403; a session-owning
 // role (user) is admitted. F-10.7.4.
 func TestEvalRequiresSessionEvalWritePermission_spec_10_7_936(t *testing.T) {
@@ -165,7 +164,7 @@ func TestEvalRateLimitPerSession_spec_10_7_938(t *testing.T) {
 		t.Fatalf("second eval: status %d, want 429", rr.Code)
 	}
 	if rr.Header().Get("Retry-After") == "" {
-		t.Error("429 response must carry a Retry-After header per §10.7 line 938")
+		t.Error("429 response must carry a Retry-After header per §10.7")
 	}
 	if !strings.Contains(rr.Body.String(), "RATE_LIMITED") {
 		t.Errorf("rejection should carry RATE_LIMITED: %s", rr.Body.String())
@@ -236,7 +235,7 @@ func TestEvalRateLimitFixedWindowBoundary_spec_10_7(t *testing.T) {
 	}
 }
 
-// TestEvalIdempotencyReplay_spec_10_7_940 pins §10.7 line 940: a repeat
+// TestEvalIdempotencyReplay_spec_10_7_940 pins §10.7: a repeat
 // submission carrying the same idempotency key for a session returns
 // 200 OK with the original record rather than inserting a duplicate; a
 // different key inserts a fresh record. F-10.7.4.
@@ -284,8 +283,7 @@ func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
 	}
 }
 
-// TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939 pins §10.7 line
-// 939: an idempotency key over 128 bytes is rejected with 400 before any
+// TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939 pins §10.7: an idempotency key over 128 bytes is rejected with 400 before any
 // store work. F-10.7.4.
 func TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939(t *testing.T) {
 	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
@@ -310,7 +308,7 @@ type capturedEvalScore struct {
 	score                       float64
 }
 
-// spec: §16.1 line 164 / §10.7 line 1128 — a submitted eval with a scalar
+// spec: §16.1 / §10.7 — a submitted eval with a scalar
 // score records one lenny_eval_score observation labelled by scorer and the
 // session's variant. A submission carrying only the per-dimension scores map
 // has no scalar observation and must not call the hook. F-10.7.13.
@@ -451,7 +449,7 @@ func TestEvalUnavailableWithoutStore(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 892-928 — the POST /v1/sessions/{id}/eval response
+// spec: §10.7 — the POST /v1/sessions/{id}/eval response
 // carries experimentId, variantId, delegationDepth, inherited, and
 // submittedAfterConclusion when the session has an experiment context,
 // so callers can round-trip the stored record without a follow-up GET.
@@ -495,8 +493,7 @@ func TestEvalResponseCarriesExperimentAttribution_spec_10_7(t *testing.T) {
 	}
 }
 
-// TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7 lines
-// 868/905: the eval endpoint copies the session's stamped
+// TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7: the eval endpoint copies the session's stamped
 // delegation_depth onto the EvalResult so the Results API
 // `?delegation_depth=` filter and `?breakdown_by=delegation_depth`
 // operate on truthful data. F-10.7.5.
@@ -538,8 +535,7 @@ func TestEvalRootSessionDelegationDepthZero_spec_10_7_905(t *testing.T) {
 	}
 }
 
-// TestEvalSubmittedAfterConclusion_spec_10_7_907 pins §10.7 lines
-// 907/937: an eval submitted against a session whose attributed
+// TestEvalSubmittedAfterConclusion_spec_10_7_907 pins §10.7: an eval submitted against a session whose attributed
 // experiment has concluded is stored with the original attribution and
 // flagged submitted_after_conclusion=true. F-10.7.5.
 func TestEvalSubmittedAfterConclusion_spec_10_7_907(t *testing.T) {

@@ -18,8 +18,7 @@
 // adapter that mishandled the extension as a rotation would send
 // credentials_rotated over the wire the peer observes.
 //
-// spec: §4.9 (line 1470, adapter ExtendCredentialLease re-arms the direct-mode
-// timer without rewriting material), §4.7 (runtime adapter lifecycle).
+// spec: §4.9, §4.7 (runtime adapter lifecycle).
 package tier10_conformance_test
 
 import (
@@ -135,7 +134,7 @@ func credentialFileBytes(t *testing.T, dir string) []byte {
 // credentials_rotated lifecycle event and leaving the credential-file contents
 // byte-for-byte unchanged.
 //
-// spec: §4.9 (line 1470, timer-only extension), §4.7 (runtime adapter)
+// spec: §4.9, §4.7 (runtime adapter)
 //
 // diagnosis: a conforming adapter mishandled a timer-only extension as a
 // material rotation — it re-delivered credential material (the file bytes

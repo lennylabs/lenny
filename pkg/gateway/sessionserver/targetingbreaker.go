@@ -34,14 +34,13 @@ type targetingBreakerEntry struct {
 	openUntil time.Time
 }
 
-// targetingBreaker is the §10.7 SCL-023 per-tenant OpenFeature targeting
-// circuit breaker (spec lines 835-844). It is consulted on the session-
+// targetingBreaker is the §10.7 SCL-023 per-tenant OpenFeature targeting circuit breaker. It is consulted on the session-
 // creation hot path: Allow reports whether an evaluation may proceed,
 // and Record feeds the outcome back so sustained provider failures open
 // the circuit and let the gateway skip the OpenFeature call entirely.
 //
 // State is keyed per (tenant_id, provider) to match the
-// lenny_experiment_targeting_circuit_open gauge labels (§16.1 line 64).
+// lenny_experiment_targeting_circuit_open gauge labels (§16.1).
 // It is in-memory and per-replica; a replica restart resets it, matching
 // the other per-replica breakers in the gateway.
 type targetingBreaker struct {
@@ -86,7 +85,7 @@ func (b *targetingBreaker) emit(tenantID, provider string, open bool) {
 // Allow reports whether an OpenFeature evaluation may proceed for the
 // (tenant, provider). It returns false while the breaker is open and the
 // open window has not elapsed; the caller then skips the OpenFeature
-// call entirely (§10.7 line 838). When the open window has elapsed the
+// call entirely (§10.7). When the open window has elapsed the
 // breaker transitions to half-open and admits a single probe.
 func (b *targetingBreaker) Allow(tenantID, provider string) bool {
 	if b == nil {
@@ -104,7 +103,7 @@ func (b *targetingBreaker) Allow(tenantID, provider string) bool {
 		}
 		return false
 	case breakerHalfOpen:
-		// A probe is already outstanding; admit only one (§10.7 line 839).
+		// A probe is already outstanding; admit only one (§10.7).
 		return false
 	default:
 		return true
@@ -115,7 +114,7 @@ func (b *targetingBreaker) Allow(tenantID, provider string) bool {
 // closes a half-open breaker and clears the failure run; a failure
 // re-arms the open window when a half-open probe fails, or extends the
 // consecutive-failure run and opens the breaker once it reaches the
-// threshold within the rolling window (§10.7 lines 837-839).
+// threshold within the rolling window (§10.7).
 func (b *targetingBreaker) Record(tenantID, provider string, p targetingBreakerParams, success bool) {
 	if b == nil {
 		return
@@ -137,7 +136,7 @@ func (b *targetingBreaker) Record(tenantID, provider string, p targetingBreakerP
 
 	switch e.phase {
 	case breakerHalfOpen:
-		// Probe failed: re-arm the 30s open window (§10.7 line 839).
+		// Probe failed: re-arm the 30s open window (§10.7).
 		e.phase = breakerOpen
 		e.openUntil = now.Add(p.openDur)
 		e.failTimes = nil

@@ -124,7 +124,7 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	if row.WorkspaceSnapshot == nil {
 		t.Fatal("no WorkspaceSnapshot recorded on the session row")
 	}
-	// spec: §10.1 line 130 — the ref is the gateway-minted checkpoint_id
+	// spec: §10.1 — the ref is the gateway-minted checkpoint_id
 	// (a UUID), not an adapter-supplied value.
 	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
 		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
@@ -135,23 +135,23 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	if !row.WorkspaceSnapshot.Timestamp.Equal(when) {
 		t.Errorf("snapshot timestamp = %v, want %v", row.WorkspaceSnapshot.Timestamp, when)
 	}
-	// spec: §4.4 line 258 — every successful checkpoint bumps
+	// spec: §4.4 — every successful checkpoint bumps
 	// last_successful_checkpoint_at on the session row, regardless of
 	// trigger. The freshness gauge keys off this field.
 	if !row.LastSuccessfulCheckpointAt.Equal(when) {
 		t.Errorf("LastSuccessfulCheckpointAt = %v, want %v", row.LastSuccessfulCheckpointAt, when)
 	}
-	// spec: §7.3 line 397 / §10.1 line 132 — the adapter-reported total
+	// spec: §7.3 / §10.1 — the adapter-reported total
 	// byte count from the CheckpointSummary frame flows into
 	// WorkspaceSnapshot.Bytes so the §10.1 preStop tiered-cap selection
-	// and §7.2 line 138 workspaceRecoveryFraction both have a non-NULL
+	// and §7.2 workspaceRecoveryFraction both have a non-NULL
 	// input. F-7.3.21.
 	if row.WorkspaceSnapshot.Bytes != 4096 {
 		t.Errorf("WorkspaceSnapshot.Bytes = %d, want 4096 (the CheckpointSummary total)", row.WorkspaceSnapshot.Bytes)
 	}
 }
 
-// spec: §4.4 line 258 — a failed adapter checkpoint must NOT bump
+// spec: §4.4 — a failed adapter checkpoint must NOT bump
 // last_successful_checkpoint_at; the freshness gauge would otherwise
 // report falsely-fresh sessions.
 func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
@@ -171,7 +171,7 @@ func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 132 — a CheckpointFailed frame terminates the stream
+// spec: §10.1 — a CheckpointFailed frame terminates the stream
 // and the checkpoint fails; the gateway records no WorkspaceSnapshot and
 // surfaces the adapter-reported reason.
 func TestCheckpointSurfacesACheckpointFailedFrame_spec_10_1(t *testing.T) {
@@ -198,7 +198,7 @@ func TestCheckpointSurfacesACheckpointFailedFrame_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — Seal counts as a successful checkpoint and
+// spec: §4.4 — Seal counts as a successful checkpoint and
 // MUST bump last_successful_checkpoint_at as a regular checkpoint
 // would. A sealed session whose seal-recorded timestamp is stale would
 // otherwise resurface as stale in the freshness gauge.
@@ -234,7 +234,7 @@ func TestCheckpointReturnsErrNoBindingForAnUncoordinatedSession(t *testing.T) {
 
 // TestSealNoOpsForAnUncoordinatedSession_spec_7_1 asserts that Seal, unlike
 // Checkpoint, returns nil for a session this replica holds no binding for:
-// such a session has no live workspace to export, so the §7.1 line 112 seal
+// such a session has no live workspace to export, so the §7.1 seal
 // retry path must not treat it as a transient export failure to retry.
 func TestSealNoOpsForAnUncoordinatedSession_spec_7_1(t *testing.T) {
 	cp := &checkpointer.Checkpointer{
@@ -288,7 +288,7 @@ func TestSweepCheckpointsEveryCoordinatedSession(t *testing.T) {
 	cp.Sweep(context.Background())
 
 	// Each coordinated session receives its own gateway-minted checkpoint
-	// id (§10.1 line 130), so the two refs are present and distinct.
+	// id (§10.1), so the two refs are present and distinct.
 	refs := map[string]string{}
 	for _, id := range []string{"s1", "s2"} {
 		row, err := store.Get(context.Background(), "acme", id)
@@ -353,7 +353,7 @@ func TestRunPeriodicallySweeps(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — periodicCheckpointIntervalSeconds default is 600 s.
+// spec: §4.4 — periodicCheckpointIntervalSeconds default is 600 s.
 // diagnosis: a zero Interval selects the spec-mandated default; the
 // previous defaultInterval of 5 minutes generated twice the steady-state
 // MinIO bandwidth and missed §17.8 capacity baselines.
@@ -368,7 +368,7 @@ func TestRunUsesTenMinuteDefaultIntervalWhenUnset(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — jitter spreads the first periodic checkpoint
+// spec: §4.4 — jitter spreads the first periodic checkpoint
 // across [interval, interval + interval × jitterFraction]; the same
 // session must receive the same jitter across restarts.
 func TestFirstCheckpointDelayIsStableAndBounded(t *testing.T) {
@@ -398,7 +398,7 @@ func TestFirstCheckpointDelayIsStableAndBounded(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — jitterFraction = 0 selects no jitter; every
+// spec: §4.4 — jitterFraction = 0 selects no jitter; every
 // session ticks at the same wall-clock second. Used by tests and by
 // dev-mode deployments.
 func TestFirstCheckpointDelayWithZeroJitterReturnsInterval(t *testing.T) {
@@ -408,7 +408,7 @@ func TestFirstCheckpointDelayWithZeroJitterReturnsInterval(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — jitterFraction range is [0.0, 1.0]; out-of-range
+// spec: §4.4 — jitterFraction range is [0.0, 1.0]; out-of-range
 // values are clamped at the boundary rather than rejected so an
 // operator typo cannot crash the loop.
 func TestFirstCheckpointDelayClampsOutOfRangeJitter(t *testing.T) {
@@ -426,7 +426,7 @@ func TestFirstCheckpointDelayClampsOutOfRangeJitter(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — different session IDs yield different first
+// spec: §4.4 — different session IDs yield different first
 // delays so a burst of sessions started in the same wall-clock second
 // does not align their next checkpoints.
 func TestFirstCheckpointDelayDiversifiesAcrossSessions(t *testing.T) {
@@ -441,7 +441,7 @@ func TestFirstCheckpointDelayDiversifiesAcrossSessions(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — empty session ID degrades to the no-jitter
+// spec: §4.4 — empty session ID degrades to the no-jitter
 // path; this protects callers that mis-pass an empty string.
 func TestFirstCheckpointDelayWithEmptySessionIDReturnsInterval(t *testing.T) {
 	got := checkpointer.FirstCheckpointDelay("", 600*time.Second, 0.2)
@@ -450,7 +450,7 @@ func TestFirstCheckpointDelayWithEmptySessionIDReturnsInterval(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 258 — zero or negative interval returns 0 (the loop
+// spec: §4.4 — zero or negative interval returns 0 (the loop
 // is effectively disabled, matching the test-mode contract).
 func TestFirstCheckpointDelayWithZeroIntervalReturnsZero(t *testing.T) {
 	if got := checkpointer.FirstCheckpointDelay("s1", 0, 0.2); got != 0 {
@@ -488,7 +488,7 @@ func TestSealRecordsASealedSnapshot(t *testing.T) {
 	if row.WorkspaceSnapshot.Source != sessionstore.WorkspaceSnapshotSealed {
 		t.Errorf("snapshot source = %q, want sealed", row.WorkspaceSnapshot.Source)
 	}
-	// spec: §10.1 line 130 — the ref is the gateway-minted checkpoint_id.
+	// spec: §10.1 — the ref is the gateway-minted checkpoint_id.
 	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
 		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
 	}
@@ -498,7 +498,7 @@ func TestSealRecordsASealedSnapshot(t *testing.T) {
 }
 
 // captureMetrics records every observed duration call so tests can
-// assert §4.4 line 254 emission.
+// assert §4.4 emission.
 type captureMetrics struct {
 	calls []durationCall
 }
@@ -514,7 +514,7 @@ func (c *captureMetrics) ObserveCheckpointDuration(pool, level, trigger string, 
 	c.calls = append(c.calls, durationCall{pool, level, trigger, seconds})
 }
 
-// spec: §4.4 line 254 — every checkpoint emits the duration histogram.
+// spec: §4.4 — every checkpoint emits the duration histogram.
 func TestCheckpointEmitsDurationHistogram(t *testing.T) {
 	registry := podsession.NewRegistry()
 	store := memstore.New()
@@ -542,7 +542,7 @@ func TestCheckpointEmitsDurationHistogram(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 254 — even a failed checkpoint emits the duration
+// spec: §4.4 — even a failed checkpoint emits the duration
 // histogram. The §16.5 CheckpointDurationHigh alert reads the P95,
 // which would otherwise miss slow-then-failing checkpoints.
 func TestFailedCheckpointStillObservesDuration(t *testing.T) {
@@ -564,7 +564,7 @@ func TestFailedCheckpointStillObservesDuration(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 254 — the lenny_checkpoint_duration_seconds trigger
+// spec: §4.4 — the lenny_checkpoint_duration_seconds trigger
 // label is sourced from the trigger the caller threads into the
 // snapshot, so a non-periodic trigger such as the gateway preStop
 // drain's checkpoint.TriggerEviction is stamped verbatim. The retired
@@ -595,8 +595,7 @@ func TestSnapshotStampsTheCallerSuppliedTrigger(t *testing.T) {
 	}
 }
 
-// fakeRetention captures Insert + Rotate so the test asserts §4.4
-// line 234 / §12.5 latest-2 wiring. rotateReturn is the set of rows Rotate
+// fakeRetention captures Insert + Rotate so the test asserts §4.4 / §12.5 latest-2 wiring. rotateReturn is the set of rows Rotate
 // reports as dropped past the latest-2 cap, so a test can drive the
 // rotation-side chunk release.
 type fakeRetention struct {
@@ -633,7 +632,7 @@ func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID, slotID st
 	return f.rotateReturn, nil
 }
 
-// spec: §4.4 line 234 / §12.5 — every successful checkpoint records
+// spec: §4.4 / §12.5 — every successful checkpoint records
 // to the retention catalog and runs Rotate to enforce latest-2.
 func TestCheckpointWritesRetentionCatalog(t *testing.T) {
 	registry := podsession.NewRegistry()
@@ -654,7 +653,7 @@ func TestCheckpointWritesRetentionCatalog(t *testing.T) {
 	}
 	ins := ret.inserts[0]
 	// The catalog row records the gateway-minted checkpoint id, the same
-	// ref recorded on the session's WorkspaceSnapshot (§10.1 line 130).
+	// ref recorded on the session's WorkspaceSnapshot (§10.1).
 	row, err := store.Get(context.Background(), "acme", "s1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -667,7 +666,7 @@ func TestCheckpointWritesRetentionCatalog(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 234 — a failed checkpoint must not record to the
+// spec: §4.4 — a failed checkpoint must not record to the
 // retention catalog (no ref to rotate against).
 func TestFailedCheckpointDoesNotRecordRetention(t *testing.T) {
 	registry := podsession.NewRegistry()
@@ -689,7 +688,7 @@ func TestFailedCheckpointDoesNotRecordRetention(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 313 — a session under legal hold is exempt from
+// spec: §12.5 — a session under legal hold is exempt from
 // the latest-2 rotation. The checkpoint is still catalogued (so the
 // §12.8 reconciler can see it) but Rotate is not run, so every
 // checkpoint is retained until the hold is lifted.
@@ -718,7 +717,7 @@ func TestLegalHoldSessionSkipsRotation(t *testing.T) {
 	}
 }
 
-// spec: §12.5 lines 313, 326 — in concurrent-workspace mode the
+// spec: §12.5 — in concurrent-workspace mode the
 // rotation operates on (session_id, slot_id) pairs. The bound slot id
 // flows into both the catalog Insert and the Rotate call.
 func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
@@ -741,7 +740,7 @@ func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
 	}
 }
 
-// spec: §12.5 GC rule 5 / line 348 — a checkpoint the latest-2 rotation
+// spec: §12.5 GC rule 5 — a checkpoint the latest-2 rotation
 // drops must have its chunk rows released (issuing the §12.5 rule 4 Redis
 // decrement) and its objects deleted, so a long-running session's
 // storage_bytes_used does not climb monotonically to STORAGE_QUOTA_EXCEEDED.
@@ -793,7 +792,7 @@ func TestRotatedOutCheckpointReleasesItsChunkRowsAndObjects(t *testing.T) {
 	}
 }
 
-// spec: §12.5 GC rule 6 / §4.4 line 248 — a completed (partial = false)
+// spec: §12.5 GC rule 6 / §4.4 — a completed (partial = false)
 // checkpoint the latest-2 rotation drops has no §12.5 backstop sweep to retry
 // a failed chunk delete (that sweep's predicate carries partial = true and
 // never re-selects a finalised checkpoint), so a failed DeleteObject on the
@@ -875,7 +874,7 @@ func TestRotationWithoutReleaseSeamsDoesNotFail(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 234 — a catalog Insert failure skips Rotate so the latest-2
+// spec: §4.4 — a catalog Insert failure skips Rotate so the latest-2
 // cap is not enforced against an unwritten row; the next successful checkpoint
 // rotates the catalog. The checkpoint itself still succeeds (the retention
 // write is best-effort).
@@ -971,7 +970,7 @@ func TestReleaseRotatedCheckpointToleratesManifestReadError(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 248 — a failed object delete on the rotation path with no
+// spec: §4.4 — a failed object delete on the rotation path with no
 // DriverMetrics wired skips the orphaned-object emission without panicking;
 // the manifest row still stays active for observability.
 func TestRotatedOutCheckpointOrphanWithoutMetricsIsSilent(t *testing.T) {
@@ -1003,7 +1002,7 @@ func TestRotatedOutCheckpointOrphanWithoutMetricsIsSilent(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 341 — the rotation-side release stamps each soft-deleted
+// spec: §12.5 — the rotation-side release stamps each soft-deleted
 // chunk row with the configured gc.tombstoneRetentionSeconds window rather
 // than the default.
 func TestRotationReleaseUsesConfiguredTombstoneRetention(t *testing.T) {

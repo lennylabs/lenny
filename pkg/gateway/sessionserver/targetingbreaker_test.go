@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant OpenFeature
+// spec: §10.7 — the per-tenant OpenFeature
 // targeting circuit breaker.
 
 type gaugeEvent struct {
@@ -32,7 +32,7 @@ func newTestBreaker() (*targetingBreaker, *fakeClock, *[]gaugeEvent) {
 
 var testParams = targetingBreakerParams{threshold: 5, window: 10 * time.Second, openDur: 30 * time.Second}
 
-// spec: §10.7 line 837 — 5 consecutive failures within the window open
+// spec: §10.7 — 5 consecutive failures within the window open
 // the circuit; fewer do not.
 func TestTargetingBreakerOpensAtThreshold(t *testing.T) {
 	b, clock, gauge := newTestBreaker()
@@ -55,7 +55,7 @@ func TestTargetingBreakerOpensAtThreshold(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 837 — failures spread beyond the rolling window do not
+// spec: §10.7 — failures spread beyond the rolling window do not
 // open the breaker (they age out of the window).
 func TestTargetingBreakerWindowAgesOutFailures(t *testing.T) {
 	b, clock, _ := newTestBreaker()
@@ -68,7 +68,7 @@ func TestTargetingBreakerWindowAgesOutFailures(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 837 — a success resets the consecutive-failure run.
+// spec: §10.7 — a success resets the consecutive-failure run.
 func TestTargetingBreakerSuccessResetsRun(t *testing.T) {
 	b, _, _ := newTestBreaker()
 	for i := 0; i < 4; i++ {
@@ -83,7 +83,7 @@ func TestTargetingBreakerSuccessResetsRun(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 838-839 — while open the breaker denies calls until
+// spec: §10.7 — while open the breaker denies calls until
 // the open window elapses, then admits a single half-open probe; a probe
 // success closes the breaker.
 func TestTargetingBreakerHalfOpenProbeSuccessCloses(t *testing.T) {
@@ -116,7 +116,7 @@ func TestTargetingBreakerHalfOpenProbeSuccessCloses(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 839 — a failed half-open probe re-arms the open window.
+// spec: §10.7 — a failed half-open probe re-arms the open window.
 func TestTargetingBreakerHalfOpenProbeFailureReArms(t *testing.T) {
 	b, clock, gauge := newTestBreaker()
 	for i := 0; i < 5; i++ {

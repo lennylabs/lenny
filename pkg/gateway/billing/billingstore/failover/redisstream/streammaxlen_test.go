@@ -14,7 +14,7 @@ import (
 
 // TestStreamMaxLenForTier verifies the §17.8.2 per-tier
 // billingRedisStreamMaxLen default: 72,000 at Tier 3, 50,000 otherwise.
-// spec: spec/17_deployment-topology.md lines 1203, 1205.
+// spec: §17.8.2.
 func TestStreamMaxLenForTier_spec_17_8_2_1203(t *testing.T) {
 	cases := map[string]int64{
 		"tier1":   DefaultStreamMaxLen,
@@ -36,7 +36,7 @@ func TestStreamMaxLenForTier_spec_17_8_2_1203(t *testing.T) {
 // TestPublishHonorsConfiguredStreamMaxLen confirms the StreamMaxLen option
 // flows into the XADD MAXLEN trim: publishing more events than the cap
 // leaves the per-tenant stream trimmed to the configured length. spec:
-// spec/17_deployment-topology.md line 1203; §11.2.1 MAXLEN ~billingRedisStreamMaxLen.
+// §17.8.2; §11.2.1 MAXLEN ~billingRedisStreamMaxLen.
 func TestPublishHonorsConfiguredStreamMaxLen_spec_17_8_2_1203(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

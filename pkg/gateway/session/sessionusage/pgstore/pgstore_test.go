@@ -31,7 +31,7 @@ const (
 // ON DELETE CASCADE erasure that follows a session row. It downloads the
 // PostgreSQL bundle, so it is skipped under -short.
 //
-// spec: §8.8 lines 897-917; §4.9 line 1468; §12.3 (RLS isolation).
+// spec: §8.8; §4.9; §12.3 (RLS isolation).
 func TestSessionUsagePgStore_spec_8_8_897(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 )
 
-// spec: §12.6 lines 631-634 — the v1 StaticPoolGenerator wraps the §4.9
+// spec: §12.6 — the v1 StaticPoolGenerator wraps the §4.9
 // Assigner: GenerateCredential mints a lease from the named pool and
 // returns it as a *CredentialLease.
 func TestStaticPoolGenerator_GenerateCredential_spec_12_6_631(t *testing.T) {

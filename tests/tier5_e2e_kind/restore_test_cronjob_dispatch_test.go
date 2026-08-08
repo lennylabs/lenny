@@ -55,9 +55,7 @@ const restoreTestDispatchObjectKey = "seed/config-only.tar.gz"
 // "latest-full", so the row is typed "full".
 const restoreTestDispatchBackupID = "t5-restore-test-dispatch-seed"
 
-// spec: §25.11 lines 4128-4133 ("Test Restore ... selects the latest
-// backup matching the selector ... restores it into the scratch
-// Postgres ... and records the outcome") and spec/25_agent-operability.md:4260
+// spec: §25.11 and §25.11
 // ("POST /v1/admin/backups/{id}/verify?mode=test-restore runs a Job
 // that actually restores the backup to a temporary namespace ... and
 // reports the outcome").
@@ -316,8 +314,7 @@ func waitForPodTerminalPhase(t *testing.T, c *kind.Cluster, pod string) string {
 	}
 }
 
-// spec: §25.11 lines 4098, 4254-4256 ("emits lenny_restore_test_artifact_success_rate ...
-// and lenny_restore_test_artifact_missing_total"); the restoretest.Store
+// spec: §25.11; the restoretest.Store
 // doc comment (pkg/ops/backup/restoretest/restoretest.go) — "the leader
 // lenny-ops replica reads the latest Result on each scrape and
 // re-exposes it as the §25.11 / §16.1 restore-test Prometheus series."

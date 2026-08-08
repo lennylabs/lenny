@@ -11,7 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// spec: §27.3.1 line 98 — "TestPlaygroundSessionRevocationCrossReplica
+// spec: §27.3.1 — "TestPlaygroundSessionRevocationCrossReplica
 // MUST assert that a logout on replica A invalidates a subsequent
 // request carrying the same cookie or bearer on replica B, both before
 // and after the pub/sub message is delivered (the authoritative Redis
@@ -75,7 +75,7 @@ func TestPlaygroundSessionRevocationCrossReplica_spec_27_3_1_98(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 line 98 / §12.4 — the Redis-backed store extends the
+// spec: §27.3.1 / §12.4 — the Redis-backed store extends the
 // tenant-key-isolation guarantee to the pg:sess:* and pg:revoked:* key
 // prefixes: a record or revocation marker written for tenant A must not
 // be visible to a request scoped to tenant B reusing the same

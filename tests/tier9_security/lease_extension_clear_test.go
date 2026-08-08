@@ -3,15 +3,14 @@
 //go:build security
 
 // Tier-9 security test for the §10.2 own-tenant confinement on the
-// §15.1 line 868 admin extension-denial clear (proposal 0019 finding
+// §15.1 admin extension-denial clear (proposal 0019 finding
 // ADM-4). The endpoint
 //
 //	DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial
 //
-// is admitted to both platform-admin and tenant-admin by the §15.1 line
-// 869 RBAC grant. The tree is keyed by an opaque session UUID, so the
+// is admitted to both platform-admin and tenant-admin by the §15.1 RBAC grant. The tree is keyed by an opaque session UUID, so the
 // role gate alone lets a tenant-admin of one tenant clear another
-// tenant's durable extension-denial row. §10.2 line 261 states a
+// tenant's durable extension-denial row. §10.2 states a
 // tenant-admin cannot access another tenant's data, so the handler must
 // resolve the tree's owner tenant and reject a non-platform-admin caller
 // whose tenant differs before the durable clear runs.
@@ -23,9 +22,7 @@
 // Bearer-JWT caller exercises; the cross-tenant boundary is the property
 // under test, independent of the JWT-parsing front door.
 //
-// spec: §10.2 (tenant-admin cannot access other tenants' data, line
-// 261), §15.1 (extension-denial requires platform-admin or tenant-admin,
-// line 869).
+// spec: §10.2, §15.1.
 
 package tier9_security_test
 
@@ -107,7 +104,7 @@ func newClearRouter(denials admin.LeaseDenialClearer, resolver leasecontrol.Tena
 // diagnosis: the §15.1 admin extension-denial clear leaks across
 // tenants. A tenant-admin of acme cleared a tree owned by globex given
 // the opaque root session UUID, because the durable clear ran before any
-// caller-tenant check. A failure here means the §10.2 line 261 own-tenant
+// caller-tenant check. A failure here means the §10.2 own-tenant
 // confinement is missing or unwired, and any tenant-admin can wipe
 // another tenant's extension-denial row. The owning tenant-admin must
 // still succeed; the confinement narrows to the foreign caller only.

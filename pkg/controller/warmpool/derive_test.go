@@ -110,8 +110,7 @@ func TestDerivePodStatesNilTemplate(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2956 (warmPoolStuckReplenish: zero in-flight warm-up
-// claims). The PoolDrained condition is True in exactly the zero-in-flight
+// spec: §25.6. The PoolDrained condition is True in exactly the zero-in-flight
 // state (positive minWarm, no idle, no warming pods) and False otherwise, so
 // the doctor's dwell gate keys off a condition whose Status flips on entry.
 func TestPoolDrainedConditionDerivation(t *testing.T) {
@@ -157,7 +156,7 @@ func TestPoolDrainedConditionDerivation(t *testing.T) {
 // would fire the instant the pool drains; keying it off PoolDrained (which
 // flips False→True on entry) holds the >5m guard the spec mandates.
 //
-// spec: §25.6 line 2956 (zero in-flight warm-up claims for > 5m).
+// spec: §25.6.
 func TestPoolDrainedTracksEntryTransition(t *testing.T) {
 	available := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
 	drainedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC) // 3h later

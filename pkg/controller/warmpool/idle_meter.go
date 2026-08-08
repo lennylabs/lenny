@@ -41,7 +41,7 @@ var idlePodMinutes = func() *prometheus.CounterVec {
 
 // idlePods is the §16.1 lenny_warmpool_idle_pods gauge: instantaneous
 // count of warm pods in the idle (claimable) state, labeled by pool.
-// spec: §17.8.2 line 1101 "First-week monitoring workflow" instructs
+// spec: §17.8.2 instructs
 // operators to read this metric as a gauge ("if consistently near zero,
 // minWarm is too low"). Multiple §16.5 alerting rules also join against
 // it (WarmPoolExhausted, WarmPoolLow, PodClaimQueueBacklog). The
@@ -62,7 +62,7 @@ var idlePods = func() *prometheus.GaugeVec {
 // setIdlePods publishes the pool's current idle-pod count to the §16.1
 // lenny_warmpool_idle_pods gauge. Called once per reconcile so a
 // controller restart re-establishes the series.
-// spec: §17.8.2 line 1101.
+// spec: §17.8.2.
 func setIdlePods(pool string, count int) {
 	idlePods.WithLabelValues(pool).Set(float64(count))
 }

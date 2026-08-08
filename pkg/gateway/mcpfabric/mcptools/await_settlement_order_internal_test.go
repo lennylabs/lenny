@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.10 line 1062 — when the resumed parent re-issues
+// spec: §8.10 — when the resumed parent re-issues
 // lenny/await_children the gateway streams settled child results "in
 // original-settlement order". collectChildResults must therefore order
 // the `all` / `settled` result set by each child's settle witness, not

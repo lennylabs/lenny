@@ -31,7 +31,7 @@ type SessionRecord struct {
 	// envelope so a downstream reader does not have to infer it.
 	Origin string `json:"origin"`
 
-	// Labels is the §27.2 line 41 playground.sessionLabels map
+	// Labels is the §27.2 playground.sessionLabels map
 	// applied to the session record for audit/accounting consumers.
 	// Config.EffectiveLabels guarantees the load-bearing origin label
 	// is present; operators can add labels via the chart value.
@@ -45,7 +45,7 @@ type SessionRecord struct {
 	// per-session heartbeat). The §27.6 idle-timeout sweep reclaims a
 	// record whose LastActivityAt predates the idle reclamation window. A
 	// zero value (a legacy record written before this field existed)
-	// falls back to IssuedAt. spec: §27.6 line 201.
+	// falls back to IssuedAt. spec: §27.6.
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
 
 	// CSRFToken is the §27.3.1 anti-forgery token bound to the record.
@@ -155,8 +155,7 @@ type SessionStore interface {
 	// (Handler.RevokeSessionsForUser) reads it to revoke every playground
 	// session the user established. The ids are a best-effort lookup
 	// hint: the caller revalidates each against GetSession, so a stale id
-	// (a session already revoked or expired) is harmless. spec: §27.3.1
-	// line 148, §11.4.
+	// (a session already revoked or expired) is harmless. spec: §27.3.1, §11.4.
 	SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error)
 
 	// IdleSessions returns a reference to every playground session record
@@ -165,18 +164,15 @@ type SessionStore interface {
 	// falls back to its IssuedAt. An already-invalidated record is skipped
 	// (the §11.4 path revoked it). The scan is best-effort: a record that
 	// expires or is revoked between the scan and the sweep's RevokeSession
-	// is harmless because revocation is idempotent. spec: §27.6 line 201.
+	// is harmless because revocation is idempotent. spec: §27.6.
 	IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error)
 
 	// TenantForSession resolves the tenant that owns an opaque session
-	// id through the §27.3.1 fan-in index, so the
-	// lenny_playground_session cookie carries only the opaque session id
-	// (line 81) and never the tenant. ok is false when no index entry
+	// id through the §27.3.1 fan-in index, so the lenny_playground_session cookie carries only the opaque session id and never the tenant. ok is false when no index entry
 	// exists (the cookie expired or was never issued). The error is
 	// non-nil only when the backing store is unreachable, so a caller on
 	// the auth path fails closed. The index is written by PutSession and
-	// removed by RevokeSession. spec: §27.3.1 line 81 (the cookie carries
-	// only the opaque session id).
+	// removed by RevokeSession. spec: §27.3.1.
 	TenantForSession(ctx context.Context, id string) (tenant string, ok bool, err error)
 }
 
@@ -195,12 +191,12 @@ func revokedKey(tenant, jti string) string {
 // sessTenantIndexKey is the §27.3.1 fan-in index that recovers the
 // tenant owning an opaque session id. It lets the
 // lenny_playground_session cookie carry only the opaque session id
-// (§27.3.1 line 81) rather than embedding the tenant in the cookie
+// (§27.3.1) rather than embedding the tenant in the cookie
 // value. The session id is a 256-bit opaque random (newOpaqueID), so
 // this platform-scoped lookup discloses no tenant data on its own:
 // resolving the index requires already possessing the opaque id, which
 // is the cookie credential. The entry is written under the session TTL
-// by PutSession and deleted by RevokeSession. spec: §27.3.1 line 81.
+// by PutSession and deleted by RevokeSession. spec: §27.3.1.
 func sessTenantIndexKey(id string) string {
 	return "pg:sess-tenant:" + id
 }
@@ -209,7 +205,7 @@ func sessTenantIndexKey(id string) string {
 // ids a user holds. The §11.4 user-invalidation fan-out reads it to
 // revoke every playground session the user established. It carries the
 // §12.4 per-tenant prefix so a cross-tenant read is impossible. spec:
-// §27.3.1 line 148, §27.6 line 204.
+// §27.3.1, §27.6.
 func userIndexKey(tenant, userID string) string {
 	return "t:" + tenant + ":pg:user:" + userID
 }
@@ -226,8 +222,8 @@ func revocationChannel(tenant string) string {
 // channel. A single PSUBSCRIBE on this pattern subscribes a gateway
 // replica to all current and future tenants, so a tenant provisioned
 // after gateway start still warms the replica's negative cache without
-// a per-tenant subscription enrolment step. spec: §27.6 line 204 /
-// §27.3.1 line 96 — "Every gateway replica subscribes to this channel".
+// a per-tenant subscription enrolment step. spec: §27.6 /
+// §27.3.1 — "Every gateway replica subscribes to this channel".
 // F-27.6.7.
 const revocationChannelPattern = "t:*:pg:revocations"
 
@@ -255,7 +251,7 @@ func tenantFromRevocationChannel(channel string) (string, bool) {
 // propagation latency, and the publish timestamp lets a peer compute
 // the end-to-end §27.8 propagation sample on receipt. The jti is placed
 // last so a SplitN keeps it intact even though §10.2 jti material never
-// contains the delimiter. spec: §27.8 line 241. F-27.6.6.
+// contains the delimiter. spec: §27.8. F-27.6.6.
 func encodeRevocationMsg(originReplicaID string, publishNano int64, jti string) string {
 	return originReplicaID + "|" + strconv.FormatInt(publishNano, 10) + "|" + jti
 }
@@ -468,7 +464,7 @@ type RedisSessionStore struct {
 	// subscriber including the originating replica, so the subscribe
 	// loop compares this id against the message origin to record the
 	// §27.8 propagation sample only for messages a *peer* published.
-	// spec: §27.8 line 241. F-27.6.6.
+	// spec: §27.8. F-27.6.6.
 	replicaID string
 
 	// propObserver, when set, receives the §27.8
@@ -502,7 +498,7 @@ func NewRedisSessionStore(client redis.UniversalClient) *RedisSessionStore {
 // subscribe loop and returns s for chaining. The gateway calls it so a
 // peer-observed revocation records a lenny_playground_session_revocation_propagation_seconds
 // sample. revocationPropagation is itself nil-safe, so WithMetrics(nil)
-// leaves sampling disabled. spec: §27.8 line 241. F-27.6.6.
+// leaves sampling disabled. spec: §27.8. F-27.6.6.
 func (s *RedisSessionStore) WithMetrics(m *Metrics) *RedisSessionStore {
 	if m == nil {
 		return s
@@ -659,7 +655,7 @@ const idleSessionScanPattern = "t:*:pg:sess:*"
 // record whose JSON cannot be parsed is skipped rather than failing the
 // whole sweep, so one corrupt entry does not strand the rest. The SCAN is
 // O(records) and runs on the sweep cadence (minutes), well outside the
-// per-request hot path. spec: §27.6 line 201.
+// per-request hot path. spec: §27.6.
 func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error) {
 	const scanBatch = 256
 	var (
@@ -706,7 +702,7 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 // a §27.8 {outcome="resubscribe"} sample. A nil client subscribes to
 // nothing and returns when ctx is cancelled.
 //
-// spec: §27.6 line 204 / §27.3.1 line 96 — every replica subscribes and
+// spec: §27.6 / §27.3.1 — every replica subscribes and
 // a dropped subscription re-subscribes and emits the resubscribe
 // outcome. F-27.6.6, F-27.6.7.
 func (s *RedisSessionStore) SubscribeAllRevocations(ctx context.Context) {
@@ -767,7 +763,7 @@ func (s *RedisSessionStore) drainRevocations(ctx context.Context, ch <-chan *red
 // timestamp, records the §27.8 end-to-end propagation latency under the
 // pubsub_delivered outcome. A message this replica published itself
 // warms the cache but is not sampled (it is not a cross-replica
-// observation). spec: §27.8 line 241. F-27.6.6.
+// observation). spec: §27.8. F-27.6.6.
 func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
 	tenant, ok := tenantFromRevocationChannel(channel)
 	if !ok {

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
-// spec: §9.1 lines 14-31 — when the controller is configured with the
+// spec: §9.1 — when the controller is configured with the
 // gateway GatewayControl address, the adapter container binds the
 // platform MCP socket and forwards a type:agent runtime's platform tool
 // calls to that gateway. F-9.1.1.
@@ -43,7 +43,7 @@ func TestBuildOmitsPlatformMCPWhenGatewayUnset_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 lines 14-31 — in the §4.7 embedded model the runtime process
+// spec: §9.1 — in the §4.7 embedded model the runtime process
 // is the adapter, so the platform MCP flags render onto the single
 // `runtime` container when the controller is configured with the gateway
 // address. The embedded main accepts the same flags as the sidecar

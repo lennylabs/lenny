@@ -104,13 +104,13 @@ type IssueRequest struct {
 
 // Issue establishes an impersonation session. It writes
 // admin.impersonation_started FIRST and mints the bearer only after the
-// audit row commits (§16.7 line 680: audit must be durable before any
+// audit row commits (§16.7: audit must be durable before any
 // externally observable side effect). When the audit write fails closed
 // because the target tenant's residency region is unresolvable (the
 // §11.7 CMP-058 gate), the error is returned and NO session is
 // established and NO bearer is minted.
 //
-// spec: §13.3 line 585; §16.7 line 680; §11.7 lines 430-433.
+// spec: §13.3; §16.7; §11.7.
 func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, error) {
 	if req.AdminSub == "" || req.TargetTenantID == "" || req.TargetUserID == "" {
 		return Ticket{}, "", ErrMissingField
@@ -227,7 +227,7 @@ func (s *Service) ListActive(ctx context.Context) ([]Ticket, error) {
 	return s.store.ListActive(ctx)
 }
 
-// startedPayload renders the §16.7 line 680 admin.impersonation_started
+// startedPayload renders the §16.7 admin.impersonation_started
 // canonical payload. target_tenant_id is a top-level field so the §11.7
 // CMP-058 residency gate routes the write to the target's regional
 // platform-Postgres.

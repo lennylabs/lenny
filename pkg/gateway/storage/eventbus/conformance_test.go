@@ -46,7 +46,7 @@ func (s *recordingSender) channels() []string {
 	return out
 }
 
-// spec: §12.6 lines 658-662 (F-12.6.10)
+// spec: §12.6
 // diagnosis: §12.6 defines EventBus as an interface with Publish and
 // Subscribe so a Tier-4 swap to NATS/Kafka is a configuration change with
 // no caller edits. RedisEventBus must satisfy the interface and be usable
@@ -67,7 +67,7 @@ func TestRedisEventBusSatisfiesEventBusInterface_spec_12_6_658(t *testing.T) {
 	}
 }
 
-// spec: §12.6 lines 411-414 (F-12.6.11)
+// spec: §12.6
 // diagnosis: §12.6 declares Subscription as an interface whose detach
 // method is Unsubscribe() error. The returned handle must satisfy it and
 // Unsubscribe must be safe to call more than once (idempotent) without
@@ -95,7 +95,7 @@ func TestSubscriptionUnsubscribeIsIdempotent_spec_12_6_411(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 709 (F-12.6.17)
+// spec: §12.6
 // diagnosis: §12.6 observability contract requires every EventBus to emit
 // lenny_event_bus_publish_duration_seconds. A successful Publish must
 // record exactly one duration sample equal to the elapsed publish time.
@@ -122,7 +122,7 @@ func TestPublishRecordsDurationHistogram_spec_12_6_709(t *testing.T) {
 	}
 }
 
-// spec: §12.6 lines 369-373, 705 (F-12.6.16)
+// spec: §12.6
 // diagnosis: §12.6 EventBus.Publish/Subscribe take a typed TenantID and
 // the channel name is tenant-prefixed, so isolation holds at the interface
 // boundary. ChannelName must build t:{tenant}:evt:{topic} and a missing
@@ -140,7 +140,7 @@ func TestPublishTypedTenantIDChannelIsolation_spec_12_6_705(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 683 (F-12.6.12)
+// spec: §12.6
 // diagnosis: when Publish fails after the durable commit (backend
 // unavailable), §12.6 requires the serialized envelope be appended to the
 // bounded in-memory replay buffer, the drop counter incremented, and the
@@ -168,7 +168,7 @@ func TestReplayBufferBuffersOnBackendFailure_spec_12_6_683(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 683 (F-12.6.12)
+// spec: §12.6
 // diagnosis: §12.6 says the replay buffer drains in FIFO order when the
 // backend recovers (the next successful publish). Envelopes buffered during
 // the outage must be re-published oldest-first after the recovering event.
@@ -211,7 +211,7 @@ func TestReplayBufferDrainsFIFOOnRecovery_spec_12_6_683(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 683 (F-12.6.12)
+// spec: §12.6
 // diagnosis: the replay buffer is bounded with oldest-first eviction
 // (default 10k). When it overflows, the oldest envelope is dropped and the
 // utilization gauge reports 1.0; a later recovery drains only the retained
@@ -249,7 +249,7 @@ func TestReplayBufferOldestFirstEviction_spec_12_6_683(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 683 (F-12.6.12)
+// spec: §12.6
 // diagnosis: a serialization failure is not retryable, so it must NOT be
 // appended to the replay buffer (re-publishing the same bytes cannot
 // succeed). It is recorded as a serialization_failed drop and returned.

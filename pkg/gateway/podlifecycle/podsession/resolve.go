@@ -42,14 +42,13 @@ var ErrPoolNotSatisfiable = errors.New("podsession: the requested pool is not ba
 // WarmPoolController sets True while a pool with a positive minWarm has
 // no idle pods and at least one pod still warming. The gateway reads it
 // to answer session creation with a 503 during the bootstrap window.
-// spec: §5.2 line 594 ("PoolWarmingUp condition").
+// spec: §5.2.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
 // PoolWarmingError reports that the resolved pool is in the §5.2
 // PoolWarmingUp state: it has no idle pods yet because it is still
-// bootstrapping. The session-creation handler maps it to the §5.2
-// lines 602-625 `503 RUNTIME_UNAVAILABLE` "Pool Not Ready" response.
-// spec: §5.2 lines 602-625.
+// bootstrapping. The session-creation handler maps it to the §5.2 "Pool Not Ready" response.
+// spec: §5.2.
 type PoolWarmingError struct {
 	// Pool is the warming pool's name (its SandboxWarmPool name).
 	Pool string
@@ -139,10 +138,10 @@ type PoolMatch struct {
 	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod hard workspace
 	// size limit declared on the SandboxTemplate. Zero leaves the cap
 	// unset (the kubelet emptyDir guard remains the backstop). The
-	// resume path forwards it to the adapter for the §7.3 line 397
+	// resume path forwards it to the adapter for the §7.3
 	// pre-extraction symmetric size check. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// MaxPodUptimeSeconds is the §6.2 concurrent-workspace
 	// pod-uptime retirement cap copied from the SandboxTemplate's
 	// sessionPolicy.recycle.maxPodUptimeSeconds. Zero leaves uptime retirement off. The
 	// slot-claim path drains an over-uptime pod before its next slot
@@ -164,7 +163,7 @@ type PoolMatch struct {
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. It is copied from the SandboxTemplate's
 	// checkpointGrantWindow field. Nil leaves the driver on the
-	// deployment-wide default. spec: §10.1 line 131 chunk-grant window;
+	// deployment-wide default. spec: §10.1 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int32
 }
@@ -211,7 +210,7 @@ type PoolPolicyMirror struct {
 	MaxQueueWaitSeconds int
 	// CheckpointGrantWindow is the §5.2 per-pool checkpointGrantWindow
 	// override read from the poolstore mirror. Nil leaves the checkpoint
-	// driver on the deployment-wide default. spec: §10.1 line 131; §5.2
+	// driver on the deployment-wide default. spec: §10.1; §5.2
 	// (per-pool override of the deployment-wide default).
 	CheckpointGrantWindow *int32
 }
@@ -316,13 +315,13 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 			m.Recycle = true
 			m.MicrovmScrubMode = sp.Recycle.ScrubProfile
 		}
-		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
+		// spec: §4.4 / §10.1 — copy the per-pod hard
 		// workspace size cap so the resume path can pass it to the adapter
-		// for the §7.3 line 397 symmetric pre-extraction check. F-7.3.26.
+		// for the §7.3 symmetric pre-extraction check. F-7.3.26.
 		if tmpl.Spec.WorkspaceSizeLimitBytes != nil {
 			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
-		// spec: §10.1 line 131 / §5.2 — copy the per-pool
+		// spec: §10.1 / §5.2 — copy the per-pool
 		// checkpointGrantWindow override from the SandboxTemplate so the
 		// checkpoint driver can prefer it over the deployment-wide default.
 		// foldPoolPolicy lets a poolstore mirror row override it further.
@@ -394,7 +393,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	if mirror.MaxConcurrent > 0 {
 		m.MaxConcurrent = mirror.MaxConcurrent
 	}
-	// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+	// spec: §10.1 / §5.2 — a poolstore mirror row that carries a
 	// checkpointGrantWindow override wins over the CRD-derived value; a
 	// mirror without the override leaves the CRD value in place.
 	if mirror.CheckpointGrantWindow != nil {
@@ -405,7 +404,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 
 // PoolStatusLookup reads the live §5.2 bootstrap status of a pool from
 // its Kubernetes CRD pair. The §15.1 admin pool GET handler consults it
-// to surface `poolCondition` and `idlePodCount` (§5.2 line 629) without
+// to surface `poolCondition` and `idlePodCount` (§5.2) without
 // requiring operators to inspect the CR status directly. The pool's
 // SandboxWarmPool and SandboxTemplate share the pool name (the
 // PoolScalingController names both after the pool, §4.6.2).
@@ -423,7 +422,7 @@ type PoolStatusLookup struct {
 // when the pool has no SandboxWarmPool yet (defined in Postgres but not
 // reconciled into a CRD), so the caller omits the live-status fields
 // rather than reporting a misleading zero.
-// spec: §5.2 line 629 ("Operator visibility").
+// spec: §5.2.
 func (l PoolStatusLookup) PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error) {
 	var pool lennyv1.SandboxWarmPool
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &pool); e != nil {
@@ -470,7 +469,7 @@ func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName stri
 	return float64(pool.Status.BootstrapHoursOfData), pool.Status.ScalingMode, true, nil
 }
 
-// CRDGeneration returns the §4.6.2 line 558 pool_config_generation the
+// CRDGeneration returns the §4.6.2 pool_config_generation the
 // PoolScalingController stamped on the pool's SandboxTemplate annotation,
 // the line-560 last-reconciled instant, and ok = true when the
 // SandboxTemplate exists. It satisfies the admin
@@ -481,7 +480,7 @@ func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName stri
 // Postgres but not reconciled into a CRD), so the handler reports the
 // pending state. The PoolScalingController names both CRDs after the pool
 // (§4.6.2), so the SandboxTemplate is looked up by the pool name.
-// spec: spec/04_system-components.md lines 558-560.
+// spec: §4.6.2.
 func (l PoolStatusLookup) CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error) {
 	var tmpl lennyv1.SandboxTemplate
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &tmpl); e != nil {

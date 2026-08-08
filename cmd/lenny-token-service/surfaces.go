@@ -62,7 +62,7 @@ func (w *tokenServiceWiring) buildMetricsSurface() {
 // development path; a production deployment swaps in Postgres-backed
 // credleasestore/pgstore and a shared credential cache.
 //
-// spec: §4.3 / §12.2.4, §4.9 line 1212, §4.3 line 195, §4.3 line 205.
+// spec: §4.3 / §12.2.4, §4.9, §4.3, §4.3.
 func (w *tokenServiceWiring) buildGRPCSurface() {
 	leases := credleasestore.New()
 	cache := credcache.New()
@@ -70,7 +70,7 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	tsGRPC := tokenservice.NewGRPCServer(assignSvc, leases)
 	tsGRPC.SetAuditor(w.auditor)
 	tsGRPC.SetMetrics(w.metricsEmitter)
-	// §4.9 line 1212 admin-time RBAC live-probe. Wire the
+	// §4.9 admin-time RBAC live-probe. Wire the
 	// Kubernetes-backed prober when the Token Service runs in-cluster.
 	// Out of cluster (local dev) the prober is left unset; the
 	// ProbeSecretAccess RPC then returns codes.Unavailable so the gateway
@@ -91,7 +91,7 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	// trust boundary rests on the Token Service authenticating
 	// the caller. When the TLS flags are unset the gRPC surface
 	// runs in plaintext, which is the dev-mode path only.
-	// spec: §4.3 line 195
+	// spec: §4.3
 	creds, err := tokenServiceCreds(*w.f.tlsCert, *w.f.tlsKey, *w.f.tlsCA)
 	if err != nil {
 		fatalf("gRPC mTLS: %v", err)
@@ -103,7 +103,7 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	} else {
 		log.Printf("lenny-token-service: §4.3 gRPC running plaintext (dev mode: --tls-cert/--tls-key/--tls-ca unset)")
 	}
-	// §4.3 line 205 per-replica identity. When the gateway client
+	// §4.3 per-replica identity. When the gateway client
 	// cert carries a SPIFFE URI SAN (chart value
 	// gateway.spiffe.enabled wires cert-manager-csi-driver-spiffe
 	// per-replica identities into the gateway pods), extract the

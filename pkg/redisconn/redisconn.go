@@ -46,7 +46,7 @@ type Config struct {
 	// ignores it, so a caller that needs cluster support must use
 	// NewUniversalClient.
 	//
-	// spec: §12.4 line 264 — "The QuotaStore and rate limiter
+	// spec: §12.4 — "The QuotaStore and rate limiter
 	// implementations must use CLUSTER KEYSLOT-aware client libraries
 	// (e.g., go-redis/v9 with cluster mode)".
 	ClusterAddrs []string
@@ -76,7 +76,7 @@ type Config struct {
 	// this field; it exists so a dev deployment that has opted out of
 	// enforcement can still dial a TLS-fronted sentinel topology.
 	//
-	// spec: §12.4 line 197 — Redis AUTH (ACLs) and TLS are required.
+	// spec: §12.4 — Redis AUTH (ACLs) and TLS are required.
 	TLS bool
 
 	// AllowInsecure disables the §12.4 AUTH-and-TLS startup invariant.
@@ -88,7 +88,7 @@ type Config struct {
 	// fast at construction rather than silently dialing an
 	// unauthenticated, plaintext Redis.
 	//
-	// spec: §12.4 line 197.
+	// spec: §12.4.
 	AllowInsecure bool
 }
 
@@ -200,7 +200,7 @@ func pinTLSFloor(c *tls.Config) {
 // §12.4 Tier 2→3 migration of the Quota/Rate Limiting instance must
 // route through here rather than NewClient.
 //
-// spec: §12.4 lines 260-264 — Redis Cluster migration pre-plan.
+// spec: §12.4 — Redis Cluster migration pre-plan.
 func NewUniversalClient(cfg Config) (redis.UniversalClient, error) {
 	if len(cfg.ClusterAddrs) == 0 {
 		return NewClient(cfg)

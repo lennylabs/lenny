@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// spec: §4.4 line 244 — runtime-side `checkpoint_ready` after the
+// spec: §4.4 — runtime-side `checkpoint_ready` after the
 // runtime quiesces.
 func TestHandleCheckpointRequestEmitsReady(t *testing.T) {
 	var out bytes.Buffer
@@ -41,7 +41,7 @@ func TestHandleCheckpointRequestEmitsReady(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 244 — autonomous-resume timer fires after 60s
+// spec: §4.4 — autonomous-resume timer fires after 60s
 // (compressed in test) and the runtime emits the timeout warning.
 func TestAutonomousResumeFiresWhenCompleteNeverArrives(t *testing.T) {
 	var stderr bytes.Buffer
@@ -79,7 +79,7 @@ func TestAutonomousResumeFiresWhenCompleteNeverArrives(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 244 — receiving `checkpoint_complete` cancels the
+// spec: §4.4 — receiving `checkpoint_complete` cancels the
 // autonomous-resume timer and the runtime does not log the warning.
 func TestHandleCheckpointCompleteCancelsTimer(t *testing.T) {
 	var fired atomic.Bool

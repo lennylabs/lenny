@@ -177,8 +177,7 @@ func (e *ResolveError) Unwrap() error { return e.Err }
 // lowercase hex form is pinned directly without a resolver call. Any
 // other ref is resolved through resolver, using the VCS credential creds
 // materializes for the source (nil creds, or a zero credential, resolves
-// a public repo unauthenticated — §14 line 102 "the same credential-lease
-// as the clone itself, or unauthenticated for public repos"). A source
+// a public repo unauthenticated — §14). A source
 // whose ResolvedCommitSha is already set is left untouched, so
 // PinCommitSHAs is idempotent across re-materialization. The plan is
 // mutated in place. A non-nil return is a *ResolveError naming the first

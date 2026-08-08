@@ -39,7 +39,7 @@ func tlsPeerCtx(verified bool) context.Context {
 	})
 }
 
-// spec: §4.7 line 616; §15.3 — when mTLS verification is active the
+// spec: §4.7; §15.3 — when mTLS verification is active the
 // GatewayControl interceptor admits only peers with a verified client
 // certificate chain and rejects everything else with Unauthenticated.
 func TestRequireVerifiedPeerInterceptor_Spec4_7(t *testing.T) {
@@ -104,7 +104,7 @@ func TestRequireVerifiedPeerInterceptor_Spec4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 616 — a peer whose AuthInfo is not TLS (e.g. an
+// spec: §4.7 — a peer whose AuthInfo is not TLS (e.g. an
 // insecure in-cluster dial that should never reach a verified listener)
 // is rejected when verification is active.
 func TestRequireVerifiedPeerInterceptor_NonTLSPeerRejected(t *testing.T) {
@@ -120,7 +120,7 @@ func TestRequireVerifiedPeerInterceptor_NonTLSPeerRejected(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 735; §15.1 line 868 — ClearSubtreeDenial clears the
+// spec: §8.6; §15.1 — ClearSubtreeDenial clears the
 // extension-denied flag for a known tree and reports found, and reports
 // not-found (without error) for an unknown tree so the admin endpoint
 // answers 404.

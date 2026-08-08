@@ -203,9 +203,8 @@ type Definition struct {
 
 // Validate reports the §10.7 admission errors for an
 // ExperimentDefinition at admin POST/PUT time. Violations are tagged
-// with a §15.1 error code so the admin handler can surface
-// `RESERVED_IDENTIFIER` (line 1005) or `INVALID_VARIANT_WEIGHTS`
-// (§4.6.2 line 545) distinctly from the generic `VALIDATION_ERROR`.
+// with a §15.1 error code so the admin handler can surface `RESERVED_IDENTIFIER` or `INVALID_VARIANT_WEIGHTS`
+// (§4.6.2) distinctly from the generic `VALIDATION_ERROR`.
 func (d Definition) Validate() error {
 	var v []Violation
 	if d.ID == "" {
@@ -247,7 +246,7 @@ func (d Definition) Validate() error {
 			continue
 		}
 		if vt.ID == ControlVariantID {
-			// spec: §10.7 line 703 / §15.1 line 1005 — variant id
+			// spec: §10.7 / §15.1 — variant id
 			// "control" is reserved; admin must surface
 			// RESERVED_IDENTIFIER with details.field + details.value.
 			v = append(v, Violation{
@@ -274,7 +273,7 @@ func (d Definition) Validate() error {
 		totalWeight += vt.Weight
 	}
 	if totalWeight >= 1 {
-		// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 returns
+		// spec: §4.6.2 — Σ variant_weights ≥ 1 returns
 		// INVALID_VARIANT_WEIGHTS at admission.
 		v = append(v, Violation{
 			Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,

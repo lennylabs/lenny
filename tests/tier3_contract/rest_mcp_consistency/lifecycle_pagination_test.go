@@ -38,7 +38,7 @@ func restState(t *testing.T, raw []byte) string {
 	return body.State
 }
 
-// spec: §15.2.1 line 1411
+// spec: §15.2.1
 // diagnosis: after an identical operation sequence, GET
 // /v1/sessions/{id} and the get_session_status MCP tool must report the
 // same session state. This drives the create → terminated sequence (the
@@ -118,7 +118,7 @@ func (e listEnvelope) ids() map[string]bool {
 	return out
 }
 
-// spec: §15.2.1 line 1412
+// spec: §15.2.1
 // diagnosis: for overlapping list operations the default page size,
 // cursor semantics, and empty-result shape must be identical across REST
 // and the adapter surface. The MCP list_sessions tool forwards GET

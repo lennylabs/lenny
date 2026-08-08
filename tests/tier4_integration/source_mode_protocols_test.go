@@ -2,9 +2,9 @@
 
 //go:build integration
 
-// Source Mode protocol-by-runtime coverage (§17.4 line 213: "Gateway,
+// Source Mode protocol-by-runtime coverage (§17.4: "Gateway,
 // controller-sim, and a single agent container run as goroutines in
-// one process"; §17.4 line 218: "Runtime adapter authors testing
+// one process"; §17.4: "Runtime adapter authors testing
 // their adapter against the gateway contract without full pod
 // scheduling"). source_mode_smoke_test.go drives Source Mode's REST
 // surface against the built-in echo runtime only. Because Source
@@ -12,7 +12,7 @@
 // external-protocol adapter the binary registers (REST, MCP, OpenAI
 // Chat Completions, Open Responses) is live in that same process, and
 // a runtime author substitutes a custom binary via --runtime-bin
-// (§17.4 line 323) in place of the built-in echo executor. This file
+// (§17.4) in place of the built-in echo executor. This file
 // extends the protocol-by-runtime matrix with two more cells: the MCP
 // lenny/send_message tool and the OpenAI Chat Completions endpoint,
 // both driven against the streaming-echo Full-level reference runtime
@@ -50,11 +50,7 @@ func buildStreamingEchoBinary(t *testing.T) string {
 	return out
 }
 
-// spec: §17.4 line 208-213 ("Source Mode runs the Lenny source tree
-// directly without Kubernetes ... Gateway, controller-sim, and a
-// single agent container run as goroutines in one process") and line
-// 218 ("Runtime adapter authors testing their adapter against the
-// gateway contract without full pod scheduling"). The existing Source
+// spec: §17.4. The existing Source
 // Mode smoke test only exercises REST against the built-in echo
 // runtime; a regression confined to the MCP or OpenAI Chat
 // Completions wire adapters, or to the --runtime-bin subprocess path

@@ -324,7 +324,7 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 	return int64(maxConcurrent)*pcv.MaxTieredCheckpointCapSeconds(workspaceBytes) + testMinStreamDrainSeconds
 }
 
-// spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — the
+// spec: §5.2 — the
 // SandboxWarmPool admission webhook enforces the agent-pod
 // `terminationGracePeriodSeconds` floor, fanning the per-slot checkpoint
 // cap across maxConcurrent slots for a service-mode pool
@@ -336,7 +336,7 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 // field whose default under-provisions is rejected fail-closed. It warns
 // at >600s and rejects when maxTerminationGracePeriodSeconds is set and
 // breached or when the effective grace period falls below the floor.
-// spec: §10.1 lines 104-124 — the tier-cap table and the BarrierAck
+// spec: §10.1 — the tier-cap table and the BarrierAck
 // floor (`checkpointBarrierAckTimeoutSeconds ≥ tier cap`).
 func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }
@@ -558,11 +558,11 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	})
 }
 
-// spec: §10.1 line 119 / §16.1 line 129 — only the two grace-period
+// spec: §10.1 / §16.1 — only the two grace-period
 // budget rejections (floor > terminationGracePeriodSeconds, floor >
 // maxTerminationGracePeriodSeconds) set Decision.BudgetExceeded so the
 // webhook increments lenny_pool_termination_budget_exceeded_total. The
-// BarrierAck-floor rule (§10.1 line 124) and the warm-count / acknowledgment
+// BarrierAck-floor rule (§10.1) and the warm-count / acknowledgment
 // rejections are distinct and must NOT increment that counter.
 func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }
@@ -601,7 +601,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 	})
 }
 
-// spec: §13.2 lines 438-442 (NET-006) — deliveryMode: proxy with
+// spec: §13.2 — deliveryMode: proxy with
 // egressProfile: provider-direct is mutually exclusive. The check is
 // independent of executionMode, so it fires for session, task, and
 // concurrent pools alike, and names the InvalidPoolEgressDeliveryCombo
@@ -645,7 +645,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 		}
 	})
 
-	// spec: §13.2 line 450 (NET-002) — the internet egress profile requires
+	// spec: §13.2 — the internet egress profile requires
 	// sandboxed/microvm isolation; standard (runc, including the empty
 	// default) is rejected. F-13.2.11.
 	t.Run("internet requires sandboxed or microvm isolation", func(t *testing.T) {
@@ -683,7 +683,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 	})
 }
 
-// spec: §10.1 lines 104-108 (spec/10_gateway-internals.md) — the tier
+// spec: §10.1 — the tier
 // table maps workspace size to the max checkpoint cap. Unset/unknown
 // workspace size falls back to the 90s conservative tier per line 108.
 func TestMaxTieredCheckpointCapSeconds_spec_10_1_104(t *testing.T) {
@@ -712,7 +712,7 @@ func TestMaxTieredCheckpointCapSeconds_spec_10_1_104(t *testing.T) {
 	}
 }
 
-// spec: §4.6.3 line 601 (spec/04_system-components.md) — rule set 2:
+// spec: §4.6.3 — rule set 2:
 // the userInfo authorization backstop admits only the
 // PoolScalingController SA and rejects every other principal with HTTP
 // 403 and the UNAUTHORIZED_POOL_CONFIG_WRITE reason code.
@@ -750,7 +750,7 @@ func TestDecideAuthorization(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 line 400 — the scaleToZero cron window and optional IANA
+// spec: §4.6.1 — the scaleToZero cron window and optional IANA
 // timezone are validated at admission so the controller never silently
 // fails to parse them.
 func TestWarmPoolScaleToZero(t *testing.T) {

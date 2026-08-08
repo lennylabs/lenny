@@ -17,7 +17,7 @@ import (
 // proxyDialectFixture builds a Server whose runtime declares the given
 // credentialCapabilities.proxyDialect set (nil = no credentialCapabilities
 // block) and whose single anthropic_direct pool carries deliveryMode +
-// poolDialect, so resolveCredentialPools exercises the §4.9 line 1476
+// poolDialect, so resolveCredentialPools exercises the §4.9
 // runtime↔pool proxy-dialect admission boundary.
 func proxyDialectFixture(t *testing.T, runtimeDialects []string, deliveryMode, poolDialect string) *Server {
 	t.Helper()
@@ -54,7 +54,7 @@ func proxyDialectFixture(t *testing.T, runtimeDialects []string, deliveryMode, p
 	}
 }
 
-// spec: §4.9 line 1476 — a proxy-mode pool whose proxyDialect the session
+// spec: §4.9 — a proxy-mode pool whose proxyDialect the session
 // runtime declares is accepted; the pool is assigned for its provider.
 func TestResolveCredentialPoolsProxyDialectMatch_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, []string{"anthropic", "openai"}, "proxy", "anthropic")
@@ -67,7 +67,7 @@ func TestResolveCredentialPoolsProxyDialectMatch_spec_4_9_1476(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1476 — a proxy-mode pool whose proxyDialect the session
+// spec: §4.9 — a proxy-mode pool whose proxyDialect the session
 // runtime does NOT declare is rejected before a pod is claimed, with the
 // verbatim INVALID_POOL_PROXY_DIALECT message.
 func TestResolveCredentialPoolsProxyDialectMismatch_spec_4_9_1476(t *testing.T) {
@@ -86,7 +86,7 @@ func TestResolveCredentialPoolsProxyDialectMismatch_spec_4_9_1476(t *testing.T) 
 	}
 }
 
-// spec: §4.9 line 1476 — a runtime that declares no credentialCapabilities
+// spec: §4.9 — a runtime that declares no credentialCapabilities
 // block speaks no proxy dialect, so any proxy-mode pool is rejected.
 func TestResolveCredentialPoolsProxyDialectNoCapabilities_spec_4_9_1476(t *testing.T) {
 	s := proxyDialectFixture(t, nil, "proxy", "anthropic")
@@ -97,7 +97,7 @@ func TestResolveCredentialPoolsProxyDialectNoCapabilities_spec_4_9_1476(t *testi
 	}
 }
 
-// spec: §4.9 line 1476 — a direct-mode pool declares no proxyDialect, so
+// spec: §4.9 — a direct-mode pool declares no proxyDialect, so
 // the dialect boundary does not apply and the pool is assigned even though
 // the runtime declares no proxy dialect.
 func TestResolveCredentialPoolsDirectModeSkipsDialect_spec_4_9_1476(t *testing.T) {

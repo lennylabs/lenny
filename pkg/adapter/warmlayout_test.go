@@ -34,7 +34,7 @@ func TestEnsureWarmWorkspaceLayout_CreatesSubdirs(t *testing.T) {
 		}
 	}
 
-	// spec: §6.1 line 11 — /workspace/current "exists but is empty".
+	// spec: §6.1 — /workspace/current "exists but is empty".
 	entries, err := os.ReadDir(current)
 	if err != nil {
 		t.Fatalf("read current: %v", err)
@@ -108,7 +108,7 @@ func TestEnsureWarmWorkspaceLayout_RootModeReadable(t *testing.T) {
 // TestChmodWarmDir_AlreadyCorrectModeIsNoop verifies chmodWarmDir
 // succeeds when the directory already carries the requested mode, the
 // common case for a kubelet-created emptyDir mountpoint the non-root
-// adapter UID does not own. spec: §6.4 line 409 — F-6.4.3.
+// adapter UID does not own. spec: §6.4 — F-6.4.3.
 func TestChmodWarmDir_AlreadyCorrectModeIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, warmSharedMode); err != nil {
@@ -129,7 +129,7 @@ func TestChmodWarmDir_AlreadyCorrectModeIsNoop(t *testing.T) {
 // TestChmodWarmDir_RaisesInadequateMode verifies chmodWarmDir lifts a
 // directory whose mode is missing the requested bits up to the requested
 // mode when the chmod is permitted (the adapter owns a dir it created with
-// a restrictive umask). spec: §6.4 line 409 — F-6.4.3.
+// a restrictive umask). spec: §6.4 — F-6.4.3.
 func TestChmodWarmDir_RaisesInadequateMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -155,7 +155,7 @@ func TestChmodWarmDir_RaisesInadequateMode(t *testing.T) {
 // its socket). os.Chmod cannot be forced to return EPERM portably from a
 // non-root unit test without ownership manipulation, so the branch is
 // driven through chmodWarmDirWith, which injects the chmod result.
-// spec: §6.4 line 409 — F-6.4.3.
+// spec: §6.4 — F-6.4.3.
 func TestChmodWarmDir_DeniedButAdequateModeTolerated(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, warmSharedMode); err != nil {
@@ -178,15 +178,14 @@ func TestChmodWarmDir_DeniedButAdequateModeTolerated(t *testing.T) {
 
 	// EROFS is tolerated the same way: an embedded/SDK-warm runtime mounts
 	// /workspace/shared read-only, so its chmod of the already-populated
-	// shared tree hits a read-only file system. spec: §6.4 line 409.
+	// shared tree hits a read-only file system. spec: §6.4.
 	readonly := func(string, os.FileMode) error { return syscall.EROFS }
 	if err := chmodWarmDirWith(dir, warmSharedMode, readonly); err != nil {
 		t.Fatalf("chmodWarmDirWith tolerating a benign EROFS: %v", err)
 	}
 }
 
-// TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets verifies the §6.4
-// line 409 read-only shared-asset tree is created and populated before
+// TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets verifies the §6.4 read-only shared-asset tree is created and populated before
 // the pod is claimed: the directory exists at a runtime-readable mode and
 // each configured inline asset is written read-only.
 func TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets_spec_6_4(t *testing.T) {
@@ -222,14 +221,14 @@ func TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets_spec_6_4(t *testing.T) 
 	if err != nil {
 		t.Fatalf("stat shared asset: %v", err)
 	}
-	// spec: §6.4 line 409 — default asset mode is 0444 (read-only).
+	// spec: §6.4 — default asset mode is 0444 (read-only).
 	if got := assetInfo.Mode().Perm(); got != 0o444 {
 		t.Errorf("shared asset mode = %o, want 0444", got)
 	}
 }
 
 // TestEnsureWarmWorkspaceLayout_SharedDirEmptyWhenNoAssets verifies the
-// §6.4 line 409 scrub-space-prevention guarantee: the shared directory is
+// §6.4 scrub-space-prevention guarantee: the shared directory is
 // created (so the runtime cannot use the mountpoint as writable scratch)
 // even when no assets are configured, and it stays empty.
 func TestEnsureWarmWorkspaceLayout_SharedDirEmptyWhenNoAssets_spec_6_4(t *testing.T) {

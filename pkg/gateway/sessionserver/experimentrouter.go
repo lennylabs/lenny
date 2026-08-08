@@ -102,7 +102,7 @@ func (c constErrEvalClient) Evaluate(context.Context, string, map[string]any) (e
 
 // ExperimentRouterPriority is the §4.8 built-in priority the
 // ExperimentRouter occupies in the PreRoute phase chain (spec: §4.8
-// line 21 priority table, line 115 field-dependency table). The
+// priority table and field-dependency table). The
 // ExperimentRouter runs in-process at session creation (routeExperiment)
 // rather than as a generic interceptor.Interceptor because it operates
 // on the session row and pool registry, not on the serialized chain
@@ -133,7 +133,7 @@ func (e *variantIsolationError) Error() string {
 // observability reports. ReportExperimentIsolationRejection records a
 // fail-closed rejection (the `experiment.isolation_mismatch` event and
 // the `lenny_experiment_isolation_rejections_total` counter). The
-// targeting methods record the §16.1 lines 156-157 external-targeting
+// targeting methods record the §16.1 external-targeting
 // metrics on the `mode: external` evaluation path. Defining the
 // interface here keeps the session server decoupled from the audit and
 // metrics subsystems, matching the DeriveAuditSink pattern. A nil
@@ -141,12 +141,11 @@ func (e *variantIsolationError) Error() string {
 type ExperimentRejectionReporter interface {
 	ReportExperimentIsolationRejection(ctx context.Context, ev ExperimentIsolationRejection)
 	// ObserveTargetingDuration records one external-targeting evaluation
-	// latency for `lenny_experiment_targeting_duration_seconds` (§16.1
-	// line 156). provider is the OpenFeature provider name, or the OFREP
+	// latency for `lenny_experiment_targeting_duration_seconds` (§16.1). provider is the OpenFeature provider name, or the OFREP
 	// endpoint hostname when provider:ofrep.
 	ObserveTargetingDuration(ctx context.Context, provider string, seconds float64)
 	// RecordTargetingError increments `lenny_experiment_targeting_error_total`
-	// (§16.1 line 157) on a §10.7 targeting_failed condition. errorType
+	// (§16.1) on a §10.7 targeting_failed condition. errorType
 	// classifies the cause (timeout, transport, or the OFREP errorCode).
 	RecordTargetingError(ctx context.Context, provider, errorType string)
 }
@@ -154,7 +153,7 @@ type ExperimentRejectionReporter interface {
 // StickyCache is the §10.7 `sticky: user` variant-assignment cache the
 // ExperimentRouter reads through for `mode: external` experiments so the
 // OpenFeature provider "is not called again for subsequent sessions if a
-// cached assignment exists" (§10.7 line 831). *experimentsticky.RedisCache
+// cached assignment exists" (§10.7). *experimentsticky.RedisCache
 // satisfies it. A nil cache disables read-through; routing re-evaluates
 // every experiment fresh, which is also the §12.4 Redis-outage fail-open
 // path. Get/Put return Redis errors so the router degrades to fresh
@@ -185,7 +184,7 @@ type ExperimentIsolationRejection struct {
 // recorded. A session that no experiment enrolls is left unchanged and
 // runs the base runtime.
 //
-// spec: §8.2 line 90 / §10.7 — the delegation path invokes this same
+// spec: §8.2 / §10.7 — the delegation path invokes this same
 // routing function on a child whose parent's propagation mode is
 // `independent` (or whose parent carries no experimentContext), so
 // the child is routed afresh through the ExperimentRouter rather than
@@ -222,7 +221,7 @@ func (s *Server) ApplyExperimentRouting(ctx context.Context, row *sessionstore.S
 	// provider. A tenant with no external targeting yields a nil
 	// evaluator and RouteMixed skips external-mode experiments.
 	evaluator := s.buildExternalEvaluator(ctx, row, candidates)
-	// §10.7 lines 831, 1096: a `mode: external` + `sticky: user` experiment
+	// §10.7: a `mode: external` + `sticky: user` experiment
 	// reads its assignment from the sticky cache before calling the provider,
 	// and writes a fresh evaluation back. A Redis outage falls open to fresh
 	// evaluation (§12.4 failure behavior). Percentage-mode `sticky: user`
@@ -302,7 +301,7 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		return nil
 	}
 	cfg := tenant.ExperimentTargeting
-	// spec: §10.7 lines 779-782 — OFREP (pkg/gateway/ofrep) or one of the
+	// spec: §10.7 — OFREP (pkg/gateway/ofrep) or one of the
 	// built-in OpenFeature SDK providers (launchdarkly, statsig, unleash,
 	// pkg/gateway/experimentprovider). resolveExternalClient returns nil
 	// for a provider this build cannot serve, which skips external-mode
@@ -318,7 +317,7 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		Runtime:   row.RuntimeRef,
 	})
 	knownIDs := knownExperimentIDs(candidates)
-	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+	// spec: §10.7 — the per-tenant targeting
 	// circuit-breaker thresholds resolved from the tenant config.
 	breakerParams := targetingBreakerParams{
 		threshold: cfg.BreakerFailureThreshold(),
@@ -330,7 +329,7 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		if failed {
 			return "", false
 		}
-		// spec: §10.7 lines 835-838 — while the circuit is open the gateway
+		// spec: §10.7 — while the circuit is open the gateway
 		// skips the OpenFeature call entirely and returns empty assignment
 		// with zero wait, same as a provider error. Latch so no further
 		// external experiment is evaluated for this session.
@@ -340,21 +339,21 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		}
 		start := time.Now()
 		result, err := client.Evaluate(ctx, experimentID, evalCtx)
-		// spec: §16.1 line 156 — record latency for every evaluation
+		// spec: §16.1 — record latency for every evaluation
 		// attempt, success or failure.
 		s.observeTargetingDuration(ctx, providerLabel, time.Since(start).Seconds())
-		// spec: §10.7 lines 837-839 — feed the outcome back so consecutive
+		// spec: §10.7 — feed the outcome back so consecutive
 		// failures open the breaker and a half-open probe success closes it.
 		s.targetingBreaker.Record(row.TenantID, providerLabel, breakerParams, err == nil)
 		if err != nil {
 			failed = true
-			// spec: §10.7 line 833 / §16.1 line 157 — increment the
+			// spec: §10.7 / §16.1 — increment the
 			// targeting-error counter alongside the targeting_failed event.
 			s.recordTargetingError(ctx, providerLabel, classifyTargetingError(err))
 			s.emitExperimentTargetingFailed(ctx, row, string(cfg.Provider), err)
 			return "", false
 		}
-		// spec: §10.7 line 829 / §16.6 line 651 — a provider response that
+		// spec: §10.7 / §16.6 — a provider response that
 		// echoes a flag/experiment key Lenny did not register is logged
 		// with experiment.unknown_external_id and otherwise ignored (no
 		// enrollment is made from an unregistered external experiment).
@@ -374,7 +373,7 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 }
 
 // resolveExternalClient builds the §10.7 evaluation transport for a
-// tenant targeting config and the §16.1 line 156 provider metric label.
+// tenant targeting config and the §16.1 provider metric label.
 // OFREP constructs a per-session HTTP client; the launchdarkly, statsig,
 // and unleash SDK providers resolve through the cached
 // ExternalProviderResolver (the vendor OpenFeature clients hold
@@ -427,8 +426,7 @@ func (s *Server) resolveExternalClient(ctx context.Context, cfg experiment.Targe
 // RouteMixed treats the control variant as no-enrollment exactly as it does
 // for a fresh control result.
 //
-// spec: §10.7 line 831 (provider not re-called when a cached assignment
-// exists), line 1096 (the cache the pause/conclude flush clears).
+// spec: §10.7.
 func (s *Server) stickyWrappedEvaluator(ctx context.Context, row *sessionstore.Session, candidates []experimentstore.Experiment, inner experiment.ExternalEvaluator) experiment.ExternalEvaluator {
 	if s.stickyCache == nil {
 		return inner
@@ -469,7 +467,7 @@ func (s *Server) stickyWrappedEvaluator(ctx context.Context, row *sessionstore.S
 
 // observeTargetingDuration forwards an external-targeting evaluation
 // latency to the wired reporter. Best-effort: a nil reporter is a no-op.
-// spec: §16.1 line 156.
+// spec: §16.1.
 func (s *Server) observeTargetingDuration(ctx context.Context, provider string, seconds float64) {
 	if s.experimentReporter == nil {
 		return
@@ -479,7 +477,7 @@ func (s *Server) observeTargetingDuration(ctx context.Context, provider string, 
 
 // recordTargetingError forwards a §10.7 targeting_failed classification
 // to the wired reporter. Best-effort: a nil reporter is a no-op.
-// spec: §16.1 line 157.
+// spec: §16.1.
 func (s *Server) recordTargetingError(ctx context.Context, provider, errorType string) {
 	if s.experimentReporter == nil {
 		return
@@ -487,7 +485,7 @@ func (s *Server) recordTargetingError(ctx context.Context, provider, errorType s
 	s.experimentReporter.RecordTargetingError(ctx, provider, errorType)
 }
 
-// targetingProviderLabel derives the §16.1 line 156 `provider` metric
+// targetingProviderLabel derives the §16.1 metric
 // label. For provider:ofrep the OFREP endpoint hostname is used; any
 // other provider uses its name verbatim. An unparseable endpoint falls
 // back to the provider name so the label is never empty.
@@ -501,7 +499,7 @@ func targetingProviderLabel(provider experiment.TargetingProvider, endpoint stri
 }
 
 // classifyTargetingError reduces an OFREP evaluation failure to a bounded
-// §16.1 line 157 error_type label. A provider-level *ofrep.EvalError
+// §16.1 error_type label. A provider-level *ofrep.EvalError
 // carries the OFREP errorCode (or "http_error" when the non-2xx response
 // had no code); a timeout is "timeout"; any other transport failure is
 // "transport". The label set is bounded so the counter does not explode
@@ -514,7 +512,7 @@ func classifyTargetingError(err error) string {
 		}
 		return "http_error"
 	}
-	// spec: §16.1 line 157 — an OpenFeature SDK-provider failure carries
+	// spec: §16.1 — an OpenFeature SDK-provider failure carries
 	// the bounded OpenFeature ErrorCode (FLAG_NOT_FOUND, PROVIDER_NOT_READY,
 	// GENERAL, TYPE_MISMATCH, ...); fall back to "provider_error" when the
 	// SDK surfaced no code.
@@ -537,7 +535,7 @@ func classifyTargetingError(err error) string {
 
 // knownExperimentIDs is the set of registered experiment IDs among the
 // routable candidates — the keys a provider response is matched against
-// for the §10.7 line 829 unknown_external_id check.
+// for the §10.7 unknown_external_id check.
 func knownExperimentIDs(candidates []experimentstore.Experiment) map[string]bool {
 	ids := make(map[string]bool, len(candidates))
 	for _, e := range candidates {
@@ -609,7 +607,7 @@ func (s *Server) emitExperimentUnknownVariant(ctx context.Context, row *sessions
 	})
 }
 
-// emitExperimentUnknownExternalID records the §16.6 line 651
+// emitExperimentUnknownExternalID records the §16.6
 // experiment.unknown_external_id info event when an OpenFeature provider
 // returns a flag/experiment key that is not registered in Lenny's
 // mode:external catalog. Best-effort: a nil emitter is a no-op.

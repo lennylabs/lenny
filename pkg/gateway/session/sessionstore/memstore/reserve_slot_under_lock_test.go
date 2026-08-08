@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §12.4 line 208 — the Redis-outage capacity gate admits a slot only
+// spec: §12.4 — the Redis-outage capacity gate admits a slot only
 // when the pod's live-session count is below the per-pod bound.
 // diagnosis: ReserveSlotUnderLock counted terminal sessions or the wrong
 // pod, so the fallback gate admitted or rejected incorrectly.
@@ -37,7 +37,7 @@ func TestReserveSlotUnderLockAdmitsBelowBound(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — the gate rejects when the pod is at its bound.
+// spec: §12.4 — the gate rejects when the pod is at its bound.
 // diagnosis: the fallback gate overran the per-pod bound during a Redis
 // outage.
 func TestReserveSlotUnderLockRejectsAtBound(t *testing.T) {
@@ -58,7 +58,7 @@ func TestReserveSlotUnderLockRejectsAtBound(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — the count-and-decide is serialized under a per-pod
+// spec: §12.4 — the count-and-decide is serialized under a per-pod
 // lock so two concurrent admissions cannot both observe the same free slot.
 // diagnosis: the in-memory fallback gate did not serialize, so a race let
 // the pod overrun its bound. The mutex ensures at most one admission past
@@ -94,7 +94,7 @@ func TestReserveSlotUnderLockSerializes(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — an empty pod id matches no slot.
+// spec: §12.4 — an empty pod id matches no slot.
 func TestReserveSlotUnderLockEmptyPod(t *testing.T) {
 	s := memstore.New()
 	count, admitted, err := s.ReserveSlotUnderLock(context.Background(), "", 4)

@@ -299,7 +299,7 @@ func TestActionString(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 981 — Chain.Run stamps Result.RejectedBy with the
+// spec: §4.8 — Chain.Run stamps Result.RejectedBy with the
 // rejecting interceptor's Name() so the §16.7 audit row identifies the
 // actual rejector rather than assuming a fixed built-in.
 func TestRunStampsRejectedByOnReject(t *testing.T) {
@@ -320,7 +320,7 @@ func TestRunStampsRejectedByOnReject(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1032 — a fail-closed timeout/error carries the
+// spec: §4.8 — a fail-closed timeout/error carries the
 // rejecting interceptor's name, the INTERCEPTOR_TIMEOUT code, and the
 // elapsed deadline in milliseconds for the §15.1 envelope.
 func TestRunFailClosedCarriesNameAndTimeout(t *testing.T) {
@@ -362,7 +362,7 @@ func TestRunFailOpenLeavesRejectedByEmpty(t *testing.T) {
 	}
 }
 
-// spec: §4.8 lines 1021, 1023 — Register sentinel errors map to the
+// spec: §4.8 — Register sentinel errors map to the
 // §15.1 INVALID_INTERCEPTOR_PRIORITY / INVALID_INTERCEPTOR_PHASE codes
 // with HTTP 400; an unrelated error is not a registration sentinel.
 func TestRegistrationErrorCode(t *testing.T) {
@@ -388,7 +388,7 @@ func TestRegistrationErrorCode(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 12, line 115 — RunRange executes only the interceptors
+// spec: §4.8 — RunRange executes only the interceptors
 // whose priority falls in the [min,max) window, preserving ascending
 // priority order. This is the building block for splitting the PreRoute
 // chain around the ExperimentRouter built-in at priority 300: the below
@@ -419,7 +419,7 @@ func TestRunRangeExecutesOnlyPriorityWindow_spec_4_8(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 12 — a MODIFY inside a RunRange segment is threaded to
+// spec: §4.8 — a MODIFY inside a RunRange segment is threaded to
 // the later interceptors of that same segment and surfaces as the
 // segment result, exactly as Run does for the full chain.
 func TestRunRangeThreadsModifyWithinSegment_spec_4_8(t *testing.T) {
@@ -447,7 +447,7 @@ func TestRunRangeThreadsModifyWithinSegment_spec_4_8(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 12 — LenRange counts only interceptors whose priority
+// spec: §4.8 — LenRange counts only interceptors whose priority
 // falls in the window, so a caller can skip a RunRange that would select
 // none.
 func TestLenRangeCountsWindow_spec_4_8(t *testing.T) {

@@ -16,8 +16,8 @@
 // is load-bearing: a grant sent without an expiry leaves the re-mint path
 // dead and the retry replays the expired signature instead of recovering.
 //
-// spec: §4.4 lines 261-264 (retry budget, grant re-mint on expiry),
-// §10.1 line 131 (monotonic confirm counter), §13.2 (capability expiry).
+// spec: §4.4,
+// §10.1, §13.2 (capability expiry).
 
 package tier4_integration_test
 

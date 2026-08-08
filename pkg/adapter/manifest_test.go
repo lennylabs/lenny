@@ -30,7 +30,7 @@ func TestNewMCPNonce(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 846 — the manifest is mounted read-only into the
+// spec: §4.7 — the manifest is mounted read-only into the
 // agent container; the file must be group-readable (so the runtime's
 // distinct UID can read it via the shared lenny-cred-readers fsGroup)
 // but never world-readable, since it carries the §15.4.3 mcpNonce.

@@ -247,8 +247,8 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	dst.AllowedResourceClasses = append([]string(nil), rt.Spec.AllowedResourceClasses...)
 	dst.SupportedProviders = append([]string(nil), rt.Spec.SupportedProviders...)
 	dst.CredentialCapabilities = credentialCapabilitiesFromCRD(rt.Spec.CredentialCapabilities)
-	// spec: §12.9 line 1025 — workspaceTier is mirrored from the CRD into the
-	// gateway registry so §5.2 cross-tenant-reuse rejection (line 396) and the
+	// spec: §12.9 — workspaceTier is mirrored from the CRD into the
+	// gateway registry so §5.2 cross-tenant-reuse rejection and the
 	// §6.4 T4 dedicated-node injection both see the same value the deployer
 	// declared on the Runtime resource.
 	dst.WorkspaceTier = runtimestore.WorkspaceTier(rt.Spec.WorkspaceTier)
@@ -260,49 +260,48 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// embedded + false combination is rejected before mirroring (mirror),
 	// so an embedded runtime never reaches this copy carrying false.
 	dst.RequireSoPeercred = requireSoPeercredFromCRD(rt.Spec.RequireSoPeercred)
-	// spec: §5.1 / §7.5 lines 481-490 — setupCommandPolicy is mirrored from
+	// spec: §5.1 / §7.5 — setupCommandPolicy is mirrored from
 	// the CRD so the §7.5 gateway-side enforcement (F-7.5.1) reads the same
 	// policy the deployer declared on the Runtime resource. F-7.5.10.
 	dst.SetupCommandPolicy = setupCommandPolicyFromCRD(rt.Spec.SetupCommandPolicy)
-	// spec: §7.4 lines 458, 462; §13.4 — archivePolicy is mirrored from
+	// spec: §7.4; §13.4 — archivePolicy is mirrored from
 	// the CRD so the adapter's uploadArchive extractor reads the same
 	// AllowSymlinks toggle the deployer declared on the Runtime resource.
 	// F-7.4.4.
 	dst.ArchivePolicy = archivePolicyFromCRD(rt.Spec.ArchivePolicy)
-	// spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11 line
-	// 466 — capabilities (interaction + injection.{supported, modes}) are
+	// spec: §5.1; §26.9; §26.10; §26.11 — capabilities (interaction + injection.{supported, modes}) are
 	// mirrored from the CRD so the gateway registry advertises the §15.4.6
 	// conformance battery the runtime actually implements. F-26.9.2 /
 	// F-26.10.2 / F-26.11.2.
 	dst.Capabilities = capabilitiesFromCRD(rt.Spec.Capabilities)
-	// spec: §5.1 line 92; §26.9 line 408; §26.10 line 434; §26.11 line 465
+	// spec: §5.1; §26.9; §26.10; §26.11
 	// — runtimeOptionsSchemaRef is rendered as a JSON {"$ref": "<url>"}
 	// schema fragment so the §14 validator resolves the v1 schema URL the
 	// runtime advertises. An empty CRD field leaves the registry schema
 	// nil. F-26.9.2 / F-26.10.2 / F-26.11.2.
 	dst.RuntimeOptionsSchema = runtimeOptionsSchemaFromRef(rt.Spec.RuntimeOptionsSchemaRef)
-	// spec: §5.1 line 68; §26.11 line 467 — delegationPolicyRef binds the
+	// spec: §5.1; §26.11 — delegationPolicyRef binds the
 	// runtime to its §8.3 DelegationPolicy so the gateway resolves the
 	// policy at session-creation time. §26.11 declares the field required
 	// on the crewai runtime. F-26.11.2.
 	dst.DelegationPolicyRef = rt.Spec.DelegationPolicyRef
-	// spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines 166-169 —
+	// spec: §5.1; §26.2; §26.3 —
 	// limits is mirrored from the CRD so the §11.3 / §6.2 session-age
 	// watchdog, the upload cap, and the inter-agent request_input timeout
 	// read the per-runtime caps the §26 coding-agent catalog declares.
 	// F-26.2.1 / F-26.3.2.
 	dst.Limits = limitsFromCRD(rt.Spec.Limits)
-	// spec: §5.1 lines 90-92; §26.3 lines 174-176 — setupPolicy is mirrored
+	// spec: §5.1; §26.3 — setupPolicy is mirrored
 	// from the CRD so the §6.2 finalizing-state watchdog enforces the
 	// runtime-declared setup timeout and onTimeout disposition. F-26.2.1 /
 	// F-26.3.4.
 	dst.SetupPolicy = setupPolicyFromCRD(rt.Spec.SetupPolicy)
-	// spec: §5.1 lines 97-100; §26.3 lines 181-184 — defaultPoolConfig is
+	// spec: §5.1; §26.3 — defaultPoolConfig is
 	// mirrored from the CRD so the §5.2 pool resolver consults the
 	// runtime-declared warmCount / resourceClass / egressProfile before
 	// falling back to platform defaults. F-26.2.1 / F-26.3.5.
 	dst.DefaultPoolConfig = defaultPoolConfigFromCRD(rt.Spec.DefaultPoolConfig)
-	// spec: §5.1 lines 102-130; §26.3 lines 185-199 — agentInterface is
+	// spec: §5.1; §26.3 — agentInterface is
 	// mirrored from the CRD so the registered Runtime advertises the
 	// agent's declared skills and the §15 A2A agent-card auto-generation
 	// has a source. F-26.2.1 / F-26.3.5.
@@ -312,7 +311,7 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 
 // limitsFromCRD maps the §5.1 limits block. A nil CRD block mirrors to a
 // nil registry block (the runtime declares no per-runtime caps and the
-// gateway falls back to platform defaults). spec: §5.1 lines 76-79 —
+// gateway falls back to platform defaults). spec: §5.1 —
 // F-26.2.1 / F-26.3.2.
 func limitsFromCRD(l *lennyv1.RuntimeLimits) *runtimestore.Limits {
 	if l == nil {
@@ -328,8 +327,7 @@ func limitsFromCRD(l *lennyv1.RuntimeLimits) *runtimestore.Limits {
 }
 
 // setupPolicyFromCRD maps the §5.1 setupPolicy block. A nil CRD block
-// mirrors to a nil registry block (no aggregate setup cap). spec: §5.1
-// lines 90-92 — F-26.2.1 / F-26.3.4.
+// mirrors to a nil registry block (no aggregate setup cap). spec: §5.1 — F-26.2.1 / F-26.3.4.
 func setupPolicyFromCRD(p *lennyv1.SetupPolicy) *runtimestore.SetupPolicy {
 	if p == nil {
 		return nil
@@ -342,7 +340,7 @@ func setupPolicyFromCRD(p *lennyv1.SetupPolicy) *runtimestore.SetupPolicy {
 
 // defaultPoolConfigFromCRD maps the §5.1 defaultPoolConfig block. A nil CRD
 // block mirrors to a nil registry block (the §5.2 pool resolver falls back
-// to platform defaults). spec: §5.1 lines 97-100 — F-26.2.1 / F-26.3.5.
+// to platform defaults). spec: §5.1 — F-26.2.1 / F-26.3.5.
 func defaultPoolConfigFromCRD(c *lennyv1.DefaultPoolConfig) *runtimestore.DefaultPoolConfig {
 	if c == nil {
 		return nil
@@ -356,7 +354,7 @@ func defaultPoolConfigFromCRD(c *lennyv1.DefaultPoolConfig) *runtimestore.Defaul
 
 // agentInterfaceFromCRD maps the §5.1 agentInterface descriptor. A nil CRD
 // block mirrors to a nil registry block (the runtime declares no
-// agentInterface). spec: §5.1 lines 102-130 — F-26.2.1 / F-26.3.5.
+// agentInterface). spec: §5.1 — F-26.2.1 / F-26.3.5.
 func agentInterfaceFromCRD(a *lennyv1.AgentInterface) *runtimestore.AgentInterface {
 	if a == nil {
 		return nil
@@ -392,7 +390,7 @@ func credentialCapabilitiesFromCRD(c *lennyv1.CredentialCapabilities) *runtimest
 
 // setupCommandPolicyFromCRD maps the §5.1 / §7.5 setupCommandPolicy block.
 // A nil CRD block mirrors to a nil registry block (no policy declared, the
-// pre-F-7.5.1 admit-everything path remains). spec: §7.5 lines 481-490 —
+// pre-F-7.5.1 admit-everything path remains). spec: §7.5 —
 // F-7.5.10.
 func setupCommandPolicyFromCRD(p *lennyv1.SetupCommandPolicy) *runtimestore.SetupCommandPolicy {
 	if p == nil {
@@ -409,7 +407,7 @@ func setupCommandPolicyFromCRD(p *lennyv1.SetupCommandPolicy) *runtimestore.Setu
 
 // archivePolicyFromCRD maps the §13.4 archivePolicy block. A nil CRD block
 // mirrors to a nil registry block (no opt-in declared; symlinks rejected
-// per §7.4 line 458). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+// per §7.4). spec: §7.4; §13.4 — F-7.4.4.
 func archivePolicyFromCRD(p *lennyv1.ArchivePolicy) *runtimestore.ArchivePolicy {
 	if p == nil {
 		return nil
@@ -440,7 +438,7 @@ func requireSoPeercredFromCRD(p *bool) *bool {
 // mirrors to a nil registry block (no capabilities declared). The
 // runtimestore enum types accept any string; ApplyDefaults at registry
 // admission rejects invalid values with the spec-required error.
-// spec: §5.1 lines 60-64 — F-26.9.2.
+// spec: §5.1 — F-26.9.2.
 func capabilitiesFromCRD(c *lennyv1.RuntimeCapabilitiesCRD) *runtimestore.RuntimeCapabilities {
 	if c == nil {
 		return nil
@@ -463,7 +461,7 @@ func capabilitiesFromCRD(c *lennyv1.RuntimeCapabilitiesCRD) *runtimestore.Runtim
 // runtimeOptionsSchemaFromRef converts the CRD's URL form of
 // runtimeOptionsSchema into the gateway registry's JSON Schema fragment:
 // a `{"$ref": "<url>"}` document the §14 validator dereferences. An empty
-// ref returns nil. spec: §5.1 line 92; §26.9 line 408 — F-26.9.2.
+// ref returns nil. spec: §5.1; §26.9 — F-26.9.2.
 func runtimeOptionsSchemaFromRef(ref string) json.RawMessage {
 	if ref == "" {
 		return nil

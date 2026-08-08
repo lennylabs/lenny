@@ -35,7 +35,7 @@ func (f *fakeReviewer) Create(_ context.Context, tr *authnv1.TokenReview, _ meta
 	return out, nil
 }
 
-// spec: §10.2 line 227 — an authenticated token whose granted audiences
+// spec: §10.2 — an authenticated token whose granted audiences
 // include the deployment audience passes.
 func TestTokenReviewVerifierAuthenticatedAudienceMatch_spec_10_2_227(t *testing.T) {
 	fr := &fakeReviewer{status: authnv1.TokenReviewStatus{
@@ -51,7 +51,7 @@ func TestTokenReviewVerifierAuthenticatedAudienceMatch_spec_10_2_227(t *testing.
 	}
 }
 
-// spec: §10.2 line 227 — a forged/expired token (apiserver reports
+// spec: §10.2 — a forged/expired token (apiserver reports
 // Authenticated=false) is rejected with the signature/expiry sentinel.
 func TestTokenReviewVerifierUnauthenticatedRejected_spec_10_2_227(t *testing.T) {
 	fr := &fakeReviewer{status: authnv1.TokenReviewStatus{
@@ -65,7 +65,7 @@ func TestTokenReviewVerifierUnauthenticatedRejected_spec_10_2_227(t *testing.T) 
 	}
 }
 
-// spec: §10.2 line 227 — a token signed by the cluster issuer but minted
+// spec: §10.2 — a token signed by the cluster issuer but minted
 // for another deployment authenticates yet is not granted this audience.
 func TestTokenReviewVerifierAudienceMismatchRejected_spec_10_2_227(t *testing.T) {
 	fr := &fakeReviewer{status: authnv1.TokenReviewStatus{
@@ -79,7 +79,7 @@ func TestTokenReviewVerifierAudienceMismatchRejected_spec_10_2_227(t *testing.T)
 	}
 }
 
-// spec: §10.2 line 227 — a TokenReview that cannot reach a verdict
+// spec: §10.2 — a TokenReview that cannot reach a verdict
 // (apiserver unreachable, RBAC denied) fails closed.
 func TestTokenReviewVerifierTransportErrorFailsClosed_spec_10_2_227(t *testing.T) {
 	fr := &fakeReviewer{err: errors.New("connection refused")}
@@ -93,7 +93,7 @@ func TestTokenReviewVerifierTransportErrorFailsClosed_spec_10_2_227(t *testing.T
 // TokenReviewVerifier composes with client-go's fake clientset (the same
 // AuthenticationV1().TokenReviews() the production binary wires), so the
 // seam is satisfied by the real client type.
-// spec: §10.2 line 227.
+// spec: §10.2.
 func TestTokenReviewVerifierWithFakeClientset_spec_10_2_227(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	cs.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, k8sruntime.Object, error) {
@@ -121,7 +121,7 @@ func (s *stubVerifier) Verify(_ context.Context, token, audience string) error {
 	return s.err
 }
 
-// spec: §10.2 line 227 — when a verifier is wired the interceptor delegates
+// spec: §10.2 — when a verifier is wired the interceptor delegates
 // to it and admits the call on a nil verdict.
 func TestSATokenInterceptorVerifierAccepts_spec_10_2_227(t *testing.T) {
 	h, called := passHandler()
@@ -139,7 +139,7 @@ func TestSATokenInterceptorVerifierAccepts_spec_10_2_227(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 227 — a verifier rejection (forged/expired signature)
+// spec: §10.2 — a verifier rejection (forged/expired signature)
 // fails the call closed; the handler never runs.
 func TestSATokenInterceptorVerifierRejects_spec_10_2_227(t *testing.T) {
 	h, called := passHandler()
@@ -155,7 +155,7 @@ func TestSATokenInterceptorVerifierRejects_spec_10_2_227(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 227 — a TokenReview transport failure fails closed even
+// spec: §10.2 — a TokenReview transport failure fails closed even
 // though the token may be syntactically valid.
 func TestSATokenInterceptorVerifierTransportFailsClosed_spec_10_2_227(t *testing.T) {
 	h, called := passHandler()
@@ -171,7 +171,7 @@ func TestSATokenInterceptorVerifierTransportFailsClosed_spec_10_2_227(t *testing
 	}
 }
 
-// spec: §10.2 line 227 — even with a verifier wired, a request that carries
+// spec: §10.2 — even with a verifier wired, a request that carries
 // no SA token is rejected before the verifier is consulted.
 func TestSATokenInterceptorVerifierMissingToken_spec_10_2_227(t *testing.T) {
 	h, called := passHandler()
@@ -189,7 +189,7 @@ func TestSATokenInterceptorVerifierMissingToken_spec_10_2_227(t *testing.T) {
 // VerifyUser reports the ServiceAccount username the apiserver authenticated
 // the token as, which is what a caller authorizing a specific service account
 // (rather than only proving the token is authentic for this deployment) gates
-// on. spec: §10.2 line 227, §25.4 ("Calling the Gateway").
+// on. spec: §10.2, §25.4 ("Calling the Gateway").
 func TestTokenReviewVerifierReportsTheAuthenticatedUser_spec_10_2_227(t *testing.T) {
 	const opsSA = "system:serviceaccount:lenny-system:lenny-ops-sa"
 	cs := fake.NewSimpleClientset()

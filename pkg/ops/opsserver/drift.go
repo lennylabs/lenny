@@ -28,7 +28,7 @@ var driftErrorMap = map[string]struct {
 // canonical error envelope and writes it.
 //
 // A non-zero driftservice.Error.HTTPStatus overrides the default
-// code→status mapping. §25.10 line 3866 maps DRIFT_DESIRED_STATE_MISSING
+// code→status mapping. §25.10 maps DRIFT_DESIRED_STATE_MISSING
 // to either 404 (cold-start) or 503 (Postgres down); the cold-start
 // path sets HTTPStatus=404 so a fresh install reports as "no snapshot
 // exists" rather than as a transient outage. F-25.10.10.
@@ -66,9 +66,9 @@ func (s *Server) driftUnavailable(w http.ResponseWriter) {
 
 // handleDriftReport serves GET /v1/admin/drift: the §25.10 drift report
 // comparing running state against the desired-state snapshot. It
-// accepts ?scope=, ?against=, and ?fresh= (§25.10 line 3762).
+// accepts ?scope=, ?against=, and ?fresh= (§25.10).
 //
-// ?fresh=true bypasses the §25.10 line 3822 running-state cache; the
+// ?fresh=true bypasses the §25.10 running-state cache; the
 // HTTP layer parses the standard truthy spellings (true/1/yes/on). An
 // unparseable value is treated as not-fresh so a typo does not silently
 // thrash the cache. F-25.10.7.
@@ -102,7 +102,7 @@ func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 			conventions.CategoryPermanent, "malformed request body")
 		return
 	}
-	// §25.10 line 3791: ?against=both returns the live and target diffs in
+	// §25.10: ?against=both returns the live and target diffs in
 	// one response. It routes through a distinct service method because
 	// the response carries two reports rather than one. F-25.10.6. The
 	// two-snapshot diff is defined only against the stored live and target
@@ -223,7 +223,7 @@ func (s *Server) handleDriftSnapshotRefresh(w http.ResponseWriter, r *http.Reque
 //
 // A confirmed reconcile that applies every resource returns 200. A
 // reconcile where some resources could not be applied returns the
-// §25.10 line 3852 / line 3865 partial result: HTTP 207 with the result
+// §25.10 partial result: HTTP 207 with the result
 // body carrying the per-resource outcomes and errorCode
 // DRIFT_RECONCILE_PARTIAL. F-25.10.1.
 func (s *Server) handleDriftReconcile(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +253,7 @@ func (s *Server) handleDriftReconcile(w http.ResponseWriter, r *http.Request) {
 		writeDriftError(w, err)
 		return
 	}
-	// §25.10 line 3852: a partial reconcile (some resources failed)
+	// §25.10: a partial reconcile (some resources failed)
 	// surfaces as HTTP 207 with the per-resource outcomes in the body.
 	status := http.StatusOK
 	if result.ErrorCode == driftservice.ErrCodeReconcilePartial {

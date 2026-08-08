@@ -25,7 +25,7 @@ type PlaygroundConfig struct {
 	// GlobalDevMode mirrors global.devMode.
 	GlobalDevMode bool
 	// AcknowledgeAPIKeyMode mirrors
-	// playground.acknowledgeApiKeyMode (§27.2 line 42).
+	// playground.acknowledgeApiKeyMode (§27.2).
 	AcknowledgeAPIKeyMode bool
 }
 
@@ -41,11 +41,11 @@ var playgroundTenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 // after the pod has started. Failures use the §27.2 fatal codes as their
 // prefix so an operator sees the same envelope at install time and at
 // startup. The apiKey-mode acknowledgement WARNING is a distinct,
-// non-blocking row (CheckPlaygroundAPIKeyMode, the §27.9 line 255
+// non-blocking row (CheckPlaygroundAPIKeyMode, the §27.9
 // `playground.apiKeyMode` row), kept separate so the operator-visible
 // report names it exactly as the spec does.
 //
-// spec: §27.2 lines 41–42 + §27.3 ("rejected at Helm-validate
+// spec: §27.2 + §27.3 ("rejected at Helm-validate
 // otherwise").
 func CheckPlaygroundConfig(cfg PlaygroundConfig) Decision {
 	if !cfg.Enabled {
@@ -97,7 +97,7 @@ func CheckPlaygroundConfig(cfg PlaygroundConfig) Decision {
 	return Decision{Passed: true}
 }
 
-// CheckPlaygroundAPIKeyMode is the §27.9 line 255 `playground.apiKeyMode`
+// CheckPlaygroundAPIKeyMode is the §27.9
 // row of the lenny-preflight Job. It emits a non-blocking WARNING when a
 // deployment ships the playground in apiKey auth mode outside dev mode
 // without acknowledging the paste-form phishing surface via
@@ -108,8 +108,7 @@ func CheckPlaygroundConfig(cfg PlaygroundConfig) Decision {
 // Every other combination (playground disabled, oidc/dev mode, apiKey
 // inside dev mode, or an acknowledged apiKey mode) passes silently.
 //
-// spec: §27.9 line 255 (`playground.apiKeyMode` preflight row); §27.2
-// line 42 (acknowledgeApiKeyMode value). F-27.9.2.
+// spec: §27.9; §27.2. F-27.9.2.
 func CheckPlaygroundAPIKeyMode(cfg PlaygroundConfig) Decision {
 	if cfg.Enabled && cfg.AuthMode == "apiKey" && !cfg.GlobalDevMode && !cfg.AcknowledgeAPIKeyMode {
 		return Decision{

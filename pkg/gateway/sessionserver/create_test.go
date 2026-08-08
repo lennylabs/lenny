@@ -62,7 +62,7 @@ func createRequestRaw(t *testing.T, h http.Handler, body []byte) *httptest.Respo
 // shared §15.1 service entry point the MCP lenny/create_session tool
 // dispatches to: it runs the full create flow (validation, persist,
 // uploadToken mint) and returns the same CreateSessionResponse the REST
-// handler returns, in `created` state. spec: §15.2.1 rule 1 line 1380.
+// handler returns, in `created` state. spec: §15.2.1 rule 1.
 // F-15.2.4.
 func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
 	store := memstore.New()
@@ -169,7 +169,7 @@ func TestCreateAndStartServiceHappyPath(t *testing.T) {
 // so the §15 single-shot binder re-emits the identical backoff hint. This
 // value lives only on the recorder header, so it would be lost against the
 // pre-field code.
-// spec: §7.1 create-and-start atomicity; §15.1 line 1138 (Retry-After).
+// spec: §7.1 create-and-start atomicity; §15.1.
 func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
@@ -256,7 +256,7 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	if resp.SessionIsolationLevel.ResidualStateWarning {
 		t.Error("session-mode must not raise residualStateWarning")
 	}
-	// spec: §7.1 line 74 — a session-mode pool binds the session to one pod
+	// spec: §7.1 — a session-mode pool binds the session to one pod
 	// and preserves conversation context for its lifetime.
 	if resp.SessionIsolationLevel.ConversationContinuity != "platform" {
 		t.Errorf("conversationContinuity: got %q, want platform",
@@ -399,13 +399,13 @@ func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
 	}
 }
 
-// TestCreateDevModeDefaultIsolation_spec_5_3 verifies the §5.3 line 677
+// TestCreateDevModeDefaultIsolation_spec_5_3 verifies the §5.3
 // dev-mode fallback at the session-creation default: with DevMode set
 // and no configured DefaultIsolationProfile, a session that omits a
 // profile resolves to `standard` (runc) rather than the production
 // `sandboxed`.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
@@ -453,7 +453,7 @@ func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	}
 }
 
-// TestGetReturnsSessionIsolationLevel_spec_7_1 asserts the §7.1 line 75
+// TestGetReturnsSessionIsolationLevel_spec_7_1 asserts the §7.1
 // requirement that GET /v1/sessions/{id} and the list both return the
 // sessionIsolationLevel metadata so a client that lost the create
 // response can still inspect the session's isolation posture. The
@@ -639,7 +639,7 @@ func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 	}
 }
 
-// spec: §14.1 line 326 — a plan whose schemaVersion exceeds what the
+// spec: §14.1 — a plan whose schemaVersion exceeds what the
 // gateway understands is not a "bad plan" (400 WORKSPACE_PLAN_INVALID)
 // but a "gateway too old" condition: HTTP 422
 // WORKSPACE_PLAN_SCHEMA_UNSUPPORTED carrying details.knownVersion and
@@ -675,8 +675,7 @@ func TestCreateRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 	}
 }
 
-// TestCreateMultiViolationReportsDetailsFields covers F-14.1.19 / §15.1
-// line 979: when multiple WorkspacePlan sub-errors are aggregated the
+// TestCreateMultiViolationReportsDetailsFields covers F-14.1.19 / §15.1: when multiple WorkspacePlan sub-errors are aggregated the
 // envelope rides under `details.fields` (plural — the JSON Schema
 // validation report), not `details.subErrors`. `details.field`
 // (singular) carries the offending plan path.
@@ -751,7 +750,7 @@ func TestCreateAcceptsNullWorkspacePlan(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 — the atomic-creation contract requires that
+// spec: §7.1 — the atomic-creation contract requires that
 // when the upload-token mint fails, no session row is persisted and
 // the client receives 503 SESSION_CREATION_FAILED with Retry-After.
 // A nil UploadTokenIssuer is not the exercised failure mode (the
@@ -792,7 +791,7 @@ func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testin
 		t.Errorf("details.reason = %v, want row_persistence_failed", env.Error.Details["reason"])
 	}
 
-	// §7.1 line 28: "does NOT persist the session row". Even though the
+	// §7.1: "does NOT persist the session row". Even though the
 	// store's Create returned an error, the row must not exist.
 	if _, err := store.Store.Get(context.Background(), "acme", "sess_persist_fail"); err == nil {
 		t.Errorf("session row exists after persistence failure; §7.1 forbids the create row")
@@ -864,7 +863,7 @@ func TestCreateProceedsWhenDualStoreAvailable_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 — when the upload-token mint itself fails, the
+// spec: §7.1 — when the upload-token mint itself fails, the
 // row was never built (no IDFunc was even called for persistence).
 // The handler returns SESSION_CREATION_FAILED with reason
 // `upload_token_issuance_failed` and no row.
@@ -905,7 +904,7 @@ func TestCreateReturnsSessionCreationFailedOnMintFailure_spec_7_1_4(t *testing.T
 }
 
 // createRejectingStore wraps memstore so Create returns an error,
-// exercising the §7.1 line 28 persistence-failure roll-back branch.
+// exercising the §7.1 persistence-failure roll-back branch.
 type createRejectingStore struct {
 	*memstore.Store
 }
@@ -916,11 +915,11 @@ func (s *createRejectingStore) Create(ctx context.Context, row sessionstore.Sess
 
 var errCreateRejected = errors.New("test: persistence failure injected")
 
-// --- §11.1 line 13 noEnvironmentPolicy admission gate -----------------
+// --- §11.1 noEnvironmentPolicy admission gate -----------------
 
 // seedNoEnvServer builds a sessionserver wired with the §10.6
 // environment + tenant registries, the rest of the options stays
-// minimal so the test exercises only the §11.1 line 13 admission gate.
+// minimal so the test exercises only the §11.1 admission gate.
 func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefault string, envs ...environmentstore.Environment) (*sessionserver.Server, *memstore.Store) {
 	t.Helper()
 	store := memstore.New()
@@ -948,7 +947,7 @@ func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefau
 }
 
 // createRequestAs drives a session create request whose context carries
-// an authenticated Principal (the §10.2 path the §11.1 line 13 gate
+// an authenticated Principal (the §10.2 path the §11.1 gate
 // resolves environment membership against).
 func createRequestAs(t *testing.T, h http.Handler, body sessionserver.CreateSessionRequest, principal authmw.Principal) *httptest.ResponseRecorder {
 	t.Helper()
@@ -962,9 +961,9 @@ func createRequestAs(t *testing.T, h http.Handler, body sessionserver.CreateSess
 }
 
 // TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1 — the
-// §11.1 line 13 platform default `deny-all` rejects a session create
+// §11.1 platform default `deny-all` rejects a session create
 // that names no environment when the caller has no environment
-// membership. §10.6 line 646 treats an empty per-tenant policy as
+// membership. §10.6 treats an empty per-tenant policy as
 // deny-all.
 func TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1(t *testing.T) {
 	srv, store := seedNoEnvServer(t, "sess_deny", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
@@ -990,7 +989,7 @@ func TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1(t *testing.T) {
 
 // TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1 — when
 // the tenant's noEnvironmentPolicy resolves to allow-all, the same
-// request passes through to the normal create path. §10.6 line 657.
+// request passes through to the normal create path. §10.6.
 func TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_allow", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 
@@ -1004,7 +1003,7 @@ func TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1(t *testing.T) {
 
 // TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1 —
 // a caller who belongs to at least one environment is admitted under
-// deny-all because §10.6 line 657 scopes the policy to "no environment
+// deny-all because §10.6 scopes the policy to "no environment
 // membership"; the transparent filter governs runtime access through
 // the runtimeRef path even when no environment is named in the body.
 func TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1(t *testing.T) {
@@ -1033,7 +1032,7 @@ func TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1(t *testing
 
 // TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6
 // — an empty per-tenant noEnvironmentPolicy is treated as deny-all
-// when the platform default is also deny-all. §10.6 line 646.
+// when the platform default is also deny-all. §10.6.
 func TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_empty", "", tenantstore.NoEnvPolicyDenyAll)
 
@@ -1151,7 +1150,7 @@ func TestExplicitEnvironmentNonMemberRejected_spec_10_6_557(t *testing.T) {
 	}
 }
 
-// TestExplicitEnvironmentViewerRejected_spec_10_6_605 — §10.6 line 605:
+// TestExplicitEnvironmentViewerRejected_spec_10_6_605 — §10.6:
 // a `viewer` reads; creating a session requires at least `creator`. A
 // viewer-only member is rejected. F-10.6.5.
 func TestExplicitEnvironmentViewerRejected_spec_10_6_605(t *testing.T) {
@@ -1192,8 +1191,7 @@ func TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605(t *testing.T) {
 	}
 }
 
-// TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629 — §10.6
-// line 629: the session's runtime must be inside the environment
+// TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629 — §10.6: the session's runtime must be inside the environment
 // definition. A creator member requesting a runtime the environment's
 // runtimeSelector does not admit is rejected. F-10.6.1.
 func TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629(t *testing.T) {
@@ -1254,8 +1252,7 @@ func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T
 	}
 }
 
-// TestCreateRejectsSetupCommandsOverMaxCommands covers F-7.5.5 / §7.5
-// line 477 / §5.1 line 76: the gateway rejects a session whose
+// TestCreateRejectsSetupCommandsOverMaxCommands covers F-7.5.5 / §7.5 / §5.1: the gateway rejects a session whose
 // workspacePlan.setupCommands exceeds the runtime
 // setupCommandPolicy.maxCommands cap before any row is persisted or any
 // pod is claimed. The §15.1 envelope is WORKSPACE_PLAN_INVALID with a
@@ -1372,8 +1369,7 @@ func TestCreateAdmitsSetupCommandsWhenPolicyUnset(t *testing.T) {
 	}
 }
 
-// TestCreateRejectsSetupCommandOutsideAllowlist covers F-7.5.1 / §7.5 line
-// 488: the gateway rejects a session whose workspacePlan.setupCommands
+// TestCreateRejectsSetupCommandOutsideAllowlist covers F-7.5.1 / §7.5: the gateway rejects a session whose workspacePlan.setupCommands
 // includes a command that does not match any allowlist prefix. The §15.1
 // envelope is WORKSPACE_PLAN_INVALID with a structured details payload
 // (`field`, `reason`, `mode`, `index`, `command`) so the rejection reason
@@ -1428,7 +1424,7 @@ func TestCreateRejectsSetupCommandOutsideAllowlist(t *testing.T) {
 	}
 }
 
-// TestCreateRejectsSetupCommandOnBlocklist covers F-7.5.1 / §7.5 line 488:
+// TestCreateRejectsSetupCommandOnBlocklist covers F-7.5.1 / §7.5:
 // the gateway rejects a session when a setup command matches a blocklist
 // prefix.
 func TestCreateRejectsSetupCommandOnBlocklist(t *testing.T) {
@@ -1569,8 +1565,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 23 (atomicity note: pool exhaustion at step 4 returns
-// SESSION_CREATION_FAILED, no row), §15.1 line 1138 (Retry-After).
+// spec: §7.1, §15.1.
 // diagnosis: a create against an exhausted pool that persists a row, omits
 // the Retry-After hint, or surfaces a code other than SESSION_CREATION_FAILED
 // breaks the §7.1 fail-fast-at-create atomicity envelope — the client would
@@ -1607,7 +1602,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	if ra := rr.Header().Get("Retry-After"); ra == "" {
 		t.Error("Retry-After header missing on the SESSION_CREATION_FAILED reply")
 	}
-	// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — create-time pool
+	// spec: §7.1 / §4.1 (proposal) — create-time pool
 	// exhaustion surfaces the SESSION_CREATION_FAILED atomicity envelope, not
 	// the §5.2 WARM_POOL_EXHAUSTED code the two-step /start claim returns.
 	var env struct {
@@ -1676,8 +1671,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 (rollback releases the pod claim on a create-step
-// failure), §4.6 (durable binding).
+// spec: §7.1, §4.6 (durable binding).
 // diagnosis: a create whose row persist fails after the §7.1 step-4 claim
 // must release the claimed pod, or every persist failure leaks a warm pod.
 // A failure here means createSession did not roll back the create-time
@@ -1707,7 +1701,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 		t.Fatalf("create with rejecting store: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// spec: §7.1 line 28 — the create-time claim is rolled back: the per-pod
+	// spec: §7.1 — the create-time claim is rolled back: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var claim lennyv1.SandboxClaim
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
@@ -1715,7 +1709,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 620 (/terminate of a created session releases the pod),
+// spec: §15.1,
 // §4.6 (durable binding), §6.2 (pre-attached disposition), §7.1 step 23
 // (lease release).
 // diagnosis: a /terminate (DELETE) of a `created` session that does not
@@ -1770,7 +1764,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 		t.Fatalf("DELETE created session: status %d, want 200; body=%s", delRR.Code, delRR.Body.String())
 	}
 
-	// spec: §15.1 line 620 — the terminate released the claimed pod: the per-pod
+	// spec: §15.1 — the terminate released the claimed pod: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var after lennyv1.SandboxClaim
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {

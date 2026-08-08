@@ -449,8 +449,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 630 (created TTL-expiry releases the pod claim and revokes
-// the lease), §7.1 line 28 (atomicity), §4.5 (proposal) — the created-expiry
+// spec: §15.1, §7.1, §4.5 (proposal) — the created-expiry
 // sweep, wired to the binder's claimless reclaim, releases the pod a
 // `created`-state row claimed at /create back to the pool against a real
 // kube-apiserver before it deletes the abandoned row. This is the S5 end-to-end

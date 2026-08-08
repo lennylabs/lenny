@@ -216,7 +216,7 @@ type denyGate struct{ deny string }
 
 func (g denyGate) Allow(sessionID string) bool { return sessionID != g.deny }
 
-// spec: §8.10 line 1108 / §11.2 line 44 — a request for a session whose
+// spec: §8.10 / §11.2 — a request for a session whose
 // token budget is exhausted is rejected with BUDGET_EXHAUSTED before any
 // upstream call (the §11.2 mid-session enforcement pre-flight gate).
 func TestHandlerRejectsBudgetExhaustedSession_spec_8_10(t *testing.T) {
@@ -454,10 +454,7 @@ func TestHandlerStreamingRejectsExpiredLeaseBeforeUpstream(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 (the gateway LLM Proxy drives the budget-exhaustion
-// lease-extension trigger in-process, delivering the exhausting call's
-// already-computed response transparently), §11.2 line 44 (budget
-// enforcement). These tests exercise the proxy's write-path branch on the
+// spec: §8.6, §11.2. These tests exercise the proxy's write-path branch on the
 // tri-state Outcome the record path (Usage.RecordUsage) surfaces from its
 // single §8.6 extension dispatch. The handler never issues its own extension
 // call; it consumes the Outcome the enforcer already resolved, so the

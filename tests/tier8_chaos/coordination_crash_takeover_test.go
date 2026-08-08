@@ -65,7 +65,7 @@ func waitForLapse(t *testing.T, leases leasestore.LeaseStore, tenant, sessID str
 // spec: §10.1 (coordinator failover; CoordinatorFence; hold state on
 // connection loss; relinquish-and-backoff; hold-state timeout), §4.6.1
 // (coordinating replica holds the lease), §4.7 (single content consumer /
-// Attach content stream), §4.2 line 156 (coordination_generation on handoff).
+// Attach content stream), §4.2.
 //
 // diagnosis: a failure means the survivor did not recover the coordinator role
 // on a real replica crash — the lapsed lease was not adopted and re-fenced, a

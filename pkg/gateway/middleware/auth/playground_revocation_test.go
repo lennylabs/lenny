@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
-// spec: §27.6 line 204 / §27.3.1 lines 95-97 — the authoritative
+// spec: §27.6 / §27.3.1 — the authoritative
 // per-request revocation check for origin=playground bearers.
 
 // fakePlaygroundRevocations is an in-test PlaygroundRevocationChecker.
@@ -55,7 +55,7 @@ func playgroundToken(t *testing.T, signer *jwt.HMACSigner, jti string, origin st
 }
 
 // A revoked playground bearer is rejected 401 with
-// details.reason=bearer_revoked. spec: §27.3.1 line 95, §27 line 166.
+// details.reason=bearer_revoked. spec: §27.3.1, §27.
 func TestPlaygroundBearerRejectedWhenRevoked_spec_27_3_1_95(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
 	tok := playgroundToken(t, signer, "jti-pg-revoked", "playground")
@@ -86,7 +86,7 @@ func TestPlaygroundBearerRejectedWhenRevoked_spec_27_3_1_95(t *testing.T) {
 }
 
 // A live (non-revoked) playground bearer passes the check and reaches
-// the inner handler. spec: §27.3.1 line 95.
+// the inner handler. spec: §27.3.1.
 func TestPlaygroundBearerAllowedWhenLive(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
 	tok := playgroundToken(t, signer, "jti-pg-live", "playground")
@@ -117,8 +117,7 @@ func TestPlaygroundBearerAllowedWhenLive(t *testing.T) {
 }
 
 // A backing-store error fails closed: the bearer is rejected 503
-// REDIS_UNAVAILABLE rather than honored. spec: §27.3.1 line 97, §27
-// line 168.
+// REDIS_UNAVAILABLE rather than honored. spec: §27.3.1, §27.
 func TestPlaygroundBearerFailsClosedOnStoreError_spec_27_3_1_97(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
 	tok := playgroundToken(t, signer, "jti-pg-redis-down", "playground")
@@ -148,7 +147,7 @@ func TestPlaygroundBearerFailsClosedOnStoreError_spec_27_3_1_97(t *testing.T) {
 // A non-playground bearer (no origin claim) never consults the
 // playground revocation check, even when one is wired. The §13.3
 // revocation path is the only revocation gate for ordinary bearers.
-// spec: §27.3.1 line 95 — the check keys on the origin claim.
+// spec: §27.3.1 — the check keys on the origin claim.
 func TestNonPlaygroundBearerSkipsPlaygroundRevocation(t *testing.T) {
 	signer := jwt.NewHMACSigner("test", []byte("secret"))
 	// No origin claim: a normal session-capability bearer.

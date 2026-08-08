@@ -13,7 +13,7 @@ import (
 // the claim was dropped at this boundary, leaving operability-scope tokens
 // with nothing to enforce against.
 //
-// spec: §13.3 line 580.
+// spec: §13.3.
 func TestToExchangeTokenCarriesAuthorizedTools_spec_13_3_580(t *testing.T) {
 	c := jwt.Claims{
 		TenantID:        "acme",

@@ -35,8 +35,7 @@ type Embedder interface {
 // ValidateEmbedder is the startup preflight for a provider-backed
 // Embedder. It calls Embed with a known-non-empty preflight token and
 // fails when the returned vector's length does not match EmbeddingDim
-// — the §9.4 line 198 "MUST project its model output to this width
-// before returning" guarantee the pgvector column and the ivfflat
+// — the §9.4 guarantee the pgvector column and the ivfflat
 // index rely on. A misconfigured custom Embedder fails fast at boot
 // rather than corrupting the §9.4 vector(256) column at every Write
 // (where the pgvector dimension-mismatch error arrives unfriendly and
@@ -52,7 +51,7 @@ type Embedder interface {
 // EmbeddingDim is the only failure mode this preflight catches —
 // every other Embedder defect is the implementation's responsibility.
 //
-// spec: §9.4 line 198; F-9.4.8.
+// spec: §9.4; F-9.4.8.
 func ValidateEmbedder(e Embedder) error {
 	if e == nil {
 		return nil
@@ -65,7 +64,7 @@ func ValidateEmbedder(e Embedder) error {
 		return nil
 	}
 	if len(vec) != EmbeddingDim {
-		return fmt.Errorf("memorystore: embedder returned vector of length %d, want %d (§9.4 line 198 dimension width)",
+		return fmt.Errorf("memorystore: embedder returned vector of length %d, want %d (§9.4 dimension width)",
 			len(vec), EmbeddingDim)
 	}
 	return nil
@@ -77,7 +76,7 @@ func ValidateEmbedder(e Embedder) error {
 // Embedder short-circuit before producing a vector). It is exported
 // so tests for custom Embedders can assert the preflight contract
 // without re-discovering the magic string.
-// spec: §9.4 line 198; F-9.4.8.
+// spec: §9.4; F-9.4.8.
 const EmbedderPreflightToken = "memorystore-embedder-preflight"
 
 // HashingEmbedder is the deterministic, dependency-free default

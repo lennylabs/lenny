@@ -132,7 +132,7 @@ var (
 const adapterGRPCPort = 50051
 
 func main() {
-	// spec: §16.4 lines 370-372 — install the structured JSON logger as the
+	// spec: §16.4 — install the structured JSON logger as the
 	// process-wide slog default and route the stdlib log package through it,
 	// so every gateway log line carries ts (RFC 3339 UTC), level, msg, and
 	// component=gateway. F-16.4.1.
@@ -265,7 +265,7 @@ func runGateway(f *gatewayFlags) {
 		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, slotHealth,
 		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
 	)
-	// spec: §11.2 line 44 — the budget terminator runs the same terminal
+	// spec: §11.2 — the budget terminator runs the same terminal
 	// pipeline a watchdog or operator force-terminate runs, so an
 	// over-budget session releases its pod and emits its terminal audit /
 	// billing / SSE signals exactly once.
@@ -380,7 +380,7 @@ func (r sessionGenerationReader) CoordinationGeneration(ctx context.Context, ten
 	return row.CoordinationGeneration, nil
 }
 
-// lastSeqStore adapts the §4.2 session store to the §7.3 line 397
+// lastSeqStore adapts the §4.2 session store to the §7.3
 // sessions.last_seq durability hooks on the session event bus. It
 // satisfies both sessionevents.LastSeqPersister (advance on every
 // publish) and sessionevents.LastSeqLoader (seed the in-memory
@@ -389,7 +389,7 @@ func (r sessionGenerationReader) CoordinationGeneration(ctx context.Context, ten
 // without dropping events. F-7.3.3.
 type lastSeqStore struct{ sessions sessionstore.Store }
 
-// LoadLastSeq returns the persisted §7.3 line 397 sessions.last_seq
+// LoadLastSeq returns the persisted §7.3 sessions.last_seq
 // counter so the Bus seeds its local counter on the first publish for
 // the session (the coordinator-handoff "primed from Postgres at
 // handoff step 0" contract). A missing row reads as zero so a fresh
@@ -432,7 +432,7 @@ func (l lastSeqStore) AdvanceLastSeq(ctx context.Context, tenantID, sessionID st
 // (and whenever inner is nil) it reports "no policy", so the evaluator
 // falls back to the operator-configured default maxInputSize. The holder
 // is read on the request path after wiring completes, so the deferred
-// assignment is safe. spec: §4.8 line 974; §8.3 line 157. F-13.5.1 / F-8.2.9.
+// assignment is safe. spec: §4.8; §8.3. F-13.5.1 / F-8.2.9.
 type maxInputSizeResolverHolder struct {
 	inner policy.MaxInputSizeResolver
 }
@@ -480,16 +480,16 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		DenyList:     denyList,
 		Interceptors: chain,
 		Cache:        cache,
-		// spec: §4.9 line 1468 — proxy-extracted counts feed the §15.1 /
+		// spec: §4.9 — proxy-extracted counts feed the §15.1 /
 		// §11.2 usage record. A nil Usage discards the counts.
 		Usage: usage,
-		// spec: §11.2 line 44 / §8.10 line 1108 — reject a proxied request
+		// spec: §11.2 / §8.10 — reject a proxied request
 		// for a session that has already exhausted its token budget.
 		BudgetGate: budgetGate,
-		// §16.1 lines 97, 99, 100: active connections, translation
+		// §16.1: active connections, translation
 		// duration, and translation errors on the gateway registry.
 		Metrics: gwMetrics,
-		// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
+		// spec: §4.9 — the credentialPolicy Fallback Flow.
 		Fallback:        fallback.controller,
 		FallbackRotator: fallback.rotator,
 		FallbackAudit:   fallback.audit,
@@ -519,7 +519,7 @@ type llmTranslatorConfig struct {
 }
 
 // buildLLMTranslatorRegistry assembles the §4.9 provider→translator
-// registry the proxy dispatches on. spec: §4.9 lines 1525-1526.
+// registry the proxy dispatches on. spec: §4.9.
 func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegistry {
 	translators := []llmproxy.Translator{
 		&llmproxy.AnthropicDirectTranslator{DefaultAnthropicVersion: c.anthropicVersion},
@@ -568,7 +568,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 //
 // metrics may be nil for the no-metrics test path; in production the
 // gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
-// every extension decision drives the §16 line 66
+// every extension decision drives the §16
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
 //
 // trustDomain and denyList wire the §10.3 NET-060 inbound peer
@@ -576,7 +576,7 @@ func buildLLMTranslatorRegistry(c llmTranslatorConfig) llmproxy.TranslatorRegist
 // installs a SPIFFE VerifyPeerCertificate callback that validates each
 // inbound pod certificate's `spiffe://<trust-domain>/agent/{pool}/{pod}`
 // URI SAN at handshake (spec line 321) and rejects a certificate on the
-// §10.3 revocation deny list (spec line 352). A rejection aborts the
+// §10.3 revocation deny list. A rejection aborts the
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
@@ -594,24 +594,24 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		Auditing:          auditor,
 		ServiceInstanceID: replicaID,
 		Clock:             clockinject.Now,
-		// §8.6 line 714 — wire the elicitation path so elicitation-mode
+		// §8.6 — wire the elicitation path so elicitation-mode
 		// trees solicit the user's consent instead of auto-granting.
 		// F-8.6.2.
 		Elicitor: elicitor,
-		// §8.6 line 712 — the auto-mode rate-limit counter (reuses the
+		// §8.6 — the auto-mode rate-limit counter (reuses the
 		// §11.1 request-rate counter, Redis-backed when configured) and
 		// the deployment-default cap. F-8.6.7.
 		AutoExtensionCounter:    autoCounter,
 		DefaultAutoMaxPerMinute: defaultAutoMaxPerMin,
-		// §9.1 lines 14-31 — forward a type:agent runtime's intra-pod
+		// §9.1 — forward a type:agent runtime's intra-pod
 		// platform tool calls (lenny/delegate_task, ...) to the gateway
 		// platform tool surface. F-9.1.1.
 		PlatformTools: platformTools,
-		// §9.3 lines 142-164 — forward a type:agent runtime's intra-pod
+		// §9.3 — forward a type:agent runtime's intra-pod
 		// per-connector tool calls (against @lenny-connector-<id> sockets)
 		// to the gateway connector-invocation surface. F-9.1.2.
 		ConnectorTools: connectorTools,
-		// §8.6 line 643 — propagate a granted token-budget extension onto
+		// §8.6 — propagate a granted token-budget extension onto
 		// the §8.2 per-tree delegation budget counter so admission observes
 		// the raised pool. F-8.6.3.
 		TreeBudget: treeGranter,
@@ -628,7 +628,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("bind GatewayControl listener on %s: %w", addr, err)
 	}
-	// spec: §4.7 line 616 / §15.3 — the adapter↔gateway channel is mTLS.
+	// spec: §4.7 / §15.3 — the adapter↔gateway channel is mTLS.
 	// The pod adapter is the client of this listener, so the gateway
 	// presents its mesh server cert (--adapter-tls-cert/key, its §4.7
 	// identity) and requires + verifies the adapter's client cert against
@@ -638,12 +638,11 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// cert material is configured the option is nil and the listener
 	// serves plaintext — the documented local-development path only.
 	// F-8.6.4 / F-15.3.1.
-	// spec: §10.3 line 321 (NET-060) — the gateway validates the pod's
+	// spec: §10.3 — the gateway validates the pod's
 	// SPIFFE URI on every inbound handshake. The verifier runs as a
 	// VerifyPeerCertificate callback on top of CA chain verification, so
 	// possession of a cluster-CA cert is necessary but never sufficient
-	// (spec line 324). It also consults the §10.3 revocation deny list
-	// (spec line 352) so a cert revoked between rotations is rejected at
+	// (spec line 324). It also consults the §10.3 revocation deny list so a cert revoked between rotations is rejected at
 	// handshake. Only installed when client-cert verification is active
 	// (clientCA set) and a trust domain is configured; otherwise the
 	// local-development plaintext/CA-only path is preserved.
@@ -679,7 +678,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// request body and have no other proof of the caller's identity.
 	// F-8.6.4 / F-15.3.1.
 	//
-	// spec: §10.2 line 227 / §10.3 line 334 — the gateway validates the
+	// spec: §10.2 / §10.3 — the gateway validates the
 	// projected SA token on every pod→gateway request: its signature and
 	// expiry via a Kubernetes TokenReview (when saTokenVerifier is wired)
 	// and its deployment-specific audience claim, the SA-token layer of
@@ -692,7 +691,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		leasecontrol.RequireVerifiedPeerInterceptor(clientCA != ""),
 		leasecontrol.RequireSATokenInterceptor(saTokenAudience, saTokenVerifier),
 	))
-	// spec: §16.3 line 328 ("Pod → Gateway (delegation tool calls carry
+	// spec: §16.3 ("Pod → Gateway (delegation tool calls carry
 	// parent trace context)") — extract the inbound traceparent from gRPC
 	// metadata so the gateway's GatewayControl spans continue the pod's
 	// trace. F-16.3.3.
@@ -705,8 +704,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// the §4.9 usage recorder so the per-tree episode fan-out (and the in-path
 	// Granted path) can raise or terminate a session that detached at the
 	// in-path deadline while keeping the raise alive across the next
-	// Enforcer.Record (the recorder accumulates the granted delta). spec: §8.6
-	// line 629; proposal 0023 S3/S4/S6.
+	// Enforcer.Record (the recorder accumulates the granted delta). spec: §8.6; proposal 0023 S3/S4/S6.
 	return gs, lis, svc, nil
 }
 
@@ -796,11 +794,10 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 // leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning
 // each ExtensionAudit record into a §11.7 hash-chained audit row
 // keyed on the request tenant. The event type is the spec-listed
-// `delegation.lease_extended`; the payload carries every §8.6 line
-// 743 field so a forensic reconstruction can identify the requesting
+// `delegation.lease_extended`; the payload carries every §8.6 field so a forensic reconstruction can identify the requesting
 // session, the approval mode and approver, the per-batch grouping,
 // the issuing replica, and the client originator. F-8.6.10.
-// spec: §8.6 line 743
+// spec: §8.6
 type leaseExtensionAuditAdapter struct {
 	appender policy.AuditAppender
 }
@@ -812,7 +809,7 @@ func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e lease
 	payload := map[string]any{
 		"session_id":      e.RequestSessionID,
 		"root_session_id": e.RootSessionID,
-		// §8.6 line 643 requested/granted amounts across every extendable
+		// §8.6 requested/granted amounts across every extendable
 		// dimension, not just tokens. F-8.6.1.
 		"requested_tokens":            e.Requested.Tokens,
 		"granted_tokens":              e.Granted.Tokens,
@@ -852,12 +849,12 @@ func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e lease
 	_, _ = a.appender.Append(ctx, e.TenantID, "delegation.lease_extended", json.RawMessage(data), clockinject.Now().UTC())
 }
 
-// RecordAutoRateLimitExceeded emits the §8.6 line 712
+// RecordAutoRateLimitExceeded emits the §8.6
 // `delegation.lease_extension_auto_rate_limit_exceeded` audit row when an
 // auto-mode extension request trips the tree's maxAutoExtensionsPerMinute
 // and the gateway falls back to elicitation for the remainder of the
 // window. F-8.6.7.
-// spec: §8.6 line 712
+// spec: §8.6
 func (a leaseExtensionAuditAdapter) RecordAutoRateLimitExceeded(ctx context.Context, e leasecontrol.AutoRateLimitAudit) {
 	if a.appender == nil {
 		return
@@ -894,9 +891,9 @@ func verifyPostgresSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	return nil
 }
 
-// platformConfigMissing is one §10.3 line 361 LENNY_CONFIG_MISSING
+// platformConfigMissing is one §10.3 LENNY_CONFIG_MISSING
 // violation: a required platform configuration key that is absent or
-// invalid. The fields mirror the structured-log fields §10.3 line 371
+// invalid. The fields mirror the structured-log fields §10.3
 // mandates (config_key, scope, remediation).
 type platformConfigMissing struct {
 	configKey   string
@@ -904,7 +901,7 @@ type platformConfigMissing struct {
 	remediation string
 }
 
-// validatePlatformConfig returns the §10.3 line 361 required-key
+// validatePlatformConfig returns the §10.3 required-key
 // violations for the platform keys gated at this point in gateway
 // startup: the OIDC issuer URL and client ID (both exempt in dev mode
 // per the line 373 dev-mode symmetry and §17.4), and the
@@ -914,7 +911,7 @@ type platformConfigMissing struct {
 // resolveNoEnvironmentPolicy, playground.devTenantId by
 // playground.Config.Validate. Extracted from main() so the
 // TestGatewayConfigValidation regression test can cover the §10.3
-// contract without booting a gateway. spec: §10.3 lines 361-373;
+// contract without booting a gateway. spec: §10.3;
 // §17.4 dev mode.
 func validatePlatformConfig(devMode bool, oidcIssuerURL, oidcClientID string, defaultMaxSessionSeconds int) []platformConfigMissing {
 	var missing []platformConfigMissing
@@ -952,17 +949,17 @@ func validatePlatformConfig(devMode bool, oidcIssuerURL, oidcClientID string, de
 }
 
 // isAbsoluteURL reports whether s parses as an absolute URL with a
-// scheme and host — the §10.3 line 365 "Non-empty URL" acceptance
+// scheme and host — the §10.3 acceptance
 // criterion for auth.oidc.issuerUrl.
 func isAbsoluteURL(s string) bool {
 	u, err := url.Parse(strings.TrimSpace(s))
 	return err == nil && u.IsAbs() && u.Host != ""
 }
 
-// buildStartupProbeTLSConfig assembles the §10.3 line 359 startup TLS
+// buildStartupProbeTLSConfig assembles the §10.3 startup TLS
 // probe's client config from the optional CA bundle and client
 // certificate. An empty CA uses the system trust store; an empty
-// cert/key presents no client certificate. spec: §10.3 line 359.
+// cert/key presents no client certificate. spec: §10.3.
 func buildStartupProbeTLSConfig(caFile, certFile, keyFile string) (*tls.Config, error) {
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if caFile != "" {
@@ -994,8 +991,8 @@ func buildStartupProbeTLSConfig(caFile, certFile, keyFile string) (*tls.Config, 
 // derives allow-all for local convenience. Any value other than
 // deny-all / allow-all returns a typed validation error. Extracted
 // from main() so the §11.1 TestGatewayConfigValidation test can
-// regression-cover the §10.3 contract. spec: §10.6 line 646;
-// §11.1 line 13; §10.3 configuration validation table.
+// regression-cover the §10.3 contract. spec: §10.6;
+// §11.1; §10.3 configuration validation table.
 func resolveNoEnvironmentPolicy(value string, devMode bool) (string, error) {
 	resolved := value
 	if resolved == "" && devMode {
@@ -1036,11 +1033,11 @@ type permissiveRegistry struct{}
 
 func (permissiveRegistry) IsRegistered(string) (bool, error) { return true, nil }
 
-// kmsBreakerObserver routes the §10.2 line 225 JWTSigner breaker
+// kmsBreakerObserver routes the §10.2 JWTSigner breaker
 // transitions and signing failures onto gatewaymetrics so the §16.5
 // KMSSigningUnavailable alert reads them. The metrics pointer is wired
 // in after gatewaymetrics.New() returns; pre-wire calls are no-ops.
-// spec: §10.2 line 225. F-10.2.6.
+// spec: §10.2. F-10.2.6.
 type kmsBreakerObserver struct {
 	mu sync.Mutex
 	m  *gatewaymetrics.Metrics
@@ -1118,7 +1115,7 @@ func reclaimAbandonedManifests(ctx context.Context, release checkpointer.Backsto
 	return reclaimed, nil
 }
 
-// runStartupChainContinuityCheck implements the §12.3 line 101 startup
+// runStartupChainContinuityCheck implements the §12.3 startup
 // chain-continuity check: it re-verifies the most recent lastN audit
 // rows of every tenant's hash chain, increments
 // lenny_audit_chain_integrity_total per tenant by §11.7 state, and logs
@@ -1128,7 +1125,7 @@ func reclaimAbandonedManifests(ctx context.Context, release checkpointer.Backsto
 // only a non-linking prev_hash across the gap (a committed audit row
 // tampered with or removed) reaches the boundary-populated WARN branch.
 // A broken chain fires the §16.5 AuditChainGap alert through the metric;
-// the gateway does not refuse to start. spec: §12.3 line 101, §11.7.
+// the gateway does not refuse to start. spec: §12.3, §11.7.
 // F-12.3.9. F-11.2.10.
 func runStartupChainContinuityCheck(ctx context.Context, db, ctrlDB integrity.Querier, lastN int, m *gatewaymetrics.Metrics) {
 	// db is the ledger instance holding audit_log (the separate §12.3
@@ -1137,7 +1134,7 @@ func runStartupChainContinuityCheck(ctx context.Context, db, ctrlDB integrity.Qu
 	// skip-set is authoritative, so the retained gdpr.*-only remnant of a
 	// tenant in state='deleting' or state='deleted' does not raise a false
 	// §16.5 AuditChainGap alert. In the co-located topology the call site
-	// passes the same pool for both. spec: §12.3 line 103, §12.8.
+	// passes the same pool for both. spec: §12.3, §12.8.
 	results, err := integrity.CheckChainContinuityRecent(ctx, db, ctrlDB, lastN)
 	if err != nil {
 		log.Printf("lenny-gateway: WARNING: §12.3 startup audit chain-continuity check could not run: %v", err)
@@ -1158,10 +1155,10 @@ func runStartupChainContinuityCheck(ctx context.Context, db, ctrlDB integrity.Qu
 			// tampered with or removed — never buffered-T2 loss, which is the
 			// accepted unsignaled tradeoff of the opt-in audit.batchingEnabled
 			// path and carries no chain-level signal. The message matches the
-			// §12.3 line 101 WARN string verbatim; the surrounding §12.3 prose
+			// §12.3 WARN string verbatim; the surrounding §12.3 prose
 			// directs the operator to reconcile against the independent SIEM
 			// copy and document the break in their compliance records.
-			// spec: §12.3 line 101, §11.7. F-11.2.10.
+			// spec: §12.3, §11.7. F-11.2.10.
 			log.Printf("Audit chain broken for tenant %s: prev_hash does not link across sequence %d to %d (~%s to %s). This indicates a committed audit row was tampered with or removed. T3/T4 events are synchronous and will not appear in chain gaps.",
 				r.TenantID, r.GapLowSeq(), r.GapHighSeq(),
 				r.GapStart().Format(time.RFC3339), r.GapEnd().Format(time.RFC3339))
@@ -1199,7 +1196,7 @@ func (o *kmsBreakerObserver) OnCircuitClosed() {
 // memoryStoreObserver adapts the gatewaymetrics emitters into the §9.4
 // MemoryStore Observer contract so the in-memory and Postgres
 // backends route their per-operation metrics through one bound
-// `backend` label. spec: §9.4 line 200 / §16.1 line 151–154. F-9.4.1.
+// `backend` label. spec: §9.4 / §16.1. F-9.4.1.
 type memoryStoreObserver struct {
 	metrics *gatewaymetrics.Metrics
 	backend string
@@ -1237,15 +1234,14 @@ func (a ocsfMetricsAdapter) TranslationSucceeded(string) {}
 
 func (a ocsfMetricsAdapter) DeadLettered(string) {}
 
-// userstorePlatformRoles adapts a userstore.Store into the §10.2 line
-// 294 platform-managed role resolver consulted by the auth middleware.
+// userstorePlatformRoles adapts a userstore.Store into the §10.2 platform-managed role resolver consulted by the auth middleware.
 // When a row carries a platform-managed assignment (RoleAssigned) — even
 // one whose Roles slice is empty — its Roles fully replace the OIDC
 // claim, so tenant-admins can downgrade a user with an over-broad OIDC
 // claim by recording an explicit (possibly empty) assignment. A row with
 // no assignment (the state left by `DELETE /v1/admin/tenants/{id}/users/
 // {userId}/role`) or a missing row leaves the JWT claim authoritative.
-// spec: §10.2 line 294, §15.1 line 828. F-10.2.3, F-15.1.3.
+// spec: §10.2, §15.1. F-10.2.3, F-15.1.3.
 type userstorePlatformRoles struct {
 	store userstore.Store
 }
@@ -1264,7 +1260,7 @@ func (r userstorePlatformRoles) ResolveRoles(ctx context.Context, tenantID, subj
 	return append([]auth.Role(nil), row.Roles...), row.RoleAssigned, nil
 }
 
-// tenantIntrospectionConfig resolves the §10.6 line 661 real-time
+// tenantIntrospectionConfig resolves the §10.6 real-time
 // group-check configuration from a tenant's stored identityProvider
 // record, satisfying introspection.ConfigSource. A tenant that has not
 // set introspectionEnabled yields a disabled Config, so the auth
@@ -1294,7 +1290,7 @@ func (s tenantIntrospectionConfig) IntrospectionConfig(ctx context.Context, tena
 	}, nil
 }
 
-// bearerTenantRegistry is the §10.2 line 219 multi-tenant bearer-chain
+// bearerTenantRegistry is the §10.2 multi-tenant bearer-chain
 // adapter. It consults the wired tenantstore so a Bearer JWT whose
 // `tenant_id` claim names a tenant that is not provisioned (or is
 // soft-deleted) is rejected with TENANT_NOT_FOUND. The built-in
@@ -1302,7 +1298,7 @@ func (s tenantIntrospectionConfig) IntrospectionConfig(ctx context.Context, tena
 // quickstart (which seeds the default row via the bootstrap Job) works
 // even before the row is persisted; once the row exists, the active
 // flag (IsActive) governs.
-// spec: §10.2 lines 219-221. F-10.2.1.
+// spec: §10.2. F-10.2.1.
 type bearerTenantRegistry struct {
 	store tenantstore.Store
 }
@@ -1342,12 +1338,12 @@ type artifactMetricsSink interface {
 
 // tierMismatchSink is implemented by the non-envelope-capable artifact
 // stores (the in-memory and §17.4 local-filesystem backends) that reject
-// a T4 tenant's write under the §12.9 line 1048 storage-boundary tier
+// a T4 tenant's write under the §12.9 storage-boundary tier
 // check. The cloud backends do not implement it: they enforce the T4
 // contract through their own SSE-KMS resolver and surface
 // kms_unavailable instead.
 //
-// spec: §12.9 line 1048.
+// spec: §12.9.
 type tierMismatchSink interface {
 	SetOnTierStoreMismatch(func(tenantID string))
 }
@@ -1398,7 +1394,7 @@ func newSSEKeyResolver(tenants tenantstore.Store) func(string) (string, bool, er
 }
 
 // authFailureAuditAdapter bridges the §10.2 auth middleware to the
-// §11.7 audit chain so every §4.2 line 185 tenant-claim rejection
+// §11.7 audit chain so every §4.2 tenant-claim rejection
 // (TENANT_CLAIM_MISSING / TENANT_NOT_FOUND / TENANT_CLAIM_INVALID_FORMAT)
 // produces an `auth_failure` audit row. Rejections that infer a
 // tenant id from the JWT claim or dev header land on that inferred
@@ -1478,7 +1474,7 @@ func (e experimentRejectionReporter) ReportExperimentIsolationRejection(ctx cont
 	}
 }
 
-// ObserveTargetingDuration records the §16.1 line 156
+// ObserveTargetingDuration records the §16.1
 // lenny_experiment_targeting_duration_seconds histogram.
 func (e experimentRejectionReporter) ObserveTargetingDuration(_ context.Context, provider string, seconds float64) {
 	if e.metrics != nil {
@@ -1486,7 +1482,7 @@ func (e experimentRejectionReporter) ObserveTargetingDuration(_ context.Context,
 	}
 }
 
-// RecordTargetingError increments the §16.1 line 157
+// RecordTargetingError increments the §16.1
 // lenny_experiment_targeting_error_total counter.
 func (e experimentRejectionReporter) RecordTargetingError(_ context.Context, provider, errorType string) {
 	if e.metrics != nil {
@@ -1537,7 +1533,7 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 // audit-traceability requirement. It appends directly to the §11.7
 // per-tenant hash chain (the §4.9.2 event-type catalog is distinct from
 // the admin-audit catalog the EmitAdminEvent path validates against).
-// The token is never recorded. spec: §26.2 line 119; §4.9.2. F-26.2.5.
+// The token is never recorded. spec: §26.2; §4.9.2. F-26.2.5.
 type mcpVCSLeaseAuditor struct {
 	appender policy.AuditAppender
 	// billing tees the §11.2.1 credential.leased event into the per-tenant
@@ -1595,8 +1591,7 @@ func (a deriveDowngradeBillingAuditor) EmitDeriveIsolationDowngrade(ctx context.
 // §16.6 session lifecycle events (session.created and the terminal
 // session.{completed,failed,cancelled,expired}) to the §11.7
 // hash-chained audit log under the session's own tenant partition. The
-// tenant is taken from the session-derived event, satisfying the §11.7
-// line 428 write-time tenant-validation rule. The OCSF mapping maps
+// tenant is taken from the session-derived event, satisfying the §11.7 write-time tenant-validation rule. The OCSF mapping maps
 // these event types to API Activity (6003).
 type sessionLifecycleAuditor struct {
 	appender policy.AuditAppender
@@ -1616,7 +1611,7 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 		payload["failure_class"] = ev.FailureClass
 	}
 	if ev.Detail != "" {
-		// spec: §7.1 line 112 — workspaceSealFailed records the last MinIO
+		// spec: §7.1 — workspaceSealFailed records the last MinIO
 		// export error in the detail field.
 		payload["detail"] = ev.Detail
 	}
@@ -1646,9 +1641,9 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 // §7.2 / §11.7 / §16.7 tool-use approve/deny and elicitation
 // respond/dismiss events to the hash-chained audit log under the
 // session's own tenant partition. The tenant is taken from the
-// session-derived event, satisfying the §11.7 line 428 write-time
+// session-derived event, satisfying the §11.7 write-time
 // tenant-validation rule. The OCSF mapping maps these event types to
-// API Activity (6003). spec: §7.2 lines 124-127. F-7.2.8.
+// API Activity (6003). spec: §7.2. F-7.2.8.
 type interactionResolutionAuditor struct {
 	appender policy.AuditAppender
 }
@@ -1685,7 +1680,7 @@ func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Cont
 // lenny_audit_partition_drop_blocked gauge is exported through
 // Prometheus; the per-sweep rows-pruned and run-outcome counts are not
 // §16.1 series and are surfaced through the pruner's onTick log line, so
-// those two sink methods are deliberate no-ops. spec: §16.4 line 378.
+// those two sink methods are deliberate no-ops. spec: §16.4.
 type auditRetentionMetrics struct{ m *gatewaymetrics.Metrics }
 
 func (auditRetentionMetrics) AddAuditRowsPruned(int)      {}
@@ -1705,8 +1700,7 @@ func (a auditRetentionMetrics) SetAuditPartitionDropBlocked(partition string, bl
 // regardless of which transport walked the tree. The audit-row half
 // of the §8.9 finding (a `delegation.tree_cycle_detected` row) is
 // not yet emitted: §16.7 is a closed catalog of spec-listed events
-// and the new event type requires a spec change. spec: §8.9 line
-// 1003; F-8.9.10 (metric half closed, audit half deferred to a
+// and the new event type requires a spec change. spec: §8.9; F-8.9.10 (metric half closed, audit half deferred to a
 // future spec addition).
 type treeCycleEmitter struct {
 	metrics *gatewaymetrics.Metrics
@@ -1723,7 +1717,7 @@ func (e treeCycleEmitter) emit(_ context.Context, tenantID, _, _, source string)
 
 // sessionserverTreeCycleObserver adapts treeCycleEmitter to
 // sessionserver.TreeCycleObserver for the REST /v1/sessions/{id}/tree
-// walker. spec: §8.9 line 1003; F-8.9.10.
+// walker. spec: §8.9; F-8.9.10.
 type sessionserverTreeCycleObserver struct {
 	emitter treeCycleEmitter
 }
@@ -1734,7 +1728,7 @@ func (o sessionserverTreeCycleObserver) OnTreeCycle(ctx context.Context, ev sess
 
 // mcpToolsTreeCycleObserver adapts treeCycleEmitter to
 // mcptools.TreeCycleObserver for the lenny/get_task_tree platform-
-// tool walker. spec: §8.9 line 1003; F-8.9.10.
+// tool walker. spec: §8.9; F-8.9.10.
 type mcpToolsTreeCycleObserver struct {
 	emitter treeCycleEmitter
 }
@@ -1772,8 +1766,7 @@ func (a credentialAuditor) EmitCredentialEvent(ctx context.Context, eventType st
 // dev-mode sessions are bounded.
 // agentPodStateMirror adapts the §4.6.1 agent_pod_state store to the
 // §10.1 orphan-session reconciler's MirrorReader, mapping the store's
-// PodState onto the reconciler's narrow MirrorPod view. spec: §10.1
-// line 51. F-10.1.5.
+// PodState onto the reconciler's narrow MirrorPod view. spec: §10.1. F-10.1.5.
 type agentPodStateMirror struct {
 	store agentpodstate.Store
 }
@@ -1790,12 +1783,12 @@ func (a agentPodStateMirror) MirrorLagSeconds(ctx context.Context, poolID string
 	return a.store.MirrorLagSeconds(ctx, poolID)
 }
 
-// sandboxPhaseReader is the §10.1 line 51 direct-Kubernetes fallback the
+// sandboxPhaseReader is the §10.1 direct-Kubernetes fallback the
 // orphan-session reconciler consults when the agent_pod_state mirror is
 // stale or missing. It reads the authoritative Sandbox phase through the
 // §4.6.1 PodLifecycleManager.GetPodStatus surface; a deleted Sandbox
 // (ErrPodNotFound) reports found=false, itself a terminal signal.
-// spec: §10.1 line 51. F-10.1.5.
+// spec: §10.1. F-10.1.5.
 type sandboxPhaseReader struct {
 	mgr podlifecycle.PodLifecycleManager
 	ns  string
@@ -1844,8 +1837,7 @@ func (t tenantsLister) ListTenants(ctx context.Context) ([]string, error) {
 // the gateway runs without a pod binder (in-memory mode), leaving the sweep to
 // drop the row without a pod release.
 //
-// spec: §15.1 line 630 (created TTL-expiry releases the pod claim and revokes
-// the lease); proposal §4.5.
+// spec: §15.1; proposal §4.5.
 func createdSweeperReclaim(binder *podsession.Binder) createdsweeper.Reclaimer {
 	if binder == nil {
 		return nil
@@ -1910,7 +1902,7 @@ func (a auditPruneTenants) ListTenants(ctx context.Context) ([]string, error) {
 }
 
 // t4TenantSource adapts a tenantstore.Store into a
-// tenantkms.TenantSource so the §12.5 line 307 continuous probe
+// tenantkms.TenantSource so the §12.5 continuous probe
 // enumerates exactly the active tenants at workspaceTier T4 — the only
 // tenants holding a tenant-scoped KMS key. Soft-deleted tenants are
 // dropped (their key is destroyed in §12.8 Phase 4a, so probing it is
@@ -1937,7 +1929,7 @@ func (t t4TenantSource) T4Tenants(ctx context.Context) ([]string, error) {
 // complianceProfile values across the registered tenants. It backs the
 // §11.2.1 billing.retentionDays compliance-floor preflight: a profile
 // active on any tenant raises the deployment's retention floor.
-// spec: §11.2.1 line 151. F-11.2.15.
+// spec: §11.2.1. F-11.2.15.
 func activeComplianceProfiles(ctx context.Context, store tenantstore.Store) ([]string, error) {
 	rows, err := store.List(ctx, tenantstore.ListFilter{})
 	if err != nil {
@@ -1980,8 +1972,7 @@ func (r playgroundTenantRegistry) IsRegistered(tenantID string) (bool, error) {
 }
 
 // playgroundAuditEmitter bridges the playground's §27.3.1 / §10.2
-// audit events into the durable §11.7 audit chain. spec: §27.3.1 step
-// 6 (line 156) — playground.bearer_minted and playground.bearer_revoked
+// audit events into the durable §11.7 audit chain. spec: §27.3.1 step 6 — playground.bearer_minted and playground.bearer_revoked
 // "share the taxonomy and redaction rules of other auth events in
 // §11.7", so they are committed to the principal's per-tenant hash
 // chain, not just logged. It keeps the lightweight log line so a mint
@@ -2019,7 +2010,7 @@ func (e playgroundAuditEmitter) EmitPlaygroundEvent(ctx context.Context, ev play
 	})
 }
 
-// EmitMintRejected routes the §10.2 line 243
+// EmitMintRejected routes the §10.2
 // playground.bearer_mint_rejected event to the durable §11.7 sink and
 // logs it alongside the metric increment. A rejection that fires before
 // tenant extraction carries an empty tenant; the sink commits it to the
@@ -2048,12 +2039,12 @@ func (e playgroundAuditEmitter) EmitMintRejected(ctx context.Context, ev playgro
 // embeddedOIDCAudience is the only audience the §17.4 embedded OIDC
 // provider issues. It mirrors pkg/embedded/oidc.Audience; the gateway
 // keeps the literal local so the production binary does not link the
-// embedded dev-only provider. spec: §17.4 line 182.
+// embedded dev-only provider. spec: §17.4.
 const embeddedOIDCAudience = "dev.local"
 
 // embeddedHMACVerifier wraps the trusted embedded OIDC HMAC verifier so
 // the gateway refuses any token whose aud claim is not the embedded
-// provider's audience, even when the signature is valid. §17.4 line 182
+// provider's audience, even when the signature is valid. §17.4
 // requires the gateway to reject foreign-audience tokens; the embedded
 // provider's own Verify enforces this, but the gateway trusts the key
 // directly and must apply the same check on its side. F-17.4.16.
@@ -2075,7 +2066,7 @@ func splitCSV(raw string) []string {
 
 // parseKeyValueCSV splits a comma-separated key=value flag value into
 // a map. Trimmed empty entries and entries without `=` are skipped.
-// An empty input yields a nil map. The §27.2 line 41
+// An empty input yields a nil map. The §27.2
 // playground.sessionLabels flag uses this encoding so a Helm value
 // like `{origin: playground, env: stage}` renders to
 // `--playground-session-labels=origin=playground,env=stage`.
@@ -2109,7 +2100,7 @@ func parseKeyValueCSV(raw string) map[string]string {
 // signature. F-10.2.14 keys the §10.3 publication notice on this check
 // so an operator who opts into --jwks-publish on top of the v1 HMAC
 // signer is told that the JWKS document is metadata-only.
-// spec: §10.2 line 195. F-10.2.14.
+// spec: §10.2. F-10.2.14.
 func jwksAdvertisesAsymmetric(doc jwt.JWKSet) bool {
 	for _, k := range doc.Keys {
 		if k.Kty != "" && k.Kty != "oct" {
@@ -2159,7 +2150,7 @@ func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, c
 	}
 }
 
-// exportElicitationIntegrityWeakened refreshes the §16.5 line 460
+// exportElicitationIntegrityWeakened refreshes the §16.5
 // ElicitationContentIntegrityWeakened standing-alert gauge: the count
 // of active tenants whose §9.2 effective elicitation content-integrity
 // mode (max(platformFloor, tenantStored)) is weaker than enforce. The
@@ -2170,8 +2161,8 @@ func exportStorageQuotaMetrics(ctx context.Context, tenants tenantstore.Store, c
 // are logged but never bubble — the exporter is a best-effort signal
 // and must not interrupt the gauge-refresh loop.
 //
-// spec: §16.5 line 460 (standing-alert numerator)
-// spec: §9.2 lines 60, 64 (effective-mode resolution + defaults)
+// spec: §16.5
+// spec: §9.2
 func exportElicitationIntegrityWeakened(ctx context.Context, tenants tenantstore.Store, floor string, m *gatewaymetrics.Metrics) {
 	rows, err := tenants.List(ctx, tenantstore.ListFilter{})
 	if err != nil {
@@ -2220,7 +2211,7 @@ func exportHPAGauges(ctx context.Context, sessions sessionstore.Store, lister te
 	// in-flight SSE subscribers on this replica's sessionevents bus.
 	if bus != nil {
 		m.SetActiveStreams(bus.ActiveSubscribers())
-		// spec: §10.4 line 389 / §16 catalog — sample the worst
+		// spec: §10.4 / §16 catalog — sample the worst
 		// per-session SSE replay buffer utilization so the
 		// lenny_event_bus_replay_buffer_utilization gauge tracks the
 		// pressure on the §10.4 reconnect-window assumption. F-10.4.11.
@@ -2312,7 +2303,7 @@ func exportCircuitBreakerMetrics(ctx context.Context, breakers breakerRegistry, 
 // critical alert reports unhealthy, otherwise a firing warning reports
 // degraded. ok is false when no firing alert maps to the component, in
 // which case the dependency probe's verdict stands.
-// spec: §25.3 lines 443-451.
+// spec: §25.3.
 type alertHealthSource struct {
 	eval *atomic.Pointer[evaluator.Evaluator]
 }
@@ -2493,7 +2484,7 @@ func envBool(name string, def bool) bool {
 	return b
 }
 
-// auditBatchingNoSIEM reports the §12.3 line 99 AuditBatchingNoSIEM
+// auditBatchingNoSIEM reports the §12.3 AuditBatchingNoSIEM
 // condition: production mode has T2 audit batching enabled but no SIEM
 // endpoint, so buffered T2 audit events would be lost on a crash with
 // no external durable copy to recover from. F-12.3.15.
@@ -2519,11 +2510,11 @@ func envInt64(name string, def int64) int64 {
 // prestop.BarrierDispatcher interface. It surfaces the pass's per-session
 // Outcome set (not just the error) so the preStop hook can skip every
 // barrier-acked session in its post-barrier per-session loop: under the
-// §10.1 line 169 quiesce-and-hold contract the barrier already drives a
+// §10.1 quiesce-and-hold contract the barrier already drives a
 // full gateway-side checkpoint for every session it acks, so a loop that
 // re-checkpointed those sessions would open a second manifest row and
 // duplicate catalog rows for one (session, coordination_generation).
-// spec: §10.1 lines 163-181.
+// spec: §10.1.
 type barrierCoordinatorDispatch struct{ c *barrier.Coordinator }
 
 func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) ([]barrier.Outcome, error) {
@@ -2531,7 +2522,7 @@ func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) ([]barrier.Out
 	return sum.Outcomes, err
 }
 
-// parseTerminationGrace returns the §4.4 line 263 termination grace
+// parseTerminationGrace returns the §4.4 termination grace
 // period the preStop hook uses to bound the staged drain. It reads
 // LENNY_TERMINATION_GRACE_SECONDS first; the chart-default 240s
 // applies when the env is unset or invalid.
@@ -2550,7 +2541,7 @@ func parseTerminationGrace() time.Duration {
 // "warm_pool_sizing=12h,credential_pool_sizing=72h") into the map the
 // recommendations.Config expects. Malformed pairs and unparseable
 // durations are skipped so one bad entry does not drop the rest.
-// spec: §25.3 line 596. F-25.3.12.
+// spec: §25.3. F-25.3.12.
 func parseWindowOverrides(raw string) map[string]time.Duration {
 	out := map[string]time.Duration{}
 	for _, pair := range splitAndTrim(raw) {
@@ -2587,7 +2578,7 @@ func splitAndTrim(s string) []string {
 	return out
 }
 
-// defaultDeriveLock picks the §7.1 line 92 derive-lock implementation.
+// defaultDeriveLock picks the §7.1 derive-lock implementation.
 // Redis-backed serialization is mandatory across replicas; the in-
 // process Memory fallback is correct for the minimal-gateway and
 // single-replica deployments (the in-memory store mutex inside
@@ -2617,7 +2608,7 @@ func dialTokenService(addr, certPath, keyPath, caPath string) (*grpc.ClientConn,
 	case certPath == "" || keyPath == "" || caPath == "":
 		return nil, fmt.Errorf("token service mTLS requires --token-service-tls-cert, --token-service-tls-key, and --token-service-ca to all be set")
 	default:
-		// spec: §10.3 line 338 — present the gateway leaf via a
+		// spec: §10.3 — present the gateway leaf via a
 		// filesystem-watching GetClientCertificate callback so a
 		// cert-manager renewal is picked up on the next dial without a
 		// gateway restart.
@@ -2663,7 +2654,7 @@ type interceptorIdentity struct {
 //
 // For an in-cluster interceptor (a .svc endpoint host) with a configured
 // SPIFFE trust domain, the dial pins tls.Config.ServerName to the
-// endpoint host (DNS-SAN validation, spec §10.3 line 328) and installs a
+// endpoint host (DNS-SAN validation, spec §10.3) and installs a
 // spiffe.InterceptorPeerVerifier that validates the SPIFFE-URI SAN
 // against the trust domain and namespace allowlist and rejects revoked
 // certificates (NET-063). Every mTLS handshake outcome is timed into the
@@ -2679,7 +2670,7 @@ func dialInterceptor(addr, certPath, keyPath, caPath string, id interceptorIdent
 	case certPath == "" || keyPath == "" || caPath == "":
 		return nil, fmt.Errorf("external interceptor mTLS requires --external-interceptor-tls-cert, --external-interceptor-tls-key, and --external-interceptor-ca to all be set")
 	default:
-		// spec: §10.3 line 338 — present the gateway leaf via a
+		// spec: §10.3 — present the gateway leaf via a
 		// filesystem-watching GetClientCertificate callback so a
 		// cert-manager renewal is picked up on the next dial without a
 		// gateway restart.
@@ -2699,7 +2690,7 @@ func dialInterceptor(addr, certPath, keyPath, caPath string, id interceptorIdent
 		if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
 			host = h
 		}
-		// spec: §10.3 line 328 (NET-063) — only an in-cluster
+		// spec: §10.3 — only an in-cluster
 		// interceptor presents a SPIFFE identity; an external endpoint
 		// (public FQDN or raw IP) is out of NET-063 scope (spec line 322)
 		// and keeps CA + DNS-SAN validation only.

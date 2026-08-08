@@ -56,13 +56,13 @@ func NewJSONHandler(w io.Writer, opts Options) slog.Handler {
 }
 
 // replaceAttr renames slog's built-in timestamp attribute from its default
-// key "time" to "ts" and forces the value to UTC. §16.4 line 372 requires
+// key "time" to "ts" and forces the value to UTC. §16.4 requires
 // every log line to carry `ts` (RFC 3339 UTC); slog's JSON handler defaults
 // to the key `time` rendered in the process-local zone. The rename only
 // applies to the top-level record time (groups is empty), so a caller-added
 // attribute literally named "time" inside a group is untouched.
 //
-// spec: §16.4 line 372.
+// spec: §16.4.
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 	if len(groups) == 0 && a.Key == slog.TimeKey {
 		a.Key = "ts"
@@ -89,17 +89,17 @@ func NewTextHandler(w io.Writer, opts Options) slog.Handler {
 // slog calls and legacy log.Printf / log.Fatalf call sites emit the §16.4
 // structured envelope (ts, level, msg, component, plus any correlation
 // fields present on a record's context). component is the binary name
-// emitted as the "component" attribute on every line (§16.4 line 372). The
+// emitted as the "component" attribute on every line (§16.4). The
 // minimum level is read from LENNY_LOG_LEVEL (Info when unset or
 // unparseable). Setup returns the installed logger.
 //
-// §16.4 line 370 mandates structured JSON logs from the gateway, token
+// §16.4 mandates structured JSON logs from the gateway, token
 // service, pool controller, runtime adapter, and lenny-ops; calling Setup
 // in each binary's main is how those binaries satisfy that requirement
 // without rewriting their existing log.Printf call sites — slog.SetDefault
 // reroutes the stdlib logger through the same handler.
 //
-// spec: §16.4 lines 370-372; §25.4 lines 2499-2526.
+// spec: §16.4; §25.4.
 func Setup(w io.Writer, component string) *slog.Logger {
 	level := slog.LevelInfo
 	if v := os.Getenv("LENNY_LOG_LEVEL"); v != "" {

@@ -81,7 +81,7 @@ const (
 // nonceOnlyRuntimeClass is the RuntimeClass the §5.3 `standard` isolation
 // profile maps to (`standard` → runc). The WarmPoolController marks a pool
 // Degraded and suppresses all pod creation when the pool's RuntimeClass is
-// absent (§5.3 line 675), so a pool can render a nonce-only member only on a
+// absent (§5.3), so a pool can render a nonce-only member only on a
 // cluster where this RuntimeClass exists. The runc RuntimeClass is part of
 // the e2e install (tests/testinfra/kind/agent-workload.yaml); the test skips
 // cleanly when it is absent rather than reporting a spurious §4.7 failure on

@@ -61,7 +61,7 @@ func newServiceWithConnectors(t *testing.T, ct leasecontrol.ConnectorToolService
 	return svc
 }
 
-// spec: §9.3 line 142 — ListSessionConnectors forwards the policy-filtered
+// spec: §9.3 — ListSessionConnectors forwards the policy-filtered
 // connector list. F-9.1.2.
 func TestListSessionConnectorsSuccess_spec_9_3_142(t *testing.T) {
 	ct := &fakeConnectorTools{listConns: []leasecontrol.SessionConnectorDescriptor{
@@ -118,7 +118,7 @@ func TestConnectorRPCsValidateArguments_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 164 — a denied connector maps to PermissionDenied; an
+// spec: §9.3 — a denied connector maps to PermissionDenied; an
 // unknown session maps to NotFound. F-9.1.2.
 func TestConnectorRPCsErrorMapping_spec_9_3_164(t *testing.T) {
 	denied := &fakeConnectorTools{toolsErr: leasecontrol.ErrConnectorNotPermitted, callErr: leasecontrol.ErrConnectorNotPermitted}
@@ -144,7 +144,7 @@ func TestConnectorRPCsErrorMapping_spec_9_3_164(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 142 — CallConnectorTool returns the MCP result and the
+// spec: §9.3 — CallConnectorTool returns the MCP result and the
 // isError flag verbatim. F-9.1.2.
 func TestCallConnectorToolSuccess_spec_9_3_142(t *testing.T) {
 	ct := &fakeConnectorTools{callResult: []byte(`{"content":[{"type":"text","text":"x"}],"isError":true}`), callIsErr: true}
@@ -162,7 +162,7 @@ func TestCallConnectorToolSuccess_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1077, §15.1 lines 1014-1015 — a connector interceptor
+// spec: §4.8, §15.1 — a connector interceptor
 // REJECT carries the §15.1 code; CallConnectorTool maps it to the matching
 // gRPC status code so the pod's MCP client sees the policy rejection.
 // F-4.8.14.

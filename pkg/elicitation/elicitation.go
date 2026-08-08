@@ -99,13 +99,12 @@ func ResolveEffective(platformFloor, tenantStored EnforcementMode) (EnforcementM
 // ResolveEffectiveWithDefaults resolves the §9.2 effective enforcement
 // mode from the raw configured platform floor and the raw tenant
 // stored value, applying the spec defaults so the result is always a
-// valid mode: an unset or invalid floor is treated as off (§9.2 line
-// 64 platform-floor default), and an unset or invalid tenant stored
-// value is treated as the enforce tenant default (§9.2 line 60). The
+// valid mode: an unset or invalid floor is treated as off (§9.2 platform-floor default), and an unset or invalid tenant stored
+// value is treated as the enforce tenant default (§9.2). The
 // effective mode is max(floor, stored). This is the shared resolver
 // the admin GET response and the §16.5 weakened-mode reconciliation
 // gauge both read so the two surfaces agree on what "weaker than
-// enforce" means. spec: §9.2 lines 60, 64. F-9.2.5.
+// enforce" means. spec: §9.2. F-9.2.5.
 func ResolveEffectiveWithDefaults(rawFloor, rawStored string) EnforcementMode {
 	floor := EnforcementMode(rawFloor)
 	if !floor.IsValid() {
@@ -150,10 +149,10 @@ const (
 	DepthBlockAll DepthPolicy = "block_all"
 )
 
-// DefaultSuppressAtDepth is the §9.2 line 92 platform-default threshold
+// DefaultSuppressAtDepth is the §9.2 platform-default threshold
 // applied when a pool ships no elicitationDepthPolicy: deep-tree
 // agent-initiated elicitation spam is auto-suppressed at delegation
-// depth >= 3. spec: §9.2 line 92. F-9.2.16.
+// depth >= 3. spec: §9.2. F-9.2.16.
 const DefaultSuppressAtDepth = 3
 
 // AllDepthPolicies returns the closed enum.
@@ -296,14 +295,14 @@ func (e *TamperError) Error() string {
 // DivergentFields reports which of the §9.2 `{message, schema}` fields
 // differ between the gateway-recorded original and a forward-hop
 // re-emission. It is the `divergent_fields` payload of the
-// `elicitation.content_tamper_detected` audit event (§16.7 line 674):
+// `elicitation.content_tamper_detected` audit event (§16.7):
 // an incident responder reads it to learn whether the tampering pod
 // rewrote the human-visible message, the input schema, or both. The
 // schema comparison is over the canonical digest so key reordering or
 // whitespace differences do not register as a divergence. Fields are
 // returned in a stable order (message before schema); an empty slice
-// means the two contents are semantically equal. spec: §9.2 line 56;
-// §16.7 line 674.
+// means the two contents are semantically equal. spec: §9.2;
+// §16.7.
 func DivergentFields(original, forwarded Content) []string {
 	out := make([]string, 0, 2)
 	if original.Message != forwarded.Message {

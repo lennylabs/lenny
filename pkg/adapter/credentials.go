@@ -17,7 +17,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// §4.7 lines 822-824 Full-level rotation protocol constants.
+// §4.7 Full-level rotation protocol constants.
 const (
 	// defaultRotationInflightCeiling caps the in-flight gate wait for any
 	// rotationTrigger other than proactive_renewal (spec line 822).
@@ -38,7 +38,7 @@ const (
 	proactiveRenewalTrigger = "proactive_renewal"
 )
 
-// RotationCeilingHit carries the §4.7 line 822 / §4.9.2
+// RotationCeilingHit carries the §4.7 / §4.9.2
 // credential.rotation_ceiling_hit forensic fields to the audit emitter.
 type RotationCeilingHit struct {
 	SessionID           string
@@ -68,7 +68,7 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "AssignCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified assignment writes the slot's
+	// spec: §6.1 — a slot-qualified assignment writes the slot's
 	// own /run/lenny/slots/{slotId}/credentials.json so a sibling slot's
 	// credential file is untouched.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
@@ -95,7 +95,7 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	}
 	s.credSessionID = sessionID
 	s.credLeases = leases
-	// §4.9 line 1149: arm a local expiry timer for each direct-mode lease.
+	// §4.9: arm a local expiry timer for each direct-mode lease.
 	s.reconcileExpiryTimers(leases)
 	return &adapterv1.AssignCredentialsResponse{}, nil
 }
@@ -110,7 +110,7 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RotateCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified rotation rewrites only the
+	// spec: §6.1 — a slot-qualified rotation rewrites only the
 	// slot's own credential file, so sibling slots' in-flight requests are
 	// unaffected.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
@@ -146,14 +146,14 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 // already holds, so no Token Service call is made. It touches neither the
 // credential file nor s.credLeases.
 //
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "ExtendCredentialLease requires a session id")
 	}
 	newExpiresAt := time.UnixMilli(req.GetExpiresAtUnixMs())
-	// spec: §6.1 line 28 — a slot-qualified extension re-arms only the
+	// spec: §6.1 — a slot-qualified extension re-arms only the
 	// slot's own timer, so sibling slots' deadlines are untouched.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		return s.extendCredentialLeaseSlot(slotID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
@@ -164,18 +164,16 @@ func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendC
 	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
 }
 
-// rotateProviderFull runs the §4.7 Full-level rotation protocol for one
-// provider: the in-flight LLM-request completion gate (spec line 820)
+// rotateProviderFull runs the §4.7 Full-level rotation protocol for one provider: the in-flight LLM-request completion gate
 // with the 300s revocation ceiling (line 822), the credentials_rotated
 // send, and the 60s credentials_acknowledged timeout that falls through
-// to the standard rotation path (line 824). It records the four §4.7
-// metrics and the grace-period interval (line 829).
+// to the standard rotation path (line 824). It records the four §4.7 metrics and the grace-period interval.
 //
-// spec: §4.7 lines 816-829
+// spec: §4.7
 func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rotatedLease, credentialsPath, trigger string) error {
 	pool := s.CheckpointPoolLabel
 
-	// §4.7 line 820: wait for in-flight LLM requests to drain before
+	// §4.7: wait for in-flight LLM requests to drain before
 	// signalling rotation, so no request reaches the provider with the
 	// old credential after the rotation decision.
 	elapsed, ceilingHit, err := s.awaitInflightGate(ctx, r.provider, trigger)
@@ -188,7 +186,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 			sessionID, r.leaseID, r.provider, elapsed)
 	}
 	if ceilingHit {
-		// §4.7 line 822: send credentials_rotated regardless and record the
+		// §4.7: send credentials_rotated regardless and record the
 		// compromise-indicator signals — the counter, alert, and durable
 		// audit event are the forensic record of every ceiling-hit rotation.
 		incRotationCeilingHit(pool, ceilingTriggerLabel(trigger))
@@ -205,7 +203,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 		}
 	}
 
-	// §4.7 line 824: bound the credentials_acknowledged wait at 60s. The
+	// §4.7: bound the credentials_acknowledged wait at 60s. The
 	// old credential is released either on ack or on timeout (line 829),
 	// so the grace interval is recorded on both outcomes.
 	ackTimeout := s.CredentialsAckTimeout
@@ -221,7 +219,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 	case err == nil:
 		return nil
 	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
-		// §4.7 line 824-826: the runtime did not acknowledge within 60s.
+		// §4.7: the runtime did not acknowledge within 60s.
 		// Emit the timeout signals and hand back to the gateway so it can
 		// take the Standard-level path (Checkpoint → terminate → replace →
 		// AssignCredentials → Resume).
@@ -231,7 +229,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 		return status.Errorf(codes.DeadlineExceeded,
 			"credentials_acknowledged timeout for provider %s; gateway must take the standard rotation path", r.provider)
 	default:
-		// §4.7 lines 652-662: the runtime could not rebind to the rotated
+		// §4.7: the runtime could not rebind to the rotated
 		// credential (or the caller cancelled), so surface LEASE_REJECTED
 		// to the gateway before failing the RPC.
 		s.EmitLeaseRejected(r.provider, r.leaseID, err.Error())
@@ -241,7 +239,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 
 // awaitInflightGate blocks until the per-provider in-flight LLM-request
 // counter reaches zero (spec line 820). For any trigger other than
-// proactive_renewal the wait is capped at the §4.7 line 822 ceiling; on
+// proactive_renewal the wait is capped at the §4.7 ceiling; on
 // ceiling hit it returns ceilingHit=true so the caller sends
 // credentials_rotated regardless. proactive_renewal waits unbounded
 // (only the caller's context cancels it). It returns the elapsed wait.
@@ -315,7 +313,7 @@ func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1
 		return nil, err
 	}
 	s.credLeases = leases
-	// §4.9 line 1149: a rotated direct-mode lease re-arms its expiry timer
+	// §4.9: a rotated direct-mode lease re-arms its expiry timer
 	// at the new expiresAt; unchanged providers keep their existing timer.
 	s.reconcileExpiryTimers(leases)
 	return rotated, nil
@@ -328,7 +326,7 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RevokeCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified revoke drops providers from
+	// spec: §6.1 — a slot-qualified revoke drops providers from
 	// the slot's own credential file only.
 	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
 		return s.revokeCredentialsSlot(sessionID, slotID, req.GetProviders())
@@ -348,7 +346,7 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 		return nil, err
 	}
 	s.credLeases = leases
-	// §4.9 line 1149: a revoked provider's expiry timer is cancelled so
+	// §4.9: a revoked provider's expiry timer is cancelled so
 	// it cannot fire AUTH_EXPIRED after the lease is already gone.
 	s.reconcileExpiryTimers(leases)
 	return &adapterv1.RevokeCredentialsResponse{}, nil

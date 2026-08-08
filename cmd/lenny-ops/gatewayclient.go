@@ -46,7 +46,7 @@ type gatewayClientConfig struct {
 // ReplicaDiscovery is wired only when a headless Service name and
 // namespace are known, so the fan-out fallback resolves real pod IPs.
 //
-// spec: §25.4 lines 1740-1790 ("Calling the Gateway").
+// spec: §25.4.
 func buildGatewayClient(cfg gatewayClientConfig, reg prometheus.Registerer) (*gateway.Client, error) {
 	if cfg.gatewayURL == "" {
 		log.Printf("lenny-ops: §25.4 gateway client not configured (no --gateway-url); gateway-auth self-health reports not-applicable")
@@ -92,7 +92,7 @@ func buildGatewayClient(cfg gatewayClientConfig, reg prometheus.Registerer) (*ga
 		}
 	}
 
-	// §25.4 line 1743: the admin-API HTTP client trusts the cluster
+	// §25.4: the admin-API HTTP client trusts the cluster
 	// trust store plus any operator-supplied CA via ops.tls.caBundle-
 	// ConfigMap (the cert-manager case needs no extra material). A nil
 	// client uses the default transport (system roots).
@@ -149,7 +149,7 @@ func buildGatewayHTTPClient(caBundlePath string, timeout time.Duration) (*http.C
 // (→ degraded). A nil client returns a nil probe so the self-health
 // check reports not-applicable.
 //
-// spec: §25.4 lines 1956-1971.
+// spec: §25.4.
 func gatewayAuthProbe(client *gateway.Client) opsservice.GatewayAuthProbe {
 	if client == nil {
 		return nil
@@ -179,7 +179,7 @@ func isTokenError(err error) bool {
 // effective config and proxies a confirmed config apply. A nil client
 // yields a nil adapter so the config service is left unwired (404).
 //
-// spec: §25.8 Config Diff and Config Apply (lines 3567-3574).
+// spec: §25.8 Config Diff and Config Apply.
 type gatewayConfigClient struct {
 	client *gateway.Client
 }
@@ -231,7 +231,7 @@ func (g gatewayConfigClient) ApplyConfig(ctx context.Context, desired map[string
 // §16.9 /metrics exposition scrapes them and the OpsAdminAPIPlaintext-
 // Detected alert (§16.5) reads the handshake counter.
 //
-// spec: §25.4 lines 1971 (token refresh) and 2538-2546 (handshake).
+// spec: §25.4.
 type gatewayMetrics struct {
 	tokenRefresh *prometheus.CounterVec
 	handshake    *prometheus.CounterVec

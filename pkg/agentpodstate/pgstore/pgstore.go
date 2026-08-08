@@ -184,7 +184,7 @@ const getByPodSQL = `SELECT pool_id, state, tenant_id, session_id,
 // GetByPodID reads the single mirror row keyed on podID. The bool
 // reports whether the row exists. An empty podID can never match the
 // NOT NULL primary key, so it returns (PodState{}, false, nil) without
-// a round trip. spec: §10.1 line 51 — the orphan-session reconciler
+// a round trip. spec: §10.1 — the orphan-session reconciler
 // reads the mirrored §6.2 phase for a session's bound pod.
 func (s *Store) GetByPodID(ctx context.Context, podID string) (agentpodstate.PodState, bool, error) {
 	if podID == "" {

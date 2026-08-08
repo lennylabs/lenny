@@ -16,7 +16,7 @@ tests:
           value: pgbouncer
       - matchRegex:
           path: data["pgbouncer.ini"]
-          # spec: §4.2 line 163 — fresh server connections must SET
+          # spec: §4.2 — fresh server connections must SET
           # app.current_tenant = '__unset__'.
           pattern: "connect_query = 'SET app.current_tenant = ''__unset__'''"
       - matchRegex:
@@ -65,7 +65,7 @@ tests:
           value: |
             [pgbouncer]
             pool_mode = transaction
-            # spec: §4.2 line 163 — fresh server connections begin with the
+            # spec: §4.2 — fresh server connections begin with the
             # SET sentinel so an unclaimed pooled connection is rejected by
             # the lenny_tenant_guard trigger and by RLS before tenant data
             # could leak. The pgbouncer.ini INI parser wraps the value in

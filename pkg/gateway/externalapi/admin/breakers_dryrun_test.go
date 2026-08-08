@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §15.1 line 1140 — the circuit-breaker open/close endpoints
+// spec: §15.1 — the circuit-breaker open/close endpoints
 // support ?dryRun=true, returning a reduced simulation object that reads
 // Redis state but never writes it and emits no audit event.
 

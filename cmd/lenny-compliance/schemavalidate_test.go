@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.4.6 line 2405 — the harness validates a runtime's response
+// spec: §15.4.6 — the harness validates a runtime's response
 // frame against schemas/lenny-adapter-jsonl.schema.json. The published
 // schemas are compiled from the embedded FS so the check runs against a
 // third-party runtime in its own repository.
@@ -36,7 +36,7 @@ func TestValidateJSONLFrame_spec_15_4_6_2405(t *testing.T) {
 	}
 }
 
-// spec: §15.4.6 line 2408 — every MessagePart the runtime emits validates
+// spec: §15.4.6 — every MessagePart the runtime emits validates
 // against schemas/messagepart.schema.json, including the required
 // schemaVersion the §15.4.1 producer contract mandates.
 func TestValidateMessagePart_spec_15_4_6_2408(t *testing.T) {
@@ -65,7 +65,7 @@ func TestValidateMessagePart_spec_15_4_6_2408(t *testing.T) {
 
 // validateResponseFrame validates the frame and every MessagePart it
 // carries, so a response with a schema-invalid part is rejected even
-// when the envelope itself is well-formed. spec: §15.4.6 lines 2405, 2408.
+// when the envelope itself is well-formed. spec: §15.4.6.
 func TestValidateResponseFrame_rejectsBadMessagePart_spec_15_4_6_2408(t *testing.T) {
 	// Envelope is valid JSONL, but the output part omits schemaVersion.
 	frame := `{"type":"response","output":[{"type":"text","inline":"hi"}]}`

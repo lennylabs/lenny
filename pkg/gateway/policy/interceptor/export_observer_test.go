@@ -40,7 +40,7 @@ func allowScanner(t *testing.T, c *interceptor.Chain) {
 	})
 }
 
-// spec: §16.1 line 80 — an ALLOWed file is the `admitted` outcome with
+// spec: §16.1 — an ALLOWed file is the `admitted` outcome with
 // the configured labels and no reason. F-8.7.10.
 func TestExportScanEmitsAdmitted_spec_16_1_80(t *testing.T) {
 	c := interceptor.NewChain()
@@ -71,7 +71,7 @@ func TestExportScanEmitsAdmitted_spec_16_1_80(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 80 — a MODIFYed file is the `modified` outcome.
+// spec: §16.1 — a MODIFYed file is the `modified` outcome.
 func TestExportScanEmitsModified_spec_16_1_80(t *testing.T) {
 	c := interceptor.NewChain()
 	mustRegister(t, c, interceptor.PhasePreExportMaterialization, &fakeInterceptor{
@@ -96,7 +96,7 @@ func TestExportScanEmitsModified_spec_16_1_80(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 69 / §16.1 line 80 — a deliberate REJECT is the
+// spec: §11.7 / §16.1 — a deliberate REJECT is the
 // `rejected` outcome carrying the interceptor's reason. F-8.7.9.
 func TestExportScanEmitsRejected_spec_11_7_69(t *testing.T) {
 	c := interceptor.NewChain()
@@ -129,8 +129,8 @@ func TestExportScanEmitsRejected_spec_11_7_69(t *testing.T) {
 	}
 }
 
-// spec: §8.7 rule 3 / §11.7 line 70 — a fail-open scanner error admits
-// the file as `failed_open` with the §11.7 line 122 reason token.
+// spec: §8.7 rule 3 / §11.7 — a fail-open scanner error admits
+// the file as `failed_open` with the §11.7 reason token.
 // F-8.7.9.
 func TestExportScanEmitsFailedOpen_spec_11_7_70(t *testing.T) {
 	c := interceptor.NewChain()
@@ -163,7 +163,7 @@ func TestExportScanEmitsFailedOpen_spec_11_7_70(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1073 / §16.1 line 80 — a fail-closed scanner outage
+// spec: §15.1 / §16.1 — a fail-closed scanner outage
 // is the `failed_closed` outcome (and surfaces EXPORT_FILE_SCAN_UNAVAILABLE).
 // F-8.7.10.
 func TestExportScanEmitsFailedClosed_spec_16_1_80(t *testing.T) {
@@ -188,7 +188,7 @@ func TestExportScanEmitsFailedClosed_spec_16_1_80(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 80 — the size pre-gate fires before the file enters
+// spec: §16.1 — the size pre-gate fires before the file enters
 // the chain, so a size-rejected file is not a "scanned file" and emits
 // no ExportScanEvent. F-8.7.10.
 func TestExportScanSizeGateEmitsNoEvent_spec_16_1_80(t *testing.T) {

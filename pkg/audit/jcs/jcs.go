@@ -5,14 +5,14 @@
 // each event payload (`payload_canonical_json`) so that two byte
 // representations of the same logical JSON value produce the same hash.
 //
-// The canonicalization, per §11.7 item 3 line 364, applies:
+// The canonicalization, per §11.7 item 3, applies:
 //   - lexicographic key order at every nesting level (UTF-16 code-unit
 //     order, the RFC 8785 ordering),
 //   - UTF-8 NFC normalization of string values,
 //   - no insignificant whitespace, and
 //   - numbers in shortest canonical (ECMAScript Number::toString) form.
 //
-// spec: §11.7 item 3 line 364 (RFC 8785 JCS).
+// spec: §11.7 item 3.
 package jcs
 
 import (
@@ -36,7 +36,7 @@ import (
 // the key reordering and whitespace changes a Postgres `jsonb` round
 // trip introduces.
 //
-// spec: §11.7 item 3 line 364.
+// spec: §11.7 item 3.
 func Canonicalize(raw []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

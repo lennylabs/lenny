@@ -22,7 +22,7 @@ import (
 // running. It is the treerecovery.NodeReattacher the bottom-up
 // traversal calls per node (leaves first).
 //
-// spec: §8.10 line 1016 (per-node recovery); §7.3 (resume).
+// spec: §8.10; §7.3 (resume).
 type sessionNodeReattacher struct{ s *Server }
 
 func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionstore.Session) error {
@@ -46,10 +46,10 @@ func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionsto
 // failed (or expired). It is the treerecovery.TerminalMarker the
 // traversal calls for a node that exhausts its recovery budget.
 //
-// Per §8.10 line 1027 a node whose individual `maxResumeWindowSeconds`
+// Per §8.10 a node whose individual `maxResumeWindowSeconds`
 // elapsed transitions to `expired`; a node lost to a level or whole-tree
 // budget transitions to `failed`. Both are terminal and trigger the
-// node's cascade policy from that point (§8.10 line 1025).
+// node's cascade policy from that point (§8.10).
 type sessionTerminalMarker struct{ s *Server }
 
 func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.Session, reason string) {
@@ -68,7 +68,7 @@ func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.S
 // unit-test) no node is recoverable and the recovery degrades to a
 // no-op.
 //
-// spec: §8.10 line 1014 (the tree is tracked independently of pods).
+// spec: §8.10.
 func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {
 	if s.podRegistry == nil {
 		return false
@@ -85,7 +85,7 @@ func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {
 // (default 600s), far longer than an HTTP response should block, so it
 // runs in its own goroutine on a context that outlives the request.
 //
-// spec: §8.10 lines 1016, 1023.
+// spec: §8.10.
 func (s *Server) recoverDelegationTree(reqCtx context.Context, tenantID, rootID string) {
 	if s.treeRecovery == nil || rootID == "" {
 		return

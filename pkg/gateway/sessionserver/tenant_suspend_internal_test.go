@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §15.1 line 818 — a suspended tenant rejects new session creation
+// spec: §15.1 — a suspended tenant rejects new session creation
 // and message injection with TENANT_SUSPENDED. F-15.1.3.
 
 // requireTenantState reports the suspension as TENANT_SUSPENDED, and it

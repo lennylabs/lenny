@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.10 line 1062 — the resumed parent's children_reattached event
+// spec: §8.10 — the resumed parent's children_reattached event
 // streams already-settled child results "in original-settlement order",
 // then the still-running children. F-8.10.4.
 func TestEmitChildrenReattachedStreamsArchiveInSettlementOrder_spec_8_10_1062(t *testing.T) {

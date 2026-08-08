@@ -32,50 +32,50 @@ import (
 // proto WorkspacePlanWarning so the adapter Server can transcribe a
 // slice straight onto FinalizeWorkspaceResponse.
 //
-// spec: §7.4 line 459 (workspace_plan_strip_components_skip); §14
+// spec: §7.4; §14
 // WarningCode. F-7.4.15, F-14.1.18.
 type Warning struct {
 	// Code is the §14 WarningCode enum value (e.g.
 	// `workspace_plan_strip_components_skip`).
 	Code string
 	// SourceIndex is the 0-based plan source index the warning refers to.
-	// spec: §14 line 100 — `sourceIndex`.
+	// spec: §14 — `sourceIndex`.
 	SourceIndex int
 	// EntryPath is the archive entry path that triggered the warning.
 	// Empty when the warning is not entry-scoped.
-	// spec: §14 line 100 — `entryPath`. F-14.1.18.
+	// spec: §14 — `entryPath`. F-14.1.18.
 	EntryPath string
 	// SegmentCount is the number of `/`-separated segments the rejected
 	// entry had after trimming leading/trailing empty segments.
-	// spec: §14 line 100 — `segmentCount`. F-14.1.18.
+	// spec: §14 — `segmentCount`. F-14.1.18.
 	SegmentCount int
 	// StripComponents is the configured `stripComponents` value the
 	// entry was tested against.
-	// spec: §14 line 100 — `stripComponents`. F-14.1.18.
+	// spec: §14 — `stripComponents`. F-14.1.18.
 	StripComponents int
 	// UnknownType is the open-string `source.type` the materializer did
 	// not recognize and skipped. Populated only on
 	// `workspace_plan_unknown_source_type` warnings.
-	// spec: §14 line 334 — `unknownType`. F-14.1.2.
+	// spec: §14 — `unknownType`. F-14.1.2.
 	UnknownType string
 	// Path is the workspace-relative path two sources resolved to.
 	// Populated only on `workspace_plan_path_collision` warnings.
-	// spec: §14 line 338 — `path`. F-14.1.9.
+	// spec: §14 — `path`. F-14.1.9.
 	Path string
 	// WinningSourceIndex is the later (last-writer-wins) source whose
 	// content survives the collision. Equals SourceIndex. Populated only
 	// on `workspace_plan_path_collision` warnings.
-	// spec: §14 line 338 — `winningSourceIndex`. F-14.1.9.
+	// spec: §14 — `winningSourceIndex`. F-14.1.9.
 	WinningSourceIndex int
 	// LosingSourceIndex is the earlier source the later write overwrote.
 	// Populated only on `workspace_plan_path_collision` warnings.
-	// spec: §14 line 338 — `losingSourceIndex`. F-14.1.9.
+	// spec: §14 — `losingSourceIndex`. F-14.1.9.
 	LosingSourceIndex int
 	// Message is a human-readable explanation.
 	Message string
 }
 
-// pathCollisionCode is the §14 line 338 closed-enum WarningCode for the
+// pathCollisionCode is the §14 closed-enum WarningCode for the
 // last-writer-wins path-collision advisory raised when two sources
 // resolve to the same workspace path during materialization. The string
 // matches pkg/workspaceplan.WarnPathCollision so the two definitions
@@ -83,16 +83,15 @@ type Warning struct {
 const pathCollisionCode = "workspace_plan_path_collision"
 
 // unknownSourceTypeSkipCode is the §14 closed-enum WarningCode for the
-// §14 line 334 "unknown source.type is skipped, not rejected" advisory.
+// §14 advisory.
 // The string matches pkg/workspaceplan.WarnUnknownSourceType so the two
 // definitions stay aligned. F-14.1.2.
 const unknownSourceTypeSkipCode = "workspace_plan_unknown_source_type"
 
 // ArchivePolicy is the §13.4 per-Runtime archive-extraction policy the
 // gateway hands the adapter on FinalizeWorkspace. AllowSymlinks lifts the
-// §7.4 line 458 default-deny on symlink entries; WorkspaceRoot is the
-// absolute path symlink targets are canonicalized against. spec: §7.4
-// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+// §7.4 default-deny on symlink entries; WorkspaceRoot is the
+// absolute path symlink targets are canonicalized against. spec: §7.4; §13.4 — F-7.4.4.
 type ArchivePolicy struct {
 	AllowSymlinks bool
 	WorkspaceRoot string
@@ -106,17 +105,17 @@ func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) 
 }
 
 const (
-	// promotionStagingName is the §7.4 line 433 /workspace/staging build
+	// promotionStagingName is the §7.4 /workspace/staging build
 	// tree. MaterializeWithPolicy lays the resolved workspace down here,
 	// then atomically promotes it onto the workspace root
 	// (/workspace/current). It is a sibling of the root so the promotion
-	// rename never crosses a filesystem boundary. spec: §7.4 line 433 —
+	// rename never crosses a filesystem boundary. spec: §7.4 —
 	// F-7.4.12, F-13.4.5.
 	promotionStagingName = "staging"
 	// promotionBackupSuffix names the directory the pre-promotion workspace
 	// root is moved aside to while the staging tree is renamed into place,
 	// so a failed post-promotion symlink re-validation can restore it.
-	// spec: §7.4 line 433 — F-7.4.12.
+	// spec: §7.4 — F-7.4.12.
 	promotionBackupSuffix = ".prev"
 	// promotionBuildFallbackSuffix is the build-tree name used when the
 	// spec-default sibling (/workspace/staging) would alias the configured
@@ -136,17 +135,16 @@ const (
 // stagingDir by PrepareWorkspace; symlink recreates a gateway-validated
 // link; gitClone extracts the repository archive the gateway cloned and
 // staged under stagingDir. uploadArchive sources are extracted by the
-// gateway (§7.4 line 448) before they reach the adapter and are rejected
+// gateway (§7.4) before they reach the adapter and are rejected
 // here if one is encountered.
 //
-// Per §7.4 line 433 the resolved tree is built in a sibling
+// Per §7.4 the resolved tree is built in a sibling
 // /workspace/staging directory and atomically promoted onto root only
 // after every source succeeds, so the runtime never observes a partial
 // workspace and a failure in any source (not only the last) leaves the
 // prior /workspace/current untouched. After promotion every symlink is
 // re-validated against its new location under root; an escape rolls the
-// whole promotion back and restores the previous root. spec: §7.4 line
-// 433 and the §7.4 symlink-handling bullet — F-7.4.12, F-13.4.5.
+// whole promotion back and restores the previous root. spec: §7.4 and the §7.4 symlink-handling bullet — F-7.4.12, F-13.4.5.
 //
 // archive carries the §13.4 per-Runtime opt-ins (allowSymlinks +
 // workspace root for symlink-target validation). It is consulted only
@@ -155,14 +153,13 @@ const (
 //
 // Non-fatal advisory warnings (per-entry strip-components skips,
 // future §14 warning codes) are appended to the returned slice rather
-// than aborting materialization, per §7.4 line 459. spec: §7.4 line
-// 459; §7.4 lines 458, 462; §13.4 — F-7.4.4, F-7.4.15.
+// than aborting materialization, per §7.4. spec: §7.4; §7.4; §13.4 — F-7.4.4, F-7.4.15.
 func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
 	root = filepath.Clean(root)
 	if archive.WorkspaceRoot == "" {
 		archive.WorkspaceRoot = root
 	}
-	// spec: §7.4 line 433 — build into /workspace/staging, not directly
+	// spec: §7.4 — build into /workspace/staging, not directly
 	// into /workspace/current. Symlink targets are validated against the
 	// intended final root (archive.WorkspaceRoot) at extraction time; the
 	// definitive check runs against root after promotion.
@@ -172,7 +169,7 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 		return warnings, err
 	}
 
-	// spec: §7.4 line 433 — atomic staging→current promotion.
+	// spec: §7.4 — atomic staging→current promotion.
 	promo, err := promoteStaging(buildDir, root)
 	if err != nil {
 		_ = os.RemoveAll(buildDir)
@@ -188,7 +185,7 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 	return warnings, nil
 }
 
-// MaterializeOverlayWithPolicy is the §7.4 line 433 mid-session upload
+// MaterializeOverlayWithPolicy is the §7.4 mid-session upload
 // path. The session is already running, so unlike MaterializeWithPolicy it
 // must not replace the whole workspace: the resolved sources are overlaid
 // onto the existing /workspace/current, preserving the files the agent has
@@ -200,7 +197,7 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 // before any entry is moved, so the live workspace is left untouched.
 //
 // archive carries the same §13.4 per-Runtime opt-ins as the pre-start
-// path; warnings are returned identically. spec: §7.4 line 433 and the
+// path; warnings are returned identically. spec: §7.4 and the
 // §7.4 symlink-handling bullet — F-7.4.6, F-7.4.12.
 func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
 	root = filepath.Clean(root)
@@ -225,7 +222,7 @@ func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.
 	if err := revalidateBuildSymlinks(buildDir, root); err != nil {
 		return warnings, err
 	}
-	// spec: §7.4 line 433 — overlay each built entry onto the existing
+	// spec: §7.4 — overlay each built entry onto the existing
 	// workspace root with an atomic per-file move.
 	if err := overlayTree(buildDir, root); err != nil {
 		return warnings, err
@@ -236,10 +233,9 @@ func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.
 // buildResolvedTree lays the workspace sources down in buildDir in plan
 // order and returns the §14 advisory warnings raised during the build. A
 // failure in any source clears the partial build tree and returns, so the
-// caller's workspace root is never touched (§7.4 line 460). It is the
+// caller's workspace root is never touched (§7.4). It is the
 // shared first half of both the whole-tree promotion (MaterializeWithPolicy)
-// and the mid-session overlay (MaterializeOverlayWithPolicy). spec: §7.4
-// lines 433, 459, 460; §14 line 338 — F-7.4.6, F-7.4.12, F-14.1.9.
+// and the mid-session overlay (MaterializeOverlayWithPolicy). spec: §7.4; §14 — F-7.4.6, F-7.4.12, F-14.1.9.
 func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
 	if err := os.RemoveAll(buildDir); err != nil {
 		return nil, fmt.Errorf("clear workspace staging %q: %w", buildDir, err)
@@ -250,8 +246,7 @@ func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.Workspa
 
 	var warnings []Warning
 	// seen maps a workspace-relative path to the source index that last
-	// wrote it, so a later source writing the same path raises the §14
-	// line 338 last-writer-wins collision warning. Directories are not
+	// wrote it, so a later source writing the same path raises the §14 last-writer-wins collision warning. Directories are not
 	// tracked: two sources both creating a directory is normal merging,
 	// not an overwrite.
 	seen := make(map[string]int)
@@ -259,13 +254,13 @@ func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.Workspa
 		written, w, err := materializeSource(buildDir, stagingDir, i, src, archive)
 		warnings = append(warnings, w...)
 		if err != nil {
-			// spec: §7.4 line 460 — a failure at any source returns the
+			// spec: §7.4 — a failure at any source returns the
 			// staging tree to its pre-extraction state. Discarding the whole
 			// build tree leaves the live workspace root untouched.
 			_ = os.RemoveAll(buildDir)
 			return warnings, fmt.Errorf("workspace source %d (type %q): %w", i, src.GetType(), err)
 		}
-		// spec: §14 line 338 — a path collision is detected "during
+		// spec: §14 — a path collision is detected "during
 		// materialization", not only at parse time. A path an earlier
 		// source already materialized that a later source overwrites
 		// raises the warning here, where archive-extracted entry paths
@@ -324,7 +319,7 @@ func revalidateBuildSymlinks(buildDir, root string) error {
 // mode is not changed); a directory absent under root is created with the
 // build entry's mode. filepath.WalkDir reads each directory's entries up
 // front, so renaming leaf entries out of the build tree mid-walk is safe.
-// spec: §7.4 line 433 — F-7.4.6.
+// spec: §7.4 — F-7.4.6.
 func overlayTree(build, root string) error {
 	build = filepath.Clean(build)
 	root = filepath.Clean(root)
@@ -369,8 +364,7 @@ func overlayTree(build, root string) error {
 // sibling of root. It never aliases the workspace root itself or the
 // configured raw-upload staging directory (which holds the compressed
 // upload payloads the extractors read from), falling back to a
-// root-adjacent name in the rare case of a collision. spec: §7.4 line
-// 433 — F-7.4.12.
+// root-adjacent name in the rare case of a collision. spec: §7.4 — F-7.4.12.
 func promotionBuildDir(root, stagingDir string) string {
 	dir := filepath.Join(filepath.Dir(root), promotionStagingName)
 	if dir == root || (stagingDir != "" && dir == filepath.Clean(stagingDir)) {
@@ -380,7 +374,7 @@ func promotionBuildDir(root, stagingDir string) string {
 }
 
 // promotion records the state needed to commit or roll back an atomic
-// staging→current promotion. spec: §7.4 line 433 — F-7.4.12.
+// staging→current promotion. spec: §7.4 — F-7.4.12.
 type promotion struct {
 	root    string
 	backup  string
@@ -392,7 +386,7 @@ type promotion struct {
 // materialized tree) is moved aside to a backup so a failed
 // post-promotion check can restore it. The build→root rename is a single
 // atomic syscall, so the runtime sees either the complete promoted tree
-// or the prior root, never a partial workspace. spec: §7.4 line 433 —
+// or the prior root, never a partial workspace. spec: §7.4 —
 // F-7.4.12.
 func promoteStaging(build, root string) (*promotion, error) {
 	p := &promotion{root: root, backup: root + promotionBackupSuffix}
@@ -417,13 +411,13 @@ func promoteStaging(build, root string) (*promotion, error) {
 }
 
 // commit drops the saved previous root after a successful promotion and
-// re-validation. spec: §7.4 line 433 — F-7.4.12.
+// re-validation. spec: §7.4 — F-7.4.12.
 func (p *promotion) commit() { _ = os.RemoveAll(p.backup) }
 
 // rollback removes the promoted tree and restores the previous root. When
 // no prior root existed it recreates an empty one so the §6.1 warm-time
 // invariant ("/workspace/current exists") holds after a rolled-back
-// promotion. spec: §7.4 symlink-handling bullet, §6.1 line 11 — F-7.4.12.
+// promotion. spec: §7.4 symlink-handling bullet, §6.1 — F-7.4.12.
 func (p *promotion) rollback() {
 	_ = os.RemoveAll(p.root)
 	if p.hadPrev {
@@ -464,7 +458,7 @@ func revalidatePromotedSymlinks(root string) error {
 // materializeSource writes one §14 source into root and returns the
 // workspace-relative paths of the regular files and symlinks it created
 // (directories are excluded — see MaterializeWithPolicy). The path slice
-// feeds the §14 line 338 collision detector. F-14.1.9.
+// feeds the §14 collision detector. F-14.1.9.
 func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]string, []Warning, error) {
 	switch src.GetType() {
 	case "inlineFile":
@@ -480,7 +474,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		}
 		return writtenPaths(root, src.GetPath()), nil, nil
 	case "symlink":
-		// spec: §7.4 line 458; §13.4 line 665 — a `symlink` source is the
+		// spec: §7.4; §13.4 — a `symlink` source is the
 		// gateway's rewrite of a symlink entry from an extracted archive.
 		// The gateway already validated the target against the workspace
 		// root; the adapter recreates the link and the post-promotion
@@ -489,7 +483,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		written, err := writeSymlink(root, src, archive)
 		return written, nil, err
 	case "uploadArchive":
-		// spec: §7.4 line 448; §13.4 line 652 — "pod binaries neither
+		// spec: §7.4; §13.4 — "pod binaries neither
 		// decompress archives nor canonicalize paths on untrusted input."
 		// The gateway extracts every uploadArchive source in its §4.1
 		// Upload Handler subsystem and hands the adapter only pre-extracted
@@ -498,7 +492,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		// decompress in the pod. F-7.4.1, F-13.4.1.
 		return nil, nil, errors.New("uploadArchive sources are extracted by the gateway; the adapter must not decompress archives")
 	case "gitClone":
-		// spec: §7.4 line 448; §14 line 95 — the gateway clones the
+		// spec: §7.4; §14 — the gateway clones the
 		// repository on its own network path (so the pod never sees VCS
 		// credentials) and extracts the tree in its §4.1 Upload Handler
 		// subsystem, handing the adapter pre-extracted
@@ -506,7 +500,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		// adapter is a trust-boundary violation; fail closed. F-7.4.1.
 		return nil, nil, errors.New("gitClone sources are extracted by the gateway; the adapter must not clone or decompress")
 	default:
-		// spec: §14 line 334 — a consumer that encounters an unknown
+		// spec: §14 — a consumer that encounters an unknown
 		// source.type MUST skip the entry and emit a
 		// workspace_plan_unknown_source_type warning rather than reject
 		// the whole plan. The adapter is the live consumer at
@@ -525,7 +519,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 
 // writtenPaths returns the single workspace-relative slash-path a direct
 // writer (inlineFile, uploadFile) created, normalized the same way the
-// archive extractors normalize entry paths so the §14 line 338 collision
+// archive extractors normalize entry paths so the §14 collision
 // detector compares identical strings. A path that does not resolve under
 // root (already rejected by the writer that just succeeded) yields no
 // entry. F-14.1.9.
@@ -648,7 +642,7 @@ func writeUploadFile(root, stagingDir string, src *adapterv1.WorkspaceSource) er
 // opt in fails closed. The link target itself is re-validated against the
 // workspace root by revalidatePromotedSymlinks after the atomic
 // staging→current promotion, which is the §7.4 post-promotion symlink
-// re-validation pass. spec: §7.4 line 458; §13.4 line 665 — F-7.4.1.
+// re-validation pass. spec: §7.4; §13.4 — F-7.4.1.
 func writeSymlink(root string, src *adapterv1.WorkspaceSource, archive ArchivePolicy) ([]string, error) {
 	if !archive.AllowSymlinks {
 		return nil, errors.New("symlink source requires the runtime's allowSymlinks policy")

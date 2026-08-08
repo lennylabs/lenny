@@ -207,8 +207,7 @@ func TestRenderOpenSLOObjectivesMatchCatalog(t *testing.T) {
 // exactly the 6h/3x warning condition. OpenSLO v1 caps an AlertPolicy at
 // one condition, so a two-condition policy or a dropped window is a defect.
 //
-// spec: §16.10 (one condition per AlertPolicy), §16.5 line 627 (multi-window
-// burn rate preserved across two policies).
+// spec: §16.10 (one condition per AlertPolicy), §16.5.
 func TestRenderOpenSLOBurnRateMatchesAlerts(t *testing.T) {
 	out, err := RenderOpenSLO(OpenSLOService, "tier1", OpenSLODefaultNotificationTarget)
 	if err != nil {

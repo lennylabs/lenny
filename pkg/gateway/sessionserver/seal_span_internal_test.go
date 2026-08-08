@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §16.3 line 356 — the gateway-side seal-and-export path must open a
+// spec: §16.3 — the gateway-side seal-and-export path must open a
 // `session.seal_and_export` span. sealWorkspace is unexported, so these
 // tests live in the internal package and drive it directly through the
 // existing flakySealer / advancingClock harness from seal_internal_test.go.

@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
-// spec: §13.3 line 595 — when this replica's NTP drift exceeds the 5s
+// spec: §13.3 — when this replica's NTP drift exceeds the 5s
 // ceiling, /v1/oauth/token returns 503 token_validation_unavailable
 // rather than issuing a token whose `exp` it cannot trust. F-13.3.5.
 func TestDriftDegradedReturns503(t *testing.T) {
@@ -59,7 +59,7 @@ func TestDriftDegradedReturns503(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 595 — when DriftDegraded reports false (or is nil),
+// spec: §13.3 — when DriftDegraded reports false (or is nil),
 // the exchange proceeds normally. F-13.3.5.
 func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
@@ -92,7 +92,7 @@ func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 595 — when DriftDegraded is nil, the exchange
+// spec: §13.3 — when DriftDegraded is nil, the exchange
 // proceeds (the option is opt-in). F-13.3.5.
 func TestDriftNilOptionLeavesHandlerOpen(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))

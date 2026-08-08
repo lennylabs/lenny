@@ -23,7 +23,7 @@ func toolsListResponses(toolsJSON string) []*http.Response {
 	}
 }
 
-// spec: §9.3 lines 142-164 — ListTools dials the connector as the MCP
+// spec: §9.3 — ListTools dials the connector as the MCP
 // client and returns its tools/list catalog for the intra-pod
 // per-connector MCP server to advertise. F-9.1.2.
 func TestInvokerListToolsReturnsCatalog_spec_9_3_142(t *testing.T) {
@@ -45,7 +45,7 @@ func TestInvokerListToolsReturnsCatalog_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 164 — ListTools enforces the connector-access boundary
+// spec: §9.3 — ListTools enforces the connector-access boundary
 // before any outbound dial; a denied connector is never reached. F-9.1.2.
 func TestInvokerListToolsPolicyDenied_spec_9_3_164(t *testing.T) {
 	connectors := connectorstore.NewMemory()
@@ -79,7 +79,7 @@ func TestInvokerListToolsInactiveConnector_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 607 — ListTools drops the tools the environment
+// spec: §10.6 — ListTools drops the tools the environment
 // connectorSelector capability filter denies so the intra-pod tools/list
 // advertises only callable tools. F-9.1.2.
 func TestInvokerListToolsFiltersByCapability_spec_10_6_607(t *testing.T) {

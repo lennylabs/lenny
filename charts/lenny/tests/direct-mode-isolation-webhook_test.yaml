@@ -5,7 +5,7 @@ release:
 templates:
   - admission-policies/direct-mode-isolation-webhook.yaml
 tests:
-  # spec: §13.2 line 440 step 2 (F-13.2.12) — the webhook enforces a
+  # spec: §13.2 step 2 (F-13.2.12) — the webhook enforces a
   # pool's credential-delivery / egress coherence, independent of the
   # LLM-proxy feature flag, so it must render even with llmProxy: false.
   - it: renders the workload + webhook config even when features.llmProxy is false

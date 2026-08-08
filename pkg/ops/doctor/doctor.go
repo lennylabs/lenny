@@ -14,7 +14,7 @@
 // without a Kubernetes API. cmd/lenny-ops supplies the production
 // Remediator over its client-go clients.
 //
-// spec: §25.6 lines 2941-2982 (Auto-remediation); §24.2 rows 2-3
+// spec: §25.6; §24.2 rows 2-3
 // (`lenny-ctl doctor` / `doctor --fix`). F-25.6.2, F-24.2.3.
 package doctor
 
@@ -30,7 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
-// The §25.6 fixable finding codes (lines 2961-2967). Each maps to a
+// The §25.6 fixable finding codes. Each maps to a
 // detection signal and an idempotent remediation in the Remediator.
 const (
 	FindingCoreDNSStuckEndpoint   = "coreDnsStuckEndpoint"
@@ -116,7 +116,7 @@ type Detected struct {
 // bootstrapConfigDrift fix re-applies. Data is the canonical key/value
 // content the chart renders; Hash is the content hash the release
 // annotation records so detection can compare it against the live
-// ConfigMap without re-hashing the chart output. spec: §25.6 line 2953.
+// ConfigMap without re-hashing the chart output. spec: §25.6.
 type RenderedConfigMap struct {
 	// Name is the ConfigMap name (e.g. "lenny-bootstrap-values").
 	Name string
@@ -132,7 +132,7 @@ type RenderedConfigMap struct {
 // ServiceMonitor objects the chart's monitoring.yaml template produces
 // when monitoring.enabled=true. Each object is an unstructured manifest
 // keyed by its group/version/resource so the remediator can apply it
-// through the dynamic client. spec: §25.6 line 2955.
+// through the dynamic client. spec: §25.6.
 type RenderedMonitoring struct {
 	// Objects is the rendered PrometheusRule/ServiceMonitor manifests.
 	Objects []RenderedObject
@@ -159,7 +159,7 @@ type RenderedObject struct {
 // installs with (threaded through chart values to lenny-ops). A nil
 // HelmRenderSource on the production remediator leaves both findings
 // undetectable, so they report not_detected rather than a false
-// success. spec: §25.6 lines 2953, 2955.
+// success. spec: §25.6.
 type HelmRenderSource interface {
 	// BootstrapConfigMap returns the rendered lenny-bootstrap ConfigMap
 	// the drift fix re-applies. A false ok means the operator did not
@@ -213,12 +213,12 @@ type Config struct {
 	// Now overrides the clock for the progress envelope timestamps (tests).
 	Now func() time.Time
 	// NewID overrides the operationId generator (tests). The default is
-	// "doctor-" + a v4 UUID, matching the §25.2 line 1779
+	// "doctor-" + a v4 UUID, matching the §25.2
 	// <kind-prefix>-<natural-key> convention.
 	NewID func() string
 }
 
-// DefaultFixTimeout is the §25.6 line 2973 per-operation timeout default.
+// DefaultFixTimeout is the §25.6 per-operation timeout default.
 const DefaultFixTimeout = 120 * time.Second
 
 // RunRequest is one §25.6 doctor invocation.
@@ -333,8 +333,7 @@ func (o *Orchestrator) Run(ctx context.Context, req RunRequest) (*RunReport, err
 	// (two Certificates within 7 days of expiry both raise
 	// certManagerExpiring). Group every detection under its code so each
 	// resource is remediated and reported; keying by code alone would drop
-	// all but one detection and leave the rest unfixed. spec: §25.6 lines
-	// 2949, 2968, 2985.
+	// all but one detection and leave the rest unfixed. spec: §25.6.
 	byCode := make(map[string][]Detected, len(detected))
 	for _, d := range detected {
 		byCode[d.Code] = append(byCode[d.Code], d)

@@ -33,7 +33,7 @@ import (
 // exhausting call would fail closed with 403 BUDGET_EXHAUSTED; this test would
 // fail against that code.
 //
-// spec: §8.6 line 629; §11.2 line 44; proposal 0023 S6.
+// spec: §8.6; §11.2; proposal 0023 S6.
 
 // TestLeaseControlWiredGrantDeliversHeldResponse proves the end-to-end
 // transparent path: an auto-mode tree grants the in-process extension, so the

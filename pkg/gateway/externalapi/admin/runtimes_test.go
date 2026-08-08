@@ -37,7 +37,7 @@ func runtimeRequest(t *testing.T, h http.Handler, method, path string, body any)
 	t.Helper()
 	var buf *bytes.Reader
 	if body != nil {
-		// §5.1 line 51 makes labels required on a runtime create. Tests that
+		// §5.1 makes labels required on a runtime create. Tests that
 		// are not about the labels contract pass a RuntimePayload with nil
 		// labels; default a benign label so the create reaches the handler
 		// logic under test. Tests exercising the labels-required rejection
@@ -52,7 +52,7 @@ func runtimeRequest(t *testing.T, h http.Handler, method, path string, body any)
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
-	// spec: §15.1 lines 1207-1211 — runtime PUTs enforce If-Match. A test
+	// spec: §15.1 — runtime PUTs enforce If-Match. A test
 	// that is not driving the precondition reaches the handler by carrying
 	// the runtime's current ETag; one that exercises the precondition sets
 	// If-Match explicitly and is left untouched.
@@ -1329,7 +1329,7 @@ func TestStandaloneRuntimeRoundTripsNewFields(t *testing.T) {
 	}
 }
 
-// spec: §5.1 credentialCapabilities (lines 73-75) — the admin API
+// spec: §5.1 credentialCapabilities — the admin API
 // round-trips the hotRotation flag and proxyDialect set on a standalone
 // runtime.
 func TestRuntimeCredentialCapabilitiesRoundTrip(t *testing.T) {
@@ -1360,7 +1360,7 @@ func TestRuntimeCredentialCapabilitiesRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: §5.1 lines 76-101 / merge table — limits, setupCommandPolicy, and
+// spec: §5.1 / merge table — limits, setupCommandPolicy, and
 // defaultPoolConfig are modeled, persisted, and round-trip through the
 // admin create/get path.
 func TestCreateRuntimeModelsLimitsSetupCommandPolicyAndPoolConfig(t *testing.T) {
@@ -1424,7 +1424,7 @@ func TestCreateRuntimeRejectsInvalidNewBlocks(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 36 — integrationLevel is only valid on type:agent
+// spec: §5.1 — integrationLevel is only valid on type:agent
 // runtimes; a type:mcp payload that sets it is rejected with INVALID_RUNTIME.
 func TestCreateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
@@ -1439,7 +1439,7 @@ func TestCreateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 36 — a PUT setting integrationLevel on an existing
+// spec: §5.1 — a PUT setting integrationLevel on an existing
 // type:mcp runtime is rejected.
 func TestUpdateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
@@ -1456,7 +1456,7 @@ func TestUpdateRuntimeRejectsIntegrationLevelOnMCP(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 36 — a type:agent runtime accepts integrationLevel.
+// spec: §5.1 — a type:agent runtime accepts integrationLevel.
 func TestCreateRuntimeAcceptsIntegrationLevelOnAgent(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
@@ -1471,7 +1471,7 @@ func TestCreateRuntimeAcceptsIntegrationLevelOnAgent(t *testing.T) {
 // runtime workspaceTier field round-trips through POST and GET and is
 // updatable via PUT.
 //
-// spec: §5.2 line 396 / §12.9.
+// spec: §5.2 / §12.9.
 func TestRuntimeWorkspaceTierRoundTrip_spec_12_9(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
@@ -1529,7 +1529,7 @@ func TestCreateRuntimeRejectsUnknownWorkspaceTier_spec_12_9(t *testing.T) {
 // workspaceTier is Inherited from the base runtime, so a derived runtime
 // may not declare it.
 //
-// spec: §5.1 merge table / §5.2 line 396.
+// spec: §5.1 merge table / §5.2.
 func TestCreateRuntimeRejectsWorkspaceTierOnDerived_spec_5_1(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	if err := store.Create(context.Background(), runtimestore.Runtime{
@@ -1548,8 +1548,8 @@ func TestCreateRuntimeRejectsWorkspaceTierOnDerived_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 260 — `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`;
-// §11.3 line 219 — the gateway-side outer bound.
+// spec: §6.2 — `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`;
+// §11.3 — the gateway-side outer bound.
 func TestCreateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
 	router = router.WithMaxFinalizingTimeoutSeconds(600)
@@ -1571,7 +1571,7 @@ func TestCreateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.
 	}
 }
 
-// spec: §6.2 line 260 — the inner bound is enforced inclusively at the
+// spec: §6.2 — the inner bound is enforced inclusively at the
 // boundary; setupTimeoutSeconds == maxFinalizingTimeoutSeconds is accepted.
 func TestCreateRuntimeAcceptsSetupTimeoutAtFinalizingCap_spec_6_2(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
@@ -1591,7 +1591,7 @@ func TestCreateRuntimeAcceptsSetupTimeoutAtFinalizingCap_spec_6_2(t *testing.T) 
 	}
 }
 
-// spec: §6.2 line 260 — the cap applies only when the runtime declares a
+// spec: §6.2 — the cap applies only when the runtime declares a
 // finite aggregate cap; zero (no-cap) remains acceptable because the
 // per-command timeout still bounds work.
 func TestCreateRuntimeAcceptsZeroSetupTimeoutUnderCap_spec_6_2(t *testing.T) {
@@ -1612,7 +1612,7 @@ func TestCreateRuntimeAcceptsZeroSetupTimeoutUnderCap_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 260 — the bound applies on PUT updates too, since a PUT
+// spec: §6.2 — the bound applies on PUT updates too, since a PUT
 // can shrink the gateway cap or grow the runtime setupPolicy.
 func TestUpdateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
@@ -1637,7 +1637,7 @@ func TestUpdateRuntimeRejectsSetupTimeoutAboveFinalizingCap_spec_6_2(t *testing.
 	}
 }
 
-// spec: §6.2 line 260 — when no gateway cap is wired (Router constructed
+// spec: §6.2 — when no gateway cap is wired (Router constructed
 // without WithMaxFinalizingTimeoutSeconds), the check no-ops so test
 // scaffolding does not need the wiring.
 func TestCreateRuntimeAcceptsArbitrarySetupTimeoutWithoutCap_spec_6_2(t *testing.T) {
@@ -1657,13 +1657,13 @@ func TestCreateRuntimeAcceptsArbitrarySetupTimeoutWithoutCap_spec_6_2(t *testing
 	}
 }
 
-// TestCreateRuntimeRejectsMissingLabels verifies the §5.1 line 51
+// TestCreateRuntimeRejectsMissingLabels verifies the §5.1
 // "Labels are required from v1" contract: a runtime registered through
 // the admin POST with no labels is rejected with VALIDATION_ERROR. An
 // explicit empty (non-nil) Labels map bypasses the runtimeRequest helper's
 // convenience default so the handler sees the empty set.
 //
-// spec: §5.1 line 51.
+// spec: §5.1.
 func TestCreateRuntimeRejectsMissingLabels_spec_5_1_51(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
@@ -1683,7 +1683,7 @@ func TestCreateRuntimeRejectsMissingLabels_spec_5_1_51(t *testing.T) {
 // TestCreateRuntimeAcceptsLabels verifies a runtime with at least one
 // label is accepted and the labels round-trip on GET.
 //
-// spec: §5.1 line 51.
+// spec: §5.1.
 func TestCreateRuntimeAcceptsLabels_spec_5_1_51(t *testing.T) {
 	router, _, _ := newRuntimeAdmin(t)
 	rr := runtimeRequest(t, router.Handler(), http.MethodPost, "/v1/admin/runtimes", admin.RuntimePayload{
@@ -1707,7 +1707,7 @@ func TestCreateRuntimeAcceptsLabels_spec_5_1_51(t *testing.T) {
 // explicit empty label map is rejected: §5.1 keeps labels required, so a
 // wholesale replacement cannot strip them.
 //
-// spec: §5.1 line 51.
+// spec: §5.1.
 func TestUpdateRuntimeRejectsEmptyLabels_spec_5_1_51(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)
 	if err := store.Create(context.Background(), runtimestore.Runtime{

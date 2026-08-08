@@ -152,7 +152,7 @@ func TestSocketRuntimeProcessOutputClosesOnRuntimeDisconnect(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 509, §15.4.1 line 1459 — one runtime process per pod
+// spec: §5.2, §15.4.1 — one runtime process per pod
 // serves every slot over the single connection, so a second Start for a
 // sibling slot's session reuses the live connection rather than accepting
 // a new one, and WriteEnvelope writes any slot's session over it.
@@ -193,7 +193,7 @@ func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T)
 	}
 }
 
-// spec: §15.4.1 line 1459 — the single runtime connection fans every frame
+// spec: §15.4.1 — the single runtime connection fans every frame
 // out to all Output subscribers, so two concurrent per-slot Attach streams
 // each receive the runtime's full output and demultiplex by slotId. A
 // subscriber that arrives after Start still sees frames written after it
@@ -241,8 +241,7 @@ func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing
 	}
 }
 
-// spec: §5.2 line 534 (slots fail independently), line 536 (other slots
-// continue unaffected), line 537 (per-slot teardown and release) — a
+// spec: §5.2 — a
 // per-slot Close on one slot while a sibling slot is still active must not
 // tear the shared runtime connection down: the sibling keeps writing and
 // reading over it. Only the last slot's Close closes the connection.
@@ -300,8 +299,7 @@ func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 534 (slots fail independently), line 536 (other slots
-// continue unaffected) — a clean Interrupt (the §15.4.1 line 1826
+// spec: §5.2 — a clean Interrupt (the §15.4.1
 // heartbeat-hung SIGTERM) on one slot while a sibling is active must not
 // close the shared connection: only the last active slot's Interrupt EOFs
 // the runtime.

@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+// spec: §11.1 — per-runtime and per-pool requests-per-minute
 // admission limits, enforced at session creation. F-11.1.2.
 
 // rlRecorder captures the §11.1 rejection-scope and counter-failure
@@ -158,7 +158,7 @@ func TestAdmissionRateLimitNilCounterNoLimit_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — an empty runtimeRef is left to the required-field
+// spec: §11.1 — an empty runtimeRef is left to the required-field
 // check (the gate skips it rather than consuming a rate-limit slot for a
 // request that will be rejected as VALIDATION_ERROR). F-11.1.2.
 func TestAdmissionRateLimitSkipsEmptyRuntime_spec_11_1_7(t *testing.T) {
@@ -173,7 +173,7 @@ func TestAdmissionRateLimitSkipsEmptyRuntime_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — the per-pool scope is enforced against the
+// spec: §11.1 — the per-pool scope is enforced against the
 // resolved warm pool, keyed independently of the per-runtime scope.
 // F-11.1.2.
 func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
@@ -227,7 +227,7 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — when no pool resolver is wired (the Postgres-only
+// spec: §11.1 — when no pool resolver is wired (the Postgres-only
 // posture), the per-pool scope is skipped rather than blocking
 // admission. F-11.1.2.
 func TestPerPoolRateLimitSkippedWithoutBinder_spec_11_1_7(t *testing.T) {

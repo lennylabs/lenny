@@ -127,7 +127,7 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 743-758
+// spec: §12.8
 // diagnosis: migration 0096 must seed the reserved __preflight__ tenant
 // so the §12.8 MemoryStore erasure preflight's synthetic agent_memory
 // probe row satisfies the agent_memory → tenants(id) foreign key. The row

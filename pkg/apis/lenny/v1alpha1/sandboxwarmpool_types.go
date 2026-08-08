@@ -43,7 +43,7 @@ type ScalePolicy struct {
 	// +optional
 	SDKWarmCircuitBreakerMinOpenSeconds *int64 `json:"sdkWarmCircuitBreakerMinOpenSeconds,omitempty"`
 
-	// SDKConnectTimeoutSeconds is the §6.1 line 69 per-pod watchdog
+	// SDKConnectTimeoutSeconds is the §6.1 per-pod watchdog
 	// budget for the sdk_connecting phase: a pod that has not completed
 	// its SDK pre-connection and reached idle within this window is
 	// retired to failed and the WarmPoolController increments

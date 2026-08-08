@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// DefaultReplicaPollInterval is the §12.4 line 224 cadence the gateway
+// DefaultReplicaPollInterval is the §12.4 cadence the gateway
 // polls the Kubernetes Endpoints object for the gateway Service. The spec
 // fixes the maximum staleness of cached_replica_count at 30s.
 const DefaultReplicaPollInterval = 30 * time.Second
 
-// ReplicaCount holds the §12.4 line 224 cached_replica_count: the
+// ReplicaCount holds the §12.4 cached_replica_count: the
 // last-known good number of ready gateway replicas, sourced from the
 // Kubernetes Endpoints object. It is in-memory (never in Redis) and
 // persists across individual poll failures so a dual outage (Redis +
@@ -22,7 +22,7 @@ const DefaultReplicaPollInterval = 30 * time.Second
 // admitting an N× overshoot. A cold start with no successful poll yet
 // reads as 1.
 //
-// spec: §12.4 line 224.
+// spec: §12.4.
 type ReplicaCount struct {
 	mu    sync.Mutex
 	count int // 0 until the first successful poll; Get floors at 1
@@ -33,7 +33,7 @@ type ReplicaCount struct {
 func NewReplicaCount() *ReplicaCount { return &ReplicaCount{} }
 
 // Get returns the last successfully observed replica count, floored at 1
-// per §12.4 line 224 (cold start defaults to 1; the floor also guards the
+// per §12.4 (cold start defaults to 1; the floor also guards the
 // tenant_limit / max(cached_replica_count, 1) division).
 func (r *ReplicaCount) Get() int {
 	r.mu.Lock()
@@ -59,7 +59,7 @@ func (r *ReplicaCount) Observe(count int) {
 // EndpointsLister reports the number of ready endpoints backing the
 // gateway Service. The production implementation queries the Kubernetes
 // API server (corev1 Endpoints / EndpointSlices); tests inject a stub.
-// spec: §12.4 line 224.
+// spec: §12.4.
 type EndpointsLister interface {
 	CountReady(ctx context.Context) (int, error)
 }

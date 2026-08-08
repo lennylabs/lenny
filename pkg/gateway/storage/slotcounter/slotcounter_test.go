@@ -176,7 +176,7 @@ func TestResetClearsCounter(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — the first reservation on a pod whose rehydrated
+// spec: §5.2 — the first reservation on a pod whose rehydrated
 // flag is absent seeds the counter from the SlotSource before
 // incrementing. A source reporting 2 live slots makes the first
 // reservation return 3 (seed 2 + INCR).
@@ -221,7 +221,7 @@ func TestReserveRehydratesFromSource_spec_5_2_521(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — when Postgres already shows the pod at its
+// spec: §5.2 — when Postgres already shows the pod at its
 // maxConcurrent bound, rehydration seeds the counter to the cap and the
 // reservation is rejected (no over-commit), still reporting the
 // rehydration event.
@@ -240,7 +240,7 @@ func TestReserveRehydratesToCapThenExhausted(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — rehydration is per-pod scoped (no global lock):
+// spec: §5.2 — rehydration is per-pod scoped (no global lock):
 // each pod triggers its own seed exactly once.
 func TestReserveRehydrationIsPerPodScoped(t *testing.T) {
 	src := newFakeSource()
@@ -263,7 +263,7 @@ func TestReserveRehydrationIsPerPodScoped(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — concurrent reservations on the same un-rehydrated
+// spec: §5.2 — concurrent reservations on the same un-rehydrated
 // pod within one replica must seed exactly once (in-process mutex) and
 // must not over-commit. Run under -race.
 func TestReserveRehydrationConcurrentSamePod(t *testing.T) {
@@ -310,7 +310,7 @@ func TestReserveRehydrationConcurrentSamePod(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — two gateway replicas (two Counters) sharing one
+// spec: §5.2 — two gateway replicas (two Counters) sharing one
 // Redis race to rehydrate the same pod. The cross-replica SET NX lock
 // ensures the source is queried exactly once cluster-wide. Run under
 // -race.
@@ -351,7 +351,7 @@ func TestReserveRehydrationCrossReplicaSeedsOnce(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — a SlotSource error fails the reservation without
+// spec: §5.2 — a SlotSource error fails the reservation without
 // setting the rehydrated flag, so a later reservation retries the seed
 // and succeeds once the source recovers.
 func TestReserveRehydrationSourceErrorRetries(t *testing.T) {
@@ -386,7 +386,7 @@ func TestReserveRehydrationSourceErrorRetries(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — with no SlotSource wired, rehydration falls back
+// spec: §5.2 — with no SlotSource wired, rehydration falls back
 // to seed-zero (the pre-rehydration behaviour) and is not reported as a
 // rehydration event.
 func TestReserveNilSourceSeedsZero(t *testing.T) {
@@ -404,7 +404,7 @@ func TestReserveNilSourceSeedsZero(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — after a Redis restart (counters and flags
+// spec: §5.2 — after a Redis restart (counters and flags
 // cleared) the next reservation re-seeds from Postgres, restoring the
 // pre-restart slot count before allowing a new slot.
 func TestReserveRehydratesAfterRedisRestart(t *testing.T) {
@@ -445,7 +445,7 @@ func TestReserveRehydratesAfterRedisRestart(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — Reset clears the rehydrated flag so the next
+// spec: §5.2 — Reset clears the rehydrated flag so the next
 // reservation rehydrates again (a fresh pod with a recycled name does
 // not inherit a stale flag).
 func TestResetClearsRehydrationFlag(t *testing.T) {
@@ -467,7 +467,7 @@ func TestResetClearsRehydrationFlag(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — a peer replica holds the rehydrating lock and
+// spec: §5.2 — a peer replica holds the rehydrating lock and
 // never sets the flag; the spin-wait is bounded by the rehydration
 // timeout and the reservation stalls rather than blocking forever.
 func TestReserveStallsWhenLockHeldAndFlagNeverSet(t *testing.T) {
@@ -491,7 +491,7 @@ func TestReserveStallsWhenLockHeldAndFlagNeverSet(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — a waiter blocked on a peer's rehydrating lock
+// spec: §5.2 — a waiter blocked on a peer's rehydrating lock
 // resumes and reserves once the peer sets the flag mid-wait.
 func TestReserveWaitsForPeerFlagThenSucceeds(t *testing.T) {
 	src := newFakeSource()

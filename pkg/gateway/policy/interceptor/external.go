@@ -45,7 +45,7 @@ type ExternalConfig struct {
 	Name string
 
 	// Endpoint is the gRPC address (host:port) of the interceptor
-	// service, per the §4.8 registration table (line 1019). The gateway
+	// service, per the §4.8 registration table. The gateway
 	// dials it and supplies the resulting Client. It is informational on
 	// ExternalConfig itself — NewExternal uses Client, not Endpoint — but
 	// it is carried here so the production wiring and audit records can

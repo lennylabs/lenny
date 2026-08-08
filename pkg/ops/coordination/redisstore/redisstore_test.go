@@ -33,7 +33,7 @@ func acquire(t *testing.T, s *redisstore.Store, scope, by string, ttl int) *coor
 	return lock
 }
 
-// spec: §25.4 lines 2166, 2195-2202 — the Tier 2 acquire is a compare-and-
+// spec: §25.4 — the Tier 2 acquire is a compare-and-
 // set on scope; a held scope yields REMEDIATION_LOCK_CONFLICT.
 func TestRedisAcquireAndConflict_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
@@ -50,7 +50,7 @@ func TestRedisAcquireAndConflict_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2103, 2131 — Get by id and List by scope.
+// spec: §25.4 — Get by id and List by scope.
 func TestRedisGetAndList_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
 	a := acquire(t, s, "pool:b", "alice", 300)
@@ -75,7 +75,7 @@ func TestRedisGetAndList_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2129, 2303-2306 — identity-based Release and Extend:
+// spec: §25.4 — identity-based Release and Extend:
 // the caller must equal acquiredBy.
 func TestRedisReleaseExtendIdentity_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
@@ -99,7 +99,7 @@ func TestRedisReleaseExtendIdentity_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2267 — RemoveByID drops a losing split-brain Redis lock
+// spec: §25.4 — RemoveByID drops a losing split-brain Redis lock
 // regardless of holder (the reconciliation removes it once the pre-outage
 // Postgres holder has won); a missing id is a no-op.
 func TestRedisRemoveByID_spec_25_4(t *testing.T) {
@@ -128,7 +128,7 @@ func TestRedisRemoveByID_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2282-2295 — Steal records the prior holder and bumps
+// spec: §25.4 — Steal records the prior holder and bumps
 // the revision.
 func TestRedisSteal_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
@@ -145,7 +145,7 @@ func TestRedisSteal_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2198, 2218-2222 — the outage epoch counter:
+// spec: §25.4 — the outage epoch counter:
 // increment advances it, SetEpoch applies the MAX (never backward), and a
 // Tier 2 acquire stamps the current value.
 func TestRedisEpochAndStamp_spec_25_4(t *testing.T) {
@@ -172,7 +172,7 @@ func TestRedisEpochAndStamp_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2200-2202 — the key-level PTTL expires the lock
+// spec: §25.4 — the key-level PTTL expires the lock
 // natively: after the TTL elapses the scope is free again.
 func TestRedisTTLExpiry_spec_25_4(t *testing.T) {
 	s, mr := newStore(t)
@@ -187,7 +187,7 @@ func TestRedisTTLExpiry_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2231 — ActiveLocks is the reconciliation snapshot
+// spec: §25.4 — ActiveLocks is the reconciliation snapshot
 // source.
 func TestRedisActiveLocks_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
@@ -203,8 +203,7 @@ func TestRedisActiveLocks_spec_25_4(t *testing.T) {
 // Postgres now(). It is the same source acquiredAt/expiresAt are authored
 // from, so the monitored skew is the skew the lease path is exposed to.
 //
-// spec: §25.4 line 2202 (Redis TIME clock source), line 2280 (skew
-// monitoring).
+// spec: §25.4.
 func TestRedisServerTime_spec_25_4(t *testing.T) {
 	s, mr := newStore(t)
 	want := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)

@@ -1,4 +1,4 @@
-suite: OpenTelemetry Collector and trace sampling (F-16.3.4, spec §16.3 line 359)
+suite: OpenTelemetry Collector and trace sampling (F-16.3.4, spec §16.3)
 templates:
   - otel-collector.yaml
   - gateway-deployment.yaml
@@ -53,7 +53,7 @@ tests:
       - matchRegex:
           path: data["config.yaml"]
           pattern: "sampling_percentage: 25"
-      # spec: §16.3 line 359 — errors and slow requests are always kept.
+      # spec: §16.3 — errors and slow requests are always kept.
       - matchRegex:
           path: data["config.yaml"]
           pattern: "status_codes: \\[ERROR\\]"

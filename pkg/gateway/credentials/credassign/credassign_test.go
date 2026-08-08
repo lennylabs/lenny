@@ -291,7 +291,7 @@ func TestProtoLeaseByIDUnknownLease(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1645, 1649 — RevokeCredential marks a credential
+// spec: §4.9 — RevokeCredential marks a credential
 // unselectable so a §4.9 emergency-revocation step-5 replacement mint
 // draws a different credential from the same pool, never the one revoked.
 

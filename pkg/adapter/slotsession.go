@@ -23,7 +23,7 @@ import (
 // slot ids may be active at once; re-claiming an already-active slot id
 // is rejected with Unavailable.
 //
-// spec: §6.4 lines 385-405; §5.2 concurrent mode; spec/05:509; spec/15:1459.
+// spec: §6.4; §5.2 concurrent mode; spec/05:509; spec/15:1459.
 func (s *Server) startSessionSlot(ctx context.Context, req *adapterv1.StartSessionRequest, slotID string) (*adapterv1.StartSessionResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if s.Runtime == nil {
@@ -59,7 +59,7 @@ func (s *Server) startSessionSlot(ctx context.Context, req *adapterv1.StartSessi
 // the slot so a sibling slot is unaffected. One runtime process per pod
 // serves every slot (spec/05:509), so the close is scoped to the slot's
 // session id rather than tearing the shared process down.
-// spec: §6.4 lines 401-405; spec/05:509.
+// spec: §6.4; spec/05:509.
 func (s *Server) shutdownSlot(ctx context.Context, sessionID, slotID string, deadlineMs int32) (*adapterv1.ShutdownResponse, error) {
 	s.mu.Lock()
 	st, ok := s.slotStateLocked(slotID)

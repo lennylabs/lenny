@@ -17,7 +17,7 @@ import (
 // replica acquired it (the leader-only completion reconciler releases a
 // lock another replica took). F-17.3.4.
 //
-// spec: §25.11 lines 4148-4149.
+// spec: §25.11.
 func TestRestoreLockerAcquireConflictRelease_spec_25_11(t *testing.T) {
 	ctx := context.Background()
 	locks := coordination.NewMemStore()

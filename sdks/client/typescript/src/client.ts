@@ -179,7 +179,7 @@ export class Client {
     }
     const encoded = q.toString();
     const path = encoded ? `/v1/sessions?${encoded}` : '/v1/sessions';
-    // §15.1 lines 1228-1253 canonical cursor-paginated envelope:
+    // §15.1 canonical cursor-paginated envelope:
     // {items, cursor, hasMore, total?}. The list helper surfaces items
     // as page.sessions and cursor as page.nextCursor so the SDK's
     // pagination surface stays stable regardless of the wire field
@@ -324,8 +324,8 @@ export class Client {
    * executor's synchronous output. Each payload may carry `inReplyTo`,
    * `delivery`, and `slotId`; see {@link MessagePayload}.
    *
-   * spec: §15.1 messages endpoint; §15.4 lines 1725-1737
-   * delivery_receipt; §7.2 line 345.
+   * spec: §15.1 messages endpoint; §15.4
+   * delivery_receipt; §7.2.
    */
   async sendMessages(
     id: string,
@@ -372,7 +372,7 @@ export class Client {
    * POST /v1/sessions/{id}/tool-use/{toolCallId}/approve to resolve a
    * pending tool-use interaction the agent is blocked on.
    *
-   * spec: §7.2 table line 124; §15.1.
+   * spec: §7.2 table; §15.1.
    */
   async approveToolUse(
     id: string,
@@ -392,7 +392,7 @@ export class Client {
    * POST /v1/sessions/{id}/tool-use/{toolCallId}/deny with an optional
    * human-readable reason recorded in the audit row.
    *
-   * spec: §7.2 table line 125; §15.1.
+   * spec: §7.2 table; §15.1.
    */
   async denyToolUse(
     id: string,
@@ -415,7 +415,7 @@ export class Client {
    * the supplied response value. The runtime receives the value and
    * unblocks the pending `lenny/request_elicitation` call.
    *
-   * spec: §7.2 table line 126; §9.2; §15.1.
+   * spec: §7.2 table; §9.2; §15.1.
    */
   async respondElicitation(
     id: string,
@@ -436,7 +436,7 @@ export class Client {
    * POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss to
    * cancel a pending elicitation request.
    *
-   * spec: §7.2 table line 127; §9.2; §15.1.
+   * spec: §7.2 table; §9.2; §15.1.
    */
   async dismissElicitation(
     id: string,

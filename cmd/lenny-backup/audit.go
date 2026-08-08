@@ -24,9 +24,8 @@ import (
 // events stay observable and a degraded audit backend never halts the
 // backup run.
 //
-// spec: §25.11 line 4343 (every backup transition is audited);
-// §11.7 line 435 (platform-scoped audit rows route to the platform
-// tenant); §16.7 (backup.completed, backup.failed, backup.verified).
+// spec: §25.11;
+// §11.7; §16.7 (backup.completed, backup.failed, backup.verified).
 func buildBackupAuditSink(pool *pgxpool.Pool) backup.AuditSink {
 	if pool == nil {
 		return logBackupAuditSink

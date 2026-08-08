@@ -245,6 +245,113 @@
       "blocked_until_phase": "8",
       "notes": "Phase 8 ships the §4.4 checkpoint enums (Level, Trigger, Outcome, ResumeMode) plus the per-level consistency tag, the per-trigger retry budget, the §4.4 60-second quiescence timeout constant, the §4.4 'Hard workspace size limit' pre-check, and the §4.4 'Checkpoint freshness SLO' check. The MinIO upload pipeline, the SIGSTOP/SIGCONT embedded-adapter path, the eviction-fallback Postgres minimal-state record, and the lenny-drain-readiness admission webhook are deferred to the K8s-integration phase."
     },
+    "4.4.1": {
+      "title": "Stored Records and Audit Egress",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "tests/tier2_component/stores/eventstore_test.go",
+        "tests/tier3_contract/ocsf_audit/admin_audit_envelope_test.go",
+        "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
+        "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go"
+      ],
+      "packages": [
+        "pkg/store/event"
+      ],
+      "depends_on_sections": [
+        "4.4",
+        "11.7"
+      ],
+      "blocked_until_phase": "8",
+      "notes": "Covers the record classes the EventStore holds and the OCSF audit-egress translator that maps the canonical Postgres tuple for every consumer outside the authoritative store."
+    },
+    "4.4.2": {
+      "title": "Checkpoint Atomicity and Partial Manifests",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "tests/tier2_component/stores/partialcleanup_component_test.go",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed",
+        "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointLeavesPartialAndSweepsChunksOnPutFailure"
+      ],
+      "packages": [
+        "pkg/checkpoint"
+      ],
+      "depends_on_sections": [
+        "4.4",
+        "10.1",
+        "12.5"
+      ],
+      "blocked_until_phase": "8",
+      "notes": "Covers the atomic checkpoint unit, the partial manifest row and its chunk objects, and the soft-delete cleanup path that keeps the GC backstop able to reclaim them."
+    },
+    "4.4.3": {
+      "title": "Checkpoint Quiescence, Timeout, and Abort Handling",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/checkpoint/checkpoint_test.go::TestAllLevelsIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestConsistencyForLevel",
+        "pkg/checkpoint/checkpoint_test.go::TestCheckpointTimeoutIs60s",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
+      ],
+      "packages": [
+        "pkg/checkpoint"
+      ],
+      "depends_on_sections": [
+        "4.4",
+        "4.7",
+        "13.1"
+      ],
+      "blocked_until_phase": "8",
+      "notes": "Covers the per-level quiescence strategy, the 60-second checkpoint timeout, the SIGCONT confirmation poll, the abort sweep, and the liveness flag that surfaces a stuck checkpoint."
+    },
+    "4.4.4": {
+      "title": "Checkpoint SLOs and Scheduling",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/checkpoint/checkpoint_test.go::TestAllTriggersIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestWorkspaceSizePreCheckRejectsExceed",
+        "pkg/checkpoint/checkpoint_test.go::TestFreshnessCheckRejectsStale"
+      ],
+      "packages": [
+        "pkg/checkpoint"
+      ],
+      "depends_on_sections": [
+        "4.4",
+        "16.5"
+      ],
+      "blocked_until_phase": "8",
+      "notes": "Covers the checkpoint duration SLO, the hard workspace size limit and its pre-check, the freshness SLO, and the jittered periodic checkpoint schedule."
+    },
+    "4.4.5": {
+      "title": "Checkpoint Storage Failure and Eviction Fallback",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/checkpoint/checkpoint_test.go::TestRetryBudgetForTriggers",
+        "pkg/checkpoint/checkpoint_test.go::TestAllOutcomesIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestAllResumeModesIsExhaustive",
+        "pkg/checkpoint/checkpoint_test.go::TestResumeModeWorkspaceLost",
+        "tests/tier2_component/stores/evictionfallback_test.go",
+        "tests/tier2_component/stores/evictionstatestore_test.go",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
+        "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackTotalLossWhenBothStoresDown",
+        "tests/tier8_chaos/minio_outage_during_checkpoint_test.go",
+        "tests/tier8_chaos/node_drain_during_minio_outage_test.go",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces"
+      ],
+      "packages": [
+        "pkg/checkpoint",
+        "pkg/store/event"
+      ],
+      "depends_on_sections": [
+        "4.4",
+        "11.2",
+        "12.5"
+      ],
+      "blocked_until_phase": "8",
+      "notes": "Covers the per-trigger retry budgets, the Postgres minimal state record, the quota accounting for eviction context objects, the total-loss path, and the tenant isolation of session_eviction_state."
+    },
     "4.5": {
       "title": "Artifact Store",
       "spec_file": "spec/04_system-components.md",
@@ -438,6 +545,220 @@
         "schemas/runtime-ops-events.schema.json"
       ],
       "blocked_until_phase": "2"
+    },
+    "4.7.1": {
+      "title": "Role and Gateway RPC Contract",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/server_test.go",
+        "pkg/adapter/session_test.go",
+        "pkg/adapter/checkpoint_stream_test.go",
+        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
+        "tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go",
+        "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
+        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the gateway-to-adapter and adapter-to-gateway RPC surface: workspace preparation, session start, attach, interrupt, checkpoint, barrier, fencing, credential delivery, usage reporting, termination, and the two scrub reports."
+    },
+    "4.7.2": {
+      "title": "Checkpoint and Interrupt Mutual Exclusion",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/oplock_test.go::TestOpLockSerializesAndPromotes",
+        "pkg/adapter/oplock_test.go::TestOpLockPromotesCheckpointsInSlotIDOrder",
+        "pkg/adapter/oplock_test.go::TestOpLockCoalescesSameSlotAdmitsDistinctSlot",
+        "pkg/adapter/oplock_test.go::TestOpLockRejectsSecondQueuedInterrupt",
+        "pkg/adapter/oplock_test.go::TestOpLockInterruptDuringCheckpointDeliversAfterComplete"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "5.2"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the pod-level operation lock: the queueing order between checkpoint and interrupt, the per-slot promotion order, coalescing, and the BUSY refusal."
+    },
+    "4.7.3": {
+      "title": "Adapter Events on CH-ADAPTEREVENTS",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/adapterevents_test.go",
+        "tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go",
+        "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
+        "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "8.3",
+        "10.1"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the events the adapter pushes to the gateway: credential-fault notifications, the checkpoint barrier acknowledgement, the self-initiated terminal notification, and the final usage report."
+    },
+    "4.7.4": {
+      "title": "Adapter ↔ Runtime Protocol (Intra-Pod)",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "tests/tier3_contract/adapter_jsonl/messages_test.go",
+        "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go",
+        "pkg/adapter/runtimeops_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "28.5"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the pointer to the intra-pod channel contracts, which are owned by the intra-pod channel cards rather than by this section."
+    },
+    "4.7.5": {
+      "title": "Adapter Manifest",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/manifest_test.go",
+        "pkg/adapter/warmlayout_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "5.2"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the manifest written to the read-only manifest volume before the runtime binary is spawned, and its regeneration on a recycling pool."
+    },
+    "4.7.6": {
+      "title": "Adapter Manifest Field Reference",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/manifest_fields_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the manifest field set, the per-level reading requirements, and the forward-compatibility rule that unknown top-level fields are ignored."
+    },
+    "4.7.7": {
+      "title": "Runtime Integration Levels (agent-type only)",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/integrationlevel_test.go",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go"
+      ],
+      "packages": [
+        "pkg/adapter",
+        "cmd/runtimes/echo"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "15.4"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the Basic, Standard, and Full integration levels and what each level requires of a runtime."
+    },
+    "4.7.8": {
+      "title": "Credential Rotation by Integration Level",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/credentials_test.go",
+        "pkg/adapter/credexpiry_test.go",
+        "pkg/adapter/rotationgate_test.go",
+        "tests/tier4_integration/credential_lifecycle_test.go::TestCredentialLifecycleAssignRotateRebindRevokeTerminate",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "4.9"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the per-level rotation behaviour and the Full-level rotation protocol with its acknowledgement timeout and in-flight request handling."
+    },
+    "4.7.9": {
+      "title": "Startup Sequence for `type: agent` Runtimes",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/socketruntime_test.go",
+        "pkg/adapter/socketruntime_e2e_test.go",
+        "pkg/adapter/sdkwarm_test.go"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "6.1"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the ordered startup the adapter performs before and around the runtime binary spawn."
+    },
+    "4.7.10": {
+      "title": "Deployment Model",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/embedded_test.go",
+        "pkg/adapter/embedded_sdkwarm_test.go",
+        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
+      ],
+      "packages": [
+        "pkg/adapter",
+        "cmd/runtimes/echo"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "13.1"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the default sidecar deployment over abstract Unix sockets, the embedded alternative, the trade-offs between them, and the gRPC health check the warm pool controller waits on."
+    },
+    "4.7.11": {
+      "title": "Adapter-Agent Security Boundary",
+      "spec_file": "spec/04_system-components.md",
+      "tests": [
+        "pkg/adapter/peercred_test.go",
+        "pkg/adapter/peercredselftest_test.go::TestPeercredSelftest_spec_4_7_passes_on_loopback",
+        "pkg/adapter/credredact_test.go",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestPassesUnderRuncAndGvisor",
+        "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestFaultCrashLoops",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7",
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract"
+      ],
+      "packages": [
+        "pkg/adapter"
+      ],
+      "depends_on_sections": [
+        "4.7",
+        "13.1",
+        "13.2"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "Covers the nonce handshake, the peer-credential check, the crash-isolation rule, the credential-sensitive RPC logging exclusion, and what the local MCP servers never expose."
     },
     "4.8": {
       "title": "Gateway Policy Engine",
@@ -893,7 +1214,7 @@
         "pkg/delegation/policy"
       ],
       "blocked_until_phase": "9",
-      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The delegation-time credential-availability pre-check (§8.3 line 470) has a deterministic spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go: an inherit or independent delegate_task whose origin credential pool is exhausted is rejected with CREDENTIAL_POOL_EXHAUSTED before a child row is created. The §8.2 delegate-path pod-claim and credential-lease-assignment step (steps 5-9) landed via proposal 0054: delegate_task now materializes the child synchronously through MaterializeDelegatedChild, and tests/tier9_security/delegation_child_materialization_cred_test.go pins that the assigned lease is delivered into the running child's pod along the real delegate path. The one-of-N concurrent assignment race (exactly one of N racing delegations winning, the losers' pods released) stays with the ADV battery under the skip-ADV policy (T-ADV.14). credentialPropagation: deny (§8.3 line 443) is covered end to end: tests/tier4_integration/delegation_credential_propagation_test.go asserts a deny child is assigned no credential pool at finalize (deny-mode suppression) and that an inherit hop whose origin is a deny session is rejected with CREDENTIAL_POOL_EXHAUSTED at delegation time and receives no credential at finalize (a deny hop holds no origin pool, line 474/490). tests/tier9_security/delegation_credential_deny_leakage_test.go pins the delivery boundary with a lease-counting assigner across the real delegate_task → finalize path: zero lease tokens are minted or delivered into the deny leaf's pod or the inherit-from-deny grandchild's pod, while a non-deny control child drives the assigner above zero so the assertion is non-vacuous. The deny bit is persisted as the boolean CredentialDeny marker (migration 0179) rather than a full enum column, since CredentialOriginSessionID already distinguishes inherit from independent."
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The delegation-time credential-availability pre-check (§8.3) has a deterministic spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go: an inherit or independent delegate_task whose origin credential pool is exhausted is rejected with CREDENTIAL_POOL_EXHAUSTED before a child row is created. The §8.2 delegate-path pod-claim and credential-lease-assignment step (steps 5-9) landed via proposal 0054: delegate_task now materializes the child synchronously through MaterializeDelegatedChild, and tests/tier9_security/delegation_child_materialization_cred_test.go pins that the assigned lease is delivered into the running child's pod along the real delegate path. The one-of-N concurrent assignment race (exactly one of N racing delegations winning, the losers' pods released) stays with the ADV battery under the skip-ADV policy (T-ADV.14). credentialPropagation: deny (§8.3) is covered end to end: tests/tier4_integration/delegation_credential_propagation_test.go asserts a deny child is assigned no credential pool at finalize (deny-mode suppression) and that an inherit hop whose origin is a deny session is rejected with CREDENTIAL_POOL_EXHAUSTED at delegation time and receives no credential at finalize (a deny hop holds no origin pool, line 474/490). tests/tier9_security/delegation_credential_deny_leakage_test.go pins the delivery boundary with a lease-counting assigner across the real delegate_task → finalize path: zero lease tokens are minted or delivered into the deny leaf's pod or the inherit-from-deny grandchild's pod, while a non-deny control child drives the assigner above zero so the assertion is non-vacuous. The deny bit is persisted as the boolean CredentialDeny marker (migration 0179) rather than a full enum column, since CredentialOriginSessionID already distinguishes inherit from independent."
     },
     "8.4": {
       "title": "Approval Modes",
@@ -3825,7 +4146,7 @@
       "packages": [
         "pkg/alerting/inproceval"
       ],
-      "notes": "§25.13 Bundled Alerting Rules. pkg/alerting/inproceval implements the in-process alert-state tracker over the shared rules.Catalog(). See TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
+      "notes": "§25.13 Bundled Alerting Rules. pkg/alerting/inproceval implements the in-process alert-state tracker over the shared rules.Catalog(). See TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13)."
     },
     "25.14": {
       "title": "lenny-ctl Extensions",

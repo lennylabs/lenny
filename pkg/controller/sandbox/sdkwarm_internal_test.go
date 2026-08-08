@@ -34,7 +34,7 @@ func sdkWarmScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// spec: §6.1 lines 30-69 — resolveSDKWarm reads capabilities.preConnect
+// spec: §6.1 — resolveSDKWarm reads capabilities.preConnect
 // from the Runtime CRD, the circuit-breaker flag and watchdog budget from
 // the SandboxWarmPool, and fails safe to pod-warm on any miss.
 func TestResolveSDKWarm_spec_6_1(t *testing.T) {
@@ -117,7 +117,7 @@ func TestResolveSDKWarm_spec_6_1(t *testing.T) {
 	})
 }
 
-// spec: §6.1 line 69 — podRunningFor is the watchdog clock; an unstarted
+// spec: §6.1 — podRunningFor is the watchdog clock; an unstarted
 // pod yields zero so the watchdog stays dormant.
 func TestPodRunningFor(t *testing.T) {
 	now := time.Now()

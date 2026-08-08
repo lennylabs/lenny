@@ -28,8 +28,8 @@ tests:
           path: spec.template.metadata.labels.app
           value: lenny-ops
 
-  # spec: §25.16 line 5113 — "Deployment: lenny-ops (1 replica, leader-elected)".
-  - it: defaults to one replica per §25.16 line 5113
+  # spec: §25.16 — "Deployment: lenny-ops (1 replica, leader-elected)".
+  - it: defaults to one replica per §25.16
     documentSelector:
       path: kind
       value: Deployment
@@ -68,7 +68,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --addr=:8090
 
-  # spec: §25.4 line 1339 / §25.13 lines 4833-4834 / F-25.4.17 — the
+  # spec: §25.4 / §25.13 / F-25.4.17 — the
   # leader-only bundleRules reconciler re-stamps the bundled-rules gauges
   # from monitoring.format and the alertOverrides count.
   - it: renders the §25.4 bundleRules reconciler args (default prometheusrule, 0 overrides)
@@ -255,7 +255,7 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
 
-  # spec: §25.4 lines 1034-1039 — F-25.4.10. The startup probe uses the
+  # spec: §25.4 — F-25.4.10. The startup probe uses the
   # permissive /healthz with a 30×2s budget covering Postgres connection.
   - it: renders the §25.4 startup probe on the permissive /healthz
     documentSelector:
@@ -272,7 +272,7 @@ tests:
           path: spec.template.spec.containers[0].startupProbe.periodSeconds
           value: 2
 
-  # spec: §25.4 line 1055 — F-25.4.10. In production the readiness probe
+  # spec: §25.4 — F-25.4.10. In production the readiness probe
   # uses the strict gate so traffic is not routed to a replica that
   # cannot reach both Postgres and the Kubernetes API.
   - it: uses the strict readiness gate when ops.production is true
@@ -290,7 +290,7 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.failureThreshold
           value: 3
 
-  # spec: §25.4 line 1027 — F-25.4.10. A writable /tmp emptyDir backs the
+  # spec: §25.4 — F-25.4.10. A writable /tmp emptyDir backs the
   # read-only root filesystem posture.
   - it: mounts a writable /tmp emptyDir under the read-only root
     documentSelector:
@@ -308,7 +308,7 @@ tests:
             name: tmp
             emptyDir: {}
 
-  # spec: §25.4 line 1028 — F-25.4.10. topologySpreadConstraints render
+  # spec: §25.4 — F-25.4.10. topologySpreadConstraints render
   # only when lenny-ops scales past one replica.
   - it: omits topologySpreadConstraints at the default single replica
     documentSelector:
@@ -318,7 +318,7 @@ tests:
       - notExists:
           path: spec.template.spec.topologySpreadConstraints
 
-  - it: spreads replicas across nodes when ops.replicas >= 2 per §25.4 line 1028
+  - it: spreads replicas across nodes when ops.replicas >= 2 per §25.4
     set:
       ops:
         replicas: 2
@@ -360,7 +360,7 @@ tests:
             port: 9090
             targetPort: http
 
-  # spec: §16.9 line 723 — F-16.9.10. The lenny-ops PodMonitor selects
+  # spec: §16.9 — F-16.9.10. The lenny-ops PodMonitor selects
   # by container port name `metrics`; the deployment must expose the
   # named port even though /metrics lives on the same HTTP listener.
   - it: exposes a named metrics containerPort on the lenny-ops pod
@@ -379,10 +379,10 @@ tests:
             name: http
             containerPort: 8090
 
-  # spec: §25.4 line 1063 — F-25.16.3. The lenny-ops Service MUST
+  # spec: §25.4 — F-25.16.3. The lenny-ops Service MUST
   # pin SSE clients to the replica that buffered their events; the
   # session-affinity timeout matches the §25.16 Production block.
-  - it: pins SSE clients with sessionAffinity ClientIP per §25.4 line 1063
+  - it: pins SSE clients with sessionAffinity ClientIP per §25.4
     documentSelector:
       path: kind
       value: Service
@@ -394,9 +394,9 @@ tests:
           path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
           value: 10800
 
-  # spec: §25.4 line 1063 — F-25.16.3. Operators can tune the affinity
+  # spec: §25.4 — F-25.16.3. Operators can tune the affinity
   # timeout via ops.service.sessionAffinityTimeoutSeconds.
-  - it: honors ops.service.sessionAffinityTimeoutSeconds override per §25.4 line 1063
+  - it: honors ops.service.sessionAffinityTimeoutSeconds override per §25.4
     set:
       ops:
         service:
@@ -409,10 +409,10 @@ tests:
           path: spec.sessionAffinityConfig.clientIP.timeoutSeconds
           value: 7200
 
-  # spec: §25.16 line 5124 — F-25.16.4. When ops.prometheus.url is
+  # spec: §25.16 — F-25.16.4. When ops.prometheus.url is
   # empty (the §25.16 Minimal default) lenny-ops runs without a BYO
   # Prometheus URL and falls back to per-replica fan-out.
-  - it: omits --prometheus-url when ops.prometheus.url is empty per §25.16 line 5124
+  - it: omits --prometheus-url when ops.prometheus.url is empty per §25.16
     documentSelector:
       path: kind
       value: Deployment
@@ -421,9 +421,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --prometheus-url=
 
-  # spec: §25.16 line 5124 — F-25.16.4. Production Tier 2/3 sets
+  # spec: §25.16 — F-25.16.4. Production Tier 2/3 sets
   # ops.prometheus.url to the deployment's BYO Prometheus HTTP API.
-  - it: plumbs --prometheus-url when ops.prometheus.url is set per §25.16 line 5124
+  - it: plumbs --prometheus-url when ops.prometheus.url is set per §25.16
     set:
       ops:
         prometheus:
@@ -436,9 +436,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --prometheus-url=http://prometheus.monitoring.svc:9090
 
-  # spec: §25.10 line 3809 — F-25.10.9. ops.drift.snapshotStaleWarningDays
+  # spec: §25.10 — F-25.10.9. ops.drift.snapshotStaleWarningDays
   # renders as --drift-snapshot-stale-warning-days. Default 7 days.
-  - it: renders --drift-snapshot-stale-warning-days with the spec default per §25.10 line 3809
+  - it: renders --drift-snapshot-stale-warning-days with the spec default per §25.10
     documentSelector:
       path: kind
       value: Deployment
@@ -447,9 +447,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --drift-snapshot-stale-warning-days=7
 
-  # spec: §25.10 line 3809 — F-25.10.9. Operators can override per
+  # spec: §25.10 — F-25.10.9. Operators can override per
   # deployment; the rendered flag reflects the override.
-  - it: honors ops.drift.snapshotStaleWarningDays override per §25.10 line 3809
+  - it: honors ops.drift.snapshotStaleWarningDays override per §25.10
     set:
       ops:
         drift:
@@ -462,9 +462,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --drift-snapshot-stale-warning-days=14
 
-  # spec: §25.10 line 3824 — F-25.10.7. ops.drift.runningStateCacheTTLSeconds
+  # spec: §25.10 — F-25.10.7. ops.drift.runningStateCacheTTLSeconds
   # renders as --drift-running-state-cache-ttl-seconds. Default 60s.
-  - it: renders --drift-running-state-cache-ttl-seconds with the spec default per §25.10 line 3824
+  - it: renders --drift-running-state-cache-ttl-seconds with the spec default per §25.10
     documentSelector:
       path: kind
       value: Deployment
@@ -473,9 +473,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --drift-running-state-cache-ttl-seconds=60
 
-  # spec: §25.10 line 3824 — F-25.10.7. A 0 override disables the cache
+  # spec: §25.10 — F-25.10.7. A 0 override disables the cache
   # entirely (every report reads fresh from the gateway).
-  - it: honors ops.drift.runningStateCacheTTLSeconds=0 disable per §25.10 line 3824
+  - it: honors ops.drift.runningStateCacheTTLSeconds=0 disable per §25.10
     set:
       ops:
         drift:
@@ -488,7 +488,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --drift-running-state-cache-ttl-seconds=0
 
-  # spec: §17.8.5 line 1323 — F-17.8.12. The chart MUST reject any
+  # spec: §17.8.5 — F-17.8.12. The chart MUST reject any
   # attempt to disable lenny-ops via Helm values: the operability
   # surface is mandatory in every Lenny installation regardless of tier.
   - it: rejects ops.enabled=false at chart validation per §17.8.5
@@ -497,9 +497,9 @@ tests:
         enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§17.8.5 line 1323: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key."
+          errorMessage: "§17.8.5: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key."
 
-  # spec: §17.8.5 line 1323 — F-17.8.12. ops.enabled is not a supported
+  # spec: §17.8.5 — F-17.8.12. ops.enabled is not a supported
   # Helm value; even an explicit true is rejected so the chart stays
   # the single source of truth on the §17.8.5 mandatoriness.
   - it: rejects ops.enabled=true at chart validation per §17.8.5
@@ -508,9 +508,9 @@ tests:
         enabled: true
     asserts:
       - failedTemplate:
-          errorMessage: "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values."
+          errorMessage: "§17.8.5: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values."
 
-  # spec: §25.4 lines 2206-2212 — F-25.4.26. The in-memory (Tier-3) lock
+  # spec: §25.4 — F-25.4.26. The in-memory (Tier-3) lock
   # policy renders as --locks-memory-tier; the default is
   # single-replica-only, and --ops-service-name names the Service whose
   # Endpoints the policy reads to count ready replicas.
@@ -526,9 +526,9 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --ops-service-name=lenny-ops
 
-  # spec: §25.4 line 2210 — F-25.4.26. The operator can select the most
+  # spec: §25.4 — F-25.4.26. The operator can select the most
   # conservative "never" mode, disabling the Tier-3 store entirely.
-  - it: honors ops.locks.memoryTier=never per §25.4 line 2210
+  - it: honors ops.locks.memoryTier=never per §25.4
     set:
       ops:
         locks:
@@ -541,7 +541,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --locks-memory-tier=never
 
-  # spec: §25.4 line 2208 — F-25.4.26. The single-replica-only policy
+  # spec: §25.4 — F-25.4.26. The single-replica-only policy
   # reads the lenny-ops Service Endpoints in the pod's own namespace, so
   # POD_NAMESPACE is injected via the downward API.
   - it: injects POD_NAMESPACE from the downward API for replica detection
@@ -591,7 +591,7 @@ tests:
                 fieldRef:
                   fieldPath: metadata.namespace
 
-  # spec: §25.5 lines 2558-2602 — the read side consumes the platform-scoped
+  # spec: §25.5 — the read side consumes the platform-scoped
   # ops:events:stream from the same redis.provider=external / redis.url the
   # gateway and controller use. The connection URL comes from the
   # lenny-datastore-conn Secret so no secret material lands in the pod spec.
@@ -618,7 +618,7 @@ tests:
                 name: lenny-datastore-conn
                 key: redis-url
 
-  # spec: §12.4 lines 260-264 / §25.5 — the Cluster topology is one of the
+  # spec: §12.4 / §25.5 — the Cluster topology is one of the
   # §17.3 permitted self-managed backends, so lenny-ops must reach the §25.5
   # ops:events:stream on it too. Without the cluster env lenny-ops wires no
   # Redis at all and serves polling and SSE from this replica's in-memory
@@ -647,7 +647,7 @@ tests:
           content:
             name: LENNY_REDIS_SENTINEL_ADDRS
 
-  # spec: §17.9.3 lines 1402-1409 / §12.4 — the Sentinel topology wires the
+  # spec: §17.9.3 / §12.4 — the Sentinel topology wires the
   # discovery env (addresses and master are plain env) plus the data AUTH
   # password from the datastore Secret, and requests TLS so §12.4 AUTH+TLS
   # holds. The external LENNY_REDIS_URL is absent on this path.
@@ -715,7 +715,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --redis-allow-insecure
 
-  # spec: §25.4 line 903 / §25.5 line 2598 / §17.8.4 — F-17.8.1. The base
+  # spec: §25.4 / §25.5 / §17.8.4 — F-17.8.1. The base
   # values render the Tier 1 self-monitor cadence (10s) and the Tier 1
   # ops:events:stream MAXLEN (10,000) as lenny-ops flags.
   - it: renders the self-health and events-stream-max-len flags (base defaults)
@@ -746,7 +746,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=100000
 
-  # spec: §25.5 lines 2649-2663 — the webhook delivery-tracking mode and
+  # spec: §25.5 — the webhook delivery-tracking mode and
   # retention windows render as flags. F-25.5.15.
   - it: renders the webhook delivery tracking and retention flags (base defaults)
     documentSelector:
@@ -782,7 +782,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --webhook-failures-retention-days=90
 
-  # spec: §25.4 lines 2396, 2414 — the escalation durability knobs render
+  # spec: §25.4 — the escalation durability knobs render
   # as flags. F-25.4.7.
   - it: renders the escalation durability flags (base defaults)
     documentSelector:
@@ -842,7 +842,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-internal-tls=false
 
-  # spec: §25.4 lines 1740-1974 — F-25.4.8. The GatewayClient fan-out and
+  # spec: §25.4 — F-25.4.8. The GatewayClient fan-out and
   # token-lifecycle flags render from the ops.gateway / security.oidc
   # values, and the projected SA token volume mounts at the token path.
   - it: renders the GatewayClient fan-out and token-lifecycle flags per §25.4
@@ -873,7 +873,7 @@ tests:
                     audience: lenny-gateway
                     expirationSeconds: 3600
 
-  # spec: §25.4 line 1743 — F-25.4.19. Setting ops.tls.caBundleConfigMap
+  # spec: §25.4 — F-25.4.19. Setting ops.tls.caBundleConfigMap
   # mounts the operator CA and passes --gateway-ca-bundle-file.
   - it: mounts the operator CA bundle when ops.tls.caBundleConfigMap is set
     documentSelector:

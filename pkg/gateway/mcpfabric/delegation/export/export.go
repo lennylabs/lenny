@@ -16,8 +16,7 @@
 // Sink seams so the orchestration is unit-testable without a pod or a
 // blob store.
 //
-// spec: §8.7 (file export model); §8.2 lines 91-95 (delegation flow
-// steps 3, 4, 6).
+// spec: §8.7 (file export model); §8.2.
 package export
 
 import (
@@ -54,7 +53,7 @@ type ExportedFile struct {
 // runtime to resolve a single fileExport Spec against its
 // /workspace/current and return the rebased files. The orchestrator
 // calls it once per Spec, in declared order, so cross-Spec path
-// collisions are observable at the gateway (the §8.7 line 793 overwrite
+// collisions are observable at the gateway (the §8.7 overwrite
 // audit) rather than being silently collapsed inside one RPC. The
 // production implementation backs onto the parent pod adapter's
 // ExportPaths RPC.
@@ -73,7 +72,7 @@ type Sink interface {
 	Persist(ctx context.Context, tenantID, childSessionID string, f ExportedFile) (uploadRef string, err error)
 }
 
-// Auditor emits the §8.7 line 793 delegation.export_overwrite audit
+// Auditor emits the §8.7 delegation.export_overwrite audit
 // event into the session's delegation audit trail. It matches the
 // delegation.Service Auditor seam so the gateway wires one auditor for
 // both. A nil Auditor disables the emission.
@@ -81,7 +80,7 @@ type Auditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
-// EventExportOverwrite is the §8.7 line 793 audit event the orchestrator
+// EventExportOverwrite is the §8.7 audit event the orchestrator
 // emits when a later export entry overwrites a path an earlier entry
 // already placed in the child workspace.
 const EventExportOverwrite = "delegation.export_overwrite"
@@ -126,7 +125,7 @@ type Params struct {
 	Scan ContentScan
 }
 
-// Overwrite records one §8.7 line 793 child-workspace path collision:
+// Overwrite records one §8.7 child-workspace path collision:
 // a later export Spec placed a file at a path an earlier Spec had
 // already written.
 type Overwrite struct {
@@ -152,7 +151,7 @@ type Result struct {
 	// TotalBytes is the aggregate exported size after overwrite collapse,
 	// the value checked against Limits.MaxTotalSize.
 	TotalBytes int64
-	// Overwrites are the §8.7 line 793 collisions detected across Specs.
+	// Overwrites are the §8.7 collisions detected across Specs.
 	Overwrites []Overwrite
 }
 
@@ -165,26 +164,26 @@ type Materializer struct {
 
 // NewMaterializer returns a Materializer. exporter (the §8.2-step-3
 // parent export RPC) and sink (the §8.2-step-4 durable persistence) are
-// required; a nil auditor disables the §8.7 line 793 overwrite audit.
+// required; a nil auditor disables the §8.7 overwrite audit.
 func NewMaterializer(exporter ParentExporter, sink Sink, auditor Auditor) *Materializer {
 	return &Materializer{exporter: exporter, sink: sink, auditor: auditor}
 }
 
 // Materialize runs the §8.7 export pipeline for one delegation:
 //
-//  1. validate each Spec's destPrefix (§8.7 line 789);
+//  1. validate each Spec's destPrefix (§8.7);
 //  2. export each Spec from the parent in declared order (§8.2 step 3),
 //     merging into a child-path map and recording every overwrite a
-//     later Spec causes (§8.7 line 793 — audited);
+//     later Spec causes (§8.7 — audited);
 //  3. enforce the lease fileExportLimits count + aggregate-size ceilings
-//     (§8.7 lines 790-791);
+//     (§8.7);
 //  4. run the optional PreExportMaterialization per-file content scan
 //     (§8.7 — contentPolicy.scanExportedFiles), applying MODIFY rewrites
 //     and failing the whole export on the first REJECT;
 //  5. persist each surviving file durably and build the §14 child upload
 //     sources (§8.2 steps 4, 6). An exported archive is routed as an
 //     uploadArchive source so the child materialization inherits the
-//     §13.4 / §7.4 upload archive validators (§8.7 line 792); every
+//     §13.4 / §7.4 upload archive validators (§8.7); every
 //     other file is an uploadFile placed verbatim.
 //
 // On any validation, scan-REJECT, or persistence failure it returns the
@@ -201,7 +200,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 		return Result{}, fmt.Errorf("export: contentPolicy.scanExportedFiles is true but no interceptor chain was resolved")
 	}
 
-	// §8.7 lines 774, 793: process Specs in declared order, merging into
+	// §8.7: process Specs in declared order, merging into
 	// a child-path map. order preserves first-seen child paths; byPath
 	// holds the live (last-write-wins) file. A later Spec writing an
 	// existing path is an overwrite — recorded and audited.
@@ -231,7 +230,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 		}
 	}
 
-	// §8.7 lines 790-791: the structural ceilings are checked against the
+	// §8.7: the structural ceilings are checked against the
 	// collapsed (post-overwrite) set — the bytes that actually reach the
 	// child workspace, not the pre-collapse export total.
 	var totalBytes int64
@@ -302,7 +301,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 // non-empty pathPrefix, so the renderer maps it to "." (the workspace
 // root) to keep the stamped plan ParseStored-valid.
 //
-// spec: §14 (WorkspacePlan); §8.2 line 95 (delegation flow step 6).
+// spec: §14 (WorkspacePlan); §8.2.
 func (r Result) WorkspacePlanJSON() (json.RawMessage, error) {
 	if len(r.Sources) == 0 {
 		return nil, nil
@@ -345,7 +344,7 @@ func (r Result) WorkspacePlanJSON() (json.RawMessage, error) {
 	return json.Marshal(plan)
 }
 
-// auditOverwrite emits the §8.7 line 793 delegation.export_overwrite
+// auditOverwrite emits the §8.7 delegation.export_overwrite
 // event for one child-workspace path collision.
 func (m *Materializer) auditOverwrite(ctx context.Context, p Params, ow Overwrite) {
 	if m.auditor == nil {
@@ -364,7 +363,7 @@ func (m *Materializer) auditOverwrite(ctx context.Context, p Params, ow Overwrit
 // childSource builds the §14 child WorkspacePlan source for one rebased
 // file. An archive (detected from its extension) becomes an uploadArchive
 // so the child materialization inherits the §13.4 / §7.4 upload archive
-// validators (§8.7 line 792); any other file is an uploadFile placed
+// validators (§8.7); any other file is an uploadFile placed
 // verbatim at its rebased child path.
 func childSource(childPath, uploadRef string) workspaceplan.Source {
 	if format, ok := archiveFormat(childPath); ok {
@@ -388,7 +387,7 @@ func childSource(childPath, uploadRef string) workspaceplan.Source {
 
 // archiveFormat reports the §13.4 uploadArchive format for a child path
 // whose extension marks it as an archive, so the child materialization
-// unpacks it under the §13.4 / §7.4 validators (§8.7 line 792). An
+// unpacks it under the §13.4 / §7.4 validators (§8.7). An
 // unrecognised extension returns ("", false) and the file is placed as a
 // plain uploadFile.
 func archiveFormat(p string) (string, bool) {

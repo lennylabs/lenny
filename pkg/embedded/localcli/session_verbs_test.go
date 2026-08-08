@@ -90,7 +90,7 @@ func fakeGateway(t *testing.T) *httptest.Server {
 		_, _ = w.Write([]byte(`{"id":"` + r.PathValue("id") + `","state":"running","runtimeRef":"claude-code"}`))
 	})
 	mux.HandleFunc("GET /v1/sessions", func(w http.ResponseWriter, r *http.Request) {
-		// §15.1 lines 1228-1253 canonical cursor-paginated envelope the
+		// §15.1 canonical cursor-paginated envelope the
 		// SDK's ListSessions decodes ({items, cursor, hasMore}).
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"items":[{"id":"sess_1","state":"running","runtimeRef":"claude-code"}],"hasMore":false}`))
@@ -101,7 +101,7 @@ func fakeGateway(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// remoteArgs prefixes a verb's args with the §24.17 line 222 / §24 line 8
+// remoteArgs prefixes a verb's args with the §24.17 / §24
 // discovery flags so the test targets the fake gateway instead of the
 // Embedded Mode stack.
 func remoteArgs(srv *httptest.Server, args ...string) []string {

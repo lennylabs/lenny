@@ -184,7 +184,7 @@ func TestServiceRunsSelfMonitorOnEveryReplica(t *testing.T) {
 	<-done
 }
 
-// spec: §16.8 line 704 / §25.4 line 2507 — the self-monitor invokes
+// spec: §16.8 / §25.4 — the self-monitor invokes
 // OnSelfHealthSample with the full report on every evaluation (not only on
 // a status transition), so the §16.9 /metrics publisher refreshes the
 // lenny_ops_self_health_status{check} gauge each tick.

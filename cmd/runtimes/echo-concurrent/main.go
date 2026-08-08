@@ -40,10 +40,7 @@
 // Exit codes (spec §15.4): 0 success, 1 runtime error, 2 protocol error
 // (malformed inbound JSONL), 137 SIGKILL (set by the OS).
 //
-// spec: §5.2 line 509 (slotId multiplexing over stdin, dispatch loop keyed
-// on slotId), §15.4.1 line 1459 (dispatch loop keyed on slotId over a
-// single stdin channel), §6.4 line 384 (per-slot cwd, no global
-// /workspace/current when maxConcurrentSessions > 1).
+// spec: §5.2, §15.4.1, §6.4.
 package main
 
 import (

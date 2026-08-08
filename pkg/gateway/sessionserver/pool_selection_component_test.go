@@ -101,7 +101,7 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §7.1 (pool selector, line 18 / line 75), §14.1 (CreateSessionRequest.pool)
+// spec: §7.1, §14.1 (CreateSessionRequest.pool)
 // diagnosis: a pinned pool whose profile differs from the deployment
 // default is rejected when the client omits isolationProfile. A failure
 // here means the gate passed the defaulted profile (the deployment

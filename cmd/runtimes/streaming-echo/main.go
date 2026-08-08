@@ -413,7 +413,7 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 				MimeTyp:       p.MimeTyp,
 			})
 		} else {
-			// §15.4.1 line 1499: stamp the producer schemaVersion even when
+			// §15.4.1: stamp the producer schemaVersion even when
 			// echoing an input part verbatim, so every emitted MessagePart
 			// satisfies the required field. 15.4-MED-021.
 			p.SchemaVersion = messagePartSchemaVersion
@@ -444,11 +444,11 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 }
 
 type messagePart struct {
-	// SchemaVersion is the §15.4.1 line 1499 producer obligation: a
+	// SchemaVersion is the §15.4.1 producer obligation: a
 	// producer MUST set schemaVersion to the highest version required by
 	// the fields it emits. messagepart.schema.json:66 makes it required, so
 	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
-	// §15.4.1 line 1499-1501 / 15.4-MED-021.
+	// §15.4.1.4-MED-021.
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`

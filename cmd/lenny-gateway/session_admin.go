@@ -11,10 +11,9 @@ import (
 
 // sessionAdminAdapter backs the §24.11 platform-admin session
 // investigation endpoints (admin.SessionAdmin). GetByID resolves a
-// session by its global id; ForceTerminate drives the §24.11 line 136
+// session by its global id; ForceTerminate drives the §24.11
 // forced terminal transition and releases the assigned pod via the
-// session server's terminal-side-effects hook. spec: §24.11 lines
-// 135-136.
+// session server's terminal-side-effects hook. spec: §24.11.
 type sessionAdminAdapter struct {
 	store sessionstore.Store
 	// onTerminal runs the full terminal-side-effects pipeline (workspace
@@ -23,7 +22,7 @@ type sessionAdminAdapter struct {
 	// watchdog-forced termination runs, so a force-terminate releases the
 	// pod exactly as a natural terminal does. fromState is the pre-force
 	// state so the terminal pod-release path can distinguish a pre-running
-	// claimed session from a running one (§4.6). spec: §5.2 line 519; §4.6.
+	// claimed session from a running one (§4.6). spec: §5.2; §4.6.
 	onTerminal func(ctx context.Context, fromState session.State, sess sessionstore.Session)
 }
 
@@ -38,7 +37,7 @@ func (a sessionAdminAdapter) GetByID(ctx context.Context, id string) (sessionsto
 // transition is serialized: if the row has already reached a terminal
 // state the mutate is a no-op and transitioned is false (idempotent).
 // The pre-force state is captured inside the mutate so it reflects the
-// state at commit time. spec: §24.11 line 136.
+// state at commit time. spec: §24.11.
 func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (sessionstore.Session, session.State, bool, error) {
 	sess, err := a.store.GetByID(ctx, id)
 	if err != nil {
@@ -51,7 +50,7 @@ func (a sessionAdminAdapter) ForceTerminate(ctx context.Context, id string) (ses
 		if session.IsTerminal(s.State) {
 			return nil
 		}
-		// §24.11 line 136: the session transitions immediately to failed.
+		// §24.11: the session transitions immediately to failed.
 		// FailureClass uses the §7.1 runtime_failure bucket (the operator
 		// forcibly stopped a stuck or unresponsive runtime); the specific
 		// cause rides FailureReason. The store does not validate the

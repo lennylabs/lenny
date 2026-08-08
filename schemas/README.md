@@ -2,15 +2,7 @@
 
 Wire-contract artifacts. Spec-first: each file is the authoritative shape of the corresponding interface, and the implementation in `pkg/` is verified by CI to match.
 
-| File | Surface | Spec section |
-|:-----|:--------|:-------------|
-| `lenny-adapter.proto` | Gateway ↔ pod gRPC control protocol | [§15.3](../spec/15_external-api-surface.md), [§15.4](../spec/15_external-api-surface.md) |
-| `lenny-interceptor.proto` | Gateway ↔ external interceptor gRPC SPI | [§4.8](../spec/04_system-components.md), [§8.7](../spec/08_recursive-delegation.md) |
-| `lenny-adapter-jsonl.schema.json` | Adapter sidecar ↔ agent binary stdin/stdout JSONL | [§15.4](../spec/15_external-api-surface.md) |
-| `messagepart.schema.json` | MessagePart envelope used in sessions, tasks, and audit | [§15.4](../spec/15_external-api-surface.md) |
-| `workspaceplan-v1.json` | WorkspacePlan used at session creation | [§14](../spec/14_workspace-plan-schema.md) |
-| `ocsf-mapping.yaml` | Event-type → OCSF class/activity mapping mirror | [§11.7](../spec/11_security-trust-model.md) |
-| `audit-events/v1.json` | Audit-event canonical-record schema, per `event_schema_version` | [§11.7](../spec/11_security-trust-model.md) |
+The wire-contract artifact register in [`spec/28_communication-channels.md`](../spec/28_communication-channels.md) §28.7 states the artifact set this directory holds, the surface each artifact schematizes, and the heading that owns that surface.
 
 ## Validation
 

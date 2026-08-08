@@ -120,7 +120,7 @@ func clientReloader(t *testing.T, c *ca) *certreload.Reloader {
 	return r
 }
 
-// spec: §10.3 line 328 (NET-063) — a correctly-issued in-cluster
+// spec: §10.3 — a correctly-issued in-cluster
 // interceptor certificate (CA-chained, DNS SAN covering the pinned
 // ServerName, SPIFFE URI in an allowed namespace) completes the
 // handshake and records a `success` outcome on the §16.1 histogram.
@@ -149,7 +149,7 @@ func TestCredentialsHandshakeSuccessObservesMetric_spec_10_3_328(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 328 — an interceptor whose SPIFFE namespace is outside
+// spec: §10.3 — an interceptor whose SPIFFE namespace is outside
 // the allowlist is rejected at the handshake (no gRPC frame) and recorded
 // as `san_mismatch`, the impact the finding describes (a co-located pod
 // in the interceptor namespace cannot impersonate the interceptor).
@@ -178,7 +178,7 @@ func TestCredentialsHandshakeRejectsWrongNamespace_spec_10_3_328(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 328 — pinning ServerName makes Go's standard chain
+// spec: §10.3 — pinning ServerName makes Go's standard chain
 // verification refuse a certificate whose DNS SAN does not cover the
 // registered endpoint, recorded as `san_mismatch`.
 func TestCredentialsHandshakeRejectsDNSSANMismatch_spec_10_3_328(t *testing.T) {

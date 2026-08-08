@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.8 lines 3300-3301, 3360-3362 — migration 0135 creates the
+// spec: §25.8 — migration 0135 creates the
 // platform_registry_config singleton that backs the runtime registry API
 // (GET/PUT /v1/admin/platform/registry). The PUT persists url, overrides,
 // pull_secret_name, and require_digest so the change survives a restart and

@@ -239,7 +239,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_orphan_tasks_terminated", TypeCounter, "Orphan tasks terminated by the cleanup job"},
 	{"lenny_orphan_tasks_active", TypeGauge, "Currently active orphan tasks awaiting cleanup"},
 	{"lenny_orphan_tasks_active_per_tenant", TypeGauge, "Per-tenant active orphan task count"},
-	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert. Reflects the
+	// spec: §8.10, §16.5 OrphanTasksPerTenantHigh alert. Reflects the
 	// configured maxOrphanTasksPerTenant ceiling so the alert's
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` threshold resolves to a single
 	// series. F-8.10.13.
@@ -360,9 +360,9 @@ var metricCatalog = []MetricSpec{
 	{"lenny_billing_redis_stream_oldest_entry_age_seconds", TypeGauge, "Age of the oldest unacknowledged billing Redis entry"},
 	{"lenny_otlp_export_tls_handshake_total", TypeCounter, "OTLP exporter TLS handshake outcomes by result"},
 	{"lenny_ops_admin_api_tls_handshake_total", TypeCounter, "lenny-ops to gateway admin-API TLS handshake outcomes"},
-	// §25.6 line 2926 — diagnostic endpoint latency.
+	// §25.6 — diagnostic endpoint latency.
 	{"lenny_diagnostics_request_duration_seconds", TypeHistogram, "Per-diagnostic-endpoint latency for §25.6 diagnostic endpoints"},
-	// §25.13 lines 4833–4835 / F-25.13.3 — bundled-rules visibility,
+	// §25.13 / F-25.13.3 — bundled-rules visibility,
 	// override-count visibility, and per-rule in-process evaluator
 	// latency for the §16.5 alert catalog. The first two are stamped
 	// at gateway boot from the rendered chart inputs; the histogram is
@@ -376,7 +376,7 @@ var metricCatalog = []MetricSpec{
 // reference but that are not rows in the §16.1 canonical metric table.
 // They fall into a few categories: config-mirror gauges that publish a
 // Helm-tunable threshold so an alert can read it via `scalar(...)`
-// (§25.13 line 4737), suppression/state gauges that gate an alert,
+// (§25.13), suppression/state gauges that gate an alert,
 // infrastructure-liveness series scraped from a dependency (Postgres,
 // etcd, PgBouncer, cert-manager), and recording-rule outputs the
 // rendered PrometheusRule defines from underlying histograms or
@@ -385,7 +385,7 @@ var metricCatalog = []MetricSpec{
 // alert-expression cross-check resolve every referenced series.
 // F-16.5.2.
 var alertSupportCatalog = []MetricSpec{
-	// --- Helm-tunable threshold gauges (§25.13 line 4737). The chart
+	// --- Helm-tunable threshold gauges (§25.13). The chart
 	// emits the configured value into the gauge at startup; the alert
 	// reads it via scalar(...) so a tier preset tightening the value
 	// flows through without re-rendering the rule expression. F-25.13.2.
@@ -447,7 +447,7 @@ var alertSupportCatalog = []MetricSpec{
 	// lenny_gateway_request_duration_seconds), so those two underlying
 	// series must be catalogued. SessionAvailability reads the
 	// gateway-emitted lenny_session_unavailability_ratio gauge. The
-	// fast/slow multipliers are the §16.5 line 640 operator-tunable
+	// fast/slow multipliers are the §16.5 operator-tunable
 	// thresholds every burn-rate alert compares against via scalar(...).
 	// CheckpointDuration reads the §16.1 lenny_checkpoint_duration_seconds
 	// histogram (in MetricCatalog), so no support series is needed there.

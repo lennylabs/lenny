@@ -25,7 +25,7 @@ import (
 // top-level method reads as that pipeline. The CreateSessionRequest is
 // decoded by the caller (handleCreate / handleEnvironmentSessions).
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request, req CreateSessionRequest) {
-	// spec: §16.3 line 336 — open the gateway-side `session.create` span on
+	// spec: §16.3 — open the gateway-side `session.create` span on
 	// the request context so the create flow (quota/admission gates, the
 	// store INSERT, the §7.1 uploadToken mint) rides one trace. The tracer
 	// resolves the process-global OTel provider; constructing it here keeps
@@ -91,7 +91,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return false
 	}
-	// spec: §11.1 line 8 — global, per-user, and per-runtime
+	// spec: §11.1 — global, per-user, and per-runtime
 	// concurrent-session admission caps. Enforced before the rate-limit
 	// and policy gates so an over-limit create consumes no rate budget
 	// and reserves no token budget. The caller's subject is the per-user
@@ -104,7 +104,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
 		return false
 	}
-	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+	// spec: §11.1 — per-runtime and per-pool requests-per-minute
 	// admission limits. Enforced before the §4.8 policy chain (so an
 	// over-limit create never reserves token budget) using the requested
 	// isolation profile to resolve the pool. An empty RuntimeRef is left
@@ -125,7 +125,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 
-	// §11.1 line 13 / §10.6 — a session create that names no
+	// §11.1 / §10.6 — a session create that names no
 	// environment is admitted only when the caller is a member of at
 	// least one environment (transparent filter applies) or when the
 	// tenant's noEnvironmentPolicy resolves to allow-all. The platform
@@ -135,7 +135,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 
-	// spec: §27.5 line 190 / §27.9 line 250 — an origin=playground caller may
+	// spec: §27.5 / §27.9 — an origin=playground caller may
 	// only create a session against a runtime its playground.allowedRuntimes
 	// list exposes. This closes the §27.4 "see and select" gap so the
 	// allowedRuntimes filter is an authorization boundary, not just a picker
@@ -167,13 +167,13 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		return sessionstore.Session{}, createBuild{}, false
 	}
 
-	// spec: §7.1 line 18 / line 75 — when a pool is pinned and the client
+	// spec: §7.1 — when a pool is pinned and the client
 	// omits isolationProfile, the named pool's own profile governs, so every
 	// pool resolution on this create defers to the pool (effective requested
 	// profile empty) rather than the deployment default. F-CS2 (0018).
 	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
 
-	// spec: §15.1 line 797 — reject a create that would select a pool in
+	// spec: §15.1 — reject a create that would select a pool in
 	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
 	// pod claim. The gate resolves the same pool the session would bind
 	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
@@ -191,20 +191,20 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	if !planOK {
 		return sessionstore.Session{}, createBuild{}, false
 	}
-	// spec: §7.5 line 477 / §5.1 line 76 — runtime setupCommandPolicy.maxCommands
+	// spec: §7.5 / §5.1 — runtime setupCommandPolicy.maxCommands
 	// is a per-session cap the gateway enforces before pod claim so a
 	// buggy or malicious client cannot DoS the setup phase. F-7.5.5.
 	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
 		return sessionstore.Session{}, createBuild{}, false
 	}
 
-	// spec: §7.3 lines 377-393 — validate the client-supplied retry
+	// spec: §7.3 — validate the client-supplied retry
 	// policy before any side effect, then clamp against the deployer
 	// caps so the persisted value is the effective upper bound. A nil
 	// input stays nil; a non-nil input always lands on the row with
 	// the deployer cap as the floor for unset fields. F-7.3.1.
 	if err := session.ValidateRetryPolicy(req.RetryPolicy); err != nil {
-		// spec: §16.3 line 336 — a malformed retryPolicy is a caller error
+		// spec: §16.3 — a malformed retryPolicy is a caller error
 		// (PERMANENT: the same request will not validate on retry).
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
 		var rpErr *session.RetryPolicyValidationError
@@ -222,14 +222,14 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		effectiveRetry = &clamped
 	}
 
-	// spec: §7.1 line 75 — resolve the pool-derived isolation level
+	// spec: §7.1 — resolve the pool-derived isolation level
 	// once at create time so the executionMode / scrubPolicy halves can
 	// be persisted on the row alongside isolationProfile. GET / List
 	// return the same envelope across the session's lifetime
 	// (persistedIsolationLevel in toResponse), so a client that lost
 	// the create response or hits a different replica still sees the
 	// rich level the pool resolved to.
-	// spec: §7.1 line 18 / line 75 — resolve the level against effProf so a
+	// spec: §7.1 — resolve the level against effProf so a
 	// pinned pool's own profile governs, and persist the pool-derived profile
 	// on the row. The later claim re-resolves from row.IsolationProfile, so
 	// persisting the pool's profile keeps the claim consistent with the pin.
@@ -252,14 +252,14 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
-	// spec: §4.2 line 159 — stamp the resume-eligibility deadline
+	// spec: §4.2 — stamp the resume-eligibility deadline
 	// onto the row at create time. The watchdog can then expire a
 	// session whose resume window has passed without consulting the
 	// global watchdog budget; the per-session window also lets
 	// individual sessions override the platform default by adjusting
 	// this field on Update.
 	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
-	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
+	// spec: §7.1 / §12.9 — stamp the tier-keyed default
 	// artifact-retention deadline at create so a session that never reaches
 	// a terminal state is still eligible for GC (the retention GC treats a
 	// zero deadline as ineligible, which would otherwise let the row live
@@ -268,7 +268,7 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	// rolls this forward to terminal_time + the same window.
 	row.RetentionExpiresAt = row.CreatedAt.Add(s.retentionForTier(r.Context(), tenantID, req.Environment))
 
-	// spec: §14 lines 47-79, 154-155 — validate the §14 request-envelope
+	// spec: §14 — validate the §14 request-envelope
 	// fields (env blocklist, pool, timeouts cap, credentialPolicy
 	// restrict-only, delegationLease bounds, runtimeOptions schema) and
 	// copy the accepted values onto the row. Rejection writes the §15.1
@@ -279,7 +279,7 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		return sessionstore.Session{}, createBuild{}, false
 	}
 
-	// spec: §27.3 line 63 / §27.6 lines 200-203 — when the caller's session
+	// spec: §27.3 / §27.6 — when the caller's session
 	// bearer carries the origin=playground claim, stamp the §27.6 idle and
 	// duration caps (min-wins over any §14 timeout the client requested) and
 	// the origin=playground audit label onto the row before persist. Reads
@@ -295,8 +295,8 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		return sessionstore.Session{}, createBuild{}, false
 	}
 
-	// spec: §14 lines 100, 334, 338 — the §14 plan-parse warnings and the
-	// §14 line 155 RuntimeOptionsUnschematized envelope warning ride the
+	// spec: §14 — the §14 plan-parse warnings and the
+	// §14 RuntimeOptionsUnschematized envelope warning ride the
 	// same per-session SSE bus; aggregate them so the persist stage can
 	// publish all three async and the response echoes them. F-14.1.17 /
 	// F-14.1.15.
@@ -304,14 +304,14 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	return row, createBuild{level: level, parsedPlan: parsedPlan, allWarnings: allWarnings}, true
 }
 
-// claimMintPersist runs the §7.1 line 28 atomic create unit: the optional
+// claimMintPersist runs the §7.1 atomic create unit: the optional
 // synchronous pod claim (steps 3-5), the §7.1 step 8 uploadToken mint
 // before persist, the store INSERT, and the post-persist registration
 // (lease tree, parse-warning publish). It rolls the create-time claim back
 // on a mint or persist failure so no pod leaks past a "no session_id"
 // return, and returns the resolved isolation level and the minted
 // uploadToken the response echoes.
-// spec: §7.1 (atomicity, lines 28/58/75), §8.6, §14.
+// spec: §7.1, §8.6, §14.
 func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, build createBuild, span trace.Span) (SessionIsolationLevel, string, bool) {
 	level := build.level
 
@@ -322,7 +322,7 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	// immediately so the client learns of it before uploading, and the
 	// claimed pod's binding (PodAssignment + PoolRef) is persisted on the
 	// row so a later /finalize and /start reconnect to it (§4.6). A claim
-	// failure leaves no row behind per the §7.1 line 28 atomicity contract.
+	// failure leaves no row behind per the §7.1 atomicity contract.
 	// A service-mode pool is claimless (a nil claim); a concurrent-workspace
 	// pool claims a per-session slot at create like every non-service-mode
 	// pool (claimAtCreate returns the reserved slot's binding), so the §15.1
@@ -331,7 +331,7 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	if s.podBinder != nil {
 		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan)
 		if err != nil {
-			// spec: §7.1 line 28 — the pre-check or claim failed before any
+			// spec: §7.1 — the pre-check or claim failed before any
 			// row was persisted; surface SESSION_CREATION_FAILED (or the
 			// credential / pool-warming envelope) with no session_id. No pod
 			// is held: the pre-check is claimless, and the exclusive Claim and
@@ -341,7 +341,7 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 				"could not place the session on a warm pod")
 			return level, "", false
 		}
-		// spec: §7.1 line 75 — the returned level reflects the actual resolved
+		// spec: §7.1 — the returned level reflects the actual resolved
 		// pool's profile, tightening the create-response accuracy guarantee.
 		level = outcome.Level
 		row.ExecutionMode = level.ExecutionMode
@@ -358,24 +358,24 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 		}
 	}
 
-	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
+	// spec: §7.1 — atomicity. Mint the §7.1 step 8 uploadToken
 	// BEFORE the row is persisted: on failure no session row exists, so
 	// the client receives no session_id (matching the "does NOT persist
 	// the session row" rule). The token's digest + expiry are stamped
 	// directly on the row that will be persisted, replacing the legacy
 	// "Create then Update with digest" sequence that left an orphan
 	// `created`-state row when the mint failed.
-	// spec: §7.1 line 58 — TTL = maxCreatedStateTimeoutSeconds; the
+	// spec: §7.1 — TTL = maxCreatedStateTimeoutSeconds; the
 	// gateway threads the configured value through s.uploadTokenTTL so
 	// the token deadline matches the watchdog's MaxCreatedSeconds and the
 	// createdsweeper's Timeout. F-7.4.7.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
-		// spec: §7.1 line 28 — the mint failed before the row persist, so roll
+		// spec: §7.1 — the mint failed before the row persist, so roll
 		// back the create-time pod claim rather than leak it past a "no
 		// session_id returned" failure.
 		s.rollbackClaim(r.Context(), createClaim, row.ID)
-		// spec: §16.3 line 336 — the uploadToken mint failed before any row
+		// spec: §16.3 — the uploadToken mint failed before any row
 		// was persisted; record it on the create span (PERMANENT: a bad
 		// session id does not become valid on retry).
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
@@ -387,13 +387,13 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	row.UploadTokenExpiry = parsed.Expiry
 
 	if err := s.store.Create(r.Context(), *row); err != nil {
-		// spec: §7.1 line 28 — persistence failure leaves no row behind;
+		// spec: §7.1 — persistence failure leaves no row behind;
 		// the minted upload token's digest is never referenced because
 		// the finalize/upload paths look up the digest off the
 		// (non-existent) row. Roll back the create-time pod claim so no pod
 		// leaks past the failure, then return SESSION_CREATION_FAILED so the
 		// client retries.
-		// spec: §16.3 line 336 — a store INSERT failure is retryable
+		// spec: §16.3 — a store INSERT failure is retryable
 		// (TRANSIENT: the client receives a 503 + Retry-After).
 		s.rollbackClaim(r.Context(), createClaim, row.ID)
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
@@ -406,13 +406,13 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	// ExtendForBudget trigger) resolves it instead of ErrSessionNotFound.
 	// F-15.3.5.
 	s.registerLeaseTree(*row)
-	// spec: §14 lines 100, 334, 338 — each plan warning is an "event"
+	// spec: §14 — each plan warning is an "event"
 	// the gateway emits, not just an echo-in-response. Publish the
 	// parse-time `workspace_plan_unknown_source_type` and
 	// `workspace_plan_path_collision` warnings on the same per-session
 	// SSE bus that the materializer's `workspace_plan_strip_components_skip`
 	// warnings ride, so Ops/audit consumers see all three async.
-	// F-14.1.17. The §14 line 155 RuntimeOptionsUnschematized warning the
+	// F-14.1.17. The §14 RuntimeOptionsUnschematized warning the
 	// envelope validation raised rides the same plane. F-14.1.15.
 	s.publishParsePlanWarnings(row.TenantID, row.ID, build.allWarnings)
 	return level, tok, true
@@ -421,10 +421,10 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 // writeCreateSessionResponse renders the §15.1 201 CreateSessionResponse:
 // the toResponse envelope with the create-time-resolved isolation level,
 // the minted uploadToken, and the aggregated §14 plan/envelope warnings.
-// spec: §7.1 line 75, §15.1.
+// spec: §7.1, §15.1.
 func (s *Server) writeCreateSessionResponse(w http.ResponseWriter, row sessionstore.Session, level SessionIsolationLevel, uploadToken string, warnings []workspaceplan.Warning) {
 	base := toResponse(row)
-	// spec: §7.1 line 75 — the pool-resolved level is now persisted on
+	// spec: §7.1 — the pool-resolved level is now persisted on
 	// the row, so toResponse returns it on every read. The local
 	// resolved-at-admission value still wins over the persisted column
 	// for the create response itself (covers a future code path that

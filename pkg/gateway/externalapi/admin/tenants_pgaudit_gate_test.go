@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §11.7 lines 374-379 — the pgaudit compliance enforcement gate.
+// spec: §11.7 — the pgaudit compliance enforcement gate.
 // These routers run with SIEM configured so a rejection is attributable
 // to the pgaudit gate rather than the SIEM gate. F-11.7.10.
 
@@ -27,7 +27,7 @@ func pgauditUnconfiguredAdmin(store tenantstore.Store) *admin.Router {
 	}).WithSIEMConfigured(true).WithPgauditConfigured(false)
 }
 
-// spec: §11.7 line 377 — creating a regulated-profile tenant with pgaudit
+// spec: §11.7 — creating a regulated-profile tenant with pgaudit
 // not fully configured is rejected with 422 COMPLIANCE_PGAUDIT_REQUIRED.
 func TestCreateTenantRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.T) {
 	for _, profile := range []string{"soc2", "fedramp", "hipaa"} {
@@ -58,7 +58,7 @@ func TestCreateTenantRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.T)
 	}
 }
 
-// spec: §11.7 line 377 — with pgaudit configured (and SIEM) the create
+// spec: §11.7 — with pgaudit configured (and SIEM) the create
 // succeeds.
 func TestCreateTenantRegulatedWithPgauditAllowed_spec_11_7_377(t *testing.T) {
 	store := tenantstore.NewMemory()
@@ -90,7 +90,7 @@ func TestCreateTenantUnregulatedWithoutPgauditAllowed_spec_11_7_377(t *testing.T
 	}
 }
 
-// spec: §11.7 line 377 — updating a tenant to a regulated profile with
+// spec: §11.7 — updating a tenant to a regulated profile with
 // pgaudit not configured is rejected, symmetric with create.
 func TestUpdateTenantToRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.T) {
 	store := tenantstore.NewMemory()
@@ -112,7 +112,7 @@ func TestUpdateTenantToRegulatedWithoutPgauditRejected_spec_11_7_377(t *testing.
 	}
 }
 
-// spec: §11.7 line 377 — environment creation under a regulated tenant
+// spec: §11.7 — environment creation under a regulated tenant
 // with pgaudit absent is rejected.
 func TestCreateEnvironmentUnderRegulatedTenantWithoutPgauditRejected_spec_11_7_377(t *testing.T) {
 	store := tenantstore.NewMemory()
@@ -132,7 +132,7 @@ func TestCreateEnvironmentUnderRegulatedTenantWithoutPgauditRejected_spec_11_7_3
 	}
 }
 
-// spec: §11.7 line 377 — the startup gate flags a regulated tenant when
+// spec: §11.7 — the startup gate flags a regulated tenant when
 // pgaudit is not configured and is a no-op once configured or when no
 // regulated tenant exists.
 func TestValidatePgauditForRegulatedTenants_spec_11_7_377(t *testing.T) {

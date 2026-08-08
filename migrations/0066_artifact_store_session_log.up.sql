@@ -1,4 +1,4 @@
--- §4.4 line 226 lists "Session logs and runtime stderr" among the
+-- §4.4 lists "Session logs and runtime stderr" among the
 -- artifacts the Event/Checkpoint Store retains for session recovery
 -- and observability. The session-log store
 -- (pkg/gateway/sessionlogstore) writes runtime stderr to MinIO at
@@ -13,7 +13,7 @@
 -- GC sweep retires session-log rows on the same lifecycle as every
 -- other artifact kind.
 --
--- spec: §4.4 line 226.
+-- spec: §4.4.
 
 ALTER TABLE artifact_store
     DROP CONSTRAINT IF EXISTS artifact_store_artifact_type_check;

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 line 986 — a no-credentials request with RequireAuth=true
+// spec: §15.1 — a no-credentials request with RequireAuth=true
 // rejects with the canonical UNAUTHORIZED (401) code from the §15.1
 // error catalog. Details.reason carries the operational discriminator
 // "auth_required" so a caller scripting against the catalog still
@@ -49,7 +49,7 @@ func TestRequireAuthEmitsCanonicalUnauthorized(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1016 — gateway misconfiguration (no Verifier wired)
+// spec: §15.1 — gateway misconfiguration (no Verifier wired)
 // surfaces as the canonical INTERNAL_ERROR (500); details.reason
 // names the misconfiguration. This is the F-10.2.12 sibling case.
 func TestBearerWithoutVerifierEmitsCanonicalInternalError(t *testing.T) {

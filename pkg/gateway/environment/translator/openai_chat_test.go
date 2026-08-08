@@ -340,7 +340,7 @@ func TestOpenAIChatNoopBinderEchoFallback(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatAdapterCapabilities pins §9.1 line 35 + §15.1 line 575:
+// TestOpenAIChatAdapterCapabilities pins §9.1 + §15.1:
 // the OpenAI Chat Completions adapter publishes its own capability
 // block. The OpenAI envelope is stateless and exposes none of the
 // Lenny session-continuity, delegation, elicitation, or interrupt

@@ -43,12 +43,12 @@ func (f fixedRunningState) RunningState(context.Context, string) (map[string]any
 	return f.state, nil
 }
 
-// spec: §25.8 lines 3555-3558 ("Drift snapshot cleanup on rollback. When
+// spec: §25.8 ("Drift snapshot cleanup on rollback. When
 // rollback completes (state transitions to RolledBack), lenny-ops deletes
 // the bootstrap_seed_snapshot_target row for this upgrade ... Rollback
 // during OpsRoll or later phases deletes the target snapshot row. After
 // this point, GET /v1/admin/drift?against=target returns 404
-// DRIFT_NO_TARGET_SNAPSHOT until a new upgrade starts."); §25.10 line 3792
+// DRIFT_NO_TARGET_SNAPSHOT until a new upgrade starts."); §25.10
 // (new lenny-ops writes bootstrap_seed_snapshot_target early in OpsRoll).
 //
 // diagnosis: a failure means the rollback half of the target-snapshot

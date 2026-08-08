@@ -80,8 +80,7 @@ func ClassifyPodFailure(s Signals) (Category, bool) {
 // both fields because the §7.3 classifier names budget failures with a
 // `budget`-rooted reason (`budget_exceeded`, `delegation_budget_exceeded`)
 // and credential failures with a `credential`-rooted class/reason
-// (`credential_error`, `credential_pool_exhausted`). spec: §25.6 line
-// 2890, §7.3 failure classification. F-25.6.6.
+// (`credential_error`, `credential_pool_exhausted`). spec: §25.6, §7.3 failure classification. F-25.6.6.
 func SessionStateCause(failureClass, failureReason string) (Category, bool) {
 	hay := strings.ToLower(failureClass + " " + failureReason)
 	switch {

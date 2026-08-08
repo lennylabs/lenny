@@ -48,7 +48,7 @@ func TestTickTerminatesOrphanPastCascadeTimeout(t *testing.T) {
 }
 
 // TestTickStampsExpiredDeadlineReason_spec_8_8_867 verifies the
-// §8.8 line 867 expiry-reason prefix lands on the row when orphan
+// §8.8 expiry-reason prefix lands on the row when orphan
 // cleanup drives a child to `expired`. The MCP boundary's taskError
 // fallback then surfaces `expired:deadline` to clients. F-8.8.8.
 func TestTickStampsExpiredDeadlineReason_spec_8_8_867(t *testing.T) {
@@ -68,7 +68,7 @@ func TestTickStampsExpiredDeadlineReason_spec_8_8_867(t *testing.T) {
 		t.Fatalf("State = %q, want expired", row.State)
 	}
 	if row.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", row.FailureReason, session.FailureExpiredDeadline)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", row.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 
@@ -166,7 +166,7 @@ func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, _ session.State,
 	f.calls = append(f.calls, sess)
 }
 
-// spec: §5.2 line 519 + §8.10 — F-5.2.26: an orphan terminated by the
+// spec: §5.2 + §8.10 — F-5.2.26: an orphan terminated by the
 // cascade sweep must run the gateway-side terminal pipeline so its
 // executor (concurrent-mode slot release + pod drain) is released.
 func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
@@ -232,7 +232,7 @@ func (m *fakeMetricsSink) SetOrphanTasksActivePerTenant(tenantID string, value i
 }
 
 // TestTickEmitsOrphanCleanupMetrics_spec_8_10_1091 covers the §8.10 /
-// §16.1 lines 146-149 orphan-cleanup observability surface — one
+// §16.1 orphan-cleanup observability surface — one
 // IncOrphanCleanupRun per Tick, terminated counter += per-sweep return,
 // fleet-wide active gauge sums the per-tenant remaining counts, and the
 // per-tenant gauge re-publishes a value for every tenant. F-8.10.7.

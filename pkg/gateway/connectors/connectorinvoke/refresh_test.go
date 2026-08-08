@@ -14,7 +14,7 @@ import (
 )
 
 // captureHandler is a minimal slog.Handler that records every WARN-level
-// message verbatim so a test can assert the exact §5.1 line 327 wording.
+// message verbatim so a test can assert the exact §5.1 wording.
 type captureHandler struct{ msgs *[]string }
 
 func (h captureHandler) Enabled(context.Context, slog.Level) bool { return true }
@@ -93,7 +93,7 @@ func TestRefreshCapabilitiesInfersAndPersists_spec_9_3_136(t *testing.T) {
 
 // TestRefreshCapabilitiesStrictUnannotatedWarns_spec_5_1_327 verifies an
 // unannotated tool under the default strict mode is inferred as admin and
-// reported in UnannotatedAdminTools (the §5.1 line 327 WARN signal).
+// reported in UnannotatedAdminTools (the §5.1 WARN signal).
 func TestRefreshCapabilitiesStrictUnannotatedWarns_spec_5_1_327(t *testing.T) {
 	connectors := connectorstore.NewMemory()
 	seedConnector(t, connectors, connectorstore.Connector{
@@ -120,7 +120,7 @@ func TestRefreshCapabilitiesStrictUnannotatedWarns_spec_5_1_327(t *testing.T) {
 }
 
 // TestRefreshCapabilitiesEmitsVerbatimWarnMessage_spec_5_1_327 verifies
-// the production discovery path logs the verbatim §5.1 line 327 WARN via
+// the production discovery path logs the verbatim §5.1 WARN via
 // capabilityinference.WarnMessage (its sole production caller), not a
 // divergent inline string.
 func TestRefreshCapabilitiesEmitsVerbatimWarnMessage_spec_5_1_327(t *testing.T) {
@@ -193,7 +193,7 @@ func TestRefreshCapabilitiesPermissiveUnannotatedIsWrite_spec_5_1_329(t *testing
 		t.Errorf("mode = %q, want permissive", res.Mode)
 	}
 	if len(msgs) != 0 {
-		t.Errorf("permissive mode emitted WARN messages %v, want none (§5.1 line 329 suppresses the warning)", msgs)
+		t.Errorf("permissive mode emitted WARN messages %v, want none (§5.1 suppresses the warning)", msgs)
 	}
 }
 

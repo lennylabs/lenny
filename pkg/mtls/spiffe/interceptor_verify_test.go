@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 )
 
-// spec: §10.3 line 328 (NET-063) — the gateway accepts an interceptor
+// spec: §10.3 — the gateway accepts an interceptor
 // certificate whose SPIFFE URI carries the configured trust domain and a
 // namespace in the gateway.interceptorNamespaces allowlist.
 func TestInterceptorPeerVerifierAcceptsAllowedNamespace_spec_10_3_328(t *testing.T) {
@@ -23,7 +23,7 @@ func TestInterceptorPeerVerifierAcceptsAllowedNamespace_spec_10_3_328(t *testing
 	}
 }
 
-// spec: §10.3 line 328 — an interceptor whose namespace segment is not in
+// spec: §10.3 — an interceptor whose namespace segment is not in
 // the allowlist is rejected. The impact text (a co-located non-interceptor
 // pod in the interceptor namespace) is the same class of failure.
 func TestInterceptorPeerVerifierRejectsNamespaceNotInAllowlist_spec_10_3_328(t *testing.T) {
@@ -50,7 +50,7 @@ func TestInterceptorPeerVerifierRejectsNamespaceNotInAllowlist_spec_10_3_328(t *
 	}
 }
 
-// spec: §10.3 line 328 — a foreign trust domain is rejected (NET-064
+// spec: §10.3 — a foreign trust domain is rejected (NET-064
 // cross-deployment isolation extends to the interceptor link).
 func TestInterceptorPeerVerifierRejectsForeignTrustDomain_spec_10_3_328(t *testing.T) {
 	cert := certWithURIs(t, "spiffe://lenny-other-deployment/interceptor/acme-interceptors/lenny-interceptor")
@@ -63,7 +63,7 @@ func TestInterceptorPeerVerifierRejectsForeignTrustDomain_spec_10_3_328(t *testi
 	}
 }
 
-// spec: §10.3 line 332 — possession of a valid cluster-CA certificate is
+// spec: §10.3 — possession of a valid cluster-CA certificate is
 // necessary but never sufficient: an agent identity (or any non-
 // interceptor kind) on the interceptor link is rejected.
 func TestInterceptorPeerVerifierRejectsAgentKind_spec_10_3_332(t *testing.T) {
@@ -74,7 +74,7 @@ func TestInterceptorPeerVerifierRejectsAgentKind_spec_10_3_332(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 328 — a certificate with no spiffe:// SAN cannot be an
+// spec: §10.3 — a certificate with no spiffe:// SAN cannot be an
 // interceptor identity.
 func TestInterceptorPeerVerifierRejectsNoSPIFFESAN_spec_10_3_328(t *testing.T) {
 	cert := certWithURIs(t) // no URI SANs
@@ -92,7 +92,7 @@ func TestInterceptorPeerVerifierRejectsNoSPIFFESAN_spec_10_3_328(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 352 — a revoked interceptor certificate (on the deny
+// spec: §10.3 — a revoked interceptor certificate (on the deny
 // list) is rejected at the handshake even though its identity is valid.
 func TestInterceptorPeerVerifierRejectsRevoked_spec_10_3_352(t *testing.T) {
 	uri := "spiffe://" + testTrustDomain + "/interceptor/acme-interceptors/lenny-interceptor"

@@ -593,9 +593,9 @@ func TestReleaseSlotIsIdempotentAtZero(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519
+// spec: §5.2
 // diagnosis: ClaimSlot conflated "no pods at all" with "pods exist but
-// full" — both returned ErrNoConcurrentSlot. §5.2 line 519 distinguishes
+// full" — both returned ErrNoConcurrentSlot. §5.2 distinguishes
 // the cause via details.reason: an empty pool is "no_idle_pods", mapped
 // from ErrNoIdlePod (the same sentinel session-mode exhaustion uses).
 func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
@@ -610,7 +610,7 @@ func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519
+// spec: §5.2
 // diagnosis: lenny_slot_assignment_conflict_total had no emitter. The
 // SlotClaimer must record a slot-contention conflict via OnSlotConflict
 // when the atomic Redis counter finds a candidate pod at its bound.
@@ -636,11 +636,11 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 166-167 (uptime placement filter), §4.6.1 (uptime drains
+// spec: §6.2, §4.6.1 (uptime drains
 // are WarmPoolController-written).
 // diagnosis: ClaimSlot placed a slot on a pod whose wall-clock uptime had
 // exceeded the pool's maxPodUptimeSeconds, or it wrote Sandbox.status to
-// drain the pod itself. §6.2 line 166: an over-uptime claimed pod accepts no
+// drain the pod itself. §6.2: an over-uptime claimed pod accepts no
 // new slots, so ClaimSlot must skip it as a candidate. Per §4.6.1 the
 // gateway no longer owns the draining transition; the WarmPoolController
 // derives it from the pod CreationTimestamp. The gateway therefore skips the
@@ -673,7 +673,7 @@ func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 	assertNotGatewayStatusOwned(t, c, "sbx-old")
 }
 
-// spec: §6.2 line 167 (uptime placement filter), §4.6.1 (uptime drains are
+// spec: §6.2, §4.6.1 (uptime drains are
 // WarmPoolController-written).
 // diagnosis: ClaimSlot acquired a fresh slot on an idle pod that was already
 // past its uptime cap, or it wrote Sandbox.status to drain the pod. Per
@@ -706,7 +706,7 @@ func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 	assertNotGatewayStatusOwned(t, c, "sbx-old")
 }
 
-// spec: §6.2 lines 166-167.
+// spec: §6.2.
 // diagnosis: ClaimSlot drained a pod still within its uptime budget. A pod
 // under maxPodUptimeSeconds must serve the slot normally.
 func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
@@ -735,7 +735,7 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 166-167 — the cap is optional; zero disables retirement.
+// spec: §6.2 — the cap is optional; zero disables retirement.
 // diagnosis: ClaimSlot drained a pod even though the pool set no
 // maxPodUptimeSeconds, retiring pods that should run indefinitely.
 func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {

@@ -53,7 +53,7 @@ func loadCompose(t *testing.T) composeFile {
 	root := schematest.RepoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "docker-compose.yml"))
 	if err != nil {
-		t.Fatalf("spec §17.4 line 216: top-level docker-compose.yml must exist: %v", err)
+		t.Fatalf("spec §17.4: top-level docker-compose.yml must exist: %v", err)
 	}
 	var cf composeFile
 	if err := yaml.Unmarshal(raw, &cf); err != nil {
@@ -62,7 +62,7 @@ func loadCompose(t *testing.T) composeFile {
 	return cf
 }
 
-// spec: §17.4 lines 213–225 — `docker compose up` starts the gateway,
+// spec: §17.4 — `docker compose up` starts the gateway,
 // the single agent, Postgres, Redis, and MinIO.
 // diagnosis: a failure means the default Compose profile does not bring
 // up the expected service set, so `docker compose up` would not yield a
@@ -82,9 +82,9 @@ func TestComposeDefaultProfileServices_spec_17_4_216(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 168 — Compose Mode uses the production gateway. The
+// spec: §17.4 — Compose Mode uses the production gateway. The
 // gateway service builds the lenny-gateway binary and is wired to the
-// embedded Postgres, Redis, and MinIO backends with the §17.4 line 262
+// embedded Postgres, Redis, and MinIO backends with the §17.4
 // echo runtime.
 // diagnosis: a failure means the Compose gateway service is not wired to
 // the production lenny-gateway binary and embedded backends, so Compose
@@ -107,7 +107,7 @@ func TestComposeGatewayWiring_spec_17_4_168(t *testing.T) {
 			t.Errorf("gateway env %s=%q must contain %q", k, got, substr)
 		}
 	}
-	// §17.4 line 262 zero-credential echo runtime + dev-mode + the
+	// §17.4 zero-credential echo runtime + dev-mode + the
 	// plaintext-redis dev relaxation.
 	cmd := strings.Join(gw.Command, " ")
 	for _, want := range []string{"--dev-mode", "--agent-runtime=echo", "--redis-allow-insecure"} {
@@ -130,7 +130,7 @@ func TestComposeGatewayWiring_spec_17_4_168(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 276 — `docker compose run smoke-test` creates a
+// spec: §17.4 — `docker compose run smoke-test` creates a
 // session, sends a prompt, verifies a response, and exits. The
 // smoke-test service is profiled out of `docker compose up`.
 // diagnosis: a failure means the smoke-test service is misconfigured or
@@ -161,7 +161,7 @@ func TestComposeSmokeTestService_spec_17_4_276(t *testing.T) {
 	}
 }
 
-// spec: §17.4 lines 236–254 — the credentials profile sets
+// spec: §17.4 — the credentials profile sets
 // LENNY_DEV_TLS=true and generates self-signed mTLS material under
 // ./lenny-data/certs.
 // diagnosis: a failure means the credentials profile does not enable
@@ -195,7 +195,7 @@ func TestComposeCredentialsProfile_spec_17_4_245(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 258 — the observability profile adds Prometheus,
+// spec: §17.4 — the observability profile adds Prometheus,
 // Grafana, and Jaeger.
 // diagnosis: a failure means the observability profile does not add
 // Prometheus, Grafana, and Jaeger, so the Compose observability stack

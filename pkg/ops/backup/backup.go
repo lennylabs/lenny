@@ -47,7 +47,7 @@ func RequiresConfirm(t Type, production bool) bool {
 // returns when a confirm-gated backup is requested without confirm:true.
 // It mirrors the canonical preview object (resourcesAffected,
 // estimatedDowntime, warnings) so an agent can inspect the blast radius
-// before re-issuing with confirm. spec: §25.2 lines 287-300.
+// before re-issuing with confirm. spec: §25.2.
 type CreatePreview struct {
 	ResourcesAffected []string `json:"resourcesAffected"`
 	EstimatedDowntime string   `json:"estimatedDowntime"`
@@ -57,7 +57,7 @@ type CreatePreview struct {
 // PreviewBackup builds the §25.2 dry-run preview for an on-demand backup
 // of type t. A backup runs online against live stores, so the estimated
 // downtime is zero; the affected resources are the components the backup
-// would dump. spec: §25.2 lines 287-300, §25.11 line 3883.
+// would dump. spec: §25.2, §25.11.
 func PreviewBackup(t Type) CreatePreview {
 	comps := componentsFor(t)
 	resources := make([]string, len(comps))

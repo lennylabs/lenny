@@ -78,7 +78,7 @@ func TestValidateAcceptsCredGroupOnCredentialContainer(t *testing.T) {
 }
 
 // TestValidateRejectsMissingCredSupplementalGroups_spec_13_1 asserts
-// §13.1 line 25: the pod-level supplementalGroups must declare the
+// §13.1: the pod-level supplementalGroups must declare the
 // lenny-cred-readers GID. A pod that sets the fsGroup but omits the
 // explicit supplementalGroups declaration is rejected (F-13.1.11 /
 // F-13.1.15).
@@ -113,7 +113,7 @@ func TestValidateRejectsWrongCredSupplementalGroups_spec_13_1(t *testing.T) {
 }
 
 // TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1
-// asserts §13.1 line 27: a non-adapter, non-agent container that mounts
+// asserts §13.1: a non-adapter, non-agent container that mounts
 // the credential volume by name reaches /run/lenny/credentials.json and
 // is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. This closes the
 // fsGroup-inheritance side-channel the per-container runAsGroup check
@@ -141,7 +141,7 @@ func TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1(t *testing.
 }
 
 // TestValidateRejectsNonCredContainerMountingCredPath_spec_13_1 asserts
-// §13.1 line 27: a non-credential container that mounts a path under
+// §13.1: a non-credential container that mounts a path under
 // /run/lenny — even via a differently-named volume — is rejected
 // (F-13.1.10, the equivalent of cred-guard condition (iv) by-path
 // match).
@@ -335,7 +335,7 @@ func TestValidateRejectsAddedCapabilities(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 496 — concurrent-workspace slots share a network
+// spec: §5.2 — concurrent-workspace slots share a network
 // namespace, so the agent container's securityContext MUST drop
 // CAP_NET_RAW to prevent one slot sniffing sibling traffic with a raw
 // socket. The §13.1 baseline enforces this two ways: every container
@@ -356,7 +356,7 @@ func TestValidateRejectsNetRawAdd_spec_5_2_496(t *testing.T) {
 	}
 }
 
-// The §5.2 line 496 NET_RAW drop holds for a standard agent pod: the
+// The §5.2 NET_RAW drop holds for a standard agent pod: the
 // well-formed spec drops ALL and adds nothing, so it validates. This
 // pins the positive case so the rejection test above cannot pass
 // vacuously.

@@ -8,7 +8,7 @@
 // applied. Covers the intent-row Put + Get round-trip on the
 // (tenant_id, checkpoint_id) key, the supersede-on-write and fencing
 // invariants under the real partial_manifest_active_uniq index, the
-// §10.1 line 131 monotonic ConfirmChunk counter, Finalise, the
+// §10.1 monotonic ConfirmChunk counter, Finalise, the
 // exactly-once ReleaseReservation guard, SumOutstandingReservations,
 // the §12.5 ListReclaimable backstop predicate with its terminal-state
 // join, the soft-delete idempotency guard, and cross-tenant RLS
@@ -114,7 +114,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 lines 137, 143-151, 155 — supersede-on-write collapses
+	// spec: §10.1 — supersede-on-write collapses
 	// the active partial set to one row under the real
 	// partial_manifest_active_uniq index (two same-generation attempts on
 	// one coordinator), and a fenced strictly-lower write is rejected.
@@ -151,7 +151,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial
+	// spec: §10.1 — LatestActiveForSlot returns the active partial
 	// row for the exact (session, slot) the supersede path scopes on, not the
 	// session-wide highest-generation winner LatestActive returns.
 	t.Run("latest active is scoped to the slot", func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly
+	// spec: §10.1 — LatestActiveAny is the resume-reassembly
 	// selector: the highest-coordination_generation active row regardless of
 	// partial. A completed checkpoint is returned when it is the only active
 	// row (unlike LatestActive, which is partial-scoped), and a newer partial
@@ -202,7 +202,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 			t.Fatalf("Put full intent: %v", err)
 		}
 		// A confirmed chunk keeps the completed row active (a zero-chunk row
-		// is soft-deleted by Finalise, §10.1 line 132).
+		// is soft-deleted by Finalise, §10.1).
 		if err := store.ConfirmChunk(ctx, tenant, full, 0, 4096); err != nil {
 			t.Fatalf("ConfirmChunk full: %v", err)
 		}
@@ -234,7 +234,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 131 — ConfirmChunk advances the counters
+	// spec: §10.1 — ConfirmChunk advances the counters
 	// monotonically under the `chunk_count < n + 1` guard.
 	t.Run("confirm chunk is monotonic", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
@@ -255,7 +255,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 141 — Finalise stamps the terminal disposition.
+	// spec: §10.1 — Finalise stamps the terminal disposition.
 	t.Run("finalise flips partial and reason", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		checkpointID := newUUID(t)

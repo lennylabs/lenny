@@ -25,7 +25,7 @@ import (
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the handler under
 // test emitted, then restores the prior provider when the test ends.
-// spec: §16.3 line 352 (credential.rotate).
+// spec: §16.3.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()
@@ -82,7 +82,7 @@ func TestCredentialRotateSpan_spec_16_3(t *testing.T) {
 	if span.Status().Code == codes.Error {
 		t.Errorf("happy-path span carries an error status: %q", span.Status().Description)
 	}
-	// §16.4 line 376: the rotate RPC's secret must never be a span
+	// §16.4: the rotate RPC's secret must never be a span
 	// attribute.
 	for _, a := range span.Attributes() {
 		if a.Value.Type() == attribute.STRING && bytes.Contains([]byte(a.Value.AsString()), []byte("new-secret")) {

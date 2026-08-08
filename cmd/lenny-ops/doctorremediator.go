@@ -26,7 +26,7 @@ import (
 
 // The §25.6 doctor remediation coordinates. CoreDNS ships as the
 // `coredns` Deployment fronted by the `kube-dns` Service in kube-system
-// on every conformant cluster; the §25.6 line 2974 opt-out annotation
+// on every conformant cluster; the §25.6 opt-out annotation
 // and the standard rollout-restart annotation are well-known strings.
 const (
 	doctorOptOutAnnotation = "lenny.dev/doctor-optout"
@@ -55,7 +55,7 @@ const (
 // DataSource already classifies. A nil source leaves warmPoolStuckReplenish
 // undetected (reported not_detected), matching the Helm-dependent findings.
 //
-// spec: §25.6 line 2956, §25.6.1 (PoolBottleneck classification).
+// spec: §25.6, §25.6.1 (PoolBottleneck classification).
 type poolDiagnosisSource interface {
 	DiagnosePool(ctx context.Context, poolName string) (*diagnostics.PoolDiagnosis, error)
 }
@@ -90,7 +90,7 @@ type poolDiagnosisSource interface {
 // a code outside the fixable table, never by these three, because that
 // path requires a successful Detect first.
 //
-// spec: §25.6 lines 2952-2974. F-25.6.2, F-DR-1.
+// spec: §25.6. F-25.6.2, F-DR-1.
 type k8sDoctorRemediator struct {
 	clientset kubernetes.Interface
 	dyn       dynamic.Interface
@@ -130,15 +130,14 @@ var sandboxTemplateGVR = schema.GroupVersionResource{
 	Resource: "sandboxtemplates",
 }
 
-// warmPoolStuckWindow is the §25.6 line 2956 dwell threshold: a pool in
+// warmPoolStuckWindow is the §25.6 dwell threshold: a pool in
 // DEMAND_EXCEEDS_SUPPLY with zero in-flight warm-up claims for longer
 // than this is a fixable finding.
 const warmPoolStuckWindow = 5 * time.Minute
 
 // poolDrainedConditionType is the §5.2 condition the WarmPoolController
 // writes onto the SandboxTemplate (not the pool). Its True state (no idle
-// and no warming pods) is exactly the §25.6 line 2956 "zero in-flight
-// warm-up claims" state, and its lastTransitionTime supplies the durable
+// and no warming pods) is exactly the §25.6 state, and its lastTransitionTime supplies the durable
 // >5m dwell timestamp the pool's own status does not carry.
 //
 // The dwell is keyed off this dedicated condition rather than the
@@ -343,7 +342,7 @@ func (r *k8sDoctorRemediator) applyCertExpiring(ctx context.Context, resource st
 }
 
 // detectWarmPoolStuck reports warmPoolStuckReplenish for each SandboxWarmPool
-// that is stalled per §25.6 line 2956: the §25.6.1 pool diagnosis classifies
+// that is stalled per §25.6: the §25.6.1 pool diagnosis classifies
 // its bottleneck as DEMAND_EXCEEDS_SUPPLY (claim rate outpaces replenishment
 // rate) with zero in-flight warm-up claims (no warming and no claimed pods),
 // and the pool has dwelt in that no-progress state for longer than the 5m
@@ -384,8 +383,7 @@ func (r *k8sDoctorRemediator) detectWarmPoolStuck(ctx context.Context) ([]doctor
 	return out, nil
 }
 
-// warmPoolStuck reports whether a SandboxWarmPool is in the §25.6 line
-// 2956 stuck-replenish state. It requires all three conjuncts the spec
+// warmPoolStuck reports whether a SandboxWarmPool is in the §25.6 stuck-replenish state. It requires all three conjuncts the spec
 // names: the §25.6.1 bottleneck classification is DEMAND_EXCEEDS_SUPPLY;
 // the pod-state breakdown shows zero in-flight warm-up claims (no warming
 // and no claimed pods); and the referenced SandboxTemplate's
@@ -406,7 +404,7 @@ func (r *k8sDoctorRemediator) warmPoolStuck(ctx context.Context, u *unstructured
 	if diag.Bottleneck == nil || diag.Bottleneck.Category != diagnostics.BottleneckDemandExceedsSupply {
 		return false, nil
 	}
-	// spec: §25.6 line 2956 — "zero in-flight warm-up claims". A pool with
+	// spec: §25.6 — "zero in-flight warm-up claims". A pool with
 	// any warming or claimed pod is making progress, so it is not stuck.
 	if diag.PodCounts.Warming > 0 || diag.PodCounts.Claimed > 0 {
 		return false, nil

@@ -31,7 +31,7 @@ func TestResolveRejectsLocalInProduction(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 163 — a local provider with a master-key file is
+// spec: §17.4 — a local provider with a master-key file is
 // seeded from the persisted key, so two Resolves over the same file
 // derive the same KEK (the property that lets state survive a restart).
 func TestResolveLocalWithMasterKeyFilePersists_spec_17_4_163(t *testing.T) {
@@ -57,7 +57,7 @@ func TestResolveLocalWithMasterKeyFilePersists_spec_17_4_163(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 163 — the file-backed master key is still rejected in
+// spec: §17.4 — the file-backed master key is still rejected in
 // production; the persistence knob does not weaken the prod guard.
 func TestResolveRejectsLocalWithMasterKeyFileInProduction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "master.key")

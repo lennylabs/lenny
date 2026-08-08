@@ -17,7 +17,7 @@ import (
 )
 
 // ElicitationPerHopForwardingTimeout caps a single forwarding hop on
-// the §9.2 elicitation chain. The §11.3 line 211 / §9.1 line 104 contract
+// the §9.2 elicitation chain. The §11.3 / §9.1 contract
 // is hard-coded at 30s in v1 ("not configurable" per the §11.3 table):
 // if a hop does not complete its forward within the deadline the gateway
 // treats it as a failure and returns ELICITATION_PER_HOP_TIMEOUT to the
@@ -25,7 +25,7 @@ import (
 // elicitation. v1's chain walk is server-internal, so the bound is
 // applied to each ancestor session lookup; that is the only point where
 // the walk can block waiting on an external dependency (the session
-// store). spec: §11.3 line 211; §9.1 line 104.
+// store). spec: §11.3; §9.1.
 const ElicitationPerHopForwardingTimeout = 30 * time.Second
 
 // elicitationDispatcher drives the §9.2 hop-by-hop elicitation chain.
@@ -64,7 +64,7 @@ type elicitationDispatcher struct {
 	// also writes the §16.7 `elicitation.url_mode_domain_rejected`
 	// audit event through `audit` so the policy-relevant rejection is
 	// recorded once per occurrence, alongside the metric and the
-	// per-hop tool error envelope. spec: §9.2 line 86; §16.7
+	// per-hop tool error envelope. spec: §9.2; §16.7
 	// (elicitation.url_mode_domain_rejected). F-9.2.11, F-EL3.
 	dropMetrics ElicitationDropRecorder
 
@@ -72,10 +72,10 @@ type elicitationDispatcher struct {
 	// the §9.2 chain walk catches a tamper at a forwarding hop. The
 	// observer is responsible for incrementing
 	// lenny_elicitation_content_tamper_detected_total
-	// {origin_pod, tampering_pod, enforcement_mode} per §16.1 line 64.
+	// {origin_pod, tampering_pod, enforcement_mode} per §16.1.
 	tamperMetrics ElicitationTamperRecorder
 
-	// perHopTimeout overrides the §11.3 line 211 hard-coded 30s per-hop
+	// perHopTimeout overrides the §11.3 hard-coded 30s per-hop
 	// forwarding deadline used by buildHops on each ancestor lookup.
 	// Tests set this to a small duration so they can drive the timeout
 	// branch deterministically; production binaries leave it zero,
@@ -90,13 +90,13 @@ type elicitationDispatcher struct {
 	// reject the forward (enforce) or forward as received and record the
 	// divergence (detect-only). A nil resolver defaults to the §9.2
 	// enforce tenant default so a misconfigured binary fails safe.
-	// spec: §9.2 lines 58–64. F-9.2.2.
+	// spec: §9.2. F-9.2.2.
 	effectiveMode func(ctx context.Context, tenantID string) elicitation.EnforcementMode
 
-	// audit, when non-nil, receives the §16.7 line 674
+	// audit, when non-nil, receives the §16.7
 	// `elicitation.content_tamper_detected` event whenever the chain
 	// walk catches a forward-hop divergence under detect-only or
-	// enforce. spec: §9.2 lines 60–61; §16.7 line 674. F-9.2.3.
+	// enforce. spec: §9.2; §16.7. F-9.2.3.
 	audit DelegationAuditor
 
 	// clock stamps the audit event's detected_at field. Tests inject a
@@ -126,7 +126,7 @@ type elicitationDispatcher struct {
 // enforcementMode is the §9.2 effective mode that was in force at the
 // time the tamper was caught (enforce | detect-only — the detector
 // does not run under off). The §16.5 alert scopes to the enforce
-// stream. spec: §16.1 line 64; §9.2 line 60. F-9.2.4.
+// stream. spec: §16.1; §9.2. F-9.2.4.
 type ElicitationTamperRecorder interface {
 	RecordElicitationContentTamperDetected(originPod, tamperingPod, enforcementMode string)
 }
@@ -176,7 +176,7 @@ func (d *elicitationDispatcher) dispatch(
 	// F-9.2.11, F-EL3.
 	// The agent-facing dispatch path is always agent-initiated (F-9.2.19
 	// removed the self-declarable initiator), so no connector
-	// expected_domain is in scope here; the §9.2 line 87 connector
+	// expected_domain is in scope here; the §9.2 connector
 	// hard boundary is enforced at the connector OAuth surface
 	// (handleAuthorizeConnector) and threaded through CheckURLModeProvenance
 	// for any future connector-initiated dispatch.
@@ -230,7 +230,7 @@ func (d *elicitationDispatcher) dispatch(
 		return dispatchResult{}, err
 	}
 
-	// §9.2 lines 58–64: resolve the tenant's effective content-integrity
+	// §9.2: resolve the tenant's effective content-integrity
 	// enforcement mode (max of the platform floor and the tenant stored
 	// mode). It governs the content-integrity check: `off` performs no
 	// canonicalization or comparison; `detect-only` and `enforce` both
@@ -242,7 +242,7 @@ func (d *elicitationDispatcher) dispatch(
 	// Under `off` the detector does not run, so no re-emission is
 	// verified. Under detect-only / enforce, hand WalkChain the
 	// re-emission provider so a supplied forward-hop frame is compared
-	// against the origination digest. spec: §9.2 line 62.
+	// against the origination digest. spec: §9.2.
 	var forwarded func(hop elicitation.Hop) (elicitation.Content, bool)
 	if mode != elicitation.ModeOff {
 		forwarded = d.forwardedContentFor
@@ -280,10 +280,10 @@ func (d *elicitationDispatcher) dispatch(
 	}, nil
 }
 
-// eventElicitationContentTamperDetected is the §16.7 line 674 audit
+// eventElicitationContentTamperDetected is the §16.7 audit
 // event type emitted on a §9.2 content-integrity divergence. It is the
 // closed audit-catalog constant so a sink that whitelists by the spec
-// catalog accepts the row. spec: §16.7 line 674. F-9.2.3.
+// catalog accepts the row. spec: §16.7. F-9.2.3.
 var eventElicitationContentTamperDetected = string(audit.EventElicitationContentTamperDetected)
 
 // eventElicitationURLModeDomainRejected is the §16.7 audit event type
@@ -298,7 +298,7 @@ var eventElicitationURLModeDomainRejected = string(audit.EventElicitationURLMode
 // resolveMode returns the §9.2 effective content-integrity enforcement
 // mode for tenantID. A nil resolver or an invalid result defaults to
 // the §9.2 enforce tenant default so a misconfigured binary fails safe
-// (the stricter behavior). spec: §9.2 lines 58–64. F-9.2.2.
+// (the stricter behavior). spec: §9.2. F-9.2.2.
 func (d *elicitationDispatcher) resolveMode(ctx context.Context, tenantID string) elicitation.EnforcementMode {
 	if d.effectiveMode == nil {
 		return elicitation.ModeEnforce
@@ -312,8 +312,8 @@ func (d *elicitationDispatcher) resolveMode(ctx context.Context, tenantID string
 
 // handleTamper applies the §9.2 enforcement-mode contract to a
 // forward-hop content divergence caught by the chain walk. Both
-// detect-only and enforce record the §16.1 line 64 counter (labelled
-// with the resolved mode) and emit the §16.7 line 674
+// detect-only and enforce record the §16.1 counter (labelled
+// with the resolved mode) and emit the §16.7
 // elicitation.content_tamper_detected audit event; the two modes then
 // diverge:
 //
@@ -326,8 +326,7 @@ func (d *elicitationDispatcher) resolveMode(ctx context.Context, tenantID string
 //     (forward_outcome = forwarded_as_received).
 //
 // Under off this method is never reached: the dispatcher hands WalkChain
-// no re-emission provider, so the check does not run. spec: §9.2 lines
-// 60–62; §16.1 line 64; §16.7 line 674. F-9.2.2, F-9.2.3.
+// no re-emission provider, so the check does not run. spec: §9.2; §16.1; §16.7. F-9.2.2, F-9.2.3.
 func (d *elicitationDispatcher) handleTamper(
 	ctx context.Context,
 	tenantID string,
@@ -347,7 +346,7 @@ func (d *elicitationDispatcher) handleTamper(
 	divergent := d.divergentFields(originalContent, tamperingPod, hops)
 
 	if d.tamperMetrics != nil {
-		// spec: §16.1 line 64 — {origin_pod, tampering_pod,
+		// spec: §16.1 — {origin_pod, tampering_pod,
 		// enforcement_mode}. The mode label is the resolved tenant mode,
 		// so an operator's detect-only → enforce pivot is observable here
 		// (the §16.5 alert scopes to the enforce stream). F-9.2.4.
@@ -357,7 +356,7 @@ func (d *elicitationDispatcher) handleTamper(
 	}
 
 	if d.audit != nil {
-		// spec: §16.7 line 674 — the full content-tamper audit payload an
+		// spec: §16.7 — the full content-tamper audit payload an
 		// incident-response runbook queries (origin/tampering pod, the two
 		// digests, the divergent fields, and the forward outcome). F-9.2.3.
 		d.audit.EmitDelegationEvent(ctx, eventElicitationContentTamperDetected, map[string]any{
@@ -378,7 +377,7 @@ func (d *elicitationDispatcher) handleTamper(
 	}
 
 	if mode == elicitation.ModeDetectOnly {
-		// §9.2 line 61: forward the divergent payload as received. Re-run
+		// §9.2: forward the divergent payload as received. Re-run
 		// the walk with no re-emission provider so the divergence does not
 		// abort routing; the gateway never substitutes the recorded
 		// original back in, but it still delivers the elicitation.
@@ -400,7 +399,7 @@ func (d *elicitationDispatcher) handleTamper(
 
 	// enforce: drop the forward with the canonical lenny code so REST and
 	// MCP envelopes share the same (category, retryable) pair. spec:
-	// §15.2.1; §9.2 line 60. F-8.5.10.
+	// §15.2.1; §9.2. F-8.5.10.
 	return dispatchResult{}, mcp.NewToolError("ELICITATION_CONTENT_TAMPERED",
 		tamper.Error(), map[string]any{
 			"originPod":       raising.ID,
@@ -457,12 +456,12 @@ func (d *elicitationDispatcher) now() time.Time {
 // human edge. A malformed cyclic stored chain is defended against
 // with a visited set.
 //
-// Each ancestor lookup is bounded by the §11.3 line 211 per-hop
+// Each ancestor lookup is bounded by the §11.3 per-hop
 // forwarding deadline (ElicitationPerHopForwardingTimeout, 30s by
 // default). A hop that does not complete its lookup within the
 // deadline aborts the walk and surfaces ELICITATION_PER_HOP_TIMEOUT
 // to the originating pod so the agent can either give up or raise a
-// fresh elicitation. spec: §11.3 line 211; §9.1 line 104.
+// fresh elicitation. spec: §11.3; §9.1.
 func (d *elicitationDispatcher) buildHops(ctx context.Context, tenantID string, raising sessionstore.Session) ([]elicitation.Hop, error) {
 	var chain []sessionstore.Session
 	visited := map[string]bool{}
@@ -482,7 +481,7 @@ func (d *elicitationDispatcher) buildHops(ctx context.Context, tenantID string, 
 				break // ancestor GC'd — treat current as the root
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
-				// spec: §11.3 line 211 — per-hop forwarding deadline.
+				// spec: §11.3 — per-hop forwarding deadline.
 				// The forwarding pod (cur.ID) is the hop whose lookup
 				// did not complete; the originating pod sees its
 				// elicitation fail with ELICITATION_PER_HOP_TIMEOUT.
@@ -520,7 +519,7 @@ func (d *elicitationDispatcher) buildHops(ctx context.Context, tenantID string, 
 	return hops, nil
 }
 
-// effectivePerHopTimeout returns the §11.3 line 211 30s deadline the
+// effectivePerHopTimeout returns the §11.3 30s deadline the
 // dispatcher applies per forwarding hop, defaulting to the package
 // constant when the test override is unset.
 func (d *elicitationDispatcher) effectivePerHopTimeout() time.Duration {
@@ -533,7 +532,7 @@ func (d *elicitationDispatcher) effectivePerHopTimeout() time.Duration {
 // lookupAncestor performs one §9.2 forwarding hop's ancestor lookup
 // under the per-hop deadline. The deadline is layered onto the
 // caller's context — if the caller's deadline is sooner, that one
-// wins. spec: §11.3 line 211; §9.1 line 104.
+// wins. spec: §11.3; §9.1.
 func (d *elicitationDispatcher) lookupAncestor(ctx context.Context, tenantID, parentID string) (sessionstore.Session, error) {
 	hopCtx, cancel := context.WithTimeout(ctx, d.effectivePerHopTimeout())
 	defer cancel()

@@ -89,7 +89,7 @@ func TestReconcileHoldsFinalizerWhileClaimActive(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 305-313 — a freshly-created pod is warming (pre-ready),
+// spec: §6.2 — a freshly-created pod is warming (pre-ready),
 // which has no coarse operational value, so the lenny.dev/state label is
 // omitted rather than carrying a value outside the documented
 // idle/active/draining set. The immutable lenny.dev/runtime label is
@@ -107,7 +107,7 @@ func TestReconcileStampsPodStateLabelOnCreate(t *testing.T) {
 		t.Errorf("pod state label = %q, want absent (warming pod has no coarse state)", got)
 	}
 	if got := pod.Labels[state.LabelRuntime]; got != "claude-code" {
-		t.Errorf("pod runtime label = %q, want claude-code (§6.2 line 311)", got)
+		t.Errorf("pod runtime label = %q, want claude-code (§6.2)", got)
 	}
 }
 

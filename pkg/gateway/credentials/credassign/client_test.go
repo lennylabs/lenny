@@ -303,7 +303,7 @@ func clientDirectPool(name string, p credential.Provider, mc credential.Material
 	}
 }
 
-// spec: §4.9 lines 1246-1298
+// spec: §4.9
 // diagnosis: a direct-mode lease's materializedConfig survives the full
 // gateway↔Token-Service round trip: leaseToProto carries it in
 // materialized_config, credentialLeaseFromProto reconstructs lease.Direct,

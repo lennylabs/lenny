@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// spec: §12.3 R-03 line 144 — billing/audit writes route only Postgres
+// spec: §12.3 R-03 — billing/audit writes route only Postgres
 // shards, so the single-shard router supports a Postgres-only mode (no
 // Redis) for the billing/audit store paths and their component tests.
 // The Postgres accessors route as usual; the Redis accessors fail closed

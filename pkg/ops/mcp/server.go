@@ -255,7 +255,7 @@ func (s *Server) handleToolsCall(r *http.Request, req rpcRequest) rpcResponse {
 			Data: map[string]any{
 				"code": "SCOPE_FORBIDDEN",
 				// §25.2 error category: a scope-claim rejection is an
-				// authorization failure (spec: §25.2 lines 302-329).
+				// authorization failure (spec: §25.2).
 				"category":      string(conventions.CategoryAuth),
 				"retryable":     false,
 				"requiredScope": tool.Scope,

@@ -164,7 +164,7 @@ func findControllerGen() string {
 // post-generation additions the committed CRDs carry that controller-gen
 // does not emit: the `lenny.dev/schema-version` annotation (and its
 // explanatory comment) and the top-level spec/status
-// `x-kubernetes-preserve-unknown-fields: true` markers. §10 line 437
+// `x-kubernetes-preserve-unknown-fields: true` markers. §10
 // applies the schema-version annotation by hand after generation; the
 // preserve-unknown markers keep a stale CRD from stripping fields a newer
 // controller writes. The drift check normalizes these away so it compares
@@ -177,7 +177,7 @@ func postProcessLine(line string) bool {
 	switch {
 	case strings.HasPrefix(trimmed, "lenny.dev/schema-version:"):
 		return true
-	case strings.HasPrefix(trimmed, "# spec: §10 line 437"),
+	case strings.HasPrefix(trimmed, "# spec: §10"),
 		strings.HasPrefix(trimmed, "# read at controller startup"),
 		strings.HasPrefix(trimmed, "# FATAL exit so stale CRDs"),
 		strings.HasPrefix(trimmed, "# F-15.5.12."):

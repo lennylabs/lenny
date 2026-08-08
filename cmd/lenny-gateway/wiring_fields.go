@@ -229,7 +229,7 @@ type gatewayWiringFields struct {
 	// token delta and raises the enforcer budget, keeping the raise alive
 	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
 	// usagestore is wired (the recorder is nil), in which case exhaustion
-	// keeps the §11.2 line 44 terminate-immediately posture.
+	// keeps the §11.2 terminate-immediately posture.
 	proxyUsageRec         *proxyUsageRecorder
 	leaseBudgets          *leasecontrol.MemoryBudgetSource
 	leaseExtDefaults      sessionserver.LeaseExtensionDefaults
@@ -275,7 +275,7 @@ type gatewayWiringFields struct {
 	// serves no proxy traffic against a retained revoked lease with an
 	// incomplete deny list; the rebuild goroutine (startBillingAndSecurityWorkers)
 	// flips it after the union across both credential stores lands.
-	// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+	// spec: §4.9; §10.4 readiness precedence.
 	credDenyRebuilt atomic.Bool
 	credRenewalProp *credrenewalprop.Propagator
 	deadlockTracker *deadlock.AwaitTracker

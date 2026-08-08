@@ -20,9 +20,7 @@
 // §10.2 auth middleware attaches after it validates the JWT and parses
 // the RFC 9068 scope claim.
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920;
-// SCOPE_FORBIDDEN, line 1030), §25.1 (middleware checks scopes before
-// routing, line 94).
+// spec: §15.1, §25.1.
 
 package tier9_security_test
 
@@ -179,8 +177,7 @@ func TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1(t *testing.T) {
 		t.Errorf("matching-scope token did not reach the handler (status %d, body=%s)", rr.Code, rr.Body.String())
 	}
 
-	// 3. An absent scope claim defers to the role ceiling (§25.1 line
-	//    90): the platform-admin role admits the call, the gate does not
+	// 3. An absent scope claim defers to the role ceiling (§25.1): the platform-admin role admits the call, the gate does not
 	//    narrow, and the handler runs.
 	dropper.called = false
 	rr = httptest.NewRecorder()

@@ -33,7 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 )
 
-// QuotaReleaser releases freed storage bytes back to the §11 line 37
+// QuotaReleaser releases freed storage bytes back to the §11
 // per-tenant storage-quota counter when an artifact is soft-deleted.
 // The decorator decrements the counter by the deleted object's size
 // AFTER the catalog row's soft-delete (the spec's `deleted_at`) has
@@ -42,7 +42,7 @@ import (
 // structurally; the seam keeps the blobstore layer free of a gateway
 // import.
 //
-// spec: §11 line 37 — GC-triggered decrement, ordering requirement.
+// spec: §11 — GC-triggered decrement, ordering requirement.
 type QuotaReleaser interface {
 	Adjust(ctx context.Context, tenantID string, delta int64) error
 }
@@ -75,7 +75,7 @@ type Options struct {
 	// so a deployment can record the orphan condition without coupling
 	// the decorator to a metrics registry.
 	LogOnCatalogFailure func(uri string, err error)
-	// QuotaReleaser, when set, receives the §11 line 37 storage-quota
+	// QuotaReleaser, when set, receives the §11 storage-quota
 	// decrement when an artifact is soft-deleted: the decorator releases
 	// the deleted object's bytes back to the per-tenant counter after the
 	// catalog soft-delete commits. Nil leaves the counter untouched
@@ -105,24 +105,24 @@ func New(inner blobstore.Store, catalog artifactcatalog.Store, opts Options) *St
 	}
 }
 
-// SetQuotaReleaser wires the §11 line 37 storage-quota counter after
+// SetQuotaReleaser wires the §11 storage-quota counter after
 // construction. The gateway builds the decorator before the Redis-backed
 // storagequota.Counter is resolved, so it installs the releaser through
 // this setter once the counter is ready. Passing nil disables the
 // decrement.
 //
-// spec: §11 line 37.
+// spec: §11.
 func (s *Store) SetQuotaReleaser(q QuotaReleaser) { s.quota = q }
 
-// releaseBytes issues the §11 line 37 storage-quota decrement for n
+// releaseBytes issues the §11 storage-quota decrement for n
 // bytes freed by a soft-delete. It is called only after the catalog
 // soft-delete has committed (the spec's `deleted_at` ordering
 // requirement) and is a no-op when no releaser is wired or no bytes
 // were freed. A decrement failure is reported through logOnFail rather
 // than failing the delete: the bytes are durably released in Postgres
-// and the next §11 line 37 rehydration reconciles the counter.
+// and the next §11 rehydration reconciles the counter.
 //
-// spec: §11 line 37 — Redis decrement only after the Postgres row is
+// spec: §11 — Redis decrement only after the Postgres row is
 // committed with deleted_at set.
 func (s *Store) releaseBytes(ctx context.Context, tenantID string, n int64) {
 	if s.quota == nil || n <= 0 || tenantID == "" {
@@ -299,7 +299,7 @@ func (s *Store) SoftDelete(u blobstore.URI, retention time.Duration) error {
 			return err
 		}
 	}
-	// Capture the freed byte size before the transition: the §11 line 37
+	// Capture the freed byte size before the transition: the §11
 	// decrement uses the artifact_store-recorded size as the source of
 	// truth. A missing row leaves freed at zero so no decrement fires.
 	var freed int64
@@ -319,13 +319,13 @@ func (s *Store) SoftDelete(u blobstore.URI, retention time.Duration) error {
 		return fmt.Errorf("cataloging: soft-delete catalog row for %s: %w", u.String(), err)
 	}
 	// The catalog row is committed with `deleted_at` set; only now is the
-	// §11 line 37 Redis decrement safe (the spec's ordering requirement).
+	// §11 Redis decrement safe (the spec's ordering requirement).
 	s.releaseBytes(ctx, u.TenantID, freed)
 	return nil
 }
 
 // SoftDeleteRow soft-deletes the artifact_store catalog row named by uri
-// under the catalog's deleted_at IS NULL guard and issues the §11 line 37 /
+// under the catalog's deleted_at IS NULL guard and issues the §11 /
 // §12.5 rule 4 Redis decrement exactly once for the live→soft_deleted
 // transition, without touching the bucket object. The §12.5 checkpoint
 // chunk-release paths (the retention rotation reclaimer, and by extension
@@ -342,7 +342,7 @@ func (s *Store) SoftDelete(u blobstore.URI, retention time.Duration) error {
 // and only needs the catalog row transition and the guarded decrement here.
 //
 // spec: §12.5 rule 4 — the Redis decrement follows the Postgres deleted_at
-// commit and fires exactly once; §11 line 37 ordering requirement.
+// commit and fires exactly once; §11 ordering requirement.
 func (s *Store) SoftDeleteRow(ctx context.Context, uri string, retention time.Duration) error {
 	rec, gerr := s.catalog.Get(ctx, uri)
 	if gerr != nil {
@@ -369,7 +369,7 @@ func (s *Store) SoftDeleteRow(ctx context.Context, uri string, retention time.Du
 		}
 		return fmt.Errorf("cataloging: soft-delete catalog row for %s: %w", uri, err)
 	}
-	// The row is committed with deleted_at set; only now is the §11 line 37
+	// The row is committed with deleted_at set; only now is the §11
 	// Redis decrement safe (the spec's ordering requirement). A row that was
 	// already past live released its bytes on the first transition, so freed
 	// is zero and no second decrement fires.
@@ -420,7 +420,7 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 		}
 		_ = s.catalog.Tombstone(ctx, r.URI)
 	}
-	// Issue the §11 line 37 decrement after the catalog soft-deletes are
+	// Issue the §11 decrement after the catalog soft-deletes are
 	// committed (the spec's `deleted_at`-first ordering).
 	s.releaseBytes(ctx, tenantID, freed)
 	return deleted, nil
@@ -459,7 +459,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	return deleted, nil
 }
 
-// HardPrune drives the §12.5 line 320/341 hard-prune sweep, catalog-
+// HardPrune drives the §12.5 hard-prune sweep, catalog-
 // first: it queries Postgres for the artifacts past their tombstone
 // deadline (ListPrunable), deletes exactly those bucket objects via
 // the inner store's targeted HardDeleteObject, then drops the catalog
@@ -478,8 +478,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 // (the next cycle picks them up); a catalog query failure short-
 // circuits and returns the error.
 //
-// spec: §12.5 line 320 (catalog-driven), line 341 (delete object then
-// row).
+// spec: §12.5.
 func (s *Store) HardPrune(ctx context.Context, now time.Time) (int, error) {
 	uris, err := s.catalog.ListPrunable(ctx, now)
 	if err != nil {
@@ -564,7 +563,7 @@ func (s *Store) SoftDeleteSession(ctx context.Context, tenantID, sessionID strin
 		freed += r.SizeBytes
 		count++
 	}
-	// The §11 line 37 decrement runs once the catalog rows are committed
+	// The §11 decrement runs once the catalog rows are committed
 	// with `deleted_at` set (the spec's ordering requirement): the GC
 	// sweep that soft-deletes a terminal session's artifacts releases
 	// their bytes back to the per-tenant storage-quota counter so a

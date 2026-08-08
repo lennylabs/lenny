@@ -37,7 +37,7 @@ func (b *recordingBarrier) Dispatch(ctx context.Context) ([]barrier.Outcome, err
 	return b.outcomes, b.err
 }
 
-// spec: §10.1 line 165 / line 167 — the preStop hook fires the
+// spec: §10.1 — the preStop hook fires the
 // CheckpointBarrier at Stage 1 under a deadline bounded by
 // checkpointBarrierAckTimeoutSeconds.
 func TestHookFiresBarrierBoundedByAckTimeout_spec_10_1_167(t *testing.T) {
@@ -66,7 +66,7 @@ func TestHookFiresBarrierBoundedByAckTimeout_spec_10_1_167(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 210 — a zero BarrierAckTimeout selects the 90s default.
+// spec: §11.3 — a zero BarrierAckTimeout selects the 90s default.
 func TestHookBarrierDefaultAckTimeout_spec_11_3_210(t *testing.T) {
 	bar := &recordingBarrier{}
 	hook := &Hook{
@@ -86,7 +86,7 @@ func TestHookBarrierDefaultAckTimeout_spec_11_3_210(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — a barrier dispatch error is best-effort: it does
+// spec: §10.1 — a barrier dispatch error is best-effort: it does
 // not abort the eviction-checkpoint drain.
 func TestHookBarrierErrorDoesNotAbortDrain_spec_10_1_165(t *testing.T) {
 	bar := &recordingBarrier{err: errors.New("postgres down during drain")}
@@ -110,7 +110,7 @@ func TestHookBarrierErrorDoesNotAbortDrain_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 169 — the post-barrier per-session loop skips every
+// spec: §10.1 — the post-barrier per-session loop skips every
 // session the barrier already checkpointed under quiesce-and-hold, so no
 // session is checkpointed twice on a drain. With three coordinated
 // sessions where two ack the barrier and one does not, the loop
@@ -126,7 +126,7 @@ func TestHookSkipsBarrierAckedSessions_spec_10_1_169(t *testing.T) {
 	bar := &recordingBarrier{outcomes: []barrier.Outcome{
 		{Target: barrier.Target{SessionID: "s1"}, Acked: true},
 		{Target: barrier.Target{SessionID: "s2"}, Acked: true},
-		// s3 timed out — a §10.1 lines 169-172 partial-capture case that
+		// s3 timed out — a §10.1 partial-capture case that
 		// the loop must still cover.
 		{Target: barrier.Target{SessionID: "s3"}, Acked: false, Err: errors.New("deadline")},
 	}}
@@ -167,7 +167,7 @@ func TestHookSkipsBarrierAckedSessions_spec_10_1_169(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — a nil Barrier is skipped without affecting the
+// spec: §10.1 — a nil Barrier is skipped without affecting the
 // drain (dev-mode / single-replica posture).
 func TestHookNilBarrierIsNoop(t *testing.T) {
 	hook := &Hook{

@@ -10,7 +10,7 @@
 // external MCP traffic: the gateway only dials hosts that resolve
 // to a registered connector.
 //
-// spec: §4.2 line 173 — connectors are tenant-scoped. Each row
+// spec: §4.2 — connectors are tenant-scoped. Each row
 // carries a `tenant_id` column and is filtered by the standard
 // lenny_tenant_isolation RLS policy. The Store API threads the
 // owning tenant through every CRUD call; platform-admin reads pass
@@ -34,7 +34,7 @@ import (
 // MCP (Streamable HTTP) transport only; A2A / Agent Protocol
 // transports are reserved post-v1.
 type Connector struct {
-	// TenantID is the §4.2 line 173 tenant-scoping column. Each
+	// TenantID is the §4.2 tenant-scoping column. Each
 	// connector belongs to exactly one tenant; an in-memory Store
 	// indexes by (TenantID, ID).
 	TenantID string
@@ -66,15 +66,13 @@ type Connector struct {
 	// CapabilityInferenceMode is the §5.1 mode controlling the default
 	// capability for a tool that carries no MCP annotations: `strict`
 	// (default) infers an unannotated tool as admin, `permissive` infers
-	// it as write. spec: §5.1 line 329; §9.3 line 136.
+	// it as write. spec: §5.1; §9.3.
 	CapabilityInferenceMode capabilityinference.Mode
 
 	// Capabilities is the §5.1 union of capabilities inferred from the
 	// connector's tools/list across every tool. It is empty until a
 	// capability refresh runs on the sanctioned outbound path; the
-	// synchronous registration path makes no outbound call (§15.1 line
-	// 1144), so inference is a separate post-create step. spec: §9.3 line
-	// 136.
+	// synchronous registration path makes no outbound call (§15.1), so inference is a separate post-create step. spec: §9.3.
 	Capabilities []capabilityinference.Capability
 
 	// ToolCapabilities maps each discovered tool name to its inferred
@@ -96,7 +94,7 @@ type Connector struct {
 	// 1 and increments on every successful write (Update or SoftDelete).
 	// The quoted decimal version is the resource's strong ETag, enforced
 	// on the admin PUT via the If-Match precondition and exposed on
-	// GET/list responses. spec: §15.1 lines 1207-1213.
+	// GET/list responses. spec: §15.1.
 	Version int64
 }
 
@@ -117,7 +115,7 @@ type ConnectorAuth struct {
 	// ExpectedDomain is the §9.2/§9.3 expected OAuth endpoint domain for
 	// the connector's url-mode elicitations. It is either an exact host
 	// (`accounts.example.com`) or a `*.suffix` wildcard
-	// (`*.example.com`). §9.2 line 87 makes it a hard enforcement
+	// (`*.example.com`). §9.2 makes it a hard enforcement
 	// boundary: the gateway rejects any url-mode elicitation (and the
 	// connector's own authorization URL) whose host does not match it.
 	// Optional; when set on an oauth2 connector the authorization and
@@ -126,11 +124,11 @@ type ConnectorAuth struct {
 }
 
 // Store is the §9.3 connector registry contract. Every method takes
-// the §4.2 line 173 tenant context: a concrete tenant id scopes the
+// the §4.2 tenant context: a concrete tenant id scopes the
 // operation to that tenant, and the AllTenantsSentinel value (`__all__`)
 // lets a platform-admin code path span tenants on reads.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Connectors are tenant-scoped resources with no
 // user attribution, so DeleteByUser is a no-op that returns 0 erased
@@ -187,7 +185,7 @@ func ValidateID(id string) error {
 // cannot become an http:// SSRF pivot, and the §9.3 v1 transport
 // constraint (`streamable_http` only) is enforced.
 //
-// spec: §9.3 line 116-130 — the connector YAML example treats
+// spec: §9.3 — the connector YAML example treats
 // `mcpServerUrl` and the oauth2 endpoint+clientId triple as
 // mandatory. The validator rejects malformed connectors at
 // registration time so the §15.1 admin API matches the documented
@@ -203,7 +201,7 @@ func (c Connector) Validate() error {
 	if c.Transport != "" && c.Transport != "streamable_http" {
 		return errors.New("connectorstore: v1 transport must be streamable_http")
 	}
-	// spec: §9.3 line 140 — every connector must be registered before
+	// spec: §9.3 — every connector must be registered before
 	// it can be used. The mcpServerUrl is the endpoint the registry
 	// authorizes; an empty value admits a connector that cannot be
 	// dialed and would later fail at adapter-manifest time. F-9.3.10.
@@ -223,7 +221,7 @@ func (c Connector) Validate() error {
 		if c.Auth.Type != "" && c.Auth.Type != "oauth2" {
 			return errors.New("connectorstore: auth.type must be oauth2")
 		}
-		// spec: §9.3 line 116-130 — an oauth2 auth block must carry
+		// spec: §9.3 — an oauth2 auth block must carry
 		// authorizationEndpoint, tokenEndpoint, and clientId. Without
 		// these the OAuth authorize endpoint fails late at
 		// `handleAuthorizeConnector` with CONNECTOR_OAUTH_INCOMPLETE
@@ -254,7 +252,7 @@ func (c Connector) Validate() error {
 		if c.Auth.ClientSecretRef != "" && !strings.Contains(c.Auth.ClientSecretRef, "/") {
 			return errors.New("connectorstore: auth.clientSecretRef must be a namespace/name reference")
 		}
-		// spec: §9.2 line 87 — expected_domain is the connector's
+		// spec: §9.2 — expected_domain is the connector's
 		// url-mode hard enforcement boundary, enforced at emit time when
 		// the §9.3 OAuth flow produces a url-mode URL (the gateway drops
 		// any URL whose host does not match it). Registration validates
@@ -273,7 +271,7 @@ func (c Connector) Validate() error {
 
 // validateExpectedDomain checks that an expected_domain is a
 // syntactically valid host or `*.suffix` wildcard. It rejects an empty
-// pattern, a scheme/path, and a bare `*` so the §9.2 line 87 boundary
+// pattern, a scheme/path, and a bare `*` so the §9.2 boundary
 // cannot be registered as a wildcard that matches everything.
 func validateExpectedDomain(ed string) error {
 	pat := strings.ToLower(strings.TrimSpace(ed))
@@ -316,7 +314,7 @@ func NewMemory() *Memory {
 	return &Memory{connectors: map[string]map[string]Connector{}}
 }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -343,7 +341,7 @@ func (m *Memory) Create(_ context.Context, c Connector) error {
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = c.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if c.Version == 0 {
 		c.Version = 1
 	}
@@ -407,7 +405,7 @@ func (m *Memory) Update(_ context.Context, tenantID, id string, mutate func(*Con
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match precondition compares
 	// against the new value.
 	row.Version++
@@ -466,7 +464,7 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, id string, at time.Time
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	// spec: §15.1 line 1213 — a soft-delete is a write; advance the
+	// spec: §15.1 — a soft-delete is a write; advance the
 	// version so a stale If-Match on a later operation is caught.
 	row.Version++
 	tenant[id] = row
@@ -487,7 +485,7 @@ func (m *Memory) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // of rows removed. The erasure orchestrator invokes this after
 // soft-deletes have propagated through downstream consumers.
 //
-// spec: §4.2 line 173 — connectors are tenant-scoped, so a tenant
+// spec: §4.2 — connectors are tenant-scoped, so a tenant
 // erasure can purge their definitions cleanly.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" || tenantID == AllTenantsSentinel {

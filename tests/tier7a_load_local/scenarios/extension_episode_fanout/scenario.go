@@ -7,7 +7,7 @@
 // the trigger into the gateway LLM Proxy and dispatches the extension as
 // a single per-tree episode whose joined sessions batch onto one
 // elicitation prompt: many concurrent exhausting sessions in one tree
-// join the one pending episode (treeConsent.pending / §8.6 line 719
+// join the one pending episode (treeConsent.pending / §8.6
 // batching) rather than opening a second elicitation, then the episode's
 // per-session completion fan-out raises or terminates each joined
 // session. A single tracked episode goroutine per tree owns the whole
@@ -24,7 +24,7 @@
 //   - Every joined session is reclaimed (raised or terminated); no
 //     session is left denied with nothing to clear it.
 //   - Exactly one elicitation opens per tree for a batch of concurrent
-//     exhausting sessions (§8.6 line 719): the deterministic single-batch
+//     exhausting sessions (§8.6): the deterministic single-batch
 //     phase drives every session of every tree into one held-open episode
 //     at once and asserts elicitations == treeCount, so a regression to a
 //     per-session prompt (or a per-session-after-serialization prompt)
@@ -228,7 +228,6 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	// global elicitation count is not a fixed number. This phase drives
 	// every session of every tree into ONE held-open episode per tree at
 	// once and asserts exactly treeCount elicitations opened — the §8.6
-	// line 719 "one elicitation at a time, concurrent requests batched"
 	// invariant. A regression that dispatches joined sessions so they do
 	// not overlap inside the elicitation (opening a second prompt per tree,
 	// or per session) fails here.
@@ -252,7 +251,7 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 // inside the one prompt re-elicit once the first rejection resolves
 // (their sibling subtrees are still extendable), pushing the after-count
 // above treeCount and failing here. It records the observed prompt count.
-// spec: §8.6 line 719, line 729.
+// spec: §8.6.
 func (s *Scenario) assertOnePromptPerTree() error {
 	budgets := newSubtreeDenialSource()
 	total := treeCount * sessionsPerTree
@@ -311,7 +310,7 @@ func (s *Scenario) assertOnePromptPerTree() error {
 	got := el.count()
 	if got != treeCount {
 		el.releaseAll()
-		return fmt.Errorf("§8.6 line 719 single-prompt-per-tree violated: %d elicitations opened for %d trees of %d concurrent sessions each (want exactly %d — concurrent sessions in one tree must batch onto one prompt)",
+		return fmt.Errorf("§8.6 single-prompt-per-tree violated: %d elicitations opened for %d trees of %d concurrent sessions each (want exactly %d — concurrent sessions in one tree must batch onto one prompt)",
 			got, treeCount, sessionsPerTree, treeCount)
 	}
 
@@ -334,7 +333,7 @@ func (s *Scenario) assertOnePromptPerTree() error {
 	after := el.count()
 	s.singleBatchElicitations = after
 	if after != treeCount {
-		return fmt.Errorf("§8.6 line 719: %d elicitations after resolution across %d trees, want %d (a sequential dispatch re-elicits sessions that did not batch onto the one per-tree prompt)",
+		return fmt.Errorf("§8.6: %d elicitations after resolution across %d trees, want %d (a sequential dispatch re-elicits sessions that did not batch onto the one per-tree prompt)",
 			after, treeCount, treeCount)
 	}
 	return nil
@@ -429,14 +428,14 @@ func (e *barrierElicitor) releaseAll() {
 
 // subtreeDenialSource is a BudgetSource whose extension-denied flag is
 // scoped per requesting subtree, matching the production Postgres source
-// that keys the flag with a per-row subtree id (§8.6 line 729/730). It
+// that keys the flag with a per-row subtree id (§8.6). It
 // wraps a MemoryBudgetSource for the budget math and overrides only the
 // denial scope: Deny(requestingSessionID) marks that subtree alone, and
 // TreeBudget(sessionID) reports ExtensionDenied only for that session's
 // own subtree. This lets the single-prompt-per-tree phase drive the
 // rejection path without one session's rejection silently denying its
 // siblings, so a sequential dispatch's second-prompt regression surfaces.
-// spec: §8.6 line 719, line 729.
+// spec: §8.6.
 type subtreeDenialSource struct {
 	inner  *leasecontrol.MemoryBudgetSource
 	mu     sync.Mutex

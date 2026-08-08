@@ -415,7 +415,7 @@ func assertInvalidStateTransition(t *testing.T, body map[string]any, wantCurrent
 	}
 }
 
-// spec: §4.2 line 156 — the session envelope carries the §4.2 record
+// spec: §4.2 — the session envelope carries the §4.2 record
 // fields the spec lists for client visibility: recoveryGeneration
 // (counter visible per spec line 156), schemaVersion, and the optional
 // cwd and podAssignment when present. The counter and the schema
@@ -439,7 +439,7 @@ func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
 	// tag omits the empty-flag so a fresh session reports zero).
 	got, ok := body["recoveryGeneration"]
 	if !ok {
-		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2 line 156)")
+		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2)")
 	}
 	// JSON numbers round-trip as float64 in map[string]any.
 	if f, _ := got.(float64); f != 0 {
@@ -449,7 +449,7 @@ func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
 	// schemaVersion: v1 sessions report schema_version=1.
 	gotSV, ok := body["schemaVersion"]
 	if !ok {
-		t.Errorf("envelope missing 'schemaVersion' field (§4.2 line 156)")
+		t.Errorf("envelope missing 'schemaVersion' field (§4.2)")
 	}
 	if f, _ := gotSV.(float64); f != 1 {
 		t.Errorf("schemaVersion: want 1 on a v1 session, got %v", gotSV)

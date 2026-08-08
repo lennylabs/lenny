@@ -140,16 +140,16 @@ var spec161Metrics = []string{
 	"lenny_session_eviction_total_loss_total", "lenny_network_policy_cidr_drift_total",
 	"lenny_billing_redis_stream_oldest_entry_age_seconds", "lenny_otlp_export_tls_handshake_total",
 	"lenny_ops_admin_api_tls_handshake_total",
-	// §12.5 line 321 — retention GC metrics.
+	// §12.5 — retention GC metrics.
 	"lenny_gc_runs_total", "lenny_gc_artifacts_deleted", "lenny_gc_errors_total",
 	"lenny_gc_duration_seconds",
-	// §12.5 line 291 — drain readiness check counter.
+	// §12.5 — drain readiness check counter.
 	"lenny_drain_readiness_checks_total",
-	// §12.8 line 739 — legal-hold checkpoint-gap reconciler counter.
+	// §12.8 — legal-hold checkpoint-gap reconciler counter.
 	"lenny_legal_hold_checkpoint_gaps_total",
-	// §25.6 line 2926 — diagnostic endpoint latency histogram.
+	// §25.6 — diagnostic endpoint latency histogram.
 	"lenny_diagnostics_request_duration_seconds",
-	// §16.1 line 713 / §25.13 lines 4833–4835 — bundled-alerting
+	// §16.1 / §25.13 — bundled-alerting
 	// observability surface.
 	"lenny_alerting_rules_bundled", "lenny_alerting_rule_overrides",
 	"lenny_alerting_rule_eval_duration_seconds",

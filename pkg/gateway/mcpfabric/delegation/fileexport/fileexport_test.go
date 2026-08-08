@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 )
 
-// spec: §8.7 line 789 — destPrefix must be a relative path, no `..`, no
+// spec: §8.7 — destPrefix must be a relative path, no `..`, no
 // absolute paths. F-8.7.3.
 func TestValidateDestPrefix_spec_8_7_789(t *testing.T) {
 	cases := []struct {
@@ -46,7 +46,7 @@ func TestValidateDestPrefix_spec_8_7_789(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 264 — default fileExportLimits is
+// spec: §8.3 — default fileExportLimits is
 // { maxFiles: 100, maxTotalSize: 100MB }. F-8.7.4.
 func TestDefaultFileExportLimits_spec_8_3_264(t *testing.T) {
 	if fileexport.DefaultFileExportLimits.MaxFiles != 100 {
@@ -57,7 +57,7 @@ func TestDefaultFileExportLimits_spec_8_3_264(t *testing.T) {
 	}
 }
 
-// spec: §8.7 lines 790-791 — file count and aggregate size are checked
+// spec: §8.7 — file count and aggregate size are checked
 // against fileExportLimits; the boundary admits and one-over rejects.
 // F-8.7.4.
 func TestFileExportLimitsCheck_spec_8_7_790(t *testing.T) {
@@ -86,7 +86,7 @@ func TestFileExportLimitsZeroIsUnlimited(t *testing.T) {
 	}
 }
 
-// spec: §8.7 line 787 — a file resolving (via realpath) inside the
+// spec: §8.7 — a file resolving (via realpath) inside the
 // workspace root is admitted. F-8.7.2.
 func TestResolveWithinRootAdmitsContainedFile_spec_8_7_787(t *testing.T) {
 	root := t.TempDir()
@@ -128,7 +128,7 @@ func TestResolveWithinRootAdmitsInternalSymlink_spec_8_7_787(t *testing.T) {
 	}
 }
 
-// spec: §8.7 line 787 — the `./data → /etc/passwd` attack: a symlink
+// spec: §8.7 — the `./data → /etc/passwd` attack: a symlink
 // resolving outside the workspace root is rejected. F-8.7.2.
 func TestResolveWithinRootRejectsEscapingSymlink_spec_8_7_787(t *testing.T) {
 	root := t.TempDir()

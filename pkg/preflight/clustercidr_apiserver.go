@@ -45,9 +45,8 @@ type ClusterCIDRConfig struct {
 // check passes with an advisory note rather than failing, mirroring the
 // CIDR drift detector's tolerance for that topology.
 //
-// spec: §13.2 lines 230-262 (kubeApiServerCIDR ClusterIP validation),
-// §13.2 lines 416/446-450 (excludeClusterPodCIDR / excludeClusterServiceCIDR
-// must match the discovered cluster CIDRs). F-13.2.13.
+// spec: §13.2,
+// §13.2. F-13.2.13.
 func CheckClusterCIDRDiscovery(apiServerClusterIP string, nodePodCIDRs []string, cfg ClusterCIDRConfig) Decision {
 	ip := net.ParseIP(apiServerClusterIP)
 	if ip == nil {

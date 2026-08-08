@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.5 lines 313, 326 — in concurrent-workspace mode the
+// spec: §12.5 — in concurrent-workspace mode the
 // "latest 2" checkpoint cap applies independently per slot, so the
 // retention catalog keys rotation on (session_id, slot_id) pairs.
 // Migration 0112 adds the slot_id column and re-points the rotation

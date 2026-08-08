@@ -47,12 +47,12 @@ const (
 	EventDelegationSelfRecursionAllowed EventType = "delegation.self_recursion_allowed"
 	EventDelegationCycleWarning         EventType = "delegation.cycle_warning"
 
-	// §8.2 / §11.7 line 62 — `delegation.spawned` is recorded when a
+	// §8.2 / §11.7 — `delegation.spawned` is recorded when a
 	// child session is created via recursive delegation. The §11.7 row
 	// carries `parent_session_id`, `child_session_id`, `delegation_depth`,
 	// `runtime_ref`, `pool_ref`, `isolation_profile`, and the tuple
 	// SIEM consumers use to attribute billing and lineage. spec: §8.2 /
-	// §11.7 line 62; F-8.5.8.
+	// §11.7; F-8.5.8.
 	EventDelegationSpawned EventType = "delegation.spawned"
 
 	// §8.2 / §8.3 — Helm-driven cycle-detection setting changes.
@@ -63,7 +63,7 @@ const (
 	// §11.6 — operator-managed circuit-breaker state changes.
 	EventCircuitBreakerStateChanged EventType = "circuit_breaker.state_changed"
 
-	// §15.1 lines 818-819 — operator tenant suspend/resume actions.
+	// §15.1 — operator tenant suspend/resume actions.
 	EventTenantSuspended EventType = "tenant.suspended"
 	EventTenantResumed   EventType = "tenant.resumed"
 
@@ -111,7 +111,7 @@ const (
 	// §17.2 — admission-plane feature-flag downgrade acknowledgement.
 	EventDeploymentFeatureFlagDowngradeAcknowledged EventType = "deployment.feature_flag_downgrade_acknowledged"
 
-	// §12.5 line 291 / §16.7 — drain-force override audit. The
+	// §12.5 / §16.7 — drain-force override audit. The
 	// lenny-drain-readiness webhook emits this event when a node
 	// carries the lenny.dev/drain-force: "true" override and the
 	// eviction is admitted despite a degraded artifact store.
@@ -128,13 +128,13 @@ const (
 	EventSessionAwaitingActionEntered   EventType = "session.awaiting_action_entered"
 	EventSessionExpiredInAwaitingAction EventType = "session.expired_in_awaiting_action"
 	EventSessionCascadeApplied          EventType = "session.cascade_applied"
-	// EventSessionSetupCommandFailed is the §7.5 / §7.3 line 387
+	// EventSessionSetupCommandFailed is the §7.5 / §7.3
 	// non-retryable failure category, emitted by the gateway when a
 	// setup command exits non-zero or is killed by the per-command /
 	// aggregate cap. The audit Detail carries `cmd`, `exitCode`,
 	// `stderr_excerpt`, `index`, and `duration_ms` so an operator can
 	// reconstruct what happened without parsing the gRPC error string.
-	// spec: §7.5 line 475, §7.3 line 387 — F-7.5.9.
+	// spec: §7.5, §7.3 — F-7.5.9.
 	EventSessionSetupCommandFailed EventType = "session.setup_command_failed"
 
 	// EventSessionForceTerminated is the §24.11 operator force-terminate
@@ -144,8 +144,7 @@ const (
 	// `previous_state`, and the optional `reason`. §16.7 does not
 	// enumerate this operability action (it is a §24.11 CLI surface, not a
 	// §25 lifecycle event), so it is recognized by IsKnownEventType via
-	// auxKnownEventTypes but excluded from Catalog(). spec: §24.11 line
-	// 136 — F-24.11.3.
+	// auxKnownEventTypes but excluded from Catalog(). spec: §24.11 — F-24.11.3.
 	EventSessionForceTerminated EventType = "session.force_terminated"
 
 	// §9.3 connector lifecycle audit events. The §15.1 admin connector
@@ -156,7 +155,7 @@ const (
 	// initiated, or completed a connector OAuth flow against which
 	// connector_id; the §16.7 catalog enumerates each so audit-sink
 	// validators (IsKnownEventType) do not discard the rows as unknown
-	// event types. spec: §9.3 line 116-164 — F-9.3.9.
+	// event types. spec: §9.3 — F-9.3.9.
 	EventAdminConnectorCreated                EventType = "admin.connector.created"
 	EventAdminConnectorUpdated                EventType = "admin.connector.updated"
 	EventAdminConnectorSoftDeleted            EventType = "admin.connector.soft_deleted"
@@ -169,8 +168,7 @@ const (
 // registration gate emit these through the §11.7 audit path. §16.7 does
 // not enumerate them (it predates the registry-gate audit surface), so
 // they are recognized by IsKnownEventType via auxKnownEventTypes but
-// excluded from Catalog(). spec: §15 line 1414 (machine-enforceable
-// registration gate); §24.8 line 113. F-24.8.2.
+// excluded from Catalog(). spec: §15; §24.8. F-24.8.2.
 const (
 	EventAdminExternalAdapterRegistered       EventType = "admin.external_adapter.registered"
 	EventAdminExternalAdapterUpdated          EventType = "admin.external_adapter.updated"
@@ -209,10 +207,9 @@ const (
 	// §25.6 `fix=true` auto-remediation lifecycle. The doctor
 	// orchestrator emits these around a `POST /v1/admin/diagnostics/run?-
 	// fix=true` run: one fix_started/fix_completed pair bounds the run,
-	// and one fix_applied / fix_skipped / fix_failed per finding. §16.7
-	// line 685 enumerates only the four read-side diagnostics events, so
+	// and one fix_applied / fix_skipped / fix_failed per finding. §16.7 enumerates only the four read-side diagnostics events, so
 	// these are recognized by IsKnownEventType (see auxKnownEventTypes)
-	// but excluded from Catalog(). spec: §25.6 lines 2975-2982 — F-25.6.2.
+	// but excluded from Catalog(). spec: §25.6 — F-25.6.2.
 	EventDiagnosticsFixStarted   EventType = "diagnostics.fix_started"
 	EventDiagnosticsFixApplied   EventType = "diagnostics.fix_applied"
 	EventDiagnosticsFixSkipped   EventType = "diagnostics.fix_skipped"
@@ -296,7 +293,7 @@ const (
 	// preflight), "legal_hold_escrow" (Phase 3.5 escrow), and
 	// "platform_audit_write" (CMP-058). It shares the
 	// lenny_data_residency_violation_total counter across surfaces.
-	// spec: §12.8 lines 921-923, line 936.
+	// spec: §12.8.
 	EventDataResidencyViolationAttempt EventType = "DataResidencyViolationAttempt"
 )
 
@@ -311,7 +308,7 @@ const (
 	EventLegalHoldEscrowRegionResolved           EventType = "legal_hold.escrow_region_resolved"
 	EventLegalHoldEscrowed                       EventType = "legal_hold.escrowed"
 	EventLegalHoldEscrowReleased                 EventType = "legal_hold.escrow_released"
-	// §12.8 line 739 — emitted by the legal-hold reconciler when a
+	// §12.8 — emitted by the legal-hold reconciler when a
 	// session under legal_hold=true is observed with a checkpoint
 	// sequence gap (one or more checkpoints already rotated).
 	EventLegalHoldCheckpointGapDetected EventType = "legal_hold.checkpoint_gap_detected"
@@ -326,16 +323,16 @@ const (
 // unknown event types.
 const (
 	// EventInterceptorRejected is the §4.8 interceptor-chain REJECT
-	// audit event. §11.7 line 331 names it in the per-tenant
+	// audit event. §11.7 names it in the per-tenant
 	// audit-write traffic list ("session.created, token.exchanged,
 	// interceptor.rejected"); §4.8 / §16.7 mention it only to contrast
 	// it with admission.circuit_breaker_rejected (the pre-chain gate,
 	// which is not an interceptor). It is emitted in production by
 	// pkg/gateway/policy.RecordRejection on every chain REJECT.
-	// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
+	// spec: §11.7; §16.7. F-11.7.18.
 	EventInterceptorRejected EventType = "interceptor.rejected"
 
-	// EventInterceptorFailPolicyWeakened is the §4.8 line 1034 audit
+	// EventInterceptorFailPolicyWeakened is the §4.8 audit
 	// event emitted when an admin flips an external interceptor's
 	// failPolicy from fail-closed to fail-open. It carries interceptor_ref,
 	// old_fail_policy, new_fail_policy, the server-minted transition_ts,
@@ -343,41 +340,40 @@ const (
 	// affected_policy_count / affected_policy_names of the active
 	// DelegationPolicy resources whose contentPolicy.interceptorRef names
 	// the interceptor. It is the producer the §8.3 rule-5 weakening
-	// cooldown is paired with. spec: §4.8 line 1034; §8.3 line 224
+	// cooldown is paired with. spec: §4.8; §8.3
 	// (SEC-013). F-4.8.17.
 	EventInterceptorFailPolicyWeakened EventType = "interceptor.fail_policy_weakened"
 
-	// EventInterceptorFailPolicyStrengthened is the §4.8 line 1034
+	// EventInterceptorFailPolicyStrengthened is the §4.8
 	// audit event emitted on the reverse fail-open to fail-closed
 	// transition, with the same fields. The strengthen takes effect
-	// immediately and arms no cooldown. spec: §4.8 line 1034. F-4.8.17.
+	// immediately and arms no cooldown. spec: §4.8. F-4.8.17.
 	EventInterceptorFailPolicyStrengthened EventType = "interceptor.fail_policy_strengthened"
 
-	// EventInterceptorWeakeningCooldownActive is the §8.3 line 218
+	// EventInterceptorWeakeningCooldownActive is the §8.3
 	// audit event emitted once per cooldown-window entry (not per
 	// rejected request) when a fail-closed to fail-open transition arms
 	// the weakening cooldown. It carries interceptor_ref, transition_ts,
 	// cooldown_seconds, and the affected_policy_count /
-	// affected_policy_names. spec: §8.3 line 218 (SEC-013). F-4.8.17.
+	// affected_policy_names. spec: §8.3. F-4.8.17.
 	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
 
-	// EventPoolIsolationWarning is the §8.3 line 350 proactive
+	// EventPoolIsolationWarning is the §8.3 proactive
 	// pool-registration audit event: a pool created or updated via the
 	// admin API would let a more-restrictive parent pool delegate to this
 	// weaker pool under an active DelegationPolicy rule. It carries
 	// pool_name, pool_isolation, matched_policy_rule, conflicting_pool_name,
 	// and conflicting_isolation. §16.7 does not enumerate it, so it is
 	// recognized via auxKnownEventTypes yet excluded from Catalog().
-	// spec: §8.3 lines 349-352; §11.7. F-11.2.1.
+	// spec: §8.3; §11.7. F-11.2.1.
 	EventPoolIsolationWarning EventType = "pool.isolation_warning"
 
-	// EventGDPRErasureJobRetried is the §24.12 line 143 / §12.8 line 766
+	// EventGDPRErasureJobRetried is the §24.12 / §12.8
 	// audit row for an operator retry of a failed erasure job. Emitted by
 	// pkg/gateway/admin handleRetryErasureJob.
 	EventGDPRErasureJobRetried EventType = "gdpr.erasure_job_retried"
 
-	// EventGDPRProcessingRestrictionCleared is the §24.12 line 144 / §12.8
-	// line 764 audit row for an operator manually clearing a user's GDPR
+	// EventGDPRProcessingRestrictionCleared is the §24.12 / §12.8 audit row for an operator manually clearing a user's GDPR
 	// Article 18 processing-restriction flag. Emitted by
 	// pkg/gateway/admin handleClearErasureRestriction.
 	EventGDPRProcessingRestrictionCleared EventType = "gdpr.processing_restriction_cleared"
@@ -457,10 +453,10 @@ var catalog = []EventType{
 // additions. They are recognized by IsKnownEventType so audit-sink
 // validators accept the rows, but are intentionally excluded from
 // Catalog() because Catalog() transcribes only the §16.7 enumeration.
-// spec: §11.7 line 331. F-11.7.18.
+// spec: §11.7. F-11.7.18.
 var auxKnownEventTypes = []EventType{
 	EventInterceptorRejected,
-	// §4.8 line 1034 / §8.3 SEC-013 interceptor failPolicy-transition
+	// §4.8 / §8.3 SEC-013 interceptor failPolicy-transition
 	// events. Emitted through the §11.7 audit path by the admin
 	// interceptor-registry PUT handler; §16.7 does not enumerate them, so
 	// they are recognized by IsKnownEventType (audit-sink validators must
@@ -468,7 +464,7 @@ var auxKnownEventTypes = []EventType{
 	EventInterceptorFailPolicyWeakened,
 	EventInterceptorFailPolicyStrengthened,
 	EventInterceptorWeakeningCooldownActive,
-	// §8.3 line 350 proactive pool-registration warning. Emitted through
+	// §8.3 proactive pool-registration warning. Emitted through
 	// the §11.7 audit path by the admin pool create/update handlers; §16.7
 	// does not enumerate it, so it is recognized by IsKnownEventType yet
 	// excluded from Catalog(). F-11.2.1.
@@ -484,7 +480,7 @@ var auxKnownEventTypes = []EventType{
 	// session lifecycle terminals but not this operator-driven force, so it
 	// is recognized by IsKnownEventType yet excluded from Catalog(). F-24.11.3.
 	EventSessionForceTerminated,
-	// §15.1 lines 818-819 tenant suspend/resume operator actions. §16.7
+	// §15.1 tenant suspend/resume operator actions. §16.7
 	// does not enumerate them, so they are recognized by IsKnownEventType
 	// (audit-sink validators must not discard them) yet excluded from
 	// Catalog(), which transcribes only the §16.7 enumeration. F-15.1.3.
@@ -499,7 +495,7 @@ var auxKnownEventTypes = []EventType{
 	EventAdminExternalAdapterDeleted,
 	EventAdminExternalAdapterValidated,
 	EventAdminExternalAdapterValidationFailed,
-	// §25.6 doctor `fix=true` auto-remediation lifecycle. §16.7 line 685
+	// §25.6 doctor `fix=true` auto-remediation lifecycle. §16.7
 	// enumerates only the read-side diagnostics events, so these are
 	// recognized by IsKnownEventType yet excluded from Catalog(). F-25.6.2.
 	EventDiagnosticsFixStarted,
@@ -522,7 +518,7 @@ func Catalog() []EventType {
 // event (auxKnownEventTypes). It is the discard gate for audit-sink
 // validators, so it must accept every event the gateway emits through
 // the standard §11.7 audit path, not only the §16.7 subset.
-// spec: §11.7 line 331. F-11.7.18.
+// spec: §11.7. F-11.7.18.
 func IsKnownEventType(t EventType) bool {
 	for _, v := range catalog {
 		if t == v {
@@ -544,24 +540,23 @@ func IsKnownEventType(t EventType) bool {
 // also routed to the operational event stream so on-call operators can
 // ... in real time"). When such an event is emitted on the stream the
 // envelope is CloudEvents with datacontenttype application/ocsf+json and
-// the OCSF v1.1.0 record in the data field. spec: §16.7 lines 661, 670,
-// 674, 682, 687; §25.5 line 2556.
+// the OCSF v1.1.0 record in the data field. spec: §16.7; §25.5.
 var operationalStreamEscalations = map[EventType]bool{
-	EventDelegationSelfRecursionAllowed:             true, // spec: §16.7 line 670
-	EventElicitationContentTamperDetected:           true, // spec: §16.7 line 674
-	EventDeploymentFeatureFlagDowngradeAcknowledged: true, // spec: §16.7 line 682
-	EventAuditOcsfRetranslateRequested:              true, // spec: §16.7 line 687
-	EventAuditPartitionDropForced:                   true, // spec: §16.7 line 687
-	EventEventBusRepublishRequested:                 true, // spec: §16.7 line 687
-	// spec: §18 line 609 — the Helm-driven deployment-transition audit
+	EventDelegationSelfRecursionAllowed:             true, // spec: §16.7
+	EventElicitationContentTamperDetected:           true, // spec: §16.7
+	EventDeploymentFeatureFlagDowngradeAcknowledged: true, // spec: §16.7
+	EventAuditOcsfRetranslateRequested:              true, // spec: §16.7
+	EventAuditPartitionDropForced:                   true, // spec: §16.7
+	EventEventBusRepublishRequested:                 true, // spec: §16.7
+	// spec: §18 — the Helm-driven deployment-transition audit
 	// events are also CloudEvent types emitted onto the §25.5 operational
 	// event stream by the responsible subsystem (the deployment-config
 	// reconciliation endpoint, F-8.2.5 / F-9.2.10 / F-17.2.8).
-	EventGatewayCycleDetectionModeChanged:                true, // spec: §16.7 line 672; §18 line 609
-	EventGatewayAllowSelfRecursionChanged:                true, // spec: §16.7 line 672
-	EventGatewayDefaultMaxDepthChanged:                   true, // spec: §16.7 line 672
-	EventPlatformElicitationContentIntegrityFloorChanged: true, // spec: §16.7 line 676; §18 line 609
-	EventTenantElicitationContentIntegrityFloorClamp:     true, // spec: §16.7 line 677; §18 line 609
+	EventGatewayCycleDetectionModeChanged:                true, // spec: §16.7; §18
+	EventGatewayAllowSelfRecursionChanged:                true, // spec: §16.7
+	EventGatewayDefaultMaxDepthChanged:                   true, // spec: §16.7
+	EventPlatformElicitationContentIntegrityFloorChanged: true, // spec: §16.7; §18
+	EventTenantElicitationContentIntegrityFloorClamp:     true, // spec: §16.7; §18
 }
 
 // EscalatesToOperationalStream reports whether an audit event of type t
@@ -569,7 +564,7 @@ var operationalStreamEscalations = map[EventType]bool{
 // §11.7 audit log. The escalation set is the §16.7 events flagged for
 // real-time operator visibility (self-recursion admission, elicitation
 // content tampering, feature-flag downgrade acknowledgement, and the
-// §25.9 audit-maintenance operations). spec: §16.7 line 661.
+// §25.9 audit-maintenance operations). spec: §16.7.
 func EscalatesToOperationalStream(t EventType) bool {
 	return operationalStreamEscalations[t]
 }

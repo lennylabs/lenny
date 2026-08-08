@@ -55,8 +55,7 @@ func spanStringAttr(s sdktrace.ReadOnlySpan, key string) (string, bool) {
 	return "", false
 }
 
-// TestStartSessionEmitsSessionStartSpan_spec_16_3 asserts the §16.3
-// line 341 Pod-emitted `session.start` span fires on a clean StartSession.
+// TestStartSessionEmitsSessionStartSpan_spec_16_3 asserts the §16.3 Pod-emitted `session.start` span fires on a clean StartSession.
 // This is the Go-side adapter OTel emitter F-16.3.6 was missing.
 func TestStartSessionEmitsSessionStartSpan_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
@@ -101,8 +100,7 @@ func TestStartSessionSpanRecordsRuntimeStartError_spec_16_3(t *testing.T) {
 	}
 }
 
-// TestAttachEmitsToolCallSpanPerInvocation_spec_16_3 asserts the §16.3
-// line 343 Pod-emitted `session.tool_call` span fires once per
+// TestAttachEmitsToolCallSpanPerInvocation_spec_16_3 asserts the §16.3 Pod-emitted `session.tool_call` span fires once per
 // adapter-local tool invocation, carrying the tool name attribute.
 func TestAttachEmitsToolCallSpanPerInvocation_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
@@ -199,7 +197,7 @@ func TestAttachToolCallSpanRecordsToolError_spec_16_3(t *testing.T) {
 }
 
 // TestPrepareWorkspaceEmitsUploadSpan_spec_16_3 asserts the Pod half of
-// the §16.3 line 338 Gateway + Pod `session.upload` span: the adapter's
+// the §16.3 Gateway + Pod `session.upload` span: the adapter's
 // staging-stream RPC runs under a `session.upload` span carrying the
 // staged byte/file counts.
 func TestPrepareWorkspaceEmitsUploadSpan_spec_16_3(t *testing.T) {

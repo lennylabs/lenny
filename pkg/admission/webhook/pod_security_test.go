@@ -222,8 +222,7 @@ func TestPodSecurityValidatesInitContainers(t *testing.T) {
 	}
 }
 
-// TestPodSecurityValidatesEphemeralContainers_spec_13_1 asserts §13.1
-// line 27: the per-container baseline applies to ephemeral debug
+// TestPodSecurityValidatesEphemeralContainers_spec_13_1 asserts §13.1: the per-container baseline applies to ephemeral debug
 // containers attached via pods/ephemeralcontainers. A privileged
 // ephemeral container — one that trips neither the cred UID/GID nor a
 // credential mount, so the dedicated cred-guard would let it through —
@@ -249,7 +248,7 @@ func TestPodSecurityValidatesEphemeralContainers_spec_13_1(t *testing.T) {
 			Object:      psPodRaw(t, pod),
 		})
 	if resp.Allowed {
-		t.Fatalf("a privileged ephemeral container must reject the pod (§13.1 line 27)")
+		t.Fatalf("a privileged ephemeral container must reject the pod (§13.1)")
 	}
 	if !strings.Contains(resp.Result.Message, `container "debugger"`) {
 		t.Errorf("rejection should name the ephemeral container, got %q", resp.Result.Message)

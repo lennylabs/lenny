@@ -118,7 +118,7 @@ func TestPrometheusDuration(t *testing.T) {
 
 // TestRenderPrometheusRuleEmitsOperatorAnnotations verifies a rule's
 // arbitrary Annotations passthrough lands on the rendered alert next to
-// the renderer-owned typed annotations (spec §25.13 line 4684 — the
+// the renderer-owned typed annotations (spec §25.13 — the
 // open-ended Annotations map of the Go Rule shape, used for Alertmanager
 // routing keys).
 func TestRenderPrometheusRuleEmitsOperatorAnnotations_spec_25_13_4684(t *testing.T) {
@@ -156,7 +156,7 @@ func TestRenderPrometheusRuleEmitsOperatorAnnotations_spec_25_13_4684(t *testing
 
 // TestRuleValidateRejectsReservedAnnotation verifies an operator cannot
 // shadow a renderer-owned annotation through the passthrough map, so each
-// annotation keeps a single source (spec §25.13 line 4684).
+// annotation keeps a single source (spec §25.13).
 func TestRuleValidateRejectsReservedAnnotation_spec_25_13_4684(t *testing.T) {
 	for _, key := range []string{"summary", "description", "runbook_url", "slo"} {
 		r := Rule{
@@ -220,7 +220,7 @@ func TestRenderPrometheusRuleRendersFullCatalog(t *testing.T) {
 // lets Prometheus evaluate the buckets in parallel rather than
 // serialising the full catalog through a single group.
 //
-// spec: §25.13 line 4822; F-25.13.9.
+// spec: §25.13; F-25.13.9.
 func TestRenderRuleGroupsBySeveritySplitsCatalog_spec_25_13_4822(t *testing.T) {
 	out, err := RenderRuleGroupsBySeverity("lenny", Catalog())
 	if err != nil {
@@ -258,7 +258,7 @@ func TestRenderRuleGroupsBySeveritySplitsCatalog_spec_25_13_4822(t *testing.T) {
 // renderer fails closed on a missing namePrefix rather than emitting a
 // group named ".critical".
 //
-// spec: §25.13 line 4822; F-25.13.9.
+// spec: §25.13; F-25.13.9.
 func TestRenderRuleGroupsBySeverityRejectsEmptyPrefix_spec_25_13_4822(t *testing.T) {
 	if _, err := RenderRuleGroupsBySeverity("", Catalog()); err == nil {
 		t.Error("an empty group-name prefix must be rejected")
@@ -269,7 +269,7 @@ func TestRenderRuleGroupsBySeverityRejectsEmptyPrefix_spec_25_13_4822(t *testing
 // containing only critical alerts renders one group, not three (no
 // empty warning or info groups).
 //
-// spec: §25.13 line 4822; F-25.13.9.
+// spec: §25.13; F-25.13.9.
 func TestRenderRuleGroupsBySeverityOmitsEmptyBuckets_spec_25_13_4822(t *testing.T) {
 	bucket := []Rule{{
 		Name:       "OnlyCritical",

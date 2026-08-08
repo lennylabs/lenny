@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §15.1 line 1140 — the environments dry-run preview validates the
+// spec: §15.1 — the environments dry-run preview validates the
 // definition and returns matched runtimes/connectors plus unmatched
 // selector terms without persisting or auditing.
 

@@ -67,7 +67,7 @@ const (
 // re-classifying.
 //
 // HTTPStatus, when non-zero, overrides the default code→status mapping
-// in the HTTP layer. §25.10 line 3866 maps DRIFT_DESIRED_STATE_MISSING
+// in the HTTP layer. §25.10 maps DRIFT_DESIRED_STATE_MISSING
 // to either 404 (cold-start: no snapshot exists at all) or 503
 // (Postgres down). The default mapping is the conservative 503; the
 // cold-start path sets HTTPStatus = 404 so a fresh install reads as a
@@ -122,12 +122,11 @@ type SnapshotStore interface {
 	Delete(ctx context.Context, id string) error
 	// PromoteTargetToLive atomically replaces the live snapshot row with the
 	// target row, then removes the target row, so the in-flight desired
-	// state becomes the desired state in effect at §25.10 Verification-phase
-	// completion (spec line 3789). The swap is a single atomic step: a
+	// state becomes the desired state in effect at §25.10 Verification-phase completion. The swap is a single atomic step: a
 	// concurrent reader observes either the old live row or the new one,
 	// never an intermediate state. When no target row exists (a defensive
 	// call with nothing to promote), the live row is left unchanged and the
-	// call is a no-op. spec: §25.10 line 3789.
+	// call is a no-op. spec: §25.10.
 	PromoteTargetToLive(ctx context.Context, upgradeID string) error
 }
 
@@ -174,7 +173,7 @@ func (s *MemSnapshotStore) Delete(_ context.Context, id string) error {
 // missing target row leaves the live row untouched (a no-op promote).
 // The promoted live row carries the SourceHelmValues provenance and the
 // target row's written-at, matching the §25.10 "target → live promotion"
-// behavior. spec: §25.10 line 3789.
+// behavior. spec: §25.10.
 func (s *MemSnapshotStore) PromoteTargetToLive(_ context.Context, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,7 +197,7 @@ type RunningStateReader interface {
 	RunningState(ctx context.Context, scope string) (map[string]any, error)
 }
 
-// RunningStateCache is the §25.10 line 3822 running-state cache: the
+// RunningStateCache is the §25.10 running-state cache: the
 // gateway-aggregation result for a scope is held for
 // ops.drift.runningStateCacheTTLSeconds so repeat drift reports skip
 // the expensive scatter over 50+ pools. The HTTP layer honors
@@ -237,7 +236,7 @@ type memCacheEntry struct {
 
 // NewMemRunningStateCache returns an in-memory cache with the given TTL.
 // A non-positive TTL disables caching: Lookup always misses and Store is
-// a no-op (the §25.10 line 3824 "0 disables" posture).
+// a no-op (the §25.10 posture).
 func NewMemRunningStateCache(ttl time.Duration) *MemRunningStateCache {
 	return &MemRunningStateCache{
 		ttl:     ttl,
@@ -336,7 +335,7 @@ const staleWarningText = "The bootstrap_seed_snapshot is %d days old. " +
 type Service struct {
 	snapshots SnapshotStore
 	running   RunningStateReader
-	// runningCache is the optional §25.10 line 3822 running-state cache.
+	// runningCache is the optional §25.10 running-state cache.
 	// A nil cache disables caching and every report reads fresh.
 	runningCache RunningStateCache
 	// StaleWarningDays is ops.drift.snapshotStaleWarningDays (default 7);
@@ -344,19 +343,19 @@ type Service struct {
 	StaleWarningDays int
 	now              func() time.Time
 
-	// metrics is the §25.10 line 3858-3859 drift-metric sink. A nil sink
+	// metrics is the §25.10 drift-metric sink. A nil sink
 	// is the no-op default; deps wires a Prometheus-backed one. F-25.10.3.
 	metrics Metrics
-	// audit is the §25.10 line 3871 drift audit-event sink. A nil sink is
+	// audit is the §25.10 drift audit-event sink. A nil sink is
 	// the no-op default; deps wires a sink that emits the §16.7 chain
 	// rows (logged until the lenny-ops audit-store client lands).
 	// F-25.10.2.
 	audit AuditSink
 	// applier applies a single drifted resource through the gateway admin
-	// API during reconciliation (§25.10 line 3842). A nil applier leaves
+	// API during reconciliation (§25.10). A nil applier leaves
 	// reconcile able to dry-run but not confirm. F-25.10.1.
 	applier ResourceApplier
-	// progress emits the §25.10 line 3844 operation_progressed event on
+	// progress emits the §25.10 operation_progressed event on
 	// each resource reconciliation. A nil emitter skips emission.
 	// F-25.10.1.
 	progress ProgressEmitter
@@ -366,11 +365,10 @@ type Service struct {
 	reconciles *ReconcileTracker
 }
 
-// DefaultStaleWarningDays is the §25.10 ops.drift.snapshotStaleWarningDays
-// spec default (line 3801, 3809).
+// DefaultStaleWarningDays is the §25.10 ops.drift.snapshotStaleWarningDays spec default.
 const DefaultStaleWarningDays = 7
 
-// DefaultRunningStateCacheTTL is the §25.10 line 3824
+// DefaultRunningStateCacheTTL is the §25.10
 // ops.drift.runningStateCacheTTLSeconds default.
 const DefaultRunningStateCacheTTL = 60 * time.Second
 
@@ -389,9 +387,8 @@ func NewService(snapshots SnapshotStore, running RunningStateReader) *Service {
 	}
 }
 
-// SetRunningStateCache installs the §25.10 line 3822 running-state
-// cache. A nil cache disables caching (the §25.10 line 3824 "0
-// disables" posture). F-25.10.7.
+// SetRunningStateCache installs the §25.10 running-state
+// cache. A nil cache disables caching (the §25.10 posture). F-25.10.7.
 func (s *Service) SetRunningStateCache(c RunningStateCache) { s.runningCache = c }
 
 // SetClock overrides the service clock; tests use it for deterministic
@@ -408,7 +405,7 @@ func (s *Service) SetMetrics(m Metrics) {
 	s.metrics = m
 }
 
-// SetAuditSink installs the §25.10 line 3871 drift audit-event sink. A
+// SetAuditSink installs the §25.10 drift audit-event sink. A
 // nil sink restores the no-op default. F-25.10.2.
 func (s *Service) SetAuditSink(a AuditSink) {
 	if a == nil {
@@ -417,12 +414,12 @@ func (s *Service) SetAuditSink(a AuditSink) {
 	s.audit = a
 }
 
-// SetApplier installs the §25.10 line 3842 gateway-side resource
+// SetApplier installs the §25.10 gateway-side resource
 // applier reconciliation calls through. A nil applier leaves reconcile
 // able to dry-run but rejects a confirm. F-25.10.1.
 func (s *Service) SetApplier(a ResourceApplier) { s.applier = a }
 
-// SetProgressEmitter installs the §25.10 line 3844 operation_progressed
+// SetProgressEmitter installs the §25.10 operation_progressed
 // emitter. A nil emitter skips emission. F-25.10.1.
 func (s *Service) SetProgressEmitter(p ProgressEmitter) { s.progress = p }
 
@@ -443,7 +440,7 @@ type ReportParams struct {
 	// Desired, when non-nil, is a caller-supplied desired state used in
 	// place of the stored snapshot for ad-hoc comparison.
 	Desired map[string]any
-	// Fresh, when true, bypasses the §25.10 line 3822 running-state
+	// Fresh, when true, bypasses the §25.10 running-state
 	// cache. The HTTP layer sets this from ?fresh=true. Reconciliation
 	// always passes Fresh=true so it never acts on stale state.
 	// F-25.10.7.
@@ -492,7 +489,7 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 	} else {
 		snap, ok, snapErr := s.snapshots.Get(ctx, against)
 		if snapErr != nil {
-			// §25.10 line 3866: a snapshot-store failure (Postgres down)
+			// §25.10: a snapshot-store failure (Postgres down)
 			// surfaces as DRIFT_DESIRED_STATE_MISSING with the default
 			// 503 mapping. The underlying store error is preserved in the
 			// message so operators can correlate with §25.4 healthz output.
@@ -509,7 +506,7 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 					Message: "no target snapshot — no upgrade is in flight",
 				}
 			}
-			// §25.10 line 3866: the cold-start "no snapshot exists" case is
+			// §25.10: the cold-start "no snapshot exists" case is
 			// 404, distinct from the 503 "Postgres down" case above. The
 			// explicit HTTPStatus override pins the status without changing
 			// the canonical error code. F-25.10.10.
@@ -525,7 +522,7 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 		s.applyStaleness(report, snap)
 	}
 
-	// §25.10 line 3828: a narrow scope compares one resource type. The
+	// §25.10: a narrow scope compares one resource type. The
 	// running-state reader already scoped its collection, so restrict the
 	// desired side to the same resource type — otherwise every non-scoped
 	// desired resource would read as removed drift against a running state
@@ -536,13 +533,13 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 	for _, c := range drift.Diff(desired, running) {
 		entry := toDriftEntry(c)
 		report.Drift = append(report.Drift, entry)
-		// §25.10 line 3858: lenny_drift_detected_total{resource_type,
+		// §25.10: lenny_drift_detected_total{resource_type,
 		// severity}. The resource_type label is the top path segment
 		// (pools, runtimes, tenants, credential-pools, ...). F-25.10.3.
 		s.metrics.DriftDetected(resourceTypeOf(entry.Path), entry.Severity)
 	}
 	report.DriftCount = len(report.Drift)
-	// §25.10 line 3871: drift.report_generated carries the scope, the
+	// §25.10: drift.report_generated carries the scope, the
 	// row compared against, and the drift count so the audit trail
 	// records every drift read. F-25.10.2.
 	s.audit.Emit(AuditEvent{
@@ -561,7 +558,7 @@ func (s *Service) Report(ctx context.Context, p ReportParams) (*DriftReport, err
 // view of the stored live desired-state snapshot: whether one exists, its
 // age, and whether it is past the staleness threshold.
 //
-// spec: §25.4 line 1337 (drift snapshot validation reconciliation goroutine).
+// spec: §25.4.
 type SnapshotFreshness struct {
 	// Present is false when no live bootstrap_seed_snapshot has been written.
 	Present bool
@@ -580,7 +577,7 @@ type SnapshotFreshness struct {
 // returns an error so the loop can log the degradation; the reconciler
 // treats that as transient rather than fatal.
 //
-// spec: §25.4 line 1337; §25.10 lines 3801-3809.
+// spec: §25.4; §25.10.
 func (s *Service) SnapshotFreshness(ctx context.Context) (SnapshotFreshness, error) {
 	snap, ok, err := s.snapshots.Get(ctx, SnapshotLive)
 	if err != nil {
@@ -602,7 +599,7 @@ func (s *Service) SnapshotFreshness(ctx context.Context) (SnapshotFreshness, err
 }
 
 // DeleteTargetSnapshot removes the §25.10 target snapshot row when a
-// §25.8 upgrade rolls back (spec line 3551). The row is deleted only
+// §25.8 upgrade rolls back. The row is deleted only
 // when its upgrade_id matches the rolled-back upgrade, so a rollback of
 // one upgrade never clears a target written by a concurrent or later
 // one. A blank upgradeID matches any target (the orchestrator passes the
@@ -611,7 +608,7 @@ func (s *Service) SnapshotFreshness(ctx context.Context) (SnapshotFreshness, err
 // returns false. After deletion, GET /v1/admin/drift?against=target
 // returns DRIFT_NO_TARGET_SNAPSHOT until a new upgrade starts.
 //
-// spec: §25.8 lines 3551-3554; §25.10 (target snapshot lifecycle).
+// spec: §25.8; §25.10 (target snapshot lifecycle).
 func (s *Service) DeleteTargetSnapshot(ctx context.Context, upgradeID string) (bool, error) {
 	snap, ok, err := s.snapshots.Get(ctx, SnapshotTarget)
 	if err != nil {
@@ -640,8 +637,7 @@ func (s *Service) DeleteTargetSnapshot(ctx context.Context, upgradeID string) (b
 // row on rollback. After this write, GET /v1/admin/drift?against=target
 // and ?against=both resolve instead of returning DRIFT_NO_TARGET_SNAPSHOT.
 //
-// spec: §25.10 line 3788 (write bootstrap_seed_snapshot_target early in
-// OpsRoll).
+// spec: §25.10.
 func (s *Service) WriteTargetSnapshot(ctx context.Context, upgradeID, writtenBy string, desired map[string]any) error {
 	if desired == nil {
 		return &Error{Code: ErrCodeInvalid, Message: "a desired-state (rendered Helm values) body is required to write the target snapshot"}
@@ -656,15 +652,14 @@ func (s *Service) WriteTargetSnapshot(ctx context.Context, upgradeID, writtenBy 
 	})
 }
 
-// PromoteTargetToLive atomically promotes the §25.10 target snapshot into
-// the live snapshot at Verification-phase completion (spec line 3789), so
+// PromoteTargetToLive atomically promotes the §25.10 target snapshot into the live snapshot at Verification-phase completion, so
 // from that point GET /v1/admin/drift compares against the new desired
 // state by default. The store performs the swap atomically; a missing
 // target row is a no-op (nothing to promote). The upgrade id is passed
 // through for store implementations that scope the promotion to a single
 // upgrade.
 //
-// spec: §25.10 line 3789 (promote target → live at Verification completion).
+// spec: §25.10.
 func (s *Service) PromoteTargetToLive(ctx context.Context, upgradeID string) error {
 	return s.snapshots.PromoteTargetToLive(ctx, upgradeID)
 }
@@ -685,7 +680,7 @@ func (s *Service) applyStaleness(report *DriftReport, snap Snapshot) {
 	}
 }
 
-// BothReport is the §25.10 line 3791 GET /v1/admin/drift?against=both
+// BothReport is the §25.10 GET /v1/admin/drift?against=both
 // response: the running state diffed against both the live snapshot
 // (pre-upgrade drift) and the in-flight target snapshot (what the
 // upgrade will change), in a single response. F-25.10.6.
@@ -700,7 +695,7 @@ type BothReport struct {
 // ReportBoth computes the §25.10 against=both report. It collects the
 // running state once and diffs it against both the live and the target
 // snapshot. A caller-supplied desired body is rejected — both mode is
-// defined only over the two stored snapshots (§25.10 line 3791,
+// defined only over the two stored snapshots (§25.10,
 // "during an active upgrade"). A missing target row fails
 // DRIFT_NO_TARGET_SNAPSHOT, matching the against=target contract.
 // F-25.10.6.
@@ -712,7 +707,7 @@ func (s *Service) ReportBoth(ctx context.Context, p ReportParams) (*BothReport, 
 	if scope == "" {
 		scope = "all"
 	}
-	// §25.10 line 3791: both mode is meaningful only when a target row
+	// §25.10: both mode is meaningful only when a target row
 	// exists. Fail closed before the expensive running-state read so a
 	// non-upgrade call gets the documented DRIFT_NO_TARGET_SNAPSHOT.
 	if _, ok, err := s.snapshots.Get(ctx, SnapshotTarget); err != nil {
@@ -724,7 +719,7 @@ func (s *Service) ReportBoth(ctx context.Context, p ReportParams) (*BothReport, 
 	if err != nil {
 		return nil, err
 	}
-	// §25.10 line 3824: the live report already populated the cache (when
+	// §25.10: the live report already populated the cache (when
 	// configured), so the target read reuses it rather than re-scattering
 	// over the gateway.
 	target, err := s.Report(ctx, ReportParams{Scope: scope, Against: SnapshotTarget, Fresh: false})
@@ -769,7 +764,7 @@ func (s *Service) Validate(ctx context.Context, p ValidateParams) (*ValidationRe
 	if stored == nil {
 		snap, ok, err := s.snapshots.Get(ctx, SnapshotLive)
 		if err != nil {
-			// §25.10 line 3866 Postgres-down case → 503 via the default
+			// §25.10 Postgres-down case → 503 via the default
 			// DRIFT_DESIRED_STATE_MISSING mapping (HTTPStatus left zero).
 			return nil, &Error{
 				Code:    ErrCodeDesiredStateMissing,
@@ -777,7 +772,7 @@ func (s *Service) Validate(ctx context.Context, p ValidateParams) (*ValidationRe
 			}
 		}
 		if !ok {
-			// §25.10 line 3866 cold-start path: no snapshot exists at all
+			// §25.10 cold-start path: no snapshot exists at all
 			// → 404. The caller may retry by supplying a stored snapshot
 			// in the request body for offline validation. F-25.10.10 /
 			// F-25.10.12.
@@ -811,7 +806,7 @@ type RefreshRequest struct {
 
 // RefreshResult is the §25.10 snapshot-refresh outcome, carrying the
 // previous-snapshot provenance for the drift.snapshot_refreshed audit
-// event. The §25.10 line 3871 event details require
+// event. The §25.10 event details require
 // {previous_written_at, previous_source, new_source, byteSize}; this
 // struct populates all four so the audit emitter can render the event
 // without re-marshalling. F-25.10.8.
@@ -821,10 +816,9 @@ type RefreshResult struct {
 	PreviousWrittenAt *time.Time `json:"previousWrittenAt,omitempty"`
 	PreviousSource    string     `json:"previousSource,omitempty"`
 	NewSource         string     `json:"newSource"`
-	// ByteSize is the JSON-encoded length of the new desired state. §25.10
-	// line 3871 carries this on the drift.snapshot_refreshed audit event
+	// ByteSize is the JSON-encoded length of the new desired state. §25.10 carries this on the drift.snapshot_refreshed audit event
 	// so operators can correlate snapshot growth with downstream Postgres
-	// row size and the §25.10 line 3824 cache pressure. F-25.10.8.
+	// row size and the §25.10 cache pressure. F-25.10.8.
 	ByteSize int `json:"byteSize"`
 }
 
@@ -833,7 +827,7 @@ type RefreshResult struct {
 // explicit operator action — the HTTP layer requires confirm:true (the
 // §25.2 dry-run/confirm pattern) before calling this.
 //
-// The returned RefreshResult carries the §25.10 line 3871
+// The returned RefreshResult carries the §25.10
 // drift.snapshot_refreshed audit-event details: previous_written_at,
 // previous_source, new_source, and the JSON-encoded byteSize of the
 // new desired state.
@@ -841,7 +835,7 @@ func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*Ref
 	if req.Desired == nil {
 		return nil, &Error{Code: ErrCodeInvalid, Message: "a desired-state body is required"}
 	}
-	// §25.10 line 3871: byteSize is the JSON-encoded length of the new
+	// §25.10: byteSize is the JSON-encoded length of the new
 	// desired state. The JSON-encoding choice matches how the snapshot is
 	// stored in Postgres (`bootstrap_seed_snapshot.desired_state JSONB`)
 	// so the audit event reports the persisted row size, not the
@@ -870,7 +864,7 @@ func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*Ref
 	}
 	res.Replaced = true
 	res.NewWrittenAt = now
-	// §25.10 line 3871: drift.snapshot_refreshed carries the previous and
+	// §25.10: drift.snapshot_refreshed carries the previous and
 	// new provenance plus the JSON byteSize of the new desired state.
 	// F-25.10.2 / F-25.10.8.
 	details := map[string]any{
@@ -889,10 +883,10 @@ func (s *Service) RefreshSnapshot(ctx context.Context, req RefreshRequest) (*Ref
 // running-state reader yields an empty running state so the report
 // still assembles (every desired field reads as removed drift).
 //
-// When a §25.10 line 3822 running-state cache is configured and
+// When a §25.10 running-state cache is configured and
 // fresh=false, the cache is consulted first and a fresh read updates
 // the cache for the next call. fresh=true bypasses the cache entirely
-// and does not update it — §25.10 line 3824 reserves the cache for the
+// and does not update it — §25.10 reserves the cache for the
 // non-bypass path so a ?fresh=true probe cannot crowd out the baseline
 // value other callers rely on. Cache failures are non-fatal: a Lookup
 // error degrades to a fresh read, a Store error is silently ignored
@@ -929,7 +923,7 @@ func toDriftEntry(c drift.Change) DriftEntry {
 }
 
 // filterScope restricts a desired-state document to the single resource
-// type a §25.10 line 3828 narrow scope compares. The "all" scope, the
+// type a §25.10 narrow scope compares. The "all" scope, the
 // empty scope, and any unrecognized value return the document unchanged
 // (the wide comparison). A narrow scope keeps only its top-level
 // resource key, so a scope=pools report does not render every non-pool

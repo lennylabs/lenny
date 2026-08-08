@@ -1,4 +1,4 @@
--- §8.3 line 472 / line 488 — credential_origin_session_id identifies the
+-- §8.3 — credential_origin_session_id identifies the
 -- session whose credential pool a `credentialPropagation: inherit` hop
 -- draws from. The §8.3 multi-hop rule requires an `inherit` hop to forward
 -- the same origin pool, traced through contiguous `inherit` hops back to

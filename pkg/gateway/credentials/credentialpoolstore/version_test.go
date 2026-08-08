@@ -10,8 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 )
 
-// TestCredentialPoolVersionRoundTrip_spec_15_1_1207 covers the §15.1 lines
-// 1207-1213 optimistic-concurrency version: it starts at 1 on Create and
+// TestCredentialPoolVersionRoundTrip_spec_15_1_1207 covers the §15.1 optimistic-concurrency version: it starts at 1 on Create and
 // increments on every successful Update and SoftDelete.
 func TestCredentialPoolVersionRoundTrip_spec_15_1_1207(t *testing.T) {
 	ctx := context.Background()

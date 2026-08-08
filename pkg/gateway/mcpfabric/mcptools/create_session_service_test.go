@@ -29,7 +29,7 @@ func parseToolJSON(t *testing.T, text string) map[string]any {
 // fakeSessionCreator records the request lenny/create_session forwards and
 // returns a canned response or a typed ServiceError, so the routing and
 // error-projection behaviour of the tool can be asserted without the full
-// §15.1 gateway. spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+// §15.1 gateway. spec: §15.2.1 rule 1. F-15.2.4.
 type fakeSessionCreator struct {
 	gotTenant string
 	gotReq    sessionserver.CreateSessionRequest

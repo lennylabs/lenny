@@ -7,7 +7,7 @@
 // capabilities.preConnect), terminating each session so the pool recycles.
 // The cloud tier runs this for the SDK-warm arm of runc, gVisor, and Kata in
 // one provisioned cluster, so the per-runtime-class SDK-warm claim-to-ready
-// numbers are directly comparable (the §6.3 line 352 complexity-tradeoff
+// numbers are directly comparable (the §6.3 complexity-tradeoff
 // validation). The runtime class is selected by the isolationProfile on the
 // create body, which routes the claim to the per-class SDK-warm pool.
 //

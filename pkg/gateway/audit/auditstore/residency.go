@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// This file implements the §11.7 lines 430-435 CMP-058 platform-tenant
+// This file implements the §11.7 CMP-058 platform-tenant
 // audit residency gate (fail-closed). An audit event written under the
 // platform tenant that references a non-platform tenant via
 // target_tenant_id MUST be written to the target tenant's regional
@@ -37,15 +37,15 @@ import (
 //     rule 2 so the incident does not disappear into the unreachable
 //     region), and bump the residency counters.
 //
-// spec: §11.7 lines 430-435.
+// spec: §11.7.
 
 const (
-	// operationPlatformAuditWrite is the §11.7 line 433 operation label on
+	// operationPlatformAuditWrite is the §11.7 operation label on
 	// the DataResidencyViolationAttempt event and the shared
 	// lenny_data_residency_violation_total counter.
 	operationPlatformAuditWrite = "platform_audit_write"
 	// failureModeMissingEntry / failureModePostgresUnreachable are the
-	// §11.7 line 433 failure_mode values distinguishing a region absent
+	// §11.7 failure_mode values distinguishing a region absent
 	// from storage.regions from a present-but-unreachable region.
 	failureModeMissingEntry        = "missing_entry"
 	failureModePostgresUnreachable = "postgres_unreachable"
@@ -63,7 +63,7 @@ const (
 
 // PlatformRegionRouter resolves the region-scoped platform-Postgres pool
 // for a CMP-058 residency-routed write. *storerouter.SingleShardRouter
-// satisfies it via PlatformPostgresForRegion. spec: §11.7 line 431.
+// satisfies it via PlatformPostgresForRegion. spec: §11.7.
 type PlatformRegionRouter interface {
 	PlatformPostgresForRegion(ctx context.Context, region string) (*pgxpool.Pool, error)
 }
@@ -71,14 +71,14 @@ type PlatformRegionRouter interface {
 // ResidencyLookup resolves a target tenant's dataResidencyRegion. A
 // not-found tenant (or a tombstone whose region snapshot is unavailable)
 // resolves to "" so the write falls back to the global platform-Postgres
-// (rule 2). spec: §11.7 line 432.
+// (rule 2). spec: §11.7.
 type ResidencyLookup interface {
 	TargetResidencyRegion(ctx context.Context, targetTenantID string) (string, error)
 }
 
-// ResidencyMetrics receives the §11.7 line 433 residency-violation
+// ResidencyMetrics receives the §11.7 residency-violation
 // counters on a fail-closed CMP-058 abort. *gatewaymetrics.Metrics
-// satisfies it. spec: §11.7 line 433.
+// satisfies it. spec: §11.7.
 type ResidencyMetrics interface {
 	IncDataResidencyViolation(operation string)
 	IncPlatformAuditRegionUnresolvable(region, failureMode string)
@@ -139,7 +139,7 @@ func WithPlatformAuditResidency(platformTenantID string, regions PlatformRegionR
 // audit payload. The OCSF translator routes this field to
 // unmapped.lenny.target_tenant_id; the CMP-058 gate keys on its presence
 // in the canonical payload. An absent, empty, or malformed payload
-// returns "". spec: §11.7 lines 428, 430.
+// returns "". spec: §11.7.
 func targetTenantID(payload json.RawMessage) string {
 	if len(payload) == 0 {
 		return ""
@@ -171,7 +171,7 @@ type routeOutcome struct {
 	failureMode string
 }
 
-// decide resolves the §11.7 lines 431-433 routing for a platform-tenant
+// decide resolves the §11.7 routing for a platform-tenant
 // audit write referencing target. It performs no I/O against Postgres
 // beyond the optional reachability ping, so it is exercised directly by
 // the unit tests with fake collaborators. A lookup error is returned to
@@ -205,7 +205,7 @@ func (pr *platformResidencyRouter) decide(ctx context.Context, target string) (r
 
 // appendPlatformTargeted routes a platform-tenant audit write that
 // carries target as its non-platform target_tenant_id through the §11.7
-// CMP-058 three-rule residency gate. spec: §11.7 lines 430-433.
+// CMP-058 three-rule residency gate. spec: §11.7.
 func (s *Store) appendPlatformTargeted(ctx context.Context, eventType string, payload json.RawMessage, target string, at time.Time) (audit.Row, error) {
 	pr := s.platformResidency
 	outcome, err := pr.decide(ctx, target)
@@ -226,7 +226,7 @@ func (s *Store) appendPlatformTargeted(ctx context.Context, eventType string, pa
 	return s.appendOnPool(ctx, pool, pr.platformTenantID, eventType, payload, at)
 }
 
-// recordViolation bumps the §11.7 line 433 residency counters: the shared
+// recordViolation bumps the §11.7 residency counters: the shared
 // data-residency series (labeled operation=platform_audit_write) and the
 // dedicated platform-audit series (labeled region + failure_mode).
 func (pr *platformResidencyRouter) recordViolation(region, failureMode string) {
@@ -234,7 +234,7 @@ func (pr *platformResidencyRouter) recordViolation(region, failureMode string) {
 	pr.metrics.IncPlatformAuditRegionUnresolvable(region, failureMode)
 }
 
-// failClosedPlatformAudit implements §11.7 line 433: bump the residency
+// failClosedPlatformAudit implements §11.7: bump the residency
 // counters, record the DataResidencyViolationAttempt event (routed to the
 // global platform-Postgres per rule 2 so the incident is not lost to the
 // unreachable region), and return PLATFORM_AUDIT_REGION_UNRESOLVABLE. The
@@ -260,7 +260,7 @@ func (s *Store) failClosedPlatformAudit(ctx context.Context, eventType, target, 
 	}
 }
 
-// buildViolationPayload constructs the §11.7 line 433
+// buildViolationPayload constructs the §11.7
 // DataResidencyViolationAttempt canonical payload.
 func buildViolationPayload(platformTenantID, target, region, eventType, failureMode string) (json.RawMessage, error) {
 	return json.Marshal(map[string]any{
@@ -273,11 +273,11 @@ func buildViolationPayload(platformTenantID, target, region, eventType, failureM
 	})
 }
 
-// PlatformAuditRegionUnresolvableError is the §11.7 line 433 fail-closed
+// PlatformAuditRegionUnresolvableError is the §11.7 fail-closed
 // error a CMP-058 platform-tenant audit write returns when the target
 // tenant's dataResidencyRegion cannot be resolved to a reachable regional
 // platform-Postgres. It maps to PLATFORM_AUDIT_REGION_UNRESOLVABLE
-// (HTTP 422, PERMANENT). spec: §11.7 line 433; §15.1 line 1044.
+// (HTTP 422, PERMANENT). spec: §11.7; §15.1.
 type PlatformAuditRegionUnresolvableError struct {
 	TargetTenantID string
 	Region         string
@@ -292,10 +292,10 @@ func (e *PlatformAuditRegionUnresolvableError) Error() string {
 	)
 }
 
-// Code returns the §15.1 line 1044 error code for HTTP mapping.
+// Code returns the §15.1 error code for HTTP mapping.
 func (e *PlatformAuditRegionUnresolvableError) Code() string {
 	return "PLATFORM_AUDIT_REGION_UNRESOLVABLE"
 }
 
-// HTTPStatus returns the §11.7 line 433 / §15.1 line 1044 HTTP status.
+// HTTPStatus returns the §11.7 / §15.1 HTTP status.
 func (e *PlatformAuditRegionUnresolvableError) HTTPStatus() int { return 422 }

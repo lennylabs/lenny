@@ -389,7 +389,7 @@ func assertSlotCredentialIsolation(t *testing.T, srv *adapter.Server, alice, bob
 }
 
 // slotCredentialFile returns the slot's per-slot credential file path,
-// /run/lenny/slots/{slotId}/credentials.json. spec: §6.1 line 28.
+// /run/lenny/slots/{slotId}/credentials.json. spec: §6.1.
 func slotCredentialFile(srv *adapter.Server, slotID string) string {
 	return filepath.Join(srv.CredentialsDir, "slots", slotID, "credentials.json")
 }

@@ -26,13 +26,13 @@ func TestScalarGaugesRegisteredAtStartup(t *testing.T) {
 		"lenny_gateway_min_replicas 0",
 		"lenny_gateway_stream_ceiling 0",
 		"lenny_gateway_replica_count 0",
-		// spec: §11.2.1 line 187 / §16.5 BillingCorrectionRateHigh —
+		// spec: §11.2.1 / §16.5 BillingCorrectionRateHigh —
 		// pre-materialize the threshold gauge with the spec default
 		// (0.05 = 5%) so scalar(lenny_billing_correction_rate_threshold)
 		// in the alert expression never evaluates to NaN even before
 		// SetBillingCorrectionRateThreshold runs. F-11.2.23.
 		"lenny_billing_correction_rate_threshold 0.05",
-		// spec: §12.6 line 683 / §16.5 EventBusPublishDropped —
+		// spec: §12.6 / §16.5 EventBusPublishDropped —
 		// pre-materialize the drop-alert threshold gauge with the spec
 		// default (10/min) so scalar(lenny_event_bus_drop_alert_threshold)
 		// in the alert expression never evaluates to NaN before

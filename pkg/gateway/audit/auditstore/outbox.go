@@ -30,10 +30,9 @@ import (
 // `__all__` sentinel satisfies the §12.3 lenny_tenant_isolation RLS
 // policy under the non-superuser lenny_app role, and one
 // cross_tenant_read audit event (category audit_siem_forwarder) is
-// emitted per worker invocation per §12.3 line 141.
+// emitted per worker invocation per §12.3.
 //
-// spec: §12.3 line 97 (outbox forwarder); §12.3 line 141 (cross-tenant
-// read audit).
+// spec: §12.3; §12.3.
 func (s *Store) PendingForward(ctx context.Context, limit int) ([]siem.ForwardRow, error) {
 	if limit <= 0 {
 		limit = 256
@@ -132,7 +131,7 @@ func (s *Store) pendingForwardOnShard(ctx context.Context, pool *pgxpool.Pool, l
 // platform-internal forwarder bookkeeping), so the upsert runs on the
 // audit shard pool directly without a per-tenant transaction context.
 //
-// spec: §12.3 line 97.
+// spec: §12.3.
 func (s *Store) Checkpoint(ctx context.Context, tenantID string, seq uint64, ackedAt time.Time) error {
 	pool, err := s.shard(ctx, tenantID)
 	if err != nil {
@@ -166,7 +165,7 @@ func (s *Store) Checkpoint(ctx context.Context, tenantID string, seq uint64, ack
 // PendingForward (which emits the per-invocation cross_tenant_read), so
 // it does not emit a second cross_tenant_read.
 //
-// spec: §16.1 line 228.
+// spec: §16.1.
 func (s *Store) DeliveryLag(ctx context.Context) (float64, error) {
 	shards, err := s.allShards(ctx)
 	if err != nil {

@@ -73,7 +73,7 @@ func TestPlatformMCP(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 879-883 — with SO_PEERCRED disabled (NonceOnlyMode),
+// spec: §4.7 — with SO_PEERCRED disabled (NonceOnlyMode),
 // the platform MCP server supplements the manifest nonce with a
 // per-connection HMAC challenge before completing initialize.
 func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
@@ -141,8 +141,7 @@ func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
 // fakePlatformForwarder records the session id it is forwarded with and
 // returns a canned catalog / result. The mutex guards the captured call
 // so a test reading it after a concurrent server-goroutine forward (the
-// Attach loop's set_tracing_context path) stays race-free. spec: §9.1
-// lines 14-31. F-9.1.1.
+// Attach loop's set_tracing_context path) stays race-free. spec: §9.1. F-9.1.1.
 type fakePlatformForwarder struct {
 	list       []mcp.Tool
 	result     json.RawMessage
@@ -176,7 +175,7 @@ func (f *fakePlatformForwarder) lastCall() (session, tool string, args json.RawM
 	return f.gotSession, f.gotTool, f.gotArgs
 }
 
-// spec: §9.1 lines 8-31 — when a PlatformForwarder is wired, the platform
+// spec: §9.1 — when a PlatformForwarder is wired, the platform
 // MCP server advertises the gateway's platform tool catalog on tools/list
 // and forwards a runtime's tools/call to the gateway scoped to this pod's
 // session. F-9.1.1.

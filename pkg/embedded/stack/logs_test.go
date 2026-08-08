@@ -50,7 +50,7 @@ func waitFor(t *testing.T, d time.Duration, cond func() bool) {
 // is not running reports ErrNoRunningStack so the CLI can present a precise
 // message rather than streaming nothing.
 //
-// spec: §24.19 line 263.
+// spec: §24.19.
 func TestRunLogsNoStack_spec_24_19_263(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	err := RunLogs(context.Background(), LogsOptions{Out: &bytes.Buffer{}})
@@ -62,7 +62,7 @@ func TestRunLogsNoStack_spec_24_19_263(t *testing.T) {
 // TestRunLogsUnknownComponent covers the fail-closed allow-list: an unknown
 // component is rejected rather than streamed.
 //
-// spec: §24.19 line 263.
+// spec: §24.19.
 func TestRunLogsUnknownComponent_spec_24_19_263(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())
@@ -77,7 +77,7 @@ func TestRunLogsUnknownComponent_spec_24_19_263(t *testing.T) {
 // are no longer selectable, so lenny logs rejects each rather than streaming a
 // stale host file.
 //
-// spec: §17.4 line 179, §24.19 line 263 (the pod-backed log component set).
+// spec: §17.4, §24.19.
 func TestRunLogsRejectsRemovedHostComponents_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())
@@ -94,8 +94,7 @@ func TestRunLogsRejectsRemovedHostComponents_spec_17_4(t *testing.T) {
 // kubeconfig and streams each pod's log. The fake clientset returns a fixed
 // pod-log body, so the test asserts the stream reaches the output.
 //
-// spec: §17.4 line 179 (the control-plane logs stream from the in-cluster
-// pods), §24.19 line 263.
+// spec: §17.4, §24.19.
 func TestRunLogsStreamsControlPlanePod_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
@@ -118,8 +117,8 @@ func TestRunLogsStreamsControlPlanePod_spec_17_4(t *testing.T) {
 // pod carrying the real ops label and asserts its log streams; a uniform
 // lenny.dev/component=ops selector would match zero pods and stream nothing.
 //
-// spec: §17.4 line 179 (ops streams from the in-cluster pods), §13.2 (the
-// lenny-ops pod-label exception), §24.19 line 263.
+// spec: §17.4, §13.2 (the
+// lenny-ops pod-label exception), §24.19.
 func TestRunLogsStreamsOpsPod_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
@@ -141,7 +140,7 @@ func TestRunLogsStreamsOpsPod_spec_17_4(t *testing.T) {
 // component's Deployment has not scheduled a pod yet: lenny logs reports the
 // component has no running pods rather than failing.
 //
-// spec: §17.4 line 179, §24.19 line 263.
+// spec: §17.4, §24.19.
 func TestRunLogsControlPlaneNoPods_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())
@@ -159,8 +158,7 @@ func TestRunLogsControlPlaneNoPods_spec_17_4(t *testing.T) {
 // runtime name in the agent namespace and streams their logs, while an
 // unrelated runtime's pods are not streamed.
 //
-// spec: §6.2 (the runtime-name pod label), §17.4 line 179 (runtime-<name>
-// streams the runtime's agent pods), §24.19 line 263.
+// spec: §6.2 (the runtime-name pod label), §17.4, §24.19.
 func TestRunLogsRuntimeComponentSelectsAgentPods_spec_24_19_263(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
@@ -180,7 +178,7 @@ func TestRunLogsRuntimeComponentSelectsAgentPods_spec_24_19_263(t *testing.T) {
 // alias: it expands to every runtime with running agent pods, so a stack with
 // echo and claude-code agent pods streams both, prefixed by runtime name.
 //
-// spec: §17.4 line 179, §24.19 line 263.
+// spec: §17.4, §24.19.
 func TestRunLogsRuntimeAliasExpands_spec_24_19_263(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
@@ -204,7 +202,7 @@ func TestRunLogsRuntimeAliasExpands_spec_24_19_263(t *testing.T) {
 // alias matches no running agent pod: lenny logs reports no runtime pods are
 // running rather than streaming nothing.
 //
-// spec: §24.19 line 263.
+// spec: §24.19.
 func TestRunLogsRuntimeAliasNoPods_spec_24_19_263(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())
@@ -220,8 +218,7 @@ func TestRunLogsRuntimeAliasNoPods_spec_24_19_263(t *testing.T) {
 // with its component name. The gateway pod, the k3s substrate file, and an echo
 // agent pod each reach the merged output.
 //
-// spec: §17.4 line 179 (the merged log set is the pod-backed sources plus the
-// k3s substrate), §24.19 line 263.
+// spec: §17.4, §24.19.
 func TestRunLogsMergedStreamsEveryComponent_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset(
@@ -263,8 +260,8 @@ func TestRunLogsMergedStreamsEveryComponent_spec_17_4(t *testing.T) {
 // keeps its host log file path (the substrate has no API follow channel), so
 // lenny logs k3s reads the substrate log file rather than a pod.
 //
-// spec: §17.4 line 179 (the k3s substrate keeps its host log file path),
-// §24.19 line 263.
+// spec: §17.4,
+// §24.19.
 func TestRunLogsK3sStreamsSubstrateFile_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())
@@ -285,12 +282,12 @@ func TestRunLogsK3sStreamsSubstrateFile_spec_17_4(t *testing.T) {
 	}
 }
 
-// TestRunLogsK3sFollowStreamsAppendedLines covers the §24.19 line 263
+// TestRunLogsK3sFollowStreamsAppendedLines covers the §24.19
 // `--follow` mode on the substrate file source: RunLogs streams new lines
 // appended to the k3s substrate log until the caller cancels, since the
 // substrate file has no API follow channel and is polled.
 //
-// spec: §24.19 line 263 (`--follow`).
+// spec: §24.19.
 func TestRunLogsK3sFollowStreamsAppendedLines_spec_24_19_263(t *testing.T) {
 	recordRunningStack(t)
 	withClusterClient(t, k8sfake.NewSimpleClientset())

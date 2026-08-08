@@ -29,7 +29,7 @@ func base() Inputs {
 
 // TestDecidePendingWaits covers the not-ready guard: until the adapter
 // reports a scrub outcome the driver must not advance the pod.
-// spec: §6.2 line 142 (task_complete_acknowledged precedes scrub).
+// spec: §6.2.
 func TestDecidePendingWaits(t *testing.T) {
 	in := base()
 	in.Scrub = ScrubPending
@@ -42,10 +42,10 @@ func TestDecidePendingWaits(t *testing.T) {
 	}
 }
 
-// TestDecideSpecEdges drives every enumerated §6.2 lines 147-156
+// TestDecideSpecEdges drives every enumerated §6.2
 // disposition edge, including the session_count_limit retirement reason
 // keyed to the spec/16 retirement-reason vocabulary.
-// spec: §6.2 lines 147-156 (recycle disposition), §16.1 (retirement reason vocabulary).
+// spec: §6.2, §16.1 (retirement reason vocabulary).
 func TestDecideSpecEdges(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -61,7 +61,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			mutate:     func(i *Inputs) {},
 			wantPhase:  state.Reserved,
 			wantReason: ReasonReuse,
-			specLine:   "§5.2 line 449 (non-preConnect reserve reuse)",
+			specLine:   "§5.2",
 		},
 		{
 			name:        "non_preconnect_scrub_warning_reserved",
@@ -262,7 +262,7 @@ func TestDecideExhaustionBeatsRetirement(t *testing.T) {
 // scrub failure that has NOT exhausted maxScrubFailures but HAS reached
 // recycle.maxSessionsPerPod retires on session_count_limit (the pod is
 // leaving for count, so the warning is superseded).
-// spec: §6.2 lines 149-150 (recycle disposition precedence), §16.1 (session_count_limit reason).
+// spec: §6.2, §16.1 (session_count_limit reason).
 func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	in := base()
 	in.Scrub = ScrubFailed
@@ -422,7 +422,7 @@ func TestDecideVMRestartSessionCountOnePrecedence(t *testing.T) {
 // vm-restart Draining reprovision. The fail-policy branch precedes the
 // vm-restart branch. The non-happy path is a fail-policy failure masked as the
 // vm-restart reprovision, which would drop the fail-closed terminal.
-// spec: spec/05 §5.2 (onScrubFailure fail), spec/06 §6.2 line 156.
+// spec: spec/05 §5.2 (onScrubFailure fail), spec/06 §6.2.
 func TestDecideVMRestartFailPolicyPrecedence(t *testing.T) {
 	in := base()
 	in.VMRestart = true
@@ -441,7 +441,7 @@ func TestDecideVMRestartFailPolicyPrecedence(t *testing.T) {
 // trigger even on a vm-restart pool, so the scrub-exhausted branch precedes the
 // vm-restart branch. The non-happy path is a scrub-failure-limit retire
 // undercounted as ReasonVMRestartReprovision.
-// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), §16.1 (scrub_failure_limit counts).
+// spec: spec/06 §6.2, §16.1 (scrub_failure_limit counts).
 func TestDecideVMRestartScrubExhaustedPrecedence(t *testing.T) {
 	in := base()
 	in.VMRestart = true
@@ -477,8 +477,7 @@ func TestDecideMaxScrubFailuresDefault(t *testing.T) {
 }
 
 // TestDecideNoUptimeCapWhenUnset verifies MaxPodUptimeSeconds == 0 means
-// no cap: a long-running pod still reuses. spec: §6.2 line 151 (the cap
-// is optional).
+// no cap: a long-running pod still reuses. spec: §6.2.
 func TestDecideNoUptimeCapWhenUnset(t *testing.T) {
 	in := base()
 	in.PodUptimeSeconds = 1 << 40
@@ -491,7 +490,7 @@ func TestDecideNoUptimeCapWhenUnset(t *testing.T) {
 // TestDecideScrubbedReuseReserves verifies that a recycling pod that ran
 // its whole-pod scrub successfully and is under its limits reuses the pod
 // by reserving it for the pinned tenant (non-preConnect path).
-// spec: §5.2 (recycle lifecycle, line 449), §6.2 (recycle disposition).
+// spec: §5.2, §6.2 (recycle disposition).
 func TestDecideScrubbedReuseReserves(t *testing.T) {
 	in := base()
 	if got := Decide(in); got.NextPhase != state.Reserved {

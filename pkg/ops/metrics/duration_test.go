@@ -34,7 +34,7 @@ func (r *recordingQueryMetrics) for_(kind string) []float64 {
 	return r.samples[kind]
 }
 
-// TestPrometheusClient_ObservesQueryDuration covers §25.4 lines 1914-1916:
+// TestPrometheusClient_ObservesQueryDuration covers §25.4:
 // every instant and range query records its wall-clock latency against
 // lenny_prometheus_query_duration_seconds{kind}.
 func TestPrometheusClient_ObservesQueryDuration_spec_25_4(t *testing.T) {

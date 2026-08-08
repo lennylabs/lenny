@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-// TestOpsAdminTLSCheck covers the §25.4 NET-070 ops-admin-tls decision
-// matrix (lines 2544-2546): skipped when internal TLS is off, skipped
+// TestOpsAdminTLSCheck covers the §25.4 NET-070 ops-admin-tls decision matrix: skipped when internal TLS is off, skipped
 // when no endpoint is configured, skipped when no prober is wired,
 // passing on a successful handshake, and failing on a handshake or SAN
 // failure.

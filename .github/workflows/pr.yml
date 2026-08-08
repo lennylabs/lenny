@@ -305,7 +305,7 @@ jobs:
           exit $fail
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
-      # spec: §23.2 line 127 — "CI includes a TTHW smoke test that
+      # spec: §23.2 — "CI includes a TTHW smoke test that
       # validates both paths on every merge." The docs tier runs
       # tests/tier11_docs/..., which includes the time-to-hello-world
       # gate (time_to_hello_world_test.go). F-23.2.2.

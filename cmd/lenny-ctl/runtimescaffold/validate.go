@@ -100,7 +100,7 @@ type ValidateReport struct {
 //
 // It returns one of the Validate* codes.
 //
-// spec: §24.18 line 231 (declared-vs-observed reconciliation); §15.4.6
+// spec: §24.18; §15.4.6
 // (conformance categories and the observed-level algorithm).
 func Validate(opts ValidateOptions, stdout, stderr io.Writer) int {
 	path := opts.Path

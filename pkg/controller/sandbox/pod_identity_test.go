@@ -42,7 +42,7 @@ func podCondition(pod corev1.Pod, t corev1.PodConditionType) (corev1.PodConditio
 }
 
 // TestReconcileFlipsReadinessGateWhenContainersReady_spec_6_1 verifies the
-// §6.1 line 18 claimability handoff: once the pod's containers are ready,
+// §6.1 claimability handoff: once the pod's containers are ready,
 // the reconciler flips the lenny.dev/sandbox-ready readiness gate to True.
 // The Sandbox stays warming this pass because Pod.Ready is not yet True (a
 // real kubelet recomputes it from ContainersReady + the now-True gate).

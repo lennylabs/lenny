@@ -112,8 +112,8 @@ func TestNewAdapterReportsConstructorValues(t *testing.T) {
 	}
 }
 
-// spec: §26.1 lines 14-22 (catalog table) + §26.3-26.11 (per-runtime
-// Image field), §26.7 line 312, §26.9 line 399, §26.11 line 458, etc.
+// spec: §26.1 + §26.3-26.11 (per-runtime
+// Image field), §26.7, §26.9, §26.11, etc.
 // diagnosis: every §26 reference runtime is published at
 // `ghcr.io/lennylabs/runtime-<name>:<release>`. The embedded-stack
 // catalog (`pkg/embedded/stack/catalog.go`) and Helm chart
@@ -140,7 +140,7 @@ func TestReferenceCatalogImageRefsCanonical(t *testing.T) {
 			t.Errorf("§26 runtime %q image %q is absolute; the manifest expresses the path-relative form so LENNY_REFERENCE_IMAGE_REGISTRY can target any registry", r.Name, r.Image)
 		}
 		if !strings.Contains(r.Image, "/runtime-") {
-			t.Errorf("§26 runtime %q image %q drops the canonical `runtime-` repository prefix per spec §26.x Image lines (e.g. §26.7 line 312)", r.Name, r.Image)
+			t.Errorf("§26 runtime %q image %q drops the canonical `runtime-` repository prefix per spec §26.x Image lines (e.g. §26.7)", r.Name, r.Image)
 		}
 		if strings.HasSuffix(r.Image, ":v1") {
 			t.Errorf("§26 runtime %q image %q uses the legacy `:v1` tag; canonical form is `:1.0.0` per pkg/embedded/stack/catalog.go and charts/lenny/values.yaml", r.Name, r.Image)

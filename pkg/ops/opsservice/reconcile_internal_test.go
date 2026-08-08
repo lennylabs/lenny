@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.4 lines 2404, 2429 — the escalation emission-retry loop runs
+// spec: §25.4 — the escalation emission-retry loop runs
 // leader-only, so a multi-replica deployment re-publishes a record left
 // unemitted by a dual-destination outage from exactly one replica rather
 // than once per replica. This is the tier-7a (ordering/singleton)

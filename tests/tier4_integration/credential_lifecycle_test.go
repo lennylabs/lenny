@@ -84,7 +84,7 @@ const (
 // deny list and retains the leases this replica holds against it, denied in
 // place by the deny-list entry, returning the count of leases affected. It
 // is reconstructed here rather than imported because the production glue
-// lives in package main. spec: §4.9 lines 1640-1652, 1671.
+// lives in package main. spec: §4.9.
 type lifecycleRevoker struct {
 	denyList *denylist.DenyList
 	leases   *credleasestore.Store
@@ -231,7 +231,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	if !credFileCarriesUpstream(t, credDir, clUpstreamV2) {
 		t.Fatalf("after rotation: credential file was not rebound to the rotated key")
 	}
-	// §4.7 line 850 grace period: release the old lease now that the runtime
+	// §4.7 grace period: release the old lease now that the runtime
 	// acknowledged the rebind, leaving v2 as the session's sole active lease.
 	assign.Release(v1.GetLeaseId())
 
@@ -293,7 +293,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// The session's active lease is retained and denied in place: the §4.9
 	// revocation shadows it with the deny-list entry rather than removing the
 	// row (which would make the deny-list check unreachable on the shared
-	// store). spec: §4.9 line 1671.
+	// store). spec: §4.9.
 	if _, ok := leaseStore.GetByID(v2.GetLeaseId()); !ok {
 		t.Fatalf("post-revoke: session lease v2 %s must be retained so the deny-list check can reject it", v2.GetLeaseId())
 	}

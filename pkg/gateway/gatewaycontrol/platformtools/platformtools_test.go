@@ -45,7 +45,7 @@ func (f fakeSessions) GetByID(_ context.Context, id string) (sessionstore.Sessio
 	return s, nil
 }
 
-// spec: §9.1 line 14 — CallPlatformTool dispatches under the calling
+// spec: §9.1 — CallPlatformTool dispatches under the calling
 // session's principal (session, tenant, owner) so the platform tool
 // handlers resolve the same identity a gateway-edge /mcp call would.
 func TestBridgeCallInstallsSessionPrincipal_spec_9_1(t *testing.T) {
@@ -112,7 +112,7 @@ func TestBridgeCallUnknownTool_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 lines 14-31 — ListPlatformTools returns the gateway catalog
+// spec: §9.1 — ListPlatformTools returns the gateway catalog
 // mapped to the descriptor the GatewayControl RPC serializes.
 func TestBridgeListCatalog_spec_9_1(t *testing.T) {
 	disp := &fakeDispatcher{catalog: []mcp.Tool{

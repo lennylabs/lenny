@@ -56,7 +56,7 @@ type renewalProvider struct {
 	provider string
 	// tenantID is the owning tenant the original lease was minted for,
 	// replayed so the replacement carries the same tenant attribution
-	// (spec: §4.9 line 1468 — proxy-extracted usage attribution).
+	// (spec: §4.9 — proxy-extracted usage attribution).
 	tenantID string
 }
 
@@ -85,14 +85,13 @@ type credRenewalWiring struct {
 	// ExpiresAt/RenewBefore here so the proxy's server-side expiry check
 	// honors the extension. Typed as the interface so it can hold the
 	// Postgres-backed pgstore.Store the proxy reads under a durable
-	// deployment. spec: §4.9 line 1470.
+	// deployment. spec: §4.9.
 	leases credleasestore.LeaseStore
 	// terminator force-transitions a session to its §8.8 expired terminal
 	// state. The §4.9 cumulative-extension cap routes a capped lease's
 	// session here with the expired:lease reason rather than into the
 	// Fallback Flow, so a permanently-open breaker tears the session down
-	// without re-minting against the still-open breaker. spec: §4.9 line
-	// 1470.
+	// without re-minting against the still-open breaker. spec: §4.9.
 	terminator sessionbudget.Terminator
 
 	mu sync.Mutex
@@ -143,7 +142,7 @@ func (w *credRenewalWiring) track(worker *credrenewal.Worker, pool, provider str
 // lifetime (ExpiresAt - IssuedAt, i.e. min(leaseTTLSeconds, providerMaxTTL)
 // per spec/04 line 1145) so the §4.9 cumulative-extension cap is
 // TTL-derived rather than falling back to DefaultMaxExtensions.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func renewalLease(lease credential.Lease) credrenewal.Lease {
 	return credrenewal.Lease{
 		LeaseID:      lease.LeaseID,
@@ -178,7 +177,7 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID)
 	if err != nil {
 		if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
-			// spec: §4.9 line 1470 — Token Service unavailability guard.
+			// spec: §4.9 — Token Service unavailability guard.
 			// Surface the breaker-open failure as the credrenewal sentinel
 			// so the worker holds and reschedules the still-valid lease
 			// instead of exhausting it into the Fallback Flow. The
@@ -254,7 +253,7 @@ func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
 	// §4.9 rotationTrigger: proactive_renewal. The trigger rides the RPC
 	// so the adapter keeps the unbounded §4.7 in-flight wait (the old
 	// credential is still valid) instead of applying the fault ceiling.
-	// spec: §4.9 line 1413 / §4.7 line 822. F-13.3.10.
+	// spec: §4.9 / §4.7. F-13.3.10.
 	if err := bind.Adapter.RotateCredentials(ctx, renewed.SessionID,
 		map[string]*adapterv1.CredentialLease{provider: wire},
 		credential.TriggerProactiveRenewal); err != nil {
@@ -288,7 +287,7 @@ func (w *credRenewalWiring) onExhausted(lease credrenewal.Lease) {
 // is advanced in the gateway lease store the LLM Proxy reads. An error
 // return signals the worker that the enforcement point was unreachable,
 // so it does not advance its own view of the deadline and the lease
-// falls through to the retry and Fallback path. spec: §4.9 line 1470.
+// falls through to the retry and Fallback path. spec: §4.9.
 func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.Time) error {
 	if w == nil {
 		return nil
@@ -338,8 +337,7 @@ func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.
 // credential-lease expiry), which the §8.8 MCP adapter surfaces to
 // clients as a failed task carrying the expired:lease error code. It does
 // NOT enter the Fallback Flow: a re-mint against the still-open breaker
-// would re-enter the restart loop the guard prevents. spec: §4.9 line
-// 1470; §8.8 line 869.
+// would re-enter the restart loop the guard prevents. spec: §4.9; §8.8.
 func (w *credRenewalWiring) onExtensionCapReached(lease credrenewal.Lease) {
 	if w == nil || w.terminator == nil {
 		return
@@ -402,7 +400,7 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 	})
 }
 
-// logCredentialExpiryWarning emits the §11.3 line 215 expiry-warning
+// logCredentialExpiryWarning emits the §11.3 expiry-warning
 // log line once per lease when the renewal worker reports the lease has
 // entered its `credentials.expiryWarningLeadSeconds` window. The log is
 // the deployer-facing surface for impending lease expiry — operators
@@ -410,7 +408,7 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 // §4.9 fault-rotation fall-through is consumed. F-11.3.20.
 func logCredentialExpiryWarning(lease credrenewal.Lease) {
 	log.Printf(
-		"lenny-gateway: §11.3 line 215 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
+		"lenny-gateway: §11.3 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
 		lease.LeaseID, lease.SessionID, lease.CredentialID,
 		lease.ExpiresAt.UTC().Format(time.RFC3339),
 	)

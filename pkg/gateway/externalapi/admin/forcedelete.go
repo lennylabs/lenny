@@ -20,7 +20,7 @@ import (
 // §12.8 Phase 3.5 escrow segregation authorizes, never skips, the hold
 // handling); justification is the required free-text override reason.
 //
-// spec: §12.8 lines 880-889; §24.10 row 4.
+// spec: §12.8; §24.10 row 4.
 type ForceDeleteTenantRequest struct {
 	AcknowledgeHoldOverride bool   `json:"acknowledgeHoldOverride,omitempty"`
 	Justification           string `json:"justification,omitempty"`
@@ -41,7 +41,7 @@ type ForceDeleteTenantRequest struct {
 // persisted state after a restart) escrows held evidence at Phase 3.5
 // rather than re-blocking.
 //
-// spec: §12.8 lines 880-889; §24.10 row 4. F-12.8.2, F-24.10.2.
+// spec: §12.8; §24.10 row 4. F-12.8.2, F-24.10.2.
 func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
 	principal, ok := authmw.FromContext(req.Context())
@@ -50,7 +50,7 @@ func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Reques
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	// §12.8 line 880: tenant-admins cannot self-override; force-delete is
+	// §12.8: tenant-admins cannot self-override; force-delete is
 	// platform-admin only.
 	if !principal.HasRole(auth.RolePlatformAdmin) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN",
@@ -78,12 +78,12 @@ func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
-	// spec: §15.1 line 1213 — honour If-Match when present.
+	// spec: §15.1 — honour If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return
 	}
 
-	// §12.8 line 880: enumerate active tenant-scoped legal holds. The
+	// §12.8: enumerate active tenant-scoped legal holds. The
 	// override authorizes the Phase 3.5 escrow; absent the override, an
 	// active hold blocks fail-closed.
 	holds, err := r.activeTenantHolds(req.Context(), id)
@@ -98,7 +98,7 @@ func (r *Router) handleForceDeleteTenant(w http.ResponseWriter, req *http.Reques
 	}
 
 	if !body.AcknowledgeHoldOverride {
-		// §12.8 line 889: force-delete without acknowledgeHoldOverride while
+		// §12.8: force-delete without acknowledgeHoldOverride while
 		// active holds exist is rejected — the endpoint never silently
 		// assumes the override.
 		if len(holds) > 0 {
@@ -196,7 +196,7 @@ func (r *Router) writeTenantUpdateError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 }
 
-// activeTenantHolds enumerates the §12.8 line 878 active tenant-scoped
+// activeTenantHolds enumerates the §12.8 active tenant-scoped
 // legal holds: session-level holds (sessions.legal_hold) and
 // artifact-level holds on any artifact under one of the tenant's
 // sessions. It mirrors the controller-side enumerator so the force-delete

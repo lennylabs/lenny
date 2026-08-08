@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 880-889 — the force-delete legal-hold override must
+// spec: §12.8 — the force-delete legal-hold override must
 // be durable on the tenant row so the tenant-deletion controller (which
 // reconstructs its job from the persisted state after a restart) still
 // segregates held evidence on the override path. Migration 0162 adds the

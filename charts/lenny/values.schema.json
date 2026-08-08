@@ -53,7 +53,7 @@
       "type": "object"
     },
     "cluster": {
-      "description": "Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla). §17.9.1 line 1351.",
+      "description": "Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla).",
       "type": "string"
     },
     "complianceProfile": {
@@ -108,11 +108,11 @@
           "type": "boolean"
         },
         "maintenanceMode": {
-          "description": "When true, the §25.6 doctor --fix auto-remediation surface skips every remediation. §25.6 line 2974.",
+          "description": "When true, the §25.6 doctor --fix auto-remediation surface skips every remediation.",
           "type": "boolean"
         },
         "noEnvironmentPolicy": {
-          "description": "Platform-wide default access policy for a session that names no environment. §10.6 / §17.6 line 365.",
+          "description": "Platform-wide default access policy for a session that names no environment. §10.6 /.",
           "enum": [
             "deny-all",
             "allow-all"
@@ -120,15 +120,15 @@
           "type": "string"
         },
         "saTokenAudience": {
-          "description": "Projected SA-token audience the gateway validates on every pod→gateway request. §10.3 line 334.",
+          "description": "Projected SA-token audience the gateway validates on every pod→gateway request. §10.3.",
           "type": "string"
         },
         "spiffeTrustDomain": {
-          "description": "SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3 line 316.",
+          "description": "SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3.",
           "type": "string"
         },
         "traceSamplingRate": {
-          "description": "Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3 line 359.",
+          "description": "Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3.",
           "maximum": 1,
           "minimum": 0,
           "type": "number"
@@ -149,7 +149,7 @@
       "type": "object"
     },
     "isolationProfile": {
-      "description": "Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes. §17.9.1 line 1354.",
+      "description": "Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes.",
       "type": "string"
     },
     "kms": {
@@ -174,24 +174,7 @@
       "type": "object"
     },
     "monitoring": {
-      "type": "object",
-      "properties": {
-        "openslo": {
-          "type": "object",
-          "properties": {
-            "notificationTarget": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
-                  "maxLength": 63
-                }
-              }
-            }
-          }
-        }
-      }
+      "type": "object"
     },
     "mtls": {
       "type": "object"

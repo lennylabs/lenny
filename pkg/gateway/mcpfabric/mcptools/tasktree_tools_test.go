@@ -42,7 +42,7 @@ func TestGetTaskTreeTool(t *testing.T) {
 }
 
 // TestGetTaskTreeAcceptsEmptyArgsFromBoundPrincipal_spec_8_9_F_8_9_11
-// verifies that lenny/get_task_tree honors the §8.9 lines 615-623 input
+// verifies that lenny/get_task_tree honors the §8.9 input
 // schema (`{"properties":{},"required":[]}`): a spec-conformant caller
 // who omits every argument and presents an authenticated principal
 // gets the tree rooted at the principal's SessionID. F-8.9.11.
@@ -83,8 +83,7 @@ func TestGetTaskTreeRejectsUnboundEmptyArgs_spec_8_9_F_8_9_11(t *testing.T) {
 }
 
 // TestGetTaskTreeInputSchemaHasNoRequired_spec_8_9_F_8_9_11 verifies
-// the registered §8.9 input schema declares no required fields — the
-// caller-implicit identification rule the spec at lines 615-623 sets.
+// the registered §8.9 input schema declares no required fields — the caller-implicit identification rule the spec at sets.
 // F-8.9.11.
 func TestGetTaskTreeInputSchemaHasNoRequired_spec_8_9_F_8_9_11(t *testing.T) {
 	srv, _ := newMCP(t)
@@ -106,7 +105,7 @@ func TestGetTaskTreeInputSchemaHasNoRequired_spec_8_9_F_8_9_11(t *testing.T) {
 		schema, _ := tool["inputSchema"].(map[string]any)
 		required, _ := schema["required"].([]any)
 		if len(required) != 0 {
-			t.Errorf("get_task_tree inputSchema.required = %v, want [] (§8.9 lines 615-623)", required)
+			t.Errorf("get_task_tree inputSchema.required = %v, want [] (§8.9)", required)
 		}
 		return
 	}
@@ -218,7 +217,7 @@ func TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1(t *testing.T) {
 
 // TestGetTaskTreeUsesTaskIDField_spec_8_5_540 verifies that the §8.5
 // MCP `lenny/get_task_tree` node uses the `taskId` wire field rather
-// than `sessionId`. spec: §8.5 line 540 — "Each node includes
+// than `sessionId`. spec: §8.5 — "Each node includes
 // `taskId`, `state`, and `runtimeRef`". F-8.9.5.
 func TestGetTaskTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 	srv, store := newMCP(t)
@@ -241,12 +240,12 @@ func TestGetTaskTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 		}
 	}
 	if strings.Contains(text, `"sessionId":"sess_root_tid"`) || strings.Contains(text, `"sessionId":"sess_kid_tid"`) {
-		t.Errorf("tree node leaked legacy `sessionId` field instead of §8.5 line 540 `taskId`: %q", text)
+		t.Errorf("tree node leaked legacy `sessionId` field instead of §8.5: %q", text)
 	}
 }
 
 // TestGetTaskTreeSurfacesNodeAttributes_spec_8_9_1010 verifies that the
-// §8.9 line 1010 per-node tracking attributes (generation, pod, lease,
+// §8.9 per-node tracking attributes (generation, pod, lease,
 // failure history) ride on each MCP tree node so a parent agent can
 // inspect a child's recovery generation, pod assignment, granted lease,
 // and failure history. F-8.9.1.
@@ -332,7 +331,7 @@ func TestCancelChildTool(t *testing.T) {
 
 // TestCancelChildToolHonoursAwaitCompletion verifies that
 // `await_completion` on the cancelled node leaves its descendants
-// running. spec: §8.10 lines 1066-1076. F-8.5.19.
+// running. spec: §8.10. F-8.5.19.
 func TestCancelChildToolHonoursAwaitCompletion(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_root", session.StateRunning, "")
@@ -365,8 +364,7 @@ func TestCancelChildToolHonoursAwaitCompletion(t *testing.T) {
 }
 
 // TestCancelChildToolHonoursDetach verifies that `detach` on the
-// cancelled node leaves its descendants running. spec: §8.10 lines
-// 1066-1076. F-8.5.19.
+// cancelled node leaves its descendants running. spec: §8.10. F-8.5.19.
 func TestCancelChildToolHonoursDetach(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_root", session.StateRunning, "")
@@ -497,7 +495,7 @@ func TestAwaitChildrenAny(t *testing.T) {
 }
 
 // TestAwaitChildrenYieldsInputRequiredPartial_spec_8_8_951 covers the
-// §8.8 lines 951-971 contract: when an awaited child is blocked on a
+// §8.8 contract: when an awaited child is blocked on a
 // lenny/request_input round, lenny/await_children returns a partial
 // result carrying the child's requestId and question parts instead of
 // blocking until the child settles. F-8.5.5 / F-8.8.5.
@@ -609,7 +607,7 @@ func TestAwaitChildrenAnyReturnsFirstChronologicallySettled_spec_8_8_945(t *test
 }
 
 // TestAwaitChildrenSettledAliasesAll_spec_8_8_945 asserts that the
-// `settled` mode is the alias for `all` named at §8.8 line 945 — both
+// `settled` mode is the alias for `all` named at §8.8 — both
 // require every child terminal and return the full set. F-8.8.12.
 func TestAwaitChildrenSettledAliasesAll_spec_8_8_945(t *testing.T) {
 	srv, store := newMCP(t)
@@ -888,7 +886,7 @@ func TestAwaitChildrenFailedChildCarriesError(t *testing.T) {
 }
 
 // TestGetTaskTreeProjectsSessionStateMetadata_spec_8_8_871 verifies
-// that the MCP tree walker stamps the §8.8 lines 871-883 supplementary
+// that the MCP tree walker stamps the §8.8 supplementary
 // metadata on tree nodes: a suspended session surfaces as
 // `working + metadata.suspended:true`; a resume_pending session as
 // `working + metadata.resuming:true`. F-8.8.9.
@@ -919,9 +917,9 @@ func TestGetTaskTreeProjectsSessionStateMetadata_spec_8_8_871(t *testing.T) {
 }
 
 // TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867 verifies that
-// `lenny/await_children` projects the §8.8 line 857 task-level state
+// `lenny/await_children` projects the §8.8 task-level state
 // table at the MCP boundary: `cancelled` → `canceled` (MCP spelling)
-// and `expired` → `failed` (with the §8.8 line 867 `expired:*` error
+// and `expired` → `failed` (with the §8.8 error
 // code prefix when the row carries one). F-8.8.7.
 func TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867(t *testing.T) {
 	srv, store := newMCP(t)
@@ -931,7 +929,7 @@ func TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867(t *testing.T) {
 		`{"sessionId":"sess_p","childIds":["sess_canc"],"mode":"all"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, `"state":"canceled"`) {
-		t.Errorf("await_children for cancelled child = %q, want MCP spelling \"canceled\" (§8.8 line 857)", text)
+		t.Errorf("await_children for cancelled child = %q, want MCP spelling \"canceled\" (§8.8)", text)
 	}
 	if strings.Contains(text, `"state":"cancelled"`) {
 		t.Errorf("await_children carried Lenny-native spelling \"cancelled\" instead of MCP \"canceled\": %q", text)
@@ -939,7 +937,7 @@ func TestAwaitChildrenMapsStateToMCPSpelling_spec_8_8_867(t *testing.T) {
 }
 
 // TestAwaitChildrenExpiredChildSurfacesFailedWithReasonCode_spec_8_8_867
-// verifies the §8.8 line 867 `expired` → `failed` collapse: the state
+// verifies the §8.8 → `failed` collapse: the state
 // field uses MCP `failed`, the error.code carries the spec-prescribed
 // `expired:*` prefix (here `expired:deadline` from the watchdog), and
 // the Lenny-native `expired` spelling does not leak through. F-8.8.7
@@ -959,12 +957,12 @@ func TestAwaitChildrenExpiredChildSurfacesFailedWithReasonCode_spec_8_8_867(t *t
 		`{"sessionId":"sess_p","childIds":["sess_exp"],"mode":"all"}`)
 	text := resultText(t, resp)
 	if !strings.Contains(text, `"state":"failed"`) {
-		t.Errorf("expired child state should collapse to \"failed\" per §8.8 line 867: %q", text)
+		t.Errorf("expired child state should collapse to \"failed\" per §8.8: %q", text)
 	}
 	if strings.Contains(text, `"state":"expired"`) {
 		t.Errorf("Lenny-native \"expired\" leaked to MCP boundary: %q", text)
 	}
 	if !strings.Contains(text, `"code":"expired:deadline"`) {
-		t.Errorf("expired child error.code should carry the §8.8 line 867 prefix \"expired:deadline\": %q", text)
+		t.Errorf("expired child error.code should carry the §8.8 prefix \"expired:deadline\": %q", text)
 	}
 }

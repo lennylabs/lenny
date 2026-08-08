@@ -20,9 +20,7 @@
 // connection so the credential-file deletion at the capped deadline is
 // observed on the real enforcement point.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard; keeps the session
-// alive until recovery; cumulative extension capped at one leaseTTLSeconds;
-// terminal teardown at the cap); §8.8 (expired:lease surfacing).
+// spec: §4.9; §8.8 (expired:lease surfacing).
 package tier8_chaos_test
 
 import (
@@ -54,7 +52,7 @@ const guardProvider = "anthropic_direct"
 
 // guardDirectPayload is a direct-mode lease payload; a direct-mode lease with a
 // positive expiry arms the adapter expiry timer the guard re-arms.
-// spec: §4.9 line 1149.
+// spec: §4.9.
 const guardDirectPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 
 // scriptedRenewer injects a Token Service breaker-open outage window into the
@@ -99,8 +97,7 @@ func (r *scriptedRenewer) Renew(_ context.Context, _ credrenewal.Lease) (credren
 // the next sweep renews normally onto a fresh credential with no lingering
 // extension state, so the reset budget is available again.
 //
-// spec: §4.9 (line 1470, keeps the session alive until the Token Service
-// recovers)
+// spec: §4.9
 //
 // diagnosis: the guard did not bridge the outage (a still-valid session was
 // exhausted mid-outage) or did not resume normal renewal on recovery. The
@@ -297,8 +294,7 @@ func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
 // the key does not outlive the capped lease, and no further renewal is
 // attempted after the cap.
 //
-// spec: §4.9 (line 1470, cumulative extension capped at one leaseTTLSeconds;
-// terminal teardown at the cap, no re-mint); §8.8 (expired:lease surfacing)
+// spec: §4.9; §8.8 (expired:lease surfacing)
 //
 // diagnosis: the cap did not bound the key's usable life (a permanently-open
 // breaker extended it without limit) or re-entered the Fallback restart loop at

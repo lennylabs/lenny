@@ -96,7 +96,7 @@ type Store interface {
 	// the oldest pending request is first. The §7.2 `children_reattached`
 	// emitter calls this to surface a child session's pending request
 	// id to a resumed parent.
-	// spec: §7.2 line 153 (ReattachedChild.pending_request_id).
+	// spec: §7.2.
 	ListPending(ctx context.Context, tenantID, sessionID string) ([]Interaction, error)
 
 	// DeleteByUser removes every interaction directed at userID within
@@ -110,7 +110,7 @@ type Store interface {
 	// adapter. Mandatory at the interface per §12.1 so the production
 	// pgstore (not only the in-memory store) carries it. A tenant with no
 	// interactions is a no-op returning (0, nil).
-	// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+	// spec: §12.1; §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// DismissByUser sets every pending elicitation directed at userID
@@ -196,7 +196,7 @@ func (m *Memory) CountElicitations(_ context.Context, tenantID, sessionID string
 }
 
 // ListPending implements Store. Pending entries are returned oldest
-// first (CreatedAt ascending) so the §7.2 line 153
+// first (CreatedAt ascending) so the §7.2
 // `ReattachedChild.pending_request_id` surface picks the longest-
 // waiting request when a session carries several.
 func (m *Memory) ListPending(_ context.Context, tenantID, sessionID string) ([]Interaction, error) {

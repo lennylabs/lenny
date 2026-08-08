@@ -93,7 +93,7 @@ func TestDelegateRunsExportMaterializer_spec_8_7_F_8_7_1(t *testing.T) {
 	if len(mat.gotParams.Specs) != 1 || mat.gotParams.Specs[0].Source != "docs/*.txt" {
 		t.Errorf("specs = %+v, want one docs/*.txt spec", mat.gotParams.Specs)
 	}
-	// §8.3 line 264: unset lease limits default to 100 files / 100 MiB.
+	// §8.3: unset lease limits default to 100 files / 100 MiB.
 	if mat.gotParams.Limits != fileexport.DefaultFileExportLimits {
 		t.Errorf("limits = %+v, want defaults %+v", mat.gotParams.Limits, fileexport.DefaultFileExportLimits)
 	}
@@ -209,7 +209,7 @@ func TestDelegateScanRequiredWithoutResolverFailsClosed(t *testing.T) {
 // TestDelegateExportEndToEndStampsPlan exercises the real
 // export.Materializer through Delegate: a parent export of one plain file
 // and one archive yields a child WorkspacePlan with an uploadFile and an
-// uploadArchive (the §8.7 line 792 archive-validator inheritance routing).
+// uploadArchive (the §8.7 archive-validator inheritance routing).
 func TestDelegateExportEndToEndStampsPlan(t *testing.T) {
 	store := memstore.New()
 	seedParent(t, store, "sess_parent", "", "gemini", "pool-b", isolation.ProfileSandboxed)

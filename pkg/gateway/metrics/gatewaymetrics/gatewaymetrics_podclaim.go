@@ -27,7 +27,7 @@ type podClaimMetrics struct {
 	// WARM_POOL_EXHAUSTED. Labeled by `pool`. It backs the §16.5
 	// PodClaimQueueSaturated alert alongside the depth gauge.
 	podClaimTimeout *prometheus.CounterVec
-	// slotAssignmentConflict counts the §5.2 line 519 concurrent-mode
+	// slotAssignmentConflict counts the §5.2 concurrent-mode
 	// slot reservation failures due to slot contention (a candidate pod
 	// was at its maxConcurrent bound). Labeled by `pool` (finite, the
 	// warm-pool registry), it lets operators detect pool under-sizing.
@@ -80,13 +80,13 @@ func newPodClaimMetrics(reg *prometheus.Registry) (podClaimMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §5.2 line 519 — `lenny_slot_assignment_conflict_total` increments
+	// §5.2 — `lenny_slot_assignment_conflict_total` increments
 	// when a concurrent-mode slot reservation found a candidate pod at
 	// its maxConcurrent bound. `pool` is bounded by the warm-pool
 	// registry.
 	slotAssignmentConflict, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_slot_assignment_conflict_total",
-		Help: "Concurrent-mode slot reservation failures due to slot contention (§5.2 line 519).",
+		Help: "Concurrent-mode slot reservation failures due to slot contention (§5.2).",
 	}, []string{"pool"})
 	if err != nil {
 		return m, err

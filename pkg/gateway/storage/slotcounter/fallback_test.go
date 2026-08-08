@@ -79,7 +79,7 @@ func downedCounter(t *testing.T, opts ...slotcounter.Option) *slotcounter.Counte
 	return slotcounter.New(cl, opts...)
 }
 
-// spec: §12.4 line 208 — during a Redis outage the counter gates intra-pod
+// spec: §12.4 — during a Redis outage the counter gates intra-pod
 // capacity on the Postgres fallback under a per-pod advisory lock.
 // diagnosis: a Redis outage rejected all slot admission instead of
 // degrading to the Postgres-fallback gate.
@@ -99,7 +99,7 @@ func TestReserveFallsBackToPostgresOnRedisOutage(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — the fallback caps at maxConcurrent.
+// spec: §12.4 — the fallback caps at maxConcurrent.
 // diagnosis: the Postgres-fallback gate admitted a slot past the per-pod
 // bound during a Redis outage.
 func TestReserveFallbackCapsAtBound(t *testing.T) {
@@ -113,7 +113,7 @@ func TestReserveFallbackCapsAtBound(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — no Postgres fallback wired fails closed
+// spec: §12.4 — no Postgres fallback wired fails closed
 // immediately.
 // diagnosis: a Redis outage with no fallback silently admitted slots
 // rather than failing closed.
@@ -125,7 +125,7 @@ func TestReserveFailsClosedWithoutFallback(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — dual-store outage (Postgres also unavailable)
+// spec: §12.4 — dual-store outage (Postgres also unavailable)
 // fails closed.
 // diagnosis: when both Redis and Postgres are unavailable the gate admitted
 // a slot instead of failing closed.
@@ -140,7 +140,7 @@ func TestReserveFailsClosedOnDualStoreOutage(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — the fallback window is bounded; after
+// spec: §12.4 — the fallback window is bounded; after
 // slotCounterPostgresFallbackMaxSeconds with Redis still down the gate
 // fails closed.
 // diagnosis: a sustained Redis outage kept degrading to Postgres latency

@@ -52,13 +52,12 @@ const (
 	// DefaultStreamMaxLen is the billingRedisStreamMaxLen default at
 	// Tier 1/2 (§17.8.2). Tier 3 raises it to 72,000.
 	DefaultStreamMaxLen = 50_000
-	// Tier3StreamMaxLen is the §17.8.2 line 1203 / footnote ⁵
+	// Tier3StreamMaxLen is the §17.8.2 / footnote ⁵
 	// billingRedisStreamMaxLen default at Tier 3: 72,000 entries
 	// (`600 events/s × 60s outage-plus-recovery envelope × 2 safety
 	// factor`). The Tier 1/2 default of 50,000 fills in ~83s at the
 	// Tier 3 billing rate, below the combined envelope and therefore
-	// unsafe at Tier 3. spec: spec/17_deployment-topology.md lines 1203,
-	// 1205.
+	// unsafe at Tier 3. spec: §17.8.2.
 	Tier3StreamMaxLen = 72_000
 	// DefaultReclaimInterval is billingReclaimIntervalSeconds (§11.2.1).
 	DefaultReclaimInterval = 15 * time.Second
@@ -71,8 +70,7 @@ const (
 // default: 72,000 at Tier 3, 50,000 otherwise. The gateway applies it when
 // the operator leaves billing.redisStreamMaxLen unset so a Tier 3 install
 // is sized for the outage-plus-recovery envelope rather than silently
-// using the Tier 1/2 floor. spec: spec/17_deployment-topology.md lines
-// 1203, 1205.
+// using the Tier 1/2 floor. spec: §17.8.2.
 func StreamMaxLenForTier(tier string) int64 {
 	if tier == "tier3" {
 		return Tier3StreamMaxLen
@@ -359,7 +357,7 @@ func (t *Tier) flushEntries(ctx context.Context, tenantID string, messages []red
 // entry, so a concurrent flusher cannot re-deliver a purged event.
 // Returns the number of stream entries removed.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+// spec: §12.8, step 5.
 func (t *Tier) PurgeUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, fmt.Errorf("redisstream: PurgeUser requires non-empty tenant_id and user_id")

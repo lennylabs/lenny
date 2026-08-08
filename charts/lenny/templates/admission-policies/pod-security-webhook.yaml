@@ -7,7 +7,7 @@ or wrong credential fsGroup, a root pod, a privileged or
 privilege-escalating container, a writable root filesystem, an
 undropped capability, or a seccomp profile other than RuntimeDefault.
 Scoped to Pod CREATE/UPDATE and the pods/ephemeralcontainers
-subresource (§13.1 line 27 — the per-container baseline applies to
+subresource (§13.1 — the per-container baseline applies to
 ephemeral debug containers too) in agent namespaces; fail-closed so a
 pod the webhook cannot validate is not admitted with an unverified
 §13.1 posture.
@@ -48,7 +48,7 @@ webhooks:
         # data-residency-validator) which all register CREATE+UPDATE.
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
-      # spec: §13.1 line 27 — ephemeral debug containers attached
+      # spec: §13.1 — ephemeral debug containers attached
       # post-hoc via the pods/ephemeralcontainers subresource carry the
       # same per-container baseline (no privileged, drop ALL caps,
       # read-only root, RuntimeDefault seccomp). The dedicated

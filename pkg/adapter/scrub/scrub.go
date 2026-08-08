@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package scrub implements the §5.2 Lenny scrub procedure a recycling pod
-// runs at the §6.2 occupancy-zero recycle boundary (spec/05_runtime-
-// registry-and-pool-model.md lines 415-465). The procedure has two phases:
+// runs at the §6.2 occupancy-zero recycle boundary. The procedure has two phases:
 // a pre-cleanup credential purge (step 0) executed before any deployer
 // code, and a post-cleanup scrub sequence (steps 1-6) executed after the
 // deployer-defined cleanupCommands finish. The whole-pod scrub runs once
@@ -389,7 +388,7 @@ func (r *Report) verify(ops Ops, cfg Config) {
 }
 
 // CleanupEnv returns the env a cleanupCommand runs with: the §7.5 minimal
-// setup whitelist plus the §5.2 line 424 LENNY_PREV_CREDENTIAL_PROVIDER and
+// setup whitelist plus the §5.2 LENNY_PREV_CREDENTIAL_PROVIDER and
 // LENNY_PREV_LEASE_ID sanitized metadata. The credential file itself is
 // already purged (step 0), so cleanup code that needs provider/lease
 // context for custom audit logging reads it from these variables rather

@@ -1,5 +1,5 @@
 suite: lenny-ops and lenny-backup NetworkPolicies
-# spec: §25.4 lines 1119-1403 — F-25.4.12, F-17.1.4. The three §25.4
+# spec: §25.4 — F-25.4.12, F-17.1.4. The three §25.4
 # policies beyond the lenny-ops-deny-all-ingress baseline.
 templates:
   - ops-network-policies.yaml

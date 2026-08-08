@@ -66,7 +66,7 @@ func newDelegateMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Serve
 	return srv, store
 }
 
-// spec: §8.2 line 90 — the gateway runs the PreRoute chain on the
+// spec: §8.2 — the gateway runs the PreRoute chain on the
 // child's augmented TaskSpec. A generic (non-immutable) REJECT blocks
 // the delegation, falls back to INTERCEPTOR_REJECTED, carries no
 // violated_fields, and creates no child session.
@@ -95,7 +95,7 @@ func TestDelegateTaskPreRouteRejectBlocksChild(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 90, §4.8 line 1048 — a PreRoute MODIFY rewrites the
+// spec: §8.2, §4.8 — a PreRoute MODIFY rewrites the
 // child's task input. The echo executor reflects the delivered body,
 // proving the modified input reached the child.
 func TestDelegateTaskPreRouteModifyRewritesInput(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.3 lines 149-188 / §4.8 lines 1036, 1040 / §13.5 mitigations
+// spec: §8.3 / §4.8 / §13.5 mitigations
 // 2-3 — Service.ResolveContentPolicy returns the session runtime's
 // effective contentPolicy maxInputSize and interceptorRef so the MCP
 // delegate_task / send_message handlers run only the policy-named

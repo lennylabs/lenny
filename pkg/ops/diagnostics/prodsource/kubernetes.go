@@ -15,7 +15,7 @@ import (
 
 // K8sReader is the §25.6 Kubernetes pod-signal reader. It maps a pod's
 // container statuses and scheduling conditions onto the diagnostics.Signals
-// the cause chain classifies. spec: §25.6 lines 2890, 2899-2906. F-25.6.1.
+// the cause chain classifies. spec: §25.6. F-25.6.1.
 type K8sReader struct {
 	client    kubernetes.Interface
 	namespace string
@@ -56,8 +56,7 @@ func (r *K8sReader) Signals(ctx context.Context, podName string) (diagnostics.Si
 // signalsFromPod derives the §25.6 cause signals from a pod's status.
 // Container-terminated state yields the exit code and OOM flag; a
 // waiting image-pull reason yields the image-pull flag; an Unschedulable
-// PodScheduled condition yields the resource-pressure flag. spec: §25.6
-// lines 2899-2906.
+// PodScheduled condition yields the resource-pressure flag. spec: §25.6.
 func signalsFromPod(pod *corev1.Pod) diagnostics.Signals {
 	var sig diagnostics.Signals
 	statuses := append([]corev1.ContainerStatus{}, pod.Status.InitContainerStatuses...)

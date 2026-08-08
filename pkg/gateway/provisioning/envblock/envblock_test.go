@@ -4,7 +4,7 @@ package envblock
 
 import "testing"
 
-// spec: §14 line 105 — the env-var blocklist matches exact names and `*`
+// spec: §14 — the env-var blocklist matches exact names and `*`
 // globs, case-sensitive; the platform default is always merged in first
 // so an operator can extend but not reduce it. F-14.1.12.
 

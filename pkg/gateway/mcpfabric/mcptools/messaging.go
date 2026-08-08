@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// §8.3 lines 269-272 messagingRateLimit defaults. Applied per-field when
+// §8.3 messagingRateLimit defaults. Applied per-field when
 // the corresponding MessagingRateLimit field is zero. The values are
 // deployment-configurable; per-lease overrides land with the §8.2
 // delegation-lease persistence (the lease carries messagingRateLimit and
@@ -23,9 +23,9 @@ const (
 	defaultMessagingMaxInboundPerMinute = 60
 )
 
-// MessagingRateLimit carries the §8.3 lines 269-272 per-session
+// MessagingRateLimit carries the §8.3 per-session
 // lenny/send_message rate limits. A zero field selects the spec default.
-// spec: §7.2 line 270; §8.3 lines 269-272, 309. F-7.2.6.
+// spec: §7.2; §8.3. F-7.2.6.
 type MessagingRateLimit struct {
 	// MaxPerMinute is the per-sender outbound fixed-window per-minute burst
 	// limit (default 30).
@@ -35,7 +35,7 @@ type MessagingRateLimit struct {
 	MaxPerSession int
 	// MaxInboundPerMinute is the per-target inbound aggregate
 	// fixed-window per-minute limit, counting messages arriving from every
-	// sender in the delegation tree (default 60). It is the §8.3 line 309 brake
+	// sender in the delegation tree (default 60). It is the §8.3 brake
 	// on the O(N²) sibling-messaging storm: regardless of how many
 	// senders contribute, the target accepts at most this many per
 	// window.
@@ -62,7 +62,7 @@ func (l MessagingRateLimit) withDefaults() MessagingRateLimit {
 // counter is best-effort in v1 — it resets on gateway restart, so the
 // per-session cap is enforced within a process lifetime; durable
 // per-session counters land with the §7.2 inbox persistence (F-7.2.4).
-// spec: §7.2 line 270; §8.3 lines 269-272. F-7.2.6.
+// spec: §7.2; §8.3. F-7.2.6.
 type messagingLimiter struct {
 	counter  ratelimit.Counter
 	limits   MessagingRateLimit
@@ -131,9 +131,8 @@ func (m *messagingLimiter) allowLifetime(key string) bool {
 // only under `siblings` scope; under the default `direct` scope a
 // session cannot message its siblings. Self-messaging is always
 // rejected. The check is constant-time — every admissible relation is a
-// one-hop ParentSessionID comparison, no tree walk. spec: §7.2 line 240
-// (`direct` / `siblings` scope), §7.2 line 373 (parent communication
-// asymmetry). F-7.2.6, F-7.2.22.
+// one-hop ParentSessionID comparison, no tree walk. spec: §7.2
+// (`direct` / `siblings` scope), §7.2. F-7.2.6, F-7.2.22.
 func withinMessagingScope(sender, target sessionstore.Session, scope session.MessagingScope) bool {
 	if sender.ID == target.ID {
 		return false
@@ -155,7 +154,7 @@ func withinMessagingScope(sender, target sessionstore.Session, scope session.Mes
 }
 
 // crossTenantDenied reports whether target belongs to a tenant other
-// than callerTenant — the §7.2 line 268 cross-tenant message guard,
+// than callerTenant — the §7.2 cross-tenant message guard,
 // which the spec requires to run before scope evaluation and rate
 // limiting. The session store is tenant-scoped (its Get rejects foreign
 // rows as ErrNotFound and never leaks them), so in the per-tenant MCP
@@ -163,7 +162,7 @@ func withinMessagingScope(sender, target sessionstore.Session, scope session.Mes
 // comparison is the normative validation the spec mandates and the guard
 // any multi-tenant transport that surfaces cross-tenant rows relies on.
 // An empty target tenant (a row that predates tenant stamping) is not
-// treated as a cross-tenant denial. spec: §7.2 line 268. F-7.2.6.
+// treated as a cross-tenant denial. spec: §7.2. F-7.2.6.
 func crossTenantDenied(callerTenant string, target sessionstore.Session) bool {
 	return target.TenantID != "" && target.TenantID != callerTenant
 }

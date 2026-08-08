@@ -14,7 +14,7 @@ import (
 // the intra-pod platform MCP server advertises on tools/list, and
 // CallPlatformTool dispatches one tools/call. *gatewaycontrol.Client
 // satisfies it; the interface is the seam that keeps startPlatformMCP
-// testable without a live gateway. spec: §9.1 lines 14-31. F-9.1.1.
+// testable without a live gateway. spec: §9.1. F-9.1.1.
 type PlatformToolForwarder interface {
 	ListPlatformTools(ctx context.Context, sessionID string) ([]mcp.Tool, error)
 	CallPlatformTool(ctx context.Context, sessionID, toolName string, arguments json.RawMessage) (json.RawMessage, error)
@@ -22,7 +22,7 @@ type PlatformToolForwarder interface {
 
 // platformToolProvider adapts a PlatformToolForwarder to the
 // mcp.ToolProvider the intra-pod platform MCP server consumes, binding
-// every List/Call to the pod's single session. spec: §9.1 line 14.
+// every List/Call to the pod's single session. spec: §9.1.
 // F-9.1.1.
 type platformToolProvider struct {
 	forwarder PlatformToolForwarder

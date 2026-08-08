@@ -45,7 +45,7 @@ const Channel = "credential:denylist:events"
 // when Redis is unavailable. It is a plain SQL identifier (Redis's
 // colon-delimited Channel is not a valid LISTEN identifier without
 // quoting); the two substrates carry the same JSON-encoded credential
-// key. spec: §4.9 line 1647.
+// key. spec: §4.9.
 const PGChannel = "lenny_credential_denylist"
 
 // Fallback is the §4.9 Postgres LISTEN/NOTIFY substrate the propagator
@@ -90,7 +90,7 @@ func WithErrorHandler(fn func(error)) Option {
 // publishes on it when the Redis publish fails (or when no Redis bus is
 // wired), and Run additionally subscribes on it so a revocation raised
 // by a peer over Postgres reaches this replica even while Redis is down.
-// spec: §4.9 line 1647. F-13.3.8.
+// spec: §4.9. F-13.3.8.
 func WithFallback(fb Fallback) Option {
 	return func(p *Propagator) { p.fallback = fb }
 }
@@ -115,7 +115,7 @@ func (p *Propagator) Local() *denylist.DenyList { return p.local }
 // replicas revoke it too. The signature matches denylist.DenyList.Revoke,
 // so a Propagator is a drop-in for the raw deny list.
 //
-// §4.9 line 1647: Redis pub/sub is the primary transport with Postgres
+// §4.9: Redis pub/sub is the primary transport with Postgres
 // LISTEN/NOTIFY as fallback. Redis is attempted first when a Redis bus
 // is wired; the Postgres fallback carries the revocation when the Redis
 // publish fails (Redis down) or when no Redis bus is configured at all.
@@ -162,7 +162,7 @@ func (p *Propagator) Len() int { return p.local.Len() }
 // Redis channel and the Postgres LISTEN/NOTIFY channel concurrently, so
 // a revocation reaches this replica over whichever transport is live.
 // apply is idempotent (Revoke on a set), so receiving the same key on
-// both channels is harmless. spec: §4.9 line 1647. F-13.3.8.
+// both channels is harmless. spec: §4.9. F-13.3.8.
 func (p *Propagator) Run(ctx context.Context) {
 	if p.fallback == nil {
 		p.bus.Subscribe(ctx, Channel, p.apply)

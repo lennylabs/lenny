@@ -156,15 +156,14 @@ func TestEnvironmentDivergingFromTenantRegionRejected(t *testing.T) {
 	}
 }
 
-// TestT4SessionScopedCrossRegionTransferRejected asserts the §12.9
-// line 1046 T4 rule: a non-environment-scoped resource (a session or
+// TestT4SessionScopedCrossRegionTransferRejected asserts the §12.9 T4 rule: a non-environment-scoped resource (a session or
 // claim) that resolves to a region other than its T4 tenant's pinned
 // region is rejected as a cross-region transfer even though both
 // regions are declared in storage.regions. The same request under T3
 // is admitted (TestT3SessionScopedDifferentDeclaredRegionAdmitted),
 // which is the distinct enforcement layer T4 adds.
 //
-// spec: §12.9 line 1046 (data-residency row).
+// spec: §12.9.
 func TestT4SessionScopedCrossRegionTransferRejected(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:            "SandboxClaim",
@@ -188,7 +187,7 @@ func TestT4SessionScopedCrossRegionTransferRejected(t *testing.T) {
 // baseline the T4 rule tightens: a non-environment-scoped resource may
 // resolve to a declared region other than the tenant region under T3.
 //
-// spec: §12.9 line 1046 (T3 row).
+// spec: §12.9.
 func TestT3SessionScopedDifferentDeclaredRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:            "SandboxClaim",
@@ -206,7 +205,7 @@ func TestT3SessionScopedDifferentDeclaredRegionAdmitted(t *testing.T) {
 // restates its tenant's pinned region imposes no cross-region transfer
 // and is admitted.
 //
-// spec: §12.9 line 1046.
+// spec: §12.9.
 func TestT4MatchingTenantRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:            "SandboxClaim",
@@ -226,7 +225,7 @@ func TestT4MatchingTenantRegionAdmitted(t *testing.T) {
 // environment-inheritance code, so the operator sees the Restricted-
 // tier rationale.
 //
-// spec: §12.9 line 1046.
+// spec: §12.9.
 func TestT4EnvironmentDivergenceReportedAsCrossTransfer(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:                "Environment",
@@ -248,7 +247,7 @@ func TestT4EnvironmentDivergenceReportedAsCrossTransfer(t *testing.T) {
 // tenant pins no region has nothing to transfer across, so the cross-
 // region check does not fire (the effective-region path still applies).
 //
-// spec: §12.9 line 1046.
+// spec: §12.9.
 func TestT4WithNoTenantRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
 		Kind:            "SandboxClaim",

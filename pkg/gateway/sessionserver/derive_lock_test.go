@@ -28,7 +28,7 @@ func (f *fakeLock) Acquire(_ context.Context, _ string) (derivelock.Releaser, er
 	return func() {}, nil
 }
 
-// spec: §7.1 line 92 — concurrent derives on the same source session
+// spec: §7.1 — concurrent derives on the same source session
 // that fail to acquire the advisory lock within the wait budget return
 // `429 DERIVE_LOCK_CONTENTION` so SDK clients can distinguish a
 // transient lock race from the immutable-source rejection.
@@ -53,7 +53,7 @@ func TestDerive_ContendedLockReturns429_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — a successful Acquire admits the derive and
+// spec: §7.1 — a successful Acquire admits the derive and
 // releases the lock as soon as the snapshot has been read. The
 // in-process Memory implementation satisfies this on a single replica.
 func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
@@ -83,7 +83,7 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — concurrent derives on the same source session
+// spec: §7.1 — concurrent derives on the same source session
 // must serialize. The Memory implementation blocks the second acquirer
 // until the first releases. We assert the second derive does not race
 // past the first via a synchronized barrier.

@@ -69,7 +69,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --kata-runtime-class=kata-qemu
 
-  # spec: §13.1 line 7 — the webhook binary enforces the operator-tunable
+  # spec: §13.1 — the webhook binary enforces the operator-tunable
   # non-root pod UIDs the controller stamps. The chart wires both from the
   # same security.podUIDs values so a controller-built pod passes the
   # pod-security / cred-guard UID checks; an override on one side without
@@ -150,7 +150,7 @@ tests:
           path: webhooks[0].rules[0].resources[0]
           value: pods
 
-  # spec §5.2 line 392 — lenny-tenant-label-immutability is the
+  # spec §5.2 — lenny-tenant-label-immutability is the
   # sibling ValidatingWebhookConfiguration that enforces the
   # tenant-id transition rules (gateway-only initial assignment,
   # WarmPoolController-only pool return). Same backing Service +
@@ -268,7 +268,7 @@ tests:
       - equal:
           path: webhooks[0].rules[0].operations[1]
           value: UPDATE
-      # spec: §13.1 line 27 — a second rule covers the
+      # spec: §13.1 — a second rule covers the
       # pods/ephemeralcontainers subresource so the per-container
       # baseline applies to ephemeral debug containers attached
       # post-hoc (F-13.1.8). Ephemeral containers are added only via
@@ -343,7 +343,7 @@ tests:
       - hasDocuments:
           count: 3
 
-  # spec: §13.2 NET-068 / §17.2 line 56 — only the drain-readiness
+  # spec: §13.2 NET-068 / §17.2 — only the drain-readiness
   # Deployment carries the additive lenny.dev/webhook-name label, so the
   # gateway-egress sub-rule narrows to that webhook alone. F-17.2.11.
   - it: stamps the additive webhook-name egress label on the drain-readiness pods
@@ -385,7 +385,7 @@ tests:
       - notExists:
           path: spec.template.metadata.labels["lenny.dev/webhook-name"]
 
-  # spec: §13.2 NET-068 / sub-rule (c), §17.2 line 56. Least privilege:
+  # spec: §13.2 NET-068 / sub-rule (c), §17.2. Least privilege:
   # ONLY lenny-drain-readiness and lenny-sandboxtemplate-deletion-guard
   # carry the additive lenny.dev/webhook-name label AND a per-webhook
   # gateway-egress NetworkPolicy. Every other admission webhook is a

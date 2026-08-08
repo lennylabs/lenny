@@ -277,7 +277,7 @@ spec:
       port: 6379
       targetPort: redis
 ---
-# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
 # exception to backends: embedded only; all other backends enforce TLS. The
 # e2e overlay runs a real in-cluster MinIO (a non-embedded backend), so the
 # §12.5 chart guard requires minio.tls.enabled: true, which means the MinIO
@@ -390,7 +390,7 @@ spec:
             - /data
             - --console-address
             - ":9090"
-            # §12.5 line 280 — serve the artifact-store API over TLS. MinIO
+            # §12.5 — serve the artifact-store API over TLS. MinIO
             # reads public.crt/private.key from --certs-dir and serves https
             # on :9000 when they are present. The cert-manager-issued cert is
             # projected into this dir by the tls-certs volume below.

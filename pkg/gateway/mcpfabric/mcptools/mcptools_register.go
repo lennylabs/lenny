@@ -50,7 +50,7 @@ import (
 // fixed-window+lifetime rate limiter and deployment-resolved effective
 // messaging scope. Bundling them keeps each registerXTools helper a thin
 // extraction of one tool family's registration block while Register stays a
-// short sequence of guarded calls. spec: §8.5 (tool surface), §7.2 line 240
+// short sequence of guarded calls. spec: §8.5 (tool surface), §7.2
 // (messaging scope). F-7.2.6.
 type registerEnv struct {
 	clock      func() time.Time
@@ -63,7 +63,7 @@ type registerEnv struct {
 // registerSessionLifecycleTools installs the §15.2 session-lifecycle
 // tools: attach_session (when the session store is wired), and the
 // create_session, send_message, interrupt_session, and cancel_session
-// surfaces. spec: §15.2 lines 1289, 1331 (attach_session); §15.2.1
+// surfaces. spec: §15.2; §15.2.1
 // (create_session); §7.2/§8.5 (send_message); §8.5 (interrupt/cancel).
 // F-15.2.2, F-15.2.7, F-7.2.6, F-8.5.16.
 func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) {
@@ -72,7 +72,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 	tenant := env.tenant
 	msgLimiter := env.msgLimiter
 	msgScope := env.msgScope
-	// spec: §15.2 lines 1289, 1331 — attach_session. The streaming
+	// spec: §15.2 — attach_session. The streaming
 	// Streamable HTTP SSE channel is intercepted in the transport layer
 	// (mcp.Server.handleAttachStream) when the client sends Accept:
 	// text/event-stream; this handler is the non-streaming snapshot a
@@ -113,7 +113,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/create_session",
 		Description: "Create a new agent session against a runtime.",
-		// spec: §15.2.1 rule 4 line 1386 — the input schema is generated
+		// spec: §15.2.1 rule 4 — the input schema is generated
 		// from the OpenAPI `CreateSessionRequest` (the single authoritative
 		// schema for this overlapping operation) by the build-pipeline code
 		// generation step in pkg/gateway/mcptools/internal/genmcpschemas,
@@ -123,18 +123,18 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// MCP-only §11.5 `idempotencyKey` extension.
 		// TestGeneratedSchemasMatchOpenAPI guards against drift. F-15.2.7.
 		//
-		// §11.5 line 277 — `idempotencyKey` (optional, ≤128 runes)
+		// §11.5 — `idempotencyKey` (optional, ≤128 runes)
 		// collapses retries of CreateSession to one execution; identical
 		// retries replay the cached ToolResult, mismatched bodies are
 		// rejected with IDEMPOTENCY_KEY_REUSED. spec: F-11.5.1.
 		InputSchema: GeneratedCreateSessionInputSchema,
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant is the
+		// spec: §9.2 / §16.1 / §15.2 — tenant is the
 		// authenticated principal's, not the Register-time default,
 		// so a multi-tenant deployment scopes the session row to the
 		// caller's tenant. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
-		// spec: §15.2.1 rule 4 line 1386 — decode the full OpenAPI
+		// spec: §15.2.1 rule 4 — decode the full OpenAPI
 		// CreateSessionRequest and forward every field to the shared
 		// service so the MCP create_session path runs the same workspace-
 		// plan, isolation-profile, metadata, and retry-policy validation
@@ -152,14 +152,14 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				"runtimeRef is required",
 				map[string]any{"field": "runtimeRef"})
 		}
-		// spec: §10.6 line 557 — a connection scoped to the explicit
+		// spec: §10.6 — a connection scoped to the explicit
 		// environment surface (/mcp/environments/{name}) defaults the
 		// session to that environment when the call omits one. An explicit
 		// `environment` argument still wins. F-10.6.11.
 		if in.Environment == "" {
 			in.Environment = environmentmw.ExplicitEnvironmentFromContext(ctx)
 		}
-		// spec: §15.2.1 rule 1 line 1380 — route the create through the
+		// spec: §15.2.1 rule 1 — route the create through the
 		// shared §15.1 service layer so the MCP surface runs the same
 		// active-user, quota, concurrency, admission-rate, policy-chain,
 		// environment-access, and runtime / isolation / workspace-plan
@@ -220,39 +220,39 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/send_message",
 		Description: "Deliver a message to a running session and return the response.",
-		// spec: §8.5 line 537 — the §8.5 contract is
+		// spec: §8.5 — the §8.5 contract is
 		// `lenny/send_message(to, message)`; the implementation MUST
 		// expose `to` (target taskId) and `message` (content) as the
 		// schema-named fields. `inReplyTo` is a §7.2/§8.8 extension
 		// surfaced from the await_children pattern, `messageId` is the
-		// §15.4 line 1784 sender-supplied id surface, and
-		// `fromSessionId` enables the §7.2 line 240 topology check
+		// §15.4 sender-supplied id surface, and
+		// `fromSessionId` enables the §7.2 topology check
 		// when the calling transport has no principal binding.
 		// F-8.5.16 (rename), F-7.2.22 (fromSessionId). The `message`
 		// argument is the §15.4 MessageEnvelope.input union; see
 		// sendMessageInputSchema. F-MS5.
 		InputSchema: sendMessageInputSchema,
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §7.2 topology lookup and the §4 chain payload
 		// stay scoped to the right tenant. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
 			// To is the §8.5 target session id (renamed from the legacy
-			// `sessionId` to match the §8.5 line 537 schema). F-8.5.16.
+			// `sessionId` to match the §8.5 schema). F-8.5.16.
 			To string `json:"to"`
 			// Message is the §8.5 content field (renamed from the legacy
-			// `content` to match the §8.5 line 537 schema). It is the §15.4
+			// `content` to match the §8.5 schema). It is the §15.4
 			// MessageEnvelope.input union (bare string or MessagePart[]),
 			// identical to the REST /messages content field under the
 			// §15.2.1 parity rule. F-8.5.16, F-MS5.
 			Message   sessionrecord.MessageContent `json:"message"`
 			InReplyTo string                       `json:"inReplyTo"`
-			// MessageID is the §15.4 line 1784 sender-supplied id. When
+			// MessageID is the §15.4 sender-supplied id. When
 			// empty the gateway assigns a `msg_` prefix id so every
 			// receipt is correlatable. F-7.2.10.
 			MessageID string `json:"messageId"`
-			// FromSessionID, when set, enables the §7.2 line 373
+			// FromSessionID, when set, enables the §7.2
 			// parent/child/sibling topology check. Empty falls through
 			// to the principal's SessionID claim, then to no topology
 			// check (the pre-F-7.2.22 behaviour). F-7.2.22.
@@ -263,7 +263,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		}
 		if in.To == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"to is required (§8.5 line 537)", nil)
+				"to is required (§8.5)", nil)
 		}
 		row, err := deps.Store.Get(ctx, tenant, in.To)
 		if err != nil {
@@ -276,14 +276,14 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
 				fmt.Sprintf("session %s is terminal (%s)", in.To, row.State), nil)
 		}
-		// spec: §7.2 line 268 — cross-tenant validation runs before
+		// spec: §7.2 — cross-tenant validation runs before
 		// scope evaluation and rate limiting and applies to every
 		// message path (inter-session, inReplyTo, delivery:immediate).
 		if crossTenantDenied(tenant, row) {
 			return mcp.ToolResult{}, mcp.NewToolError("CROSS_TENANT_MESSAGE_DENIED",
-				"target session belongs to a different tenant (§7.2 line 268)", nil)
+				"target session belongs to a different tenant (§7.2)", nil)
 		}
-		// spec: §7.2 line 240 messagingScope + line 373 parent
+		// spec: §7.2 messagingScope and parent
 		// asymmetry — restrict the target to the sender's direct
 		// parent/child, and to a sibling only when the effective scope
 		// is `siblings`. The principal's SessionID claim is the
@@ -303,17 +303,17 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 						in.To, senderID, msgScope.OrDefault()), nil)
 			}
 		}
-		// spec: §15.4 line 1784 — the gateway assigns a `msg_` prefix
+		// spec: §15.4 — the gateway assigns a `msg_` prefix
 		// id when the sender omits one so every receipt is
 		// correlatable. F-7.2.10.
 		messageID := in.MessageID
 		if messageID == "" {
 			messageID = "msg_" + idFn()
 		}
-		// spec: §7.2 line 270 + §8.3 lines 269-272 — per-sender
+		// spec: §7.2 + §8.3 — per-sender
 		// outbound + lifetime and per-target inbound aggregate rate
 		// limits, evaluated before delivery. An exceeded limit returns a
-		// RATE_LIMITED delivery receipt (§7.2 line 371, §8.3 line 309)
+		// RATE_LIMITED delivery receipt (§7.2, §8.3)
 		// rather than a tool error, so the sender can react. F-7.2.6.
 		allowed, err := msgLimiter.allow(ctx, tenant, senderID, in.To, clock())
 		if err != nil {
@@ -330,7 +330,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		if in.InReplyTo != "" && deps.InputWaits != nil {
 			err := deps.InputWaits.Resolve(in.To, in.InReplyTo, in.Message.Text())
 			if err == nil {
-				// spec: §15.4 lines 1725-1737 — the inReplyTo path
+				// spec: §15.4 — the inReplyTo path
 				// counts as delivered (the runtime consumed the
 				// answer). The receipt also carries the resolved
 				// requestId so callers correlating by inReplyTo can
@@ -341,7 +341,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				return mcp.ToolResult{}, err
 			}
 		}
-		// spec: §7.2 paths 3/5/6/7 (lines 319-331) — an inter-session
+		// spec: §7.2 paths 3/5/6/7 — an inter-session
 		// message to a target that is not reading from stdin is buffered,
 		// not delivered. Path 1 (inReplyTo) resolved above; terminal
 		// returned TARGET_TERMINAL above. Classify the remaining message
@@ -412,7 +412,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				TenantID:  tenant,
 				Content:   []byte(messageText),
 			}
-			// spec: §4.8 line 1040 / §13.5 mitigation 3 — apply the same
+			// spec: §4.8 / §13.5 mitigation 3 — apply the same
 			// content policy the delegation path applies: the target
 			// session's effective contentPolicy.maxInputSize bounds the
 			// message body, and contentPolicy.interceptorRef selects the
@@ -424,8 +424,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				ref := ""
 				if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, row.ID); ok {
 					ref = r
-					// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013,
-					// F-4.8.17) — reject the delivery when the target
+					// spec: §4.8 / §8.3 — reject the delivery when the target
 					// session's effective interceptorRef names an
 					// interceptor inside the `fail-closed → fail-open`
 					// weakening cooldown, mirroring the delegate_task gate
@@ -457,7 +456,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				// the envelope is POLICY / not-retryable, matching the
 				// PostAgentOutput path below. A built-in code on the Result
 				// (e.g. INTERCEPTOR_TIMEOUT when the policy-named scanner is
-				// unreachable, §4.8 line 1032) is surfaced verbatim so the
+				// unreachable, §4.8) is surfaced verbatim so the
 				// (category, retryable) pair is correct. F-15.2.12 /
 				// F-13.5.2.
 				code := "INTERCEPTOR_REJECTED"
@@ -471,7 +470,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				messageBody = string(res.ModifiedContent)
 			}
 		}
-		// spec: §15.4.1 lines 1696-1707 / §13.5 mitigation 6 — the gateway
+		// spec: §15.4.1 / §13.5 mitigation 6 — the gateway
 		// stamps the delivered envelope's `from` from the authenticated
 		// sending session so the target can attribute the message and the
 		// runtime cannot forge an origin. An unattributed send (no principal
@@ -495,7 +494,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			}
 			return mcp.ToolResult{}, mcp.NewToolError(code, rej.Reason, nil)
 		}
-		// spec: §15.4 lines 1725-1737 — emit the `delivery_receipt`
+		// spec: §15.4 — emit the `delivery_receipt`
 		// as the first text block so a strict client can parse it
 		// before reading the runtime's text output. The executor
 		// output follows as additional text blocks so existing
@@ -514,7 +513,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		return mcp.ToolResult{Content: content}, nil
 	})
 
-	// spec: §15.2 lines 1295, 1303 — interrupt_session and cancel_session
+	// spec: §15.2 — interrupt_session and cancel_session
 	// are client-facing MCP tools on the public surface. §27.5 binds the
 	// playground to "a client of the public MCP surface", so the chat
 	// pane's Interrupt and Cancel buttons (and the §27.6 best-effort
@@ -562,7 +561,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/cancel_session",
-		// spec: §27.6 line 202 — the optional `reason` carries the
+		// spec: §27.6 — the optional `reason` carries the
 		// playground best-effort cancel hint (`playground_client_closed`).
 		// When the reason marks a best-effort hint the gateway accepts the
 		// frame even if the session is already gone or terminal (the
@@ -582,7 +581,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		if in.SessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", map[string]any{"field": "sessionId"})
 		}
-		// spec: §27.6 line 202 — playground_client_closed is a best-effort
+		// spec: §27.6 — playground_client_closed is a best-effort
 		// hint, not an authoritative teardown. A dropped/late frame must
 		// not error; it falls through to the idle-timeout path.
 		bestEffort := in.Reason == "playground_client_closed"
@@ -621,17 +620,16 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 }
 
 // registerTaskTreeTools installs the §8.5/§8.9 delegation-tree tools:
-// get_task_tree, cancel_child, and await_children. spec: §8.5 line 540
-// (get_task_tree), §8.9 lines 615-623; §8.5 (cancel_child); §8.8
+// get_task_tree, cancel_child, and await_children. spec: §8.5
+// (get_task_tree), §8.9; §8.5 (cancel_child); §8.8
 // (await_children). F-8.5.11.
 func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	clock := env.clock
 	tenant := env.tenant
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/get_task_tree",
-		// spec: §8.5 line 540 — returns the task hierarchy visible to
-		// the calling session (scoped by `treeVisibility`). §8.9 lines
-		// 615-623 fix the input schema at `{"type":"object",
+		// spec: §8.5 — returns the task hierarchy visible to
+		// the calling session (scoped by `treeVisibility`). §8.9 fix the input schema at `{"type":"object",
 		// "properties":{},"required":[]}` — the caller's session is
 		// resolved from the MCP principal, not from a request field.
 		// The legacy `sessionId` field is accepted as a transport
@@ -642,7 +640,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Return the §8 delegation task tree rooted at the calling session (visibility scoped by §8.3 treeVisibility).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}},"required":[]}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -666,7 +664,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err != nil {
 			return mcp.ToolResult{}, errSessionLookup(err)
 		}
-		// spec: §8.9 line 1010 — read only the rows belonging to the
+		// spec: §8.9 — read only the rows belonging to the
 		// requested session's delegation tree via the §12.5
 		// `idx_sessions_root` index; the cost is O(tree size) instead
 		// of O(tenant size). F-8.9.7.
@@ -678,7 +676,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §8.5 line 540 / §8.3 lines 311-319 — scope the response to
+		// spec: §8.5 / §8.3 — scope the response to
 		// the caller's effective treeVisibility. `full` roots the response
 		// at the tree apex (the caller sees the whole tree including
 		// siblings); `parent-and-self` and `self-only` narrow it to the
@@ -699,7 +697,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/cancel_child",
-		// spec: §8.5 line 531 — the §8.5 contract is
+		// spec: §8.5 — the §8.5 contract is
 		// `lenny/cancel_child(child_id)`; the parent is implicit in the
 		// calling principal. The legacy `parentSessionId` field is
 		// accepted as a transport fallback for tests and dev-headers
@@ -708,7 +706,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Cancel a child session and cascade the cancellation to its descendants (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["childSessionId"],"properties":{"childSessionId":{"type":"string"},"parentSessionId":{"type":"string","description":"§15.2.1 transport-fallback parent session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -738,7 +736,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("RESOURCE_NOT_FOUND",
 				fmt.Sprintf("child session lookup: %v", err), nil)
 		}
-		// spec: §8.9 line 1010 — read only the rows in the child's
+		// spec: §8.9 — read only the rows in the child's
 		// delegation tree (the parent must be in the same tree to
 		// authorize the cancel) instead of the whole tenant. F-8.9.7.
 		rootID := child.RootSessionID
@@ -766,7 +764,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §11.3 line 236 / §11.4 line 258 — a cancel must drain each
+		// spec: §11.3 / §11.4 — a cancel must drain each
 		// cancelled runtime's pod, not merely flip its row. Without this the
 		// child agents keep running, holding tokens, executing tool calls, and
 		// charging their credential leases until the watchdog's maxSessionAge
@@ -797,7 +795,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Wait for delegated child sessions to reach terminal states (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","childIds"],"properties":{"sessionId":{"type":"string"},"childIds":{"type":"array","items":{"type":"string"}},"mode":{"type":"string","enum":["all","any","settled"]}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -840,7 +838,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 					fmt.Sprintf("session %s is not a child of %s", cid, in.SessionID), nil)
 			}
 		}
-		// spec: §16.3 line 345 — the gateway-side await/collect path runs
+		// spec: §16.3 — the gateway-side await/collect path runs
 		// under one delegation.await_child span per await call (the poll
 		// loop reuses the same span rather than emitting one per tick).
 		// Correlation attributes auto-project from the context; the awaited
@@ -848,7 +846,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		ctx, span := obstracing.NewTracer(nil).Start(ctx, obstracing.SpanDelegationAwaitChild)
 		span.SetAttributes(attribute.Int("delegation.await.child_count", len(in.ChildIDs)))
 		defer span.End()
-		// spec: §8.8 line 981 — register the await edge for the duration of
+		// spec: §8.8 — register the await edge for the duration of
 		// the poll loop so the subtree deadlock detector can see that this
 		// session is blocking on these children. The edge drops on return.
 		// F-8.8.6.
@@ -857,7 +855,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		ticker := time.NewTicker(awaitPollInterval)
 		defer ticker.Stop()
 		for {
-			// spec: §6.2 line 276 — an await_children invocation and each
+			// spec: §6.2 — an await_children invocation and each
 			// poll round while blocked on children is qualifying activity,
 			// so the §11.3 idle watchdog does not falsely expire a parent
 			// actively waiting on slow children. The stamper coalesces to
@@ -876,7 +874,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				}{Results: results})
 				return textResult(string(body)), nil
 			}
-			// spec: §8.8 lines 981-997 — when the detector has flagged this
+			// spec: §8.8 — when the detector has flagged this
 			// session as a deadlocked subtree root, yield the
 			// deadlock_detected event so the parent's agent can break the
 			// deadlock (resolve a pending request_input or cancel a blocked
@@ -892,7 +890,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 					return textResult(string(body)), nil
 				}
 			}
-			// spec: §8.8 lines 951-971 — when an awaited child enters the
+			// spec: §8.8 — when an awaited child enters the
 			// input_required sub-state (it has a pending lenny/request_input
 			// round), the call yields a partial result carrying that child's
 			// `requestId` and question `parts` instead of blocking until the
@@ -930,7 +928,7 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Register §8.3 tracing identifiers on a session for propagation through delegation.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","context"],"properties":{"sessionId":{"type":"string"},"context":{"type":"object","additionalProperties":{"type":"string"}}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -983,14 +981,14 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 
 // registerOutputTool installs lenny/output, the §8.5 agent-output
 // surface that publishes output parts onto the session event stream as
-// an agent_output event. spec: §8.5 line 544; §15.4.1 lines 1542-1548.
+// an agent_output event. spec: §8.5; §15.4.1.
 // F-8.5.11 (15.4-HIGH-007).
 func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	clock := env.clock
 	tenant := env.tenant
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/output",
-		// spec: §8.5 line 544 — the §8.5 schema lists `output` as the
+		// spec: §8.5 — the §8.5 schema lists `output` as the
 		// only required input; the session is implicit in the calling
 		// principal. The legacy `sessionId` field is accepted as a
 		// transport-fallback for tests and dev-headers callers that
@@ -999,7 +997,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Emit output parts to the parent/client (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["output"],"properties":{"output":{"type":"array","items":{"type":"object"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -1025,7 +1023,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"output must contain at least one part", nil)
 		}
-		// spec: §15.4.1 lines 1542-1548 — the §4.1 ingress runtime
+		// spec: §15.4.1 — the §4.1 ingress runtime
 		// check the messagepart.schema.json $comment defers to the
 		// gateway: a part may not carry both `inline` and `ref`
 		// (`400 MESSAGEPART_INLINE_REF_CONFLICT`), and a part larger
@@ -1062,7 +1060,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 // registerInputWaitTool installs lenny/request_input, the §8.5/§8.8
 // structured-prompt surface that registers a pending input wait and
 // surfaces a request_input_expired event on the §9.1 timeout. spec:
-// §8.5 line 539, §8.8 line 951.
+// §8.5, §8.8.
 func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	clock := env.clock
 	idFn := env.idFn
@@ -1073,7 +1071,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	}
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/request_input",
-		// spec: §8.5 line 539 / §8.8 line 951 — the §8.5 contract is
+		// spec: §8.5 / §8.8 — the §8.5 contract is
 		// `lenny/request_input(parts)`; the question travels as an
 		// MessagePart[] so an agent can pose a structured prompt
 		// (text, JSON-shaped form, etc.) instead of a flat string.
@@ -1084,7 +1082,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Block until a peer answers via lenny/send_message with a matching inReplyTo (§8.5).",
 		InputSchema: json.RawMessage(`{"type":"object","required":["parts"],"properties":{"parts":{"type":"array","items":{"type":"object"},"description":"MessagePart[] describing the structured question."},"requestId":{"type":"string","description":"Optional caller-supplied request id; gateway assigns one when absent."},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -1122,12 +1120,12 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// platform default. Resolve the effective runtime so a derived
 		// runtime's merged Override value applies. The same lookup
 		// resolves the runtime's §5.1 capabilities.interaction so the
-		// §8.8 line 869 `one_shot` input-round constraint can fire
+		// §8.8 input-round constraint can fire
 		// before a channel is allocated. F-8.8.10.
 		callTimeout := requestInputTimeout
 		oneShot := false
 		if deps.Runtimes != nil && row.RuntimeRef != "" {
-			// §5.1 line 49: overlay the session tenant's capability
+			// §5.1: overlay the session tenant's capability
 			// override so a tenant that pinned this runtime to one_shot
 			// (or back to multi_turn) governs the §8.8 input-round gate.
 			// F-5.1.20.
@@ -1140,17 +1138,17 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				}
 			}
 		}
-		// spec: §8.8 line 869 — a `one_shot` runtime may use
+		// spec: §8.8 — a `one_shot` runtime may use
 		// lenny/request_input at most once per task. The second
 		// attempt is rejected with ONE_SHOT_INPUT_EXHAUSTED. The
 		// gateway enforces the constraint regardless of whether
 		// the client read the maxInputRounds annotation. F-8.8.10.
 		if oneShot && deps.InputWaits.Consumed(sessionID) >= 1 {
 			return mcp.ToolResult{}, mcp.NewToolError("ONE_SHOT_INPUT_EXHAUSTED",
-				fmt.Sprintf("one_shot runtime %q has already consumed its single request_input round (§8.8 line 869)", row.RuntimeRef),
+				fmt.Sprintf("one_shot runtime %q has already consumed its single request_input round (§8.8)", row.RuntimeRef),
 				map[string]any{"sessionId": sessionID, "runtimeRef": row.RuntimeRef, "maxInputRounds": 1})
 		}
-		// spec: §8.8 line 951 — store the question `parts` with the
+		// spec: §8.8 — store the question `parts` with the
 		// pending registration so a parent's lenny/await_children call
 		// can surface them in the input_required partial result without
 		// re-fetching the child. F-8.8.5.
@@ -1158,7 +1156,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §7.2 line 136 — surface the question on the session
+		// spec: §7.2 — surface the question on the session
 		// event stream as the canonical `elicitation_request` SSE event.
 		// `lenny/request_input` (§8.5) and `lenny/request_elicitation`
 		// (§9.2) both ask the user for input and so share the §7.2
@@ -1167,7 +1165,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// rendering surfaces can re-use the same MessagePart visitor
 		// the runtime adapter applies. F-8.5.12.
 		//
-		// spec: §8.8 line 869 — a `one_shot` runtime's
+		// spec: §8.8 — a `one_shot` runtime's
 		// elicitation_request carries `metadata.maxInputRounds: 1`
 		// so a client surface that renders the SSE payload sees the
 		// constraint alongside the question itself. The annotation
@@ -1205,18 +1203,18 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			return textResult(string(body)), nil
 		case <-time.After(callTimeout):
 			deps.InputWaits.Cancel(sessionID, requestID)
-			// spec: §15.2.1 / §11.3 line 238 — return the canonical
+			// spec: §15.2.1 / §11.3 — return the canonical
 			// REQUEST_INPUT_TIMEOUT code via *mcp.ToolError so the
 			// REST and MCP error envelopes share the same (category,
 			// retryable) pair. Details include the absolute
 			// `expiredAt` (ISO 8601 UTC) so a runtime can pivot on
-			// the same timestamp shape the §11.3 line 238
+			// the same timestamp shape the §11.3
 			// `request_input_expired` await_children event uses. The
 			// human-readable Msg preserves the spec reason inline so
 			// log scrapers that only read content[0].text still
 			// pivot on the code string. F-8.5.10 / F-11.3.23.
 			expiredAt := clock().UTC().Format(time.RFC3339Nano)
-			// spec: §11.3 line 238 — on a request_input timeout the
+			// spec: §11.3 — on a request_input timeout the
 			// gateway emits a `request_input_expired` event on the
 			// parent's lenny/await_children stream so the awaiting parent
 			// can distinguish "child's input request timed out" from
@@ -1257,7 +1255,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 
 // registerInteractionTools installs the §8.6 elicitation tools:
 // request_elicitation, respond_to_elicitation, and dismiss_elicitation.
-// spec: §8.6; §9.1 maxElicitationWait; §16.1 lines 60-63. F-9.2.14.
+// spec: §8.6; §9.1 maxElicitationWait; §16.1. F-9.2.14.
 func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	clock := env.clock
 	idFn := env.idFn
@@ -1278,7 +1276,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		intercepts:       deps.ElicitationIntercepts,
 		dropMetrics:      deps.ElicitationMetrics,
 		tamperMetrics:    deps.ElicitationTamperMetrics,
-		// spec: §9.2 lines 58–64 — the dispatcher resolves the tenant's
+		// spec: §9.2 — the dispatcher resolves the tenant's
 		// effective content-integrity mode and emits the §16.7 tamper
 		// audit event on a divergence. F-9.2.2, F-9.2.3.
 		effectiveMode: deps.ElicitationModeResolver,
@@ -1287,7 +1285,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/request_elicitation",
-		// spec: §9.2 lines 87–88 — agent-facing lenny/request_elicitation
+		// spec: §9.2 — agent-facing lenny/request_elicitation
 		// is always treated as agent-initiated. The InitiatorType input
 		// was removed to close F-9.2.19: a pod must not be able to
 		// self-declare `connector` and bypass the url-mode allowlist.
@@ -1295,7 +1293,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// through a different authenticated surface (the registered
 		// connector binding), not by self-assertion at this tool.
 		//
-		// spec: §8.5 line 559 — the §8.5 JSON Schema lists `schema`
+		// spec: §8.5 — the §8.5 JSON Schema lists `schema`
 		// AND `message` as required; the session is implicit in the
 		// calling principal. `sessionId` is the transport fallback
 		// used when the principal carries no SessionID claim.
@@ -1303,7 +1301,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Request human input via the §9.2 elicitation chain and block until it resolves.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["schema","message"],"properties":{"schema":{"type":"object","description":"JSON Schema describing the input to collect from the user."},"message":{"type":"string","description":"Human-readable prompt displayed to the user."},"elicitationId":{"type":"string"},"url":{"type":"string"},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the elicitation budget, lookup, and tamper metric
 		// scope to the right tenant in a multi-tenant deployment.
 		// F-9.2.13 / F-15.2.15.
@@ -1329,15 +1327,15 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		}
 		if in.Message == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"message is required (§8.5 line 559)", nil)
+				"message is required (§8.5)", nil)
 		}
-		// spec: §8.5 line 559 — `schema` is required. An empty object
+		// spec: §8.5 — `schema` is required. An empty object
 		// is acceptable (the agent has declared the input shape is
 		// free-form), but the property must be present so renderers
 		// can dispatch on the schema type. F-8.5.13.
 		if len(in.Schema) == 0 {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"schema is required (§8.5 line 559)", nil)
+				"schema is required (§8.5)", nil)
 		}
 		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
@@ -1346,7 +1344,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
 		}
-		// spec: §11.3 lines 202-203 — maxElicitationWait and
+		// spec: §11.3 — maxElicitationWait and
 		// maxElicitationsPerSession are configurable per pool in the
 		// `limits:` block of the RuntimeDefinition. Resolve the
 		// effective runtime so a derived runtime's merged Override value
@@ -1365,7 +1363,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				}
 			}
 		}
-		// spec: §9.2 line 88 — agent binaries cannot self-declare as a
+		// spec: §9.2 — agent binaries cannot self-declare as a
 		// connector. lenny/request_elicitation is the agent surface; an
 		// elicitation raised through it is always agent-initiated and
 		// must pass the per-pool url-mode allowlist to carry a URL.
@@ -1382,7 +1380,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			if deps.ElicitationMetrics != nil {
 				deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropBudgetExceeded)
 			}
-			// spec: §16.1 line 62 — a per-session budget drop is a
+			// spec: §16.1 — a per-session budget drop is a
 			// §9.1 suppression. F-9.2.14.
 			if deps.ElicitationLifecycleMetrics != nil {
 				deps.ElicitationLifecycleMetrics.IncElicitationSuppressed()
@@ -1408,13 +1406,13 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				fmt.Sprintf("elicitation content is not canonicalizable: %v", err), nil)
 		}
-		// spec: §9.2 lines 86, 90-98 — resolve the per-pool depth
+		// spec: §9.2 — resolve the per-pool depth
 		// policy and agent-initiated url-mode allowlist from the
 		// raising session's pool so the dispatch applies this pool's
 		// configuration rather than a single Register-time platform
 		// value. A pool with no explicit policy leaves the dispatcher
 		// defaults in place: WalkChain coerces the empty depth policy
-		// to the §9.2 line 92 suppress_at_depth=3 default, and the
+		// to the §9.2 suppress_at_depth=3 default, and the
 		// zero-value url-mode allowlist blocks agent-initiated
 		// url-mode (the §9.2 default). The dispatcher is copied per
 		// call so the override never races the shared registration.
@@ -1431,7 +1429,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// content-integrity digest at each forward hop, applies the
 		// depth policy, and reports the chain resolver.
 		//
-		// spec: §16.3 line 350 — the elicitation chain is "Full chain
+		// spec: §16.3 — the elicitation chain is "Full chain
 		// (each hop is a child span)"; this is the gateway hop's span,
 		// opened at the request-path entry into the chain. Correlation
 		// attributes auto-project from the context; the initiator kind
@@ -1453,7 +1451,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			if deps.ElicitationMetrics != nil {
 				deps.ElicitationMetrics.RecordElicitationDrop(elicitationDropDepthSuppressed)
 			}
-			// spec: §16.1 line 62 — every §9.2 depth-policy
+			// spec: §16.1 — every §9.2 depth-policy
 			// suppression bumps the suppression counter; the metric
 			// is what the operator-facing dashboard reads. F-9.2.14.
 			if deps.ElicitationLifecycleMetrics != nil {
@@ -1470,7 +1468,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// parent. The §15.1 respond/dismiss authorization triple then
 		// targets the resolver, not an intermediate hop.
 		resolverSessionID := dr.ResolverSessionID
-		// spec: §9.2 lines 70–82 — the gateway stamps the §9.2
+		// spec: §9.2 — the gateway stamps the §9.2
 		// provenance metadata on the elicitation at origination so
 		// client UIs can render it prominently (distinguishing a
 		// platform OAuth flow from an agent-initiated prompt) and the
@@ -1520,7 +1518,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		}); err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §16.1 lines 60–61 — admit-time stamp drives the
+		// spec: §16.1 — admit-time stamp drives the
 		// admit-to-terminal roundtrip histogram and the in-flight
 		// pending gauge. Every return path below the put MUST hit
 		// the matching Dec / Observe sites. F-9.2.14.
@@ -1535,19 +1533,19 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			deps.ElicitationLifecycleMetrics.DecElicitationPending()
 			deps.ElicitationLifecycleMetrics.ObserveElicitationRoundtrip(clock().Sub(admittedAt))
 		}
-		// spec: §7.2 line 136 — surface the elicitation on the resolver
+		// spec: §7.2 — surface the elicitation on the resolver
 		// session's event stream as the canonical `elicitation_request`
 		// SSE event. The previous `elicitation_requested` synonym was
 		// not in the §7.2 catalog; clients filtering on the documented
 		// event name silently missed elicitation prompts. F-7.2.17.
 		if deps.Events != nil {
-			// spec: §9.2 lines 70–82 — the client UI receives the §9.2
+			// spec: §9.2 — the client UI receives the §9.2
 			// provenance over the live channel so it can display the
 			// origin pod, the initiator type, and the delegation depth
 			// alongside the prompt. Without these the UI cannot honour
 			// the "users can distinguish platform OAuth flows from
 			// agent-initiated prompts" trust requirement. F-9.2.6.
-			// spec: §15.2 line 1362 — carry the {message, schema} pair so
+			// spec: §15.2 — carry the {message, schema} pair so
 			// the MCPAdapter projects the native MCP `elicitation/create`
 			// request with `requestedSchema` populated. The schema is the
 			// gateway-recorded original (the content-integrity reference),
@@ -1600,7 +1598,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				recordTerminal()
 				return mcp.ToolResult{}, ctx.Err()
 			case <-timeout:
-				// §9.1 line 103: on timeout the elicitation is dismissed
+				// §9.1: on timeout the elicitation is dismissed
 				// and the agent receives a structured timeout error. The
 				// shared §15.2.1 classifier maps ELICITATION_TIMEOUT to
 				// the same (category, retryable) pair on REST and MCP.
@@ -1613,7 +1611,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 						}
 						return nil
 					})
-				// spec: §16.1 line 63 — record the timeout site so
+				// spec: §16.1 — record the timeout site so
 				// operators can graph the rate. Pair with the
 				// admit/decrement bookkeeping. F-9.2.14.
 				if deps.ElicitationLifecycleMetrics != nil {
@@ -1634,7 +1632,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		}
 	})
 
-	// spec: §9.2 line 108 — respond_to_elicitation/dismiss_elicitation
+	// spec: §9.2 — respond_to_elicitation/dismiss_elicitation
 	// are MCP-callable resolution surfaces parallel to the §15.1 REST
 	// endpoints. The gateway validates the (session_id, user_id,
 	// elicitation_id) triple before routing the response down the
@@ -1646,7 +1644,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Respond to a pending §9.2 elicitation on the calling session.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId","response"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"response":{}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -1675,7 +1673,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		Description: "Dismiss a pending §9.2 elicitation on the calling session.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","elicitationId"],"properties":{"sessionId":{"type":"string"},"elicitationId":{"type":"string"},"reason":{"type":"string"}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
@@ -1705,7 +1703,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/discover_agents",
 		Description: "List the agent runtimes available as §8 delegation targets, filtered by the caller's effective §8.3 delegation policy.",
-		// spec: §8.3 line 244 — discovery returns only the targets
+		// spec: §8.3 — discovery returns only the targets
 		// the calling session's effective DelegationPolicy
 		// authorizes. The session is resolved from the caller's
 		// principal; the optional `sessionId` field is the
@@ -1714,7 +1712,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// F-8.5.7.
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"nameContains":{"type":"string"},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback caller session id; the principal's SessionID claim takes precedence. Resolves the §8.3 effective delegation policy that scopes the result."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §15.2 — tenant from the caller's
 		// principal so the §8.3 effective-policy lookup stays scoped
 		// to the right tenant. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
@@ -1740,7 +1738,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §8.3 line 244 — narrow the discoverable set to the
+		// spec: §8.3 — narrow the discoverable set to the
 		// agents the caller's effective DelegationPolicy authorizes.
 		// A caller whose session resolves no policy (or no
 		// Delegation service is wired) sees every
@@ -1770,7 +1768,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/list_runtimes",
 		Description: "List the runtimes available to the caller (§9.1 discovery).",
-		// spec: §10.6 line 672 — optional `environmentId` stub
+		// spec: §10.6 — optional `environmentId` stub
 		// narrows the discovery view to one named environment. The
 		// v1 stub is non-promoting: a runtime the §10.6 transparent
 		// filter already excluded stays excluded. F-10.6.10.
@@ -1802,7 +1800,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
-		// spec: §10.6 line 672 — `environmentId` stub narrows to one
+		// spec: §10.6 — `environmentId` stub narrows to one
 		// environment when supplied; unknown environment collapses
 		// the result to empty so a typo never broadens visibility.
 		// F-10.6.10. A connection on the /mcp/environments/{name}
@@ -1840,19 +1838,19 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 
 // registerDelegationTool installs lenny/delegate_task, the §8.2
 // recursive-delegation surface that spawns a child session under a
-// running parent. spec: §8.2 lines 12-34; §11.5 line 277
+// running parent. spec: §8.2; §11.5
 // (idempotencyKey). F-11.5.1, F-11.5.6.
 func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	tenant := env.tenant
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/delegate_task",
 		Description: "Spawn a child session under a running parent (§8.2 recursive delegation).",
-		// spec: §11.5 line 277 — `idempotencyKey` (optional, ≤128
+		// spec: §11.5 — `idempotencyKey` (optional, ≤128
 		// runes) collapses retries of SpawnChild to one execution;
 		// SpawnChild is one of the six §11.5 critical operations and
 		// the MCP path is its only client surface. spec: F-11.5.1,
 		// F-11.5.6.
-		// spec: §8.2 lines 12-34 — the normative signature is
+		// spec: §8.2 — the normative signature is
 		// `lenny/delegate_task(target: string, task: TaskSpec,
 		// lease_slice?: LeaseSlice)`. `target` is the opaque target id
 		// (the runtime never learns whether it resolves to a standalone
@@ -1863,7 +1861,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// issuance via the §8.2.bis precedence chain (F-8.2.6).
 		InputSchema: json.RawMessage(`{"type":"object","required":["parentSessionId","target"],"properties":{"parentSessionId":{"type":"string"},"target":{"type":"string","description":"§8.2 opaque delegation target id. The runtime does not know whether it resolves to a standalone runtime, a derived runtime, or an external registered agent; the gateway resolves it server-side. A type:mcp target is rejected with target_not_an_agent."},"poolRef":{"type":"string"},"task":{"type":"object","description":"§8.2 TaskSpec (delegation subset).","properties":{"input":{"type":"array","description":"§15.4.1 MessagePart[] task input delivered to the child as its first message.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"}}}},"workspaceFiles":{"type":"object","properties":{"export":{"type":"array","items":{"type":"object","required":["source"],"properties":{"source":{"type":"string"},"destPrefix":{"type":"string"}}},"description":"§8.7 export entries: each source glob is resolved inside the parent's /workspace/current and the matched files are rebased under destPrefix in the child workspace."}}}}},"approvalMode":{"type":"string","enum":["policy","approval","deny"],"description":"§8.4 closed enum on the delegation lease. Omit for the spec default (policy)."},"credentialPropagation":{"type":"string","enum":["inherit","independent","deny"],"description":"§8.3 credential propagation mode on the delegation lease. Omit for the default (independent)."},"treeVisibility":{"type":"string","enum":["full","parent-and-self","self-only"],"description":"§8.5 lease visibility boundary controlling lenny/get_task_tree. Omit to inherit the parent's effective value. A value broader than the parent's effective visibility is rejected with TREE_VISIBILITY_WEAKENING."},"idempotencyKey":{"type":"string","maxLength":128,"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached child session result without re-executing."},"fileExportLimits":{"type":"object","properties":{"maxFiles":{"type":"integer"},"maxTotalSize":{"type":"integer"}},"description":"§8.3 fileExportLimits ceiling on the task.workspaceFiles.export set. Omit for the defaults (100 files, 100 MiB)."},"leaseSlice":{"type":"object","properties":{"maxTokenBudget":{"type":"integer"},"maxChildrenTotal":{"type":"integer"},"maxTreeSize":{"type":"integer"},"maxTreeMemoryBytes":{"type":"integer"},"maxParallelChildren":{"type":"integer"},"perChildMaxAge":{"type":"integer"}},"description":"§8.2 lease_slice: the per-subtree resource ceiling for the child. Each axis may only tighten the parent's granted budget; a slice exceeding the parent's remaining budget on any axis is rejected with BUDGET_EXHAUSTED. Omit for no explicit budget binding."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §4 chain payload, §8.2 service Delegate, and
 		// §16.7 audit emission all stamp the right tenant.
 		// F-9.2.13 / F-15.2.15.
@@ -1917,17 +1915,17 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// not deduplicate a spawn re-derived across an unplanned
 			// parent restore; that duplicate subtree is the unmitigated
 			// at-least-once residual documented in §8.10 "Duplicate
-			// spawn across parent recovery". spec: §11.5 line 277,
+			// spawn across parent recovery". spec: §11.5,
 			// §8.10; F-11.5.1, F-11.5.6.
 			IdempotencyKey string `json:"idempotencyKey,omitempty"`
-			// FileExportLimits is the optional §8.3 line 264 ceiling on
+			// FileExportLimits is the optional §8.3 ceiling on
 			// the task.workspaceFiles.export set; omit for the spec
 			// defaults. F-8.7.1.
 			FileExportLimits *struct {
 				MaxFiles     int   `json:"maxFiles"`
 				MaxTotalSize int64 `json:"maxTotalSize"`
 			} `json:"fileExportLimits,omitempty"`
-			// LeaseSlice is the §8.2 lines 38-48 lease_slice the caller
+			// LeaseSlice is the §8.2 lease_slice the caller
 			// declares on the child lease. The service validates it
 			// against the parent's granted slice and rejects an
 			// over-budget request with BUDGET_EXHAUSTED. Omit for no
@@ -1982,7 +1980,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				fmt.Sprintf("treeVisibility %q is not a recognised §8.5 value (full, parent-and-self, self-only)", in.TreeVisibility),
 				map[string]any{"field": "treeVisibility", "value": in.TreeVisibility})
 		}
-		// spec: §8.2 lines 12-23 — `target` is the opaque delegation
+		// spec: §8.2 — `target` is the opaque delegation
 		// target id. The gateway resolves it server-side into a
 		// concrete runtime reference and an internal kind; the runtime
 		// never learns whether the target was a standalone runtime, a
@@ -1993,7 +1991,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				map[string]any{"field": "target"})
 		}
 		targetRef, targetKind := resolveDelegationTarget(ctx, deps, in.Target)
-		// spec: §8.2 line 50 — `lenny/delegate_task` rejects
+		// spec: §8.2 — `lenny/delegate_task` rejects
 		// `type: mcp` targets with `target_not_an_agent`. The check
 		// runs before the §10.6 scope filter so a caller cannot
 		// reach an MCP-only runtime even if it happens to share
@@ -2003,7 +2001,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// *mcp.ToolError so REST and MCP envelopes share the
 			// same (category, retryable) pair. F-8.5.10.
 			return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
-				fmt.Sprintf("target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2 line 50)", in.Target),
+				fmt.Sprintf("target_not_an_agent: delegation target %q is a type:mcp runtime (§8.2)", in.Target),
 				map[string]any{"target": in.Target})
 		}
 		// §10.6: the delegation target must be within the caller's
@@ -2051,7 +2049,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, toolErr
 			}
 		}
-		// §8.3 line 470: run the pre-claim credential-availability
+		// §8.3: run the pre-claim credential-availability
 		// check for an inherit or independent delegation before the
 		// child row is created, so an exhausted credential pool rejects
 		// with CREDENTIAL_POOL_EXHAUSTED before any warm pod is claimed.
@@ -2068,7 +2066,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if deps.CredAvailability != nil &&
 			(mode == lease.CredentialPropagationInherit ||
 				mode == lease.CredentialPropagationIndependent ||
-				mode == "" /* §8.3 line 445: omitted defaults to independent */) {
+				mode == "" /* §8.3: omitted defaults to independent */) {
 			callerUserID, originID, err := resolveDelegationCredentialQuery(ctx, deps, tenant, in.ParentSessionID, mode)
 			if err != nil {
 				// Fail closed on an inherit hop whose parent origin cannot
@@ -2077,7 +2075,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				// availability check. Credential handling denies on doubt
 				// (code-best-practices). An independent or omitted hop
 				// never reaches this branch, so a store read cannot block
-				// it. spec: §8.3 line 470.
+				// it. spec: §8.3.
 				return mcp.ToolResult{}, err
 			}
 			q := sessionserver.DelegationCredentialQuery{
@@ -2097,7 +2095,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 						"credential pool exhausted: no assignable credential for the delegated child at delegation time",
 						map[string]any{"childRuntime": targetRef, "credentialPropagation": string(mode)})
 				case errors.Is(err, sessionserver.ErrDelegationUserCredentialNotFound):
-					// spec: §15.2.1, §4.9 line 1364 — the same user-only-policy
+					// spec: §15.2.1, §4.9 — the same user-only-policy
 					// condition session start surfaces as USER_CREDENTIAL_NOT_FOUND
 					// (PERMANENT / 404, registered at errorclassify.go). Return
 					// the classified *mcp.ToolError so the delegate path emits
@@ -2128,7 +2126,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				TenantID:  tenant,
 				Content:   []byte(taskInput),
 			}
-			// spec: §8.3 lines 157-188 / §4.8 line 1036 / §13.5
+			// spec: §8.3 / §4.8 / §13.5
 			// mitigation 2 — resolve the parent's effective
 			// contentPolicy.interceptorRef and run only that named
 			// external content scanner at PreDelegation, alongside the
@@ -2148,7 +2146,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
-				// spec: §15.2.1 line 1386 — a manual MCP-only tool
+				// spec: §15.2.1 — a manual MCP-only tool
 				// (lenny/delegate_task) must use the shared error
 				// taxonomy. A built-in evaluator that names a canonical
 				// §15.1 code on its Result (e.g. the §4.8
@@ -2171,7 +2169,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				taskInput = string(res.ModifiedContent)
 			}
 		}
-		// §8.2 line 90: after PreDelegation passes, the gateway runs
+		// §8.2: after PreDelegation passes, the gateway runs
 		// the PreRoute chain over the child's augmented TaskSpec — the
 		// same chain that fires during top-level session creation. A
 		// REJECT blocks the delegation; a MODIFY rewrites the input the
@@ -2197,7 +2195,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			})
 			if res.Action == interceptor.ActionReject {
 				recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreRoute, res)
-				// spec: §15.2.1 line 1386 — see PreDelegation site
+				// spec: §15.2.1 — see PreDelegation site
 				// above. A deliberate PreRoute reject falls back to
 				// INTERCEPTOR_REJECTED, preserving REST/MCP (category,
 				// retryable) parity. An immutable-field violation
@@ -2241,7 +2239,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				MaxTotalSize: in.FileExportLimits.MaxTotalSize,
 			}
 		}
-		// §8.2 lines 38-48: forward the caller-declared lease_slice
+		// §8.2: forward the caller-declared lease_slice
 		// so the service validates it against the parent's granted
 		// budget. Omitted (nil) leaves the zero slice (no budget
 		// binding). F-8.2.1 / F-8.2.2.
@@ -2256,7 +2254,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				PerChildMaxAge:      in.LeaseSlice.PerChildMaxAge,
 			}
 		}
-		// §8.2 line 59: build the RFC 8693 actor_token material from
+		// §8.2: build the RFC 8693 actor_token material from
 		// the authenticated principal — the parent pod's session
 		// token. The service runs the in-process child-token exchange
 		// over it (narrow scope, build the act chain, fix
@@ -2298,7 +2296,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			ParentToken:           parentToken,
 			FileExport:            fileExport,
 			FileExportLimits:      fileExportLimits,
-			// §8.3 lines 311-319: the lease visibility boundary. Empty
+			// §8.3: the lease visibility boundary. Empty
 			// inherits the parent's effective value in the Service.
 			// EffectiveMessagingScope is left unset (resolves to the
 			// §7.2 default `direct`); the deployment/tenant/runtime
@@ -2314,7 +2312,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			var isoErr *delegation.IsolationViolationError
 			if errors.As(err, &isoErr) {
 				if deps.Audit != nil {
-					// spec: §11.7 lines 99-101 — the §11.7 delegation
+					// spec: §11.7 — the §11.7 delegation
 					// payload schema names parent_isolation /
 					// target_isolation / matched_policy_rule. v1
 					// rejection happens before the §8.3
@@ -2364,7 +2362,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}
 			// spec: §8.2 "Cycle-detection decision matrix" — a
 			// self-recursive hop the three-layer AND gate rejected.
-			// §15.2.1 line 1395 (item 4) requires every manual
+			// §15.2.1 requires every manual
 			// MCP-only tool, including lenny/delegate_task, to use
 			// the shared error taxonomy rather than a bare error
 			// that falls through to INTERNAL_ERROR. `details`
@@ -2392,8 +2390,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// (normative, always enforced)" — every effective
 			// delegation lease carries a positive integer maxDepth
 			// enforced on every hop; pkg/delegation/lease.CheckDepth
-			// rejects a hop that would push the chain past it. §15.2.1
-			// line 1395 (item 4) requires the shared error taxonomy
+			// rejects a hop that would push the chain past it. §15.2.1 requires the shared error taxonomy
 			// rather than the INTERNAL_ERROR fallback a bare error
 			// produces.
 			var depthErr *lease.DepthExceededError
@@ -2402,7 +2399,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					err.Error(),
 					map[string]any{"current": depthErr.Current, "max": depthErr.Max})
 			}
-			// §8.2 line 58: the child-token exchange requires the
+			// §8.2: the child-token exchange requires the
 			// parent's authenticated user JWT as `subject_token`. A
 			// userless parent is surfaced under a distinct reason so
 			// the caller can distinguish "missing user identity" from
@@ -2411,7 +2408,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_NO_USER",
 					fmt.Sprintf("DELEGATION_PARENT_NO_USER: %s", err.Error()), nil)
 			}
-			// §11.1 line 9: the owning user already holds the maximum
+			// §11.1: the owning user already holds the maximum
 			// count of live delegated children across all their
 			// sessions. Surface the canonical QUOTA_EXCEEDED (the same
 			// code the §11.1 concurrent-session caps return) carrying
@@ -2422,7 +2419,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					err.Error(),
 					map[string]any{"scope": "user", "control": "active_delegated_children"})
 			}
-			// §8.4 line 521: an `approvalMode: "deny"` lease is
+			// §8.4: an `approvalMode: "deny"` lease is
 			// the platform-provided mechanism for an operator to opt
 			// a lease out of delegation entirely. spec: §15.2.1 —
 			// surface the canonical lenny code via *mcp.ToolError
@@ -2454,7 +2451,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					err.Error(),
 					map[string]any{"field": "credentialPropagation", "value": icpErr.Value})
 			}
-			// spec: §8.2 lines 38-48, 127 — the caller's lease_slice
+			// spec: §8.2 — the caller's lease_slice
 			// exceeds the parent's granted budget on at least one
 			// axis. Surface the canonical BUDGET_EXHAUSTED envelope so
 			// REST and MCP share the same (category, retryable) pair,
@@ -2466,7 +2463,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					err.Error(),
 					map[string]any{"violations": budgetErr.Violations})
 			}
-			// spec: §12.4 line 213 — the §12.4 Redis-backed delegation
+			// spec: §12.4 — the §12.4 Redis-backed delegation
 			// tree budget counters could not be consulted (outage or
 			// script error). The admission path fails closed: surface
 			// the retryable DELEGATION_BUDGET_UNAVAILABLE so the caller
@@ -2476,7 +2473,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_BUDGET_UNAVAILABLE",
 					err.Error(), nil)
 			}
-			// spec: §8.2 line 61 — the §13.3 actor-token freshness
+			// spec: §8.2 — the §13.3 actor-token freshness
 			// check found the parent token revoked mid-flight (the
 			// parent was rotated or recursively revoked between this
 			// call and the in-process child-token exchange). No child
@@ -2486,7 +2483,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_PARENT_REVOKED",
 					err.Error(), map[string]any{"parentSessionId": in.ParentSessionID})
 			}
-			// spec: §8.2 line 63 — the per-tenant audit advisory lock
+			// spec: §8.2 — the per-tenant audit advisory lock
 			// timed out during the child-token exchange. Surface the
 			// retryable DELEGATION_AUDIT_CONTENTION; the parent agent
 			// retries the entire lenny/delegate_task so the full
@@ -2496,14 +2493,14 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, mcp.NewToolError("DELEGATION_AUDIT_CONTENTION",
 					err.Error(), nil)
 			}
-			// spec: §8.2 line 50 — the service-layer defence-in-depth
+			// spec: §8.2 — the service-layer defence-in-depth
 			// type gate that mirrors the §10.6 shim. Surface the
 			// canonical code so REST and MCP envelopes match.
 			if errors.Is(err, delegation.ErrTargetNotAgent) {
 				return mcp.ToolResult{}, mcp.NewToolError("TARGET_NOT_AN_AGENT",
 					err.Error(), map[string]any{"target": in.Target})
 			}
-			// spec: §8.3 line 181 — the resolved DelegationPolicy
+			// spec: §8.3 — the resolved DelegationPolicy
 			// is inside the cluster-scoped scanExportedFiles
 			// weakening cooldown. Map the typed error to the
 			// canonical INTERCEPTOR_WEAKENING_COOLDOWN envelope
@@ -2514,7 +2511,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			if errors.As(err, &cdErr) {
 				return mcp.ToolResult{}, cooldownToolError(cdErr)
 			}
-			// spec: §8.3 lines 313-317 — the child lease's treeVisibility
+			// spec: §8.3 — the child lease's treeVisibility
 			// widens the parent's effective visibility. Surface the
 			// canonical TREE_VISIBILITY_WEAKENING (POLICY, HTTP 422) with
 			// both sides of the mismatch so REST and MCP envelopes share
@@ -2528,7 +2525,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 						"childTreeVisibility":  string(tvwErr.ChildVisibility),
 					})
 			}
-			// spec: §8.3 lines 157-187 — the child's resolved
+			// spec: §8.3 — the child's resolved
 			// contentPolicy weakens the parent's effective policy on one
 			// of the inheritance axes (maxInputSize, maxExportedFileSize,
 			// scanExportedFiles true→false, or interceptorRef
@@ -2546,7 +2543,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 						"childValue":  cpwErr.ChildValue,
 					})
 			}
-			// spec: §8.3 line 188 — the child names a different non-null
+			// spec: §8.3 — the child names a different non-null
 			// interceptorRef than the parent's; the substitution cannot be
 			// verified as equally restrictive and is rejected
 			// unconditionally. Surface the canonical
@@ -2560,7 +2557,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 						"childInterceptorRef":  cpsErr.ChildRef,
 					})
 			}
-			// spec: §8.3 lines 321-324 — the child's effective
+			// spec: §8.3 — the child's effective
 			// messagingScope is `siblings` but its effective
 			// treeVisibility is not `full`. Surface the canonical
 			// TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE with the
@@ -2592,7 +2589,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}
 			return mcp.ToolResult{}, err
 		}
-		// spec: §8.2 lines 93-97 — materialize the admitted StateCreated
+		// spec: §8.2 — materialize the admitted StateCreated
 		// child (claim the warm pod, assign the credential lease, stream the
 		// stamped WorkspacePlan, launch, and transition to running) so the
 		// returned handle is a running child the parent can interact with and
@@ -2652,7 +2649,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 // a Token Service outage to TOKEN_SERVICE_UNAVAILABLE. Any other failure falls
 // through as-is, which the dispatch surfaces as INTERNAL_ERROR.
 //
-// spec: §8.2 lines 93-97 (delegated-child materialization); §8.3 line 470
+// spec: §8.2; §8.3
 // (post-claim assignment race -> CREDENTIAL_POOL_EXHAUSTED); §15.2.1 (shared
 // error taxonomy).
 func materializeToolError(err error, childRuntime, childID string) error {
@@ -2661,7 +2658,7 @@ func materializeToolError(err error, childRuntime, childID string) error {
 	var warming *podsession.PoolWarmingError
 	switch {
 	case errors.As(err, &credAssign), errors.Is(err, credrouter.ErrNoCredentialAvailable):
-		// spec: §8.3 line 470 / §4.9 line 1220 -- a post-pod-claim lease
+		// spec: §8.3 / §4.9 -- a post-pod-claim lease
 		// assignment race (the loser of concurrent delegations that each
 		// passed the point-in-time pre-check) and a pre-claim empty
 		// intersection both surface the canonical CREDENTIAL_POOL_EXHAUSTED
@@ -2671,7 +2668,7 @@ func materializeToolError(err error, childRuntime, childID string) error {
 			"credential pool exhausted: no assignable credential for the delegated child at materialization time",
 			details)
 	case errors.Is(err, credrouter.ErrUserCredentialNotFound):
-		// spec: §4.9 line 1364 / §15.1 line 993 -- a user-only policy with no
+		// spec: §4.9 / §15.1 -- a user-only policy with no
 		// pre-registered credential for the user and provider, the same
 		// condition the §8.3 pre-check maps to USER_CREDENTIAL_NOT_FOUND
 		// (PERMANENT / 404).
@@ -2680,12 +2677,12 @@ func materializeToolError(err error, childRuntime, childID string) error {
 				"register one via POST /v1/credentials or configure pool fallback",
 			details)
 	case errors.As(err, &warming):
-		// spec: §5.2 lines 602-625 -- the child's warm pool is still warming
+		// spec: §5.2 -- the child's warm pool is still warming
 		// toward idle, the same "Pool Not Ready" condition session start maps
 		// to RUNTIME_UNAVAILABLE (TRANSIENT / 503, retryable).
 		return mcp.NewToolError("RUNTIME_UNAVAILABLE", warming.Error(), details)
 	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
-		// spec: §4.3 line 214 -- the Token Service could not mint the child's
+		// spec: §4.3 -- the Token Service could not mint the child's
 		// credential lease, surfaced as TOKEN_SERVICE_UNAVAILABLE (UPSTREAM /
 		// 503, retryable), matching the session-start path.
 		return mcp.NewToolError("TOKEN_SERVICE_UNAVAILABLE", err.Error(), details)

@@ -138,7 +138,7 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 	return srv, store
 }
 
-// spec: 8.3 (spec/08_recursive-delegation.md line 470: delegation-time
+// spec: 8.3 (§8.3: delegation-time
 // pre-claim credential-availability check; CREDENTIAL_POOL_EXHAUSTED)
 // diagnosis: the §8.3 delegation-time credential-availability pre-check
 // diverged. A lenny/delegate_task delegation whose prospective child has no

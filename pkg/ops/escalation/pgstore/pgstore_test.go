@@ -22,7 +22,7 @@ import (
 // against the durable store. It downloads the PostgreSQL bundle, so it
 // is skipped under -short.
 //
-// spec: §25.4 lines 2376-2455.
+// spec: §25.4.
 func TestPgStoreRoundTrip_spec_25_4(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
@@ -164,8 +164,7 @@ func TestPgStoreRoundTrip_spec_25_4(t *testing.T) {
 // hasMore=false. It downloads the PostgreSQL bundle, so it is skipped under
 // -short.
 //
-// spec: §25.4 lines 2427-2428 (Storage Tiers, Query Path; Postgres path is
-// "full query with pagination" with cursorKind "pk").
+// spec: §25.4.
 func TestPgStoreKeysetPagination_spec_25_4(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

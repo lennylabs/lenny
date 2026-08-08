@@ -134,7 +134,7 @@ func TestGRPCServerReportsHealthy(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 652-662 — the Adapter server implements the
+// spec: §4.7 — the Adapter server implements the
 // AdapterEvents control stream and pushes adapter→gateway events onto
 // it. The stream stays open until the gateway closes it or the context is
 // cancelled; it must not answer Unimplemented.

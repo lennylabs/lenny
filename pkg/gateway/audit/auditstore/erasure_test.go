@@ -10,14 +10,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 )
 
-// spec: §12.1 line 5 — the EventStore (audit) role interface exposes
+// spec: §12.1 — the EventStore (audit) role interface exposes
 // the mandatory erasure pair, enforced at compile time.
 func TestStoreSatisfiesEventStore_spec_12_1(t *testing.T) {
 	t.Parallel()
 	var _ auditstore.EventStore = (*auditstore.Store)(nil)
 }
 
-// spec: §12.1 line 5 / §12.8 line 775 — user erasure retains the audit
+// spec: §12.1 / §12.8 — user erasure retains the audit
 // ledger (gdpr.* receipts are exempt, dead-lettered rows are redacted
 // not deleted, and audit_log has no user_id column), so DeleteByUser is
 // a no-op returning (0, nil) and never touches the pool.
@@ -30,7 +30,7 @@ func TestDeleteByUserRetainsAudit_spec_12_8_line775(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 753 — empty arguments must never be treated as
+// spec: §12.8 — empty arguments must never be treated as
 // "delete everything"; the erasure primitives reject them before any
 // database access.
 func TestErasureRejectsEmptyScope_spec_12_8_line753(t *testing.T) {

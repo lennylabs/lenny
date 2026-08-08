@@ -56,11 +56,11 @@ type IssuedToken struct {
 	// Audiences is the multi-value audience set captured per RFC 8693.
 	// The writer always populates this from the original list so a
 	// forensic reverse lookup can match individual audiences without
-	// re-splitting Audience. spec: §4.3 line 193, migration 0058.
+	// re-splitting Audience. spec: §4.3, migration 0058.
 	Audiences []string
 	// DialectCapAppliedSeconds records the §13.3 per-dialect lifetime
 	// cap that capped the issued exp. Zero means no per-dialect cap
-	// was configured for the audience. spec: §4.3 line 193, §13.3
+	// was configured for the audience. spec: §4.3, §13.3
 	// dialect-cap discipline.
 	DialectCapAppliedSeconds int
 	// IssuedAt and ExpiresAt bound the token's validity window.
@@ -116,8 +116,8 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 // caller's protected rotation operates on (the §17.6 AdminTenant) and
 // keeps the calling convention parallel to the store's other methods.
 //
-// spec: §13.3 line 605 (advisory-locked concurrent-rotation discipline),
-// §13.3 line 597 (gateway-mediated admin-credential rotation ordering).
+// spec: §13.3,
+// §13.3.
 func (s *Store) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
 	_ = tenantID // Advisory lock is database-global; keyed on subject only.
 	conn, err := s.pool.Acquire(ctx)
@@ -152,7 +152,7 @@ func (s *Store) WithSubjectLock(ctx context.Context, tenantID, subject string, f
 // build. The full pluggable-backend role interface for the
 // interface-less §12.2 stores is tracked separately (F-12.1.3).
 //
-// spec: §12.1 line 5 — "enforced at compile time by Go interface
+// spec: §12.1 — "enforced at compile time by Go interface
 // satisfaction".
 type Eraser interface {
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
@@ -203,7 +203,7 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 // returned row carries the assigned sequence number and prev_hash so a
 // caller can trace the audit chain forward.
 //
-// spec: §13.3 line 589 — single Postgres transaction binding the
+// spec: §13.3 — single Postgres transaction binding the
 // issued-token INSERT and the token.exchanged audit INSERT.
 func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
 	var committed audit.Row
@@ -233,7 +233,7 @@ func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEvent
 	return committed, nil
 }
 
-// RecordWithRotationAudit performs the §13.3 line 597 atomic
+// RecordWithRotationAudit performs the §13.3 atomic
 // token-rotation write-before-issue. In one Postgres transaction it
 // writes the `token.exchanged` audit row, INSERTs the new issued_tokens
 // row, and stamps revoked_at/revoked_reason on the previous token
@@ -254,7 +254,7 @@ func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEvent
 // the caller after COMMIT because its propagation_mode field records the
 // post-commit EventBus publish outcome.
 //
-// spec: §13.3 line 597.
+// spec: §13.3.
 func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
 	err = pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
 		// §11.7 advisory lock + token.exchanged audit row first so the
@@ -300,7 +300,7 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, pr
 // caller has already opened a pgtenant.InTx and acquired the §11.7
 // audit advisory lock when binding to an audit row.
 //
-// spec: §4.3 line 193 — audiences and dialect_cap_applied_seconds are
+// spec: §4.3 — audiences and dialect_cap_applied_seconds are
 // recorded alongside the legacy single-valued audience column so
 // forensic reverse lookups by individual audience and "why was the
 // exp this value" both have a durable source.
@@ -393,10 +393,7 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 // jti the durable store already stamped. The audit row is returned to the
 // caller for cross-checking and metric labelling.
 //
-// spec: §13.3 line 597 (gateway-mediated admin-credential rotation
-// ordering: mint-record-persist-revoke, distinct from the single-transaction
-// token-exchange rotation), §16.7 line 673 (token.revoked
-// revocation_reason=rotation_replaced).
+// spec: §13.3, §16.7.
 func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReason, auditEventType string, auditPayload json.RawMessage, at time.Time) (audit.Row, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -480,7 +477,7 @@ type RevokedToken struct {
 	IsRoot  bool
 }
 
-// RevokeCascade implements the §13.3 line 603 / §8.3 recursive
+// RevokeCascade implements the §13.3 / §8.3 recursive
 // revocation: it revokes rootJTI and every delegation descendant
 // reachable through the parent_jti edge, in one statement via a
 // recursive CTE. The root row is stamped with rootReason; each
@@ -492,7 +489,7 @@ type RevokedToken struct {
 // the tenant. Token lineage is acyclic (a child's parent_jti always
 // references a pre-existing token), so the recursive walk terminates.
 //
-// spec: §13.3 line 603 ("recursive child revocation"); §8.3.
+// spec: §13.3; §8.3.
 func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -609,7 +606,7 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 // than RevokeBySubject. Deleting an erased user's tokens is safe
 // because a deleted token can no longer be presented for validation.
 //
-// spec: §12.1 line 5, §12.8 step `TokenStore`.
+// spec: §12.1, §12.8 step `TokenStore`.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -635,7 +632,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // hard-deletes every issued-token row owned by tenantID — the §12.8
 // Phase 4 tenant-teardown path for the TokenIssuanceStore role.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByTenant requires a concrete tenant_id")
@@ -658,7 +655,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 
 // scanToken reads one row in selectList order into an IssuedToken.
 //
-// spec: §4.3 line 193 — Audiences and DialectCapAppliedSeconds are
+// spec: §4.3 — Audiences and DialectCapAppliedSeconds are
 // populated alongside the legacy Audience column so callers prefer
 // the list form when present.
 func scanToken(row pgx.Row) (IssuedToken, error) {
@@ -705,7 +702,7 @@ func scopeArg(scope []string) []string {
 // audience like "lenny-gateway" arrives as ["lenny-gateway"] and a
 // joined value like "lenny-gateway lenny-ops" arrives as the matching
 // list. The text[] column is never written NULL.
-// spec: §4.3 line 193, migration 0058.
+// spec: §4.3, migration 0058.
 func audienceListArg(audiences []string, legacy string) []string {
 	if len(audiences) > 0 {
 		out := make([]string, 0, len(audiences))

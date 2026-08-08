@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §12.5 line 317 — per-tenant gcPriority through the admin API.
+// spec: §12.5 — per-tenant gcPriority through the admin API.
 
 // TestCreateTenantWithGCPriority_spec_12_5_317 round-trips a high
 // gcPriority through create, the response payload, and the store.

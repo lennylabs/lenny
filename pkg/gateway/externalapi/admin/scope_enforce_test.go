@@ -18,7 +18,7 @@ import (
 // scopeReq attaches a platform-admin Principal carrying the parsed
 // space-separated scope claim, the way the §10.2 auth middleware attaches
 // it after validating a Bearer JWT. An empty claim yields an absent scope
-// set (the dev-header / no-narrowing case, §25.1 line 90).
+// set (the dev-header / no-narrowing case, §25.1).
 func scopeReq(t *testing.T, req *http.Request, claim string) *http.Request {
 	t.Helper()
 	set, err := scopes.Parse(claim)
@@ -41,8 +41,7 @@ func scopeReq(t *testing.T, req *http.Request, claim string) *http.Request {
 // (`legal_hold`). A drift between the served `x-lenny-scope` and the
 // canonical taxonomy would make the gate inert or mis-deny.
 //
-// spec: §15.1 (x-lenny-scope per operation, line 920), §25.1 (scope
-// enforcement point 1, line 94).
+// spec: §15.1, §25.1.
 func TestRouteScopesResolvesCanonicalScope(t *testing.T) {
 	rs := openapi.NewRouteScopes()
 	cases := []struct {
@@ -85,8 +84,7 @@ func TestRouteScopesResolvesCanonicalScope(t *testing.T) {
 // This pins the ADM-1 fix at the admin Router seam (the unit-tier
 // counterpart of the tier-9 security regression).
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920;
-// SCOPE_FORBIDDEN, line 1030), §25.1 (line 94).
+// spec: §15.1, §25.1.
 func TestAdminScopeGateBlocksBeforeHandler(t *testing.T) {
 	// fakeDropper.ForceDrop sets gotTenant when the handler runs, so a
 	// blank gotTenant after a request means the gate rejected before the

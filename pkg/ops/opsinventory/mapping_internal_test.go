@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
 
-// spec §25.4 lines 1665-1672: a buffered-memory escalation awaiting flush
+// spec §25.4: a buffered-memory escalation awaiting flush
 // is escalation_buffered/awaiting_flush; a durable open escalation is
 // escalation_open/in_progress; a resolved escalation is completed.
 func TestEscalationKindStatus(t *testing.T) {
@@ -58,7 +58,7 @@ func TestEscalationKindStatus(t *testing.T) {
 	}
 }
 
-// spec §25.4 lines 1707-1716: paused takes precedence; a rolled-back
+// spec §25.4: paused takes precedence; a rolled-back
 // upgrade is failed; complete is completed; an in-flight upgrade is
 // in_progress.
 func TestUpgradeStatus(t *testing.T) {

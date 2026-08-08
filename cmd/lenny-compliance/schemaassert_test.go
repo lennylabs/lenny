@@ -9,7 +9,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §24.8 line 113 — the suite is schema-driven; the error-code catalog
+// spec: §24.8 — the suite is schema-driven; the error-code catalog
 // the response assertion checks against is generated from the published
 // schemas/lenny-adapter.proto Error.ErrorCode enum, not hand-transcribed.
 func TestLoadProtoErrorCatalog_spec_24_8(t *testing.T) {
@@ -32,7 +32,7 @@ func TestLoadProtoErrorCatalog_spec_24_8(t *testing.T) {
 	}
 }
 
-// spec: §24.8 line 113 — the published .proto artifact is the single source
+// spec: §24.8 — the published .proto artifact is the single source
 // of truth. This drift guard fails if the text parsed from the embedded
 // artifact diverges from the compiler-generated descriptor, so a future
 // proto edit cannot silently desynchronize the two.
@@ -61,7 +61,7 @@ func TestProtoErrorCatalogMatchesDescriptor_spec_24_8(t *testing.T) {
 	}
 }
 
-// spec: §24.8 line 113 — a response carrying an out-of-catalog error code is
+// spec: §24.8 — a response carrying an out-of-catalog error code is
 // non-conformant, and the validation report cites the specific schema
 // assertion that failed.
 func TestValidateResponseErrorCode_spec_24_8(t *testing.T) {

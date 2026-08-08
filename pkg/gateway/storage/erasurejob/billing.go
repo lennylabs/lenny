@@ -45,7 +45,7 @@ type BillingErasureOutcome struct {
 	Verified bool
 }
 
-// VerificationOutcome reports the §12.8 line 851 salt-removal
+// VerificationOutcome reports the §12.8 salt-removal
 // verification result recorded in the erasure receipt: "verified" when
 // billing events were pseudonymized and the post-erasure check passed,
 // "unverified" when pseudonymization ran but the check did not pass (a
@@ -82,7 +82,7 @@ type BillingEraser struct {
 }
 
 // SaltRotationLock serializes a tenant's §12.8 salt-rotation migration
-// against its per-user erasure pseudonymization. Per §12.8 line 856 the
+// against its per-user erasure pseudonymization. Per §12.8 the
 // rotation migration holds the advisory lock
 // `erasure_salt_migration:{tenant_id}` and the erasure job respects it,
 // so a pseudonymize never reads or destroys a salt the rotation is
@@ -100,7 +100,7 @@ func NewBillingEraser(billing BillingErasureStore, tenants tenantstore.Store) *B
 	return &BillingEraser{billing: billing, tenants: tenants, newSalt: randomErasureSalt}
 }
 
-// WithRotationLock attaches the §12.8 line 856 advisory-lock coordinator
+// WithRotationLock attaches the §12.8 advisory-lock coordinator
 // so the per-user pseudonymize and the salt-rotation migration never run
 // concurrently for a tenant. F-12.8.5.
 func (e *BillingEraser) WithRotationLock(l SaltRotationLock) *BillingEraser {
@@ -108,7 +108,7 @@ func (e *BillingEraser) WithRotationLock(l SaltRotationLock) *BillingEraser {
 	return e
 }
 
-// withSaltLock runs fn under the §12.8 line 856 advisory lock when a
+// withSaltLock runs fn under the §12.8 advisory lock when a
 // coordinator is wired, and directly otherwise.
 func (e *BillingEraser) withSaltLock(ctx context.Context, tenantID string, fn func(context.Context) error) error {
 	if e.lock == nil {
@@ -119,7 +119,7 @@ func (e *BillingEraser) withSaltLock(ctx context.Context, tenantID string, fn fu
 
 // ErrBillingErasureExempt reports that a salt-rotation request targeted a
 // tenant whose billingErasurePolicy is `exempt`: no salt is used for that
-// tenant, so there is nothing to rotate (§12.8 line 855).
+// tenant, so there is nothing to rotate (§12.8).
 var ErrBillingErasureExempt = errors.New("erasurejob: tenant is exempt from billing erasure; no erasure_salt to rotate")
 
 // randomErasureSalt returns a fresh 256-bit §12.8 erasure salt.
@@ -139,7 +139,7 @@ func randomErasureSalt() ([]byte, error) {
 // rewrites the user's billing events to their salted-hash pseudonym,
 // and then destroys the salt from the tenant record.
 func (e *BillingEraser) Pseudonymize(ctx context.Context, tenantID, userID string) (BillingErasureOutcome, error) {
-	// §12.8 line 856: respect the salt-rotation advisory lock so a
+	// §12.8: respect the salt-rotation advisory lock so a
 	// pseudonymize never reads or destroys a salt a rotation migration is
 	// actively using.
 	var out BillingErasureOutcome
@@ -173,7 +173,7 @@ func (e *BillingEraser) pseudonymizeLocked(ctx context.Context, tenantID, userID
 	}
 	// Persist the salt before the rewrite so a crash mid-pseudonymization
 	// resumes against the same salt. On the Postgres tenant store this is
-	// the §12.8 line 845 KMS-envelope-encrypted-at-rest write.
+	// the §12.8 KMS-envelope-encrypted-at-rest write.
 	if _, err := e.tenants.Update(ctx, tenantID, func(t *tenantstore.Tenant) error {
 		t.ErasureSalt = salt
 		return nil
@@ -181,7 +181,7 @@ func (e *BillingEraser) pseudonymizeLocked(ctx context.Context, tenantID, userID
 		return BillingErasureOutcome{}, fmt.Errorf("erasurejob: billing pseudonymize: persist salt: %w", err)
 	}
 
-	// spec: §12.8 line 853 — the in-memory copy of the salt is zeroed
+	// spec: §12.8 — the in-memory copy of the salt is zeroed
 	// immediately after it is no longer needed (an explicit
 	// crypto/subtle-style zero) so the only copies that survive the
 	// pseudonymization are the now-irreversible salted hashes.
@@ -192,7 +192,7 @@ func (e *BillingEraser) pseudonymizeLocked(ctx context.Context, tenantID, userID
 		return BillingErasureOutcome{}, fmt.Errorf("erasurejob: billing pseudonymize: %w", err)
 	}
 
-	// §12.8 lines 849-850: destroy the salt immediately so the
+	// §12.8: destroy the salt immediately so the
 	// pseudonymized records cannot be re-identified. The tenant store
 	// nulls the column (and, on the Postgres path, deletes the
 	// KMS-wrapped ciphertext) per the immediate-deletion rule.
@@ -205,13 +205,13 @@ func (e *BillingEraser) pseudonymizeLocked(ctx context.Context, tenantID, userID
 	return BillingErasureOutcome{Disposition: billingPseudonymized, Pseudonymized: n}, nil
 }
 
-// RotateErasureSalt implements the §12.8 lines 856-857 salt rotation. It
+// RotateErasureSalt implements the §12.8 salt rotation. It
 // generates a fresh per-tenant 256-bit salt and persists it under the
 // `erasure_salt_migration:{tenant_id}` advisory lock, overwriting any
-// prior salt in the same store write — the §12.8 line 857 compromise
+// prior salt in the same store write — the §12.8 compromise
 // response deletes the old salt immediately rather than archiving it.
 // Previously pseudonymized billing rows remain keyed under the destroyed
-// old salt and become effectively anonymous (§12.8 line 854); the new
+// old salt and become effectively anonymous (§12.8); the new
 // salt keys the tenant's next erasure. A tenant whose billingErasurePolicy
 // is `exempt` has no salt and returns ErrBillingErasureExempt.
 func (e *BillingEraser) RotateErasureSalt(ctx context.Context, tenantID string) error {
@@ -239,7 +239,7 @@ func (e *BillingEraser) RotateErasureSalt(ctx context.Context, tenantID string) 
 }
 
 // zeroSalt overwrites an in-memory §12.8 erasure-salt copy with zeros.
-// Per §12.8 line 853 the salt copy is zeroed immediately after use; the
+// Per §12.8 the salt copy is zeroed immediately after use; the
 // loop is the crypto/subtle-style explicit zero the spec names. Best
 // effort — the Go runtime may have copied the slice — but it removes the
 // obvious in-process re-identification handle.

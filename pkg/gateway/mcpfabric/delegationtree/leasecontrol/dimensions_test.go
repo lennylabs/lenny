@@ -10,7 +10,7 @@ import (
 )
 
 // dimsTreeConfig registers a tree with non-zero current values and
-// generous ceilings on every §8.6 line 643 extendable dimension, so a
+// generous ceilings on every §8.6 extendable dimension, so a
 // test can exercise the new children / parallel-children / tree-size /
 // fileExportLimits dimensions end to end. F-8.6.1.
 func dimsTreeConfig() leasecontrol.TreeConfig {
@@ -34,7 +34,7 @@ func dimsTreeConfig() leasecontrol.TreeConfig {
 	}
 }
 
-// spec: §8.6 line 643 — every extendable dimension (children,
+// spec: §8.6 — every extendable dimension (children,
 // parallel-children, tree-size, and both fileExportLimits components)
 // is requestable on the wire and grantable by the gateway, alongside
 // tokens and seconds. F-8.6.1.
@@ -86,7 +86,7 @@ func TestExtendLeaseAllDimensionsGranted_Spec8_6_643(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 643 — dimensions are independent: a dimension already
+// spec: §8.6 — dimensions are independent: a dimension already
 // at its ceiling reports CEILING_REACHED for itself while the others
 // still grant, so the response is PARTIALLY_GRANTED. F-8.6.1; F-8.6.11.
 func TestExtendLeaseDimensionsIndependent_Spec8_6_643(t *testing.T) {
@@ -117,7 +117,7 @@ func TestExtendLeaseDimensionsIndependent_Spec8_6_643(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 643 — a request whose only requested dimension is at
+// spec: §8.6 — a request whose only requested dimension is at
 // its ceiling reports CEILING_REACHED for the whole response (the
 // adapter MUST treat it as terminal). F-8.6.1.
 func TestExtendLeaseSingleDimensionCeiling_Spec8_6_643(t *testing.T) {
@@ -143,7 +143,7 @@ func TestExtendLeaseSingleDimensionCeiling_Spec8_6_643(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 648 — the parent's own lease caps a child's extension
+// spec: §8.6 — the parent's own lease caps a child's extension
 // on every dimension, not just tokens. A child whose parent granted 4
 // max children cannot extend past 4 even when the tree ceiling is 10.
 // F-8.6.1; F-8.6.15.
@@ -170,7 +170,7 @@ func TestExtendLeaseParentCeilingOnNewDimension_Spec8_6_648(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 743 — the audit record carries every requested and
+// spec: §8.6 — the audit record carries every requested and
 // granted dimension, not just tokens. F-8.6.1.
 func TestExtendLeaseAuditCarriesAllDimensions_Spec8_6_743(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()

@@ -437,21 +437,20 @@ func nestedRef(joined string, loc []int) int {
 // member and no gloss runs past limit, which is the head of the next citation.
 //
 // A separator is tried before a gloss at each step, so the word `and` is read
-// as the separator it is rather than as the first word of a bare gloss. A
-// separator that is not followed by a member is left unconsumed, so a citation
-// followed by ordinary prose ends at its last member. A gloss that begins with
-// that same separator word is refused for the same reason: absorbing it would
-// put a dangling conjunction in the text a register is keyed by and that the
-// pass replaces, which deletes the sentence's conjunction.
+// as the separator it is rather than as the opening of a gloss. A separator that
+// is not followed by a member is left unconsumed, so a citation followed by
+// ordinary prose ends at its last member. Ordinary prose written directly behind
+// a member is left unconsumed by the same rule the gloss grammar states: a gloss
+// commits to a delimiter, and a bare word behind a member is read as the
+// sentence's own.
 //
 // A member's gloss is a run of segments rather than a single one, because a
-// spelling such as `line 408 step (e) (replay workspace checkpoint) + line 409`
-// writes a bare word and a parenthesized phrase against the same member. A gloss
-// that ended the citation at its first segment would drop every member after
-// it, which is the head-matching failure the whole-citation rule exists to
-// prevent: the resolver would not read the dropped members, the ratchet would
-// not count them, and the rewritten carrier would read as an anchor followed by
-// orphan integers.
+// spelling such as `line 408 (e) (replay workspace checkpoint) + line 409`
+// writes two delimited phrases against the same member. A gloss that ended the
+// citation at its first segment would drop every member after it, which is the
+// head-matching failure the whole-citation rule exists to prevent: the resolver
+// would not read the dropped members, the ratchet would not count them, and the
+// rewritten carrier would read as an anchor followed by orphan integers.
 // It returns the end of the member list together with the offset the last
 // member's gloss opens at, which is the offset behind that member's own text.
 // A parenthesis the head opened is closed from there, so the whole of the
@@ -513,41 +512,18 @@ func glossRun(joined string, pos, limit int) (int, string, bool) {
 	return end, strings.TrimSpace(render(joined[pos:end])), true
 }
 
-// glossSegment returns one gloss segment at pos, empty when there is none. A
-// segment opening with the separator word is refused, so a separator with no
-// member behind it stays outside the citation.
+// glossSegment returns one gloss segment at pos, empty when there is none.
+//
+// Every segment the grammar admits opens on a delimiter and closes on the one
+// that pairs with it, so the segment states its own bounds and nothing here
+// trims it. The two trims this call once carried, one for a separator word
+// opening a segment and one for a separator word ending it, bounded the bare
+// word run the grammar no longer admits.
 func glossSegment(text string, pos int) string {
 	if pos > len(text) {
 		return ""
 	}
-	segment := trimTrailingSeparatorWord(glossExpr.FindString(text[pos:]))
-	if opensWithSeparatorWord(segment) {
-		return ""
-	}
-	return segment
-}
-
-// trimTrailingSeparatorWord drops a separator word standing at the end of a
-// bare gloss, which is the separator of the citation that follows rather than a
-// word of this one. A quoted or parenthesized gloss closes on its own delimiter
-// and is left alone.
-func trimTrailingSeparatorWord(segment string) string {
-	trimmed := strings.TrimRight(segment, spaceBytes)
-	rest, ok := strings.CutSuffix(trimmed, separatorWord)
-	if !ok || (rest != "" && isWordByte(rest[len(rest)-1])) {
-		return segment
-	}
-	return strings.TrimRight(rest, spaceBytes)
-}
-
-// separatorWord is the one member separator spelled as a word.
-const separatorWord = "and"
-
-// opensWithSeparatorWord reports whether a gloss segment begins with the
-// separator word standing on its own.
-func opensWithSeparatorWord(segment string) bool {
-	rest, ok := strings.CutPrefix(strings.TrimLeft(segment, spaceBytes), separatorWord)
-	return ok && (rest == "" || !isWordByte(rest[0]))
+	return glossExpr.FindString(text[pos:])
 }
 
 // nextMember consumes one separator, an optional repeat of the keyword, and one

@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Shared helpers for the tier-4 §10.1 line 155 reassembly-on-resume tests
+// Shared helpers for the tier-4 §10.1 reassembly-on-resume tests
 // that drive the gateway's chunk resolver, workspace-download stream, and
 // derive chunk-copy against a live MinIO container. A checkpoint's chunks
 // are written as real objects under the §10.1 chunk-object layout

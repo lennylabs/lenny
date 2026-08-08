@@ -30,7 +30,7 @@ func (f *fakeReleaser) ReleaseForArtifact(_ context.Context, tenantID, artifactU
 	return f.artifactReleases, nil
 }
 
-// spec: §12.8 line 884 — clearing a live session hold runs the escrow-GC
+// spec: §12.8 — clearing a live session hold runs the escrow-GC
 // release and reports the count of released objects.
 func TestClearSessionHold_releasesEscrow_spec_12_8_line884(t *testing.T) {
 	router, sessions, _ := newLegalHoldAdmin(t)
@@ -57,7 +57,7 @@ func TestClearSessionHold_releasesEscrow_spec_12_8_line884(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 884 — the clear is accepted on a tombstoned tenant
+// spec: §12.8 — the clear is accepted on a tombstoned tenant
 // (the session row is gone) for the express purpose of releasing escrow.
 func TestClearSessionHold_tombstonedTenant_releasesEscrow(t *testing.T) {
 	router, _, _ := newLegalHoldAdmin(t)

@@ -35,7 +35,7 @@ func newService() (*es.Service, *recordingAudit) {
 
 var platformAdmin = es.Caller{Subject: "alice@acme.com", PlatformAdmin: true}
 
-// spec: §25.5 lines 2702-2733 — Create generates a secret server-side,
+// spec: §25.5 — Create generates a secret server-side,
 // stores only the hash + fingerprint, returns the plaintext once, and
 // emits subscription_created with the fingerprint.
 func TestServiceCreateSecretLifecycle_spec_25_5(t *testing.T) {
@@ -80,7 +80,7 @@ func TestServiceCreateSecretLifecycle_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2723-2733 — RotateSecret generates a new secret,
+// spec: §25.5 — RotateSecret generates a new secret,
 // records the previous fingerprint + rotation time for the overlap
 // window, bumps the generation, and emits subscription_secret_rotated.
 func TestServiceRotateSecret_spec_25_5(t *testing.T) {
@@ -112,7 +112,7 @@ func TestServiceRotateSecret_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2758-2766 — tenant isolation gate.
+// spec: §25.5 — tenant isolation gate.
 func TestServiceTenantIsolation_spec_25_5(t *testing.T) {
 	svc, _ := newService()
 	tenantAdmin := es.Caller{Subject: "bob@acme.com", TenantID: "acme"}
@@ -144,7 +144,7 @@ func TestServiceTenantIsolation_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2568, line 2751 — Update patches fields and bumps the
+// spec: §25.5 — Update patches fields and bumps the
 // generation; an unknown id is SUBSCRIPTION_NOT_FOUND.
 func TestServiceUpdate_spec_25_5(t *testing.T) {
 	svc, _ := newService()
@@ -225,7 +225,7 @@ func TestServiceUpdateFilters_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2806 — Delete emits subscription_deleted; an unknown
+// spec: §25.5 — Delete emits subscription_deleted; an unknown
 // id is SUBSCRIPTION_NOT_FOUND.
 func TestServiceDelete_spec_25_5(t *testing.T) {
 	svc, audit := newService()
@@ -241,7 +241,7 @@ func TestServiceDelete_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2569 — ListDeliveries returns recorded rows
+// spec: §25.5 — ListDeliveries returns recorded rows
 // newest-first and 404s for a missing subscription.
 func TestServiceListDeliveries_spec_25_5(t *testing.T) {
 	svc, _ := newService()
@@ -443,7 +443,7 @@ func deliveryIDs(ds []es.Delivery) []int64 {
 	return ids
 }
 
-// spec: §25.5 lines 2795-2802 — an invalid severity in the filter is
+// spec: §25.5 — an invalid severity in the filter is
 // INVALID_EVENT_FILTER.
 func TestServiceInvalidFilter_spec_25_5(t *testing.T) {
 	svc, _ := newService()
@@ -496,7 +496,7 @@ func TestServiceInvalidFilterType_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2702 — secret entropy + fingerprint helpers.
+// spec: §25.5 — secret entropy + fingerprint helpers.
 func TestSecretHelpers_spec_25_5(t *testing.T) {
 	a, err := es.GenerateSecret()
 	if err != nil {

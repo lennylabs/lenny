@@ -117,13 +117,13 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	match := circuitbreaker.FirstMatch(breakers, m.opts.Extract(r))
-	// spec: §16.7 line 679 — a decision served against a cache that has
+	// spec: §16.7 — a decision served against a cache that has
 	// not refreshed within the §11.7 5-second budget is recorded (sampled)
 	// before the request is admitted or rejected, so the audit trail shows
 	// which decisions were made blind during a Redis outage.
 	m.reportCacheStale(r, match != nil)
 	if match != nil {
-		// spec: §11.6 line 327 — the gate runs after AuthEvaluator, so
+		// spec: §11.6 — the gate runs after AuthEvaluator, so
 		// the audit row carries the authenticated caller identity even
 		// though the breaker match criteria do not reference the tenant.
 		if m.opts.Audit != nil {

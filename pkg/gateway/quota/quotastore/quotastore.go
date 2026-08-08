@@ -29,7 +29,7 @@ import (
 
 // ErrEmptyScope — an erasure primitive was called with an empty tenant
 // id (or user id). Empty arguments must never be treated as "delete
-// everything" (§12.8 line 753).
+// everything" (§12.8).
 var ErrEmptyScope = errors.New("quotastore: erasure requires a non-empty tenant_id (and user_id)")
 
 // QuotaStore is the §12.2 QuotaStore role interface. *Counter satisfies
@@ -37,7 +37,7 @@ var ErrEmptyScope = errors.New("quotastore: erasure requires a non-empty tenant_
 // mandatory erasure pair so a substitute backend that omits either
 // method cannot compile into the gateway binary.
 //
-// spec: §12.1 line 5 — every store role interface MUST expose
+// spec: §12.1 — every store role interface MUST expose
 // DeleteByUser and DeleteByTenant, enforced at compile time by Go
 // interface satisfaction.
 type QuotaStore interface {
@@ -343,9 +343,9 @@ func slidingBucketKey(tenantID, userID string, resolution time.Duration, at time
 // buckets all live under t:{tenant_id}:quota:tokens:{user_id}:* — and
 // returns the count dropped. It is idempotent: a user with no recorded
 // usage is a no-op returning (0, nil). Empty arguments are rejected
-// (§12.8 line 753).
+// (§12.8).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 step 6 ("QuotaStore —
+// spec: §12.1; §12.8 step 6 ("QuotaStore —
 // delete per-user rate-limit counters and budget tracking").
 func (c *Counter) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
@@ -360,7 +360,7 @@ func (c *Counter) DeleteByUser(ctx context.Context, tenantID, userID string) (in
 // and returns the count dropped. It is idempotent: a tenant with no
 // counters is a no-op returning (0, nil). Empty tenant id is rejected.
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.2 (QuotaStore key
+// spec: §12.1; §12.2 (QuotaStore key
 // prefix); §12.8 Phase 4 (tenant deletion).
 func (c *Counter) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {

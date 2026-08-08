@@ -12,7 +12,7 @@ import (
 // alerts are derived from the single SLODefinitions catalog: every SLO
 // yields exactly a fast-window critical rule and a slow-window warning
 // rule whose expressions embed the SLO's budget-normalised base ratio
-// compared against the §16.5 line 640 operator-tunable multiplier scalars
+// compared against the §16.5 operator-tunable multiplier scalars
 // (scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(14|3))).
 // This is the single-source invariant the §16.10 OpenSLO export depends
 // on (slo.go).
@@ -59,7 +59,7 @@ func TestSLODefinitionsBackEveryBurnRateAlert(t *testing.T) {
 // names every SLO in the §16.5 burn-rate table (R-006). A missing SLO is
 // an incomplete OpenSLO export and an unmonitored error budget.
 //
-// spec: §16.5 lines 627-638 (burn-rate alert table).
+// spec: §16.5.
 func TestSLODefinitionsCoverSpec16_5Catalog(t *testing.T) {
 	want := []string{
 		"SessionCreationSuccessRateBurnRate",
@@ -92,7 +92,7 @@ func TestSLODefinitionsValidateForOpenSLO(t *testing.T) {
 		if err := d.validateForOpenSLO(); err != nil {
 			t.Errorf("SLO %q fails OpenSLO validation: %v", d.Name, err)
 		}
-		// The deployment-tier scaffolding (§16.10 line 734) must be
+		// The deployment-tier scaffolding (§16.10) must be
 		// present on the good-or-bad query so RenderOpenSLO and the chart
 		// can scope it to the deployment tier.
 		q := d.SLI.Good

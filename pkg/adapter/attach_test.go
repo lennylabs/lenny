@@ -201,7 +201,7 @@ func frameSlotIDForTest(t *testing.T, frame []byte) string {
 	return probe.SlotID
 }
 
-// spec: §6.4 lines 401-405; spec/05:509; spec/15:1459 — the single
+// spec: §6.4; spec/05:509; spec/15:1459 — the single
 // pod-global runtime serves two concurrent slots over one connection, and
 // the adapter demultiplexes its interleaved output by slotId so each
 // per-slot Attach stream receives only its slot's frames. A second
@@ -322,7 +322,7 @@ func TestAttachNoSlotIDServesBasePath_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 lines 401-405; spec/15:1459 — an inbound (client→agent)
+// spec: §6.4; spec/15:1459 — an inbound (client→agent)
 // envelope on a per-slot Attach stream is stamped with the slot's slotId
 // before it reaches the shared runtime, so the runtime's dispatch loop
 // routes it to the slot's cwd. Driven under two concurrent slots so the

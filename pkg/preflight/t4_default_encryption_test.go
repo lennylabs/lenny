@@ -20,7 +20,7 @@ import (
 // cryptographic-erasure property. The deny-path cases below fail against
 // pre-fix code, which registered no such check.
 //
-// spec: §12.5 line 315 (fail-closed T4); §17.9.7; §17.6 (Checks performed).
+// spec: §12.5; §17.9.7; §17.6 (Checks performed).
 func TestT4DefaultEncryptionCheckFailsClosed(t *testing.T) {
 	cases := []struct {
 		name          string

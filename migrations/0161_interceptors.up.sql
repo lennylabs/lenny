@@ -1,4 +1,4 @@
--- §4.8 lines 1034-1040 / §8.3 lines 205-224 (SEC-013) — the
+-- §4.8 / §8.3 — the
 -- external-interceptor registry. Each row is the admin-mutable,
 -- cross-replica source of truth for a deployer-registered
 -- RequestInterceptor: the registration fields (endpoint, priority,
@@ -30,12 +30,12 @@ CREATE TABLE IF NOT EXISTS interceptors (
     cooldown_seconds_at_transition  INTEGER,
     created_at                      TIMESTAMPTZ NOT NULL,
     updated_at                      TIMESTAMPTZ NOT NULL,
-    -- §15.1 line 1207 optimistic-concurrency counter; starts at 1.
+    -- §15.1 optimistic-concurrency counter; starts at 1.
     version                         BIGINT      NOT NULL DEFAULT 1,
-    -- §4.8 line 1031 closed fail-policy enum.
+    -- §4.8 closed fail-policy enum.
     CONSTRAINT interceptors_fail_policy_check
         CHECK (fail_policy IN ('fail-closed', 'fail-open')),
-    -- §4.8 line 1020 reserved-priority ceiling: external interceptors
+    -- §4.8 reserved-priority ceiling: external interceptors
     -- must register above 100.
     CONSTRAINT interceptors_priority_check
         CHECK (priority > 100)

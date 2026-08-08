@@ -11,7 +11,7 @@ import (
 // ErrSigningUnavailable is the sentinel BreakerSigner returns when its
 // circuit is open. Callers (the Token Service §13.3 handler, the
 // gateway session-mint path) map it to 503 KMS_SIGNING_UNAVAILABLE
-// with `retryable: true` per §10.2 line 225.
+// with `retryable: true` per §10.2.
 var ErrSigningUnavailable = errors.New("jwt: signing unavailable (circuit open)")
 
 // BreakerObserver receives signing-error notifications. It is the seam
@@ -38,13 +38,13 @@ type BreakerObserver interface {
 	OnRejected()
 }
 
-// SigningBreakerThreshold is the §10.2 line 225 consecutive-failure
+// SigningBreakerThreshold is the §10.2 consecutive-failure
 // threshold ("> 3 consecutive signing failures"). A failure count
 // strictly greater than 3 trips the breaker, matching the spec's
 // inequality.
 const SigningBreakerThreshold = 3
 
-// SigningBreakerWindow is the §10.2 line 225 rolling window
+// SigningBreakerWindow is the §10.2 rolling window
 // ("within 30s"): a failure older than the window slides out of the
 // running count.
 const SigningBreakerWindow = 30 * time.Second
@@ -54,7 +54,7 @@ const SigningBreakerWindow = 30 * time.Second
 // drain a transient KMS outage.
 const SigningBreakerCooldown = 30 * time.Second
 
-// BreakerSigner wraps a Signer with the §10.2 line 225 in-memory
+// BreakerSigner wraps a Signer with the §10.2 in-memory
 // JWTSigner circuit breaker. More than SigningBreakerThreshold
 // consecutive Sign failures inside SigningBreakerWindow trip the
 // breaker open; subsequent Sign calls return ErrSigningUnavailable
@@ -64,7 +64,7 @@ const SigningBreakerCooldown = 30 * time.Second
 //
 // BreakerSigner is safe for concurrent use.
 //
-// spec: §10.2 line 225. F-10.2.6.
+// spec: §10.2. F-10.2.6.
 type BreakerSigner struct {
 	Inner    Signer
 	Observer BreakerObserver

@@ -144,7 +144,7 @@ const (
 	weakeningCooldownSecs = 60
 )
 
-// spec: §4.8 line 1058 — "the weakening transition additionally triggers
+// spec: §4.8 — "the weakening transition additionally triggers
 // a mandatory cooldown during which affected `delegate_task` and
 // `lenny/send_message` calls reject with `INTERCEPTOR_WEAKENING_COOLDOWN`
 // ... The reverse change (`fail-open` to `fail-closed`) emits an

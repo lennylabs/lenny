@@ -5,7 +5,7 @@
 // experiment the user participated in, leaving other users' and other
 // tenants' assignments intact.
 //
-// spec: §12.8 line 786 (Experiment sticky assignment cache), step 4.
+// spec: §12.8, step 4.
 package experimentsticky
 
 import (

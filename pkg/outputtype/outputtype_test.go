@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/outputtype"
 )
 
-// spec: §15.4.1 lines 1503, 1522 — canonical registry + namespace rule.
+// spec: §15.4.1 — canonical registry + namespace rule.
 
 func TestIsCanonical_spec_15_4_1(t *testing.T) {
 	for _, typ := range outputtype.Canonical {

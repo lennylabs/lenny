@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.1 line 112 — seal-and-export invariant: bounded exponential
+// spec: §7.1 — seal-and-export invariant: bounded exponential
 // backoff (5s/2×/60s cap), total window maxWorkspaceSealDurationSeconds
 // (300s), then failed/workspace_seal_timeout + workspaceSealFailed audit
 // event + lenny_workspace_seal_duration_seconds{outcome} histogram.
@@ -91,7 +91,7 @@ func TestSealWorkspaceRetriesThenSucceeds_spec_7_1_3(t *testing.T) {
 	if len(*slept) != 2 {
 		t.Errorf("backoff sleeps = %d, want 2", len(*slept))
 	}
-	// spec: §7.1 line 112 — initial 5s, factor 2×.
+	// spec: §7.1 — initial 5s, factor 2×.
 	if len(*slept) == 2 && ((*slept)[0] != 5*time.Second || (*slept)[1] != 10*time.Second) {
 		t.Errorf("backoff sequence = %v, want [5s 10s]", *slept)
 	}
@@ -140,8 +140,8 @@ func TestSealWorkspaceBackoffBoundedByWindow_spec_7_1_3(t *testing.T) {
 }
 
 // TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent
-// pins the §7.1 line 112 permanent-error arm: a seal that fails with a
-// gRPC status the adapter reports as permanent (the §4.4 line 255
+// pins the §7.1 permanent-error arm: a seal that fails with a
+// gRPC status the adapter reports as permanent (the §4.4
 // workspace-size probe returns FailedPrecondition) ends the retry window
 // on its first observation. Exactly one Seal call, zero backoff sleeps,
 // an outcome="permanent" observation, and no outcome="timeout"
@@ -193,7 +193,7 @@ func TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent(t *tes
 }
 
 // TestRecordSessionCompletedPermanentSealStaysTimeoutClass_spec_7_1_permanent
-// confirms the §7.1 line 112 terminal state is unchanged by the permanent
+// confirms the §7.1 terminal state is unchanged by the permanent
 // arm: the session is still relabelled failed/workspace_seal_timeout even
 // though the seal returned immediately on a permanent error, so the §7.1
 // failureClass enum is untouched.
@@ -250,7 +250,7 @@ func TestRecordSessionCompletedFailsOnSealTimeout_spec_7_1_3(t *testing.T) {
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, completed)
 
-	// spec: §7.1 line 112 — the row is re-labeled failed/workspace_seal_timeout.
+	// spec: §7.1 — the row is re-labeled failed/workspace_seal_timeout.
 	row, _ := store.Get(context.Background(), "acme", "s_seal")
 	if row.State != session.StateFailed {
 		t.Errorf("state after seal timeout = %q, want failed", row.State)
@@ -258,7 +258,7 @@ func TestRecordSessionCompletedFailsOnSealTimeout_spec_7_1_3(t *testing.T) {
 	if row.FailureClass != session.FailureClassWorkspaceSealTimeout {
 		t.Errorf("failureClass = %q, want workspace_seal_timeout", row.FailureClass)
 	}
-	// spec: §7.1 line 112 — workspaceSealFailed audit event records the last error.
+	// spec: §7.1 — workspaceSealFailed audit event records the last error.
 	var sealFailed *SessionLifecycleEvent
 	for i := range audit.events {
 		if audit.events[i].EventType == auditWorkspaceSealFailed {

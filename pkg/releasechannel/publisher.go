@@ -98,7 +98,7 @@ func (p *Publisher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §25.8 line 3410: refuse to advertise a release the caller cannot
+	// §25.8: refuse to advertise a release the caller cannot
 	// upgrade to directly because its current version is below the
 	// release's hard minUpgradeFrom prerequisite.
 	if currentVersion := r.URL.Query().Get("currentVersion"); !manifest.MeetsMinUpgradeFrom(currentVersion) {

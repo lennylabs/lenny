@@ -27,7 +27,7 @@ func endpoints(ns, name string, readyAddrs int) *corev1.Endpoints {
 	}
 }
 
-// spec: §25.4 line 2208 — the counter starts at 1 (the local replica)
+// spec: §25.4 — the counter starts at 1 (the local replica)
 // before the first lookup so the single-replica-only policy admits
 // acquisitions during the startup window.
 func TestReplicaCounterDefaultsToOne(t *testing.T) {
@@ -38,7 +38,7 @@ func TestReplicaCounterDefaultsToOne(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2208 — Refresh counts ready Endpoints addresses.
+// spec: §25.4 — Refresh counts ready Endpoints addresses.
 func TestReplicaCounterRefreshCountsReadyAddresses(t *testing.T) {
 	cs := fake.NewSimpleClientset(endpoints("lenny-system", "lenny-ops", 3))
 	c := opsservice.NewEndpointsReplicaCounter(cs.CoreV1(), "lenny-system", "lenny-ops")

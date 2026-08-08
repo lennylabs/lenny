@@ -40,7 +40,7 @@ func (r *holdRuntime) Close(_ context.Context, sessionID string) error {
 
 func holdGauge() float64 { return testutil.ToFloat64(coordinatorHold.WithLabelValues()) }
 
-// spec: §10.1 lines 47-52 — a closed gateway control stream with a live
+// spec: §10.1 — a closed gateway control stream with a live
 // session is the coordinator-loss signal; the adapter enters hold state,
 // raises the gauge, and arms the coordinatorHoldTimeoutSeconds timer.
 func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
@@ -73,7 +73,7 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 47 — a closed control stream on an idle pod (no live
+// spec: §10.1 — a closed control stream on an idle pod (no live
 // session) is not a coordinator loss, so no hold is entered.
 func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
@@ -97,7 +97,7 @@ func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — a successful CoordinatorFence from a new
+// spec: §10.1 — a successful CoordinatorFence from a new
 // coordinator is the only way to exit hold state; it stops the timer and
 // lowers the gauge.
 func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
@@ -130,7 +130,7 @@ func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 50 — when no coordinator fences within the timeout the
+// spec: §10.1 — when no coordinator fences within the timeout the
 // adapter notifies the gateway (AdapterTerminating), writes a disk
 // post-mortem, lowers the gauge, and closes the runtime.
 func TestHoldStateTimeoutTerminates_spec_10_1(t *testing.T) {
@@ -193,7 +193,7 @@ func TestHoldStateTimeoutTerminates_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — a fence that races in before the timeout fires
+// spec: §10.1 — a fence that races in before the timeout fires
 // disarms the termination; a stale timer callback is a no-op.
 func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
@@ -222,7 +222,7 @@ func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 lines 47-52 — entering hold twice arms only one timer.
+// spec: §10.1 — entering hold twice arms only one timer.
 func TestHoldStateEnterIdempotent_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	clk := &fakeExpiryClock{}
@@ -236,7 +236,7 @@ func TestHoldStateEnterIdempotent_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — the unary interceptor rejects every
+// spec: §10.1 — the unary interceptor rejects every
 // non-allowlisted RPC with UNAVAILABLE + coordinator_hold while held, and
 // passes CoordinatorFence through.
 func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
@@ -270,7 +270,7 @@ func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — the stream interceptor rejects Attach while held
+// spec: §10.1 — the stream interceptor rejects Attach while held
 // but admits the AdapterEvents so a new coordinator can re-attach.
 func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
@@ -294,7 +294,7 @@ func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — the interceptors are inert when no hold is
+// spec: §10.1 — the interceptors are inert when no hold is
 // active, so steady-state RPCs run unimpeded.
 func TestHoldStateInterceptorInertWhenNotHeld_spec_10_1(t *testing.T) {
 	s := New("hold-test")
@@ -309,7 +309,7 @@ func TestHoldStateInterceptorInertWhenNotHeld_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 50 — the hold timeout defaults to 120s and honours an
+// spec: §10.1 — the hold timeout defaults to 120s and honours an
 // operator override.
 func TestCoordinatorHoldTimeoutDefault_spec_10_1(t *testing.T) {
 	s := New("hold-test")

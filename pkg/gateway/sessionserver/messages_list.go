@@ -21,7 +21,7 @@ import (
 // (`client`/`client_{opaque}` for a client turn, `agent`/`sess_{id}` for
 // an agent response, `system`/`lenny-gateway` for a platform message).
 //
-// spec: §15.4.1 lines 1696-1707 (`from` closed enum + id formats).
+// spec: §15.4.1.
 type messageFrom struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id,omitempty"`
@@ -32,7 +32,7 @@ type messageFrom struct {
 // before it was recorded (the §7.2 queued / dropped / expired paths never
 // reach the transcript), so the recorded state is always `delivered`.
 //
-// spec: §15.1 line 692 — the list "Returns message history including
+// spec: §15.1 — the list "Returns message history including
 // delivery receipts and state."
 type messageDelivery struct {
 	Status      string `json:"status"`
@@ -46,7 +46,7 @@ type messageDelivery struct {
 // fields are carried so the DAG model is forward-compatible without a
 // schema change.
 //
-// spec: §15.4.1 lines 1788-1798 (DAG conversation model).
+// spec: §15.4.1.
 type messageNode struct {
 	ID            string          `json:"id"`
 	Seq           uint64          `json:"seq"`
@@ -60,8 +60,7 @@ type messageNode struct {
 	Delivery      messageDelivery `json:"delivery"`
 }
 
-// handleMessagesList implements GET /v1/sessions/{id}/messages per §15.1
-// line 692: the §15.4.1 MessageDAG over the durable session_messages
+// handleMessagesList implements GET /v1/sessions/{id}/messages per §15.1: the §15.4.1 MessageDAG over the durable session_messages
 // store, listing the messages sent to and from a session with their
 // delivery state. The view shares the session_messages backing with
 // GET /v1/sessions/{id}/transcript (the transcript is the linearized
@@ -70,10 +69,10 @@ type messageNode struct {
 //
 // It supports the canonical §15.1 `{items, cursor, hasMore}` envelope
 // with opaque cursors, the spec-named `?since=` (coordinator-local seq)
-// and `?threadId=` filters (§15.4.1 line 1792), and [1, 200] limit
+// and `?threadId=` filters (§15.4.1), and [1, 200] limit
 // clamping. A `derive_failure` audit row, a missing/cross-tenant
 // session, or a gateway with no transcript store wired returns
-// 404 RESOURCE_NOT_FOUND per §15.1 line 661.
+// 404 RESOURCE_NOT_FOUND per §15.1.
 func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -89,7 +88,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 661 — a derive_failure audit row never delivered
+	// spec: §15.1 — a derive_failure audit row never delivered
 	// a message, so the message list 404s.
 	if isDeriveFailureRow(row) {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no messages", nil)
@@ -111,7 +110,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	// Resolve the start cursor: the opaque cursor tiebreak wins (canonical
 	// form); the spec-named `?since=` seq is the convenience filter for
 	// clients that track the coordinator-local sequence directly. spec:
-	// §15.4.1 lines 1792-1793.
+	// §15.4.1.
 	afterSeq := uint64(0)
 	if params.Cursor.Tiebreak != "" {
 		if n, err := strconv.ParseUint(params.Cursor.Tiebreak, 10, 64); err == nil {
@@ -128,7 +127,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 		afterSeq = n
 	}
 
-	// spec: §15.4.1 lines 1791, 1796 — v1 has one implicit unlabeled
+	// spec: §15.4.1 — v1 has one implicit unlabeled
 	// thread per session, so every recorded node carries an empty
 	// threadId. A `?threadId=` filter naming a concrete thread therefore
 	// matches nothing; an absent/empty filter returns the implicit thread.
@@ -172,7 +171,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 // toMessageNode projects a recorded transcript entry onto a §15.4.1
 // MessageDAG node. The `from` attribution is derived from the role; the
 // delivery state is `delivered` (a recorded message was delivered before
-// it was transcribed). spec: §15.4.1 lines 1696-1707, 1788-1798.
+// it was transcribed). spec: §15.4.1.
 func toMessageNode(e transcriptstore.Entry, sessionID string) messageNode {
 	node := messageNode{
 		ID:            e.ID,
@@ -201,7 +200,7 @@ func toMessageNode(e transcriptstore.Entry, sessionID string) messageNode {
 // a `client` id is `client_{opaque}` (the transcript-reconstruction path
 // has no per-message client identifier, so it uses a stable sentinel).
 //
-// spec: §15.4.1 lines 1700-1705 (`from.id` format per `kind`).
+// spec: §15.4.1.
 func deriveMessageFrom(role, sessionID string) messageFrom {
 	switch role {
 	case "assistant":

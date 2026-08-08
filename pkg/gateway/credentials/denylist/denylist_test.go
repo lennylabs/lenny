@@ -74,7 +74,7 @@ func TestRevokeIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // last lease lapses; the sweep calls Remove to drop it.
 func TestRemoveDeletesKey(t *testing.T) {
 	d := denylist.New()

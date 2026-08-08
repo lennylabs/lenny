@@ -35,7 +35,7 @@ func (n *capturingNotifier) wait(t *testing.T) ([]byte, bool) {
 	}
 }
 
-// spec: §11.2.1 line 175 — a correction entering the dual-control
+// spec: §11.2.1 — a correction entering the dual-control
 // pending state notifies eligible approvers via the configured
 // billing.approverNotificationWebhook channel.
 func TestDualControlNotifiesApprovers_spec_11_2_1_175(t *testing.T) {

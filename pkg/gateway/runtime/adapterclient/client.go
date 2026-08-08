@@ -41,7 +41,7 @@ func New(conn *grpc.ClientConn) *Client {
 // Dial opens a gRPC connection to the adapter at target and wraps it.
 // The caller supplies the transport-credential dial option.
 //
-// spec: §16.3 line 327 ("Gateway → Pod (gRPC metadata)") — the OTel client
+// spec: §16.3 ("Gateway → Pod (gRPC metadata)") — the OTel client
 // stats handler injects the current trace context into outgoing gRPC
 // metadata so the pod adapter's spans become children of the gateway span
 // that issued the call. F-16.3.3.
@@ -127,7 +127,7 @@ type StartSessionParams struct {
 	// SlotID, when set, claims a §6.4 concurrent-workspace slot rather than
 	// the whole pod: the adapter starts the slot's runtime against
 	// /workspace/slots/{slotId}/current. Empty in session mode (maxConcurrentSessions=1).
-	// spec: §6.4 lines 385-405.
+	// spec: §6.4.
 	SlotID string
 }
 
@@ -168,10 +168,8 @@ func (c *Client) ConfigureWorkspace(ctx context.Context, sessionID, cwd string, 
 }
 
 // DemoteSDK tears down a preConnect pod's pre-connected SDK so the pod
-// falls back to pod-warm before the workspace is materialized (§6.1 line
-// 34 / §4.7 DemoteSDK RPC). reason rides the request for the adapter's
-// observability. A pod-warm adapter returns Unimplemented; per §6.1 line
-// 40 the binder surfaces that as SDK_DEMOTION_NOT_SUPPORTED rather than
+// falls back to pod-warm before the workspace is materialized (§6.1 / §4.7 DemoteSDK RPC). reason rides the request for the adapter's
+// observability. A pod-warm adapter returns Unimplemented; per §6.1 the binder surfaces that as SDK_DEMOTION_NOT_SUPPORTED rather than
 // silently proceeding with stale SDK state.
 func (c *Client) DemoteSDK(ctx context.Context, reason string) error {
 	_, err := c.rpc.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{Reason: reason})
@@ -194,7 +192,7 @@ func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases
 // AssignCredentialsSlot is the §6.4 concurrent-workspace counterpart of
 // AssignCredentials: the leases are written to the slot's own per-slot
 // credential file /run/lenny/slots/{slotId}/credentials.json so a sibling
-// slot's file is untouched. spec: §6.1 line 28.
+// slot's file is untouched. spec: §6.1.
 func (c *Client) AssignCredentialsSlot(ctx context.Context, sessionID, slotID string, leases map[string]*adapterv1.CredentialLease) error {
 	return c.assignCredentials(ctx, sessionID, slotID, leases)
 }
@@ -232,7 +230,7 @@ func (c *Client) assignCredentials(ctx context.Context, sessionID, slotID string
 // The request carries credential material; per §4.7 item 6 the call
 // site must keep it out of access logs and telemetry. A nil or empty
 // map rotates nothing.
-// spec: §4.9 line 1413 / §4.7 line 822. F-13.3.10.
+// spec: §4.9 / §4.7. F-13.3.10.
 func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease, trigger credential.RotationTrigger) error {
 	_, err := c.rpc.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
 		SessionId:       &adapterv1.SessionId{Value: sessionID},
@@ -251,7 +249,7 @@ func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases
 // re-minting against the down Token Service. The adapter re-arms the
 // provider's expiry timer to newExpiresAt so the enforced deadline moves
 // in lockstep with the gateway's tracked deadline.
-// spec: §4.9 line 1470 / §4.7.
+// spec: §4.9 / §4.7.
 func (c *Client) ExtendCredentialLease(ctx context.Context, sessionID, provider, leaseID string, newExpiresAt time.Time) error {
 	_, err := c.rpc.ExtendCredentialLease(ctx, &adapterv1.ExtendCredentialLeaseRequest{
 		SessionId:       &adapterv1.SessionId{Value: sessionID},
@@ -276,7 +274,7 @@ func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads
 
 // PrepareWorkspaceSlot is the §6.4 concurrent-workspace counterpart of
 // PrepareWorkspace: the uploads stage into the slot's own
-// /workspace/slots/{slotId}/staging area. spec: §6.4 lines 401-405.
+// /workspace/slots/{slotId}/staging area. spec: §6.4.
 func (c *Client) PrepareWorkspaceSlot(ctx context.Context, sessionID, slotID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
 	return c.prepareWorkspace(ctx, sessionID, slotID, uploads)
 }
@@ -335,14 +333,13 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // archive is the §13.4 per-Runtime archive-extraction opt-in surface
 // (AllowSymlinks toggle, workspace root for symlink-target validation).
 // Nil delivers the platform defaults (symlinks rejected) on the wire.
-// spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+// spec: §7.4; §13.4 — F-7.4.4.
 //
 // The returned []*WorkspacePlanWarning carries any §14 non-fatal
-// advisories the adapter raised during materialization (per §7.4 line
-// 459 `workspace_plan_strip_components_skip`). The slice is nil when
+// advisories the adapter raised during materialization (per §7.4). The slice is nil when
 // the materialization had nothing to report. F-7.4.15.
 //
-// midSession marks a §7.4 line 433 mid-session upload: the adapter overlays
+// midSession marks a §7.4 mid-session upload: the adapter overlays
 // the plan's sources onto the running session's existing /workspace/current
 // and signals the runtime once promotion completes, rather than replacing
 // the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
@@ -352,7 +349,7 @@ func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *
 
 // FinalizeWorkspaceSlot is the §6.4 concurrent-workspace counterpart of
 // FinalizeWorkspace: it materializes the plan into the slot's own
-// /workspace/slots/{slotId}/current. spec: §6.4 lines 401-405.
+// /workspace/slots/{slotId}/current. spec: §6.4.
 func (c *Client) FinalizeWorkspaceSlot(ctx context.Context, sessionID, slotID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
 	return c.finalizeWorkspace(ctx, sessionID, slotID, plan, archive, midSession)
 }
@@ -377,7 +374,7 @@ func (c *Client) finalizeWorkspace(ctx context.Context, sessionID, slotID string
 // RunSetup executes the §14 WorkspacePlan setup commands in the pod's
 // workspace (§4.7, the third session-assignment RPC). setupPolicy
 // bounds the aggregate setup phase per §5.1; a nil policy applies no
-// aggregate cap. The returned outputs carry the §7.5 line 475 captured
+// aggregate cap. The returned outputs carry the §7.5 captured
 // stdout / stderr / exit code for each executed command in submission
 // order; on a hard failure the adapter may attach partial outputs in
 // the gRPC status details — the caller can extract them with
@@ -388,7 +385,7 @@ func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands [
 
 // RunSetupSlot is the §6.4 concurrent-workspace counterpart of RunSetup:
 // it runs the setup commands against the slot's own
-// /workspace/slots/{slotId}/current cwd. spec: §6.4 line 404.
+// /workspace/slots/{slotId}/current cwd. spec: §6.4.
 func (c *Client) RunSetupSlot(ctx context.Context, sessionID, slotID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
 	return c.runSetup(ctx, sessionID, slotID, setupCommands, setupPolicy)
 }
@@ -438,7 +435,7 @@ func (c *Client) SendMessage(ctx context.Context, sessionID, slotID string, enve
 // InterruptStatus mirrors the §4.7 InterruptResponse.Status the adapter
 // returns from the Interrupt RPC: STATUS_ACKNOWLEDGED when the runtime
 // reached a safe stop point, STATUS_INTERRUPT_TIMEOUT when the deadline
-// elapsed without an acknowledgement (§7.2 line 169: the gateway moves
+// elapsed without an acknowledgement (§7.2: the gateway moves
 // the session to suspended anyway), STATUS_BUSY when the adapter's per-
 // session operation lock rejected the call so the gateway can retry, and
 // STATUS_UNSPECIFIED for the zero value.
@@ -458,7 +455,7 @@ const (
 // deadline to pause and checkpoint. The returned status carries the
 // §4.7 InterruptResponse.Status disposition so the caller can branch on
 // ACKNOWLEDGED, INTERRUPT_TIMEOUT (still transitions to suspended per
-// §7.2 line 169), or BUSY (retry).
+// §7.2), or BUSY (retry).
 func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, deadline time.Duration) (InterruptStatus, error) {
 	mode := adapterv1.InterruptRequest_MODE_CLEAN
 	if hard {
@@ -475,13 +472,13 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 	return InterruptStatus(resp.GetStatus()), nil
 }
 
-// SignalDeadline delivers the §11.3 line 240 pre-expiry warning to the
+// SignalDeadline delivers the §11.3 pre-expiry warning to the
 // pod's runtime over the CH-RUNTIMEOPS. remainingMs is the wall-clock
 // left before the session's deadline; trigger names which deadline is
 // approaching ("session_age", "budget", or "idle"). The returned bool
 // reports whether the adapter forwarded the warning (false when the
 // runtime has no CH-RUNTIMEOPS — Basic/Standard integration level,
-// §15 line 2141). The call is one-way; the adapter does not wait for a
+// §15). The call is one-way; the adapter does not wait for a
 // runtime acknowledgement.
 func (c *Client) SignalDeadline(ctx context.Context, sessionID string, remainingMs int32, trigger string) (bool, error) {
 	resp, err := c.rpc.SignalDeadline(ctx, &adapterv1.SignalDeadlineRequest{
@@ -511,7 +508,7 @@ type CheckpointStream = adapterv1.Adapter_CheckpointClient
 // directly to object storage. This is the single upload path for every
 // checkpoint trigger; the adapter no longer mints a checkpoint id.
 //
-// spec: §10.1 line 130 — the gateway mints the checkpoint_id.
+// spec: §10.1 — the gateway mints the checkpoint_id.
 func (c *Client) Checkpoint(ctx context.Context) (CheckpointStream, error) {
 	stream, err := c.rpc.Checkpoint(ctx)
 	if err != nil {
@@ -532,7 +529,7 @@ type CheckpointBarrierResult struct {
 	QuiescedMs    int64
 }
 
-// CheckpointBarrier dispatches the §10.1 lines 163-181 graceful-drain
+// CheckpointBarrier dispatches the §10.1 graceful-drain
 // barrier to the pod's adapter. The adapter validates generation
 // against its last fenced value (rejecting with FailedPrecondition
 // when stale), quiesces tool-call dispatch, and holds the quiesced state
@@ -542,7 +539,7 @@ type CheckpointBarrierResult struct {
 // synchronous return mirrors the CheckpointBarrierAck the adapter also
 // emits on the AdapterEvents control stream.
 //
-// spec: §10.1 lines 163-181.
+// spec: §10.1.
 func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {
 	resp, err := c.rpc.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
 		SessionId:              &adapterv1.SessionId{Value: sessionID},
@@ -569,7 +566,7 @@ type ExportSpec struct {
 }
 
 // ExportedFile is one rebased file the parent pod's adapter packaged
-// for a delegation export (§4.7 line 633 / §8.7). Path is the
+// for a delegation export (§4.7 / §8.7). Path is the
 // child-workspace-relative destination after the §8.7 rebasing rule.
 type ExportedFile struct {
 	Path    string
@@ -636,12 +633,11 @@ type ResumeParams struct {
 	// resolved from the SandboxTemplate. Zero disables the
 	// gateway-supplied limit. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
-	// ExpectedWorkspaceRoot is the §7.3 line 408 "same absolute cwd
-	// path" the original session ran against. The gateway passes it so
+	// ExpectedWorkspaceRoot is the §7.3 the original session ran against. The gateway passes it so
 	// the adapter can refuse a Resume whose replacement pod was
 	// provisioned with a different mount path — the §7.3 step (d)
 	// contractual guard against runtime template drift. Empty leaves
-	// the adapter without a hint (the §7.3 line 408 invariant is then
+	// the adapter without a hint (the §7.3 invariant is then
 	// upheld by construction only). F-7.3.15.
 	ExpectedWorkspaceRoot string
 	// Chunks carries one presigned GET capability per chunk of the
@@ -652,7 +648,7 @@ type ResumeParams struct {
 	// single tar (or tar.gz) byte stream. Empty for the conversation-only
 	// and coordinator-handoff resume paths that restore no workspace.
 	//
-	// spec: §10.1 line 155 — reassembly on resume.
+	// spec: §10.1 — reassembly on resume.
 	Chunks []ChunkGrant
 }
 
@@ -770,7 +766,7 @@ type UsageReport struct {
 // spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (pod-reported
 // cumulative-usage re-report on reconnection).
 //
-// spec: spec/04_system-components.md line 1468 — for sessions in proxy
+// spec: §4.9 — for sessions in proxy
 // mode the gateway is the sole counter of record (the §4.9 LLM proxy
 // extracts authoritative counts from the upstream response). The
 // caller must filter proxy-mode sessions before reaching this RPC; the
@@ -793,8 +789,8 @@ func (c *Client) ReportUsage(ctx context.Context, sessionID string, cumulative b
 }
 
 // ErrUsageReportProxyMode reports that ReportUsage was called for a
-// session whose credential lease is proxy-mode. spec: §4.9 line 1468.
-var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not accepted for proxy-mode sessions (§4.9 line 1468)")
+// session whose credential lease is proxy-mode. spec: §4.9.
+var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not accepted for proxy-mode sessions (§4.9)")
 
 // ReportUsageForLease is the proxy-mode-safe wrapper around ReportUsage.
 // It returns ErrUsageReportProxyMode when lease is the §4.9 proxy-mode
@@ -810,7 +806,7 @@ var ErrUsageReportProxyMode = errors.New("adapterclient: ReportUsage is not acce
 // double-counted regardless of which read a caller requests.
 //
 // spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (direct-mode usage,
-// crash-recovery MAX rule); spec/04_system-components.md line 1468.
+// crash-recovery MAX rule); §4.9.
 func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deliveryMode credential.DeliveryMode, cumulative bool) (UsageReport, error) {
 	if deliveryMode == credential.DeliveryProxy {
 		return UsageReport{}, ErrUsageReportProxyMode
@@ -892,7 +888,7 @@ func (c *Client) Shutdown(ctx context.Context, sessionID string) (bool, error) {
 
 // ShutdownSlot is the §6.4 concurrent-workspace counterpart of Shutdown:
 // it tears down only the named slot (its runtime and per-slot tree) while
-// sibling slots on the pod keep running. spec: §6.4 lines 401-405.
+// sibling slots on the pod keep running. spec: §6.4.
 func (c *Client) ShutdownSlot(ctx context.Context, sessionID, slotID string) (bool, error) {
 	return c.shutdown(ctx, sessionID, slotID)
 }

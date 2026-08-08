@@ -19,7 +19,7 @@
 // request with an empty session_id is rejected InvalidArgument, mirroring
 // RotateCredentials's session-id guard.
 //
-// spec: §4.9 (line 1470, ExtendCredentialLease wire contract), §4.7 (Gateway
+// spec: §4.9, §4.7 (Gateway
 // → Adapter RPC surface), §6.1 (per-slot credential lease timer).
 package adapter_extendcredlease_test
 
@@ -50,7 +50,7 @@ const (
 
 	// directPayload is a direct-mode lease payload: a direct-mode lease with
 	// a positive expiry arms the adapter expiry timer ExtendCredentialLease
-	// re-arms. spec: §4.9 line 1149.
+	// re-arms. spec: §4.9.
 	directPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 )
 
@@ -139,7 +139,7 @@ func fileProviders(t *testing.T, path string) map[string]bool {
 // so the request re-arms a live expiry timer, the §4.9 guard's direct-mode
 // enforcement point.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §4.7 (Gateway →
+// spec: §4.9, §4.7 (Gateway →
 // Adapter RPC surface)
 //
 // diagnosis: the ExtendCredentialLease RPC is not registered on the Adapter
@@ -186,7 +186,7 @@ func TestExtendCredentialLeaseAcceptedOverWire_spec_4_9(t *testing.T) {
 // short timer would fire and delete the entry, so the survival assertion fails
 // against a non-slot-aware handler.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §6.1 (per-slot
+// spec: §4.9, §6.1 (per-slot
 // credential lease timer)
 //
 // diagnosis: ExtendCredentialLease ignores slot_id and takes the
@@ -252,7 +252,7 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 // attributed to a pod's credential state, so the adapter fails it closed
 // rather than re-arming an unrelated provider's timer.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §4.7 (Gateway →
+// spec: §4.9, §4.7 (Gateway →
 // Adapter RPC surface)
 //
 // diagnosis: ExtendCredentialLease accepts an empty session_id, so a

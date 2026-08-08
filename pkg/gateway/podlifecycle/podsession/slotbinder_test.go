@@ -431,9 +431,9 @@ func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519
+// spec: §5.2
 // diagnosis: BindSlot must distinguish an empty pool from a full one so
-// the gateway can set the right details.reason. §5.2 line 519: a pool
+// the gateway can set the right details.reason. §5.2: a pool
 // with no pods at all is "no_idle_pods" (ErrNoIdlePod, the sentinel
 // session-mode exhaustion uses); pods-exist-but-full is
 // "concurrent_slots_exhausted" (ErrNoConcurrentSlot). The empty pool
@@ -745,7 +745,7 @@ func TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 
 type slotFailureCall struct{ errorType, pool, podName string }
 
-// spec: §5.2 line 12
+// spec: §5.2
 // A slot bind that fails after the slot was reserved emits
 // lenny_slot_failure_total labeled by the failing stage (error_type),
 // the pool, and the pod (k8s_pod_name).
@@ -776,7 +776,7 @@ func TestBindSlotEmitsSlotFailureOnStartError_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 12
+// spec: §5.2
 // A successful slot bind emits no slot-failure counter.
 func TestBindSlotEmitsNoSlotFailureOnSuccess_spec_5_2(t *testing.T) {
 	a := newConcurrentAdapter()

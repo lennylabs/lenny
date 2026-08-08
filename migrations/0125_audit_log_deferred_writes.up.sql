@@ -9,10 +9,10 @@
 -- tamper-broken chain.
 --
 -- The table is platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists it among the
+-- multi-tenanted at this boundary; §25.4 lists it among the
 -- PlatformPostgres() tables), so no tenant column or RLS policy applies.
 --
--- spec: §25.9 lines 3684-3691.
+-- spec: §25.9.
 
 CREATE TABLE audit_log_deferred_writes (
     id             BIGSERIAL PRIMARY KEY,

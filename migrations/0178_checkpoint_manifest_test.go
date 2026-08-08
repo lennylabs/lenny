@@ -11,13 +11,13 @@ import (
 // migration 0178: the up drops the migration 0062
 // session_partial_checkpoint_manifest table and the migration 0150
 // partial unique index, then creates checkpoint_manifest with the full
-// §10.1 lines 141-151 column set, the partial_manifest_active_uniq index
+// §10.1 column set, the partial_manifest_active_uniq index
 // scoped to (session_id, slot_id), the lenny_tenant_guard trigger,
 // ENABLE/FORCE ROW LEVEL SECURITY with the lenny_tenant_isolation
 // policy, and the lenny_app grants; the down recreates the 0062 table
 // and the 0150 index.
 //
-// spec: §10.1 lines 141-151 (manifest column set and the
+// spec: §10.1 (manifest column set and the
 // (session_id, slot_id) partial unique index), §12.3 (RLS apparatus).
 func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	up := readMigration0173(t, "0178_checkpoint_manifest.up.sql")
@@ -36,7 +36,7 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		t.Fatalf("migration 0178 up must CREATE TABLE checkpoint_manifest")
 	}
 
-	// The full §10.1 lines 141-151 column set.
+	// The full §10.1 column set.
 	for _, col := range []string{
 		"checkpoint_id",
 		"tenant_id",
@@ -65,14 +65,14 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	}
 
 	// manifest_reason is NOT NULL and defaults to the in_progress
-	// intent-row disposition (§10.1 line 141).
+	// intent-row disposition (§10.1).
 	if !strings.Contains(up, "manifest_reason") ||
 		!strings.Contains(up, "NOT NULL DEFAULT 'in_progress'") {
 		t.Errorf("migration 0178 up must declare manifest_reason NOT NULL DEFAULT 'in_progress'")
 	}
 
 	// baseline_full_checkpoint_bytes is BIGINT NULL with no DEFAULT so the
-	// §10.1 line 155 IS NULL branch stays reachable and the §7.2 resume
+	// §10.1 IS NULL branch stays reachable and the §7.2 resume
 	// path never divides by zero.
 	if !strings.Contains(up, "baseline_full_checkpoint_bytes BIGINT      NULL") {
 		t.Errorf("migration 0178 up must declare baseline_full_checkpoint_bytes BIGINT NULL")
@@ -84,7 +84,7 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	}
 
 	// The partial unique index is scoped to (session_id, slot_id) over
-	// active partial rows (§10.1 lines 143-151).
+	// active partial rows (§10.1).
 	normUp := strings.Join(strings.Fields(up), " ")
 	if !strings.Contains(normUp,
 		"CREATE UNIQUE INDEX partial_manifest_active_uniq ON checkpoint_manifest (session_id, slot_id) WHERE partial = TRUE AND deleted_at IS NULL") {

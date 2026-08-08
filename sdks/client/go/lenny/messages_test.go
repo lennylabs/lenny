@@ -97,7 +97,7 @@ func TestGetTranscriptForwardsCursorAndLimit(t *testing.T) {
 	}
 }
 
-// spec: §7.2 table line 124 / §15.1 — approve hits /approve and decodes
+// spec: §7.2 table / §15.1 — approve hits /approve and decodes
 // the resolution envelope.
 func TestApproveToolUsePostsApproveAndDecodesResolution(t *testing.T) {
 	var lastPath string
@@ -125,7 +125,7 @@ func TestApproveToolUsePostsApproveAndDecodesResolution(t *testing.T) {
 	}
 }
 
-// spec: §7.2 table line 125 — deny forwards the reason in the body.
+// spec: §7.2 table — deny forwards the reason in the body.
 func TestDenyToolUseForwardsReasonInBody(t *testing.T) {
 	var lastBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func TestDenyToolUseForwardsReasonInBody(t *testing.T) {
 	}
 }
 
-// spec: §7.2 table line 126 — respond forwards the response value.
+// spec: §7.2 table — respond forwards the response value.
 func TestRespondElicitationForwardsResponse(t *testing.T) {
 	var lastBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +165,7 @@ func TestRespondElicitationForwardsResponse(t *testing.T) {
 	}
 }
 
-// spec: §7.2 table line 127 — dismiss hits /dismiss with an empty body.
+// spec: §7.2 table — dismiss hits /dismiss with an empty body.
 func TestDismissElicitationPostsDismiss(t *testing.T) {
 	var lastPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

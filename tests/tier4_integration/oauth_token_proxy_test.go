@@ -82,7 +82,7 @@ func TestOAuthTokenExchangeProxiedToDeployedTokenService(t *testing.T) {
 	ts := tokensvc.Start(t)
 	waitHTTPListener(t, ts.HTTPAddr(), 5*time.Second)
 
-	// §4.3 line 194: the gateway reverse-proxies /v1/oauth/* to the
+	// §4.3: the gateway reverse-proxies /v1/oauth/* to the
 	// Token Service when --token-service-http-url is set, so the
 	// canonical POST /v1/oauth/token is served by the actual minter.
 	gw := gateway.StartWith(

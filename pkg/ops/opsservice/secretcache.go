@@ -19,7 +19,7 @@ import "sync"
 // out unsigned. The leader-only delivery worker therefore signs every
 // subscription it created or rotated, which is the common case.
 //
-// spec: §25.5 lines 2715-2733, 2747-2756.
+// spec: §25.5.
 type SecretCache struct {
 	mu      sync.RWMutex
 	secrets map[string][]byte

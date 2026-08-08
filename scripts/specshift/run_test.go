@@ -1147,6 +1147,7 @@ func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
 	t.Parallel()
 	const unnamedTree = "no line pass case assembles"
 	assertFixtureDirHolds(t, fixtureLinePass, unnamedTree, []string{
+		"embedded",
 		"fail",
 		"registers",
 		"spec",
@@ -1164,6 +1165,7 @@ func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
 		"unknown-file",
 	})
 	assertFixtureDirHolds(t, filepath.Join(fixtureLinePass, "registers"), "no line pass case loads", []string{
+		"embedded.yaml",
 		"fail-many-sites.yaml",
 		"fail-reformed-colon.yaml",
 		"fail-reformed-join.yaml",
@@ -3392,18 +3394,20 @@ func TestFindConsumesEveryMemberRatherThanTheHead(t *testing.T) {
 	}
 }
 
-// TestFindConsumesATrailingGlossWithItsMember pins that the gloss does not
-// terminate the match, and that a bare gloss is bounded at a word or two so a
-// citation followed by ordinary prose ends near its member.
+// TestFindConsumesATrailingGlossWithItsMember pins that a gloss written inside
+// a delimiter does not terminate the match. The cases are one per delimiter the
+// grammar admits, which are the parenthesis, the double quote, the single
+// quote, and the backtick, and each states where it ends.
 func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		fixture string
 		gloss   string
 	}{
-		{"gloss-trailing.txt", "step (e)"},
-		{"gloss-bare.txt", "messagingScope"},
-		{"gloss-then-prose.txt", "for the"},
+		{"gloss-parenthesized.txt", "(replay workspace checkpoint)"},
+		{"gloss-quoted.txt", `"messagingScope"`},
+		{"gloss-single-quoted.txt", "'tombstone'"},
+		{"gloss-backticked.txt", "`lenny.dev/schema-version`"},
 	} {
 		c := oneCitation(t, tc.fixture)
 		if len(c.Members) != 1 {
@@ -3411,6 +3415,48 @@ func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
 		}
 		if c.Members[0].Gloss != tc.gloss {
 			t.Errorf("%s: gloss is %q, want %q", tc.fixture, c.Members[0].Gloss, tc.gloss)
+		}
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
+		}
+	}
+}
+
+// TestFindLeavesABareWordBehindAMemberOutsideTheCitation pins the rule that
+// replaces the bare-word gloss. A word standing behind a member with no
+// delimiter around it is read as the sentence's own, because the grammar cannot
+// tell a gloss the author wrote against the pointer from the noun phrase the
+// sentence continues with: both are a member, a space, and a word. The citation
+// therefore ends at its member, and the words behind it stay in the carrier.
+//
+// Consuming them put the sentence's own words inside the span the pass
+// replaces, so converting the citation to a single anchor deleted them, and no
+// gate reported it: the citation was counted, resolved, and retired as
+// intended, and the comment was left saying something else. Leaving a word the
+// anchor already implies costs a reader one redundant word, which is the side
+// the migration errs on.
+//
+// The fixtures are the spellings the bare-word run used to bound: a single
+// identifier, a run of ordinary words, a word ahead of a parenthesis, a word
+// ending the sentence its member sits in, and a dotted identifier. None of them
+// is bounded now, because none of them is read.
+func TestFindLeavesABareWordBehindAMemberOutsideTheCitation(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []string{
+		"gloss-bare.txt",
+		"gloss-then-prose.txt",
+		"gloss-trailing.txt",
+		"gloss-sentence-boundary.txt",
+		"gloss-dotted-word.txt",
+	} {
+		c := oneCitation(t, fixture)
+		if want := wantCitation(t, fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want it to end at its member (%q)", fixture, c.Text, want)
+		}
+		for _, m := range c.Members {
+			if m.Gloss != "" {
+				t.Errorf("%s: gloss is %q, want the words behind the member left in the carrier", fixture, m.Gloss)
+			}
 		}
 	}
 }
@@ -3449,9 +3495,9 @@ func TestFindBoundsTheGlossSoItDoesNotSwallowTheNextCitation(t *testing.T) {
 // TestFindLeavesASeparatorWithNoMemberOutsideTheCitation pins that a member
 // separator spelled as a word and followed by prose or by another citation
 // rather than by a member stays out of the citation, whether it stands directly
-// against the member or behind a gloss. Absorbing it puts a dangling
-// conjunction in the text the register is keyed by and that the pass replaces,
-// so the rewritten sentence loses its conjunction.
+// against the member or behind the words the sentence continues with.
+// Absorbing it puts a dangling conjunction in the text the register is keyed by
+// and that the pass replaces, so the rewritten sentence loses its conjunction.
 func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -3459,7 +3505,7 @@ func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
 		glosses []string
 	}{
 		{"separator-then-prose.txt", []string{""}},
-		{"gloss-then-separator.txt", []string{"interfaces", "baseline"}},
+		{"gloss-then-separator.txt", []string{"", ""}},
 	} {
 		found := citation.Find(citationFixture(t, tc.fixture))
 		texts := make([]string, 0, len(found))
@@ -3478,9 +3524,9 @@ func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
 }
 
 // TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt pins that a member
-// carrying more than one gloss segment does not terminate the citation. The
-// spellings a bare word followed by a parenthesized phrase, a bare word
-// followed by a quoted fragment, and a run of bare words each precede a
+// carrying more than one gloss segment does not terminate the citation. A
+// parenthesized phrase followed by a second parenthesized phrase, and a
+// parenthesized phrase followed by a quoted fragment, each precede a
 // continuation member in the tree, and a matcher that gave up on the second
 // segment would drop every member after the gloss: the resolver would not read
 // them, the ratchet would not count them, and the rewritten carrier would read
@@ -3494,18 +3540,13 @@ func TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt(t *testing.T) {
 	}{
 		{
 			"gloss-run-parenthesized-plus-member.txt",
-			"step (e) (replay workspace checkpoint)",
+			"(e) (replay workspace checkpoint)",
 			[]string{"408-408", "409-409"},
 		},
 		{
 			"gloss-run-quoted-plus-member.txt",
-			`step (e) "Replay latest workspace checkpoint"`,
+			`(e) "Replay latest workspace checkpoint"`,
 			[]string{"408-408", "409-409"},
-		},
-		{
-			"gloss-run-words-plus-member.txt",
-			"EventBus retranscribe worker",
-			[]string{"685-689", "683-683", "699-699"},
 		},
 	} {
 		c := oneCitation(t, tc.fixture)
@@ -3519,6 +3560,43 @@ func TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt(t *testing.T) {
 		if !strings.Contains(c.Text, last.Text) {
 			t.Errorf("%s: citation text %q stops before its last member %q", tc.fixture, c.Text, last.Text)
 		}
+	}
+}
+
+// TestFindEndsAMemberListAtABareWordStandingBetweenTwoMembers pins the cost
+// the bare-word rule is paid for and the disposition of the sites that pay it.
+// A citation that writes a bare word between two of its own members ends at the
+// member ahead of the word, so the members behind it stay in the carrier. That
+// is the head-matching failure the whole-citation rule exists to prevent, and
+// the pass does not write it: the anchor the conversion emits stands against
+// the words and the members the citation did not consume, those compose the
+// retired form again, and the pass reports the site for hand correction rather
+// than converting it. A handful of carriers in the tree are written that way.
+//
+// The alternative is admitting the bare word again, which returns the deletion
+// this rule removes to every citation embedded in a sentence. A site reported
+// for hand correction is visible and is corrected; a word deleted from a
+// comment is neither.
+func TestFindEndsAMemberListAtABareWordStandingBetweenTwoMembers(t *testing.T) {
+	t.Parallel()
+	fixture := "gloss-run-words-plus-member.txt"
+	c := oneCitation(t, fixture)
+	if want := wantCitation(t, fixture); c.Text != want {
+		t.Errorf("%s: citation text is %q, want it to end at the member ahead of the words (%q)", fixture, c.Text, want)
+	}
+	if got := members(c); !sameStrings(got, []string{"685-689"}) {
+		t.Errorf("%s: members are %v, want the member ahead of the words alone", fixture, got)
+	}
+	if c.Members[0].Gloss != "" {
+		t.Errorf("%s: gloss is %q, want the words left in the carrier", fixture, c.Members[0].Gloss)
+	}
+	// The site is reported rather than converted, because the anchor the
+	// conversion would emit stands against the members it did not consume
+	// and composes the retired form again.
+	after := citationFixture(t, fixture)
+	after = after[:c.Offset] + "§" + c.Section + after[c.Offset+len(c.Raw):]
+	if len(citation.Find(after)) == 0 {
+		t.Error("converting the citation leaves no citation of the retired form, so the pass would write the truncated member list instead of reporting it")
 	}
 }
 
@@ -3566,24 +3644,29 @@ func TestFindConsumesTheMembersWrittenAfterALongGloss(t *testing.T) {
 	}
 }
 
-// TestFindEndsABareGlossAtASentenceTerminatingPeriod pins that a bare-word
-// gloss stops at the end of the sentence its member sits in. A word run that
-// absorbed the terminating period takes the first word of the next sentence as
-// its second word, and the citation text is what a register is keyed by and
-// what the pass replaces with an anchor, so the rewrite would delete that word.
-// A dotted identifier is one word, because its dots are followed by word bytes.
-func TestFindEndsABareGlossAtASentenceTerminatingPeriod(t *testing.T) {
+// TestFindLeavesTheSentenceBehindAMemberWhole pins the rest of the sentence a
+// member sits in. The word run the grammar once read behind a member was
+// bounded at the period that ended the sentence, so a citation embedded in
+// prose still lost the words ahead of that period, and the rewrite deleted
+// them. Nothing behind the member is read now, so the sentence that carries the
+// citation, and the sentence written after it, are left whole in the carrier.
+func TestFindLeavesTheSentenceBehindAMemberWhole(t *testing.T) {
 	t.Parallel()
-	sentence := oneCitation(t, "gloss-sentence-boundary.txt")
-	if want := wantCitation(t, "gloss-sentence-boundary.txt"); sentence.Text != want {
-		t.Errorf("citation text is %q, want it to stop at the word ending the sentence (%q)", sentence.Text, want)
-	}
-	if sentence.Members[0].Gloss != "reassembly" {
-		t.Errorf("gloss is %q, want %q", sentence.Members[0].Gloss, "reassembly")
-	}
-	dotted := oneCitation(t, "gloss-dotted-word.txt")
-	if dotted.Members[0].Gloss != "lenny.dev/schema-version annotation" {
-		t.Errorf("gloss is %q, want the dotted identifier read as one word", dotted.Members[0].Gloss)
+	for _, tc := range []struct {
+		fixture string
+		outside string
+	}{
+		{"gloss-sentence-boundary.txt", "reassembly. The next sentence starts here."},
+		{"gloss-dotted-word.txt", "lenny.dev/schema-version annotation"},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want it to end at its member (%q)", tc.fixture, c.Text, want)
+		}
+		rest := citationFixture(t, tc.fixture)[c.Offset+len(c.Raw):]
+		if !strings.Contains(rest, tc.outside) {
+			t.Errorf("%s: the text behind the citation is %q, want it to carry %q", tc.fixture, rest, tc.outside)
+		}
 	}
 }
 
@@ -3703,20 +3786,24 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 	}
 }
 
-// TestFindEndsACitationAtTheCommentLineThatCarriesIt pins the gloss to the
-// source line its member sits on. The continuation join covers three wrap
+// TestFindEndsACitationAtTheCommentLineThatCarriesIt pins the citation to the
+// source line its last member sits on. The continuation join covers three wrap
 // positions, which are a wrap between the reference and the keyword, a wrap
 // between the keyword and its first member, and a wrap inside a member list. A
-// gloss that read across a consumed continuation would take the opening word or
-// two of the following comment line, so the citation text a register is keyed
-// by would carry prose the citation does not own and the anchor the pass writes
-// in place of the whole citation would delete the newline, the following line's
-// comment marker, and its opening words, merging two comment lines and, in the
-// # dialect, leaving the following text outside any comment.
+// citation that read past its member across a consumed continuation would take
+// the opening words of the following comment line, so the citation text a
+// register is keyed by would carry prose the citation does not own and the
+// anchor the pass writes in place of the whole citation would delete the
+// newline, the following line's comment marker, and its opening words, merging
+// two comment lines and, in the # dialect, leaving the following text outside
+// any comment.
 //
-// The rule is stated over the bare-word gloss, which closes on nothing but the
-// end of its line. A gloss written inside a delimiter closes on that delimiter,
-// so it may close on the continuation line, which the case below pins.
+// The last two fixtures write a word behind the member and a further comment
+// line behind that. Neither the word nor the following line is read: a gloss
+// opens on a delimiter, so the word is the sentence's own, and the citation
+// ends at the member. A gloss written inside a delimiter closes on that
+// delimiter, so it may close on the continuation line, which the case below
+// pins.
 func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -3725,8 +3812,8 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 	}{
 		{"citation-then-comment-slash.txt", ""},
 		{"citation-then-comment-hash.txt", ""},
-		{"gloss-then-comment-slash.txt", "messagingScope"},
-		{"gloss-then-comment-hash.txt", "tombstone"},
+		{"gloss-then-comment-slash.txt", ""},
+		{"gloss-then-comment-hash.txt", ""},
 	} {
 		c := oneCitation(t, tc.fixture)
 		if want := wantCitation(t, tc.fixture); c.Text != want {
@@ -3764,17 +3851,17 @@ func TestFindConsumesAGlossThatClosesOnTheContinuationLine(t *testing.T) {
 		{
 			"gloss-paren-across-wrap-slash.txt",
 			[]string{"413-413"},
-			"tmpfs reservation (576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
+			"(tmpfs reservation 576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
 		},
 		{
 			"gloss-paren-across-wrap-hash.txt",
 			[]string{"413-413"},
-			"tmpfs reservation (576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
+			"(tmpfs reservation 576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
 		},
 		{
 			"gloss-quoted-across-wrap-slash.txt",
 			[]string{"240-240", "241-241"},
-			`messagingScope "the scope the session opens with, quoted from the table"`,
+			`"the scope the session opens with, quoted from the table"`,
 		},
 		{
 			"gloss-paren-across-wrap-then-member.txt",
@@ -4237,6 +4324,83 @@ func TestLinePassConvertsEverySpellingToASingleAnchorCitation(t *testing.T) {
 	}
 }
 
+// TestLinePassKeepsTheWordsBehindACitationEmbeddedInASentence pins the
+// conversion of a citation written inside a sentence, which is where the
+// words standing behind its member belong to the sentence rather than to
+// the pointer. The citation becomes the anchor of the section it names
+// and every word behind it survives verbatim.
+//
+// The carriers are copied from the sites the defect produced. Reading
+// those words as a gloss put them inside the span the conversion
+// replaces, so the rewrite deleted them and no gate reported it: the
+// citation was counted, resolved, and retired as intended, and the
+// sentence was left saying something else. The cases carry the spellings
+// that were deleted, which are a phrase ahead of a colon, an identifier
+// closing the sentence, a numbered step inside a parenthetical the
+// carrier opened, a phrase running to the end of its comment line, and a
+// phrase running to the end of its sentence.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names, and the carrier's own
+// text is left where it was written)
+func TestLinePassKeepsTheWordsBehindACitationEmbeddedInASentence(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "embedded")
+	applyLinePass(t, root, "embedded.yaml")
+	for _, tc := range []struct {
+		spelling string
+		target   string
+		want     string
+	}{
+		{
+			"a phrase ahead of a colon",
+			"compose/embedded.yaml",
+			"# §12.3 per-tier write ceiling: Tier 2 reference instance",
+		},
+		{
+			"a numbered step inside a parenthetical the carrier opened",
+			"compose/embedded.yaml",
+			"# Rendered unconditionally (§13.2 step 2): the enforcement target",
+		},
+		{
+			"a phrase running to the end of its comment line",
+			"compose/embedded.yaml",
+			"# providers is the §13.2 CIDR allowlist for the",
+		},
+		{
+			"a phrase running to the end of its sentence",
+			"compose/embedded.yaml",
+			"# certmanager is the §10.3 gate for the cert-manager prerequisite.",
+		},
+		{
+			"an identifier closing the sentence",
+			"pkg/carrier/embedded.go",
+			"// this to decide whether to enforce the §12.3 lenny_tenant_guard label on",
+		},
+	} {
+		t.Run(tc.spelling, func(t *testing.T) {
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(tc.target)))
+			if !strings.Contains(after, tc.want) {
+				t.Errorf("%s after the line pass does not read as %q:\n%s", tc.target, tc.want, after)
+			}
+		})
+	}
+	// The conversion retires the form in both carriers, so the words are
+	// kept by the citation ending at its member rather than by the site
+	// being left unconverted.
+	for _, target := range []string{"compose/embedded.yaml", "pkg/carrier/embedded.go"} {
+		after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+		if left := citation.Find(after); len(left) > 0 {
+			t.Errorf("%s still carries %v", target, left)
+		}
+		if strings.Contains(after, "line 117") || strings.Contains(after, "line 440") ||
+			strings.Contains(after, "line 434") || strings.Contains(after, "line 304") ||
+			strings.Contains(after, "line 56") {
+			t.Errorf("%s carries a line number after the conversion:\n%s", target, after)
+		}
+	}
+}
+
 // TestLinePassConvertsAWrappedCitationInEveryPositionAndDialect pins the
 // conversion of a citation wrapped across two comment lines, which the
 // continuation join reads as one citation. The cases are one per wrap
@@ -4362,7 +4526,7 @@ func TestLinePassLeavesTheServedTextAStrippedCitationIntroduced(t *testing.T) {
 		name  string
 		value string
 	}{
-		{"a citation opening a description with a bare-word gloss", `"description": "authored beside the session."`},
+		{"a citation opening a description the sentence continues", `"description": "authored beside the session."`},
 		{"a citation opening a bracketed clause", `"description": "Drain a pool (stop admitting new sessions, report the in-flight count)."`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4669,8 +4833,8 @@ func TestLinePassReportsEveryUnconvertibleSiteInOneRun(t *testing.T) {
 // the carrier's own prose. Each spelling is reported for hand
 // correction instead, and the tree is left byte-identical.
 //
-// The cases are one per composing spelling: a bare-word gloss running
-// to a trailing colon, whose anchor then stands against that colon and
+// The cases are one per composing spelling: a gloss closing on a
+// trailing colon, whose anchor then stands against that colon and
 // reads the integer opening the next comment line as a member; and a
 // separator word followed by a parenthesized reference on the next
 // comment line, whose reference the anchor's qualifier then absorbs.
@@ -4694,7 +4858,7 @@ func TestLinePassFailsAConversionThatComposesTheRetiredFormAgain(t *testing.T) {
 		composed string
 	}{
 		{
-			spelling: "a gloss running to a trailing colon",
+			spelling: "a gloss closing on a trailing colon",
 			carriers: "fail/reformed-colon",
 			register: "fail-reformed-colon.yaml",
 			target:   "pkg/carrier/gloss.go",

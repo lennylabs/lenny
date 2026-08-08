@@ -9,7 +9,7 @@ import "testing"
 // end-to-end pool-exhaustion path exercises only a valid positive value, so
 // this pins the empty, zero, negative, and non-numeric branches that decide
 // whether ServiceError.RetryAfterSeconds carries a backoff hint or stays zero.
-// spec: §15.1 line 1138 (Retry-After delta-seconds form); §7.1 create-and-start
+// spec: §15.1; §7.1 create-and-start
 // atomicity (the §4.9 CREDENTIAL_POOL_EXHAUSTED rejection carries no header).
 func TestParseRetryAfterHeader(t *testing.T) {
 	cases := []struct {
@@ -37,7 +37,7 @@ func TestParseRetryAfterHeader(t *testing.T) {
 // TestServiceErrorError verifies the ServiceError.Error() rendering the typed
 // service error exposes to a non-HTTP caller (the §15.2 MCP tool and the §15
 // single-shot adapter binder), which formats the §16.3 code and message.
-// spec: §15.2.1 rule 3 line 1384 (shared error envelope).
+// spec: §15.2.1 rule 3.
 func TestServiceErrorError(t *testing.T) {
 	err := &ServiceError{Code: "SESSION_CREATION_FAILED", Message: "warm pool exhausted"}
 	if got, want := err.Error(), "SESSION_CREATION_FAILED: warm pool exhausted"; got != want {

@@ -72,7 +72,7 @@ func (f *fakeFallback) waitSubscribed(t *testing.T) {
 	t.Fatal("fallback Subscribe was never invoked by Run")
 }
 
-// spec: §4.9 line 1647 — with no Redis bus configured, a Revoke
+// spec: §4.9 — with no Redis bus configured, a Revoke
 // propagates over the Postgres LISTEN/NOTIFY fallback. F-13.3.8.
 func TestRevokeUsesFallbackWhenNoRedisBus_F1338(t *testing.T) {
 	fb := &fakeFallback{}
@@ -85,7 +85,7 @@ func TestRevokeUsesFallbackWhenNoRedisBus_F1338(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1647 — when the Redis publish fails (Redis down), the
+// spec: §4.9 — when the Redis publish fails (Redis down), the
 // revocation falls through to the Postgres LISTEN/NOTIFY fallback.
 // F-13.3.8.
 func TestRevokeFallsBackWhenRedisPublishFails_F1338(t *testing.T) {
@@ -123,7 +123,7 @@ func TestRevokeSkipsFallbackWhenRedisHealthy_F1338(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1647 — Run subscribes on the Postgres fallback channel
+// spec: §4.9 — Run subscribes on the Postgres fallback channel
 // too, so a peer's revocation raised over Postgres converges on this
 // replica even while Redis is down. F-13.3.8.
 func TestRunSubscribesFallbackAndConverges_F1338(t *testing.T) {

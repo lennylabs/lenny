@@ -41,7 +41,7 @@ const pinSHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 // pinStubResolver is a workspaceplan.RefResolver for the pinning tests.
 // lastCred records the credential the resolver was handed so a test can
-// assert the §14 line 102 credential threading.
+// assert the §14 credential threading.
 type pinStubResolver struct {
 	shas     map[string]string
 	err      error
@@ -129,7 +129,7 @@ func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — the gateway resolves a private gitClone ref using
+// spec: §14 — the gateway resolves a private gitClone ref using
 // the same credential the clone will, so create-time ref pinning threads
 // the materialized VCS token to the ls-remote resolver.
 func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
@@ -157,7 +157,7 @@ func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — a credential-materialization failure fails the
+// spec: §14 — a credential-materialization failure fails the
 // create as a non-retryable GIT_CLONE_REF_UNRESOLVABLE, not later at
 // clone time.
 func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {

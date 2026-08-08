@@ -51,7 +51,7 @@ ALTER TABLE runtime_definitions
 -- this migration stages no UPDATE. max_concurrent survives as the service-mode
 -- per-pod request bound.
 --
--- §10.5 Phase 3 column drop (spec §10.5 line 417). The drop is irreversible, so
+-- §10.5 Phase 3 column drop (spec §10.5). The drop is irreversible, so
 -- it is fronted by a PL/pgSQL DO $$ preflight gate that counts un-migrated rows
 -- and RAISE EXCEPTIONs when any remain. A non-default concurrency_style ('' is
 -- the 0040 default) is an un-migrated row: the §5.2 collapse stages no per-row

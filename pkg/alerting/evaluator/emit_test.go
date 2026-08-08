@@ -61,7 +61,7 @@ func TestEmitCallbacksFireAndResolve(t *testing.T) {
 	if data.AlertName != "PoolExhausted" {
 		t.Errorf("alertName = %q, want PoolExhausted", data.AlertName)
 	}
-	// spec: §25.7 line 3236 / §25.17 line 5172 — `runbook` is the short
+	// spec: §25.7 / §25.17 — `runbook` is the short
 	// slug derived from the rule (here from the URL's last segment, since
 	// the rule set only RunbookURL); the full URL is carried separately.
 	if data.Runbook != "pool-exhausted" {
@@ -84,7 +84,7 @@ func TestEmitCallbacksFireAndResolve(t *testing.T) {
 	}
 }
 
-// spec: §25.17 line 5172 — the WarmPoolExhausted alert_fired payload
+// spec: §25.17 — the WarmPoolExhausted alert_fired payload
 // carries the short runbook slug ("warm-pool-exhaustion", not the URL)
 // and a suggestedAction the watchdog routes on. This exercises the
 // actual §16.5 catalog rule end-to-end through the evaluator.

@@ -278,7 +278,7 @@ func TestEventStoreContract(t *testing.T) {
 			t.Errorf("continuity check did not walk tampered tenant %q", tenant)
 		}
 
-		// The windowed startup check (the §12.3 line 101 path the reworked
+		// The windowed startup check (the §12.3 path the reworked
 		// runStartupChainContinuityCheck WARN string reads) must report the
 		// same real-Postgres committed-row tamper as broken, so a genuine
 		// tamper reaches the boundary-populated ChainBroken branch that
@@ -414,15 +414,15 @@ func TestEventBusContract(t *testing.T) {
 			t.Error("publish-attempt metric was not recorded")
 		}
 		if metrics.PublishDurationCount(eventbus.TopicSessionLifecycle) == 0 {
-			t.Error("spec: §12.6 line 709 — publish_duration_seconds histogram was not recorded")
+			t.Error("spec: §12.6 — publish_duration_seconds histogram was not recorded")
 		}
-		// spec: §12.6 line 709 — handler_duration_seconds is recorded after
+		// spec: §12.6 — handler_duration_seconds is recorded after
 		// the handler returns, which races the channel read; poll briefly.
 		deadline := time.After(2 * time.Second)
 		for metrics.HandlerDurationCount(eventbus.TopicSessionLifecycle) == 0 {
 			select {
 			case <-deadline:
-				t.Fatal("spec: §12.6 line 709 — handler_duration_seconds histogram was never recorded")
+				t.Fatal("spec: §12.6 — handler_duration_seconds histogram was never recorded")
 			case <-time.After(20 * time.Millisecond):
 			}
 		}
@@ -468,8 +468,8 @@ func TestEventBusContract(t *testing.T) {
 	})
 }
 
-// spec: §4.4 line 232 — audit-bearing CloudEvents on the EventBus.
-// diagnosis: the §4.4 line 232 contract names "the CloudEvents-wrapped
+// spec: §4.4 — audit-bearing CloudEvents on the EventBus.
+// diagnosis: the §4.4 contract names "the CloudEvents-wrapped
 // audit events published on the EventBus" as one of the OCSF-egress
 // targets. The PublishingAppender wraps Store.Append with a
 // first-publish that emits the OCSF record on

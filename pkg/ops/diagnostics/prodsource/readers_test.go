@@ -34,7 +34,7 @@ func TestHotKeysRankAndCap_spec_25_6(t *testing.T) {
 }
 
 // TestSignalsFromPodOOM maps a container terminated by the OOM killer to
-// the OOM signal and carries the exit code. spec: §25.6 lines 2899-2906.
+// the OOM signal and carries the exit code. spec: §25.6.
 func TestSignalsFromPodOOM_spec_25_6_2899(t *testing.T) {
 	pod := &corev1.Pod{Status: corev1.PodStatus{
 		ContainerStatuses: []corev1.ContainerStatus{{
@@ -54,9 +54,7 @@ func TestSignalsFromPodOOM_spec_25_6_2899(t *testing.T) {
 // without setting the OOM signal, so classification yields the generic
 // POD_CRASH. The §25.6 cause-chain cross-reference requires the OOM
 // reason ("exit code 137 + OOM reason → OOM_KILLED"); exit code 137
-// alone does not participate in OOM classification. spec: §25.6 line
-// 2896 (cause-chain cross-reference), line 2893 (reads terminated exit
-// code and reason).
+// alone does not participate in OOM classification. spec: §25.6.
 func TestSignalsFromPodExit137NoOOMReason_spec_25_6_2896(t *testing.T) {
 	pod := &corev1.Pod{Status: corev1.PodStatus{
 		ContainerStatuses: []corev1.ContainerStatus{{
@@ -75,7 +73,7 @@ func TestSignalsFromPodExit137NoOOMReason_spec_25_6_2896(t *testing.T) {
 }
 
 // TestSignalsFromPodImagePull maps an image-pull waiting reason to the
-// image-pull signal. spec: §25.6 lines 2899-2906.
+// image-pull signal. spec: §25.6.
 func TestSignalsFromPodImagePull_spec_25_6_2899(t *testing.T) {
 	pod := &corev1.Pod{Status: corev1.PodStatus{
 		ContainerStatuses: []corev1.ContainerStatus{{
@@ -88,7 +86,7 @@ func TestSignalsFromPodImagePull_spec_25_6_2899(t *testing.T) {
 }
 
 // TestSignalsFromPodUnschedulable maps an Unschedulable PodScheduled
-// condition to the resource-pressure signal. spec: §25.6 lines 2899-2906.
+// condition to the resource-pressure signal. spec: §25.6.
 func TestSignalsFromPodUnschedulable_spec_25_6_2899(t *testing.T) {
 	pod := &corev1.Pod{Status: corev1.PodStatus{
 		Conditions: []corev1.PodCondition{{
@@ -102,7 +100,7 @@ func TestSignalsFromPodUnschedulable_spec_25_6_2899(t *testing.T) {
 
 // TestSignalsFromPodLastTermination reads the last-termination exit code
 // for a crash-looping container whose current state is waiting. spec:
-// §25.6 lines 2899-2906.
+// §25.6.
 func TestSignalsFromPodLastTermination_spec_25_6_2899(t *testing.T) {
 	pod := &corev1.Pod{Status: corev1.PodStatus{
 		ContainerStatuses: []corev1.ContainerStatus{{
@@ -118,9 +116,7 @@ func TestSignalsFromPodLastTermination_spec_25_6_2899(t *testing.T) {
 // TestK8sReaderSignalsOOM drives the K8sReader end to end against a fake
 // clientset: an OOM-killed pod in the reader's namespace yields the OOM
 // signal and its exit code through the real client query, not just the
-// pure mapping function. spec: §25.6 line 2893 (K8s fallback reads pod
-// .status.containerStatuses[].state.terminated for exit code and reason
-// including OOMKilled).
+// pure mapping function. spec: §25.6.
 func TestK8sReaderSignalsOOM_spec_25_6_2893(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "lenny-system"},
@@ -143,7 +139,7 @@ func TestK8sReaderSignalsOOM_spec_25_6_2893(t *testing.T) {
 // TestK8sReaderSignalsGarbageCollected covers the not-found path: a pod
 // that no longer exists in the API (garbage-collected after the session
 // failed) returns found=false with no error, so the caller reports a
-// clean not-found rather than a degraded diagnosis. spec: §25.6 line 2892
+// clean not-found rather than a degraded diagnosis. spec: §25.6
 // (the fallback attempts to locate the pod and reads its status directly).
 func TestK8sReaderSignalsGarbageCollected_spec_25_6_2892(t *testing.T) {
 	r := NewK8sReader(k8sfake.NewSimpleClientset(), "lenny-system")
@@ -158,8 +154,7 @@ func TestK8sReaderSignalsGarbageCollected_spec_25_6_2892(t *testing.T) {
 
 // TestK8sReaderNamespaceScoping confirms the reader queries only its own
 // namespace: a pod with the same name in a different namespace is not
-// returned, and a reader scoped to that namespace finds it. spec: §25.6
-// line 2892 (reads the pod via the K8s API in the agent namespace).
+// returned, and a reader scoped to that namespace finds it. spec: §25.6.
 func TestK8sReaderNamespaceScoping_spec_25_6_2892(t *testing.T) {
 	cs := k8sfake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: "other-ns"},
@@ -195,7 +190,7 @@ func (s stubGetter) Get(_ context.Context, _ string, out any) error {
 }
 
 // TestGatewayPoolReaderFound maps the admin pool GET response onto the
-// config summary and CRD sync status. spec: §25.6 line 2906.
+// config summary and CRD sync status. spec: §25.6.
 func TestGatewayPoolReaderFound_spec_25_6_2906(t *testing.T) {
 	r := &GatewayPoolReader{client: stubGetter{payload: poolConfigPayload{
 		Name: "p1", RuntimeRef: "claude", WarmCount: 5, SyncStatus: "synced",

@@ -28,7 +28,7 @@ func newRedisT(t *testing.T) redis.UniversalClient {
 	return c
 }
 
-// spec: §7.2 line 281 — the in-memory inbox preserves FIFO order and
+// spec: §7.2 — the in-memory inbox preserves FIFO order and
 // reports its buffered count.
 func TestMemoryInbox_FIFOAndLen_spec_7_2_281(t *testing.T) {
 	in := NewMemoryInbox(0) // default cap
@@ -54,7 +54,7 @@ func TestMemoryInbox_FIFOAndLen_spec_7_2_281(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 282 — on overflow the oldest buffered message is
+// spec: §7.2 — on overflow the oldest buffered message is
 // dropped and returned for the message_dropped(inbox_overflow) receipt.
 func TestMemoryInbox_OverflowDropsOldest_spec_7_2_282(t *testing.T) {
 	in := NewMemoryInbox(2)
@@ -74,7 +74,7 @@ func TestMemoryInbox_OverflowDropsOldest_spec_7_2_282(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 280 — the in-memory inbox is keyed per (tenant,
+// spec: §7.2 — the in-memory inbox is keyed per (tenant,
 // session); a foreign tenant's queue is isolated.
 func TestMemoryInbox_TenantIsolation_spec_7_2_280(t *testing.T) {
 	in := NewMemoryInbox(10)
@@ -85,7 +85,7 @@ func TestMemoryInbox_TenantIsolation_spec_7_2_280(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 293 — the durable inbox enforces maxInboxSize
+// spec: §7.2 — the durable inbox enforces maxInboxSize
 // atomically (LLEN-before-RPUSH) and evicts the oldest on overflow.
 func TestRedisInbox_OverflowDropsOldest_spec_7_2_293(t *testing.T) {
 	in := NewRedisInbox(newRedisT(t), 2)
@@ -108,7 +108,7 @@ func TestRedisInbox_OverflowDropsOldest_spec_7_2_293(t *testing.T) {
 	}
 }
 
-// spec: §7.2 lines 297, 305 — recovery reads the durable inbox in FIFO
+// spec: §7.2 — recovery reads the durable inbox in FIFO
 // order; Drain returns and clears the list.
 func TestRedisInbox_DrainFIFO_spec_7_2_297(t *testing.T) {
 	in := NewRedisInbox(newRedisT(t), 10)
@@ -130,7 +130,7 @@ func TestRedisInbox_DrainFIFO_spec_7_2_297(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 305 — durable-inbox resume_pending handling applies an
+// spec: §7.2 — durable-inbox resume_pending handling applies an
 // EXPIRE to the inbox key rather than draining to the DLQ.
 func TestRedisInbox_Expire_spec_7_2_305(t *testing.T) {
 	c := newRedisT(t)

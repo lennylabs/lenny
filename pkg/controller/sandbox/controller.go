@@ -55,14 +55,14 @@ type Reconciler struct {
 	// the podspec package default in force. The lenny-pod-security and
 	// ephemeral-container-cred-guard webhooks MUST be wired with the same
 	// values (from the same Helm source) so a built pod passes their UID
-	// checks. spec: §13.1 line 7. F-13.1.16.
+	// checks. spec: §13.1. F-13.1.16.
 	AdapterUID     int64
 	AgentUID       int64
 	CredReadersGID int64
 	// GatewayGRPCAddr is the §8.6/§9.1 gateway GatewayControl address
 	// (host:port) stamped onto the adapter container so it forwards a
 	// type:agent runtime's platform tool calls to the gateway. Empty
-	// leaves the platform MCP server unstarted. spec: §9.1 lines 14-31.
+	// leaves the platform MCP server unstarted. spec: §9.1.
 	// F-9.1.1.
 	GatewayGRPCAddr string
 	// EgressCaptureImage is the §12.9.8 egress-capture sidecar image.
@@ -73,12 +73,12 @@ type Reconciler struct {
 	EgressCaptureImage string
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
 	// true, a Sandbox that omits an isolation profile defaults its pod to
-	// `standard` (runc) per §5.3 line 677, so a developer can launch pods
+	// `standard` (runc) per §5.3, so a developer can launch pods
 	// on a cluster without gVisor installed.
 	DevMode bool
 	// SATokenAudience is the §10.3 deployment-specific projected-token
 	// audience (global.saTokenAudience). When set, every agent pod mounts a
-	// §6.1 line 14 audience-bound projected service-account token. Empty
+	// §6.1 audience-bound projected service-account token. Empty
 	// (test or unconfigured) leaves the pod without it rather than mounting
 	// a wrong-audience token.
 	SATokenAudience string
@@ -87,8 +87,7 @@ type Reconciler struct {
 	// agent namespaces).
 	AgentServiceAccountName string
 	// DedicatedDNSClusterIP is the ClusterIP of the lenny-agent-dns Service
-	// in lenny-system (the chart's coredns.clusterIP value). spec: §13.2
-	// lines 470-490 (K8S-033) — when set, the pod builder stamps
+	// in lenny-system (the chart's coredns.clusterIP value). spec: §13.2 — when set, the pod builder stamps
 	// `dnsPolicy: None` plus a `dnsConfig` pointing the pod at the
 	// dedicated CoreDNS instance, because the agent-namespace NetworkPolicy
 	// blocks the kube-system kube-dns the default ClusterFirst policy would
@@ -115,7 +114,7 @@ type Reconciler struct {
 	// deduplication.
 	StatusDedup *statusdedup.Gate
 	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
-	// cluster-specific RuntimeClass name (spec: §17.5 line 3). Set from
+	// cluster-specific RuntimeClass name (spec: §17.5). Set from
 	// the chart's `isolation.runtimeClassNames` Helm values so a cluster
 	// running gVisor as `runsc` or Kata as `kata-qemu` does not require
 	// renaming in-cluster RuntimeClass objects to Lenny's literal
@@ -128,7 +127,7 @@ type Reconciler struct {
 	MaxConcurrentReconciles int
 	// ResourceClasses maps a §5.2 resource-class name (small/medium/large or
 	// a deployer-defined class) to container CPU/memory requests and limits.
-	// spec: §6.4 line 413 — the reconciler resolves each Sandbox's class
+	// spec: §6.4 — the reconciler resolves each Sandbox's class
 	// through this registry and stamps the result on the agent containers so
 	// the pod carries a per-pod memory cgroup limit that accounts for the
 	// tmpfs volumes. A nil registry uses resourceclass.DefaultRegistry.
@@ -176,7 +175,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	obs := observePod(&pod, podErr)
 
-	// §6.1 lines 30-69: a pool whose runtime declares capabilities.preConnect
+	// §6.1: a pool whose runtime declares capabilities.preConnect
 	// (and whose §6.1 circuit breaker has not disabled SDK-warm) warms
 	// through sdk_connecting rather than straight to pod-warm idle. The
 	// pod-warm planner governs every other pool.
@@ -228,7 +227,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if decision.Action == lifecycle.ActionSetPhase {
 		desiredPhase = string(decision.NextPhase)
 	}
-	// §6.1 line 18: flip the readiness gate once the containers are ready
+	// §6.1: flip the readiness gate once the containers are ready
 	// so Pod.Ready (and the warming → idle transition that keys off it) can
 	// proceed. This is the Lenny-controlled claimability handoff.
 	if err := r.syncReadinessGate(ctx, &pod, obs); err != nil {
@@ -307,8 +306,8 @@ func (r *Reconciler) resolveTemplate(ctx context.Context, sb *lennyv1.Sandbox) *
 // Sandbox's pod. A §12.6 CreatePod pod stamps the resolved class on
 // Sandbox.spec.resourceClass directly; a warm pod leaves it empty, so the
 // reconciler reads the class from the pool's SandboxTemplate. When neither
-// names a class the §5.1 line 357 deployer-safe default applies. spec:
-// §5.1/§5.2, §6.4 line 413.
+// names a class the §5.1 deployer-safe default applies. spec:
+// §5.1/§5.2, §6.4.
 func (r *Reconciler) resourceClassName(ctx context.Context, sb *lennyv1.Sandbox) string {
 	if sb.Spec.ResourceClass != "" {
 		return sb.Spec.ResourceClass
@@ -329,7 +328,7 @@ func (r *Reconciler) resourceClassName(ctx context.Context, sb *lennyv1.Sandbox)
 // CPU/memory requirements through the registry. An unknown class (one not
 // in the registry) resolves to no explicit requirements rather than failing
 // pod creation, matching the pre-registry behavior for deployments that
-// have not configured the class. spec: §6.4 line 413.
+// have not configured the class. spec: §6.4.
 func (r *Reconciler) resolveResources(ctx context.Context, sb *lennyv1.Sandbox) *corev1.ResourceRequirements {
 	reg := r.ResourceClasses
 	if reg == nil {
@@ -351,10 +350,10 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	}
 	profile := sb.Spec.IsolationProfile
 	if profile == "" {
-		// spec: §5.3 line 677 — dev mode falls back to `standard` (runc).
+		// spec: §5.3 — dev mode falls back to `standard` (runc).
 		profile = string(isolation.DefaultForMode(r.DevMode))
 	}
-	// spec: §5.2 line 516 / §4.4 line 255 — resolve the pool's SandboxTemplate
+	// spec: §5.2 / §4.4 — resolve the pool's SandboxTemplate
 	// once and read the grace-period settings and the workspace-size hard limit
 	// off it. A missing template leaves each nil, so the pod builder falls back
 	// to its §4.6.1 grace default and renders no --workspace-size-limit-bytes.
@@ -364,7 +363,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		graceMax = tmpl.Spec.MaxTerminationGracePeriodSeconds
 		workspaceSizeLimit = tmpl.Spec.WorkspaceSizeLimitBytes
 	}
-	// spec: §6.4 line 409 — encode the Runtime's inline sharedAssets for the
+	// spec: §6.4 — encode the Runtime's inline sharedAssets for the
 	// adapter's --shared-assets flag so it materializes them into the
 	// read-only /workspace/shared tree at warm time. F-6.4.3.
 	sharedAssetsArg, err := encodeSharedAssets(rt.Spec.SharedAssets)
@@ -386,12 +385,12 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		Labels:       sb.Labels,
 		RuntimeImage: rt.Spec.Image,
 		AdapterImage: r.AdapterImage,
-		// spec: §9.1 lines 14-31 — point the adapter at the gateway's
+		// spec: §9.1 — point the adapter at the gateway's
 		// GatewayControl listener so a type:agent runtime's platform tool
 		// calls reach the gateway platform tool surface. F-9.1.1.
 		GatewayGRPCAddr:  r.GatewayGRPCAddr,
 		IsolationProfile: profile,
-		// spec: §17.5 line 3 — apply operator RuntimeClass-name
+		// spec: §17.5 — apply operator RuntimeClass-name
 		// overrides (e.g. gvisor→runsc, kata→kata-qemu) so the chart's
 		// `isolation.runtimeClassNames` Helm values reach the pod spec
 		// without requiring rename of in-cluster RuntimeClass objects.
@@ -402,43 +401,43 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// adapter container; nil leaves the adapter default of true in force.
 		RequireSoPeercred: nonceOnly,
 		EgressCapture:     r.resolveEgressCapture(sb),
-		// spec: §5.2 line 516 — the SandboxTemplate's deployer-set
+		// spec: §5.2 — the SandboxTemplate's deployer-set
 		// terminationGracePeriodSeconds replaces the 120s default base, and
 		// the maxTerminationGracePeriodSeconds ceiling clamps the pod's
 		// grace period down when the deployer has declared a hard cap.
 		TerminationGraceSeconds:    graceBase,
 		MaxTerminationGraceSeconds: graceMax,
-		// spec: §6.1 line 67 — a preConnect (SDK-warm) runtime may reach
+		// spec: §6.1 — a preConnect (SDK-warm) runtime may reach
 		// `sdk_connecting`, so the pod's grace period is floored at
 		// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` to give the adapter time to run
 		// its bounded DemoteSDK teardown on SIGTERM before the kubelet sends
 		// SIGKILL.
 		PreConnect: rt.Spec.Capabilities != nil && rt.Spec.Capabilities.PreConnect,
-		// spec: §5.2 lines 631-636 — the WarmPoolController copied the
+		// spec: §5.2 — the WarmPoolController copied the
 		// pool's topology spread constraints onto Sandbox.spec; stamp them
 		// onto the pod here.
 		TopologySpreadConstraints: sb.Spec.TopologySpreadConstraints,
-		// spec: §6.1 line 14 / §10.3 — mount the audience-bound projected
+		// spec: §6.1 / §10.3 — mount the audience-bound projected
 		// service-account token (when an audience is configured) under the
 		// zero-RBAC agent ServiceAccount.
 		SATokenAudience:    r.SATokenAudience,
 		ServiceAccountName: r.AgentServiceAccountName,
-		// spec: §6.4 lines 416-419 — pass the Runtime's workspaceTier through
+		// spec: §6.4 — pass the Runtime's workspaceTier through
 		// so the pod builder stamps the `lenny.dev/workspace-tier: t4` label,
 		// the T4 nodeSelector, and the T4 NoSchedule toleration when the
 		// Runtime declares T4. The lenny-t4-node-isolation admission webhook
 		// (failurePolicy: Fail) rejects any T4 pod missing these constraints
 		// with the §6.4 STR-003 message.
 		WorkspaceTier: rt.Spec.WorkspaceTier,
-		// spec: §6.4 line 409 — the encoded inline shared-asset set the
+		// spec: §6.4 — the encoded inline shared-asset set the
 		// adapter materializes into the read-only /workspace/shared tree.
 		SharedAssetsArg: sharedAssetsArg,
-		// spec: §13.2 lines 470-490 (K8S-033) — point the agent pod's
+		// spec: §13.2 — point the agent pod's
 		// resolver at the dedicated lenny-system CoreDNS instance unless the
 		// pool opted out via the lenny.dev/dns-policy: cluster-default label.
 		DedicatedDNSClusterIP: r.DedicatedDNSClusterIP,
 		ReleaseNamespace:      r.ReleaseNamespace,
-		// spec: §4.4 line 255 — the pool's workspace-size hard limit. When set,
+		// spec: §4.4 — the pool's workspace-size hard limit. When set,
 		// the builder renders --workspace-size-limit-bytes so the adapter runs
 		// its pre-checkpoint size probe; nil leaves the probe disabled.
 		WorkspaceSizeLimitBytes: workspaceSizeLimit,
@@ -447,12 +446,12 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 		// --objectstore-ca-bundle at it so the adapter trusts a self-managed
 		// object store's non-public CA during checkpoint upload.
 		ObjectStoreCAConfigMap: r.ObjectStoreCAConfigMap,
-		// spec: §5.2 / §6.4 line 413 — resolve the Sandbox's resource class
+		// spec: §5.2 / §6.4 — resolve the Sandbox's resource class
 		// to container CPU/memory requests and limits so the pod has a
 		// per-pod cgroup boundary that accounts for the memory-backed tmpfs
 		// volumes charging against the pod memory limit.
 		Resources: r.resolveResources(ctx, sb),
-		// spec: §13.1 line 7 — carry the operator-tunable non-root
+		// spec: §13.1 — carry the operator-tunable non-root
 		// identities so the pod the controller stamps matches the UIDs the
 		// lenny-pod-security / ephemeral-container-cred-guard webhooks
 		// enforce (both wired from the same Helm value). F-13.1.16.
@@ -466,12 +465,12 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.Sandbox) error {
 	if pod.Labels == nil {
 		pod.Labels = map[string]string{}
 	}
-	// spec: §6.2 line 311 — stamp the immutable runtime-name label so
+	// spec: §6.2 — stamp the immutable runtime-name label so
 	// operators can select pods by runtime type.
 	if sb.Spec.RuntimeRef != "" {
 		pod.Labels[state.LabelRuntime] = sb.Spec.RuntimeRef
 	}
-	// §4.6.1 disruption protection / §6.2 lines 305-313: stamp the coarse
+	// §4.6.1 disruption protection / §6.2: stamp the coarse
 	// lenny.dev/state label so the per-pool PodDisruptionBudget can select
 	// warm (idle) pods. A pre-ready pod (warming) has no coarse value, so
 	// the label is omitted until the pod reaches a coarse state; the
@@ -664,7 +663,7 @@ func (r *Reconciler) clearNonceOnlyCarrier(ctx context.Context, sb *lennyv1.Sand
 }
 
 // podStateLabel returns the coarse lenny.dev/state label value for a
-// Sandbox (spec §6.2 line 309: idle/active/draining) and whether the
+// Sandbox (spec §6.2: idle/active/draining) and whether the
 // Sandbox's §6.2 phase maps to a coarse value at all. An unset phase (a
 // freshly-created Sandbox whose pod is being materialized) is treated as
 // warming, which has no coarse operational value, so the second return is
@@ -682,11 +681,11 @@ func podStateLabel(sb *lennyv1.Sandbox) (string, bool) {
 // PodDisruptionBudget's idle selector and §6.2 NetworkPolicy/monitoring
 // selectors track pod lifecycle. desiredPhase is the phase syncStatus
 // wrote this pass; it is mapped to the coarse idle/active/draining value
-// set (spec §6.2 lines 305-313). When the phase has no coarse value
+// set (spec §6.2). When the phase has no coarse value
 // (warming, sdk_connecting, or a terminal phase) the label is removed
 // rather than carrying a value outside the documented set. The patch is
 // skipped when the pod is absent or the label already matches. spec:
-// §4.6.1 "Disruption protection for agent pods", §6.2 lines 305-313.
+// §4.6.1 "Disruption protection for agent pods", §6.2.
 func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string, pod *corev1.Pod, obs lifecycle.PodObservation) error {
 	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
 		return nil
@@ -714,7 +713,7 @@ func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string,
 	return nil
 }
 
-// syncReadinessGate flips the §6.1 line 18 lenny.dev/sandbox-ready pod
+// syncReadinessGate flips the §6.1 lenny.dev/sandbox-ready pod
 // readiness gate to True once the pod's containers are ready. The pod spec
 // declares the gate (podspec.ReadinessGateSandboxReady), so the kubelet
 // holds Pod.Ready False — keeping the pod un-claimable and the warming →
@@ -723,7 +722,7 @@ func (r *Reconciler) syncPodStateLabel(ctx context.Context, desiredPhase string,
 // the containers report ready; the gate exists so claimability is a
 // Lenny-controlled signal rather than implied by container readiness
 // alone. The patch is skipped when the pod is absent, its containers are
-// not yet ready, or the gate is already True. spec: §6.1 line 18.
+// not yet ready, or the gate is already True. spec: §6.1.
 func (r *Reconciler) syncReadinessGate(ctx context.Context, pod *corev1.Pod, obs lifecycle.PodObservation) error {
 	if obs == lifecycle.PodAbsent || pod == nil || pod.Name == "" {
 		return nil
@@ -998,7 +997,7 @@ func (r *Reconciler) resolveEgressCapture(sb *lennyv1.Sandbox) *podspec.EgressCa
 // the transport-safe form the pod spec carries to the adapter on the
 // --shared-assets flag. An empty list yields the empty string, which the
 // pod builder reads as "mount /workspace/shared empty and read-only".
-// spec: §6.4 line 409 — F-6.4.3.
+// spec: §6.4 — F-6.4.3.
 func encodeSharedAssets(assets []lennyv1.SharedAsset) (string, error) {
 	if len(assets) == 0 {
 		return "", nil

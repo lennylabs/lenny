@@ -21,7 +21,7 @@ import (
 // that must survive a restart. It downloads the PostgreSQL bundle, so it is
 // skipped under -short.
 //
-// spec: §25.11 lines 4073-4098.
+// spec: §25.11.
 func TestReplicationStateRoundTrip_spec_25_11(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

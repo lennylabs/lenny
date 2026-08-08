@@ -2,7 +2,7 @@ suite: lenny-gateway deployment
 templates:
   - gateway-deployment.yaml
 tests:
-  # spec: §25.4 line 944 / F-25.4.25 — the recommendation Prometheus-outage
+  # spec: §25.4 / F-25.4.25 — the recommendation Prometheus-outage
   # opt-out lives under ops.recommendations (the canonical §25.4 location);
   # the gateway hosts the recommendation service, so the flag renders here.
   - it: omits --recommendations-disable-on-prometheus-outage by default
@@ -24,7 +24,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --recommendations-disable-on-prometheus-outage=true
 
-  # spec: §17.4 line 268 / F-17.4.5 — outside global.devMode the gateway
+  # spec: §17.4 / F-17.4.5 — outside global.devMode the gateway
   # acknowledges that the §17 Deployment+Service+Ingress topology
   # terminates TLS at the ingress, so the dev-mode hard startup assertion
   # passes without enabling dev mode.
@@ -39,7 +39,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --dev-mode
-  # spec: §17.4 line 268 — in dev mode the relaxed-TLS gate is satisfied
+  # spec: §17.4 — in dev mode the relaxed-TLS gate is satisfied
   # by --dev-mode itself, so the upstream-termination acknowledgment is
   # not rendered.
   - it: passes --dev-mode (not --tls-terminated-upstream) in dev mode
@@ -81,7 +81,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --tenancy-mode=single
-  # spec: §17.6 line 365 / F-17.6.7 — the noEnvironmentPolicy platform
+  # spec: §17.6 / F-17.6.7 — the noEnvironmentPolicy platform
   # default is the spec-canonical global.* key; an operator override
   # under global flows through to the gateway flag (it was previously
   # read from gateway.* and a global override was silently ignored).
@@ -105,7 +105,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --no-environment-policy=deny-all
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled the gateway mounts
+  # spec: §4.3 / §10.3 — when mtls.enabled the gateway mounts
   # the lenny-gateway-tls Secret and passes the --token-service-tls-*
   # flags so the gRPC dial to the Token Service presents a client cert
   # signed by the cluster-internal CA.
@@ -168,7 +168,7 @@ tests:
           path: spec.template.spec.securityContext.fsGroup
           value: 65532
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false the chart
+  # spec: §4.3 / §10.3 — when mtls.enabled=false the chart
   # skips the volume mount and the --token-service-tls-* flags so the
   # gateway dials the Token Service in plaintext.
   - it: omits token-service mTLS volume mounts and flags when mtls.enabled=false
@@ -185,7 +185,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --adapter-tls-cert=/etc/lenny/mtls/tls.crt
 
-  # spec: §4.7 / §10.3 line 320 (NET-060) — the same lenny-gateway-tls
+  # spec: §4.7 / §10.3 — the same lenny-gateway-tls
   # Secret carries the client cert the gateway presents to each pod
   # adapter's gRPC listener; without these flags the gateway dials
   # adapters in plaintext. F-10.3.10.
@@ -204,7 +204,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --adapter-ca=/etc/lenny/mtls/ca.crt
 
-  # spec: §10.3 line 321 (NET-060) — the gateway validates each inbound
+  # spec: §10.3 — the gateway validates each inbound
   # pod certificate's SPIFFE URI SAN against this trust domain at the
   # GatewayControl handshake; without the flag the listener falls back
   # to CA-only trust. F-10.3.1.
@@ -239,7 +239,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --spiffe-trust-domain=cluster.local
 
-  # spec: §10.3 line 328 (NET-063) — the interceptor-namespace allowlist
+  # spec: §10.3 — the interceptor-namespace allowlist
   # the gateway enforces against each in-cluster interceptor's SPIFFE URI
   # SAN. Rendered only when gateway.interceptorNamespaces is non-empty.
   # F-10.3.3.
@@ -265,7 +265,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --interceptor-namespaces=acme-interceptors,globex-interceptors
 
-  # spec: §8.6 line 712 — the auto-mode lease-extension rate-limit
+  # spec: §8.6 — the auto-mode lease-extension rate-limit
   # deployment default renders only when set; the spec default (no limit)
   # omits the flag. F-8.6.7.
   - it: renders --lease-extension-auto-max-per-min when gateway.leaseExtension.autoModeMaxPerMinute is set
@@ -288,7 +288,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --lease-extension-auto-max-per-min=0
 
-  # spec: §8.6 line 629 (proposal 0023) — the gateway LLM Proxy waits
+  # spec: §8.6 — the gateway LLM Proxy waits
   # in-path for a budget-exhaustion lease extension up to
   # proxyExtensionWaitTimeout before falling through to a
   # recover-on-next-request BUDGET_EXHAUSTED. §8.6 does not fix this
@@ -314,7 +314,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --proxy-extension-wait-timeout=12s
 
-  # spec: §11.1 line 8 / line 9 (F-11.1.3 / F-11.1.4) — the global,
+  # spec: §11.1 — the global,
   # per-user, per-runtime concurrent-session caps and the per-user
   # active-delegated-children cap render env vars only when configured > 0.
   - it: renders the §11.1 concurrent-session and delegated-children admission caps when set
@@ -374,7 +374,7 @@ tests:
             name: LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER
             value: "0"
 
-  # spec: §10.3 lines 316, 334 (NET-064) — the lenny-preflight Job reads
+  # spec: §10.3 — the lenny-preflight Job reads
   # these annotations to enforce uniqueness across Lenny Deployments in
   # the same cluster; without them the collision check is a no-op.
   # F-10.3.6.
@@ -567,7 +567,7 @@ tests:
             name: grpc
             containerPort: 50051
 
-  # spec: §16.9 line 723 — F-16.9.10. The gateway pod exposes an
+  # spec: §16.9 — F-16.9.10. The gateway pod exposes an
   # explicit metrics containerPort so PodMonitor `port: metrics`
   # discovery matches uniformly across control-plane components.
   - it: exposes a named metrics containerPort on the gateway pod
@@ -604,7 +604,7 @@ tests:
     release:
       namespace: NAMESPACE
 
-  # spec: F-4.3.12 / §4.3 line 193 — the gateway reverse-proxies
+  # spec: F-4.3.12 / §4.3 — the gateway reverse-proxies
   # /v1/oauth/* to the Token Service HTTP listener so the §13.3
   # canonical endpoint is served by the actual minter.
   - it: wires the §4.3 canonical token endpoint to lenny-token-service over HTTP
@@ -750,7 +750,7 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.path
           value: /readyz
-      # §10.4 line 386 / F-10.4.6: /readyz runs a cached backend probe
+      # §10.4 / F-10.4.6: /readyz runs a cached backend probe
       # with a 2s budget, so the probe timeout leaves headroom over it.
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.timeoutSeconds
@@ -871,7 +871,7 @@ tests:
             name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
             value: "120"
 
-  # spec: §10.2 line 227 — the GatewayControl listener verifies each
+  # spec: §10.2 — the GatewayControl listener verifies each
   # pod-presented projected SA token via a TokenReview on the §9.1/§9.3
   # tool-bridge and §5.2 scrub-report RPCs, so the gateway SA needs
   # create on authentication.k8s.io/tokenreviews. F-10.2.10.
@@ -925,7 +925,7 @@ tests:
       - equal:
           path: spec.clusterIP
           value: None
-      # spec: §25.4 line 1064 — F-25.4.10. Only ready replicas are
+      # spec: §25.4 — F-25.4.10. Only ready replicas are
       # returned so the lenny-ops fan-out skips replicas that cannot serve.
       - equal:
           path: spec.publishNotReadyAddresses
@@ -938,38 +938,38 @@ tests:
     asserts:
       # POD_NAME + LENNY_MAX_SESSIONS_PER_REPLICA + LENNY_MIN_REPLICAS
       # + LENNY_STREAM_CEILING + LENNY_TERMINATION_GRACE_SECONDS
-      # + LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS (§11.3 line 215,
+      # + LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS (§11.3,
       #   F-11.3.20)
-      # + LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS (§11.3 line 222,
+      # + LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS (§11.3,
       #   F-11.3.22)
       # + LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS / _MAX_TREE_RECOVERY_SECONDS
       #   / _CASCADE_TIMEOUT_SECONDS / _MAX_ORPHAN_TASKS_PER_TENANT (§8.10,
       #   F-8.10.6 / F-8.10.9 / F-8.10.10)
       # + 8 extraction-threshold gauges + LENNY_POOLER_MODE
-      # (§4.2 line 165) + POD_NAMESPACE (§10.4 PDB poller)
-      # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1 line 187,
-      #   F-11.2.23) + LENNY_SLO_VALIDATED (§16.5 line 623, F-16.5.5)
+      # (§4.2) + POD_NAMESPACE (§10.4 PDB poller)
+      # + LENNY_BILLING_CORRECTION_RATE_THRESHOLD (§11.2.1,
+      #   F-11.2.23) + LENNY_SLO_VALIDATED (§16.5, F-16.5.5)
       # + LENNY_GC_CYCLE_INTERVAL_SECONDS / _TOMBSTONE_RETENTION_SECONDS
-      #   (§12.5 lines 317, 341, F-12.5.19)
-      # + LENNY_HEALTH_TRACKER_USE_COMPILED_RULES (§25.13 line 4798,
+      #   (§12.5, F-12.5.19)
+      # + LENNY_HEALTH_TRACKER_USE_COMPILED_RULES (§25.13,
       #   F-25.13.4)
       # + LENNY_ALERTING_BUNDLE_FORMATS / LENNY_ALERTING_OVERRIDE_COUNT
-      #   (§25.13 lines 4833-4834, F-25.13.3)
+      #   (§25.13, F-25.13.3)
       # + LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD /
       #   LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS /
-      #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13 line 4737,
+      #   LENNY_CREDENTIAL_POOL_LOW_THRESHOLD (§25.13,
       #   F-25.13.2)
-      # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2 line 44, F-11.2.16)
-      # + LENNY_BILLING_RETENTION_DAYS (§11.2.1 line 151, F-11.2.15)
+      # + LENNY_QUOTA_SYNC_INTERVAL_SECONDS (§11.2, F-11.2.16)
+      # + LENNY_BILLING_RETENTION_DAYS (§11.2.1, F-11.2.15)
       # + LENNY_BILLING_FLUSH_INTERVAL_MS / _BATCH_SIZE / _MAX_PENDING
-      #   (§12.3 line 76, F-12.3.13)
-      # + LENNY_POSTGRES_WRITE_CEILING_IOPS (§12.3 line 123, F-12.3.8)
-      # + LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES (§12.3 line 101,
+      #   (§12.3, F-12.3.13)
+      # + LENNY_POSTGRES_WRITE_CEILING_IOPS (§12.3, F-12.3.8)
+      # + LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES (§12.3,
       #   F-12.3.9)
-      # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8 line 839, F-12.8.16)
+      # + LENNY_AUDIT_GDPR_RETENTION_DAYS (§12.8, F-12.8.16)
       # + LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN / _PER_TENANT_PER_MIN
-      #   (§10.7 line 938, F-10.7.4)
-      # + LENNY_T4_KMS_PROBE_INTERVAL_SECONDS / _RATE_LIMIT (§12.5 line 307,
+      #   (§10.7, F-10.7.4)
+      # + LENNY_T4_KMS_PROBE_INTERVAL_SECONDS / _RATE_LIMIT (§12.5,
       #   STO-021, F-12.5.4)
       # + LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS /
       #   LENNY_AUDIT_HARD_FAIL_ON_DRIFT (§11.7 item 2, F-11.7.3)
@@ -979,54 +979,53 @@ tests:
       #   F-11.7.16) + LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS /
       #   _MAX_ATTEMPTS / _BATCH_SIZE (§11.7 Wire Format, F-11.7.1)
       # + LENNY_SCATTER_MAX_CONCURRENCY / _PER_SHARD_TIMEOUT_SECONDS /
-      #   _AGGREGATE_TIMEOUT_SECONDS (§12.6 lines 556-558, F-12.6.18)
+      #   _AGGREGATE_TIMEOUT_SECONDS (§12.6, F-12.6.18)
       # + LENNY_AUDIT_RETENTION_PRESET / LENNY_AUDIT_RETENTION_DAYS
       #   (§16.4, F-16.4.9 / F-16.4.10)
-      # + LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS (§12.3 line 97,
+      # + LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS (§12.3,
       #   F-12.3.17)
       # + LENNY_AUDIT_SYNC_WRITE_POOL_SIZE / LENNY_AUDIT_BATCHING_ENABLED
       #   / LENNY_AUDIT_FLUSH_INTERVAL_MS / LENNY_AUDIT_FLUSH_BATCH_SIZE
-      #   (§12.3 lines 79-81, F-12.3.14)
+      #   (§12.3, F-12.3.14)
       # + LENNY_QUOTA_USER_FAILOPEN_FRACTION /
       #   LENNY_QUOTA_PER_REPLICA_HARD_CAP /
       #   LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
-      #   (§12.4 lines 222-224, F-12.4.9)
-      # + LENNY_LOG_LEVEL (§17.9.1 line 1350, F-17.9.9 — the default dev
+      #   (§12.4, F-12.4.9)
+      # + LENNY_LOG_LEVEL (§17.9.1, F-17.9.9 — the default dev
       #   environment renders the env var)
-      # + LENNY_BILLING_REDIS_STREAM_MAX_LEN (§17.8.2 line 1203, F-17.8.5 —
+      # + LENNY_BILLING_REDIS_STREAM_MAX_LEN (§17.8.2, F-17.8.5 —
       #   base billing.redisStreamMaxLen=0 renders) + LENNY_CAPACITY_TIER
       #   (§17.8.2, F-17.8.5/F-17.8.7 — always rendered;
       #   LENNY_SINGLE_TENANT_REDIS_TOPOLOGY is empty by default and not
       #   rendered)
-      # + LENNY_ADMIN_TOKEN_SECRET_NAME / LENNY_ADMIN_TOKEN_TENANT (§17.6
-      #   lines 455-474, F-17.6.3 — always rendered when adminToken.enabled;
+      # + LENNY_ADMIN_TOKEN_SECRET_NAME / LENNY_ADMIN_TOKEN_TENANT (§17.6, F-17.6.3 — always rendered when adminToken.enabled;
       #   LENNY_ADMIN_TOKEN_DISABLED renders only when disabled)
       # + LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS /
       #   LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS /
       #   LENNY_EVENTBUS_DROP_ALERT_THRESHOLD /
-      #   LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR (§12.6 lines 683-699,
+      #   LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR (§12.6,
       #   F-12.6.22 / F-12.6.23 — all four render at their defaults)
-      # + LENNY_GATEWAY_LEADER_ELECTION (§12.5 lines 317, 332, F-12.5.10 —
+      # + LENNY_GATEWAY_LEADER_ELECTION (§12.5, F-12.5.10 —
       #   gc.leaderElection defaults to true and renders)
-      # + LENNY_EVAL_AGGREGATION_REFRESH_SECONDS (§10.7 line 1088,
+      # + LENNY_EVAL_AGGREGATION_REFRESH_SECONDS (§10.7,
       #   F-10.7.12 — evalAggregationRefreshSeconds defaults to 0 and
       #   renders)
       # + LENNY_SLO_BURN_RATE_FAST_MULTIPLIER /
-      #   LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER (§16.5 line 640, F-16.5.3 —
+      #   LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER (§16.5, F-16.5.3 —
       #   slo.burnRate.{fast,slow}Multiplier default 14 / 3 and render)
-      # + LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED (§25.9 line 3709,
+      # + LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED (§25.9,
       #   F-25.9.11 — audit.scatterGatherCacheEnabled defaults true and
       #   renders)
-      # + LENNY_QUOTA_ENFORCEMENT_MODE (§12.4 line 268, F-12.4.14 —
+      # + LENNY_QUOTA_ENFORCEMENT_MODE (§12.4, F-12.4.14 —
       #   quotaEnforcementMode defaults to `redis` and renders)
-      # + LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS (§10.1 line 167 /
-      #   §11.3 line 210, F-11.3.15 — checkpointBarrierAckTimeoutSeconds
+      # + LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS (§10.1 /
+      #   §11.3, F-11.3.15 — checkpointBarrierAckTimeoutSeconds
       #   defaults to 90 and renders)
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
       #   claimHoldTTLSeconds defaults to 10 and renders)
       # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 / §6.57 —
       #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders)
-      # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1 line 131 / §17.8.1 —
+      # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1 / §17.8.1 —
       #   checkpointGrantWindow defaults to 4 and renders)
       # + LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS (§13.2 / §17.8.1 —
       #   checkpointCapabilityTTLSeconds defaults to 30 and renders) = 84.
@@ -1067,14 +1066,14 @@ tests:
           content:
             name: LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS
             value: "60"
-      # §16.5 line 623 / F-16.5.5 — slo.validated defaults to false, so
+      # §16.5 / F-16.5.5 — slo.validated defaults to false, so
       # the gateway emits the provisional-SLO startup warning.
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LENNY_SLO_VALIDATED
             value: "false"
-      # §16.5 line 640 / F-16.5.3 — slo.burnRate.{fast,slow}Multiplier
+      # §16.5 / F-16.5.3 — slo.burnRate.{fast,slow}Multiplier
       # default to 14 / 3, mirrored onto the burn-rate threshold gauges.
       - contains:
           path: spec.template.spec.containers[0].env
@@ -1106,7 +1105,7 @@ tests:
           content:
             name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS
             value: "2000"
-      # §12.6 lines 556-558 / F-12.6.18 — storeRouter scatter-gather
+      # §12.6 / F-12.6.18 — storeRouter scatter-gather
       # execution bounds render at their documented defaults.
       - contains:
           path: spec.template.spec.containers[0].env
@@ -1123,7 +1122,7 @@ tests:
           content:
             name: LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS
             value: "120"
-      # §12.6 lines 683-699 / F-12.6.22 / F-12.6.23 — eventBus.* render at
+      # §12.6 / F-12.6.22 / F-12.6.23 — eventBus.* render at
       # their documented defaults: the retranscribe-worker cadence/ceiling,
       # the EventBusPublishDropped alert threshold, and the test-only
       # duplicate-injection factor.
@@ -1162,13 +1161,13 @@ tests:
           content:
             name: LENNY_MINIO_ENDPOINT
           any: true
-      # §4.2 line 165 — LENNY_POOLER_MODE defaults to `transactional`.
+      # §4.2 — LENNY_POOLER_MODE defaults to `transactional`.
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LENNY_POOLER_MODE
             value: "transactional"
-      # §11.2.1 line 187 / §16.5 BillingCorrectionRateHigh — the
+      # §11.2.1 / §16.5 BillingCorrectionRateHigh — the
       # deployer-configurable threshold defaults to 0.05 (5%).
       # F-11.2.23.
       - contains:
@@ -1176,20 +1175,20 @@ tests:
           content:
             name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
             value: "0.05"
-      # §12.5 line 317 / F-12.5.19 — gc.cycleIntervalSeconds defaults to 900.
+      # §12.5 / F-12.5.19 — gc.cycleIntervalSeconds defaults to 900.
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LENNY_GC_CYCLE_INTERVAL_SECONDS
             value: "900"
-      # §12.5 line 341 / F-12.5.19 — gc.tombstoneRetentionSeconds defaults
+      # §12.5 / F-12.5.19 — gc.tombstoneRetentionSeconds defaults
       # to 86400 (24h), distinct from the §7.1 7-day artifact TTL.
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
             value: "86400"
-      # §25.13 line 4798 / F-25.13.4 — healthTracker.useCompiledRules
+      # §25.13 / F-25.13.4 — healthTracker.useCompiledRules
       # defaults to true so the gateway evaluates the §16.5 compiled-in
       # alert catalogue per replica.
       - contains:
@@ -1197,7 +1196,7 @@ tests:
           content:
             name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
             value: "true"
-      # §25.13 line 4833 / F-25.13.3 — bundle-formats env mirrors
+      # §25.13 / F-25.13.3 — bundle-formats env mirrors
       # monitoring.format so lenny_alerting_rules_bundled{format}
       # stamps the rendered formats.
       - contains:
@@ -1205,7 +1204,7 @@ tests:
           content:
             name: LENNY_ALERTING_BUNDLE_FORMATS
             value: "prometheusrule"
-      # §25.13 line 4834 / F-25.13.3 — override-count env mirrors
+      # §25.13 / F-25.13.3 — override-count env mirrors
       # len(monitoring.alertOverrides). Default 0 (chart bundles the
       # §16.5 catalogue verbatim).
       - contains:
@@ -1213,7 +1212,7 @@ tests:
           content:
             name: LENNY_ALERTING_OVERRIDE_COUNT
             value: "0"
-      # §25.13 line 4737 / F-25.13.2 — tier-dependent §16.5 thresholds.
+      # §25.13 / F-25.13.2 — tier-dependent §16.5 thresholds.
       # Tier 1 base defaults: gateway queue depth 20, p95 latency 3s,
       # credential pool utilisation 0.80. Tier presets tighten these
       # (see presets/values-tier{2,3}.yaml).
@@ -1233,7 +1232,7 @@ tests:
             name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
             value: "0.8"
 
-  # spec: §25.13 line 4798 / F-25.13.4 — operators who customize the
+  # spec: §25.13 / F-25.13.4 — operators who customize the
   # bundled Prometheus rules can disable the in-process tracker to keep
   # the per-replica view consistent with their custom thresholds.
   - it: renders LENNY_HEALTH_TRACKER_USE_COMPILED_RULES=false when gateway.healthTracker.useCompiledRules is set
@@ -1249,7 +1248,7 @@ tests:
             name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
             value: "false"
 
-  # spec: §25.13 line 4833 / F-25.13.3 — monitoring.format "both"
+  # spec: §25.13 / F-25.13.3 — monitoring.format "both"
   # expands LENNY_ALERTING_BUNDLE_FORMATS to a comma-separated list so
   # both label series on lenny_alerting_rules_bundled stamp to 1.
   - it: renders LENNY_ALERTING_BUNDLE_FORMATS as a comma list when monitoring.format=both
@@ -1265,7 +1264,7 @@ tests:
             name: LENNY_ALERTING_BUNDLE_FORMATS
             value: "prometheusrule,configmap"
 
-  # spec: §25.13 line 4834 / F-25.13.3 — len(monitoring.alertOverrides)
+  # spec: §25.13 / F-25.13.3 — len(monitoring.alertOverrides)
   # flows through to LENNY_ALERTING_OVERRIDE_COUNT so the override-gauge
   # reflects the rendered overrides map.
   - it: counts monitoring.alertOverrides entries for LENNY_ALERTING_OVERRIDE_COUNT
@@ -1284,7 +1283,7 @@ tests:
             name: LENNY_ALERTING_OVERRIDE_COUNT
             value: "2"
 
-  # spec: §25.13 line 4737 / F-25.13.2 — operator override of the
+  # spec: §25.13 / F-25.13.2 — operator override of the
   # tier-dependent thresholds. Tier 2 / Tier 3 presets ship tighter
   # defaults; an operator can also override the thresholds directly.
   - it: renders monitoring.alertThresholds overrides into the threshold env vars
@@ -1312,7 +1311,7 @@ tests:
             name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
             value: "0.65"
 
-  # spec: §12.5 lines 317, 341 / F-12.5.19 — operator-supplied GC cadence
+  # spec: §12.5 / F-12.5.19 — operator-supplied GC cadence
   # and tombstone retention flow through to the gateway env.
   - it: renders gc.cycleIntervalSeconds and gc.tombstoneRetentionSeconds overrides
     set:
@@ -1333,7 +1332,7 @@ tests:
             name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
             value: "172800"
 
-  # spec: §12.5 lines 317, 332 / F-12.5.10 — the gateway-singleton sweeps
+  # spec: §12.5 / F-12.5.10 — the gateway-singleton sweeps
   # run under the lenny-gateway-leader Lease. The namespaced Role grants
   # the gateway ServiceAccount the coordination.k8s.io Lease verbs
   # client-go's leader election needs.
@@ -1373,7 +1372,7 @@ tests:
           path: subjects[0].name
           value: lenny-gateway
 
-  # spec: §12.5 lines 317, 332 / F-12.5.10 — gc.leaderElection flows to the
+  # spec: §12.5 / F-12.5.10 — gc.leaderElection flows to the
   # gateway env so operators can force un-elected single-replica operation.
   - it: renders LENNY_GATEWAY_LEADER_ELECTION when gc.leaderElection is set
     set:
@@ -1388,7 +1387,7 @@ tests:
             name: LENNY_GATEWAY_LEADER_ELECTION
             value: "false"
 
-  # spec: §12.5 line 307 (STO-021) / F-12.5.4 — the continuous T4 KMS
+  # spec: §12.5 / F-12.5.4 — the continuous T4 KMS
   # probe cadence and rate ceiling default to 300s and 10 probes/sec and
   # flow through to the gateway env.
   - it: renders the default storage.t4KmsProbeInterval / t4KmsProbeRateLimit env
@@ -1426,23 +1425,23 @@ tests:
             name: LENNY_T4_KMS_PROBE_RATE_LIMIT
             value: "25"
 
-  # spec: §12.5 line 307 — the 60s cadence floor is enforced at
+  # spec: §12.5 — the 60s cadence floor is enforced at
   # Helm-validate so a misconfigured value fails the install closed.
   - it: rejects storage.t4KmsProbeInterval below the 60s floor
     set:
       storage.t4KmsProbeInterval: 30
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 307: storage.t4KmsProbeInterval=30 is below the 60s minimum; raise it to at least 60."
+          errorMessage: "§12.5: storage.t4KmsProbeInterval=30 is below the 60s minimum; raise it to at least 60."
 
   - it: rejects a non-positive storage.t4KmsProbeRateLimit
     set:
       storage.t4KmsProbeRateLimit: 0
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 307: storage.t4KmsProbeRateLimit=0 must be a positive probes/sec ceiling."
+          errorMessage: "§12.5: storage.t4KmsProbeRateLimit=0 must be a positive probes/sec ceiling."
 
-  # spec: §16.5 line 623 / F-16.5.5 — slo.validated = true suppresses
+  # spec: §16.5 / F-16.5.5 — slo.validated = true suppresses
   # the gateway's provisional-SLO startup warning once the Phase 14.5
   # benchmark gate has validated the SLO targets.
   - it: renders LENNY_SLO_VALIDATED=true when slo.validated is set
@@ -1458,7 +1457,7 @@ tests:
             name: LENNY_SLO_VALIDATED
             value: "true"
 
-  # spec: §16.5 line 640 / F-16.5.3 — operator-tuned burn-rate window
+  # spec: §16.5 / F-16.5.3 — operator-tuned burn-rate window
   # multipliers flow through to the gateway env that mirrors them onto
   # the lenny_slo_burn_rate_{fast,slow}_multiplier threshold gauges.
   - it: renders overridden LENNY_SLO_BURN_RATE multipliers
@@ -1480,7 +1479,7 @@ tests:
             name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER
             value: "2"
 
-  # spec: §25.3 line 748 / F-25.3.8 — the operational-event nonce
+  # spec: §25.3 / F-25.3.8 — the operational-event nonce
   # checkpoint path is rendered as LENNY_OPS_NONCE_CHECKPOINT_PATH only
   # when gateway.opsEvents.nonceCheckpointPath is set.
   - it: renders LENNY_OPS_NONCE_CHECKPOINT_PATH when opsEvents.nonceCheckpointPath is set
@@ -1507,7 +1506,7 @@ tests:
           content:
             name: LENNY_OPS_NONCE_CHECKPOINT_PATH
 
-  # spec: §12.3 line 56 — postgres.connectionPooler = external derives
+  # spec: §12.3 — postgres.connectionPooler = external derives
   # LENNY_POOLER_MODE=external on the gateway, the value the §12.3
   # startup refusal reads. One source of truth: the same value gates the
   # preflight CloudPoolerSentinelDefense check.
@@ -1524,7 +1523,7 @@ tests:
             name: LENNY_POOLER_MODE
             value: "external"
 
-  # spec: §12.3 line 55 — backends=cloud-managed defaults connectionPooler
+  # spec: §12.3 — backends=cloud-managed defaults connectionPooler
   # to external when it is not explicitly set, so a cloud-managed install
   # never silently runs without the lenny_tenant_guard trigger defense.
   - it: backends cloud-managed defaults LENNY_POOLER_MODE to external
@@ -1600,7 +1599,7 @@ tests:
             name: LENNY_MIN_REPLICAS
             value: "7"
 
-  # spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds (default 60s)
+  # spec: §11.3 — rateLimitFailOpenMaxSeconds (default 60s)
   # flows through to LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS. F-11.3.22.
   - it: wires LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS from the chart default
     documentSelector:
@@ -1613,7 +1612,7 @@ tests:
             name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
             value: "60"
 
-  # spec: §11.3 line 222 — operator override propagates to the binary.
+  # spec: §11.3 — operator override propagates to the binary.
   # F-11.3.22.
   - it: wires LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS from a gateway.rateLimitFailOpenMaxSeconds override
     set:
@@ -1628,7 +1627,7 @@ tests:
             name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
             value: "30"
 
-  # spec: §12.4 lines 222-224 — the per-replica fail-open emergency controls
+  # spec: §12.4 — the per-replica fail-open emergency controls
   # flow through to the binary. F-12.4.9.
   - it: wires the §12.4 fail-open emergency controls from the chart defaults
     documentSelector:
@@ -1651,7 +1650,7 @@ tests:
             name: LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
             value: "300"
 
-  # spec: §12.4 line 222 — operator override of the per-user fraction
+  # spec: §12.4 — operator override of the per-user fraction
   # propagates to the binary (the binary fails fast on an out-of-range
   # value). F-12.4.9.
   - it: wires LENNY_QUOTA_USER_FAILOPEN_FRACTION from a gateway override
@@ -1667,7 +1666,7 @@ tests:
             name: LENNY_QUOTA_USER_FAILOPEN_FRACTION
             value: "0.5"
 
-  # spec: §11.2 line 44 — quotaSyncIntervalSeconds (default 30s) flows
+  # spec: §11.2 — quotaSyncIntervalSeconds (default 30s) flows
   # through to LENNY_QUOTA_SYNC_INTERVAL_SECONDS. F-11.2.16.
   - it: wires LENNY_QUOTA_SYNC_INTERVAL_SECONDS from the chart default
     documentSelector:
@@ -1680,7 +1679,7 @@ tests:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "30"
 
-  # spec: §11.2 line 44 — a high-throughput-tenant override propagates to
+  # spec: §11.2 — a high-throughput-tenant override propagates to
   # the binary, which clamps any sub-10s value up to the floor. F-11.2.16.
   - it: wires LENNY_QUOTA_SYNC_INTERVAL_SECONDS from a gateway.quotaSyncIntervalSeconds override
     set:
@@ -1695,7 +1694,7 @@ tests:
             name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
             value: "10"
 
-  # spec: §12.4 line 268 — quotaEnforcementMode (default `redis`) flows
+  # spec: §12.4 — quotaEnforcementMode (default `redis`) flows
   # through to LENNY_QUOTA_ENFORCEMENT_MODE. F-12.4.14.
   - it: wires LENNY_QUOTA_ENFORCEMENT_MODE from the chart default
     documentSelector:
@@ -1708,7 +1707,7 @@ tests:
             name: LENNY_QUOTA_ENFORCEMENT_MODE
             value: redis
 
-  # spec: §12.4 line 268 — selecting the in-memory reconciled mode
+  # spec: §12.4 — selecting the in-memory reconciled mode
   # propagates to the binary, which draws per-replica Postgres budget
   # slices instead of reading the Redis counters. F-12.4.14.
   - it: wires LENNY_QUOTA_ENFORCEMENT_MODE=in_memory_reconciled from an override
@@ -1724,7 +1723,7 @@ tests:
             name: LENNY_QUOTA_ENFORCEMENT_MODE
             value: in_memory_reconciled
 
-  # spec: §10.7 line 938 — the eval-submission rate limits flow from the
+  # spec: §10.7 — the eval-submission rate limits flow from the
   # chart defaults (100 / 10000) to the binary. F-10.7.4 / F-11.2.19.
   - it: wires the eval rate-limit env vars from the chart defaults
     documentSelector:
@@ -1742,7 +1741,7 @@ tests:
             name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
             value: "10000"
 
-  # spec: §10.7 line 938 — an operator override (a negative value
+  # spec: §10.7 — an operator override (a negative value
   # disables the per-session scope) propagates to the binary. F-10.7.4.
   - it: wires the eval rate-limit env vars from gateway.evalRateLimit overrides
     set:
@@ -1763,7 +1762,7 @@ tests:
             name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN
             value: "500"
 
-  # spec: §10.7 line 1088 — the lenny_eval_aggregates materialized-view
+  # spec: §10.7 — the lenny_eval_aggregates materialized-view
   # refresh interval. The chart default (0) keeps on-read aggregation;
   # a positive override enables the matview read + periodic REFRESH.
   # F-10.7.12.
@@ -1791,7 +1790,7 @@ tests:
             name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS
             value: "0"
 
-  # spec: §11.1 lines 10-11 — upload-admission caps. The chart default
+  # spec: §11.1 — upload-admission caps. The chart default
   # (0) leaves each scope unlimited, so no env var is rendered. F-11.1.5,
   # F-11.1.6.
   - it: omits the upload-limit env vars at the chart default of zero
@@ -1810,7 +1809,7 @@ tests:
             name: LENNY_UPLOAD_MAX_BYTES_PER_SESSION
             value: "0"
 
-  # spec: §11.1 lines 10-11 — operator overrides propagate to the binary.
+  # spec: §11.1 — operator overrides propagate to the binary.
   # F-11.1.5, F-11.1.6.
   - it: wires the §11.1 upload-admission caps from gateway.uploadLimits overrides
     set:
@@ -1839,7 +1838,7 @@ tests:
             name: LENNY_UPLOAD_MAX_BYTES_PER_SESSION
             value: "536870912"
 
-  # spec: §11.2.1 line 151 — billing.retentionDays (default 395) flows
+  # spec: §11.2.1 — billing.retentionDays (default 395) flows
   # through to LENNY_BILLING_RETENTION_DAYS. F-11.2.15.
   - it: wires LENNY_BILLING_RETENTION_DAYS from the chart default
     documentSelector:
@@ -1852,7 +1851,7 @@ tests:
             name: LENNY_BILLING_RETENTION_DAYS
             value: "395"
 
-  # spec: §11.2.1 line 151 — an operator override propagates to the
+  # spec: §11.2.1 — an operator override propagates to the
   # binary, which enforces the compliance floor at startup. F-11.2.15.
   - it: wires LENNY_BILLING_RETENTION_DAYS from a billing.retentionDays override
     set:
@@ -1867,7 +1866,7 @@ tests:
             name: LENNY_BILLING_RETENTION_DAYS
             value: "2190"
 
-  # spec: §11.2.1 line 136 — the billing webhook sink URL and its HMAC
+  # spec: §11.2.1 — the billing webhook sink URL and its HMAC
   # signing secret (via secretKeyRef) render only when configured.
   # F-11.2.14.
   - it: wires the §11.2.1 billing webhook sink URL and secret when configured
@@ -1906,7 +1905,7 @@ tests:
             name: LENNY_BILLING_SINK_WEBHOOK_URL
             value: ""
 
-  # spec: §11.2.1 line 175 — the dual-control approver-notification
+  # spec: §11.2.1 — the dual-control approver-notification
   # webhook URL and secret render only when configured. F-11.2.14.
   - it: wires the §11.2.1 approver-notification webhook when configured
     set:
@@ -1930,7 +1929,7 @@ tests:
                 name: lenny-approver-hook
                 key: secret
 
-  # spec: §12.3 line 76 — billing flush tunables (default 500ms / 50 / 500)
+  # spec: §12.3 — billing flush tunables (default 500ms / 50 / 500)
   # flow through to the gateway binary. F-12.3.13.
   - it: wires the §12.3 billing flush tunables from chart defaults
     documentSelector:
@@ -1973,7 +1972,7 @@ tests:
             name: LENNY_BILLING_FLUSH_MAX_PENDING
             value: "1000"
 
-  # spec: §12.3 line 123 — postgres.writeCeilingIops (default 200) flows
+  # spec: §12.3 — postgres.writeCeilingIops (default 200) flows
   # through to LENNY_POSTGRES_WRITE_CEILING_IOPS; tier3 raises it to 1600.
   # F-12.3.8.
   - it: wires LENNY_POSTGRES_WRITE_CEILING_IOPS from the chart default
@@ -2000,7 +1999,7 @@ tests:
             name: LENNY_POSTGRES_WRITE_CEILING_IOPS
             value: "1600"
 
-  # spec: §12.3 line 101 — audit.startupChainCheckEntries (default 1000)
+  # spec: §12.3 — audit.startupChainCheckEntries (default 1000)
   # flows through to LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.
   - it: wires LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES from the chart default
     documentSelector:
@@ -2064,7 +2063,7 @@ tests:
             name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT
             value: "true"
 
-  # spec: §25.9 line 3709 — audit.scatterGatherCacheEnabled renders
+  # spec: §25.9 — audit.scatterGatherCacheEnabled renders
   # LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED so an operator can opt out of
   # the platform-admin cross-tenant audit scatter-gather result cache.
   # F-25.9.11.
@@ -2132,14 +2131,14 @@ tests:
           content:
             name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
             value: "5"
-      # spec: §12.3 line 97 — the SIEM outbox forwarder delivery-lag
+      # spec: §12.3 — the SIEM outbox forwarder delivery-lag
       # threshold renders from the chart default. F-12.3.17.
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS
             value: "30"
-      # spec: §12.3 lines 79-81 — the audit sync write pool size and the
+      # spec: §12.3 — the audit sync write pool size and the
       # T2 batching toggles render from chart defaults (batching off).
       # F-12.3.14.
       - contains:
@@ -2196,7 +2195,7 @@ tests:
             name: LENNY_AUDIT_SIEM_SECRET
             value: "shared-hmac-secret"
 
-  # spec: §12.8 line 839 — audit.gdprRetentionDays flows through to
+  # spec: §12.8 — audit.gdprRetentionDays flows through to
   # LENNY_AUDIT_GDPR_RETENTION_DAYS. F-12.8.16.
   - it: wires LENNY_AUDIT_GDPR_RETENTION_DAYS from the chart default
     documentSelector:
@@ -2261,7 +2260,7 @@ tests:
             name: LENNY_AUDIT_RETENTION_DAYS
             value: "730"
 
-  # spec: §8.10 lines 1022-1023 / 1078 / 1103 — delegation block surfaces
+  # spec: §8.10 — delegation block surfaces
   # the operator-tunable per-level, whole-tree, cascade, and orphan-cap
   # values to the gateway binary. F-8.10.6 / F-8.10.9 / F-8.10.10.
   - it: wires LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS from the chart default
@@ -2334,7 +2333,7 @@ tests:
             name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT
             value: "250"
 
-  # spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds (default
+  # spec: §11.3 — credentials.expiryWarningLeadSeconds (default
   # 3600s) flows through to LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS.
   # F-11.3.20.
   - it: wires LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS from the chart default
@@ -2348,7 +2347,7 @@ tests:
             name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS
             value: "3600"
 
-  # spec: §11.3 line 215 — operator override propagates to the binary.
+  # spec: §11.3 — operator override propagates to the binary.
   # F-11.3.20.
   - it: wires LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS from a credentials.expiryWarningLeadSeconds override
     set:
@@ -2399,7 +2398,7 @@ tests:
             name: LENNY_REDIS_URL
           any: true
 
-  # spec: §12.3 line 103 — the gateway reads LENNY_PG_BILLING_AUDIT_DSN
+  # spec: §12.3 — the gateway reads LENNY_PG_BILLING_AUDIT_DSN
   # from the datastore Secret when the separate billing/audit instance is
   # configured. F-12.3.5.
   - it: wires LENNY_PG_BILLING_AUDIT_DSN from the datastore Secret when postgres.billingAuditDSN is set
@@ -2497,7 +2496,7 @@ tests:
             name: LENNY_PG_PRIMARY_DDL_DSN
           any: true
 
-  # spec: §12.3 line 146 — the gateway reads LENNY_PG_READ_DSN from the
+  # spec: §12.3 — the gateway reads LENNY_PG_READ_DSN from the
   # datastore Secret when a read replica is configured so read-heavy
   # queries route off the primary. F-12.3.16 / F-17.9.13.
   - it: wires LENNY_PG_READ_DSN from the datastore Secret when postgres.readDsn is set
@@ -2545,7 +2544,7 @@ tests:
                 name: lenny-datastore-conn
                 key: redis-url
 
-  # spec: §12.4 lines 260-264 — Redis Cluster seed nodes render as a
+  # spec: §12.4 — Redis Cluster seed nodes render as a
   # plain env var. F-12.4.13.
   - it: wires LENNY_REDIS_CLUSTER_ADDRS from redis.cluster.addrs
     set:
@@ -2560,7 +2559,7 @@ tests:
             name: LENNY_REDIS_CLUSTER_ADDRS
             value: "10.0.0.1:6379,10.0.0.2:6379"
 
-  # spec: §12.4 lines 237-245 — per-concern Redis URLs render from the
+  # spec: §12.4 — per-concern Redis URLs render from the
   # datastore Secret; an unset concern wires no env var. F-12.4.16.
   - it: wires per-concern Redis URL env from the datastore Secret
     set:
@@ -2717,7 +2716,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --playground-bearer-ttl-seconds=900
 
-  # spec: §27.2 line 41 — the chart's playground.sessionLabels map
+  # spec: §27.2 — the chart's playground.sessionLabels map
   # renders as a comma-separated key=value flag value. F-27.2.1.
   - it: renders the playground.sessionLabels default {origin=playground}
     set:
@@ -2744,7 +2743,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --playground-session-labels=environment=stage,origin=playground,
 
-  # spec: §9.4 line 202 — the chart's memory block renders the
+  # spec: §9.4 — the chart's memory block renders the
   # --memory-max-per-user and --memory-record-count-interval flags on
   # the Deployment so deployers can tune both knobs without editing
   # the binary. F-9.4.5 / F-9.4.1.
@@ -2763,7 +2762,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --memory-enabled=false
 
-  # spec: §9.4 / §12.8 line 746 — memory.enabled: false renders the
+  # spec: §9.4 / §12.8 — memory.enabled: false renders the
   # explicit --memory-enabled=false flag so the gateway skips the
   # MemoryStore wiring and the §12.8 preflight. F-9.4.7.
   - it: renders --memory-enabled=false when the memory store is disabled
@@ -2849,7 +2848,7 @@ tests:
       - isNull:
           path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution
 
-  # spec: §4.3 line 205 — when gateway.spiffe.enabled the chart mounts
+  # spec: §4.3 — when gateway.spiffe.enabled the chart mounts
   # a cert-manager-csi-driver-spiffe volume instead of the shared
   # lenny-gateway-tls Secret so each replica presents a per-replica
   # SPIFFE identity. Compromising one replica yields a per-pod key
@@ -2879,7 +2878,7 @@ tests:
                 spiffe.csi.cert-manager.io/trust-domain: cluster.local
                 spiffe.csi.cert-manager.io/identity-template: "spiffe://cluster.local/gateway/{{ .PodName }}"
 
-  # spec: §4.3 line 205 — the SPIFFE trust domain can be overridden
+  # spec: §4.3 — the SPIFFE trust domain can be overridden
   # per-deployment so multi-tenant clusters can scope identities to a
   # known trust anchor (e.g. spiffe://acme.com/...).
   - it: honors gateway.spiffe.trustDomain override
@@ -2901,7 +2900,7 @@ tests:
                 spiffe.csi.cert-manager.io/trust-domain: lenny.acme.com
                 spiffe.csi.cert-manager.io/identity-template: "spiffe://lenny.acme.com/gateway/{{ .PodName }}"
 
-  # spec: §4.4 line 256 — `periodicCheckpointIntervalSeconds` default
+  # spec: §4.4 — `periodicCheckpointIntervalSeconds` default
   # is 600 s (10 minutes). The chart renders the value as the
   # --checkpoint-interval flag so a tier preset can override it from
   # Helm without a binary change.
@@ -2914,7 +2913,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-interval=600s
 
-  # spec: §4.4 line 258 — `periodicCheckpointJitterFraction` default is
+  # spec: §4.4 — `periodicCheckpointJitterFraction` default is
   # 0.2. The chart renders the value as the --checkpoint-jitter-fraction
   # flag.
   - it: renders --checkpoint-jitter-fraction from gateway.periodicCheckpointJitterFraction
@@ -2926,7 +2925,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-jitter-fraction=0.2
 
-  # spec: §4.4 line 256 — operators may override the periodic checkpoint
+  # spec: §4.4 — operators may override the periodic checkpoint
   # cadence via Helm; the rendered flag matches the value.
   - it: honors gateway.periodicCheckpointIntervalSeconds override
     set:
@@ -2939,7 +2938,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-interval=300s
 
-  # spec: §4.4 line 258 — operators may override the periodic checkpoint
+  # spec: §4.4 — operators may override the periodic checkpoint
   # jitter fraction via Helm; the rendered flag matches the value.
   - it: honors gateway.periodicCheckpointJitterFraction override
     set:
@@ -2952,7 +2951,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --checkpoint-jitter-fraction=0.5
 
-  # spec: §15.5 item 1; docs/api/index.md line 124 — the default chart
+  # spec: §15.5 item 1; docs/api/index.md — the default chart
   # ships with no deprecated REST versions, so the gateway container
   # does NOT carry --deprecated-api-versions and the middleware is
   # inert. F-15.5.11.
@@ -2965,7 +2964,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --deprecated-api-versions=
 
-  # spec: §15.5 item 1; docs/api/index.md line 124 — operators declare
+  # spec: §15.5 item 1; docs/api/index.md — operators declare
   # the sunset list via gateway.deprecatedAPIVersions; the chart joins
   # the values with `,` and renders a single flag the gateway parses
   # into the in-memory deprecation set. F-15.5.11.
@@ -2980,7 +2979,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --deprecated-api-versions=v1,v2
 
-  # spec: §17.9.1 line 1350 (F-17.9.9) — the environment dimension drives
+  # spec: §17.9.1 — the environment dimension drives
   # gateway log verbosity. The default posture (dev) renders debug.
   - it: drives LENNY_LOG_LEVEL=debug from the default dev environment
     documentSelector:
@@ -3006,7 +3005,7 @@ tests:
             name: LENNY_LOG_LEVEL
             value: info
 
-  # spec: §17.9.3 lines 1402-1409 (F-17.9.4) — provider=sentinel wires the
+  # spec: §17.9.3 — provider=sentinel wires the
   # Sentinel discovery env; addresses and master are plain env, the data
   # AUTH password is read from the datastore Secret, and TLS is requested.
   - it: wires the Redis Sentinel env when redis.provider=sentinel
@@ -3084,7 +3083,7 @@ tests:
             name: LENNY_SINGLE_TENANT_REDIS_TOPOLOGY
             value: "sentinel"
 
-  # spec: §17.8.2 line 1164 / F-17.8.7 — setting singleTenantRedisTopology
+  # spec: §17.8.2 / F-17.8.7 — setting singleTenantRedisTopology
   # renders the env that suppresses the Tier 3 RedisClusterRecommended log.
   - it: renders LENNY_SINGLE_TENANT_REDIS_TOPOLOGY when set
     documentSelector:
@@ -3111,7 +3110,7 @@ tests:
             name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
             value: "72000"
 
-  # spec: §25.16 line 5115 / §25.14 — F-25.16.1. When the lenny-ops
+  # spec: §25.16 / §25.14 — F-25.16.1. When the lenny-ops
   # Ingress is enabled, the gateway advertises its public URL in
   # GET /v1/admin/platform/version so lenny-ctl auto-discovers the ops
   # endpoint. The URL is https://<ops.ingress.host> (the Ingress
@@ -3145,7 +3144,7 @@ tests:
           content:
             name: LENNY_OPS_SERVICE_URL
           any: true
-  # spec: §17.6 lines 455-474 / F-17.6.3 — the gateway provisions the
+  # spec: §17.6 / F-17.6.3 — the gateway provisions the
   # initial admin credential and needs minimal Secret RBAC to write the
   # lenny-admin-token Secret.
   - it: renders the §17.6 admin-token Role and confines get/update/patch to the lenny-admin-token Secret
@@ -3212,7 +3211,7 @@ tests:
           path: kind
           value: Deployment
 
-  # spec: §17.2 line 86 / F-17.2.9 — the gateway reads the phase-stamp
+  # spec: §17.2 / F-17.2.9 — the gateway reads the phase-stamp
   # ConfigMap's elicitation-content-integrity floor key at runtime, so the
   # chart grants the gateway SA a read-only, resourceName-scoped Role on the
   # single lenny-deployment-phase-stamp ConfigMap.
@@ -3254,7 +3253,7 @@ tests:
           path: subjects[0].name
           value: lenny-gateway
 
-  # §10.1 line 167 / §11.3 line 210 / F-11.3.15 — checkpointBarrierAckTimeoutSeconds
+  # §10.1 / §11.3 / F-11.3.15 — checkpointBarrierAckTimeoutSeconds
   # defaults to 90s and renders into the gateway env so the preStop
   # CheckpointBarrier fan-out is bounded by the per-replica ACK budget.
   - it: renders the default checkpointBarrierAckTimeoutSeconds (90s)
@@ -3280,7 +3279,7 @@ tests:
             name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
             value: "120"
 
-  # §10.1 line 131 / §17.8.1 — checkpointGrantWindow defaults to 4 and
+  # §10.1 / §17.8.1 — checkpointGrantWindow defaults to 4 and
   # renders into the gateway env so the checkpoint grant/confirm loop keeps
   # at most that many chunk-upload capabilities outstanding at once.
   - it: renders the default checkpointGrantWindow (4)

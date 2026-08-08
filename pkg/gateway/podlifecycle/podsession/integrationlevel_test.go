@@ -24,7 +24,7 @@ func (f *fakeLevelProbe) GetObservedIntegrationLevel(_ context.Context, _ int32)
 	return f.level, f.err
 }
 
-// spec: §5.1 lines 41-44 — basic < standard < full; an empty declared
+// spec: §5.1 — basic < standard < full; an empty declared
 // level is the default basic; an unrecognized level ranks below every
 // named level.
 func TestIntegrationLevelRank_spec_5_1(t *testing.T) {
@@ -42,7 +42,7 @@ func TestIntegrationLevelRank_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 42 — observed < declared rejects the assignment with
+// spec: §5.1 — observed < declared rejects the assignment with
 // RUNTIME_LEVEL_UNDERPERFORMS, and the runtime is not recorded as verified
 // so every later assignment keeps being rejected.
 func TestVerifyIntegrationLevelUnderperforms_spec_5_1(t *testing.T) {
@@ -65,7 +65,7 @@ func TestVerifyIntegrationLevelUnderperforms_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 44 — observed == declared accepts without annotation and
+// spec: §5.1 — observed == declared accepts without annotation and
 // records the runtime as verified so the first-assignment probe runs once.
 func TestVerifyIntegrationLevelMatch_spec_5_1(t *testing.T) {
 	var underdeclared int
@@ -86,7 +86,7 @@ func TestVerifyIntegrationLevelMatch_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 43 — observed > declared accepts and emits the
+// spec: §5.1 — observed > declared accepts and emits the
 // runtime.integrationLevel.underdeclared warning exactly once.
 func TestVerifyIntegrationLevelUnderdeclared_spec_5_1(t *testing.T) {
 	var got []string // declared:observed per firing

@@ -43,7 +43,7 @@ func poolReq(t *testing.T, h http.Handler, method, path string, body any) *httpt
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
 	if method == http.MethodPut {
-		// spec: §15.1 lines 1207-1211 — the canonical pool PUT requires an
+		// spec: §15.1 — the canonical pool PUT requires an
 		// If-Match precondition. Fetch the resource's current ETag so the
 		// many tests exercising other pool-update behaviour pass the
 		// concurrency gate; the dedicated ETag tests set headers directly.
@@ -117,7 +117,7 @@ func TestCreatePoolRejectsBadIsolation(t *testing.T) {
 // that omits isolationProfile defaults to the production `sandboxed`
 // profile when dev mode is off.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreatePoolDefaultsSandboxedWithoutDevMode_spec_5_3(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
@@ -138,13 +138,12 @@ func TestCreatePoolDefaultsSandboxedWithoutDevMode_spec_5_3(t *testing.T) {
 	}
 }
 
-// TestCreatePoolDevModeDefaultsStandard_spec_5_3 verifies the §5.3 line
-// 677 dev-mode fallback: a pool that omits isolationProfile under dev
+// TestCreatePoolDevModeDefaultsStandard_spec_5_3 verifies the §5.3 dev-mode fallback: a pool that omits isolationProfile under dev
 // mode defaults to `standard` (runc) and receives the allowStandardIsolation
 // opt-in dev mode supplies on the operator's behalf, so the pool is
 // accepted on a gVisor-less cluster.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreatePoolDevModeDefaultsStandard_spec_5_3(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	runtimes := runtimestore.NewMemory()
@@ -176,7 +175,7 @@ func TestCreatePoolDevModeDefaultsStandard_spec_5_3(t *testing.T) {
 // the opt-in is still rejected, so dev mode does not silently weaken an
 // explicit configuration.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreatePoolDevModeExplicitProfileWins_spec_5_3(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	runtimes := runtimestore.NewMemory()
@@ -252,7 +251,7 @@ func TestUpdatePool(t *testing.T) {
 	}
 }
 
-// TestUpdatePoolWarmCount covers §25.17 lines 5232-5239 — the warm-count
+// TestUpdatePoolWarmCount covers §25.17 — the warm-count
 // sub-route maps the operability `minWarm` field onto the §15.1 warm-count
 // update and applies it when confirm:true.
 func TestUpdatePoolWarmCount_spec_25_17(t *testing.T) {
@@ -492,7 +491,7 @@ func TestResumeReconciliationDurableUnknownPool_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// fakePoolStatus is a stub admin.PoolStatusReader for the §5.2 line 629
+// fakePoolStatus is a stub admin.PoolStatusReader for the §5.2
 // admin-GET live-status assertions.
 type fakePoolStatus struct {
 	condition string
@@ -514,7 +513,7 @@ func seedGetPool(t *testing.T, pools *poolstore.Memory, runtimes *runtimestore.M
 	})
 }
 
-// spec: §5.2 line 629 — the admin pool GET surfaces poolCondition and
+// spec: §5.2 — the admin pool GET surfaces poolCondition and
 // idlePodCount during the bootstrap window when a PoolStatusReader is
 // wired. idlePodCount of 0 must be emitted (the pointer field is
 // non-nil), and poolCondition reports the warming state.
@@ -542,7 +541,7 @@ func TestGetPoolSurfacesWarmingStatus(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 629 — a ready pool reports idlePodCount with no
+// spec: §5.2 — a ready pool reports idlePodCount with no
 // warming condition.
 func TestGetPoolReadyHasIdleCountNoCondition(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
@@ -562,7 +561,7 @@ func TestGetPoolReadyHasIdleCountNoCondition(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 629 — the live-status fields are omitted when no
+// spec: §5.2 — the live-status fields are omitted when no
 // reader is wired (the Postgres-only posture) or when the pool has no
 // reconciled SandboxWarmPool yet (found=false), so a misleading zero is
 // never reported.
@@ -765,7 +764,7 @@ func TestCreateSandboxedPoolEmitsNoWeakIsolationEvent(t *testing.T) {
 // the admin pool create handler rejects allowCrossTenantReuse: true when
 // the referenced runtime is workspaceTier T4, before the pool is stored.
 //
-// spec: §5.2 line 396.
+// spec: §5.2.
 func TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -804,7 +803,7 @@ func TestCreatePoolRejectsCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T)
 // cross-tenant-reuse pool backed by a T3 (default) runtime is admitted —
 // the prohibition is T4-specific.
 //
-// spec: §5.2 line 396.
+// spec: §5.2.
 func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -840,7 +839,7 @@ func TestCreatePoolAllowsCrossTenantReuseOnT3Runtime_spec_5_2_396(t *testing.T) 
 // verifies a PUT that newly enables cross-tenant reuse on a T4-runtime
 // pool is rejected even though the pool was created without it.
 //
-// spec: §5.2 line 396.
+// spec: §5.2.
 func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *testing.T) {
 	router, _, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -895,7 +894,7 @@ func (f fakeCRDGeneration) CRDGeneration(_ context.Context, _ string) (int64, ti
 }
 
 // TestSyncStatusEndpointReportsSyncedWhenGenerationsMatch_Spec4_6_2_560
-// covers the §4.6.2 line 560 sync-status GET in the synced case.
+// covers the §4.6.2 sync-status GET in the synced case.
 func TestSyncStatusEndpointReportsSyncedWhenGenerationsMatch_Spec4_6_2_560(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
 	seedGetPool(t, pools, runtimes)
@@ -976,7 +975,7 @@ func TestSyncStatusOnGetReportsUnknownWithoutReader_Spec4_6_2_559(t *testing.T) 
 
 // TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559 confirms an
 // admin PUT that bumps Postgres generation past the CRD's reports
-// syncStatus=pending. spec: spec/04_system-components.md line 559.
+// syncStatus=pending. spec: §4.6.2.
 func TestSyncStatusOnPUTReportsPendingAfterWrite_Spec4_6_2_559(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
 	seedGetPool(t, pools, runtimes)

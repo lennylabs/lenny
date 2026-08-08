@@ -23,7 +23,7 @@ var (
 	// resource-version conflict on the Sandbox status update — another
 	// gateway replica claimed the pod between Read and CAS. The caller
 	// loops back to ClaimPod with a fresh selection. spec:
-	// spec/04_system-components.md line 386.
+	// §4.6.1.
 	ErrClaimConflict = errors.New("podlifecycle: claim conflict — retry")
 	// ErrInvalidTransition reports that TransitionPodState attempted
 	// a phase transition the §6.2 state machine does not allow.

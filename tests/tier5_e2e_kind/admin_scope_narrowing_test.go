@@ -223,7 +223,7 @@ func TestScopeNarrowedBearerGatesAdminAPI(t *testing.T) {
 	})
 
 	t.Run("absent scope claim defers to the role ceiling", func(t *testing.T) {
-		// spec: §25.1 line 90 — "Absent `scope` claim: no scope
+		// spec: §25.1 — "Absent `scope` claim: no scope
 		// restriction — the token's role ceiling applies unmodified."
 		// The same tools:tenant:read endpoint the first subtest denied
 		// must admit a platform-admin token that carries no scope claim

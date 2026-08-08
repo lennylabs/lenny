@@ -12,17 +12,17 @@
 // handlers surfaces here as a contract violation rather than shipping
 // unguarded.
 //
-// spec: §25.3 line 556 — "GET /v1/admin/recommendations | Prioritized
+// spec: §25.3 — "GET /v1/admin/recommendations | Prioritized
 // recommendations. Optional ?category= filter."
-// spec: §25.3 line 621 — "UNKNOWN_RECOMMENDATION_CATEGORY | PERMANENT |
+// spec: §25.3 — "UNKNOWN_RECOMMENDATION_CATEGORY | PERMANENT |
 // 400 | Unrecognized category filter".
-// spec: §25.3 line 622 — "RECOMMENDATIONS_UNAVAILABLE | TRANSIENT | 503".
-// spec: §25.3 line 632 — "GET /v1/admin/platform/version | Compiled-in
+// spec: §25.3 — "RECOMMENDATIONS_UNAVAILABLE | TRANSIENT | 503".
+// spec: §25.3 — "GET /v1/admin/platform/version | Compiled-in
 // version info (gateway.version, gitCommit, buildDate, goVersion)".
-// spec: §25.3 line 633 / 637 — "GET /v1/admin/platform/config |
+// spec: §25.3 — "GET /v1/admin/platform/config |
 // Effective running configuration (secrets redacted)" and "Secret
 // values are redacted to \"***\"."
-// spec: §25.3 line 729 — "GET /v1/admin/events/buffer | Recent events
+// spec: §25.3 — "GET /v1/admin/events/buffer | Recent events
 // from in-memory buffer."
 // spec: §25.2 — the canonical degradation envelope, the pagination
 // envelope, and the error-response envelope every operability endpoint
@@ -99,8 +99,8 @@ func (unavailableReader) Available() bool { return false }
 // holding data the envelope reports `healthy` with the gateway's
 // compiled-in-defaults threshold source.
 //
-// spec: §25.3 line 556, §25.2 (canonical degradation envelope),
-// §25.13 line 4848 (gateway runs the compiled-in defaults).
+// spec: §25.3, §25.2 (canonical degradation envelope),
+// §25.13.
 // diagnosis: a failure means the gateway recommendations endpoint's
 // response envelope drifted from the §25.2 canonical schema — a renamed
 // or dropped `recommendations`/`degradation` field, or a wrong
@@ -270,7 +270,7 @@ func TestRecommendationsDegradedToHealthyOnFirstSampleTransition(t *testing.T) {
 // envelope: a `code`/`category`/`message`/`retryable` object under a
 // top-level `error` key, classified PERMANENT and non-retryable.
 //
-// spec: §25.3 line 621 — "UNKNOWN_RECOMMENDATION_CATEGORY | PERMANENT |
+// spec: §25.3 — "UNKNOWN_RECOMMENDATION_CATEGORY | PERMANENT |
 // 400 | Unrecognized category filter".
 // spec: §25.2 (error response envelope) — PERMANENT 4xx errors are not
 // retryable.
@@ -303,7 +303,7 @@ func TestRecommendationsUnknownCategoryErrorEnvelope(t *testing.T) {
 // envelope: classified TRANSIENT and retryable. It is returned only
 // under the disableOnPrometheusOutage opt-out when the source is down.
 //
-// spec: §25.3 line 622 — "RECOMMENDATIONS_UNAVAILABLE | TRANSIENT |
+// spec: §25.3 — "RECOMMENDATIONS_UNAVAILABLE | TRANSIENT |
 // 503 | Returned only when ops.recommendations.disableOnPrometheusOutage:
 // true and Prometheus is unreachable."
 // spec: §25.2 (error response envelope) — TRANSIENT 5xx errors are
@@ -338,7 +338,7 @@ func TestRecommendationsUnavailableErrorEnvelope(t *testing.T) {
 // the §25.2 canonical `pagination` envelope carrying `cursor`,
 // `hasMore`, and the buffer's `cursorKind` of `buffer-seq`.
 //
-// spec: §25.3 line 729 — "GET /v1/admin/events/buffer | Recent events
+// spec: §25.3 — "GET /v1/admin/events/buffer | Recent events
 // from in-memory buffer."
 // spec: §25.3 (Gateway Event Buffer, BufferedEventPage) and §25.2
 // (pagination envelope) — the cursor is the monotonic id of the last
@@ -398,7 +398,7 @@ func TestEventBufferPageWireContract(t *testing.T) {
 // compiled-in metadata under gatewayVersion, gitCommit, buildDate, and
 // goVersion.
 //
-// spec: §25.3 line 632 — "Compiled-in version info (gateway.version,
+// spec: §25.3 — "Compiled-in version info (gateway.version,
 // gitCommit, buildDate, goVersion)".
 // diagnosis: a failure means the platform version endpoint's field set
 // drifted from the documented contract, so lenny-ops's version
@@ -431,7 +431,7 @@ func TestPlatformVersionWireContract(t *testing.T) {
 // entries with every secret-bearing value redacted to "***" and
 // non-secret values passed through.
 //
-// spec: §25.3 line 633 / line 637 — "Effective running configuration
+// spec: §25.3 — "Effective running configuration
 // (secrets redacted)" and "Secret values are redacted to \"***\"."
 // diagnosis: a failure means the platform config endpoint stopped
 // redacting a secret-bearing value or dropped the documented config

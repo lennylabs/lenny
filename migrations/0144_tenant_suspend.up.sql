@@ -6,7 +6,7 @@
 -- whether it is active, disabling, or deleting. The operator identity
 -- and reason are recorded so the suspension can be reconstructed
 -- alongside the audit-trail `tenant.suspended` event.
--- See spec/15_external-api-surface.md §15.1 lines 818-819.
+-- See spec/15_external-api-surface.md §15.1.
 ALTER TABLE tenants
     ADD COLUMN IF NOT EXISTS suspended        BOOLEAN     NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS suspended_reason TEXT        NOT NULL DEFAULT '',

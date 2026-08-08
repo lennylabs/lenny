@@ -74,7 +74,7 @@ func dialStubAdapter(t *testing.T, stub *stubAdapterServer) *adapterclient.Clien
 	return cl
 }
 
-// spec: §7.2 line 168 — interrupt_request + interrupt_acknowledged
+// spec: §7.2 — interrupt_request + interrupt_acknowledged
 // transitions running → suspended. The gateway must signal the adapter
 // AND the row must reach suspended.
 func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
@@ -113,7 +113,7 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 169 / §4.7 — deadlineMs elapsed without ack: adapter
+// spec: §7.2 / §4.7 — deadlineMs elapsed without ack: adapter
 // forces suspended, RPC returns INTERRUPT_TIMEOUT. The row STILL flips
 // to suspended; the response advertises the timeout so a UI can flag it.
 func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
@@ -141,7 +141,7 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	}
 	got, _ := store.Get(context.Background(), "acme", "sess_to")
 	if got.State != session.StateSuspended {
-		t.Errorf("row state = %s, want suspended (§7.2 line 169 adapter-forces)", got.State)
+		t.Errorf("row state = %s, want suspended (§7.2 adapter-forces)", got.State)
 	}
 
 	var body map[string]any

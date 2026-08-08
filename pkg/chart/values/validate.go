@@ -15,8 +15,7 @@ import (
 // (a values.schema.json). The returned error describes every violation
 // when the document does not conform; it is nil on success. The document
 // may be a full values.yaml or a fragment (every top-level key is
-// optional in the schema). spec: §17.6 line 666 (lenny-ctl values
-// validate), §17.9.2 line 1374 (answer-file CI lint).
+// optional in the schema). spec: §17.6, §17.9.2.
 func ValidateYAML(schemaJSON, valuesYAML []byte) error {
 	jsonDoc, err := yaml.YAMLToJSON(valuesYAML)
 	if err != nil {

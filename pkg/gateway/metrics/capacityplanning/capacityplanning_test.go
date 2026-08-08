@@ -9,9 +9,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/capacityplanning"
 )
 
-// TestShouldWarnRedisClusterRecommended exercises the §17.8.2 line 1164
+// TestShouldWarnRedisClusterRecommended exercises the §17.8.2
 // startup-warning heuristic across the tier, topology, and
-// operator-intent axes. spec: spec/17_deployment-topology.md line 1164.
+// operator-intent axes. spec: §17.8.2.
 func TestShouldWarnRedisClusterRecommended_spec_17_8_2_1164(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -41,7 +41,7 @@ func TestShouldWarnRedisClusterRecommended_spec_17_8_2_1164(t *testing.T) {
 
 // TestRedisClusterRecommendedWarningMarker pins the log marker so a Tier 3
 // operator's log scraper can match on it. spec:
-// spec/17_deployment-topology.md line 1164.
+// §17.8.2.
 func TestRedisClusterRecommendedWarningMarker_spec_17_8_2_1164(t *testing.T) {
 	if !strings.Contains(capacityplanning.RedisClusterRecommendedWarning, "RedisClusterRecommended") {
 		t.Errorf("warning %q does not carry the RedisClusterRecommended marker", capacityplanning.RedisClusterRecommendedWarning)

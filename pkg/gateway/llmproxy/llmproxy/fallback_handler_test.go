@@ -105,7 +105,7 @@ func newFallbackHandler(t *testing.T, ctl *credfallback.Controller, rot llmproxy
 	return h, leases
 }
 
-// spec: §4.9 lines 1383-1411 — a rate-limit fault on a multi-pool chain
+// spec: §4.9 — a rate-limit fault on a multi-pool chain
 // rotates the lease to the next pool and surfaces the upstream error so
 // the pod retries against the rotated credential.
 func TestHandlerFaultRotatesToNextPool(t *testing.T) {
@@ -138,7 +138,7 @@ func TestHandlerFaultRotatesToNextPool(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1393-1396 — once the chain is exhausted the session
+// spec: §4.9 — once the chain is exhausted the session
 // is terminated with CREDENTIAL_FALLBACK_EXHAUSTED, the audit event is
 // emitted, and the exhaustion counter increments.
 func TestHandlerFaultExhaustsChain(t *testing.T) {

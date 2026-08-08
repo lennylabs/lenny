@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §8.2 line 52 / §8.3 line 286 — the JSONB tracing_context arg
+// spec: §8.2 / §8.3 — the JSONB tracing_context arg
 // encoder. An empty / nil map stores SQL NULL so the read path returns
 // nil; a populated map stores the JSONB encoding. F-8.2.14.
 func TestTracingContextArg_spec_8_2_52(t *testing.T) {
@@ -27,7 +27,7 @@ func TestTracingContextArg_spec_8_2_52(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 52 — decodeTracingContext is the inverse: a valid
+// spec: §8.2 — decodeTracingContext is the inverse: a valid
 // JSONB document round-trips back into the in-memory map; a malformed
 // payload errors. F-8.2.14.
 func TestDecodeTracingContext_spec_8_2_52(t *testing.T) {

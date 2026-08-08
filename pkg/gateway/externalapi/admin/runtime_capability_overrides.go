@@ -12,10 +12,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// WithRuntimeCapabilityOverrides wires the §5.1 line 49 per-tenant
+// WithRuntimeCapabilityOverrides wires the §5.1 per-tenant
 // runtime capability override store. A nil store leaves the
 // /v1/admin/tenants/{id}/runtime-capability-overrides routes
-// unregistered. spec: §5.1 line 49 — F-5.1.20.
+// unregistered. spec: §5.1 — F-5.1.20.
 func (r *Router) WithRuntimeCapabilityOverrides(store runtimecapoverride.Store) *Router {
 	r.capOverrides = store
 	return r

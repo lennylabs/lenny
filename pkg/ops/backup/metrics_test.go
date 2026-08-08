@@ -102,7 +102,7 @@ func seedRestore(t *testing.T, store *backup.MemStore, r backup.RestoreState) {
 	}
 }
 
-// spec: §25.11 Metrics table (lines 4306-4308) — lenny_backup_total counts
+// spec: §25.11 Metrics table — lenny_backup_total counts
 // terminal outcomes by type and status, lenny_backup_size_bytes is a
 // per-backup gauge, and lenny_backup_duration_seconds is a per-type
 // histogram derived from the ops_backups rows at scrape time.
@@ -175,7 +175,7 @@ func TestMetricsCollectorBackupOutcomes_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 Metrics table (lines 4309-4310) — lenny_restore_total counts
+// spec: §25.11 Metrics table — lenny_restore_total counts
 // terminal restores by status and lenny_restore_duration_seconds is the
 // completed-restore duration histogram.
 func TestMetricsCollectorRestoreOutcomes_spec_25_11(t *testing.T) {

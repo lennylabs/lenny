@@ -4,7 +4,7 @@ package opsservice
 
 import "testing"
 
-// TestSecretCachePutGet is the §25.5 lines 2715-2733 reveal-cache
+// TestSecretCachePutGet is the §25.5 reveal-cache
 // contract: a secret stored on create/rotate is recoverable for signing.
 func TestSecretCachePutGet_spec_25_5_2715(t *testing.T) {
 	c := NewSecretCache()
@@ -25,7 +25,7 @@ func TestSecretCachePutGet_spec_25_5_2715(t *testing.T) {
 }
 
 // TestSecretCacheRotateOverwrites confirms a rotated secret replaces the
-// prior one. spec: §25.5 line 2729.
+// prior one. spec: §25.5.
 func TestSecretCacheRotateOverwrites(t *testing.T) {
 	c := NewSecretCache()
 	c.Put("sub-1", "old", 0)
@@ -37,7 +37,7 @@ func TestSecretCacheRotateOverwrites(t *testing.T) {
 }
 
 // TestSecretCacheRemove confirms a deleted subscription's secret is
-// dropped. spec: §25.5 line 2730.
+// dropped. spec: §25.5.
 func TestSecretCacheRemove(t *testing.T) {
 	c := NewSecretCache()
 	c.Put("sub-1", "x", 0)
@@ -47,7 +47,7 @@ func TestSecretCacheRemove(t *testing.T) {
 	}
 }
 
-// TestSecretCacheRetainPrunes is the §25.5 line 2752 prune-on-refresh
+// TestSecretCacheRetainPrunes is the §25.5 prune-on-refresh
 // contract: Retain drops every cached secret not in the active set.
 func TestSecretCacheRetainPrunes(t *testing.T) {
 	c := NewSecretCache()

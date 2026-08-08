@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// TestGRPCTraceContextPropagatesGatewayToPod exercises the full §16.3 line 327
+// TestGRPCTraceContextPropagatesGatewayToPod exercises the full §16.3
 // hop ("Gateway → Pod (gRPC metadata)"): a client span opened on the gateway
 // side must reach the pod adapter as the parent of the server-side RPC span.
 // Both the adapterclient.Dial client stats handler and the

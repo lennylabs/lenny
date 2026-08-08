@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
-// spec: §8.3 lines 157-188 — resolveChildContentPolicy applies the
+// spec: §8.3 — resolveChildContentPolicy applies the
 // four-axis contentPolicy inheritance and monotonicity rules. A child
 // lease may only make the policy stricter; any weakening rejects. The
 // returned effective policy is the per-axis narrowest. F-13.5.10.

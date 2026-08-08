@@ -11,13 +11,13 @@ import (
 	"path/filepath"
 )
 
-// ExitK3sUnavailable is the §24.19.1 line 282 K3S_UNAVAILABLE exit code the
+// ExitK3sUnavailable is the §24.19.1 K3S_UNAVAILABLE exit code the
 // image bridge reports when the embedded containerd is unreachable. The
 // `lenny image` CLI dispatch returns it directly; the bring-up import path
 // converts it into an error. It is exported because the CLI dispatch in
 // pkg/embedded/localcli maps it onto the same normative exit code.
 //
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE).
+// spec: §24.19.1.
 const ExitK3sUnavailable = 4
 
 // containerCtrSocket is the containerd socket path inside the rancher/k3s
@@ -84,7 +84,7 @@ func (c CtrInvocation) Args(namespace string, stdin bool, sub ...string) []strin
 // tarball is streamed into `docker exec -i <container> ctr images
 // import -`.
 //
-// spec: §24.19.1 line 275 (the `--file <tar>` air-gapped/CI import path),
+// spec: §24.19.1,
 // §17.4 (the substrate is provisioned per host operating system).
 func ImportFromFile(ctr CtrInvocation, namespace, reference, file string, stdout, stderr io.Writer) int {
 	if ctr.container == "" {
@@ -119,7 +119,7 @@ func ImportFromFile(ctr CtrInvocation, namespace, reference, file string, stdout
 // diagnostic that points at the `--file <tar>` fallback rather than the raw
 // `exec: docker: executable file not found in PATH` from os/exec.
 //
-// spec: §17.4 line 290, §24.19.1 line 274.
+// spec: §17.4, §24.19.1.
 func ImportFromHostDaemon(ctr CtrInvocation, namespace, reference string, stdout, stderr io.Writer) int {
 	if _, err := lookPathDocker(); err != nil {
 		fmt.Fprintln(stderr, "lenny image import: the `docker` binary is required for the host-daemon path but is not on PATH;")
@@ -162,7 +162,7 @@ func ImportFromHostDaemon(ctr CtrInvocation, namespace, reference string, stdout
 // K3S_UNAVAILABLE. The decision fails closed — an absent stack, an absent
 // host k3s, or a stopped Docker container each report K3S_UNAVAILABLE.
 //
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 (per-OS substrate).
+// spec: §24.19.1, §17.4 (per-OS substrate).
 func CtrCommand(stderr io.Writer) (CtrInvocation, int) {
 	root, err := DefaultRoot()
 	if err != nil {
@@ -197,7 +197,7 @@ func CtrCommand(stderr io.Writer) (CtrInvocation, int) {
 // k3s, an absent socket, an absent docker binary, or a stopped container
 // each report K3S_UNAVAILABLE.
 //
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 (per-OS substrate),
+// spec: §24.19.1, §17.4 (per-OS substrate),
 // §4.7 (the bring-up import targets the embedded containerd before the
 // state file exists).
 func CtrCommandForSubstrate(root, container string, stderr io.Writer) (CtrInvocation, int) {

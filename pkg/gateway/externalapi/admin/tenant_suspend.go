@@ -22,7 +22,7 @@ import (
 // observability/audit.EventTenantSuspended / EventTenantResumed; the
 // admin emit path serializes event-type strings (see r.emit), so the
 // constants are duplicated here to avoid importing the catalog package
-// into the router. spec: §15.1 line 818.
+// into the router. spec: §15.1.
 const (
 	eventTenantSuspended = "tenant.suspended"
 	eventTenantResumed   = "tenant.resumed"
@@ -47,14 +47,14 @@ type tenantResumePayload struct {
 }
 
 // handleSuspendTenant implements POST /v1/admin/tenants/{id}/suspend —
-// the §15.1 line 818 operator suspension. Setting the suspension marker
+// the §15.1 operator suspension. Setting the suspension marker
 // makes the gateway reject new session creation and message injection
 // with TENANT_SUSPENDED; all of the tenant's active sessions are then
 // drained. The optional `reason` body and the operator identity are
 // recorded on the row and in the tenant.suspended audit event. The
 // endpoint is idempotent: suspending an already-suspended tenant returns
 // 200 with the current marker and neither re-drains nor re-emits.
-// Platform-admin only. spec: §15.1 line 818.
+// Platform-admin only. spec: §15.1.
 func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -105,7 +105,7 @@ func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// spec: §15.1 line 818 — all active sessions in the tenant are
+	// spec: §15.1 — all active sessions in the tenant are
 	// drained. The marker set above is the authoritative rejection; the
 	// drain is a best-effort consequence performed when the session
 	// seams are wired. A drain error does not unwind the suspension.
@@ -121,12 +121,12 @@ func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleResumeTenant implements POST /v1/admin/tenants/{id}/resume — the
-// §15.1 line 819 operator resumption. Clearing the suspension marker
+// §15.1 operator resumption. Clearing the suspension marker
 // restores normal tenant operation. Sessions terminated by the
 // suspension stay terminated; resumption is not a pause. The endpoint is
 // idempotent: resuming a tenant that is not suspended returns 200 with
 // the current marker and emits no event. Platform-admin only. spec:
-// §15.1 line 819.
+// §15.1.
 func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -175,7 +175,7 @@ func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 // transitioned. It is a no-op returning (0, nil) when the session store
 // or the force-terminate seam is not wired. ForceTerminate is idempotent,
 // so a session that reaches a terminal state concurrently is skipped.
-// spec: §15.1 line 818.
+// spec: §15.1.
 func (r *Router) drainTenantSessions(ctx context.Context, tenantID string) (int, error) {
 	if r.sessions == nil || r.sessionAdmin == nil {
 		return 0, nil

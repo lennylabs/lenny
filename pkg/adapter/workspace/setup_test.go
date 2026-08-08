@@ -111,7 +111,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	}
 }
 
-// spec: §5.1 lines 89-91 — onTimeout `warn`: exceeding the aggregate cap
+// spec: §5.1 — onTimeout `warn`: exceeding the aggregate cap
 // proceeds to runtime start. RunSetup signals the warn case by returning
 // ErrSetupAggregateTimeoutWarn (wrapped) so the caller can emit a
 // structured warning before treating the RPC as success. F-7.5.13.
@@ -138,7 +138,7 @@ func TestRunSetupAggregateTimeoutStopsLaterCommands(t *testing.T) {
 	}
 }
 
-// spec: §14 line 99 — an omitted per-command timeoutSeconds carries no
+// spec: §14 — an omitted per-command timeoutSeconds carries no
 // independent time limit; only the aggregate cap (or parent ctx) can
 // terminate the command. F-7.5.6.
 func TestRunSetupOmittedPerCommandTimeoutBoundsByAggregate(t *testing.T) {
@@ -157,7 +157,7 @@ func TestRunSetupOmittedPerCommandTimeoutBoundsByAggregate(t *testing.T) {
 	}
 }
 
-// spec: §14 line 99 — an omitted per-command timeout under no aggregate
+// spec: §14 — an omitted per-command timeout under no aggregate
 // cap inherits only the parent ctx; cancelling ctx kills the command.
 func TestRunSetupOmittedPerCommandTimeoutCancelsOnContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -174,7 +174,7 @@ func TestRunSetupOmittedPerCommandTimeoutCancelsOnContext(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 477 — a per-command timeout (or aggregate-cap kill)
+// spec: §7.5 — a per-command timeout (or aggregate-cap kill)
 // must reach descendants, not just the shell. F-7.5.7.
 func TestRunSetupTimeoutKillsDescendants(t *testing.T) {
 	dir := t.TempDir()
@@ -220,7 +220,7 @@ func TestRunSetupTimeoutKillsDescendants(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 479 — setup commands must not inherit arbitrary
+// spec: §7.5 — setup commands must not inherit arbitrary
 // adapter-process state. With opts.Env set, the command sees only the
 // configured environment. F-7.5.8.
 func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
@@ -251,7 +251,7 @@ func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
 	}
 }
 
-// DefaultSetupEnv exposes the §7.5 line 479 minimal whitelist; the
+// DefaultSetupEnv exposes the §7.5 minimal whitelist; the
 // returned list seeds only PATH/HOME/USER/LANG/LC_ALL/PWD/TMPDIR.
 func TestDefaultSetupEnv(t *testing.T) {
 	env := workspace.DefaultSetupEnv("/workspace/current")
@@ -277,7 +277,7 @@ func TestDefaultSetupEnv(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 490 — F-7.5.2. Argv-mode execution must run the command
+// spec: §7.5 — F-7.5.2. Argv-mode execution must run the command
 // via direct exec rather than `/bin/sh -c`. A shell metacharacter like `>`
 // survives as a literal argument to the program; if the adapter were
 // running the command through a shell it would be interpreted as a
@@ -299,7 +299,7 @@ func TestRunSetupArgvModeNeutersShellMetacharacters(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 490 — F-7.5.2. Argv-mode splits the command string on
+// spec: §7.5 — F-7.5.2. Argv-mode splits the command string on
 // whitespace and execs argv[0] with argv[1:]; an empty argv is rejected.
 func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
 	_, err := workspace.RunSetup(context.Background(), t.TempDir(), []*adapterv1.SetupCommand{
@@ -314,7 +314,7 @@ func TestRunSetupArgvModeRejectsEmptyAfterSplit(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 490 — F-7.5.2. Argv-mode also accepts multi-token
+// spec: §7.5 — F-7.5.2. Argv-mode also accepts multi-token
 // commands; the split is whitespace-only.
 func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
 	dir := t.TempDir()
@@ -330,7 +330,7 @@ func TestRunSetupArgvModeRunsMultiTokenCommand(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475 — F-7.5.4. Every executed command must surface a
+// spec: §7.5 — F-7.5.4. Every executed command must surface a
 // SetupCommandOutput record with the captured stdout, stderr, exit code,
 // and duration so the gateway can persist the trail.
 func TestRunSetupReturnsPerCommandOutputs(t *testing.T) {
@@ -356,7 +356,7 @@ func TestRunSetupReturnsPerCommandOutputs(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475 — F-7.5.4. A failing command's transcript is
+// spec: §7.5 — F-7.5.4. A failing command's transcript is
 // preserved so the gateway can persist what was captured before the
 // abort. The function returns an error AND the partial outputs.
 func TestRunSetupReturnsPartialOutputsOnFailure(t *testing.T) {
@@ -382,7 +382,7 @@ func TestRunSetupReturnsPartialOutputsOnFailure(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475 — F-7.5.4. The per-stream byte budget must apply
+// spec: §7.5 — F-7.5.4. The per-stream byte budget must apply
 // so a chatty setup command cannot blow the gRPC response.
 func TestRunSetupTruncatesLargeOutput(t *testing.T) {
 	dir := t.TempDir()

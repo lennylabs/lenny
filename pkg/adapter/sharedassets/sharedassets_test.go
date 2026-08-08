@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §6.4 line 409 — F-6.4.3. Encode/Decode round-trips the inline
+// spec: §6.4 — F-6.4.3. Encode/Decode round-trips the inline
 // shared-asset set so the controller and the adapter agree on the wire
 // form carried on the --shared-assets flag.
 func TestEncodeDecodeRoundTrip_spec_6_4(t *testing.T) {
@@ -38,7 +38,7 @@ func TestEncodeDecodeRoundTrip_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 409 — an empty set encodes to the empty string so the
+// spec: §6.4 — an empty set encodes to the empty string so the
 // controller can omit the --shared-assets flag entirely, and the empty
 // string decodes back to nil so an adapter started without the flag
 // populates nothing.
@@ -71,7 +71,7 @@ func TestDecodeRejectsCorruptInput_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 409 — Materialize writes each inline asset read-only
+// spec: §6.4 — Materialize writes each inline asset read-only
 // into the shared root, defaulting the mode to 0444 so the runtime can
 // read but the file itself is immutable.
 func TestMaterializeWritesReadOnlyFiles_spec_6_4(t *testing.T) {
@@ -104,7 +104,7 @@ func TestMaterializeWritesReadOnlyFiles_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 409 — the default mode is pinned exactly regardless of
+// spec: §6.4 — the default mode is pinned exactly regardless of
 // the process umask, so the asset is 0444 even under a restrictive umask.
 func TestMaterializeDefaultModeUmaskIndependent_spec_6_4(t *testing.T) {
 	old := syscall.Umask(0o077)
@@ -155,7 +155,7 @@ func TestMaterializeRejectsSetuidSetgid_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 409 — an empty shared root is a configuration error
+// spec: §6.4 — an empty shared root is a configuration error
 // (the populate step requires a destination directory).
 func TestMaterializeRejectsEmptyRoot_spec_6_4(t *testing.T) {
 	if err := Materialize("", []FileSpec{{Path: "x", Content: "y"}}); err == nil {
@@ -163,7 +163,7 @@ func TestMaterializeRejectsEmptyRoot_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 409 — Materialize over an empty asset set is a no-op
+// spec: §6.4 — Materialize over an empty asset set is a no-op
 // success, leaving the (already-created) directory empty.
 func TestMaterializeEmptySetIsNoop_spec_6_4(t *testing.T) {
 	dir := t.TempDir()

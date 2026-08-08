@@ -26,7 +26,7 @@ func fakePool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// spec: §12.3 line 146 — without a read replica, usage-report aggregation
+// spec: §12.3 — without a read replica, usage-report aggregation
 // shares the primary pool.
 func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)
@@ -36,7 +36,7 @@ func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 — WithReadPool routes usage-report aggregation to
+// spec: §12.3 — WithReadPool routes usage-report aggregation to
 // the replica while the Record write stays on the primary. F-12.3.16.
 func TestWithReadPoolRoutesReadsToReplica_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)

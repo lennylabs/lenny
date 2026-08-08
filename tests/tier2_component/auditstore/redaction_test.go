@@ -27,7 +27,7 @@ import (
 // receiptCount returns the number of audit_redaction_receipts rows for
 // tenant, read directly on the container pool. DeleteByTenant only touches
 // audit_log, so the receipts remnant is the standalone compliance-receipt
-// set §12.8 line 831 keeps exempt; this counter pins that the teardown
+// set §12.8 keeps exempt; this counter pins that the teardown
 // leaves it intact.
 func receiptCount(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string) int {
 	t.Helper()
@@ -39,7 +39,7 @@ func receiptCount(t *testing.T, ctx context.Context, pg *containers.Postgres, te
 	return n
 }
 
-// spec: §12.8 lines 810-829 — DeleteByUser step-14 redacts the user's
+// spec: §12.8 — DeleteByUser step-14 redacts the user's
 // dead-lettered audit rows in place under a signed receipt and emits the
 // paired §16.7 events, while leaving other users' rows and the chain
 // verifiability intact.
@@ -203,7 +203,7 @@ func markDeadLettered(t *testing.T, ctx context.Context, pg *containers.Postgres
 
 // rowIDBySeq returns the audit_log.id of tenant's row at seq, read on the
 // container pool. Used to seed an audit_redaction_receipts row whose
-// audit_event_id FK (§12.8 line 815, migration 0160) references a real
+// audit_event_id FK (§12.8, migration 0160) references a real
 // audit_log row.
 func rowIDBySeq(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string, seq uint64) string {
 	t.Helper()
@@ -245,7 +245,7 @@ func seedReceipt(t *testing.T, ctx context.Context, pg *containers.Postgres, ten
 // audit_redaction_receipts row, then asserts the Phase-4 DeleteByTenant
 // deletes every event_type NOT LIKE 'gdpr.%' row (ordinary and
 // dead_lettered alike) and retains every gdpr.% row plus the
-// audit_redaction_receipts remnant (§12.8 line 831). It would fail against
+// audit_redaction_receipts remnant (§12.8). It would fail against
 // the pre-fix DELETE FROM audit_log WHERE tenant_id = $1, which deleted the
 // gdpr.% receipts along with the ordinary rows.
 func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.T) {
@@ -267,12 +267,12 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 	markDeadLettered(t, ctx, pg, "teardown", 2, 6)
 
 	// Seed a standalone audit_redaction_receipts row. It references a
-	// surviving gdpr.% row (seq3) so this test isolates the §12.8 line 840
+	// surviving gdpr.% row (seq3) so this test isolates the §12.8
 	// gdpr.% skip from the separately-tracked FK-ordering defect (a receipt
 	// referencing a to-be-deleted dead_lettered row blocks the teardown
 	// DELETE; see TestDeleteByTenantFKBlocksReceiptReferencedRow below and
 	// BUILD-GAPS.md F-12.8.25). DeleteByTenant deletes only audit_log, so
-	// the receipt remnant §12.8 line 831 keeps exempt must survive
+	// the receipt remnant §12.8 keeps exempt must survive
 	// regardless.
 	seedReceipt(t, ctx, pg, "teardown", rowIDBySeq(t, ctx, pg, "teardown", 3), 3)
 	if got := receiptCount(t, ctx, pg, "teardown"); got != 1 {
@@ -303,7 +303,7 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 	}
 	// The audit_redaction_receipts remnant survives the teardown intact.
 	if got := receiptCount(t, ctx, pg, "teardown"); got != 1 {
-		t.Fatalf("post-teardown receipts = %d, want 1 (the standalone remnant §12.8 line 831 keeps exempt)", got)
+		t.Fatalf("post-teardown receipts = %d, want 1 (the standalone remnant §12.8 keeps exempt)", got)
 	}
 }
 
@@ -312,7 +312,7 @@ func TestDeleteByTenantSkipsGDPRAndRetainsReceipts_spec_12_8_line840(t *testing.
 // diagnosis: this pins the CURRENT behavior of the audit_redaction_receipts
 // -> audit_log FK (migration 0160, NO ACTION) when Phase-4 DeleteByTenant
 // deletes a redacted dead_lettered row that a receipt references: the delete
-// aborts with a foreign-key violation (SQLSTATE 23503). §12.8 line 831/842
+// aborts with a foreign-key violation (SQLSTATE 23503). §12.8
 // exempt the receipts and require them to outlive the tenant, but they
 // reference a non-gdpr.% dead_lettered row the teardown must purge, so the
 // two requirements collide. Proposal 0028 did not address this ordering and

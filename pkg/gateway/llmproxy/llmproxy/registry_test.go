@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
-// spec: §4.9 lines 1525-1526 — the proxy dispatches each lease to the
+// spec: §4.9 — the proxy dispatches each lease to the
 // translator registered for its resolved provider, and rejects a lease
 // whose provider has no registered translator.
 

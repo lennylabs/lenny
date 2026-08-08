@@ -13,7 +13,7 @@ const credReadersGID int64 = 65534
 
 func i64(v int64) *int64 { return &v }
 
-// spec: §13.1 line 25 — a compliant agent pod carries the
+// spec: §13.1 — a compliant agent pod carries the
 // lenny-cred-readers fsGroup and supplementalGroups. F-13.1.4.
 func TestCheckAgentPodCredFSGroupPassesForCompliantPods(t *testing.T) {
 	d := preflight.CheckAgentPodCredFSGroup([]preflight.AgentPodSpec{
@@ -36,7 +36,7 @@ func TestCheckAgentPodCredFSGroupPassesForEmptyInput(t *testing.T) {
 	}
 }
 
-// spec: §13.1 line 25 — a pod with no pod-level fsGroup is rejected with
+// spec: §13.1 — a pod with no pod-level fsGroup is rejected with
 // POD_SPEC_CRED_FSGROUP_MISSING. F-13.1.4.
 func TestCheckAgentPodCredFSGroupRejectsMissingFSGroup(t *testing.T) {
 	d := preflight.CheckAgentPodCredFSGroup([]preflight.AgentPodSpec{
@@ -66,7 +66,7 @@ func TestCheckAgentPodCredFSGroupRejectsWrongFSGroup(t *testing.T) {
 	}
 }
 
-// spec: §13.1 line 25 — the explicit supplementalGroups membership is
+// spec: §13.1 — the explicit supplementalGroups membership is
 // required, not merely the kubelet's implicit fsGroup propagation. F-13.1.4.
 func TestCheckAgentPodCredFSGroupRejectsMissingSupplementalGroup(t *testing.T) {
 	d := preflight.CheckAgentPodCredFSGroup([]preflight.AgentPodSpec{

@@ -38,7 +38,7 @@ func mustAddr(t *testing.T, s string) netip.Addr {
 
 // TestValidateRejectReasons exercises the §14 SSRF mitigation reasons the
 // §15.1 INVALID_CALLBACK_URL envelope carries.
-// spec: §14 lines 108-112; §15.1 line 1097. F-14.1.11.
+// spec: §14; §15.1. F-14.1.11.
 func TestValidateRejectReasons_spec_14_108(t *testing.T) {
 	resolver := stubResolver{addrs: map[string][]netip.Addr{
 		"public.example.com":  {mustAddr(t, "93.184.216.34")},
@@ -78,7 +78,7 @@ func TestValidateRejectReasons_spec_14_108(t *testing.T) {
 }
 
 // TestValidatePinsPublicIP confirms a public host validates and the first
-// resolved IP is pinned. spec: §14 line 110. F-14.1.11.
+// resolved IP is pinned. spec: §14. F-14.1.11.
 func TestValidatePinsPublicIP_spec_14_110(t *testing.T) {
 	resolver := stubResolver{addrs: map[string][]netip.Addr{
 		"public.example.com": {mustAddr(t, "93.184.216.34"), mustAddr(t, "93.184.216.35")},
@@ -98,7 +98,7 @@ func TestValidatePinsPublicIP_spec_14_110(t *testing.T) {
 
 // TestValidateRejectsMixedPrivate confirms that when a host resolves to
 // any private address the callback is rejected even if a public address
-// is also returned. spec: §14 line 110. F-14.1.11.
+// is also returned. spec: §14. F-14.1.11.
 func TestValidateRejectsMixedPrivate_spec_14_110(t *testing.T) {
 	resolver := stubResolver{addrs: map[string][]netip.Addr{
 		"mixed.example.com": {mustAddr(t, "93.184.216.34"), mustAddr(t, "10.0.0.5")},
@@ -109,7 +109,7 @@ func TestValidateRejectsMixedPrivate_spec_14_110(t *testing.T) {
 	}
 }
 
-// TestValidateDomainAllowlist exercises the §14 line 112
+// TestValidateDomainAllowlist exercises the §14
 // callbackUrlAllowedDomains exact and wildcard matching. F-14.1.11.
 func TestValidateDomainAllowlist_spec_14_112(t *testing.T) {
 	resolver := stubResolver{addrs: map[string][]netip.Addr{
@@ -145,7 +145,7 @@ func TestValidateDomainAllowlist_spec_14_112(t *testing.T) {
 }
 
 // TestIsPublicAddr pins the private/reserved-range classification.
-// spec: §14 line 110. F-14.1.11.
+// spec: §14. F-14.1.11.
 func TestIsPublicAddr_spec_14_110(t *testing.T) {
 	cases := []struct {
 		ip   string

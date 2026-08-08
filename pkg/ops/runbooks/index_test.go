@@ -51,7 +51,7 @@ func TestParseFrontMatter(t *testing.T) {
 	if len(fm.Tags) != 2 {
 		t.Errorf("tags = %v, want 2", fm.Tags)
 	}
-	// spec: §25.7 line 3143 — title is parsed so the `q` filter can
+	// spec: §25.7 — title is parsed so the `q` filter can
 	// search it.
 	if fm.Title != "Warm Pool Exhaustion" {
 		t.Errorf("title = %q, want %q", fm.Title, "Warm Pool Exhaustion")
@@ -86,10 +86,10 @@ func TestMatches(t *testing.T) {
 		{"matching component", runbooks.Filter{Component: "warmPools"}, true},
 		{"non-matching component", runbooks.Filter{Component: "redis"}, false},
 		{"matching tag", runbooks.Filter{Tag: "capacity"}, true},
-		// spec: §25.7 line 3142 — `requires` filters to executable runbooks.
+		// spec: §25.7 — `requires` filters to executable runbooks.
 		{"matching requires", runbooks.Filter{Requires: "admin-api"}, true},
 		{"non-matching requires", runbooks.Filter{Requires: "cluster-access"}, false},
-		// spec: §25.7 line 3143 — `q` full-text over symptoms, tags, title.
+		// spec: §25.7 — `q` full-text over symptoms, tags, title.
 		{"q matches symptom substring", runbooks.Filter{Query: "RUNTIME_UNAVAILABLE"}, true},
 		{"q matches symptom case-insensitive", runbooks.Filter{Query: "idle pod count"}, true},
 		{"q matches tag", runbooks.Filter{Query: "scaling"}, true},

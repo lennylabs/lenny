@@ -222,7 +222,7 @@ func (c *recordingCleaner) PromoteTargetToLive(_ context.Context, upgradeID stri
 	return c.promoteErr
 }
 
-// TestRollbackDeletesTargetSnapshot_spec_25_8 covers §25.8 line 3551: a
+// TestRollbackDeletesTargetSnapshot_spec_25_8 covers §25.8: a
 // completed rollback deletes the §25.10 target snapshot for the upgrade,
 // passing the upgrade's operation id to the drift cleaner.
 func TestRollbackDeletesTargetSnapshot_spec_25_8(t *testing.T) {
@@ -542,9 +542,7 @@ func TestProceedAbortsCompletionOnPromoteFailure_spec_25_10_3789(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3496 ("etaSeconds uses etaMethod: fixed_phase_durations
-// ... combined with historical_p50 when ops_operation_baselines has
-// samples") describes the ETA the canonical progress envelope reports for
+// spec: §25.8 describes the ETA the canonical progress envelope reports for
 // an in-flight platform upgrade. This drives every public mutation the
 // orchestrator exposes (Start, Proceed, AdvanceOpsRoll) through a full
 // Preflight-to-Verification walk and asserts that the fixed_phase_durations

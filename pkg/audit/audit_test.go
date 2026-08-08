@@ -196,7 +196,7 @@ func TestOCSFStateIsTerminal(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 839 — IsRegulated is true exactly for soc2, fedramp,
+// spec: §12.8 — IsRegulated is true exactly for soc2, fedramp,
 // and hipaa; none and the empty profile are unregulated.
 func TestComplianceProfileIsRegulated(t *testing.T) {
 	regulated := map[ComplianceProfile]bool{
@@ -217,7 +217,7 @@ func TestComplianceProfileIsRegulated(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 839 — audit.gdprRetentionDays must be at least 2190
+// spec: §12.8 — audit.gdprRetentionDays must be at least 2190
 // (6 years) under any regulated complianceProfile; the default is 2555.
 func TestValidateGDPRRetentionDays(t *testing.T) {
 	cases := []struct {
@@ -246,7 +246,7 @@ func TestValidateGDPRRetentionDays(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 839 — the startup rejection message is verbatim so
+// spec: §12.8 — the startup rejection message is verbatim so
 // operators and tests can match on it.
 func TestGDPRRetentionFloorErrorMessage(t *testing.T) {
 	err := ValidateGDPRRetentionDays(100, []string{"hipaa"})

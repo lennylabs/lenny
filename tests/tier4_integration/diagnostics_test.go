@@ -37,16 +37,7 @@ import (
 // pool diagnostic endpoints and asserts each answer is derived from the live
 // store.
 //
-// spec: §25.6 line 2824 ("GET /v1/admin/diagnostics/sessions/{id} |
-// Structured cause chain for a session"), line 2896 ("Builds cause chain by
-// cross-referencing ...") and line 2890 (the cause chain cross-references the
-// session's terminal failure, so a budget termination surfaces BUDGET_EXPIRED
-// from session state alone); §25.6 line 2825 ("GET
-// /v1/admin/diagnostics/pools/{name} | Pool bottleneck analysis") and line
-// 2899 ("Reads agent_pod_state table grouped by state → pod count
-// breakdown"); §25.6 line 2882 (a diagnosis served from a fallback source
-// carries the degradation envelope, and lenny-ops without a Kubernetes
-// connection cannot enrich pod signals).
+// spec: §25.6; §25.6; §25.6.
 //
 // diagnosis: a failure means the cmd/lenny-ops composition root did not
 // thread the live Postgres store through the §25.6 DiagnosticService. Either
@@ -159,7 +150,7 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 	if got, _ := sess["pool"].(string); got != pool {
 		t.Errorf("session pool = %q, want %q", got, pool)
 	}
-	// spec: §25.6 line 2890 — the cause chain cross-references the session's
+	// spec: §25.6 — the cause chain cross-references the session's
 	// terminal failure, so a budget_exceeded reason surfaces BUDGET_EXPIRED
 	// even with no pod signal available.
 	chain, _ := sess["causeChain"].([]any)
@@ -188,7 +179,7 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 
 	// ---- pool diagnosis: pod-count breakdown grouped by state ----
 	//
-	// spec: §25.6 line 2899 — the breakdown is read from agent_pod_state
+	// spec: §25.6 — the breakdown is read from agent_pod_state
 	// grouped by state. Each seeded pod lands in its matching bucket.
 	code, pd := get("/v1/admin/diagnostics/pools/" + pool)
 	if code != http.StatusOK && code != http.StatusMultiStatus {
@@ -209,7 +200,7 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 
 	// ---- diagnostics latency histogram: scraped and labelled per endpoint ----
 	//
-	// spec: §25.6 line 2932 — the metrics catalog lists
+	// spec: §25.6 — the metrics catalog lists
 	// `lenny_diagnostics_request_duration_seconds` as a Histogram labelled
 	// `endpoint`, "Per-diagnostic-endpoint latency". The session and pool
 	// diagnostic calls above each ran against this same lenny-ops process,
@@ -229,7 +220,7 @@ func TestDiagnosticsDevOpsJourneyAgainstLiveStoresE2E(t *testing.T) {
 		key := `lenny_diagnostics_request_duration_seconds_count{endpoint="` + endpoint + `"}`
 		got, ok := samples[key]
 		if !ok {
-			t.Errorf("/metrics did not expose %s (§25.6 line 2932); the diagnostics histogram is not on the scraped registry for endpoint %q", key, endpoint)
+			t.Errorf("/metrics did not expose %s (§25.6); the diagnostics histogram is not on the scraped registry for endpoint %q", key, endpoint)
 			continue
 		}
 		if got < 1 {

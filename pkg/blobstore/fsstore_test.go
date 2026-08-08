@@ -28,7 +28,7 @@ func fsPut(t *testing.T, s *blobstore.FilesystemStore, u blobstore.URI, body str
 	}
 }
 
-// spec: §17.4 line 165 — the filesystem store round-trips a blob through
+// spec: §17.4 — the filesystem store round-trips a blob through
 // the same Store contract as MinIO.
 func TestFilesystemStorePutGet_spec_17_4_165(t *testing.T) {
 	s := newFSStore(t, nil)
@@ -52,7 +52,7 @@ func TestFilesystemStorePutGet_spec_17_4_165(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 186 — state persists across a restart: a second store
+// spec: §17.4 — state persists across a restart: a second store
 // rooted at the same directory reads back a previously written blob.
 func TestFilesystemStorePersistsAcrossReopen_spec_17_4_186(t *testing.T) {
 	root := t.TempDir()
@@ -164,7 +164,7 @@ func TestFilesystemStoreHardPruneRespectsRetention_spec_12_5(t *testing.T) {
 	}
 }
 
-// spec: §4.5 line 311 — Copy duplicates parent bytes for a derived
+// spec: §4.5 — Copy duplicates parent bytes for a derived
 // session and enforces tenant/conflict invariants.
 func TestFilesystemStoreCopy_spec_4_5_311(t *testing.T) {
 	s := newFSStore(t, nil)
@@ -225,7 +225,7 @@ func TestFilesystemStoreDeleteBySession_spec_12_8(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 295 / §12.8 Phase 4 — DeleteByTenant prefix-purges one
+// spec: §12.5 / §12.8 Phase 4 — DeleteByTenant prefix-purges one
 // tenant and an empty id is a guarded no-op.
 func TestFilesystemStoreDeleteByTenant_spec_12_8(t *testing.T) {
 	s := newFSStore(t, nil)

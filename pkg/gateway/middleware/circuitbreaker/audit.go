@@ -19,7 +19,7 @@ import (
 // interceptor, so a breaker REJECT produces this distinct event type.
 const EventAdmissionCircuitBreakerRejected = "admission.circuit_breaker_rejected"
 
-// EventAdmissionCircuitBreakerCacheStale is the §16.7 line 679 audit
+// EventAdmissionCircuitBreakerCacheStale is the §16.7 audit
 // event written (sampled) when the §11.6 admission gate serves a decision
 // against a breaker cache that has not refreshed within the 5-second poll
 // interval. The security-salient case is outcome="admitted": a breaker
@@ -32,7 +32,7 @@ const EventAdmissionCircuitBreakerCacheStale = "admission.circuit_breaker_cache_
 // cache-stale audit event and the stale-serve counter.
 const CacheStaleAfter = 5 * time.Second
 
-// auditSamplingWindow is the §11.6 line 331 rolling window: the first
+// auditSamplingWindow is the §11.6 rolling window: the first
 // rejection per (tenant_id, circuit_name, caller_sub) within any
 // 10-second window is written as a full audit row; subsequent
 // rejections in the same window are suppressed.
@@ -46,7 +46,7 @@ type AuditAppender interface {
 	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
 }
 
-// RejectionMetrics records the §11.6 line 333 rejection counters. The
+// RejectionMetrics records the §11.6 rejection counters. The
 // gateway metrics object satisfies it.
 type RejectionMetrics interface {
 	// RecordCircuitBreakerRejection counts every breaker-caused
@@ -57,17 +57,16 @@ type RejectionMetrics interface {
 	RecordCircuitBreakerRejectionSuppressed(tenantID, circuitName, limitTier string)
 	// RecordCircuitBreakerCacheStaleServe counts every admission decision
 	// served against a stale breaker cache, labelled by outcome
-	// (rejected | admitted). spec: §16.1 line 218.
+	// (rejected | admitted). spec: §16.1.
 	RecordCircuitBreakerCacheStaleServe(outcome string)
 }
 
 // AuditReporter emits the §16.7 `admission.circuit_breaker_rejected`
 // audit event on a breaker match, applying the §11.6 per-replica
-// sampling discipline and the §11.6 line 333 rejection counters. The
+// sampling discipline and the §11.6 rejection counters. The
 // sampling window is held in this replica's memory, keyed by
 // (tenant_id, circuit_name, caller_sub) — explicitly per-replica with
-// no Redis or EventBus coordination (spec: §11.6 line 331 "Sampling
-// window locality").
+// no Redis or EventBus coordination (spec: §11.6).
 type AuditReporter struct {
 	appender  AuditAppender
 	metrics   RejectionMetrics
@@ -99,7 +98,7 @@ func NewAuditReporter(appender AuditAppender, metrics RejectionMetrics, replicaI
 type RejectionSnapshot struct {
 	// CallerSub and CallerTenantID are the authenticated caller
 	// identity resolved by AuthEvaluator before the pre-chain gate runs
-	// (spec: §11.6 line 327).
+	// (spec: §11.6).
 	CallerSub      string
 	CallerTenantID string
 	// Runtime and Pool are the requested admission targets, when

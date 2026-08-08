@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
-// spec: §25.5 lines 2735-2745 — the per-delivery SSRF guard runs before
+// spec: §25.5 — the per-delivery SSRF guard runs before
 // the attempt dials. A guard rejection fails the attempt without a
 // network call; a passing guard lets the delivery through.
 func TestTransportSSRFGuard_spec_25_5(t *testing.T) {

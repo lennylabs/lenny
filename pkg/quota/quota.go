@@ -209,13 +209,13 @@ func PerUserFailOpenCeiling(effectiveCeiling int64, userFailOpenFraction float64
 // DefaultSyncIntervalSeconds is the §11.2 quotaSyncIntervalSeconds
 // default: the cadence at which Redis quota counters are checkpointed
 // to Postgres (and on which delegation budget counters are persisted).
-// spec: §11.2 line 44 ("default: 30s").
+// spec: §11.2.
 const DefaultSyncIntervalSeconds = 30
 
 // MinSyncIntervalSeconds is the §11.2 floor on quotaSyncIntervalSeconds.
 // A higher-throughput tenant lowers the interval toward this floor to
 // reduce crash-recovery overshoot exposure, but cannot go below it so
-// the checkpoint write cannot busy-loop. spec: §11.2 line 44
+// the checkpoint write cannot busy-loop. spec: §11.2
 // ("minimum: 10s").
 const MinSyncIntervalSeconds = 10
 
@@ -223,7 +223,7 @@ const MinSyncIntervalSeconds = 10
 // quotaSyncIntervalSeconds: a non-positive value selects the 30s
 // default, and a positive value below the 10s minimum is raised to the
 // floor. Any value at or above the floor is returned unchanged.
-// spec: §11.2 line 44 (default 30, minimum 10).
+// spec: §11.2.
 func ClampSyncIntervalSeconds(seconds int) int {
 	if seconds <= 0 {
 		return DefaultSyncIntervalSeconds
@@ -244,13 +244,13 @@ func MaxOvershoot(quotaSyncIntervalSeconds int, maxTokensPerSecond float64, acti
 	return float64(quotaSyncIntervalSeconds) * maxTokensPerSecond * float64(activeSessions)
 }
 
-// BudgetSliceReconcileRatio is the §12.4 line 268 local-consumption
+// BudgetSliceReconcileRatio is the §12.4 local-consumption
 // fraction that triggers an early Postgres reconcile: "reconciles with
 // Postgres periodically (default: every 30s) or when the local slice is
 // 80% consumed". It coincides with the §11.2 soft-warning ratio.
 const BudgetSliceReconcileRatio = 0.80
 
-// DrawBudgetSlice computes the §12.4 line 268 per-replica budget slice:
+// DrawBudgetSlice computes the §12.4 per-replica budget slice:
 // "1/N of the tenant's remaining budget, where N is the replica count".
 // remaining is the tenant's remaining token budget at draw time
 // (limit − persisted usage); a non-positive remaining yields a zero slice

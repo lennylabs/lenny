@@ -21,11 +21,7 @@ func TestIntersectScopeNarrowsToCeiling_spec_10_2(t *testing.T) {
 
 // TestIntersectScopeDisjointYieldsEmpty pins the §10.2 empty-intersection rule:
 // a subject scope that holds only out-of-ceiling values yields the empty scope
-// claim, so the mint proceeds with no scope restriction the §10.2 auth chain
-// would otherwise reject.
-//
-// spec: 10.2 line 250 (if the intersection is empty, the mint proceeds with an
-// empty scope claim)
+// claim, so the mint proceeds with no scope restriction the §10.2 auth chain would otherwise reject. spec: 10.2
 func TestIntersectScopeDisjointYieldsEmpty_spec_10_2(t *testing.T) {
 	if got := intersectScope("tools:credential:write", playgroundAllowedScope); got != "" {
 		t.Fatalf("disjoint intersectScope = %q, want empty", got)

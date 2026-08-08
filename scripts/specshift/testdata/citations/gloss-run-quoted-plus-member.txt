@@ -1,1 +1,1 @@
-// spec: §7.3 line 408 step (e) "Replay latest workspace checkpoint" + line 409
+// spec: §7.3 line 408 (e) "Replay latest workspace checkpoint" + line 409

@@ -6,8 +6,8 @@
 // every lenny-ops replica while Postgres is unreachable. The two
 // CAS-critical paths — acquire and release — run as Lua scripts so the
 // existence check and the write are atomic (no check-then-write window,
-// §25.4 line 2166); acquiredAt and expiresAt are authored from the Redis
-// TIME command so locks across replicas share one clock (§25.4 line 2202).
+// §25.4); acquiredAt and expiresAt are authored from the Redis
+// TIME command so locks across replicas share one clock (§25.4).
 // A Redis outage surfaces as coordination.ErrStoreUnavailable so the
 // tiered Service falls back to the in-memory (Tier 3) store.
 //
@@ -15,7 +15,7 @@
 // operational records, not tenant data), so the keys carry no tenant
 // prefix, matching the other ops: Redis namespaces.
 //
-// spec: §25.4 lines 2195-2202.
+// spec: §25.4.
 package redisstore
 
 import (
@@ -33,7 +33,7 @@ import (
 
 // Key namespaces. The scope key holds the lock; the id index maps a lock
 // id back to its scope for Get/Release/Extend-by-id; the epoch key is the
-// §25.4 line 2198 ops:lock-epoch:current counter.
+// §25.4 ops:lock-epoch:current counter.
 const (
 	scopePrefix = "ops:lock:"
 	idxPrefix   = "ops:lockidx:"
@@ -64,7 +64,7 @@ func unavailable(err error) error {
 	return coordination.ErrStoreUnavailable
 }
 
-// acquireScript is the §25.4 line 2197 atomic acquire CAS: a held scope
+// acquireScript is the §25.4 atomic acquire CAS: a held scope
 // returns its current lock data (the conflict path); a free scope is
 // written with the lock hash + id index under a shared PTTL.
 //
@@ -80,7 +80,7 @@ redis.call('SET', KEYS[2], ARGV[4], 'PX', ARGV[3])
 return false
 `)
 
-// releaseScript is the §25.4 line 2202 atomic release CAS: it deletes the
+// releaseScript is the §25.4 atomic release CAS: it deletes the
 // scope and index keys only when the stored lock id matches the expected
 // id, so a steal that re-keyed the scope is not clobbered by a stale
 // release. Returns 1 on delete, 0 on id mismatch.
@@ -108,7 +108,7 @@ return redis.call('GET', KEYS[1])
 `)
 
 // Acquire creates a §25.4 lock on req.Scope, stamping the current
-// ops:lock-epoch:current value (the §25.4 line 2198 read; the passed epoch
+// ops:lock-epoch:current value (the §25.4 read; the passed epoch
 // is advisory and ignored so Redis remains the authoritative Tier 2 epoch
 // source). acquiredAt and expiresAt come from the Redis TIME command.
 func (s *Store) Acquire(ctx context.Context, req coordination.LockRequest, _ uint64) (*coordination.Lock, error) {
@@ -284,7 +284,7 @@ func (s *Store) Reap(_ context.Context) (int, error) { return 0, nil }
 // steal that re-keyed the scope is not clobbered; a lock that has already
 // expired or been re-keyed is a no-op.
 //
-// spec: §25.4 line 2267.
+// spec: §25.4.
 func (s *Store) RemoveByID(ctx context.Context, lockID string) error {
 	lock, err := s.readByID(ctx, lockID)
 	if err != nil {
@@ -312,8 +312,7 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	return v, nil
 }
 
-// IncrementEpoch advances ops:lock-epoch:current by one (the §25.4 line
-// 2220 Postgres→Tier-2 transition) and returns the new value.
+// IncrementEpoch advances ops:lock-epoch:current by one (the §25.4 Postgres→Tier-2 transition) and returns the new value.
 func (s *Store) IncrementEpoch(ctx context.Context) (uint64, error) {
 	v, err := s.client.Incr(ctx, epochKey).Result()
 	if err != nil {
@@ -333,7 +332,7 @@ func (s *Store) SetEpoch(ctx context.Context, v uint64) error {
 }
 
 // serverTime reads the Redis TIME command so acquiredAt/expiresAt use the
-// §25.4 line 2202 consistent clock source across replicas.
+// §25.4 consistent clock source across replicas.
 func (s *Store) serverTime(ctx context.Context) (time.Time, error) {
 	t, err := s.client.Time(ctx).Result()
 	if err != nil {
@@ -342,13 +341,13 @@ func (s *Store) serverTime(ctx context.Context) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-// ServerTime exposes the §25.4 line 2202 Redis TIME read so the
+// ServerTime exposes the §25.4 Redis TIME read so the
 // Postgres-Redis clock-skew sampler can compare the Redis dependency
 // clock against Postgres now() without duplicating the TIME read. It
 // reuses the same source acquiredAt/expiresAt are authored from, so the
 // monitored skew is the skew that affects lease expiry computation.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring).
+// spec: §25.4.
 func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
 	return s.serverTime(ctx)
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 )
 
-// spec: §16.1 lines 97, 99, 100 — the proxy handler moves the
+// spec: §16.1 — the proxy handler moves the
 // active-connections gauge for the request lifetime, observes the
 // translator-leg duration on each successful translation, and counts a
 // translator failure by its §4.9 error_type.

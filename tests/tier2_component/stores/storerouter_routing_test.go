@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// R-03 contract test. §12.3 line 144 mandates that every billing event
+// R-03 contract test. §12.3 mandates that every billing event
 // insert and every audit log insert is routed through the StoreRouter
 // interface rather than reaching a Postgres pool directly, and that an
 // integration test named TestBillingAuditRoutedThroughStoreRouter
@@ -57,7 +57,7 @@ func (r *recordingRouter) AllAuditShards(context.Context) ([]storerouter.ShardHa
 	return nil, errSentinel
 }
 
-// spec: §12.3 R-03 line 144.
+// spec: §12.3 R-03.
 // diagnosis: a failure means billing and audit writes bypass the
 // StoreRouter, breaking the §12.3 R-03 routing that targets the correct
 // per-tenant shard.

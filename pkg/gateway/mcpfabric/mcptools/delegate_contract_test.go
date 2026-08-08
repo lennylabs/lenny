@@ -10,14 +10,14 @@ import (
 	"testing"
 )
 
-// spec: §8.2 lines 12-34 — the `lenny/delegate_task` tool surface matches
+// spec: §8.2 — the `lenny/delegate_task` tool surface matches
 // the normative `(target: string, task: TaskSpec, lease_slice?: LeaseSlice)`
 // signature. F-8.2.1.
 
 // TestDelegateTaskSchemaMatchesSection82Contract asserts the advertised
 // inputSchema carries the opaque `target` and the `task` envelope and no
 // longer carries the pre-§8.2 `runtimeRef` / `taskInput` / per-call
-// `maxDepth` fields. spec: §8.2 lines 12-34. F-8.2.1.
+// `maxDepth` fields. spec: §8.2. F-8.2.1.
 func TestDelegateTaskSchemaMatchesSection82Contract_spec_8_2(t *testing.T) {
 	srv, _ := newMCPForDelegate(t, newRecordingExecutor(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -125,8 +125,7 @@ func TestDelegateTaskSchemaAdvertisesCredentialPropagation_spec_8_3(t *testing.T
 }
 
 // TestDelegateTaskRejectsMissingTarget asserts an omitted opaque `target`
-// is rejected with VALIDATION_ERROR before any side effect. spec: §8.2
-// line 13. F-8.2.1.
+// is rejected with VALIDATION_ERROR before any side effect. spec: §8.2. F-8.2.1.
 func TestDelegateTaskRejectsMissingTarget_spec_8_2(t *testing.T) {
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, nil)
@@ -144,7 +143,7 @@ func TestDelegateTaskRejectsMissingTarget_spec_8_2(t *testing.T) {
 
 // TestDelegateTaskFlattensMultipartInput asserts a multi-part MessagePart[]
 // `task.input` is concatenated in order (text parts only) and delivered to
-// the child as its first message. spec: §8.2 lines 25-28; §15.4.1. F-8.2.1.
+// the child as its first message. spec: §8.2; §15.4.1. F-8.2.1.
 func TestDelegateTaskFlattensMultipartInput_spec_8_2(t *testing.T) {
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, nil)

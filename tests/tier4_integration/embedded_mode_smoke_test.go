@@ -2,7 +2,7 @@
 
 //go:build smoke
 
-// Embedded Mode quick-start smoke test (§17.4 line 150, §24.19). The
+// Embedded Mode quick-start smoke test (§17.4, §24.19). The
 // documented quick-start path is `lenny up` → `lenny session new` →
 // `lenny down`. This test drives that exact sequence through the real
 // cmd/lenny binary against a temporary LENNY_HOME, asserting the stack

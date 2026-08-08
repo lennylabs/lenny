@@ -111,7 +111,7 @@ func TestApplyCRDFields_PreservesNonCRDFields_spec_5_1(t *testing.T) {
 
 // TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9 verifies the §12.9 /
 // §6.4 workspaceTier mirror: a `T4` Runtime CRD value mirrors onto the
-// registry runtime so §5.2 cross-tenant-reuse rejection (line 396) and
+// registry runtime so §5.2 cross-tenant-reuse rejection and
 // the §6.4 T4 dedicated-node injection both see the same value the
 // deployer declared. An empty CRD value falls back to the empty
 // (registry T3 default) value.
@@ -145,8 +145,7 @@ func TestApplyCRDFields_MirrorsWorkspaceTier_spec_12_9(t *testing.T) {
 // / §7.5 setupCommandPolicy mirror from the CRD onto the runtimestore
 // runtime: every field (mode, shell, allowlist, blocklist, maxCommands)
 // round-trips, slices are copied (not aliased), and a nil CRD block
-// mirrors to a nil registry block (no policy declared). spec: §7.5 lines
-// 481-490 — F-7.5.10.
+// mirrors to a nil registry block (no policy declared). spec: §7.5 — F-7.5.10.
 func TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5(t *testing.T) {
 	if got := setupCommandPolicyFromCRD(nil); got != nil {
 		t.Errorf("nil setupCommandPolicy CRD block mapped to %+v, want nil", got)
@@ -205,7 +204,7 @@ func TestApplyCRDFields_MirrorsSetupCommandPolicy_spec_7_5(t *testing.T) {
 // §13.4 archivePolicy mirror from the CRD onto the runtimestore runtime:
 // the AllowSymlinks field round-trips, a nil CRD block mirrors to a nil
 // registry block, and applyCRDFields plumbs the field end-to-end.
-// spec: §7.4 lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+// spec: §7.4; §13.4 — F-7.4.4.
 func TestApplyCRDFields_MirrorsArchivePolicy_spec_7_4(t *testing.T) {
 	if got := archivePolicyFromCRD(nil); got != nil {
 		t.Errorf("nil archivePolicy CRD block mapped to %+v, want nil", got)
@@ -296,7 +295,7 @@ func TestDomainLabels_AllSystem(t *testing.T) {
 // mirrors from the CRD onto the runtimestore: interaction + injection
 // (supported + modes) + preConnect round-trip; a nil CRD block mirrors to
 // nil; the modes slice is copied, not aliased to the CRD slice.
-// spec: §5.1 lines 60-64; §26.3 lines 150-155 — F-26.3.1 / F-26.9.2 /
+// spec: §5.1; §26.3 — F-26.3.1 / F-26.9.2 /
 // F-26.10.2 / F-26.11.2.
 func TestCapabilitiesFromCRD_spec_5_1(t *testing.T) {
 	if got := capabilitiesFromCRD(nil); got != nil {
@@ -338,7 +337,7 @@ func TestCapabilitiesFromCRD_spec_5_1(t *testing.T) {
 // TestRuntimeOptionsSchemaFromRef_spec_5_1 verifies the §5.1 / §26 schema
 // URL is rendered as a JSON {"$ref": "<url>"} fragment the §14 validator
 // can dereference. An empty ref returns nil.
-// spec: §5.1 line 92; §26.9 line 408 — F-26.9.2.
+// spec: §5.1; §26.9 — F-26.9.2.
 func TestRuntimeOptionsSchemaFromRef_spec_5_1(t *testing.T) {
 	if got := runtimeOptionsSchemaFromRef(""); got != nil {
 		t.Errorf("empty ref returned %s, want nil", got)
@@ -358,7 +357,7 @@ func TestRuntimeOptionsSchemaFromRef_spec_5_1(t *testing.T) {
 // verifies the end-to-end plumbing: the §5.1 capabilities block, the
 // §5.1 / §26 runtimeOptionsSchemaRef URL, and the §5.1 / §26.11
 // delegationPolicyRef all land on the runtimestore runtime when the CRD
-// declares them. spec: §5.1 lines 60-92; §26.11 line 467 — F-26.9.2 /
+// declares them. spec: §5.1; §26.11 — F-26.9.2 /
 // F-26.10.2 / F-26.11.2.
 func TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1(t *testing.T) {
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{
@@ -393,7 +392,7 @@ func TestApplyCRDFields_MirrorsCapabilitiesAndSchemaAndDelegation_spec_5_1(t *te
 
 // TestLimitsFromCRD_spec_5_1 verifies the §5.1 limits block maps field for
 // field, and a nil CRD block maps to a nil registry block (platform
-// defaults). spec: §5.1 lines 76-79; §26.3 lines 166-169 — F-26.2.1 /
+// defaults). spec: §5.1; §26.3 — F-26.2.1 /
 // F-26.3.2.
 func TestLimitsFromCRD_spec_5_1(t *testing.T) {
 	if got := limitsFromCRD(nil); got != nil {
@@ -419,7 +418,7 @@ func TestLimitsFromCRD_spec_5_1(t *testing.T) {
 
 // TestSetupPolicyFromCRD_spec_5_1 verifies the §5.1 setupPolicy block maps
 // the timeout and onTimeout disposition, and a nil CRD block maps to nil.
-// spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 / F-26.3.4.
+// spec: §5.1; §26.3 — F-26.2.1 / F-26.3.4.
 func TestSetupPolicyFromCRD_spec_5_1(t *testing.T) {
 	if got := setupPolicyFromCRD(nil); got != nil {
 		t.Errorf("nil block mapped to %+v, want nil", got)
@@ -432,7 +431,7 @@ func TestSetupPolicyFromCRD_spec_5_1(t *testing.T) {
 
 // TestDefaultPoolConfigFromCRD_spec_5_1 verifies the §5.1 defaultPoolConfig
 // block maps warmCount, resourceClass, and egressProfile, and a nil CRD
-// block maps to nil. spec: §5.1 lines 97-100; §26.3 lines 181-184 —
+// block maps to nil. spec: §5.1; §26.3 —
 // F-26.2.1 / F-26.3.5.
 func TestDefaultPoolConfigFromCRD_spec_5_1(t *testing.T) {
 	if got := defaultPoolConfigFromCRD(nil); got != nil {
@@ -448,8 +447,8 @@ func TestDefaultPoolConfigFromCRD_spec_5_1(t *testing.T) {
 
 // TestAgentInterfaceFromCRD_spec_5_1 verifies the §5.1 agentInterface
 // descriptor maps the description, media-type modes, workspace-files flag,
-// and skills, and a nil CRD block maps to nil. spec: §5.1 lines 102-130;
-// §26.3 lines 185-199 — F-26.2.1 / F-26.3.5.
+// and skills, and a nil CRD block maps to nil. spec: §5.1;
+// §26.3 — F-26.2.1 / F-26.3.5.
 func TestAgentInterfaceFromCRD_spec_5_1(t *testing.T) {
 	if got := agentInterfaceFromCRD(nil); got != nil {
 		t.Errorf("nil block mapped to %+v, want nil", got)
@@ -482,7 +481,7 @@ func TestAgentInterfaceFromCRD_spec_5_1(t *testing.T) {
 // TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2 verifies the §26.2
 // shared coding-agent blocks (limits, setupPolicy, defaultPoolConfig) and
 // the §26.3 agentInterface all land on the registry runtime end-to-end.
-// spec: §26.2 lines 81-92; §26.3 lines 166-199 — F-26.2.1 / F-26.3.2 /
+// spec: §26.2; §26.3 — F-26.2.1 / F-26.3.2 /
 // F-26.3.4 / F-26.3.5.
 func TestApplyCRDFields_MirrorsCodingAgentBlocks_spec_26_2(t *testing.T) {
 	rt := &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{

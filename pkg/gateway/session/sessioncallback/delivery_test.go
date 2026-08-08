@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/webhooksig"
 )
 
-// TestRetrySchedule pins the §14 line 150 backoff and attempt budget so a
+// TestRetrySchedule pins the §14 backoff and attempt budget so a
 // future edit cannot silently change the delivery policy. F-14.1.11.
 func TestRetrySchedule_spec_14_150(t *testing.T) {
 	if MaxAttempts != 5 {
@@ -76,7 +76,7 @@ func completedJob(srvURL string) Job {
 
 // TestDispatcherDeliversSuccess verifies the §14 CloudEvents envelope,
 // the cloudevents Content-Type, the HMAC signature, and the secret-clear
-// on a 2xx delivery. spec: §14 lines 114-139. F-14.1.11.
+// on a 2xx delivery. spec: §14. F-14.1.11.
 func TestDispatcherDeliversSuccess_spec_14_114(t *testing.T) {
 	var gotBody []byte
 	var gotSig, gotCT, gotType, gotID string
@@ -126,7 +126,7 @@ func TestDispatcherDeliversSuccess_spec_14_114(t *testing.T) {
 }
 
 // TestDispatcherRetriesThenSucceeds confirms a transient 500 is retried
-// and a later 2xx settles the delivery. spec: §14 line 150. F-14.1.11.
+// and a later 2xx settles the delivery. spec: §14. F-14.1.11.
 func TestDispatcherRetriesThenSucceeds_spec_14_150(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +152,7 @@ func TestDispatcherRetriesThenSucceeds_spec_14_150(t *testing.T) {
 
 // TestDispatcherExhaustion confirms a persistently failing receiver
 // exhausts the §14 retry budget and records the undelivered event with
-// the last status. spec: §14 line 150. F-14.1.11.
+// the last status. spec: §14. F-14.1.11.
 func TestDispatcherExhaustion_spec_14_150(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -184,8 +184,7 @@ func TestDispatcherExhaustion_spec_14_150(t *testing.T) {
 }
 
 // TestDispatcherPermanentFailureNoRetry confirms a non-retryable status
-// (4xx other than 429) is not retried. spec: §14 line 150 (only non-2xx
-// transient failures retry). F-14.1.11.
+// (4xx other than 429) is not retried. spec: §14. F-14.1.11.
 func TestDispatcherPermanentFailureNoRetry_spec_14_150(t *testing.T) {
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -209,7 +208,7 @@ func TestDispatcherPermanentFailureNoRetry_spec_14_150(t *testing.T) {
 
 // TestDispatcherFreshSignaturePerAttempt confirms each delivery attempt
 // re-signs with a fresh timestamp while the CloudEvents time stays fixed.
-// spec: §14 line 139. F-14.1.11.
+// spec: §14. F-14.1.11.
 func TestDispatcherFreshSignaturePerAttempt_spec_14_139(t *testing.T) {
 	var sigs []string
 	var bodyTimes []any
@@ -247,7 +246,7 @@ func TestDispatcherFreshSignaturePerAttempt_spec_14_139(t *testing.T) {
 
 // TestPinnedClientDialsPin confirms the delivery transport dials the
 // pinned IP regardless of the URL hostname (DNS-rebind defense).
-// spec: §14 line 110. F-14.1.11.
+// spec: §14. F-14.1.11.
 func TestPinnedClientDialsPin_spec_14_110(t *testing.T) {
 	var hit int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -281,7 +280,7 @@ func TestPinnedClientDialsPin_spec_14_110(t *testing.T) {
 	}
 }
 
-// TestPinnedClientRefusesRedirect confirms the §14 line 111 no-redirect
+// TestPinnedClientRefusesRedirect confirms the §14 no-redirect
 // rule. F-14.1.11.
 func TestPinnedClientRefusesRedirect_spec_14_111(t *testing.T) {
 	c := pinnedHTTPClient(netip.MustParseAddr("93.184.216.34"))
@@ -294,7 +293,7 @@ func TestPinnedClientRefusesRedirect_spec_14_111(t *testing.T) {
 }
 
 // TestDispatcherRevalidatesPin confirms a pin that turned private since
-// admission is not dialed. spec: §14 line 110. F-14.1.11.
+// admission is not dialed. spec: §14. F-14.1.11.
 func TestDispatcherRevalidatesPin_spec_14_110(t *testing.T) {
 	var hit int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

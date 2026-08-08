@@ -1,4 +1,4 @@
--- §4.4 line 291: storage quota accounting for eviction context objects.
+-- §4.4: storage quota accounting for eviction context objects.
 -- The eviction-fallback writer (pkg/gateway/evictionfallback) records
 -- an `artifact_store` row alongside every successfully-uploaded
 -- eviction-context MinIO object so the bytes are tracked in the §12.5
@@ -15,7 +15,7 @@
 -- on its dedicated path; future artifact kinds (checkpoint chunks,
 -- exported subsets) extend the enum without further schema changes.
 --
--- spec: §4.4 line 291.
+-- spec: §4.4.
 
 ALTER TABLE artifact_store
     ADD COLUMN IF NOT EXISTS artifact_type TEXT NOT NULL DEFAULT 'workspace';
@@ -30,7 +30,7 @@ ALTER TABLE artifact_store
     ADD CONSTRAINT artifact_store_artifact_type_check
     CHECK (artifact_type IN ('workspace', 'eviction_context', 'checkpoint', 'export'));
 
--- §4.4 line 291 / §12.5 GC sweep: index on (artifact_type,
+-- §4.4 / §12.5 GC sweep: index on (artifact_type,
 -- soft_deleted_at) so the eviction-context-specific cleanup queries
 -- can range-scan the catalog without re-reading the entire table.
 CREATE INDEX IF NOT EXISTS idx_artifact_store_type_state

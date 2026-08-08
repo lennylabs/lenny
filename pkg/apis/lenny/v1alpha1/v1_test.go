@@ -32,7 +32,7 @@ func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 			t.Errorf("%T is not registered with the scheme: %v", obj, err)
 			continue
 		}
-		// spec: §15.5 line 2433 — CRDs ship initially at v1alpha1 and
+		// spec: §15.5 — CRDs ship initially at v1alpha1 and
 		// follow the graduation path v1alpha1 → v1beta1 → v1.
 		if len(gvks) == 0 || gvks[0].Group != "lenny.dev" || gvks[0].Version != "v1alpha1" {
 			t.Errorf("%T: registered as %v, want group lenny.dev version v1alpha1", obj, gvks)

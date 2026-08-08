@@ -50,7 +50,7 @@ func postIdem(srv *opsserver.Server, path, key, caller, body string) *httptest.R
 	return rec
 }
 
-// spec: §25.4 lines 2031-2035 — through the full Server, a full backup
+// spec: §25.4 — through the full Server, a full backup
 // (a required-key endpoint) without an Idempotency-Key is rejected at
 // Tier 2/3 before the handler runs.
 func TestServerRequiredKeyMissing_spec_25_4(t *testing.T) {

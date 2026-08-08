@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 )
 
-// TestStoreDeliveryRecorderWritesRow is the §25.5 lines 2701-2713
+// TestStoreDeliveryRecorderWritesRow is the §25.5
 // contract: a recorded delivery is persisted with the right status and
 // an expires_at that is exactly the retention TTL past the row's
 // creation.
@@ -36,8 +36,7 @@ func TestStoreDeliveryRecorderWritesRow_spec_25_5_2701(t *testing.T) {
 }
 
 // TestStoreDeliveryRecorderFailuresOnlyRetention confirms a failed
-// delivery uses the longer failures-only retention window. spec: §25.5
-// line 2663.
+// delivery uses the longer failures-only retention window. spec: §25.5.
 func TestStoreDeliveryRecorderFailuresOnlyRetention_spec_25_5_2663(t *testing.T) {
 	store := eventsubscription.NewMemoryStore()
 	rec := NewStoreDeliveryRecorder(store, RetentionPolicy{

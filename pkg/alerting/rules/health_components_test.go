@@ -4,7 +4,7 @@ package rules
 
 import "testing"
 
-// spec: §25.3 lines 443-451 — every alert the §25.3 health derivation maps
+// spec: §25.3 — every alert the §25.3 health derivation maps
 // to a component must name a real rule in the §16.5 catalogue, or the
 // overlay silently never fires when the rule is renamed.
 func TestHealthComponentMapReferencesRealRules_spec_25_3_443(t *testing.T) {
@@ -19,7 +19,7 @@ func TestHealthComponentMapReferencesRealRules_spec_25_3_443(t *testing.T) {
 	}
 }
 
-// spec: §25.3 lines 443-451 — the mapping must resolve to one of the
+// spec: §25.3 — the mapping must resolve to one of the
 // gateway's registered health-component names.
 func TestHealthComponentMapTargetsAreKnownComponents_spec_25_3_443(t *testing.T) {
 	valid := map[string]bool{

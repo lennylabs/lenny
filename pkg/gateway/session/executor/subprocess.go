@@ -281,7 +281,7 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 			ch <- result{err: fmt.Errorf("executor: read from runtime: %w", err)}
 			return
 		}
-		// spec: §15.4.1 line 1889 — the runtime closed stdout before
+		// spec: §15.4.1 — the runtime closed stdout before
 		// emitting a `response`. If it exited non-zero, synthesize a
 		// RUNTIME_CRASH from the exit code and the captured stderr; a
 		// clean (code 0) exit with no response is a protocol error, not a
@@ -392,7 +392,7 @@ type fromBlock struct {
 // lenny/send_message whose sender the gateway authenticated) is stamped
 // verbatim; a message with no attribution defaults to the gateway-client
 // identity used for top-level client turns. The runtime never supplies
-// `from`; the gateway is authoritative. spec: §15.4.1 lines 1696-1707.
+// `from`; the gateway is authoritative. spec: §15.4.1.
 // F-13.5.11.
 func resolveFromBlock(m Message) fromBlock {
 	if m.From.Kind != "" {

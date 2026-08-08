@@ -30,9 +30,9 @@ import (
 type Store struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
-	// read is the §12.3 line 146 read-replica pool for the read-heavy
+	// read is the §12.3 read-replica pool for the read-heavy
 	// task-tree replay/lookup paths. It is set to pool unless WithReadPool
-	// wires a separate reader; writes always use pool. spec: §12.3 line 146.
+	// wires a separate reader; writes always use pool. spec: §12.3.
 	read *pgxpool.Pool
 }
 
@@ -40,8 +40,8 @@ type Store struct {
 type Option func(*Store)
 
 // WithReadPool routes the read-heavy task-tree replay/lookup queries
-// (§12.3 line 146) to a separate read-replica pool. A nil pool keeps
-// reads on the primary. spec: §12.3 line 146.
+// (§12.3) to a separate read-replica pool. A nil pool keeps
+// reads on the primary. spec: §12.3.
 func WithReadPool(read *pgxpool.Pool) Option {
 	return func(s *Store) {
 		if read != nil {
@@ -115,7 +115,7 @@ func (s *Store) Archive(ctx context.Context, n treearchive.ArchivedNode) error {
 // order when two nodes settled in the same instant.
 func (s *Store) Replay(ctx context.Context, tenantID, rootSessionID string) ([]treearchive.ArchivedNode, error) {
 	out := make([]treearchive.ArchivedNode, 0)
-	// spec: §12.3 line 146 — task-tree replay routes to the read replica.
+	// spec: §12.3 — task-tree replay routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			`SELECT `+selectList+` FROM session_tree_archive
@@ -146,7 +146,7 @@ func (s *Store) Replay(ctx context.Context, tenantID, rootSessionID string) ([]t
 // indistinguishable from a missing row per §12.3 isolation.
 func (s *Store) Get(ctx context.Context, tenantID, rootSessionID, nodeSessionID string) (treearchive.ArchivedNode, error) {
 	var out treearchive.ArchivedNode
-	// spec: §12.3 line 146 — task-tree node lookup routes to the read replica.
+	// spec: §12.3 — task-tree node lookup routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM session_tree_archive
@@ -175,7 +175,7 @@ func (s *Store) Get(ctx context.Context, tenantID, rootSessionID, nodeSessionID 
 // its tree root. ErrNotFound is returned when no matching node exists.
 func (s *Store) GetByNode(ctx context.Context, tenantID, nodeSessionID string) (treearchive.ArchivedNode, error) {
 	var out treearchive.ArchivedNode
-	// spec: §12.3 line 146 — task-tree node lookup routes to the read replica.
+	// spec: §12.3 — task-tree node lookup routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM session_tree_archive
@@ -205,7 +205,7 @@ func (s *Store) GetByNode(ctx context.Context, tenantID, nodeSessionID string) (
 // session row delete would violate the constraint. The RLS guard scopes
 // the delete to tenantID.
 //
-// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+// spec: §12.8.
 func (s *Store) DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error) {
 	if tenantID == "" || rootSessionID == "" {
 		return 0, errors.New("treearchive: DeleteBySession requires non-empty tenant and root session ids")

@@ -351,7 +351,7 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 // the §4.7 ShutdownRequest.deadline_ms field flows into the runtime
 // adapter's Close as a context deadline, so the §11.4 10s graceful
 // window is honored by the adapter instead of an internal default.
-// spec: §11.4 line 258.
+// spec: §11.4.
 func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
@@ -376,7 +376,7 @@ func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 // TestShutdownWithoutDeadlineMsInheritsContext asserts that a request
 // with a zero (or absent) deadline_ms falls through to the inbound RPC
 // context, preserving the legacy behavior for callers that do not pin
-// the §11.4 graceful window. spec: §11.4 line 258.
+// the §11.4 graceful window. spec: §11.4.
 func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {

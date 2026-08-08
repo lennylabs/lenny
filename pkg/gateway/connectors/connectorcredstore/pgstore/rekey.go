@@ -15,7 +15,7 @@ import (
 // RekeyName identifies this store in the §4.9.1 re-encryption job
 // summary. A connector_credentials row holds the OAuth access and
 // refresh tokens the §4.9.1 procedure re-encrypts alongside the
-// user-supplied API keys. spec: §4.9.1 line 1714.
+// user-supplied API keys. spec: §4.9.1.
 func (s *Store) RekeyName() string { return "connector_credentials" }
 
 // CountStale runs the §4.9.1 verification query for tenantID: the count
@@ -24,7 +24,7 @@ func (s *Store) RekeyName() string { return "connector_credentials" }
 // refresh token (the refresh column is empty) is counted only on its
 // access token.
 //
-// spec: §4.9.1 line 1723.
+// spec: §4.9.1.
 func (s *Store) CountStale(ctx context.Context, tenantID string) (int, error) {
 	current, err := s.kms.CurrentKEKVersion(ctx, kekAlias(tenantID))
 	if err != nil {
@@ -55,7 +55,7 @@ func (s *Store) CountStale(ctx context.Context, tenantID string) (int, error) {
 // hash and updated_at are unchanged; re-keying is at-rest maintenance,
 // not a token rotation.
 //
-// spec: §4.9.1 lines 1718-1721.
+// spec: §4.9.1.
 func (s *Store) RekeyTenant(ctx context.Context, tenantID string) (int, error) {
 	current, err := s.kms.CurrentKEKVersion(ctx, kekAlias(tenantID))
 	if err != nil {

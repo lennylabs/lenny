@@ -22,7 +22,7 @@ type totalObs struct {
 	seconds          float64
 }
 
-// spec: §6.3 line 372 — recordStartupPhases emits one per-phase
+// spec: §6.3 — recordStartupPhases emits one per-phase
 // observation for each phase the caller measured, labeled with the
 // runtime class mapped from the pool's isolation profile. A whole-sequence
 // Bind measured every phase, so all five §6.3 phases are observed.
@@ -69,7 +69,7 @@ func TestRecordStartupPhases_spec_6_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 372 / §5 (0007 proposal) — the decomposed lifecycle
+// spec: §6.3 / §5 (0007 proposal) — the decomposed lifecycle
 // records each §6.3 phase at the boundary where it runs. /create records
 // only pod_claim; recordStartupPhases must not emit a spurious 0s sample
 // for the four phases that have not run yet, which would pollute their
@@ -97,7 +97,7 @@ func TestRecordStartupPhasesSkipsZeroValuedPhases_spec_6_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 372 / §5 (0007 proposal) — the launch boundary records
+// spec: §6.3 / §5 (0007 proposal) — the launch boundary records
 // the prepare/launch phases it measured but leaves pod_claim zero (it was
 // recorded at /create). recordStartupPhases must skip the zero pod_claim so
 // the start-time call does not re-emit a 0s pod_claim sample.
@@ -134,7 +134,7 @@ func TestRecordStartupPhasesSkipsPodClaimAtLaunch_spec_6_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 348 — recordStartupDuration emits the end-to-end
+// spec: §6.3 — recordStartupDuration emits the end-to-end
 // pod-warm envelope: total = pod claim + credential assignment + agent
 // session start, excluding workspace materialization and deployer setup
 // commands.

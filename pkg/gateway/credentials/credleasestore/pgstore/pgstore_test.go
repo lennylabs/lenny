@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms"
 )
 
-// spec: §12.9 line 1048 — a credential lease is T4 — Restricted and must
+// spec: §12.9 — a credential lease is T4 — Restricted and must
 // be stored under envelope encryption, so the Postgres-backed store must
 // refuse to construct without a KEK provider.
 func TestNewRequiresKMSProvider(t *testing.T) {
@@ -36,7 +36,7 @@ func TestNewRequiresKMSProvider(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1048 — the bearer lease token must not be persisted in
+// spec: §12.9 — the bearer lease token must not be persisted in
 // cleartext; GetByToken resolves it through a deterministic SHA-256 hash.
 func TestLeaseTokenHash(t *testing.T) {
 	t.Parallel()

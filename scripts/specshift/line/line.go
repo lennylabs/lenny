@@ -273,8 +273,8 @@ func fileTies(path, after string, strips []strip) error {
 // text is required to carry none. A citation standing in it is one the
 // replacement itself composed, out of the anchor the conversion emitted
 // and the carrier text beside the citation it replaced. Two spellings
-// compose that way: a citation whose bare-word gloss ran to a trailing
-// colon, whose anchor then stands directly against that colon and reads
+// compose that way: a citation whose gloss closes on a trailing colon,
+// whose anchor then stands directly against that colon and reads
 // the integer opening the next comment line as a member; and a citation
 // followed by a separator word and a further parenthesized reference,
 // whose anchor and qualifier then absorb the words behind the separator

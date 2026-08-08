@@ -4,7 +4,7 @@
 // handoff-safe durable home for the §8.6 extension-denied flag, the
 // rejection cool-off expiry, and the lease-extension grant counters.
 //
-// §8.6 lines 730-733 forbid a user's rejection of a budget elicitation
+// §8.6 forbid a user's rejection of a budget elicitation
 // from being bypassed by a gateway restart, rolling update, or
 // coordinator handoff. This store satisfies the three normative rules:
 //
@@ -23,13 +23,13 @@
 //     the race where a REJECTED outcome is persisted between an earlier
 //     flag read and a later grant commit.
 //
-// All cool-off comparisons use the database clock per §8.6 line 733; the
+// All cool-off comparisons use the database clock per §8.6; the
 // store never compares an expiry against time.Now() in Go. The §11.2
 // consumption-counter checkpoint (delegationbudget/pgstore) and this
 // store write disjoint column sets on the same row, so neither clobbers
 // the other.
 //
-// spec: §8.6 lines 730-733.
+// spec: §8.6.
 package denialpg
 
 import (
@@ -58,7 +58,7 @@ func New(pool *pgxpool.Pool) *Store {
 var _ leasecontrol.DenialStore = (*Store)(nil)
 
 // Deny persists the tree's extension-denied flag and sets the cool-off
-// expiry coolOff into the future from the database clock (§8.6 line 733),
+// expiry coolOff into the future from the database clock (§8.6),
 // keyed by (tenantID, rootSessionID). It upserts so a tree with no prior
 // row (no checkpoint yet) is created denied. The §11.2 consumption
 // columns are left at their defaults.
@@ -85,7 +85,7 @@ func (s *Store) Deny(ctx context.Context, tenantID, rootSessionID string, coolOf
 
 // Denied reports whether the tree is currently extension-denied. The
 // flag-set AND cool_off_expiry > NOW() comparison is evaluated in SQL
-// against the database clock (§8.6 line 733). A tree with no persisted
+// against the database clock (§8.6). A tree with no persisted
 // row is reported not denied with a zero expiry.
 func (s *Store) Denied(ctx context.Context, tenantID, rootSessionID string) (bool, time.Time, error) {
 	var denied bool
@@ -112,7 +112,7 @@ func (s *Store) Denied(ctx context.Context, tenantID, rootSessionID string) (boo
 	return denied, expiry.UTC(), nil
 }
 
-// Grant runs the §8.6 line 732 in-flight atomic re-check. The single
+// Grant runs the §8.6 in-flight atomic re-check. The single
 // upsert acquires the tree row's lock (via ON CONFLICT) and either:
 //
 //   - increments the durable per-tree extension counters and returns the
@@ -168,7 +168,7 @@ func (s *Store) Grant(ctx context.Context, tenantID, rootSessionID string, grant
 }
 
 // Clear clears the tree's extension-denied flag and cool-off, backing the
-// §15.1 line 868 admin extension-denial clear endpoint. Clearing a tree
+// §15.1 admin extension-denial clear endpoint. Clearing a tree
 // with no persisted denial row is a no-op (the caller has already
 // established the tree is known).
 func (s *Store) Clear(ctx context.Context, tenantID, rootSessionID string) error {

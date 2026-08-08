@@ -366,7 +366,7 @@ spec:
 {{/*
 allow-gateway-metrics-scrape and allow-token-service-metrics-scrape
 admit Prometheus scrape requests from the monitoring namespace to the
-gateway and Token Service metrics ports (§13.2 line 228 supplemental
+gateway and Token Service metrics ports (§13.2 supplemental
 ingress). Without them the lenny-system default-deny silently drops
 those component metrics scrapes.
 */}}
@@ -414,7 +414,7 @@ spec:
 ---
 {{/*
 allow-pgbouncer re-admits the §13.2 PgBouncer flows the lenny-system
-default-deny otherwise blocks (§13.2 line 219, self-managed profile):
+default-deny otherwise blocks (§13.2, self-managed profile):
 ingress from the gateway, Token Service, and controller pods on 5432,
 and egress to Postgres and kube-system CoreDNS.
 */}}
@@ -466,7 +466,7 @@ spec:
 ---
 {{/*
 allow-minio re-admits the §13.2 MinIO flows the lenny-system
-default-deny otherwise blocks (§13.2 line 220, self-managed profile):
+default-deny otherwise blocks (§13.2, self-managed profile):
 ingress from the gateway pods on the TLS port, and egress to
 kube-system CoreDNS.
 */}}
@@ -524,7 +524,7 @@ spec:
 ---
 {{/*
 allow-gateway-egress re-admits the gateway's in-cluster egress the
-§13.2 default-deny otherwise blocks (§13.2 line 216): the agent-pod
+§13.2 default-deny otherwise blocks (§13.2): the agent-pod
 adapters, the Token Service, PgBouncer, Redis, MinIO, the
 kube-apiserver, and kube-system CoreDNS. The external-HTTPS egress
 with its §13.2 NET-062 dual-family IMDS/private-range exclusions is
@@ -630,7 +630,7 @@ HTTP ports for the §25.3 admin-API (NET-051, NET-070); and the
 lenny-bootstrap Job on the internal HTTP port, which POSTs the §17.6
 Day-1 seed to the admin API. The lenny-ops peer is rendered with an
 explicit namespaceSelector plus podSelector matchLabels app: lenny-ops
-per the §13.2 line 201 selector exception (lenny-ops uses app:
+per the §13.2 selector exception (lenny-ops uses app:
 lenny-ops, not lenny.dev/component). The Prometheus metrics-scrape
 ingress is rendered separately by allow-gateway-metrics-scrape and is
 not duplicated here.
@@ -647,7 +647,7 @@ spec:
     matchLabels:
       lenny.dev/component: gateway
   ingress:
-    # spec: §13.2 lines 266-292. F-13.2.8. The from: clause pairs the
+    # spec: §13.2. F-13.2.8. The from: clause pairs the
     # namespaceSelector with a podSelector matching the configured
     # ingress controllerPodLabel so only Ingress controller pods reach
     # the gateway TLS listener; sidecars, cert-manager validators, and
@@ -805,13 +805,13 @@ spec:
 {{- /*
 lenny-ops-deny-all-ingress is the §25.4 baseline default-deny for the
 operability control plane: it selects the lenny-ops pods (app: lenny-ops,
-the §13.2 line 201 selector exception) and admits no ingress. The
+the §13.2 selector exception) and admits no ingress. The
 lenny-system namespace default-deny-all already denies ingress, but §17.2
 line 31 and the §17 NetworkPolicy inventory name this policy explicitly as
 the agent-vs-operability boundary enforcer; rendering it by name lets
 operator runbooks and the §13.2 selector-consistency audit assert its
 presence. NetworkPolicies are additive, so the allow-ops Prometheus-scrape
-ingress below still applies. spec: §25.4 line 1123; §17.2 line 31. F-17.2.16.
+ingress below still applies. spec: §25.4; §17.2. F-17.2.16.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -830,7 +830,7 @@ spec:
 {{/*
 allow-ops re-admits the §25.4 lenny-ops Deployment's egress and
 ingress the §13.2 default-deny otherwise blocks. lenny-ops pods carry
-app: lenny-ops (the §13.2 line 201 selector exception), so this policy
+app: lenny-ops (the §13.2 selector exception), so this policy
 keys on that label. Egress: the gateway admin-API on the internal TLS
 and HTTP ports (NET-051, NET-070), and CoreDNS for name resolution.
 Ingress: per the §13.2 lenny-ops ingress note and §25.4, lenny-ops is

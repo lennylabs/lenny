@@ -34,7 +34,7 @@ const (
 //	    with the canonical key.
 //
 // The check is fail-closed: a silently non-matching NetworkPolicy is
-// more dangerous than a missing one (§13.2 line 209).
+// more dangerous than a missing one (§13.2).
 //
 // TODO(NET-050): §13.2 part (b) of the NET-047/NET-050 audit — "any
 // selector matches zero pods for a component that is expected to be
@@ -200,8 +200,7 @@ func CheckDNSPodSelectorParity(policies []networkingv1.NetworkPolicy) Decision {
 // The check is fail-closed at install/upgrade (§17.6): a silently broken
 // checkpoint egress pair is more dangerous than a missing one.
 //
-// spec: §13.2 line 209 (NET-047/NET-050 preflight selector audit and the
-// egress/ingress parity check); §17.6 (Checks performed, NET-071).
+// spec: §13.2; §17.6 (Checks performed, NET-071).
 func CheckObjectStoreEgressParity(policies []networkingv1.NetworkPolicy) Decision {
 	var egressInClusterArm *networkingv1.NetworkPolicy
 	var minioIngressClause *networkingv1.NetworkPolicy

@@ -29,7 +29,7 @@ func newManager(t *testing.T, now func() time.Time) (*Manager, *recordingObserve
 	return m, obs
 }
 
-// spec: §10.3 lines 344-350 — the full operator-driven rotation:
+// spec: §10.3 — the full operator-driven rotation:
 // idle -> begin -> promote -> retire, each stage audited exactly once
 // after it durably commits, and the overlap guard enforced on retire.
 func TestManager_fullLifecycle_spec_10_3(t *testing.T) {

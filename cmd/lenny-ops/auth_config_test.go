@@ -26,7 +26,7 @@ func writeHMACKeyFile(t *testing.T, secret string) string {
 	return p
 }
 
-// spec: §25.4 line 1562 — a production lenny-ops with no verify key
+// spec: §25.4 — a production lenny-ops with no verify key
 // configured is a fatal misconfiguration; buildAuthConfig reports an
 // error so the binary refuses to serve the platform-admin surface
 // anonymously.
@@ -40,7 +40,7 @@ func TestBuildAuthConfig_ProductionRequiresKey(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — outside production, a missing key leaves the
+// spec: §25.4 — outside production, a missing key leaves the
 // surface unauthenticated (nil config, no error). This pins the dev
 // fallback.
 func TestBuildAuthConfig_DevWithoutKeyIsOpen(t *testing.T) {
@@ -53,7 +53,7 @@ func TestBuildAuthConfig_DevWithoutKeyIsOpen(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 1562-1564 / §17 security.oidc.issuerUrl — a
+// spec: §25.4 / §17 security.oidc.issuerUrl — a
 // configured key yields a verifier; when an issuer is set the verifier
 // rejects a bearer whose iss claim differs and admits a matching one.
 func TestBuildAuthConfig_WithKeyAndIssuer(t *testing.T) {
@@ -80,7 +80,7 @@ func TestBuildAuthConfig_WithKeyAndIssuer(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — a key file path that does not resolve to a
+// spec: §25.4 — a key file path that does not resolve to a
 // valid HMAC key is a startup error rather than a silently-open surface.
 func TestBuildAuthConfig_BadKeyFileErrors(t *testing.T) {
 	if _, err := buildAuthConfig(filepath.Join(t.TempDir(), "missing.json"), "", false, false, 20, 50); err == nil {

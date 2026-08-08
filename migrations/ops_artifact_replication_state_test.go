@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.11 lines 4073-4098. Migration 0126 creates the
+// spec: §25.11. Migration 0126 creates the
 // ops_artifact_replication_state table the §25.11 ArtifactStore
 // replication Controller persists RegionState rows to. Platform-scoped
 // (no RLS, no tenant column); the down migration drops the table.
@@ -32,7 +32,7 @@ func TestOpsArtifactReplicationStateMigration_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4145-4149. Migration 0127 adds the restore Job
+// spec: §25.11. Migration 0127 adds the restore Job
 // correlation column and the legal-hold ledger confirmation watermark to
 // ops_restore_state (added to the RestoreState row after 0123 shipped).
 func TestOpsRestoreStateCompletionMigration_spec_25_11(t *testing.T) {

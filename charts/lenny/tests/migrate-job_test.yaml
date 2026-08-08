@@ -1,8 +1,8 @@
-suite: §10.5 line 408 lenny-migrate pre-deploy schema-migration Job
+suite: §10.5 lenny-migrate pre-deploy schema-migration Job
 templates:
   - migrate-job.yaml
 tests:
-  # spec: §10.5 line 408 / F-10.5.2 — the Job renders only when an
+  # spec: §10.5 / F-10.5.2 — the Job renders only when an
   # external Postgres DSN is configured; a stock in-memory install has
   # no schema to migrate.
   - it: renders nothing when postgres.dsn is unset (in-memory install)
@@ -47,7 +47,7 @@ tests:
           path: spec.template.spec.containers[0].env[0].value
           value: "postgres://lenny:secret@db.acme.internal:5432/lenny?sslmode=require"
 
-  # spec: §24.13 line 150 / F-24.13.4 — the applying Job name is recorded
+  # spec: §24.13 / F-24.13.4 — the applying Job name is recorded
   # in the schema_migration_phase table and surfaced as `migrationJobName`
   # in `lenny-ctl migrate status`. The downward API supplies the generated
   # Job name from the pod's `job-name` label.

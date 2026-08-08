@@ -26,7 +26,7 @@ import (
 // exhaustion path is Terminal and it terminates the session rather than
 // attempting the §8.6 extension.
 //
-// spec: §8.6 line 629; §11.2 line 44; proposal 0023 S6.
+// spec: §8.6; §11.2; proposal 0023 S6.
 
 // recordingTerminator records the sessions the enforcer terminates so a test
 // can assert that a granted extension leaves the session alive.
@@ -235,7 +235,7 @@ func TestLeaseExtendSeamPendingDeniesWithoutTerminating_spec_8_6_line_629(t *tes
 // the buildControlServer nil-guard preserves: without a leasecontrol.Service
 // (no --grpc-addr) the composition root never calls SetExtendOnExhaustion, so
 // the enforcer keeps its nil seam and terminates immediately on exhaustion, the
-// §11.2 line 44 behavior. This is the fail-closed default a missing seam must
+// §11.2 behavior. This is the fail-closed default a missing seam must
 // not weaken.
 func TestLeaseExtendSeamNilOnLocalDevPath_spec_11_2_line_44(t *testing.T) {
 	term := &recordingTerminator{}
@@ -253,6 +253,6 @@ func TestLeaseExtendSeamNilOnLocalDevPath_spec_11_2_line_44(t *testing.T) {
 		t.Fatalf("a nil seam must fail closed to Terminal, got %v", outcome)
 	}
 	if len(term.terminated) != 1 || term.terminated[0] != "s_local" {
-		t.Fatalf("the nil-seam path must terminate immediately (§11.2 line 44), terminated=%v", term.terminated)
+		t.Fatalf("the nil-seam path must terminate immediately (§11.2), terminated=%v", term.terminated)
 	}
 }

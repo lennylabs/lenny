@@ -173,7 +173,7 @@ func playgroundOriginServer(t *testing.T) *mcp.Server {
 	return srv
 }
 
-// spec: §27.9 line 251 — for an origin=playground connection the gateway
+// spec: §27.9 — for an origin=playground connection the gateway
 // runs the §16.4 frame redaction before sending frames to the browser.
 // The redaction must not corrupt a tool's inputSchema: a schema property
 // named access_token (whose value is the structural {"type":"string"},
@@ -199,7 +199,7 @@ func TestWebSocketPlaygroundEgressPreservesSchema_spec_27_9_251(t *testing.T) {
 	}
 }
 
-// spec: §27.9 line 251 — a non-playground connection (a headless MCP
+// spec: §27.9 — a non-playground connection (a headless MCP
 // client) is never redacted, so it receives the raw tool catalog. The
 // frame is byte-identical to what a playground connection sees for this
 // credential-free catalog, confirming the gate is the only difference and

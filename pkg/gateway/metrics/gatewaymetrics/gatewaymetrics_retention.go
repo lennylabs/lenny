@@ -42,11 +42,11 @@ type retentionMetrics struct {
 	// in which the reconciler detected a checkpoint gap. Labelled by
 	// tenant so per-tenant attribution lands in the alert.
 	legalHoldCheckpointGaps *prometheus.CounterVec
-	// legalHoldEscrowRegionUnresolvable counts §12.8 line 883 Phase 3.5
+	// legalHoldEscrowRegionUnresolvable counts §12.8 Phase 3.5
 	// escrow-region resolution failures on the force-delete override
 	// path. The §16.5 LegalHoldEscrowResidencyViolation alert reads it.
 	legalHoldEscrowRegionUnresolvable *prometheus.CounterVec
-	// legalHoldOverriddenTenant counts §12.8 line 887 tenant-scope
+	// legalHoldOverriddenTenant counts §12.8 tenant-scope
 	// legal-hold overrides (force-delete with acknowledgeHoldOverride).
 	// The §16.5 LegalHoldOverrideUsedTenant alert reads it.
 	legalHoldOverriddenTenant *prometheus.CounterVec
@@ -77,28 +77,28 @@ func newRetentionMetrics(reg *prometheus.Registry) (retentionMetrics, error) {
 	// reliability (`errors_total`), and latency (`duration_seconds`).
 	gcRuns, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_gc_runs_total",
-		Help: "Artifact retention GC sweep invocations by outcome (§12.5 line 321).",
+		Help: "Artifact retention GC sweep invocations by outcome (§12.5).",
 	}, []string{"outcome"})
 	if err != nil {
 		return m, err
 	}
 	gcArtifactsDeleted, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_gc_artifacts_deleted",
-		Help: "Artifacts removed by the retention GC sweep (§12.5 line 321). Labelled by per-store adapter name.",
+		Help: "Artifacts removed by the retention GC sweep (§12.5). Labelled by per-store adapter name.",
 	}, []string{"store"})
 	if err != nil {
 		return m, err
 	}
 	gcErrors, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_gc_errors_total",
-		Help: "Retention GC errors observed per sweep (§12.5 line 321). Labelled by per-store adapter name.",
+		Help: "Retention GC errors observed per sweep (§12.5). Labelled by per-store adapter name.",
 	}, []string{"store"})
 	if err != nil {
 		return m, err
 	}
 	gcDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_gc_duration_seconds",
-		Help:    "Retention GC sweep wall-clock duration in seconds (§12.5 line 321).",
+		Help:    "Retention GC sweep wall-clock duration in seconds (§12.5).",
 		Buckets: prometheus.ExponentialBuckets(0.1, 2, 12),
 	}, nil)
 	if err != nil {
@@ -112,7 +112,7 @@ func newRetentionMetrics(reg *prometheus.Registry) (retentionMetrics, error) {
 	// `node.drain.forced` audit event.
 	drainReadinessChecks, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_drain_readiness_checks_total",
-		Help: "Drain readiness admission decisions (§12.5 line 291) by outcome.",
+		Help: "Drain readiness admission decisions (§12.5) by outcome.",
 	}, []string{"outcome"})
 	if err != nil {
 		return m, err
@@ -128,25 +128,25 @@ func newRetentionMetrics(reg *prometheus.Registry) (retentionMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §12.8 line 883 — `lenny_legal_hold_escrow_region_unresolvable_total`
+	// §12.8 — `lenny_legal_hold_escrow_region_unresolvable_total`
 	// counts Phase 3.5 force-delete-override escrow-region resolution
 	// failures (the resolved region has no legalHoldEscrow entry, or its
 	// escrow KEK / bucket is unreachable). The §16.5
 	// LegalHoldEscrowResidencyViolation alert reads it.
 	legalHoldEscrowRegionUnresolvable, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_legal_hold_escrow_region_unresolvable_total",
-		Help: "Phase 3.5 escrow-region resolution failures (§12.8 line 883).",
+		Help: "Phase 3.5 escrow-region resolution failures (§12.8).",
 	}, []string{"tenant_id"})
 	if err != nil {
 		return m, err
 	}
-	// §12.8 line 887 — `lenny_gdpr_legal_hold_overridden_tenant_total`
+	// §12.8 — `lenny_gdpr_legal_hold_overridden_tenant_total`
 	// counts tenant-scope legal-hold overrides (force-delete with
 	// acknowledgeHoldOverride). The §16.5 LegalHoldOverrideUsedTenant
 	// warning alert reads it.
 	legalHoldOverriddenTenant, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_gdpr_legal_hold_overridden_tenant_total",
-		Help: "Tenant-scope legal-hold overrides via force-delete (§12.8 line 887).",
+		Help: "Tenant-scope legal-hold overrides via force-delete (§12.8).",
 	}, []string{"tenant_id"})
 	if err != nil {
 		return m, err
@@ -160,7 +160,7 @@ func newRetentionMetrics(reg *prometheus.Registry) (retentionMetrics, error) {
 	// label value.
 	artifactUploadError, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_artifact_upload_error_total",
-		Help: "ArtifactStore PUT failures after the retry budget (§12.5 line 282) by error type.",
+		Help: "ArtifactStore PUT failures after the retry budget (§12.5) by error type.",
 	}, []string{"tenant_id", "error_type"})
 	if err != nil {
 		return m, err

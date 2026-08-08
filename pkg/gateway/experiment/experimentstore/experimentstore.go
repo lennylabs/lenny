@@ -95,7 +95,7 @@ var (
 // Store is the §10.7 experiment registry contract. Every method is
 // goroutine-safe and tenant-scoped.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Experiment definitions are tenant-scoped, not
 // user-owned, so DeleteByUser is a no-op; DeleteByTenant hard-deletes
@@ -135,7 +135,7 @@ type Memory struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{experiments: map[string]Experiment{}} }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -159,7 +159,7 @@ func (m *Memory) Create(_ context.Context, e Experiment) error {
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if e.Version == 0 {
 		e.Version = 1
 	}
@@ -195,7 +195,7 @@ func (m *Memory) Update(_ context.Context, tenantID, id string, mutate func(*Exp
 		return Experiment{}, err
 	}
 	e.UpdatedAt = time.Now().UTC()
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match precondition compares
 	// against the new value.
 	e.Version++
@@ -221,7 +221,7 @@ func (m *Memory) List(_ context.Context, tenantID string) ([]Experiment, error) 
 // (tenantID, id). The §4.6.2 PoolScalingController is platform-global
 // and consults the experiment registry to size variant pools regardless
 // of the owning tenant; it reads through this cross-tenant accessor
-// rather than the per-tenant List. spec: §10.7 line 1092 — variant pool
+// rather than the per-tenant List. spec: §10.7 — variant pool
 // lifecycle is managed by the controller across the whole platform.
 func (m *Memory) ListAll(_ context.Context) ([]Experiment, error) {
 	m.mu.RLock()

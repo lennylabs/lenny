@@ -13,7 +13,7 @@
 // provider Intersection and the §4.9 PreClaim availability check the
 // gateway runs before claiming a warm pod.
 //
-// spec: §4.9 lines 1558-1591 (CredentialRouter interface), 1303-1336
+// spec: §4.9
 // (Credential Policy, Three Credential Modes, Intersection), 1216-1220
 // (Pre-Claim Credential Availability Check).
 package credrouter
@@ -27,7 +27,7 @@ import (
 
 // PoolDescriptor is a §4.9 CredentialRouter input pool: a pool eligible
 // for a provider together with the current utilization stats the
-// router and the pre-claim check evaluate. spec: §4.9 line 1569.
+// router and the pre-claim check evaluate. spec: §4.9.
 type PoolDescriptor struct {
 	// PoolID is the credential pool name.
 	PoolID string
@@ -35,25 +35,23 @@ type PoolDescriptor struct {
 	// non-revoked credential.
 	Healthy bool
 	// HasCapacity reports whether at least one credential in the pool
-	// has active leases below maxConcurrentSessions. spec: §4.9 line
-	// 1218 ("active leases < maxConcurrentSessions for at least one
-	// credential").
+	// has active leases below maxConcurrentSessions. spec: §4.9.
 	HasCapacity bool
 	// CoolingDown reports whether the pool is on §4.9 cooldown after a
 	// fault. At session creation no pool is cooling; cooldown is
-	// rotation-time state. spec: §4.9 line 1218 ("cooldown status").
+	// rotation-time state. spec: §4.9.
 	CoolingDown bool
 }
 
 // Assignable reports whether the pool can serve a credential now: it is
-// healthy, has capacity, and is not cooling down. spec: §4.9 line 1218.
+// healthy, has capacity, and is not cooling down. spec: §4.9.
 func (d PoolDescriptor) Assignable() bool {
 	return d.Healthy && d.HasCapacity && !d.CoolingDown
 }
 
 // RotationContext is the §4.9 CredentialRouter rotation-time input,
 // present only when the router selects a replacement for a faulted
-// provider (Fallback Flow step 4). spec: §4.9 line 1572.
+// provider (Fallback Flow step 4). spec: §4.9.
 type RotationContext struct {
 	PreviousPoolID       string
 	PreviousCredentialID string
@@ -61,8 +59,7 @@ type RotationContext struct {
 	RotationCount        int
 }
 
-// Input is the §4.9 CredentialRouter input for one provider. spec: §4.9
-// lines 1562-1573.
+// Input is the §4.9 CredentialRouter input for one provider. spec: §4.9.
 type Input struct {
 	// TenantID is the tenant making the request.
 	TenantID string
@@ -83,12 +80,11 @@ type Input struct {
 	// RotationContext is present only during rotation.
 	RotationContext *RotationContext
 	// Hints is the deployer-extensible key-value map (model, cost_tier,
-	// region, ...). spec: §4.9 line 1573.
+	// region, ...). spec: §4.9.
 	Hints map[string]string
 }
 
-// Output is the §4.9 CredentialRouter output. spec: §4.9 lines
-// 1577-1581.
+// Output is the §4.9 CredentialRouter output. spec: §4.9.
 type Output struct {
 	// Source is the resolved credential source (pool or user).
 	Source credential.LeaseSource
@@ -101,8 +97,7 @@ type Output struct {
 
 // Router is the §4.9 pluggable CredentialRouter interface. Deployers
 // who need cost-aware, latency-based, or intent-based routing implement
-// it; the Hints map is the primary extension point. spec: §4.9 lines
-// 1558-1591.
+// it; the Hints map is the primary extension point. spec: §4.9.
 type Router interface {
 	// Resolve selects the credential source and pool for the input's
 	// provider. It returns ErrUserCredentialNotFound or
@@ -115,18 +110,18 @@ var (
 	// ErrUserCredentialNotFound — a user-only policy
 	// (preferredSource: user) had no usable user credential for the
 	// provider. The gateway maps it to USER_CREDENTIAL_NOT_FOUND.
-	// spec: §4.9 lines 1364, 1370.
+	// spec: §4.9.
 	ErrUserCredentialNotFound = errors.New("credrouter: no user-scoped credential for provider")
 	// ErrNoCredentialAvailable — no source resolved an assignable
 	// credential for the provider. The gateway maps it to
-	// CREDENTIAL_POOL_EXHAUSTED. spec: §4.9 line 1218.
+	// CREDENTIAL_POOL_EXHAUSTED. spec: §4.9.
 	ErrNoCredentialAvailable = errors.New("credrouter: no assignable credential for provider")
 )
 
 // Default is the built-in §4.9 CredentialRouter. It walks the
 // preferredSource source order and, for the pool source, selects the
 // first assignable pool from AllowedPools (which the caller orders by
-// the provider's fallback chain). spec: §4.9 lines 1336, 1583-1589.
+// the provider's fallback chain). spec: §4.9.
 type Default struct{}
 
 // NewDefault returns the built-in CredentialRouter.
@@ -137,7 +132,7 @@ func NewDefault() Default { return Default{} }
 // is available; a pool source resolves to the first assignable pool in
 // AllowedPools. When nothing resolves, a user-only policy with no user
 // credential returns ErrUserCredentialNotFound and every other case
-// returns ErrNoCredentialAvailable. spec: §4.9 lines 1328-1336, 1362-1366.
+// returns ErrNoCredentialAvailable. spec: §4.9.
 func (Default) Resolve(_ context.Context, in Input) (Output, error) {
 	for _, src := range in.PreferredSource.SourceOrder() {
 		switch src {
@@ -167,7 +162,7 @@ var _ Router = Default{}
 // Intersection returns the providers present in both a Runtime's
 // supportedProviders and a tenant policy's providerPools keys, in the
 // policy's sorted provider order. Only providers in both sets are
-// eligible for credential assignment. spec: §4.9 line 1326.
+// eligible for credential assignment. spec: §4.9.
 func Intersection(supportedProviders []string, policy credential.CredentialPolicy) []string {
 	supported := make(map[string]bool, len(supportedProviders))
 	for _, p := range supportedProviders {

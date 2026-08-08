@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// spec: §11.2 line 31 — per-tenant token-quota reset period.
+// spec: §11.2 — per-tenant token-quota reset period.
 
 func limitsForTenant(t *testing.T, tenant tenantstore.Tenant, platformPeriod quota.ResetPeriod) TenantLimits {
 	t.Helper()
@@ -64,7 +64,7 @@ func TestLookupLimits_InvalidResetPeriodInheritsPlatform_spec_11_2_31(t *testing
 
 // TestLookupLimits_DistinctTenantsDistinctPeriods_spec_11_2_31 verifies
 // two tenants can run on different reset periods at the same time — the
-// gap the §11.2 line 31 "configurable per quota type" wording requires.
+// gap the §11.2 wording requires.
 func TestLookupLimits_DistinctTenantsDistinctPeriods_spec_11_2_31(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	ctx := context.Background()

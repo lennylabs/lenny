@@ -58,7 +58,7 @@ func (s *stores) register(db *sqlitestore.DB) {
 	db.Register("billing_events", s.billing)
 }
 
-// spec: §17.4 line 199 — embedded SQLite for session and metadata
+// spec: §17.4 — embedded SQLite for session and metadata
 // storage. Populate every session/metadata store through its real API,
 // flush+close the SQLite file (the graceful-shutdown path), reopen the
 // file into a fresh set of stores (the restart), restore, and verify
@@ -156,7 +156,7 @@ func TestAllStores_DurableAcrossRestart_spec_17_4_199(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 199 — ImportState(ExportState()) is the identity for
+// spec: §17.4 — ImportState(ExportState()) is the identity for
 // an empty store, and a fresh store importing nil bytes stays empty.
 func TestStores_EmptySnapshotIsEmpty_spec_17_4_199(t *testing.T) {
 	s := newStores()

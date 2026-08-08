@@ -58,7 +58,7 @@ func reqCall(session, tool string) *adapterv1.CallPlatformToolRequest {
 	}
 }
 
-// spec: §9.1 line 14 — CallPlatformTool forwards to the platform tool
+// spec: §9.1 — CallPlatformTool forwards to the platform tool
 // service and returns the MCP result with its isError flag.
 func TestCallPlatformToolSuccess_spec_9_1(t *testing.T) {
 	pt := &fakePlatformTools{callResult: []byte(`{"content":[]}`), callIsErr: true}
@@ -117,7 +117,7 @@ func TestCallPlatformToolServiceErrorIsInternal_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 lines 14-31 — ListPlatformTools maps the catalog onto the
+// spec: §9.1 — ListPlatformTools maps the catalog onto the
 // proto descriptors.
 func TestListPlatformToolsSuccess_spec_9_1(t *testing.T) {
 	pt := &fakePlatformTools{listResult: []leasecontrol.PlatformToolDescriptor{

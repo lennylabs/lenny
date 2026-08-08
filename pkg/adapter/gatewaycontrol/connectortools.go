@@ -16,7 +16,7 @@ import (
 // @lenny-connector-<id> MCP server per returned connector and lists them
 // in the manifest connectorServers array. The gateway filters the list by
 // the session's policy, so a connector the policy denies never reaches the
-// pod. spec: §9.3 line 142. F-9.1.2.
+// pod. spec: §9.3. F-9.1.2.
 func (c *Client) ListSessionConnectors(ctx context.Context, sessionID string) ([]mcp.ConnectorRef, error) {
 	resp, err := c.rpc.ListSessionConnectors(ctx, &adapterv1.ListSessionConnectorsRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
@@ -39,7 +39,7 @@ func (c *Client) ListSessionConnectors(ctx context.Context, sessionID string) ([
 // tools/list. The gateway dials the external endpoint as the MCP client
 // with the gateway-held credential. The returned tools carry no handler
 // (the intra-pod server forwards each tools/call via CallConnectorTool).
-// spec: §9.3 lines 142-164. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func (c *Client) ListConnectorTools(ctx context.Context, sessionID, connectorID string) ([]mcp.Tool, error) {
 	resp, err := c.rpc.ListConnectorTools(ctx, &adapterv1.ListConnectorToolsRequest{
 		SessionId:   &adapterv1.SessionId{Value: sessionID},
@@ -65,7 +65,7 @@ func (c *Client) ListConnectorTools(ctx context.Context, sessionID, connectorID 
 // JSON-encoded §15.2 MCP tool result (a `content` array, optionally with
 // `isError`); a tool-level failure is carried inside that result. A
 // transport, routing, or policy failure (unknown session, denied
-// connector) is returned as an error. spec: §9.3 lines 142-164. F-9.1.2.
+// connector) is returned as an error. spec: §9.3. F-9.1.2.
 func (c *Client) CallConnectorTool(ctx context.Context, sessionID, connectorID, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
 	resp, err := c.rpc.CallConnectorTool(ctx, &adapterv1.CallConnectorToolRequest{
 		SessionId:   &adapterv1.SessionId{Value: sessionID},

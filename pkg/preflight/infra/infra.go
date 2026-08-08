@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package infra implements the §24.2 / §15.1 line 890 infrastructure
+// Package infra implements the §24.2 / §15.1 infrastructure
 // connectivity preflight: active outbound probes against Postgres,
 // Redis, and MinIO plus a best-effort schema-version read. The same
 // orchestration backs the standalone `lenny-ctl preflight` CLI and the
@@ -11,7 +11,7 @@
 // unit-testable with fakes; the real pgx/go-redis/minio-go dialers live
 // in dial.go and are wired only by the binaries.
 //
-// spec: §24.2 lines 39-47; §15.1 line 890.
+// spec: §24.2; §15.1.
 package infra
 
 import (
@@ -28,7 +28,7 @@ import (
 // stays transparent and pre-deployment runs against partial topologies
 // do not fail closed on an absent BYO backend).
 //
-// spec: §24.2 line 47 (DSN resolution precedence).
+// spec: §24.2.
 type Config struct {
 	// PostgresDSN is the libpq/pgx connection string for the session
 	// truth store. Empty skips the Postgres probe.
@@ -52,12 +52,12 @@ type Config struct {
 
 // Resolve merges the supplied Configs field-by-field, taking the first
 // non-empty value for each string field. Pass the sources in
-// descending precedence: the §24.2 line 47 order is CLI flags, then
+// descending precedence: the §24.2 order is CLI flags, then
 // environment variables, then the `--config` values file. MinIOUseSSL
 // is not merged here; the caller sets it on the result (it defaults to
 // true everywhere except §17.4 Embedded Mode).
 //
-// spec: §24.2 line 47.
+// spec: §24.2.
 func Resolve(sources ...Config) Config {
 	var out Config
 	first := func(dst *string, vals ...string) {
@@ -131,7 +131,7 @@ const (
 // CLI and the gateway endpoint render both the admission-plane checks
 // and the infra checks through one reporter.
 //
-// spec: §24.2 lines 39-47; §15.1 line 890.
+// spec: §24.2; §15.1.
 func Run(ctx context.Context, cfg Config, p Probers) []preflight.CheckResult {
 	report := make([]preflight.CheckResult, 0, 3)
 

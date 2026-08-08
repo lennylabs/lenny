@@ -1,4 +1,4 @@
--- §4.4 line 293 mandates the `lenny_tenant_guard` trigger covers
+-- §4.4 mandates the `lenny_tenant_guard` trigger covers
 -- session_eviction_state: "an RLS policy filters rows by
 -- `current_setting('app.current_tenant', false)`, every access is
 -- wrapped in a transaction with `SET LOCAL app.current_tenant`, and
@@ -12,7 +12,7 @@
 -- enumerates every tenant-scoped table including session_eviction_state
 -- and asserts the trigger rejects writes issued with no GUC.
 --
--- spec: §4.4 line 293.
+-- spec: §4.4.
 
 CREATE TRIGGER lenny_tenant_guard
     BEFORE INSERT OR UPDATE OR DELETE ON session_eviction_state

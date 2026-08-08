@@ -44,11 +44,7 @@ import (
 // and remediation.lock_released audit rows are correlated to the operation
 // the way the §25.9 audit-query API groups them.
 //
-// spec: §25.1 line 121 ("All audit events produced during the request
-// include this ID [X-Lenny-Operation-ID], enabling post-incident analysis
-// of multi-step remediations"); §25.17 line 5267 ("The audit trail shows
-// four calls tied to operation 550e8400-...: lock acquire, pool scale,
-// diagnostic re-check, lock release"); §25.9 ("audit events tagged with
+// spec: §25.1; §25.17; §25.9 ("audit events tagged with
 // the same operation ID are grouped in queries with ?operationId=", which
 // the gateway serves by matching payload.operation_id).
 //

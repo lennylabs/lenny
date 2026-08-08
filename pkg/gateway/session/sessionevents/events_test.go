@@ -28,7 +28,7 @@ func TestPublishAssignsMonotonicSeq(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 45 — Broadcast pushes a platform-level event to every
+// spec: §10.1 — Broadcast pushes a platform-level event to every
 // session that has a live subscriber, assigning each its own per-session
 // Seq, and returns the number of sessions reached. Sessions with no live
 // subscriber are skipped.
@@ -282,7 +282,7 @@ func TestSubscribeForTenantPermissiveWhenNoBinding(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 143 — OldestRetainedSeq reports the smallest Seq in
+// spec: §7.2 — OldestRetainedSeq reports the smallest Seq in
 // the buffer so the SSE handler can detect a cursor-eviction gap and
 // emit gap_detected / checkpoint_boundary before replaying the backlog.
 func TestOldestRetainedSeqAdvancesWithEviction_spec_7_2(t *testing.T) {
@@ -304,7 +304,7 @@ func TestOldestRetainedSeqAdvancesWithEviction_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 143 — OldestRetainedSeq does not surface evictions
+// spec: §7.2 — OldestRetainedSeq does not surface evictions
 // from a different session (per-session bookkeeping).
 func TestOldestRetainedSeqIsPerSession_spec_7_2(t *testing.T) {
 	b := sessionevents.NewBus(0)
@@ -316,7 +316,7 @@ func TestOldestRetainedSeqIsPerSession_spec_7_2(t *testing.T) {
 }
 
 // fakeLastSeqStore implements both LastSeqPersister and LastSeqLoader
-// for the §7.3 line 397 durable counter wiring tests. F-7.3.3.
+// for the §7.3 durable counter wiring tests. F-7.3.3.
 type fakeLastSeqStore struct {
 	mu        sync.Mutex
 	persisted map[string]int64
@@ -374,8 +374,7 @@ func (f *fakeLastSeqStore) advances() int {
 	return f.advCount
 }
 
-// TestPublishAdvancesPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3
-// line 397: every Publish must durably advance the per-session
+// TestPublishAdvancesPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3: every Publish must durably advance the per-session
 // monotonic counter so the value survives replica restart and
 // coordinator handoff. The Bus calls AdvanceLastSeq asynchronously so
 // the test polls until the writer drains.
@@ -399,8 +398,7 @@ func TestPublishAdvancesPersistedLastSeq_spec_7_3(t *testing.T) {
 	}
 }
 
-// TestPublishSeedsFromPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3
-// line 397 + §10.4 coordinator-handoff: a fresh replica picking up a
+// TestPublishSeedsFromPersistedLastSeq_spec_7_3 covers F-7.3.3 / §7.3 + §10.4 coordinator-handoff: a fresh replica picking up a
 // session whose persisted last_seq is 5 must continue with Seq=6 on
 // its next publish (never rewinding).
 func TestPublishSeedsFromPersistedLastSeq_spec_7_3(t *testing.T) {
@@ -474,7 +472,7 @@ func TestUntenantedPublishSkipsPersistence_spec_7_3(t *testing.T) {
 
 var errLoadFailed = errors.New("sessionevents_test: load failed")
 
-// spec: §10.4 line 389 / §16 catalog lenny_event_bus_replay_buffer_utilization.
+// spec: §10.4 / §16 catalog lenny_event_bus_replay_buffer_utilization.
 // F-10.4.11.
 func TestMaxReplayBufferUtilization_Empty(t *testing.T) {
 	b := sessionevents.NewBus(64)

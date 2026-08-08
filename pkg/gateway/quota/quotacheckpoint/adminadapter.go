@@ -15,7 +15,7 @@ import (
 // production wiring that turns the 503 QUOTA_RECONCILE_UNAVAILABLE stub
 // into a real reconcile once the Postgres checkpoint store is present.
 //
-// spec: §24.6 line 99; §15.1 line 879.
+// spec: §24.6; §15.1.
 type AdminReconciler struct {
 	Service *Service
 }

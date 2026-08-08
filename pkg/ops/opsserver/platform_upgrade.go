@@ -59,7 +59,7 @@ func (s *Server) handleUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.StartedBy = callerIdentity(r)
-	// §25.8 air-gap (line 3422): an operator who passes no explicit images
+	// §25.8 air-gap: an operator who passes no explicit images
 	// has them resolved from the runtime registry config. An operator who
 	// passes images (skip-channel, channel disabled) uses them verbatim.
 	if len(req.Images) == 0 && s.registry != nil {
@@ -279,8 +279,7 @@ func upgradeReason(r *http.Request) string {
 }
 
 // upgradeStatusBody renders the §25.8 upgrade-status response: the
-// singleton state plus the §25.2 canonical progress envelope (§25.8 line
-// 3496) and the canonical rollbackable flag the agent reads before
+// singleton state plus the §25.2 canonical progress envelope (§25.8) and the canonical rollbackable flag the agent reads before
 // calling rollback.
 func upgradeStatusBody(ctx context.Context, svc *upgradeservice.Service, st upgradeservice.State) map[string]any {
 	return map[string]any{

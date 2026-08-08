@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// spec: §12.6 lines 556-558 — DefaultScatterConfig returns the documented
+// spec: §12.6 — DefaultScatterConfig returns the documented
 // scatter-gather bounds (16 / 10s / 120s).
 func TestDefaultScatterConfig_spec_12_6_556(t *testing.T) {
 	got := DefaultScatterConfig()
@@ -64,7 +64,7 @@ func (f *fakeScatterMetrics) ObserveScatterGather(qt QueryType, count int, secs 
 	f.secs = secs
 }
 
-// spec: §12.6 lines 554-560 — all shards complete, results aggregate, the
+// spec: §12.6 — all shards complete, results aggregate, the
 // read is not partial, and the metric is emitted once with the shard count.
 func TestScatterRead_AllShardsSucceed_spec_12_6_554(t *testing.T) {
 	m := &fakeScatterMetrics{}
@@ -85,7 +85,7 @@ func TestScatterRead_AllShardsSucceed_spec_12_6_554(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 557 — a shard that exceeds the per-shard timeout is
+// spec: §12.6 — a shard that exceeds the per-shard timeout is
 // dropped and the read returns the remaining shards with partial=true.
 func TestScatterRead_PerShardTimeoutYieldsPartial_spec_12_6_557(t *testing.T) {
 	got, partial, err := ScatterRead(context.Background(), DefaultScatterConfig(), nil, nil,
@@ -107,7 +107,7 @@ func TestScatterRead_PerShardTimeoutYieldsPartial_spec_12_6_557(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 557 — a non-timeout shard error is a real failure, not a
+// spec: §12.6 — a non-timeout shard error is a real failure, not a
 // slow shard, so it fails the whole read rather than producing a partial.
 func TestScatterRead_NonTimeoutErrorFails_spec_12_6_557(t *testing.T) {
 	boom := errors.New("query error")
@@ -124,7 +124,7 @@ func TestScatterRead_NonTimeoutErrorFails_spec_12_6_557(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 557 — write paths retry a timed-out shard up to twice
+// spec: §12.6 — write paths retry a timed-out shard up to twice
 // (three attempts total) before failing the operation.
 func TestScatterWrite_RetriesTimeoutThenFails_spec_12_6_557(t *testing.T) {
 	var attempts int64
@@ -142,7 +142,7 @@ func TestScatterWrite_RetriesTimeoutThenFails_spec_12_6_557(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 557 — a transient timeout that clears within the retry
+// spec: §12.6 — a transient timeout that clears within the retry
 // budget completes the write.
 func TestScatterWrite_SucceedsAfterRetry_spec_12_6_557(t *testing.T) {
 	var attempts int64
@@ -162,7 +162,7 @@ func TestScatterWrite_SucceedsAfterRetry_spec_12_6_557(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 557 — a non-timeout write error is not retried; it fails
+// spec: §12.6 — a non-timeout write error is not retried; it fails
 // the operation immediately.
 func TestScatterWrite_NonTimeoutErrorNotRetried_spec_12_6_557(t *testing.T) {
 	var attempts int64
@@ -181,7 +181,7 @@ func TestScatterWrite_NonTimeoutErrorNotRetried_spec_12_6_557(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 558 — the aggregate timeout bounds a slow fan-out; an
+// spec: §12.6 — the aggregate timeout bounds a slow fan-out; an
 // in-flight shard past the deadline becomes a partial-result miss.
 func TestScatterRead_AggregateTimeout_spec_12_6_558(t *testing.T) {
 	cfg := ScatterConfig{MaxConcurrency: 4, PerShardTimeout: time.Second, AggregateTimeout: 5 * time.Millisecond}
@@ -199,7 +199,7 @@ func TestScatterRead_AggregateTimeout_spec_12_6_558(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 560 — the production metrics implementation emits the
+// spec: §12.6 — the production metrics implementation emits the
 // duration histogram and shard-count gauge labeled by query type.
 func TestPromScatterMetrics_Emits_spec_12_6_560(t *testing.T) {
 	reg := prometheus.NewRegistry()

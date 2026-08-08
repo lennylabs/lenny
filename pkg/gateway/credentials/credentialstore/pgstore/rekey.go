@@ -13,7 +13,7 @@ import (
 )
 
 // RekeyName identifies this store in the §4.9.1 re-encryption job
-// summary. spec: §4.9.1 line 1718.
+// summary. spec: §4.9.1.
 func (s *Store) RekeyName() string { return "credentials" }
 
 // CountStale runs the §4.9.1 verification query for tenantID: the count
@@ -22,7 +22,7 @@ func (s *Store) RekeyName() string { return "credentials" }
 // once this returns 0 for every sealed store. Rows with no secret
 // material are excluded; they carry no wrapped DEK to re-key.
 //
-// spec: §4.9.1 line 1723.
+// spec: §4.9.1.
 func (s *Store) CountStale(ctx context.Context, tenantID string) (int, error) {
 	current, err := s.kms.CurrentKEKVersion(ctx, kekAlias(tenantID))
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *Store) CountStale(ctx context.Context, tenantID string) (int, error) {
 // unchanged: re-keying is an at-rest maintenance operation, not a
 // credential rotation, so it does not surface on the §15.1 response.
 //
-// spec: §4.9.1 lines 1718-1721.
+// spec: §4.9.1.
 func (s *Store) RekeyTenant(ctx context.Context, tenantID string) (int, error) {
 	current, err := s.kms.CurrentKEKVersion(ctx, kekAlias(tenantID))
 	if err != nil {

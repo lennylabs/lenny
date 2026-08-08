@@ -61,8 +61,8 @@ func baseEvent(outcome interceptor.ExportScanOutcome, reason string) interceptor
 	}
 }
 
-// spec: §11.7 line 69 — a `rejected` outcome emits
-// delegation.export_file_scan_rejected with the §11.7 lines 119-122
+// spec: §11.7 — a `rejected` outcome emits
+// delegation.export_file_scan_rejected with the §11.7
 // payload, and records the metric. F-8.7.9; F-8.7.10.
 func TestExportScanObserverEmitsRejected_spec_11_7_69(t *testing.T) {
 	app := &recordingExportAppender{}
@@ -98,7 +98,7 @@ func TestExportScanObserverEmitsRejected_spec_11_7_69(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 70 — a `failed_open` outcome emits
+// spec: §11.7 — a `failed_open` outcome emits
 // delegation.export_scan_failed_open with the reason token. F-8.7.9.
 func TestExportScanObserverEmitsFailedOpen_spec_11_7_70(t *testing.T) {
 	app := &recordingExportAppender{}
@@ -118,7 +118,7 @@ func TestExportScanObserverEmitsFailedOpen_spec_11_7_70(t *testing.T) {
 	}
 }
 
-// spec: §11.7 lines 69-70 — admitted, modified, and failed_closed have
+// spec: §11.7 — admitted, modified, and failed_closed have
 // no dedicated §11.7 audit event; the observer records the metric only.
 // F-8.7.9; F-8.7.10.
 func TestExportScanObserverNoAuditForNonRejectOutcomes_spec_11_7_69(t *testing.T) {

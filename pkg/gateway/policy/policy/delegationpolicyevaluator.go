@@ -14,7 +14,7 @@ import (
 // DelegationPolicyEvaluatorPriority is the §4.8 built-in priority for
 // DelegationPolicyEvaluator. The §4.8 built-in interceptor table fixes
 // it at 250 (above QuotaEvaluator at 200, below ExperimentRouter at
-// 300). spec: §4.8 line 974.
+// 300). spec: §4.8.
 const DelegationPolicyEvaluatorPriority int32 = 250
 
 // DelegationPolicyEvaluatorName identifies DelegationPolicyEvaluator in
@@ -23,7 +23,7 @@ const DelegationPolicyEvaluatorName = "DelegationPolicyEvaluator"
 
 // CodeInputTooLarge is the §15.1 error code a delegation carries when
 // its TaskSpec.input exceeds the effective contentPolicy.maxInputSize.
-// The gateway maps it to HTTP 413. spec: §15.1 line 1067.
+// The gateway maps it to HTTP 413. spec: §15.1.
 const CodeInputTooLarge = "INPUT_TOO_LARGE"
 
 // MaxInputSizeResolver resolves the effective §8.3
@@ -43,7 +43,7 @@ type MaxInputSizeResolver interface {
 // (priority 250). It enforces the §8.3 contentPolicy.maxInputSize hard
 // byte cap on TaskSpec.input: a delegation whose input exceeds the
 // effective limit is rejected with INPUT_TOO_LARGE before pod
-// allocation (§8.3 line 157). The PreDelegation chain payload is the
+// allocation (§8.3). The PreDelegation chain payload is the
 // serialized TaskSpec.input, so the byte length the evaluator measures
 // is len(req.Content).
 //

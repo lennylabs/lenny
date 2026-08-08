@@ -7,7 +7,7 @@ the companion podmonitor.yaml because §16.9 routes it through Pod-level
 label selection.
 
 Two ServiceMonitors are rendered so the gateway can scrape faster than
-the rest of the control plane: spec/10_gateway-internals.md §10.1 line 88
+the rest of the control plane: spec/10_gateway-internals.md §10.1
 requires the gateway scrape interval reduced to 10s
 (`scrapeInterval: 10s`) so the custom-metric pipeline lag the HPA reads
 stays near the §10.1 budget at Tier 2/3, while the controller and Token

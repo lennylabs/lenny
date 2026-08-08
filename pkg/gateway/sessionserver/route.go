@@ -17,7 +17,7 @@ import (
 // serialized TaskSpec the interceptor chain inspects around runtime
 // selection. PreRoute carries the requested runtime and input before
 // selection; PostRoute carries the resolved runtime metadata after
-// selection (spec: §4.8 lines 1048, 1052). The JSON field names match
+// selection (spec: §4.8). The JSON field names match
 // the immutable-field paths the chain enforces on MODIFY
 // (pkg/gateway/interceptor/immutability.go): `tenant_id` / `user_id`
 // at PreRoute, `resolved_runtime_name` / `credential_pool_id` at
@@ -33,8 +33,8 @@ type routeTaskSpec struct {
 
 // runRouteChain runs the §4.8 chain for phase over the serialized
 // routeTaskSpec and returns the (possibly MODIFY-rewritten) spec. The
-// PreRoute chain (spec: §4.8 line 1048) fires after authentication and
-// before runtime selection; the PostRoute chain (spec: §4.8 line 1052)
+// PreRoute chain (spec: §4.8) fires after authentication and
+// before runtime selection; the PostRoute chain (spec: §4.8)
 // fires after runtime selection with the resolved runtime metadata. The
 // same chain the spec names for top-level session creation runs here.
 //
@@ -42,8 +42,7 @@ type routeTaskSpec struct {
 // audit row (synchronously, per §11.7) and writes a 403
 // INTERCEPTOR_REJECTED response; on a fail-closed timeout/error it
 // writes a 503 INTERCEPTOR_TIMEOUT (TRANSIENT, retryable) carrying the
-// `interceptor_ref`, `phase`, and `timeout_ms` details (spec: §4.8
-// line 1032, §15.1 line 1008). When the chain admits the request it
+// `interceptor_ref`, `phase`, and `timeout_ms` details (spec: §4.8, §15.1). When the chain admits the request it
 // returns ok=true; when it returns ok=false it has already written the
 // response.
 //
@@ -61,10 +60,10 @@ func (s *Server) runRouteChain(w http.ResponseWriter, r *http.Request, phase int
 // runRouteChainRange is runRouteChain restricted to the interceptors
 // whose priority falls in the half-open window [minPriority,
 // maxPriority). The PreRoute chain runs in two segments around the §4.8
-// ExperimentRouter built-in (priority 300, spec: §4.8 line 115): the
+// ExperimentRouter built-in (priority 300, spec: §4.8): the
 // segment below 300 runs before experiment routing so a priority 101–299
 // MODIFY of the runtime hint affects which variant the router assigns
-// (spec: §4.8 line 115), and the segment at or above 300 runs after it
+// (spec: §4.8), and the segment at or above 300 runs after it
 // so a priority ≥ 300 external interceptor orders after the built-in per
 // the §4.8 line-12 ascending-priority rule. PostRoute and the other
 // single-segment phases pass the full window via runRouteChain.
@@ -166,7 +165,7 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 // it writes the §16.7 audit row and the HTTP error envelope (so the
 // caller must return without delivering); on MODIFY it returns the
 // rewritten parts. A malformed MODIFY payload leaves the parts
-// unchanged. spec: §4.8 line 1054.
+// unchanged. spec: §4.8.
 func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, tenantID, sessionID string, out []executor.MessagePart) ([]executor.MessagePart, bool) {
 	if s.interceptors == nil || s.interceptors.Len(interceptor.PhasePostAgentOutput) == 0 {
 		return out, false

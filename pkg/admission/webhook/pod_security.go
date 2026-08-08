@@ -106,7 +106,7 @@ func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpe
 			spec.CredentialContainerNames = append(spec.CredentialContainerNames, c.Name)
 		}
 	}
-	// spec: §13.1 line 27 — ephemeral containers attached via the
+	// spec: §13.1 — ephemeral containers attached via the
 	// pods/ephemeralcontainers subresource carry the same per-container
 	// baseline. EphemeralContainerCommon is a field-for-field copy of
 	// Container, so the conversion reuses the same translation.

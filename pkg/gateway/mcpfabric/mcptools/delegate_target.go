@@ -16,7 +16,7 @@ import (
 // is a standalone runtime, a derived runtime, or an external registered
 // agent.
 //
-// spec: §8.2 line 23 — "Target id is opaque — the runtime does not know
+// spec: §8.2 — "Target id is opaque — the runtime does not know
 // whether the target is a standalone runtime, derived runtime, or
 // external registered agent."
 type delegationTargetKind string
@@ -41,7 +41,7 @@ const (
 // this resolver short-circuiting it. When no registry is wired (the dev
 // path), the opaque id passes through unchanged.
 //
-// spec: §8.2 lines 12-23 (opaque target signature); §8.2 line 50
+// spec: §8.2; §8.2
 // (type: mcp targets rejected with target_not_an_agent).
 func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref string, kind delegationTargetKind) {
 	if deps.Runtimes == nil || target == "" {

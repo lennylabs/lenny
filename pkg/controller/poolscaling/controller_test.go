@@ -279,7 +279,7 @@ func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 // SafetyFactor inherits the Reconciler's tier-resolved default. With the
 // Tier 3 default of 1.2 (instead of the Tier 1/2 1.5) the formula yields
 // ceil(0.1 × 1.2 × 35 + 0.2 × 10) = ceil(4.2 + 2.0) = 7, one below the
-// Tier 1/2 result of 8. spec: spec/17_deployment-topology.md line 1008.
+// Tier 1/2 result of 8. spec: §17.8.2.
 func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -308,7 +308,7 @@ func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 // TestSyncPoolSafetyFactorOverridesTierDefault confirms a pool that pins
 // its own SafetyFactor ignores the Reconciler's tier default. With the
 // pool pinning 2.0 the formula yields ceil(0.1 × 2.0 × 35 + 0.2 × 10) =
-// ceil(7.0 + 2.0) = 9. spec: spec/17_deployment-topology.md line 1010.
+// ceil(7.0 + 2.0) = 9. spec: §17.8.2.
 func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -643,7 +643,7 @@ func TestAdminResumerBindsNamespace(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 line 400 — a pool inside its scaleToZero window targets
+// spec: §4.6.1 — a pool inside its scaleToZero window targets
 // minWarm 0 regardless of its bootstrap floor or observed demand.
 func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 	s := newScheme(t)
@@ -668,7 +668,7 @@ func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 // PoolScalingController writes lenny.dev/config-generation onto both
 // SandboxTemplate and SandboxWarmPool, taking the value from the
 // PoolConfig.Generation the admin store bumps on every write.
-// spec: spec/04_system-components.md line 558.
+// spec: §4.6.2.
 func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()

@@ -77,7 +77,7 @@ func putArchiveBlob(t *testing.T, blobs blobstore.Store, part string, data []byt
 	return uri.String()
 }
 
-// TestBindExtractsUploadArchive is the end-to-end §7.4 line 448 contract:
+// TestBindExtractsUploadArchive is the end-to-end §7.4 contract:
 // the gateway decompresses an uploadArchive source, rewrites it into
 // per-file sources, and the adapter materializes the extracted tree —
 // without the pod ever decompressing the archive. F-7.4.1, F-13.4.1.
@@ -129,7 +129,7 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 	}
 }
 
-// TestBindUploadArchiveStripComponentsWarning confirms the §7.4 line 459
+// TestBindUploadArchiveStripComponentsWarning confirms the §7.4
 // strip-skip warning now originates gateway-side and rides back on the
 // bind result for SSE republish. F-7.4.15.
 func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
@@ -249,7 +249,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 		{
 			name:   "decompression_ratio_bomb",
 			format: "tar.gz",
-			// spec: §13.4 line 659 ("Maximum decompression ratio
+			// spec: §13.4 ("Maximum decompression ratio
 			// (compressed:uncompressed): 100:1.") — a run of identical
 			// bytes gzips far below 1% of its size.
 			data:       archiveTarGz(t, map[string]string{"bomb.txt": strings.Repeat("A", 2*1024*1024)}),
@@ -258,17 +258,14 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 		{
 			name:   "path_traversal",
 			format: "tar",
-			// spec: §13.4 line 663 ("Path traversal protection: reject `..`
-			// components, absolute paths, and symlinks whose canonicalized
-			// target escapes the workspace root.")
+			// spec: §13.4
 			data:       archiveTar(t, map[string]string{"../escape.txt": "pwned"}),
 			wantReason: upload.ReasonPathEscapesRoot,
 		},
 		{
 			name:   "over_entry_count",
 			format: "tar",
-			// spec: §13.4 line 661 ("Maximum entry count per archive:
-			// 10 000.")
+			// spec: §13.4
 			data:       manyEntryTarForTest(t, upload.MaxEntryCount+1),
 			wantReason: upload.ReasonMaxEntryCount,
 		},

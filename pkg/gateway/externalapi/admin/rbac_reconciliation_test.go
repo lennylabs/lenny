@@ -149,7 +149,7 @@ func TestReconciledDelegationPolicyRouteAuthorization(t *testing.T) {
 	} {
 		router, _, _, policies, _, _ := newReconcileAdmin(t)
 		// Seed under both `platform` (platform-admin reads/writes) and
-		// `acme` (tenant-admin reads/writes), so the §4.2 line 172
+		// `acme` (tenant-admin reads/writes), so the §4.2
 		// per-tenant policy registry has a row resolvable from either
 		// principal.
 		if err := policies.Create(context.Background(), delegationpolicystore.DelegationPolicy{TenantID: "platform", Name: "p1"}); err != nil {

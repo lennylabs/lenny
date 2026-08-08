@@ -17,7 +17,7 @@ import (
 // JWTSigner circuit breaker so KMS outages convert to KMS_SIGNING_UNAVAILABLE
 // rather than hanging the request path.
 //
-// spec: F-4.3.11 / F-17.5.2 — the pluggable KMS provider; §10.2 line 225 /
+// spec: F-4.3.11 / F-17.5.2 — the pluggable KMS provider; §10.2 /
 // F-10.2.6 — the JWTSigner circuit breaker.
 func (w *tokenServiceWiring) buildKMSAndSigner() {
 	kmsProvider, err := providerflags.Resolve(ctx, *w.f.kmsOpts)

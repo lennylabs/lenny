@@ -37,7 +37,7 @@ func TestMainHelp(t *testing.T) {
 	}
 }
 
-// spec: §24.0 line 23, §17.6 line 360 — the embedded binary prints its
+// spec: §24.0, §17.6 — the embedded binary prints its
 // local build version offline. Confirms the -X main.version ldflag has a
 // symbol to bind to (F-24.0.4).
 func TestMainVersion(t *testing.T) {
@@ -65,7 +65,7 @@ func TestMainUnknownCommand(t *testing.T) {
 	}
 }
 
-// spec: §24.19 line 266 — Local enumerates the Embedded Mode commands
+// spec: §24.19 — Local enumerates the Embedded Mode commands
 // that lenny-ctl delegates to the local stack so it behaves identically.
 func TestLocalEnumeratesEmbeddedCommands(t *testing.T) {
 	for _, name := range []string{"up", "down", "status", "logs", "restart", "token", "image", "session", "runtime"} {
@@ -121,8 +121,7 @@ func TestRunDownNoStack(t *testing.T) {
 // lenny logs reports the missing stack with guidance to run lenny up and exits
 // non-zero, matching lenny restart and lenny status.
 //
-// spec: §17.4 line 179, §24.19 line 263 (pod-backed logs require a running
-// stack).
+// spec: §17.4, §24.19.
 func TestRunLogsNoStack(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
@@ -135,7 +134,7 @@ func TestRunLogsNoStack(t *testing.T) {
 	}
 }
 
-// spec: §24.9 line 120 — token print exits 3 EMBEDDED_MODE_REQUIRED when
+// spec: §24.9 — token print exits 3 EMBEDDED_MODE_REQUIRED when
 // invoked outside Embedded Mode (no `lenny up` has written the persisted
 // signing key). (F-24.9.2)
 func TestRunTokenWithoutStack_spec_24_9_120(t *testing.T) {

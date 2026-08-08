@@ -98,7 +98,7 @@ type sdkWarmConfigJSON struct {
 
 // encodeSDKWarmConfig returns the JSONB blob to persist or a nil byte
 // slice (SQL NULL) when the pool carries no explicit §6.1 SDK-warm
-// override. spec: §6.1 lines 48, 63-65.
+// override. spec: §6.1.
 func encodeSDKWarmConfig(p poolstore.Pool) ([]byte, error) {
 	if p.SDKWarmCircuitBreakerOverride == poolstore.SDKWarmOverrideUnset &&
 		!p.AcknowledgeHighDemotionRate &&
@@ -141,7 +141,7 @@ type elicitationPolicyJSON struct {
 
 // encodeElicitationPolicy returns the JSONB blob to persist or a nil
 // byte slice (rendered as SQL NULL) when the pool carries no explicit
-// §9.2 elicitation policy. spec: §9.2 lines 86, 90-98.
+// §9.2 elicitation policy. spec: §9.2.
 func encodeElicitationPolicy(p poolstore.Pool) ([]byte, error) {
 	if p.ElicitationDepthPolicy == "" && p.ElicitationSuppressAtDepth == 0 &&
 		!p.URLModeElicitation.Enabled && len(p.URLModeElicitation.DomainAllowlist) == 0 {
@@ -302,7 +302,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 		return poolstore.Pool{}, err
 	}
 	p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-	// spec: §4.6.2 line 558 — pool_config_generation is bumped on
+	// spec: §4.6.2 — pool_config_generation is bumped on
 	// every admin-API write so the gateway-side drift check can
 	// compare it to the CRD annotation.
 	p.Generation++

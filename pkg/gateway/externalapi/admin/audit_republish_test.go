@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
-// spec: §25.9 line 3663 — POST /v1/admin/audit-events/{seq}/republish.
+// spec: §25.9 — POST /v1/admin/audit-events/{seq}/republish.
 
 // fakePublishLog is an admin.AuditLog that also tracks the §12.3.7
 // eventbus_publish_state per row, so the republish endpoint's eligibility

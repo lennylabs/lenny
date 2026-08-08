@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// AgeSink receives the §12.8 line 768 erasure-SLA gauges the Sampler
+// AgeSink receives the §12.8 erasure-SLA gauges the Sampler
 // publishes: the in-progress job age (per tenant + job), its removal on
 // termination, and the platform deadline the §16.5 ErasureJobOverdue
 // alert compares against. *gatewaymetrics.Metrics satisfies it via
@@ -18,13 +18,13 @@ type AgeSink interface {
 	SetErasureJobDeadlineSeconds(seconds float64)
 }
 
-// Sampler publishes the §12.8 line 768 erasure-SLA gauges on a periodic
+// Sampler publishes the §12.8 erasure-SLA gauges on a periodic
 // tick. The Runner cannot advance a job's age while it is blocked inside
 // a slow DeleteByUser, so a separate sampler reads the job registry and
 // republishes each in-progress job's age. The §16.5 ErasureJobOverdue
 // alert fires when a job's age exceeds the published deadline.
 //
-// spec: §12.8 line 768.
+// spec: §12.8.
 type Sampler struct {
 	jobs            Store
 	sink            AgeSink

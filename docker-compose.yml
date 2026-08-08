@@ -6,7 +6,7 @@
 #
 # Starts the production gateway against real Postgres, Redis, and MinIO
 # backends, with the built-in echo runtime serving as the single agent
-# (the §17.4 line 262 zero-credential mode). The gateway runs the
+# (the §17.4 zero-credential mode). The gateway runs the
 # controller simulation and the echo agent in-process, the same
 # substitution Source Mode (`make run`) makes for a full Kubernetes pod
 # path; the production CRD/controller/pod-scheduling path is exercised by
@@ -108,7 +108,7 @@ services:
     restart: "no"
 
   # The production gateway, dev mode, wired to the embedded backends. The
-  # built-in echo runtime is the single agent (§17.4 line 262).
+  # built-in echo runtime is the single agent (§17.4).
   gateway:
     build:
       context: .
@@ -148,7 +148,7 @@ services:
     volumes:
       - ./lenny-data/certs:/lenny-data/certs:ro
 
-  # §17.4 line 276 Compose Mode smoke test: create an echo session, send
+  # §17.4 Compose Mode smoke test: create an echo session, send
   # a prompt, verify the response, and exit. Run with
   # `docker compose run smoke-test`; it is profiled out of `up`.
   smoke-test:
@@ -176,7 +176,7 @@ services:
       - ./lenny-data/certs:/lenny-data/certs
     restart: "no"
 
-  # §17.4 line 258 optional observability containers.
+  # §17.4 optional observability containers.
   prometheus:
     profiles: ["observability"]
     image: prom/prometheus:v3.2.1

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §7.4 line 446 — Mandatory for delegation file exports (the
+// spec: §7.4 — Mandatory for delegation file exports (the
 // gateway computes and verifies hashes during the export-to-child
 // flow). F-7.4.10.
 
@@ -22,7 +22,7 @@ func TestComputeExportFileHashIsLowercaseHex(t *testing.T) {
 	got := interceptor.ComputeExportFileHash([]byte("hello world"))
 	const want = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 	if got != want {
-		t.Fatalf("hash = %q, want %q (the §4.5 line 311 well-known value)", got, want)
+		t.Fatalf("hash = %q, want %q (the §4.5 well-known value)", got, want)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestVerifyExportFileHashMismatch(t *testing.T) {
 }
 
 // VerifyExportFileHash is case-insensitive over the hex alphabet
-// (uppercase/lowercase hex are equivalent per §4.5 line 311).
+// (uppercase/lowercase hex are equivalent per §4.5).
 func TestVerifyExportFileHashCaseInsensitive(t *testing.T) {
 	content := []byte("hello world")
 	expected := strings.ToUpper(interceptor.ComputeExportFileHash(content))

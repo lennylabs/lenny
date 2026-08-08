@@ -4,7 +4,7 @@ package sessionserver
 
 import "testing"
 
-// spec: §6.2 lines 273-274 — only agent_output / tool_use events (published
+// spec: §6.2 — only agent_output / tool_use events (published
 // as response / response_degraded / tool_use*) reset the idle clock;
 // lifecycle, inbound, and warning events do not. F-11.3.7.
 func TestIsAgentActivityEvent_spec_6_2_273(t *testing.T) {

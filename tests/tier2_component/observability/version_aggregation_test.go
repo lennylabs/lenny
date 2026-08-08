@@ -241,8 +241,7 @@ func TestVersionAggregationOverRealSources(t *testing.T) {
 
 	// Drift: point the controller Deployment at an older image tag, and
 	// stamp every installed CRD's schema-version annotation to a stale
-	// value (the realistic §10 line 438 "Helm does not update CRDs on
-	// helm upgrade" scenario — every CRD stays uniformly stale, not one
+	// value (the realistic §10 scenario — every CRD stays uniformly stale, not one
 	// out of several). The §25.8 contract requires versionDrift: true and
 	// each drifted component to carry drift: true and a requiredAction.
 	dep, err = clientset.AppsV1().Deployments(ns).Get(ctx, "lenny-controller", metav1.GetOptions{})

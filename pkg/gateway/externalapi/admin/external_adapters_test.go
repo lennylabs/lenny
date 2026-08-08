@@ -52,7 +52,7 @@ func eaReq(t *testing.T, h http.Handler, method, path string, body any) *httptes
 		buf = bytes.NewReader(nil)
 	}
 	req := withAdminPrincipal(httptest.NewRequest(method, path, buf))
-	// spec: §15.1 lines 1207-1211 — the external-adapter PUT enforces
+	// spec: §15.1 — the external-adapter PUT enforces
 	// If-Match. Cases that do not exercise the precondition directly reach
 	// the handler by carrying the resource's current ETag, fetched via a GET
 	// against the same resource. A test driving the precondition sets
@@ -101,7 +101,7 @@ func samplePayload() admin.ExternalAdapterPayload {
 	}
 }
 
-// spec: §15.1 line 850 / §15 line 1414 — register creates the adapter in
+// spec: §15.1 / §15 — register creates the adapter in
 // pending_validation.
 func TestCreateExternalAdapterPendingValidation(t *testing.T) {
 	router, store, aud := newExternalAdapterAdmin(t, &fakeValidator{report: passingReport()})
@@ -121,7 +121,7 @@ func TestCreateExternalAdapterPendingValidation(t *testing.T) {
 	}
 }
 
-// spec: §24.8 line 113 / §15 line 1414 — a passing suite transitions the
+// spec: §24.8 / §15 — a passing suite transitions the
 // adapter to active.
 func TestValidateExternalAdapterPasses(t *testing.T) {
 	v := &fakeValidator{report: passingReport()}
@@ -145,7 +145,7 @@ func TestValidateExternalAdapterPasses(t *testing.T) {
 	}
 }
 
-// spec: §24.8 line 113 / §15 line 1414 — a failing suite transitions the
+// spec: §24.8 / §15 — a failing suite transitions the
 // adapter to validation_failed with per-test failure details, and the
 // endpoint returns 422.
 func TestValidateExternalAdapterFails(t *testing.T) {
@@ -229,7 +229,7 @@ func TestValidateExternalAdapterNotFound(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1199 / §15 line 1414 — changing the adapter under test
+// spec: §15.1 / §15 — changing the adapter under test
 // resets the gate to pending_validation.
 func TestUpdateExternalAdapterResetsValidation(t *testing.T) {
 	router, store, _ := newExternalAdapterAdmin(t, &fakeValidator{report: passingReport()})

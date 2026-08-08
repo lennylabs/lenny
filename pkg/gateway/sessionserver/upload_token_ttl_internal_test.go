@@ -25,7 +25,7 @@ func jsonDecodeRaw(b []byte, into any) error { return json.Unmarshal(b, into) }
 // token instead of falling through to uploadtoken.DefaultTTL. The
 // gateway threads `maxCreatedStateTimeoutSeconds` here so the token
 // expiry matches the watchdog's `created`-state deadline.
-// spec: §7.1 line 58.
+// spec: §7.1.
 func TestCreateSessionUsesConfiguredUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	store := memstore.New()
 	at := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)

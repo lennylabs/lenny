@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
-// spec: §4.8 line 1070 — GuardrailsInterceptor is the built-in hook for
+// spec: §4.8 — GuardrailsInterceptor is the built-in hook for
 // a deployer-wired external content classifier at the fixed priority
 // 400, disabled by default, active at PreDelegation, PreLLMRequest,
 // PostLLMResponse, and PostAgentOutput.

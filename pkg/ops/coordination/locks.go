@@ -108,7 +108,7 @@ func IsSplitBrain(err error) bool {
 // SplitBrainDetails returns the winner and winnerHolder carried by a §25.4
 // split-brain conflict error, or empty strings when err is not one. The
 // HTTP layer attaches them to the 409 REMEDIATION_LOCK_CONFLICT details so
-// the losing holder learns the resolution outcome (§25.4 line 2267).
+// the losing holder learns the resolution outcome (§25.4).
 func SplitBrainDetails(err error) (winner, winnerHolder string) {
 	var e *Error
 	if errors.As(err, &e) && e.SplitBrain {
@@ -484,7 +484,7 @@ func (s *MemStore) Epoch() uint64 {
 // current value. The tiered Service syncs the Tier-3 store's epoch to the
 // current outage epoch before a fall-through acquire so an in-memory lock
 // carries the epoch under which it was granted. The epoch never moves
-// backward (§25.4 line 2230 MAX reconciliation).
+// backward (§25.4 MAX reconciliation).
 func (s *MemStore) SetEpoch(v uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -502,7 +502,7 @@ func (s *MemStore) Reap() int {
 
 // ReapExpired drops every expired lock and returns the removed records so
 // the tiered Service can emit a remediation.lock_expired audit event for
-// each. §25.4 line 2338 names lock_expired among the audited lifecycle
+// each. §25.4 names lock_expired among the audited lifecycle
 // transitions.
 func (s *MemStore) ReapExpired() []Lock {
 	s.mu.Lock()

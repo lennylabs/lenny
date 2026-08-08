@@ -21,7 +21,7 @@ import (
 // check is a non-blocking warning that catches the two most common
 // misconfigurations (wrong namespace, wrong pod label) at deploy time.
 //
-// spec: §13.2 line 292 (NET-038 lenny-preflight validates that (a) a
+// spec: §13.2 (NET-038 lenny-preflight validates that (a) a
 // namespace with the configured name exists and (b) at least one running
 // pod there carries the configured controllerPodLabel, and warns if
 // either check fails). F-13.2.8.
@@ -50,7 +50,7 @@ type IngressControllerCheck struct {
 // reached through a different path (a cloud LoadBalancer, a service mesh)
 // where the rendered NetworkPolicy is not the only route.
 //
-// spec: §13.2 line 292. F-13.2.8.
+// spec: §13.2. F-13.2.8.
 func (c IngressControllerCheck) Decide() Decision {
 	if strings.TrimSpace(c.Namespace) == "" {
 		return Decision{Passed: true}
@@ -85,7 +85,7 @@ func (c IngressControllerCheck) Decide() Decision {
 // the namespace-governance and monitoring-namespace checks already require,
 // so no extra RBAC is needed.
 //
-// spec: §13.2 line 292. F-13.2.8.
+// spec: §13.2. F-13.2.8.
 func gatherIngressController(ctx context.Context, reader client.Reader, namespace, key, value string) (nsExists, hasRunningPod bool, err error) {
 	namespace = strings.TrimSpace(namespace)
 	if namespace == "" {

@@ -1,4 +1,4 @@
--- §4.2 line 158-159 session record fields the Session Manager
+-- §4.2 session record fields the Session Manager
 -- explicitly tracks: retry counters, policy enforcement state, and
 -- resume eligibility window. See spec/04_system-components.md §4.2:
 --

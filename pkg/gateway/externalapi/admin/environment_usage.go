@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 )
 
-// EnvironmentUsagePayload is the §15.1 line 840 GET
+// EnvironmentUsagePayload is the §15.1 GET
 // /v1/admin/environments/{name}/usage response: the reconciled token and
 // compute usage rolled up across every session created in the
 // environment. The fields mirror the per-session usage envelope so a
@@ -26,14 +26,14 @@ type EnvironmentUsagePayload struct {
 }
 
 // handleEnvironmentUsage implements GET /v1/admin/environments/{name}/usage
-// (§15.1 line 840): the environment billing rollup. It resolves the
+// (§15.1): the environment billing rollup. It resolves the
 // environment within the caller's authorized tenant (404 if absent), then
 // sums the §11.2.1 billing ledger across every event stamped with the
 // environment name, applying correction semantics. The environment id
 // stamped on billing events is the §10.6 environment name, so no join
 // against session rows is needed. An environment with no usage returns a
 // zero-valued rollup rather than an error, mirroring the per-session
-// usage endpoint. spec: §15.1 line 840; §10.6 line 663; §11.2.1. F-15.1.3.
+// usage endpoint. spec: §15.1; §10.6; §11.2.1. F-15.1.3.
 func (r *Router) handleEnvironmentUsage(w http.ResponseWriter, req *http.Request) {
 	tenant, _, err := r.authorizedTenantForUser(req, req.URL.Query().Get("tenantId"))
 	if err != nil {

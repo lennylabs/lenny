@@ -5,7 +5,7 @@
 // counters, per-parent reservation keys, and the high-watermark) via a
 // slot-local SCAN, leaving other trees' keys intact.
 //
-// spec: §12.8 line 831 (step 16 — slot-local SCAN of {root}:dlg:*).
+// spec: §12.8.
 package treebudget_test
 
 import (

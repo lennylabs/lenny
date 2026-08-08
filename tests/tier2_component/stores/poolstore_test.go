@@ -220,7 +220,7 @@ func TestPoolStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 797 — the draining_since column persists the pool
+	// spec: §15.1 — the draining_since column persists the pool
 	// drain phase across a store round-trip so a restarted gateway still
 	// sees the pool as draining. F-15.1.8.
 	t.Run("draining_since round-trips", func(t *testing.T) {

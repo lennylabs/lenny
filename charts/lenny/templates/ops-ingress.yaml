@@ -30,7 +30,7 @@ metadata:
     {{- include "lenny.labels" $ | nindent 4 }}
     app: lenny-ops
   annotations:
-    {{- /* §25.4 line 1004/1009 — keep SSE clients on one replica and
+    {{- /* §25.4 — keep SSE clients on one replica and
        hold the long-lived stream open past the idle timeout. */ -}}
     {{- if .idleTimeoutSeconds }}
     nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .idleTimeoutSeconds | quote }}

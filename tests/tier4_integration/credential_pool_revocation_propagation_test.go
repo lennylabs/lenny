@@ -60,7 +60,7 @@ import (
 // Redis) and retains the leases this replica holds against it, denied in
 // place by the deny-list entry, returning the count of leases affected. It
 // is reconstructed here rather than imported because the production glue
-// lives in package main. spec: §4.9 lines 1640-1652, 1671.
+// lives in package main. spec: §4.9.
 type poolRevoker struct {
 	denyList *propagator.Propagator
 	leases   *credleasestore.Store
@@ -114,18 +114,16 @@ const (
 	revProxyBody = `{"model":"claude-3-5-sonnet","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}`
 )
 
-// spec: 4.9 (Emergency Credential Revocation, spec/04_system-components.md
+// spec: 4.9 (Emergency Credential Revocation, §4.9: "The credential ID is added to an in-memory credential
 //
-//	lines 1626-1652: "The credential ID is added to an in-memory credential
 //	deny list on every gateway replica, propagated via Redis pub/sub ...
 //	Any request presenting a lease backed by a denied credential is
 //	immediately rejected with CREDENTIAL_REVOKED ... there is no window
 //	where the compromised key continues to reach the provider."), 11.4
-//	(spec/11_policy-and-controls.md line 263: "peer replicas apply them on
-//	their subscribers within seconds"), 16 (spec/16_observability.md line
-//	60: a revoked credential still holding active leases beyond 30s fires
+//	(§11.4: "peer replicas apply them on
+//	their subscribers within seconds"), 16 (§16.1: a revoked credential still holding active leases beyond 30s fires
 //	the CredentialCompromised critical alert — the propagation SLO ceiling),
-//	18 (spec/18_build-sequence.md line 480: "Emergency revocation
+//	18 (§18.26: "Emergency revocation
 //	propagating through Redis pub/sub; active leases terminate within the
 //	documented SLO").
 //

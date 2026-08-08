@@ -22,7 +22,7 @@ import (
 // against the durable store. It downloads the PostgreSQL bundle, so it is
 // skipped under -short.
 //
-// spec: §25.5 lines 2613-2664.
+// spec: §25.5.
 func TestPgStoreRoundTrip_spec_25_5(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
@@ -135,7 +135,7 @@ func TestPgStoreRoundTrip_spec_25_5(t *testing.T) {
 		t.Errorf("deliveries not newest-first: %+v", deliveries)
 	}
 
-	// §25.5 lines 2649-2664: DeleteExpired purges only rows whose
+	// §25.5: DeleteExpired purges only rows whose
 	// expires_at has passed, bounded by limit. Record one already-expired
 	// row; a sweep at a cutoff after its expiry removes it while the two
 	// future-dated rows survive.

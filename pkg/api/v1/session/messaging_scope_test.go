@@ -15,7 +15,7 @@ import (
 // empty default resolves to `direct`; empty tenant/runtime values are
 // skipped rather than read as `direct`; an empty ceiling imposes no cap
 // while an explicit `direct` ceiling forbids siblings tree-wide.
-// spec: §7.2 lines 250-266. F-7.2.6.
+// spec: §7.2. F-7.2.6.
 func TestResolveEffectiveMessagingScope_spec_7_2_250(t *testing.T) {
 	const (
 		direct   = session.MessagingScopeDirect

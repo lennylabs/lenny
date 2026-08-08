@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 #
-# §17.4 line 258 Compose Mode observability profile. Scrapes the gateway
-# at the §10.1 line 88 gateway interval (10s). The gateway serves
+# §17.4 Compose Mode observability profile. Scrapes the gateway
+# at the §10.1 gateway interval (10s). The gateway serves
 # /metrics on the same listener as the API (:8080).
 global:
   scrape_interval: 15s

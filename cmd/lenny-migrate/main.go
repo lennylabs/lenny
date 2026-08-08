@@ -25,8 +25,7 @@
 // The connection string comes from --postgres-dsn or the
 // LENNY_POSTGRES_DSN environment variable.
 //
-// spec: §24.13 lines 150-151 (operator surface is `migrate status` and
-// `migrate down --version <N> --confirm`); §10.5 (phase advancement via
+// spec: §24.13; §10.5 (phase advancement via
 // Kubernetes Jobs, destructive path gated and audited).
 package main
 
@@ -68,7 +67,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"acknowledge the destructive down/goto bypasses the audited §24.13 rollback path (required for down/goto).")
 	confirm := fs.Bool("confirm", false,
 		"confirm a destructive down/goto operation (required for down/goto).")
-	// §24.13 line 150: the Kubernetes Job that applied a migration is
+	// §24.13: the Kubernetes Job that applied a migration is
 	// recorded in the phase-tracking table and surfaced as
 	// `migrationJobName` in `lenny-ctl migrate status`. The chart wires
 	// this from the downward API (metadata.labels['job-name']) so the
@@ -113,9 +112,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	switch cmd {
 	case "up":
 		// Capture the pre-run version so the end-of-run phase write only
-		// stamps the versions this Job advanced through. spec: §24.13
-		// line 150 ("phase reflects the last migration Job that completed
-		// successfully").
+		// stamps the versions this Job advanced through. spec: §24.13.
 		prev, _, prevErr := m.Version()
 		hadPrev := prevErr == nil
 		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
@@ -174,7 +171,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // satisfied and a non-zero process exit code otherwise, pointing the
 // operator at the audited admin-API rollback path.
 //
-// spec: §24.13 lines 150-151; §10.5 (rollbacks are audited).
+// spec: §24.13; §10.5 (rollbacks are audited).
 func requireBreakGlass(cmd string, breakGlass, confirm bool, stderr io.Writer) int {
 	if breakGlass && confirm {
 		return 0
@@ -194,8 +191,7 @@ func requireBreakGlass(cmd string, breakGlass, confirm bool, stderr io.Writer) i
 // projection. A read of the post-run version or a phase-table write that
 // fails is logged and ignored: the schema migration itself succeeded, and
 // the phase data is advisory for the status surface — failing the
-// pre-deploy hook over it would block the deployment. spec: §24.13
-// line 150.
+// pre-deploy hook over it would block the deployment. spec: §24.13.
 func recordMigrationPhases(dsn, jobName string, prev uint, hadPrev bool, m *migrate.Migrate, stderr io.Writer) {
 	cur, _, err := m.Version()
 	if errors.Is(err, migrate.ErrNilVersion) {

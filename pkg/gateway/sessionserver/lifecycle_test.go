@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §7.1 line 77 (default retention on create), §7.2 line 137
+// spec: §7.1, §7.2
 // (status_change on transitions).
 
 func TestCreateStampsDefaultRetention_spec_7_1_5(t *testing.T) {

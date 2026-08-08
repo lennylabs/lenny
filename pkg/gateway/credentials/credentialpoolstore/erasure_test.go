@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 )
 
-// spec: §12.1 line 5 — credential pools are tenant-scoped configuration
+// spec: §12.1 — credential pools are tenant-scoped configuration
 // with no user_id, so DeleteByUser removes nothing and returns (0, nil)
 // while still satisfying the mandatory-erasure interface contract.
 func TestMemoryDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
@@ -30,7 +30,7 @@ func TestMemoryDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — empty scope ids are rejected.
+// spec: §12.1 — empty scope ids are rejected.
 func TestMemoryDeleteByUserEmptyRejected_spec_12_1(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
 	if _, err := store.DeleteByUser(context.Background(), "", "alice@acme.com"); err == nil {
@@ -41,7 +41,7 @@ func TestMemoryDeleteByUserEmptyRejected_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5, §12.8 Phase 4 — DeleteByTenant removes every pool
+// spec: §12.1, §12.8 Phase 4 — DeleteByTenant removes every pool
 // the tenant owns and leaves other tenants untouched.
 func TestMemoryDeleteByTenant_spec_12_1(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
@@ -70,7 +70,7 @@ func TestMemoryDeleteByTenant_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByTenant rejects the empty tenant id and is
+// spec: §12.1 — DeleteByTenant rejects the empty tenant id and is
 // idempotent on a tenant with no pools.
 func TestMemoryDeleteByTenantEmptyAndIdempotent_spec_12_1(t *testing.T) {
 	store := credentialpoolstore.NewMemory()

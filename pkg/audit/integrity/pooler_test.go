@@ -63,7 +63,7 @@ func (q *fakeQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx
 	panic("QueryRow is not used by the pooler-defense checks")
 }
 
-// spec: §12.3 line 56 — the coverage check must surface every
+// spec: §12.3 — the coverage check must surface every
 // tenant-scoped table missing the lenny_tenant_guard trigger.
 func TestTenantGuardCoverageGapsSpec123Line56ReturnsMissingTables(t *testing.T) {
 	q := &fakeQuerier{rows: &fakeRows{vals: []string{"session_eviction_state", "users"}}}
@@ -84,7 +84,7 @@ func TestTenantGuardCoverageGapsSpec123Line56ReturnsMissingTables(t *testing.T) 
 	}
 }
 
-// spec: §12.3 line 56 — an empty gap set means every tenant-scoped
+// spec: §12.3 — an empty gap set means every tenant-scoped
 // table is protected.
 func TestTenantGuardCoverageGapsSpec123Line56EmptyWhenAllCovered(t *testing.T) {
 	q := &fakeQuerier{rows: &fakeRows{vals: nil}}
@@ -121,7 +121,7 @@ func TestTenantGuardCoverageGapsIterError(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 56 — outside external pooler mode the check is a
+// spec: §12.3 — outside external pooler mode the check is a
 // no-op and must not even query the catalog (the in-cluster pooler
 // enforces the connect_query sentinel).
 func TestVerifyCloudManagedPoolerDefenseSpec123Line56NoopWhenNotExternal(t *testing.T) {
@@ -136,7 +136,7 @@ func TestVerifyCloudManagedPoolerDefenseSpec123Line56NoopWhenNotExternal(t *test
 	}
 }
 
-// spec: §12.3 line 56 — under external mode a missing trigger makes the
+// spec: §12.3 — under external mode a missing trigger makes the
 // gateway refuse to start with the verbatim fatal message.
 func TestVerifyCloudManagedPoolerDefenseSpec123Line56FatalWhenTriggerAbsent(t *testing.T) {
 	q := &fakeQuerier{rows: &fakeRows{vals: []string{"sessions"}}}
@@ -161,7 +161,7 @@ func TestVerifyCloudManagedPoolerDefenseSpec123Line56FatalWhenTriggerAbsent(t *t
 	}
 }
 
-// spec: §12.3 line 56 — under external mode with full coverage the
+// spec: §12.3 — under external mode with full coverage the
 // gateway starts.
 func TestVerifyCloudManagedPoolerDefenseSpec123Line56PassWhenCovered(t *testing.T) {
 	q := &fakeQuerier{rows: &fakeRows{vals: nil}}

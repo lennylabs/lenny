@@ -42,8 +42,7 @@ func emitAndNonce(t *testing.T, em *Emitter) uint64 {
 	return nonceFromID(t, page.Events[len(page.Events)-1].Event.ID)
 }
 
-// TestNonceCheckpointSurvivesRestart_spec_25_3_748 asserts the §25.3 line
-// 748 contract: with the disk checkpoint wired, a restarted emitter
+// TestNonceCheckpointSurvivesRestart_spec_25_3_748 asserts the §25.3 contract: with the disk checkpoint wired, a restarted emitter
 // resumes from last_checkpointed + safe_skip_window and never replays a
 // nonce that was used before the restart.
 func TestNonceCheckpointSurvivesRestart_spec_25_3_748(t *testing.T) {

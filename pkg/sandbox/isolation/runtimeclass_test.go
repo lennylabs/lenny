@@ -32,7 +32,7 @@ func TestRuntimeClassNameRejectsUnknownProfile(t *testing.T) {
 	}
 }
 
-// spec: §17.5 line 3 — operators whose cluster ships the gVisor or
+// spec: §17.5 — operators whose cluster ships the gVisor or
 // Kata RuntimeClass under a non-default name (e.g. `runsc`, `kata-qemu`)
 // MUST be able to remap each profile via a chart-supplied override map
 // without renaming the in-cluster RuntimeClass objects to Lenny's

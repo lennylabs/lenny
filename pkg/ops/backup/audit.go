@@ -10,14 +10,14 @@ import (
 )
 
 // AuditEvent is one §25.11 backup/restore audit event the Service emits
-// on a state transition. The §25.11 line 4343 enumeration requires an
+// on a state transition. The §25.11 enumeration requires an
 // audit row on every backup, restore, and retention transition; the
 // Service raises one of these for each transition it owns and hands it
 // to the caller-supplied AuditSink so the audit trail integrates with
 // the platform's §11.7 append-only audit log without coupling the
 // orchestration logic to an audit-store dependency.
 //
-// spec: §25.11 line 4343.
+// spec: §25.11.
 type AuditEvent struct {
 	// Type is the audit.EventType value, e.g. audit.EventBackupCreated.
 	Type string
@@ -48,7 +48,7 @@ type AuditEvent struct {
 type AuditSink func(AuditEvent)
 
 // ObjectDeleter removes a backup's stored object (the MinIO archive)
-// during §25.11 retention enforcement. §25.11 lines 4108-4111 require
+// during §25.11 retention enforcement. §25.11 require
 // deletion from both MinIO and Postgres; EnforceRetention marks the
 // ops_backups row expired (the Postgres half) and invokes this seam for
 // the MinIO half. A nil deleter leaves the physical object for the
@@ -56,7 +56,7 @@ type AuditSink func(AuditEvent)
 // behavior, while the row is still expired and the
 // backup.deleted_by_retention event still fires.
 //
-// spec: §25.11 lines 4108-4111.
+// spec: §25.11.
 type ObjectDeleter interface {
 	// DeleteBackupObject removes the object at storagePath. A not-found
 	// object is not an error (the object may already have been swept).
@@ -81,7 +81,7 @@ type OrphanedJob struct {
 // Jobs a no-op — the Postgres store runs the equivalent cleanup query
 // server-side.
 //
-// spec: §25.11 lines 3976-3978 ("deleting orphaned Jobs").
+// spec: §25.11.
 type JobReaper interface {
 	// ListManagedJobs returns every lenny-backup Job the launcher created
 	// together with its lenny.dev/backup-id annotation.
@@ -112,8 +112,8 @@ func (s *Service) emitAudit(ev AuditEvent) {
 // event. An empty operationID leaves fields unchanged, so a call with no
 // X-Lenny-Operation-ID header records no spurious empty field.
 //
-// spec: §25.1 line 121 (operationId on every request audit event),
-// §25.2 line 350 (operationId propagated to audit events).
+// spec: §25.1,
+// §25.2.
 func auditFieldsWithOperationID(operationID string, fields map[string]any) map[string]any {
 	if operationID == "" {
 		return fields

@@ -606,7 +606,7 @@ type CredentialLease struct {
 	// expires_at as issued_at + min(leaseTTLSeconds, providerMaxTTL); the
 	// gateway records it so the lease's wall-clock duration is auditable
 	// and feeds the §16.1 lenny_credential_lease_duration_seconds
-	// histogram. spec: §4.9 line 1145.
+	// histogram. spec: §4.9.
 	IssuedAt *timestamppb.Timestamp `protobuf:"bytes,19,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
 	// materialized_config is the §4.9 direct-mode materializedConfig: the
 	// per-provider bundle of real upstream credential fields (apiKey,
@@ -619,7 +619,7 @@ type CredentialLease struct {
 	// upstream_credential is. The gateway holds the bundle only
 	// transiently in memory and forwards it to the pod through the adapter
 	// credential file; it is never persisted in the gateway's durable
-	// lease store. spec: §4.9 lines 1246-1298.
+	// lease store. spec: §4.9.
 	MaterializedConfig map[string]string `protobuf:"bytes,20,rep,name=materialized_config,json=materializedConfig,proto3" json:"materialized_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache

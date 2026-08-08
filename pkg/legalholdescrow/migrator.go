@@ -93,7 +93,7 @@ type Escrowed struct {
 	TenantDeleteJob string
 	MigratedAt      time.Time
 	// SessionID / ArtifactURI carry the release-lookup keys onto the escrow
-	// record the Ledger persists, so the §12.8 line 884 escrow-GC release
+	// record the Ledger persists, so the §12.8 escrow-GC release
 	// can resolve the objects a cleared hold protected.
 	SessionID   string
 	ArtifactURI string

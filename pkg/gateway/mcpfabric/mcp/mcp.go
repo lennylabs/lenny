@@ -205,10 +205,10 @@ func NewToolError(code, msg string, details map[string]any) *ToolError {
 // gateway uses to run the §4.8 PreToolResult interceptor phase without
 // coupling this transport-only adapter to the policy engine. callID is
 // the JSON-RPC request id (the originating tool_call.id, immutable per
-// §4.8 line 1053); name is the tool name. A non-nil error rejects
+// §4.8); name is the tool name. A non-nil error rejects
 // delivery and the dispatcher surfaces it through the standard tool
 // error path. A returned ToolResult replaces the handler's result
-// (a MODIFY may redact content or set isError). spec: §4.8 line 1053.
+// (a MODIFY may redact content or set isError). spec: §4.8.
 type ResultInterceptor func(ctx context.Context, callID, name string, result ToolResult) (ToolResult, error)
 
 // Server is the §15.2 MCP adapter.
@@ -220,19 +220,19 @@ type Server struct {
 	// idem holds the §11.5 idempotency wiring (Store + tenant resolver
 	// + allow-list of tools that admit an idempotencyKey field). A
 	// zero IdempotencyConfig disables the per-tool idempotency path.
-	// spec: §11.5 line 277; F-11.5.1.
+	// spec: §11.5; F-11.5.1.
 	idem IdempotencyConfig
 	// wsAuth carries the §27.5.4 WebSocket revocation watch wiring: the
 	// per-connection principal extractor and the playground revocation
 	// checker that together close a revoked origin=playground bearer
 	// mid-stream with WebSocket code 4401. A zero value leaves the watch
 	// off, so a non-playground MCP WebSocket client serves frames without
-	// it. spec: §27.3.1 line 167; §27.5.4.
+	// it. spec: §27.3.1; §27.5.4.
 	wsAuth wsAuthConfig
 	// attach carries the §15.2 Streamable HTTP SSE channel wiring. A zero
 	// value (Events == nil) leaves attach streaming off, so an
 	// `attach_session` tools/call falls through to the registered snapshot
-	// handler on every transport. spec: §15.2 lines 1331-1333. F-15.2.2.
+	// handler on every transport. spec: §15.2. F-15.2.2.
 	attach AttachConfig
 }
 
@@ -273,7 +273,7 @@ func (s *Server) Handler() http.Handler {
 // runs the same JSON-RPC dispatch as POST /mcp, with the named
 // environment attached to the request context so a tool that creates a
 // session or discovers runtimes defaults to that environment scope
-// without the caller repeating it on each call. spec: §10.6 line 557.
+// without the caller repeating it on each call. spec: §10.6.
 func (s *Server) EnvironmentHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /mcp/environments/{name}", func(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +291,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 	var req jsonRPCRequest
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		// spec: §15.2.1 rule 3 (line 1384) — even transport-level
+		// spec: §15.2.1 rule 3 — even transport-level
 		// JSON-RPC errors carry the shared lenny envelope (code,
 		// category, retryable) in error.data so a client applies one
 		// error-handling strategy across REST and MCP. F-15.2.6.
@@ -305,7 +305,7 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Method {
 	case "initialize":
-		// spec: §15.2 lines 1310-1316 — negotiate the highest mutually
+		// spec: §15.2 — negotiate the highest mutually
 		// supported MCP spec version, reject an unsupported/retired one
 		// with the structured lenny error, and set the deprecation
 		// warning header when the connection lands on the previous
@@ -352,7 +352,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 		s.WriteLennyError(w, req.ID, errInvalidParams, "VALIDATION_ERROR", "params is not a valid tools/call object", nil)
 		return
 	}
-	// spec: §15.2 lines 1331-1333 — when attach streaming is wired and the
+	// spec: §15.2 — when attach streaming is wired and the
 	// caller requested the Streamable HTTP SSE channel, an attach_session
 	// tools/call is upgraded to the per-session event stream instead of a
 	// single JSON-RPC response. A caller that did not ask for
@@ -370,7 +370,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 		s.WriteLennyError(w, req.ID, errMethodNotFound, "RESOURCE_NOT_FOUND", "unknown tool "+params.Name, nil)
 		return
 	}
-	// spec: §11.5 line 277 — when the tool admits an idempotencyKey field
+	// spec: §11.5 — when the tool admits an idempotencyKey field
 	// and the caller supplied one, route the dispatch through the §11.5
 	// Claim/Replay/Finalize flow so retries collapse to one execution.
 	// dispatchIdempotent returns handled=true when the path consumed the
@@ -421,7 +421,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 	// result before delivering it back to the agent. A REJECT (or an
 	// immutable-id MODIFY violation) surfaces through the same isError
 	// + lenny-envelope path as a handler failure; a MODIFY substitutes
-	// the rewritten result. spec: §4.8 line 1053.
+	// the rewritten result. spec: §4.8.
 	if s.resultInterceptor != nil {
 		modified, ierr := s.resultInterceptor(ctx, string(req.ID), params.Name, result)
 		if ierr != nil {
@@ -437,7 +437,7 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 // order. It is the read side the §9.1 intra-pod platform MCP server
 // uses (over GatewayControl.ListPlatformTools) to advertise the same
 // catalog the gateway-edge /mcp surface serves, so the two surfaces
-// never drift. spec: §9.1 lines 14-31. F-9.1.1.
+// never drift. spec: §9.1. F-9.1.1.
 func (s *Server) Catalog() []Tool {
 	return s.toolList()
 }
@@ -460,7 +460,7 @@ func (s *Server) Catalog() []Tool {
 // The idempotency path is intentionally absent: the §11.5 idempotency
 // keys gate the client-facing session-lifecycle tools, not the
 // agent-facing platform tools this entry point serves.
-// spec: §9.1 line 14; §4.8 line 1053. F-9.1.1.
+// spec: §9.1; §4.8. F-9.1.1.
 func (s *Server) DispatchTool(ctx context.Context, name string, arguments json.RawMessage) (result ToolResult, ok bool, err error) {
 	handler, found := s.handlers[name]
 	if !found {
@@ -527,7 +527,7 @@ func (s *Server) writeResult(w http.ResponseWriter, id json.RawMessage, result a
 // reason so the same (category, retryable) pair reaches the client on
 // both REST and MCP surfaces. The response is HTTP 200 with the error
 // in the body per JSON-RPC; a parse error before an id is decoded
-// passes a nil id. spec: §15.2.1 rule 3 (line 1384). F-15.2.6.
+// passes a nil id. spec: §15.2.1 rule 3. F-15.2.6.
 func (s *Server) WriteLennyError(w http.ResponseWriter, id json.RawMessage, jsonRPCCode int, lennyCode, message string, details map[string]any) {
 	envelope := NewLennyErrorDetail(lennyCode, message, details)
 	w.Header().Set("Content-Type", "application/json")

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
-// spec: §17.4 line 182 — "the embedded OIDC provider refuses any audience
+// spec: §17.4 — "the embedded OIDC provider refuses any audience
 // claim not matching dev.local; the gateway rejects externally-issued
 // tokens." The gateway trusts the embedded OIDC HMAC key directly via
 // --bearer-trust-hmac-key-file; embeddedHMACVerifier pins that path to the

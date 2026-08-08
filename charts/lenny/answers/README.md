@@ -61,7 +61,7 @@ mirror (`platform.registry.*`) and `preflight.skipNetworkProbes: true`
 `charts/lenny/values.schema.json` by
 `pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2 line
 1374), and the wizard auto-suggests a catalog base from cluster
-detection (§17.9.2 line 1376; see the install wizard).
+detection (§17.9.2; see the install wizard).
 
 ## Schema
 

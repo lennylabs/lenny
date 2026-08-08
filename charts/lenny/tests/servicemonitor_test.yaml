@@ -29,7 +29,7 @@ tests:
       - isKind:
           of: PodMonitor
 
-  # spec: §10.1 line 88 — the gateway is rendered as its own ServiceMonitor
+  # spec: §10.1 — the gateway is rendered as its own ServiceMonitor
   # (lenny-gateway) so it can scrape at 10s while the controller and Token
   # Service share lenny-control-plane on the slower interval.
   - it: renders both ServiceMonitors when the gate is enabled
@@ -112,7 +112,7 @@ tests:
           path: spec.selector.matchExpressions[0].values
           content: gateway
 
-  # spec: §10.1 line 88 — the gateway scrapes at 10s by default; the rest
+  # spec: §10.1 — the gateway scrapes at 10s by default; the rest
   # of the control plane stays on monitoring.serviceMonitor.interval.
   - it: scrapes the gateway at 10s by default
     template: servicemonitor.yaml

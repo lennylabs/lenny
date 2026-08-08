@@ -297,7 +297,7 @@ func TestAdminUserInvalidatedMapsToDisable_spec_11_4(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 116-164 — F-9.3.9. The §9.3 connector lifecycle
+// spec: §9.3 — F-9.3.9. The §9.3 connector lifecycle
 // audit events must resolve to a distinguished OCSF class so SIEM
 // consumers see registration, update, soft-delete, and OAuth flow
 // rows under the right semantic class instead of the generic admin.*
@@ -329,7 +329,7 @@ func TestConnectorEventsResolveToTypedClasses_spec_9_3_116(t *testing.T) {
 	}
 }
 
-// spec: §24.11 line 136 — F-24.11.3. The operator force-terminate event
+// spec: §24.11 — F-24.11.3. The operator force-terminate event
 // resolves to API Activity with a Delete activity_id via an explicit
 // exact-catalog entry, not the generic `session.` prefix fallback (which
 // would yield ActivityUnknown).

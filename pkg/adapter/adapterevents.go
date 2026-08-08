@@ -13,7 +13,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// §4.7 lines 652-662 adapter→gateway control events. Each is surfaced as
+// §4.7 adapter→gateway control events. Each is surfaced as
 // a JSON envelope on the AdapterEvents server stream; type discriminates.
 const (
 	// eventRateLimited reports the current credential is rate-limited and
@@ -37,7 +37,7 @@ const (
 	// closes. The gateway waits for it before running budget_return.lua
 	// (§8.3).
 	eventFinalUsageReport = "FINAL_USAGE_REPORT"
-	// eventCheckpointBarrierAck is the §4.7 line 660 CheckpointBarrierAck
+	// eventCheckpointBarrierAck is the §4.7 CheckpointBarrierAck
 	// event the adapter emits in response to a §10.1 graceful-drain
 	// CheckpointBarrier RPC. Fields: barrier_id, checkpoint_ref,
 	// quiesced_ms (mirrors the synchronous RPC return).
@@ -62,7 +62,7 @@ type controlEvent struct {
 	LeaseID   string        `json:"leaseId,omitempty"`
 	Reason    string        `json:"reason,omitempty"`
 	Usage     *controlUsage `json:"usage,omitempty"`
-	// CheckpointBarrierAck fields (§4.7 line 660). Only set on the
+	// CheckpointBarrierAck fields (§4.7). Only set on the
 	// eventCheckpointBarrierAck event; omitted otherwise.
 	BarrierID     string `json:"barrierId,omitempty"`
 	CheckpointRef string `json:"checkpointRef,omitempty"`
@@ -86,7 +86,7 @@ type controlUsage struct {
 // stream today. At most one stream is active at a time, matching the
 // one-session-per-pod model (§6.1).
 //
-// spec: §4.7 lines 652-662.
+// spec: §4.7.
 func (s *Server) AdapterEvents(stream adapterv1.Adapter_AdapterEventsServer) error {
 	sink := make(chan controlEvent, controlEventBuffer)
 	s.controlMu.Lock()
@@ -101,7 +101,7 @@ func (s *Server) AdapterEvents(stream adapterv1.Adapter_AdapterEventsServer) err
 		s.controlMu.Lock()
 		s.controlSink = nil
 		s.controlMu.Unlock()
-		// spec: §10.1 lines 47-52 — a closed gateway control stream with a
+		// spec: §10.1 — a closed gateway control stream with a
 		// session still live is the coordinator-loss signal; enter hold
 		// state and await a new coordinator's CoordinatorFence.
 		s.onCoordinatorChannelClosed()

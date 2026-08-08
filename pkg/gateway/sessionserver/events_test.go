@@ -189,7 +189,7 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 143 + lines 349-361 — when the client's cursor falls
+// spec: §7.2 — when the client's cursor falls
 // below the oldest retained event, the SSE stream emits gap_detected
 // AND checkpoint_boundary markers ahead of the backlog so the client
 // can render a gap warning and count of events lost.
@@ -261,7 +261,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 143 — no gap markers when the cursor is current
+// spec: §7.2 — no gap markers when the cursor is current
 // (within the retained window).
 func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T) {
 	store := memstore.New()
@@ -312,7 +312,7 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 	}
 }
 
-// spec: §7.2 line 143 — a fresh connect (cursor=0) is never a gap.
+// spec: §7.2 — a fresh connect (cursor=0) is never a gap.
 func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(3)
@@ -400,7 +400,7 @@ func indexOfLine(lines []string, want string) int {
 	return -1
 }
 
-// spec: §10.4 lines 391-397 — a reconnect that spans a coordinator
+// spec: §10.4 — a reconnect that spans a coordinator
 // handoff (the client resumes from a cursor it saw under a prior
 // coordinator, the session has a durable last_seq, but this coordinator
 // has no in-memory replay history) synthesizes session.resumed +
@@ -457,7 +457,7 @@ func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
 	}
 }
 
-// spec: §10.4 lines 395-397 — the handoff children_reattached frame
+// spec: §10.4 — the handoff children_reattached frame
 // streams archived children whose CompletionSeq exceeds the client's
 // resume cursor (missed completions) and re-lists active children.
 // F-7.2.13, F-10.4.2.
@@ -513,7 +513,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 	}
 }
 
-// spec: §10.4 line 391 — no synthesis when this coordinator already holds
+// spec: §10.4 — no synthesis when this coordinator already holds
 // the session's replay history (an ordinary reconnect, not a handoff).
 func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) {
 	store := memstore.New()
@@ -547,7 +547,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 	}
 }
 
-// spec: §10.4 line 391 — a fresh connect (cursor=0) is never a handoff.
+// spec: §10.4 — a fresh connect (cursor=0) is never a handoff.
 func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
@@ -579,7 +579,7 @@ func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 
 // TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228 confirms
 // that `Accept: application/json` against /v1/sessions/{id}/events
-// returns the §15.1 line 1228 canonical envelope rather than the SSE
+// returns the §15.1 canonical envelope rather than the SSE
 // stream. F-15.1.23.
 func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	store := memstore.New()
@@ -653,7 +653,7 @@ func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 }
 
 // TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253 confirms the
-// shared §15.1 line 1253 24h cursor TTL applies on the JSON list path.
+// shared §15.1 24h cursor TTL applies on the JSON list path.
 func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(8)

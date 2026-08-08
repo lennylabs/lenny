@@ -14,7 +14,7 @@ import (
 // leaves the admin-token bootstrap step and the rotate-token route
 // inactive.
 //
-// spec: §17.6 lines 455-474 — F-17.6.3, F-24.1.7.
+// spec: §17.6 — F-17.6.3, F-24.1.7.
 type AdminTokenProvisioner interface {
 	Provision(ctx context.Context) (admintoken.Result, error)
 	Rotate(ctx context.Context) (admintoken.Result, error)
@@ -35,7 +35,7 @@ func (r *Router) WithAdminTokenProvisioner(p AdminTokenProvisioner) *Router {
 // response carries so the §24.1 CLI can print the right first-use prompt.
 type AdminTokenSection struct {
 	// SecretCreated is true when this bootstrap run wrote the Secret (a
-	// first run). The §17.6 line 473 first-use prompt fires only then;
+	// first run). The §17.6 first-use prompt fires only then;
 	// re-runs print the "already exists" message. F-24.1.7.
 	SecretCreated bool `json:"secretCreated"`
 	// SecretNamespace / SecretName / Username echo where the credential

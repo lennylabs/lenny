@@ -71,7 +71,7 @@ func (m *fakeMetrics) IncCoordinatorFenceRelinquished() { m.relinquish++ }
 
 func staleErr() error { return status.Error(codes.FailedPrecondition, "coordinator_handoff_stale") }
 
-// spec: §10.1 lines 33-37 — the fence is accepted on the first attempt;
+// spec: §10.1 — the fence is accepted on the first attempt;
 // no retry, no relinquish, no lease release.
 func TestFenceAcceptedFirstAttempt_spec_10_1(t *testing.T) {
 	fc := &fakeFenceClient{results: []adapterclient.CoordinatorFenceResult{{Accepted: true, LastFencedGeneration: 4}}}
@@ -90,7 +90,7 @@ func TestFenceAcceptedFirstAttempt_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 61 / §11.3 line 209 — a stale rejection with no
+// spec: §10.1 / §11.3 — a stale rejection with no
 // generation advance relinquishes: handoff_stale + relinquished counters
 // fire and the lease is released.
 func TestFenceStaleNoAdvanceRelinquishes_spec_11_3_209(t *testing.T) {
@@ -110,7 +110,7 @@ func TestFenceStaleNoAdvanceRelinquishes_spec_11_3_209(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — a stale rejection whose authoritative generation
+// spec: §10.1 — a stale rejection whose authoritative generation
 // advanced mid-handoff is retried at the new value and then accepted.
 func TestFenceStaleThenAdvanceRetriesAndAccepts_spec_10_1(t *testing.T) {
 	fc := &fakeFenceClient{
@@ -133,7 +133,7 @@ func TestFenceStaleThenAdvanceRetriesAndAccepts_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 209 — repeated transient transport faults are retried
+// spec: §11.3 — repeated transient transport faults are retried
 // up to the attempt budget, then the coordinator relinquishes.
 func TestFenceTransientExhaustedRelinquishes_spec_11_3_209(t *testing.T) {
 	transient := status.Error(codes.Unavailable, "pod unreachable")

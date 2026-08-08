@@ -57,7 +57,7 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 595 / §16.1 — the Token Service's
+// spec: §13.3 / §16.1 — the Token Service's
 // lenny_time_drift_seconds gauge is registered, materialized at
 // startup as 0, and updates via SetTimeDrift. F-13.3.5.
 func TestEmitterSetTimeDriftRoundTrips(t *testing.T) {

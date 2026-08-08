@@ -95,11 +95,11 @@ type StoreRouter interface {
 	AuditShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
 
 	// AuditReadShard returns the pool for read-heavy audit queries
-	// (§12.3 line 146: "Read-heavy queries ... audit reads ... should be
+	// (§12.3: "Read-heavy queries ... audit reads ... should be
 	// routed to read replicas"). When a read-replica DSN is configured
 	// (LENNY_PG_READ_DSN / postgres.readDsn) and the audit log lives on
 	// the primary, this resolves to the replica; otherwise it resolves to
-	// the same pool AuditShard returns. spec: §12.3 line 146.
+	// the same pool AuditShard returns. spec: §12.3.
 	AuditReadShard(ctx context.Context, tenantID TenantID) (*pgxpool.Pool, error)
 
 	// RedisShard returns the Redis client for a given concern.
@@ -124,7 +124,7 @@ type StoreRouter interface {
 	// PlatformPostgres pool (the residency rule-2 fallback). A non-empty
 	// region with no storage.regions.<region>.postgresEndpoint entry
 	// returns ErrPlatformRegionUnresolvable so the caller fails closed.
-	// spec: §11.7 line 431.
+	// spec: §11.7.
 	PlatformPostgresForRegion(ctx context.Context, region string) (*pgxpool.Pool, error)
 
 	// AllAuditShards returns every audit shard for scatter-gather
@@ -156,13 +156,12 @@ var (
 	ErrRedisUnavailable = errors.New("storerouter: router has no redis client (postgres-only mode)")
 	// ErrPlatformRegionUnresolvable reports that a region-scoped
 	// platform-Postgres write named a region with no
-	// storage.regions.<region>.postgresEndpoint entry. It is the §11.7
-	// line 433 fail-closed condition for the CMP-058 platform-tenant
+	// storage.regions.<region>.postgresEndpoint entry. It is the §11.7 fail-closed condition for the CMP-058 platform-tenant
 	// audit residency gate (the missing-entry case), mirroring the
 	// BACKUP_REGION_UNRESOLVABLE / LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE
 	// fail-closed gates. PlatformPostgresForRegion returns it; the audit
 	// write path maps it to PLATFORM_AUDIT_REGION_UNRESOLVABLE (HTTP 422).
-	// spec: §11.7 line 433.
+	// spec: §11.7.
 	ErrPlatformRegionUnresolvable = errors.New("storerouter: platform-Postgres region has no storage.regions entry")
 )
 
@@ -191,7 +190,7 @@ type SingleShardRouter struct {
 	// PlatformPostgresForRegion resolves a region against it; an empty
 	// map keeps the single-region deployment default (every region-set
 	// write fails closed because no regional endpoint is configured).
-	// spec: §11.7 line 431.
+	// spec: §11.7.
 	platformRegions map[string]*pgxpool.Pool
 }
 
@@ -207,13 +206,13 @@ type Config struct {
 	// billing/audit paths share the Postgres pool, so a single
 	// well-provisioned primary serves Tier-3 load unchanged.
 	//
-	// spec: §12.3 line 103 — "The gateway supports separate connection
+	// spec: §12.3 — "The gateway supports separate connection
 	// strings for the billing/audit write path (LENNY_PG_BILLING_AUDIT_DSN).
 	// When configured, billing and audit inserts are routed to this
 	// instance while all other writes continue to the primary."
 	BillingAuditPostgres *pgxpool.Pool
 	// ReadPostgres is the optional read-replica pool for the primary
-	// instance (the §12.3 line 146 LENNY_PG_READ_DSN / postgres.readDsn
+	// instance (the §12.3 LENNY_PG_READ_DSN / postgres.readDsn
 	// reader endpoint). When set, the read-only accessors that the spec
 	// names read-heavy (AuditReadShard here; the session-status, task-tree,
 	// and usage-report read paths in their own stores) resolve to it while
@@ -224,7 +223,7 @@ type Config struct {
 	// (BillingAuditPostgres nil); a separate billing/audit instance has no
 	// reader split in v1.
 	//
-	// spec: §12.3 line 146 — "The gateway should use separate connection
+	// spec: §12.3 — "The gateway should use separate connection
 	// strings for read and write traffic. Read-heavy queries (session
 	// status, task tree, audit reads, usage reports) should be routed to
 	// read replicas."
@@ -251,7 +250,7 @@ type Config struct {
 	// single-instance Tier 1/2 topology). NewSingleShardRouter installs
 	// the §12.4 tenant-key Guard hook on every distinct client.
 	//
-	// spec: §12.4 lines 237-245 — "separate connection strings per store
+	// spec: §12.4 — "separate connection strings per store
 	// role — no code changes are required because each store role already
 	// has its own interface".
 	RedisByConcern map[RedisConcern]redis.UniversalClient
@@ -271,19 +270,19 @@ type Config struct {
 	// from this map is unresolvable and the write fails closed. Empty (the
 	// default) keeps the single-region deployment behavior. The same map
 	// underpins runtime-tenant writes, backups, and legal-hold escrow
-	// residency. spec: §11.7 line 431.
+	// residency. spec: §11.7.
 	PlatformRegions map[string]*pgxpool.Pool
 	// DefaultShardID is the ShardID assigned to the single shard
 	// returned by AllSessionShards and AllAuditShards. A zero value
 	// defaults to "default".
 	DefaultShardID ShardID
-	// Scatter pins the §12.6 lines 556-558 scatter-gather execution
+	// Scatter pins the §12.6 scatter-gather execution
 	// bounds the ScatterRead / ScatterWrite helpers observe. A zero
 	// value resolves to DefaultScatterConfig. v1 is single-shard so the
 	// bounds are trivially satisfied; they become load-bearing the first
 	// time a multi-shard router is deployed.
 	Scatter ScatterConfig
-	// ScatterMetrics receives the §12.6 line 560 scatter-gather metrics.
+	// ScatterMetrics receives the §12.6 scatter-gather metrics.
 	// nil disables emission. The gateway may also attach it after
 	// construction via SetScatterMetrics (the production registerer is
 	// built after the router).
@@ -345,13 +344,13 @@ func NewSingleShardRouter(cfg Config) (*SingleShardRouter, error) {
 	}, nil
 }
 
-// ScatterConfig returns the §12.6 lines 556-558 scatter-gather bounds the
+// ScatterConfig returns the §12.6 scatter-gather bounds the
 // router was configured with. A scatter-gather caller passes it to
 // ScatterRead / ScatterWrite. The zero Config value resolves to
 // DefaultScatterConfig.
 func (r *SingleShardRouter) ScatterConfig() ScatterConfig { return r.scatterCfg }
 
-// ScatterMetrics returns the §12.6 line 560 scatter-gather metrics sink
+// ScatterMetrics returns the §12.6 scatter-gather metrics sink
 // the router was configured with, or nil when none is wired.
 func (r *SingleShardRouter) ScatterMetrics() ScatterMetrics { return r.scatterMetrics }
 
@@ -365,7 +364,7 @@ func (r *SingleShardRouter) SetScatterMetrics(m ScatterMetrics) { r.scatterMetri
 // otherwise the primary pool. Routing both the billing and audit write
 // paths through this single resolver keeps the §12.3 R-03 discipline:
 // the two append-only write sources move to the separate instance
-// together, matching the §12.3 line 130 instance-separation step.
+// together, matching the §12.3 instance-separation step.
 func (r *SingleShardRouter) billingAuditPool() *pgxpool.Pool {
 	if r.billingPG != nil {
 		return r.billingPG
@@ -375,8 +374,8 @@ func (r *SingleShardRouter) billingAuditPool() *pgxpool.Pool {
 
 // readPool returns the primary's read-replica pool when one is
 // configured (Config.ReadPostgres), otherwise the primary pool itself.
-// It is the §12.3 line 146 reader endpoint for read-heavy queries that
-// run against the primary instance. spec: §12.3 line 146.
+// It is the §12.3 reader endpoint for read-heavy queries that
+// run against the primary instance. spec: §12.3.
 func (r *SingleShardRouter) readPool() *pgxpool.Pool {
 	if r.readPG != nil {
 		return r.readPG
@@ -432,7 +431,7 @@ func (r *SingleShardRouter) AuditShard(_ context.Context, tenantID TenantID) (*p
 // §12.3 LENNY_PG_BILLING_AUDIT_DSN instance) and a read replica is
 // configured, audit reads route to the replica; otherwise they resolve
 // to the same pool AuditShard returns (the separate billing/audit
-// instance has no reader split in v1). spec: §12.3 line 146.
+// instance has no reader split in v1). spec: §12.3.
 func (r *SingleShardRouter) AuditReadShard(_ context.Context, tenantID TenantID) (*pgxpool.Pool, error) {
 	if tenantID == "" {
 		return nil, ErrInvalidTenantID
@@ -490,14 +489,14 @@ func (r *SingleShardRouter) PlatformPostgres(_ context.Context) (*pgxpool.Pool, 
 	return r.pg, nil
 }
 
-// PlatformPostgresForRegion resolves the §11.7 line 431 region-scoped
+// PlatformPostgresForRegion resolves the §11.7 region-scoped
 // platform-Postgres pool for the CMP-058 platform-tenant audit residency
 // gate. The empty region (the rule-2 fallback) returns the global
 // PlatformPostgres pool. A non-empty region is looked up in the
 // storage.regions.<region>.postgresEndpoint map (Config.PlatformRegions):
 // a present entry returns that region's pool (rule 1); an absent entry
 // returns ErrPlatformRegionUnresolvable so the audit write fails closed
-// (rule 3, missing_entry). spec: §11.7 lines 431-433.
+// (rule 3, missing_entry). spec: §11.7.
 func (r *SingleShardRouter) PlatformPostgresForRegion(ctx context.Context, region string) (*pgxpool.Pool, error) {
 	if region == "" {
 		return r.PlatformPostgres(ctx)

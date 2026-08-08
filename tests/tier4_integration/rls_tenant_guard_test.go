@@ -5,7 +5,7 @@
 // Tier-4 integration test: the §12.3 RLS tenant-isolation defense
 // against a real Postgres container with the production migrations
 // applied. It is the CI-mandated TestRLSTenantGuardMissingSetLocal from
-// §12.3 line 57: a transaction that reaches a tenant-scoped table
+// §12.3: a transaction that reaches a tenant-scoped table
 // without a prior SET LOCAL app.current_tenant must be rejected at the
 // database level, and a transaction scoped to one tenant must not see
 // another tenant's rows.
@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §12.3 line 57 — TestRLSTenantGuardMissingSetLocal.
+// spec: §12.3 — TestRLSTenantGuardMissingSetLocal.
 //
 // The two layers under test:
 //   - the lenny_tenant_guard BEFORE trigger fires for every role
@@ -34,7 +34,7 @@ import (
 //     connection that never set the GUC, and otherwise filters rows to
 //     the current tenant.
 //
-// spec: §12.3 line 57.
+// spec: §12.3.
 // diagnosis: a failure means the lenny_tenant_guard trigger or RLS
 // policy does not reject a write or read on a connection that never set
 // app.current_tenant, so an unscoped transaction could touch tenant data.

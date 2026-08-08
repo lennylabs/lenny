@@ -64,7 +64,7 @@ func TestHealthEndpointsRequireAdminRole(t *testing.T) {
 	// Kept as the spec-faithful assertion for the still-open TEST-GAPS
 	// health-auth finding: the gateway currently serves /v1/admin/health*
 	// unauthenticated (pkg/gateway/operability/health/handler.go) and the
-	// tier-8 chaos probes depend on that access, so §25.3 line 410 and the
+	// tier-8 chaos probes depend on that access, so §25.3 and the
 	// implementation disagree. The reconciliation direction (enforce the
 	// admin role on the health surface, or amend the spec to make the
 	// summary/heartbeat endpoint explicitly public) is a pending human
@@ -99,13 +99,13 @@ func TestHealthEndpointsRequireAdminRole(t *testing.T) {
 		// Unauthenticated caller: the admin API does not serve an
 		// anonymous request. It must not return the 200 health document.
 		if code := get(path, "", ""); code == http.StatusOK {
-			t.Errorf("GET %s unauthenticated: status 200, want the request rejected (§25.3 line 410 admin-role requirement)", path)
+			t.Errorf("GET %s unauthenticated: status 200, want the request rejected (§25.3 admin-role requirement)", path)
 		}
 
 		// Authenticated caller without an admin role: §10.2 RBAC denies
 		// the admin surface with 403 FORBIDDEN.
 		if code := get(path, "acme", string(pkgauth.RoleUser)); code != http.StatusForbidden {
-			t.Errorf("GET %s as non-admin: status %d, want 403 (§25.3 line 410 admin-role requirement)", path, code)
+			t.Errorf("GET %s as non-admin: status %d, want 403 (§25.3 admin-role requirement)", path, code)
 		}
 
 		// platform-admin caller: the health document is served with 200.

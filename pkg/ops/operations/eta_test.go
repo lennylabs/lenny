@@ -61,7 +61,7 @@ func TestComputeHistoricalP50ClampsAtZero(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 394: below HistoricalP50MinSamples (3) the historical
+// spec §25.2: below HistoricalP50MinSamples (3) the historical
 // method is skipped even when a p50 is present — etaMethod falls through
 // to a lower-confidence method, or "none" when nothing else applies.
 func TestComputeHistoricalP50BelowSampleThresholdFallsThrough(t *testing.T) {
@@ -186,7 +186,7 @@ func TestComputeClampsPercent(t *testing.T) {
 	}
 }
 
-// spec §25.2 lines 391/396: stalledForSeconds is the overrun beyond the
+// spec §25.2: stalledForSeconds is the overrun beyond the
 // kind's expected cadence — populated only once now-lastProgressAt
 // exceeds the cadence, and reporting the excess.
 func TestComputeStalledForSeconds(t *testing.T) {
@@ -203,7 +203,7 @@ func TestComputeStalledForSeconds(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 391: an operation advancing within its cadence is not
+// spec §25.2: an operation advancing within its cadence is not
 // stalled — stalledForSeconds stays null.
 func TestComputeStalledForSecondsNilWithinCadence(t *testing.T) {
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
@@ -218,7 +218,7 @@ func TestComputeStalledForSecondsNilWithinCadence(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 396: a zero cadence disables stall detection entirely,
+// spec §25.2: a zero cadence disables stall detection entirely,
 // even when progress has not advanced for a long time.
 func TestComputeStalledForSecondsNilWithoutCadence(t *testing.T) {
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)

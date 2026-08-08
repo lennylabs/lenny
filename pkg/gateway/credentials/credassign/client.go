@@ -24,9 +24,7 @@ import (
 // reads to surface §4.3 "Token Service down, retryable" to the caller.
 // The session-start handler maps it to HTTP 503 with Retry-After.
 //
-// spec: §4.3 line 214 "New sessions that require LLM or OAuth
-// credentials cannot start and fail with a retryable error, allowing
-// clients to back off and retry."
+// spec: §4.3
 var ErrTokenServiceUnavailable = errors.New("credassign: Token Service unavailable")
 
 // Client is the §4.3 gateway-side Token Service client. It satisfies
@@ -68,7 +66,7 @@ type Client struct {
 	timeout time.Duration
 
 	// subsystem is the §4.1 / §4.3 per-subsystem breaker the gateway
-	// wraps Token Service calls in. spec: §4.3 line 211. A nil value
+	// wraps Token Service calls in. spec: §4.3. A nil value
 	// (zero-value Subsystem) admits every call: tests and dev mode
 	// run without the breaker, and the breaker is wired in by the
 	// gateway main package.
@@ -100,7 +98,7 @@ type ClientOptions struct {
 	// Timeout bounds each gRPC call. Zero selects DefaultClientTimeout.
 	Timeout time.Duration
 	// Subsystem is the §4.1 / §4.3 per-subsystem breaker the gateway
-	// wraps Token Service calls in. spec: §4.3 line 211. A nil value
+	// wraps Token Service calls in. spec: §4.3. A nil value
 	// keeps the breaker absent: every call is admitted (test/dev path).
 	Subsystem *subsystem.Subsystem
 }
@@ -136,7 +134,7 @@ func NewClient(opts ClientOptions) *Client {
 // breaker. When the breaker is open it returns ErrTokenServiceUnavailable
 // so the session-start path can surface §4.3's retryable error.
 // transient gRPC codes (Unavailable, DeadlineExceeded) classified as
-// breaker-triggering. spec: §4.3 line 211, line 214.
+// breaker-triggering. spec: §4.3.
 func (c *Client) callTokenService(ctx context.Context, fn func(context.Context) error) error {
 	if c.subsystem == nil {
 		return fn(ctx)
@@ -181,7 +179,7 @@ func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 		resp *tokensv1.AssignCredentialsResponse
 		err  error
 	)
-	// spec: §4.9 line 1468 — when the caller supplies a per-request
+	// spec: §4.9 — when the caller supplies a per-request
 	// tenantID it wins over the client's replica-wide tenantID so the
 	// minted lease records the session's tenant.
 	effectiveTenant := tenantID
@@ -246,8 +244,7 @@ func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 // DeadlineExceeded, ResourceExhausted of the server itself,
 // Internal/Unknown) trip the breaker; logical errors (NotFound,
 // InvalidArgument) report user-level conditions that do not indicate
-// Token Service degradation. spec: §4.3 line 211 "automatic, in-memory
-// circuit breaker".
+// Token Service degradation. spec: §4.3.
 func classifyTokenServiceError(err error) error {
 	if err == nil {
 		return nil
@@ -336,7 +333,7 @@ func (c *Client) Release(leaseID string) {
 // §7.1 step 23 session-teardown lease release the gateway runs when a
 // session reaches a terminal state. A session with no leases is a no-op.
 //
-// spec: §7.1 line 52 (step 23).
+// spec: §7.1.
 func (c *Client) ReleaseSession(sessionID string) {
 	if sessionID == "" {
 		return

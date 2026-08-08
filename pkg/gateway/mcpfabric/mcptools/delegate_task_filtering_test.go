@@ -177,7 +177,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+// spec: §8.2 — `lenny/delegate_task` rejects `type: mcp`
 // targets with `target_not_an_agent`. The MCP shim is the primary
 // rejection site; the delegation Service enforces it again as
 // defence-in-depth. F-8.2.8 / F-8.5.4.
@@ -298,7 +298,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 		t.Errorf("a same-environment violation should record cross_environment=false: %+v",
 			audit.events[0].detail)
 	}
-	// spec: §11.7 lines 99-101 — the audit payload uses the snake_case
+	// spec: §11.7 — the audit payload uses the snake_case
 	// field names (parent_isolation / target_isolation /
 	// matched_policy_rule) that SIEM consumers pivot on. F-8.5.18.
 	detail := audit.events[0].detail

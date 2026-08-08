@@ -26,7 +26,7 @@ const budgetTerminateTimeout = 30 * time.Second
 // triggers the termination is never blocked on the teardown — the
 // enforcer has already flipped the session's pre-flight gate closed
 // synchronously, so further requests are rejected while the async
-// teardown runs. spec: §11.2 line 44; §7.1 line 175.
+// teardown runs. spec: §11.2; §7.1.
 type budgetSessionTerminator struct {
 	store sessionstore.Store
 	// onTerminal runs the sessionserver terminal-side-effects pipeline. It
@@ -67,7 +67,7 @@ func (t *budgetSessionTerminator) terminate(ctx context.Context, sessionID, reas
 		if session.IsTerminal(s.State) {
 			return nil
 		}
-		// spec: §7.1 line 175 — running → expired (budget exhausted). The
+		// spec: §7.1 — running → expired (budget exhausted). The
 		// store does not validate the transition, matching the watchdog /
 		// force-terminate force paths; the §8.8 MCP adapter surfaces this
 		// as `failed` with error code `expired:budget`.

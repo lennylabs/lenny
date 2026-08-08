@@ -42,8 +42,7 @@ func ssaConflict() error {
 // Force ownership. Forcing would steal the field from the other manager and
 // defeat the isolation the SSA boundary enforces.
 //
-// spec: §4.6 line 605 ("must discard its cached copy of the resource and issue
-// a fresh GET"), line 606 ("Controllers must not use --force-conflicts (SSA
+// spec: §4.6 ("Controllers must not use --force-conflicts (SSA
 // Force: true)").
 func TestUpdateStatusReReadsAndNeverForcesOnSSAConflict(t *testing.T) {
 	s := reclaimScheme(t)

@@ -12,14 +12,12 @@ import (
 )
 
 // EventTypeInterceptorRejected is the §11.7-path audit event type
-// written when a §4.8 interceptor chain REJECTs a request. §11.7 line
-// 331 lists it in the per-tenant audit-write traffic; §4.8 / §16.7
+// written when a §4.8 interceptor chain REJECTs a request. §11.7 lists it in the per-tenant audit-write traffic; §4.8 / §16.7
 // mention it only to contrast it with `admission.circuit_breaker_rejected`
 // (the pre-chain circuit-breaker gate, which is not an interceptor). It
 // is a core §11.7 event rather than a §16.7 / §25 addition, so the
 // pkg/observability/audit catalog recognizes it via auxKnownEventTypes
-// (IsKnownEventType) without listing it in Catalog(). spec: §11.7 line
-// 331. F-11.7.18.
+// (IsKnownEventType) without listing it in Catalog(). spec: §11.7. F-11.7.18.
 const EventTypeInterceptorRejected = "interceptor.rejected"
 
 // AuditAppender is the §11.7 per-tenant audit hash-chain surface the
@@ -102,7 +100,7 @@ type RejectionContext struct {
 // synchronous per §11.7; RecordRejection returns the append error so
 // the caller can fail closed when the durable audit write fails.
 func (s *AuditSink) RecordRejection(ctx context.Context, rc RejectionContext, res interceptor.Result) error {
-	// spec: §4.8 line 981 — the audit row records the interceptor that
+	// spec: §4.8 — the audit row records the interceptor that
 	// actually rejected. The chain stamps Result.RejectedBy with the
 	// rejecting interceptor's Name(); only when the chain leaves it
 	// empty (no interceptor identified) does the built-in QuotaEvaluator
@@ -121,7 +119,7 @@ func (s *AuditSink) RecordRejection(ctx context.Context, rc RejectionContext, re
 		"caller_tenant_id": rc.TenantID,
 		"session_id":       rc.SessionID,
 	}
-	// spec: §4.8 line 1032, §15.1 INTERCEPTOR_TIMEOUT — a fail-closed
+	// spec: §4.8, §15.1 INTERCEPTOR_TIMEOUT — a fail-closed
 	// timeout/error carries the elapsed deadline so operators can
 	// distinguish a degraded interceptor from a deliberate REJECT.
 	if res.Code == interceptor.CodeInterceptorTimeout {

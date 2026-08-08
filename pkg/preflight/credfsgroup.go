@@ -43,7 +43,7 @@ func projectAgentPod(workload string, spec *corev1.PodSpec) AgentPodSpec {
 // compliance or was created before the webhook was in place. An empty
 // pod set (a fresh install with no agent pods yet) passes. F-13.1.4.
 //
-// spec: §13.1 line 25 — "The admission webhook and lenny-preflight Job
+// spec: §13.1 — "The admission webhook and lenny-preflight Job
 // validate the presence ... of the fsGroup and supplementalGroups
 // settings on every agent-pod template; a pod template missing the
 // lenny-cred-readers fsGroup is rejected with POD_SPEC_CRED_FSGROUP_MISSING".

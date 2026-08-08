@@ -34,7 +34,7 @@ type ErasureSubject struct {
 	ReceiptAt time.Time
 	// SuppressedByHold reports that an active legal hold whose
 	// legal_hold.set post-dates the receipt vetoes replaying this erasure.
-	// spec: §25.11 line 4147.
+	// spec: §25.11.
 	SuppressedByHold bool
 }
 
@@ -49,7 +49,7 @@ const (
 // legal-hold ledger freshness gate decision, the ready-gating, and the
 // audit emission; this seam supplies the current ledger watermark and
 // performs the data work against the restored databases. A production
-// implementation backs it with a dedicated K8s Job (§25.11 line 4147)
+// implementation backs it with a dedicated K8s Job (§25.11)
 // that scans the restored audit_log and replays DeleteByUser /
 // DeleteByTenant via the §12.8 erasure orchestrator.
 type ErasureReconciler interface {
@@ -75,23 +75,23 @@ type ErasureReconciler interface {
 // release the restore:platform lock (step 8). A nil restarter means a
 // single-process deployment with no gateway Deployment to roll.
 //
-// spec: §25.11 lines 4148-4149.
+// spec: §25.11.
 type GatewayRestarter interface {
 	RestartGateway(ctx context.Context) error
 }
 
-// RestoreProgressInfo is one §25.11 line 4196 operation_progressed
+// RestoreProgressInfo is one §25.11 operation_progressed
 // payload: a shard finished within a restore.
 type RestoreProgressInfo struct {
 	RestoreID       string
 	Shard           string
 	CompletedShards int
-	// TotalSteps is the §25.11 line 4196 shard count plus one (the
+	// TotalSteps is the §25.11 shard count plus one (the
 	// post-restore gateway restart).
 	TotalSteps int
 }
 
-// RestoreProgressEmitter emits the §25.11 line 4196 operation_progressed
+// RestoreProgressEmitter emits the §25.11 operation_progressed
 // event on each shard completion. A nil emitter drops it.
 type RestoreProgressEmitter interface {
 	RestoreProgressed(ctx context.Context, info RestoreProgressInfo)
@@ -114,7 +114,7 @@ type RestoreProgressEmitter interface {
 // roll it and step 8 releases the restore:platform lock and expires the
 // pre-restore backup.
 //
-// spec: §25.11 lines 4146-4149.
+// spec: §25.11.
 func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards []ShardResult) (*RestoreState, error) {
 	r, err := s.store.GetRestore(ctx, restoreID)
 	if err == ErrNotFound {
@@ -167,7 +167,7 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 		}
 		r.ShardStates[sr.Shard] = st
 		completedShards++
-		// spec: §25.11 line 4146 — per-shard restore_shard_completed event.
+		// spec: §25.11 — per-shard restore_shard_completed event.
 		s.emitAudit(AuditEvent{
 			Type:      string(audit.EventRestoreShardCompleted),
 			RestoreID: r.ID,
@@ -175,7 +175,7 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 			Actor:     r.StartedBy,
 			Fields:    map[string]any{"shard": sr.Shard},
 		})
-		// spec: §25.11 line 4196 — operation_progressed fires on every
+		// spec: §25.11 — operation_progressed fires on every
 		// shard completion.
 		s.emitProgress(ctx, RestoreProgressInfo{
 			RestoreID:       r.ID,
@@ -186,7 +186,7 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 	}
 
 	// Any shard failed: the restore failed in the restore phase. The lock
-	// is NOT released (§25.11 line 4149 failure semantics).
+	// is NOT released (§25.11 failure semantics).
 	if firstFailed != nil {
 		r.Status = RestoreStatusFailed
 		r.FailedShard = firstFailed.Shard
@@ -198,7 +198,7 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 		if err := s.store.UpdateRestore(ctx, r); err != nil {
 			return &r, codedError(ErrCodeStorageUnreachable, "record restore failure: %v", err)
 		}
-		// spec: §25.11 line 4146 — restore_failed on any shard failure.
+		// spec: §25.11 — restore_failed on any shard failure.
 		s.emitAudit(AuditEvent{
 			Type:      string(audit.EventRestoreFailed),
 			RestoreID: r.ID,
@@ -214,7 +214,7 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 		return &r, nil
 	}
 
-	// All shards completed (§25.11 line 4146 restore_completed).
+	// All shards completed (§25.11 restore_completed).
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return &r, codedError(ErrCodeStorageUnreachable, "record restore shards: %v", err)
 	}
@@ -240,12 +240,11 @@ func (s *Service) CompleteRestore(ctx context.Context, restoreID string, shards 
 // restored databases. It returns nil when the reconciler reports success
 // (or when no reconciler is configured), and a RESTORE_ERASURE_RECONCILE_-
 // FAILED error after recording the failure on the restore row when the
-// ledger gate blocks or a replay/enumeration step fails. spec: §25.11
-// line 4147.
+// ledger gate blocks or a replay/enumeration step fails. spec: §25.11.
 func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) error {
 	if s.erasure == nil {
 		// GDPR erasure reconciliation is not configured for this
-		// deployment (§25.11 line 992 enabled:false); step 6 is vacuously
+		// deployment (§25.11 enabled:false); step 6 is vacuously
 		// satisfied and the gateway rolls without it.
 		return nil
 	}
@@ -266,7 +265,7 @@ func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) erro
 		if !ledgerAt.After(takenAt) {
 			// The ledger was restored in lockstep and cannot be trusted to
 			// reflect post-backup hold transitions. Block replay.
-			// spec: §25.11 line 4320 — increment
+			// spec: §25.11 — increment
 			// lenny_backup_reconcile_blocked_total{reason} so the
 			// BackupReconcileBlocked alert can fire.
 			if s.reconcile != nil {
@@ -299,7 +298,7 @@ func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) erro
 	for _, subj := range subjects {
 		if subj.SuppressedByHold {
 			suppressed = append(suppressed, subj.SubjectID)
-			// spec: §25.11 line 4147 — a subject under a post-receipt hold
+			// spec: §25.11 — a subject under a post-receipt hold
 			// is suppressed rather than replayed.
 			s.emitAudit(AuditEvent{
 				Type:      string(audit.EventGDPRErasureReconciledSuppressedByHold),
@@ -318,7 +317,7 @@ func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) erro
 		}
 		reconciled = append(reconciled, subj.SubjectID)
 	}
-	// spec: §25.11 line 4147 — a single gdpr.backup_reconcile_completed
+	// spec: §25.11 — a single gdpr.backup_reconcile_completed
 	// event carries the reconciled and suppressed subjects.
 	s.emitAudit(AuditEvent{
 		Type:      string(audit.EventGDPRBackupReconcileCompleted),
@@ -339,7 +338,7 @@ func (s *Service) runErasureReconcile(ctx context.Context, r *RestoreState) erro
 // row: status failed, the RESTORE_ERASURE_RECONCILE_FAILED error, the
 // restore_failed audit event with failure_phase "erasure_reconcile" (and
 // block_reason when the ledger gate fired), and returns the coded error.
-// The restore:platform lock is left held (§25.11 line 4149).
+// The restore:platform lock is left held (§25.11).
 func (s *Service) failReconcile(ctx context.Context, r *RestoreState, detail, blockReason string) error {
 	now := s.now()
 	r.Status = RestoreStatusFailed
@@ -390,8 +389,7 @@ func (s *Service) finishRestoreSuccess(ctx context.Context, r *RestoreState) (*R
 		}
 	}
 	// Pre-Restore Backup Lifecycle: the pre-restore backup's row is marked
-	// expired (the retention Job removes the MinIO object). spec: §25.11
-	// line 4155.
+	// expired (the retention Job removes the MinIO object). spec: §25.11.
 	if r.PreRestoreBackupID != "" {
 		s.expirePreRestoreBackup(ctx, r.PreRestoreBackupID)
 	}
@@ -409,7 +407,7 @@ func (s *Service) finishRestoreSuccess(ctx context.Context, r *RestoreState) (*R
 
 // expirePreRestoreBackup marks the pre-restore safety backup's ops_backups
 // row expired so the retention Job removes the MinIO object. It is
-// best-effort and idempotent. spec: §25.11 line 4155.
+// best-effort and idempotent. spec: §25.11.
 func (s *Service) expirePreRestoreBackup(ctx context.Context, id string) {
 	b, err := s.store.GetBackup(ctx, id)
 	if err != nil {
@@ -424,7 +422,7 @@ func (s *Service) expirePreRestoreBackup(ctx context.Context, id string) {
 	_ = s.store.UpdateBackup(ctx, b)
 }
 
-// emitProgress hands a §25.11 line 4196 operation_progressed payload to
+// emitProgress hands a §25.11 operation_progressed payload to
 // the configured emitter. A nil emitter drops it.
 func (s *Service) emitProgress(ctx context.Context, info RestoreProgressInfo) {
 	if s.progress == nil {
@@ -439,7 +437,7 @@ func (s *Service) emitProgress(ctx context.Context, info RestoreProgressInfo) {
 // for a completed restore whose step-7 gateway restart did not finish
 // (its row carries the GATEWAY_RESTART_PENDING marker). It is leader-only
 // (invoked from the lenny-ops reconcile cron) and returns the restore IDs
-// it advanced. spec: §25.11 lines 4146-4149.
+// it advanced. spec: §25.11.
 func (s *Service) ReconcileRunningRestores(ctx context.Context) ([]string, error) {
 	advanced := make([]string, 0)
 

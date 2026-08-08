@@ -85,13 +85,13 @@ type GatherOptions struct {
 	// Secret encryption-at-rest is configured (§4.9).
 	SecretEncryptionVerified bool
 	// AutoscalingProvider is the rendered chart's autoscaling.provider
-	// value (`hpa` or `keda`). §17.8.3 line 1285 makes KEDA a NO-GO
+	// value (`hpa` or `keda`). §17.8.3 makes KEDA a NO-GO
 	// criterion at Tier 3; the operator supplies the value from the
 	// values file they are applying.
 	AutoscalingProvider string
 	// MinReplicas is the rendered chart's autoscaling.minReplicas value.
 	// The SCL-036 burst-absorption check evaluates it against the
-	// §17.8.2 line 950 formula.
+	// §17.8.2 formula.
 	MinReplicas int
 	// MaxSessionsPerReplica is the rendered chart's
 	// gateway.maxSessionsPerReplica value. The SCL-036 formula uses it
@@ -99,15 +99,14 @@ type GatherOptions struct {
 	MaxSessionsPerReplica int
 	// LLMProxyExtractionAttested is the operator's attestation that
 	// the Phase 13.5 LLM Proxy extraction-ratio benchmark passed
-	// (§17.8.3 line 1263 / 1282).
+	// (§17.8.3).
 	LLMProxyExtractionAttested bool
 	// GatewayGCPauseAttested is the operator's attestation that the
-	// Phase 13.5 gateway GC pressure benchmark passed (§17.8.3 line
-	// 1264 / 1283).
+	// Phase 13.5 gateway GC pressure benchmark passed (§17.8.3).
 	GatewayGCPauseAttested bool
 	// MaxSessionsPerReplicaCalibrated is the operator's attestation
 	// that gateway.maxSessionsPerReplica has been empirically
-	// calibrated (§17.8.3 line 1265 / 1284).
+	// calibrated (§17.8.3).
 	MaxSessionsPerReplicaCalibrated bool
 }
 

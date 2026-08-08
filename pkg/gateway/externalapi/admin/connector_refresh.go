@@ -16,12 +16,12 @@ import (
 )
 
 // connectorRefreshRateLimit caps the §9.3 capability refresh at the same
-// 10/connector/minute bound as the live test (§15.1 line 1180): the
+// 10/connector/minute bound as the live test (§15.1): the
 // refresh dials the external endpoint, so it must not be abusable as a
 // network probe.
 const connectorRefreshRateLimit = 10
 
-// ConnectorCapabilityRefresher runs the §9.3 line 136 / §5.1 capability
+// ConnectorCapabilityRefresher runs the §9.3 / §5.1 capability
 // inference for a connector on the sanctioned outbound path: it reads the
 // connector's tools/list and persists the inferred capability metadata.
 // The production implementation is *connectorinvoke.Invoker; tests inject
@@ -30,11 +30,11 @@ type ConnectorCapabilityRefresher interface {
 	RefreshCapabilities(ctx context.Context, tenantID, connectorID, userID, environment string) (connectorinvoke.CapabilityRefreshResult, error)
 }
 
-// WithConnectorRefresh wires the §9.3 line 136
+// WithConnectorRefresh wires the §9.3
 // `POST /v1/admin/connectors/{name}/refresh` capability-inference
 // endpoint. A nil refresher leaves the route unregistered. limiter
 // enforces the per-connector 10/min cap on the outbound dial (matching
-// the §15.1 line 1180 live-test cap); a nil limiter leaves the refresh
+// the §15.1 live-test cap); a nil limiter leaves the refresh
 // unthrottled.
 func (r *Router) WithConnectorRefresh(refresher ConnectorCapabilityRefresher, limiter ratelimit.Counter) *Router {
 	r.connectorRefresher = refresher
@@ -52,15 +52,15 @@ type connectorCapabilityResponse struct {
 	UnannotatedAdminTools   []string                                    `json:"unannotatedAdminTools,omitempty"`
 }
 
-// handleRefreshConnectorCapabilities implements §9.3 line 136:
+// handleRefreshConnectorCapabilities implements §9.3:
 // `POST /v1/admin/connectors/{name}/refresh`. It re-reads the connector's
 // MCP tools/list on the sanctioned outbound path and persists the
 // inferred §5.1 capability metadata. The synchronous registration path
-// makes no outbound call (§15.1 line 1144), so this refresh is the path
+// makes no outbound call (§15.1), so this refresh is the path
 // by which a connector's capability metadata is populated and kept
 // current.
 //
-// spec: §9.3 line 136; §5.1 lines 312-329.
+// spec: §9.3; §5.1.
 func (r *Router) handleRefreshConnectorCapabilities(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("name")
 	principal, ok := authmw.FromContext(req.Context())

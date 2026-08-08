@@ -2,8 +2,7 @@
 
 //go:build integration
 
-// Package integration_test holds the §17.2 named integration suites the
-// spec enumerates under tests/integration/ (lines 76, 84). They exercise
+// Package integration_test holds the §17.2 named integration suites the spec enumerates under tests/integration. They exercise
 // chart-render inventory, controller-pod-spec-vs-admission-policy
 // agreement, and the render-time feature-flag downgrade guard.
 package integration_test
@@ -58,8 +57,7 @@ func phaseConfigs() []phaseConfig {
 	}
 }
 
-// TestAdmissionWebhookInventoryMatchesPreflightExpected is the §17.2
-// admission_webhook_inventory_test.go suite (lines 80-84). It is
+// TestAdmissionWebhookInventoryMatchesPreflightExpected is the §17.2 admission_webhook_inventory_test.go suite. It is
 // parameterised by the three features.* flags and asserts, in each of
 // the four phase configurations, that the set of
 // ValidatingWebhookConfiguration resources the chart renders is exactly
@@ -68,8 +66,7 @@ func phaseConfigs() []phaseConfig {
 // flag (rendered ⊋ expected or rendered ⊊ expected) and a preflight
 // expected-set computation that disagrees with the chart.
 //
-// spec: §17.2 lines 80-84 (feature-gated chart inventory, single source
-// of truth; admission_webhook_inventory_test.go). F-17.2.15 / F-17.2.12.
+// spec: §17.2. F-17.2.15 / F-17.2.12.
 func TestAdmissionWebhookInventoryMatchesPreflightExpected(t *testing.T) {
 	helm.SkipUnlessAvailable(t)
 
@@ -97,13 +94,12 @@ func TestAdmissionWebhookInventoryMatchesPreflightExpected(t *testing.T) {
 	}
 }
 
-// TestAdmissionWebhookInventoryLLMProxyAddsNoWebhook pins the §13.2
-// line 440 / F-13.2.12 decision that lenny-direct-mode-isolation renders
+// TestAdmissionWebhookInventoryLLMProxyAddsNoWebhook pins the §13.2 / F-13.2.12 decision that lenny-direct-mode-isolation renders
 // unconditionally: flipping features.llmProxy on must not change the
 // rendered webhook set relative to the baseline, because the proxy flag
 // no longer gates any webhook.
 //
-// spec: §17.2; §13.2 line 440 step 2. F-17.2.15 / F-13.2.12.
+// spec: §17.2; §13.2 step 2. F-17.2.15 / F-13.2.12.
 func TestAdmissionWebhookInventoryLLMProxyAddsNoWebhook(t *testing.T) {
 	helm.SkipUnlessAvailable(t)
 

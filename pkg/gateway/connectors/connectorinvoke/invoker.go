@@ -32,14 +32,14 @@ var ErrConnectorInactive = errors.New("connectorinvoke: connector is not active"
 //
 // *connectorauthz.Authorizer is the production implementation.
 //
-// spec: §9.3 line 164.
+// spec: §9.3.
 type ConnectorAuthorizer interface {
 	AuthorizeConnector(ctx context.Context, tenantID, sessionID, connectorID string, labels map[string]string) error
 }
 
 // Invoker resolves a registered connector and its gateway-held
 // credential, then drives an outbound MCP `tools/call`. It is the
-// gateway-side realization of §9.3 lines 142-164: the gateway acts as
+// gateway-side realization of §9.3: the gateway acts as
 // the MCP client to the external tool and supplies the connector
 // credential the OAuth flow stored, so the credential never transits a
 // pod.
@@ -51,23 +51,23 @@ type Invoker struct {
 	authz      ConnectorAuthorizer
 	// environments resolves the §10.6 environment whose connectorSelector
 	// capability filter gates a connector tools/call. nil leaves the gate
-	// open. spec: §10.6 line 607.
+	// open. spec: §10.6.
 	environments EnvironmentResolver
 	clock        func() time.Time
 	// interceptors is the §4.8 policy chain run at the PreConnectorRequest
 	// and PostConnectorResponse phases. nil disables the connector
-	// interceptor phases. spec: §4.8 line 1077.
+	// interceptor phases. spec: §4.8.
 	interceptors ConnectorChain
 }
 
 // NewInvoker wires the connector registry, the connector-credential
 // store, and the outbound MCP client. Every tools/call opens the §16
 // `mcp.external_tool_call` span. authz may be nil; when set, CallTool
-// enforces the §9.3 line 164 connector-access boundary before proxying a
+// enforces the §9.3 connector-access boundary before proxying a
 // tool call.
 func NewInvoker(connectors connectorstore.Store, creds connectorcredstore.Store, client *Client, tracer *tracing.Tracer, authz ConnectorAuthorizer) *Invoker {
 	if tracer == nil {
-		// spec: §16.3 line 349 — default to the process-global tracer so the span is emitted in production
+		// spec: §16.3 — default to the process-global tracer so the span is emitted in production
 		tracer = tracing.NewTracer(nil)
 	}
 	return &Invoker{connectors: connectors, creds: creds, client: client, tracer: tracer, authz: authz, clock: func() time.Time { return time.Now().UTC() }}
@@ -85,7 +85,7 @@ func (iv *Invoker) WithClock(now func() time.Time) *Invoker {
 // WithInterceptors wires the §4.8 policy chain the connector proxy runs at
 // the PreConnectorRequest and PostConnectorResponse phases. A nil chain
 // (or one with no interceptor registered for the connector phases) leaves
-// every connector call uninspected. spec: §4.8 line 1077.
+// every connector call uninspected. spec: §4.8.
 func (iv *Invoker) WithInterceptors(chain ConnectorChain) *Invoker {
 	iv.interceptors = chain
 	return iv
@@ -94,7 +94,7 @@ func (iv *Invoker) WithInterceptors(chain ConnectorChain) *Invoker {
 // CallTool invokes toolName on the connector identified by connectorID
 // for the calling session sessionID, scoped to (tenantID, userID,
 // environment) for credential lookup. The connector must be registered
-// and active. Before any outbound dial the §9.3 line 164 connector-access
+// and active. Before any outbound dial the §9.3 connector-access
 // boundary is enforced: the connector is validated against the calling
 // session's effective delegation policy, and a connector the policy does
 // not permit is rejected without contacting the external endpoint. When a
@@ -102,7 +102,7 @@ func (iv *Invoker) WithInterceptors(chain ConnectorChain) *Invoker {
 // token; a public connector with no stored credential is dialed
 // unauthenticated.
 //
-// spec: §9.1 line 10; §9.3 lines 142-164.
+// spec: §9.1; §9.3.
 func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorID, userID, environment, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
 	conn, err := iv.connectors.Get(ctx, tenantID, connectorID)
 	if err != nil {
@@ -112,7 +112,7 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		return nil, ErrConnectorInactive
 	}
 
-	// spec: §9.3 line 164 — the gateway validates the connector_id against
+	// spec: §9.3 — the gateway validates the connector_id against
 	// the calling pod's effective delegation policy before proxying. A
 	// child cannot use connectors its policy does not permit even when a
 	// gateway-held credential exists for them at the root level. The check
@@ -124,7 +124,7 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		}
 	}
 
-	// spec: §10.6 line 607 — the calling session's environment
+	// spec: §10.6 — the calling session's environment
 	// connectorSelector capability filter governs what an admitted
 	// connector may do. A tool whose inferred capability the filter
 	// denies is rejected before the outbound dial. F-10.6.2.
@@ -143,7 +143,7 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		defer span.End()
 	}
 
-	// spec: §4.8 line 1057, 1077 — the PreConnectorRequest chain runs over
+	// spec: §4.8 — the PreConnectorRequest chain runs over
 	// the serialized outgoing tool call before the gateway proxies it to
 	// the external connector. A MODIFY may redact/transform arguments
 	// (tool_name/connector_id are immutable); a REJECT short-circuits with
@@ -172,7 +172,7 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 		return result, err
 	}
 
-	// spec: §4.8 line 1058, 1077 — the PostConnectorResponse chain runs
+	// spec: §4.8 — the PostConnectorResponse chain runs
 	// over the connector's MCP tool result before it reaches the pod. A
 	// MODIFY may redact/transform content or set isError; a REJECT
 	// short-circuits with CONNECTOR_RESPONSE_REJECTED.
@@ -187,14 +187,14 @@ func (iv *Invoker) CallTool(ctx context.Context, tenantID, sessionID, connectorI
 // calling session and returns its tool catalog (the external endpoint's
 // tools/list), filtered to the tools the calling session's §10.6
 // environment connectorSelector capability filter admits. The connector
-// must be registered and active, and the §9.3 line 164 connector-access
+// must be registered and active, and the §9.3 connector-access
 // boundary is enforced before any outbound dial: a connector the calling
 // session's effective delegation policy does not permit is rejected
 // without contacting the external endpoint, mirroring CallTool. A tool
 // the environment filter denies is dropped from the catalog so a
 // type:agent runtime never sees an external tool it could not call.
 //
-// spec: §9.3 lines 142-164; §10.6 line 607.
+// spec: §9.3; §10.6.
 func (iv *Invoker) ListTools(ctx context.Context, tenantID, sessionID, connectorID, userID, environment string) ([]ToolDescriptor, error) {
 	conn, err := iv.connectors.Get(ctx, tenantID, connectorID)
 	if err != nil {
@@ -203,7 +203,7 @@ func (iv *Invoker) ListTools(ctx context.Context, tenantID, sessionID, connector
 	if !conn.IsActive() {
 		return nil, ErrConnectorInactive
 	}
-	// spec: §9.3 line 164 — the gateway validates the connector against the
+	// spec: §9.3 — the gateway validates the connector against the
 	// calling session's effective delegation policy before any outbound
 	// dial, so a denied connector is never reached even for discovery.
 	if iv.authz != nil {
@@ -238,7 +238,7 @@ func (iv *Invoker) ListTools(ctx context.Context, tenantID, sessionID, connector
 		}
 		return nil, fmt.Errorf("connectorinvoke: list tools %q: %w", connectorID, err)
 	}
-	// spec: §10.6 line 607 — drop the tools the environment connectorSelector
+	// spec: §10.6 — drop the tools the environment connectorSelector
 	// capability filter denies so the intra-pod tools/list advertises only
 	// callable tools. A filter error (other than a per-tool denial) is
 	// propagated; a denied tool is silently filtered out.

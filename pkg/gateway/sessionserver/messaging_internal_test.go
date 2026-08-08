@@ -51,7 +51,7 @@ func seedMsg(id, sender string) sessioninbox.Message {
 	}
 }
 
-// spec: §7.2 line 343 / §7.3 line 425 — a terminal transition drains the
+// spec: §7.2 / §7.3 — a terminal transition drains the
 // session's DLQ and emits message_expired(target_terminated) to each
 // registered sender. Exercises emitTerminalLifecycle →
 // drainMessagingOnTerminal → Coordinator.DrainOnTerminal. F-7.3.12.
@@ -82,7 +82,7 @@ func TestEmitTerminalLifecycleDrainsDLQ_spec_7_3_12(t *testing.T) {
 	}
 }
 
-// spec: §7.2 lines 305-311 — entering resume_pending drains the in-memory
+// spec: §7.2 — entering resume_pending drains the in-memory
 // inbox to the DLQ. Exercises migrateInboxOnResumePending. F-7.2.4.
 func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 	coord, inbox, dlq := testMessaging(t, &recordingExpiry{})
@@ -116,7 +116,7 @@ func (r *recordingCleared) InboxCleared(_, target string, ev sessioninbox.InboxC
 	r.targets = append(r.targets, target)
 }
 
-// spec: §7.2 line 284 — re-acquiring a recovering session on resume emits
+// spec: §7.2 — re-acquiring a recovering session on resume emits
 // inbox_cleared on the target's own stream with messagesPreservedInDLQ set
 // to the DLQ depth. Exercises clearInboxOnResume → ClearInboxOnAcquire.
 // F-7.2.12.
@@ -162,7 +162,7 @@ func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
 	})
 }
 
-// spec: §7.2 line 284 — NewBusEmitter publishes inbox_cleared onto the
+// spec: §7.2 — NewBusEmitter publishes inbox_cleared onto the
 // target session's own SSE stream so the resumed client learns the inbox
 // state change.
 func TestBusEmitterPublishesInboxCleared_spec_7_2_284(t *testing.T) {

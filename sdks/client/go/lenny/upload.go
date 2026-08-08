@@ -17,7 +17,7 @@ import (
 // request must present it.
 const uploadTokenHeader = "X-Lenny-Upload-Token"
 
-// contentHashHeader carries the §7.4 line 444 optional client-computed
+// contentHashHeader carries the §7.4 optional client-computed
 // SHA-256 of the upload body. When set the gateway verifies the streamed
 // bytes against it and rejects a mismatch with VALIDATION_ERROR.
 const contentHashHeader = "X-Lenny-Content-Hash"
@@ -49,7 +49,7 @@ type UploadArchiveOptions struct {
 // UploadArchive uploads an archive body to POST
 // /v1/sessions/{id}/upload-archive and returns the resulting uploadRef.
 // The upload requires the §7.1 uploadToken from the create response. It
-// is the §26.2 line 114 step that stages a tar'd workspace before the
+// is the §26.2 step that stages a tar'd workspace before the
 // plan referencing it is bound at finalize.
 //
 // The call is issued once (no retry): each upload mints a distinct staged
@@ -57,7 +57,7 @@ type UploadArchiveOptions struct {
 // surfaces to the caller, which re-drives the create → upload → finalize
 // flow.
 //
-// spec: §15.1 (upload endpoints); §7.1 (uploadToken); §26.2 line 114.
+// spec: §15.1 (upload endpoints); §7.1 (uploadToken); §26.2.
 func (c *Client) UploadArchive(ctx context.Context, sessionID, uploadToken string, body []byte, opt UploadArchiveOptions) (*UploadResult, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("lenny: UploadArchive requires a session id")
@@ -85,7 +85,7 @@ func (c *Client) UploadArchive(ctx context.Context, sessionID, uploadToken strin
 // and returns its uploadRef for use as an `uploadFile` plan source. Like
 // UploadArchive it requires the §7.1 uploadToken and is issued once.
 //
-// spec: §15.1 (upload endpoint); §26.2 line 213 (`--file`).
+// spec: §15.1 (upload endpoint); §26.2.
 func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, body []byte, opt UploadArchiveOptions) (*UploadResult, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("lenny: UploadFile requires a session id")
@@ -116,7 +116,7 @@ func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, 
 // the session starts. Pass a nil plan for a no-plan finalize (equivalent
 // to Finalize).
 //
-// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 lines 95-114.
+// spec: §7.1 step 11 (FinalizeWorkspace); §26.2.
 func (c *Client) FinalizeWorkspace(ctx context.Context, id string, plan json.RawMessage, opts ...RequestOption) (*Session, error) {
 	if len(plan) == 0 {
 		return c.Finalize(ctx, id, opts...)

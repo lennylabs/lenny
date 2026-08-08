@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 )
 
-// spec §25.2 line 393: a lookup before any completion reports no baseline.
+// spec §25.2: a lookup before any completion reports no baseline.
 func TestMemoryBaselineStoreEmptyLookup(t *testing.T) {
 	s := operations.NewMemoryBaselineStore()
 	if _, ok, err := s.Lookup(context.Background(), operations.KindPlatformUpgrade); err != nil || ok {
@@ -18,7 +18,7 @@ func TestMemoryBaselineStoreEmptyLookup(t *testing.T) {
 	}
 }
 
-// spec §25.2 lines 393-394: completions fold into the kind's p50/p90 and
+// spec §25.2: completions fold into the kind's p50/p90 and
 // the sample_size grows with each recorded completion.
 func TestMemoryBaselineStoreRecordsPercentiles(t *testing.T) {
 	s := operations.NewMemoryBaselineStore()
@@ -48,7 +48,7 @@ func TestMemoryBaselineStoreRecordsPercentiles(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 394: a single completion seeds both percentiles with
+// spec §25.2: a single completion seeds both percentiles with
 // that one sample (sample_size 1, below the historical_p50 threshold).
 func TestMemoryBaselineStoreSingleSample(t *testing.T) {
 	s := operations.NewMemoryBaselineStore()

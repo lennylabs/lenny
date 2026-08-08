@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight/infra"
 )
 
-// spec: §24.2 line 47 — DSN resolution precedence is CLI flags, then
+// spec: §24.2 — DSN resolution precedence is CLI flags, then
 // environment variables, then the values file (highest wins).
 func TestResolvePrecedence_FlagsOverEnvOverValues(t *testing.T) {
 	flags := infra.Config{PostgresDSN: "pg-flag"}
@@ -31,7 +31,7 @@ func TestResolvePrecedence_FlagsOverEnvOverValues(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 47 — MinIO access/secret/bucket each resolve
+// spec: §24.2 — MinIO access/secret/bucket each resolve
 // independently so an operator can commit a values file without inline
 // credentials and inject only the secrets at runtime.
 func TestResolvePrecedence_MinIOFieldsIndependent(t *testing.T) {
@@ -98,7 +98,7 @@ func byName(report []preflight.CheckResult, name string) preflight.CheckResult {
 	return preflight.CheckResult{Name: "MISSING:" + name}
 }
 
-// spec: §15.1 line 890 — the endpoint runs Postgres, Redis, and MinIO
+// spec: §15.1 — the endpoint runs Postgres, Redis, and MinIO
 // connectivity plus the schema-version read; all three pass when the
 // probers succeed and the schema version is surfaced in the report.
 func TestRun_AllReachable(t *testing.T) {
@@ -127,7 +127,7 @@ func TestRun_AllReachable(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 890 — a backend that fails to dial is reported as a
+// spec: §15.1 — a backend that fails to dial is reported as a
 // failed check (fail-closed), so the install wizard and the API caller
 // can abort.
 func TestRun_BackendUnreachableFails(t *testing.T) {
@@ -151,7 +151,7 @@ func TestRun_BackendUnreachableFails(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 39 — a backend with no connection string is skipped
+// spec: §24.2 — a backend with no connection string is skipped
 // (a partial pre-deployment topology must not fail closed on a backend
 // the operator has not yet provisioned).
 func TestRun_UnconfiguredBackendSkipped(t *testing.T) {

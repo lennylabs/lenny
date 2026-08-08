@@ -115,26 +115,25 @@ func ValidTransitions() []Transition {
 }
 
 // MCPProtocolState projects a §7.2 Lenny session state into the §8.8
-// MCP Tasks surface per the supplementary table (spec §8.8 lines
-// 871–883). It returns the protocol state string and any metadata
+// MCP Tasks surface per the supplementary table (spec §8.8). It returns the protocol state string and any metadata
 // annotations the §8.8 contract requires.
 //
 //   - Pre-running states (created, finalizing, ready, starting) collapse
-//     to `submitted` per §8.8 line 883.
+//     to `submitted` per §8.8.
 //   - `running` → `working`; `input_required` → `input_required`.
-//   - `suspended` → `working` + metadata.suspended=true (§8.8 line 879).
-//   - `resume_pending` → `working` + metadata.resuming=true (§8.8 line 880).
-//   - `awaiting_client_action` → `input_required` (§8.8 line 881).
+//   - `suspended` → `working` + metadata.suspended=true (§8.8).
+//   - `resume_pending` → `working` + metadata.resuming=true (§8.8).
+//   - `awaiting_client_action` → `input_required` (§8.8).
 //   - `resuming` is internal to the recovery cycle; it is surfaced as
 //     `working` + metadata.resuming=true alongside `resume_pending` so
 //     external observers do not flicker through a transient state.
-//   - Terminal states use the §8.8 line 857 task-level mapping
+//   - Terminal states use the §8.8 task-level mapping
 //     (`cancelled` → `canceled`, `expired` → `failed`).
 //   - An unknown state returns ("", nil).
 //
 // The metadata map is nil when the surface needs no annotations.
 //
-// spec: §8.8 lines 855-883. F-8.8.9.
+// spec: §8.8. F-8.8.9.
 func MCPProtocolState(s State) (string, map[string]any) {
 	switch s {
 	case Created, Finalizing, Ready, Starting:

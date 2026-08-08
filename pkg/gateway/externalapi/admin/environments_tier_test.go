@@ -28,7 +28,7 @@ func newEnvironmentAdminWithTenant(t *testing.T, tenantTier string) (*admin.Rout
 	return router, envs
 }
 
-// spec: §12.9 line 1033 — an environment may pin a stricter tier than its
+// spec: §12.9 — an environment may pin a stricter tier than its
 // tenant (T4 over a T3 tenant) but never a looser one. The stricter
 // override is admitted.
 func TestCreateEnvironmentStricterTierOverrideAdmitted(t *testing.T) {

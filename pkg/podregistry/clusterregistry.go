@@ -9,10 +9,10 @@ import (
 
 // DefaultLocalClusterID is the ClusterID the v1 LocalClusterRegistry
 // reports for the single in-process cluster when no explicit id is
-// configured. spec: §12.6 line 586.
+// configured. spec: §12.6.
 const DefaultLocalClusterID ClusterID = "local"
 
-// ClusterHealth is the §12.6 line 429 health-status field of a
+// ClusterHealth is the §12.6 health-status field of a
 // ClusterInfo.
 type ClusterHealth string
 
@@ -27,7 +27,7 @@ const (
 	ClusterUnreachable ClusterHealth = "unreachable"
 )
 
-// ClusterCapacity is the §12.6 line 429 capacity-metadata field of a
+// ClusterCapacity is the §12.6 capacity-metadata field of a
 // ClusterInfo. A cross-cluster scheduler reads it to bias SelectCluster
 // toward a cluster with idle warm capacity. The v1 LocalClusterRegistry
 // leaves it zero: capacity for the single local cluster is read from the
@@ -42,7 +42,7 @@ type ClusterCapacity struct {
 }
 
 // ClusterInfo describes one cluster in a multi-cluster topology. spec:
-// §12.6 line 429 — ClusterID, endpoint, CACertBundle (remote CA chain
+// §12.6 — ClusterID, endpoint, CACertBundle (remote CA chain
 // for mTLS verification), capacity metadata, and health status.
 type ClusterInfo struct {
 	// ClusterID identifies the cluster.
@@ -50,16 +50,15 @@ type ClusterInfo struct {
 	// Endpoint is the cluster's PodRegistry gRPC endpoint for
 	// cross-cluster RPC (host:port). It is empty for the local cluster,
 	// which is reached in-process with no network transport — the
-	// LocalClusterRegistry is exempt from the §12.6 line 614
+	// LocalClusterRegistry is exempt from the §12.6
 	// cross-cluster mTLS transport contract.
 	Endpoint string
 	// CACertBundle is the remote cluster's CA certificate chain
 	// (PEM-encoded), used by a cross-cluster ClusterClient to verify the
-	// remote endpoint's server certificate (§12.6 line 614 requirement
+	// remote endpoint's server certificate (§12.6 requirement
 	// 2). During a CA rotation overlap window it carries both the old
 	// and new CA certificates so a connection succeeds regardless of
-	// which CA signed the remote endpoint's current certificate (§12.6
-	// line 616). It is empty for the local cluster.
+	// which CA signed the remote endpoint's current certificate (§12.6). It is empty for the local cluster.
 	CACertBundle []byte
 	// Capacity is the cluster's warm-pod capacity metadata.
 	Capacity ClusterCapacity
@@ -68,7 +67,7 @@ type ClusterInfo struct {
 }
 
 // ClusterSelectionRequest carries the hints SelectCluster uses to route
-// a claim to a cluster. spec: §12.6 line 430 — affinity hints and
+// a claim to a cluster. spec: §12.6 — affinity hints and
 // resource requirements. The v1 LocalClusterRegistry ignores every
 // field and always returns LocalClusterID().
 type ClusterSelectionRequest struct {
@@ -88,11 +87,10 @@ type ClusterSelectionRequest struct {
 
 // RemotePodOperations is the subset of PodRegistry permitted over
 // cross-cluster connections, returned by ClusterRegistry.ClusterClient.
-// The restricted type enforces the §12.6 line 614 cross-cluster
+// The restricted type enforces the §12.6 cross-cluster
 // security contract at compile time: a caller holding a
 // RemotePodOperations cannot invoke DeletePod, UpdatePodState,
-// CreatePod, CountByState, or WatchPods on a remote cluster. spec: §12.6
-// lines 589-600.
+// CreatePod, CountByState, or WatchPods on a remote cluster. spec: §12.6.
 type RemotePodOperations interface {
 	GetPod(ctx context.Context, podID PodID) (*PodRecord, error)
 	ClaimPod(ctx context.Context, opts ClaimOpts) (*PodRecord, error)
@@ -103,14 +101,13 @@ type RemotePodOperations interface {
 // Compile-time proof that PodRegistry is a superset of
 // RemotePodOperations: any PodRegistry value (including the
 // CRDPodRegistry the LocalClusterRegistry returns from ClusterClient)
-// satisfies the restricted cross-cluster interface. spec: §12.6 lines
-// 609-612 ("the local CRDPodRegistry ... satisfies RemotePodOperations
+// satisfies the restricted cross-cluster interface. spec: §12.6 ("the local CRDPodRegistry ... satisfies RemotePodOperations
 // (it is a superset)").
 var _ RemotePodOperations = PodRegistry(nil)
 
 // ClusterRegistry abstracts cluster topology for multi-cluster
 // delegation routing (§8 lenny/delegate_task cross-cluster routing).
-// spec: §12.6 lines 602-607.
+// spec: §12.6.
 type ClusterRegistry interface {
 	// ListClusters returns every cluster in the topology.
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
@@ -123,7 +120,7 @@ type ClusterRegistry interface {
 	// ClusterClient returns the RemotePodOperations subset for the named
 	// cluster. The LocalClusterRegistry returns the in-process
 	// PodRegistry (a superset); a multi-cluster implementation returns
-	// an mTLS-authenticated remote client (§12.6 line 614).
+	// an mTLS-authenticated remote client (§12.6).
 	ClusterClient(ctx context.Context, clusterID ClusterID) (RemotePodOperations, error)
 	// LocalClusterID returns the id of the cluster this process runs in.
 	LocalClusterID() ClusterID
@@ -137,8 +134,8 @@ var ErrClusterNotFound = errors.New("podregistry: cluster not found")
 // topology that exposes only the in-process PodRegistry. ClaimOpts.ClusterID
 // is always nil in v1, and ClusterClient returns the local PodRegistry
 // (which satisfies RemotePodOperations as a superset) with no network
-// transport, so the cross-cluster mTLS contract (§12.6 line 614) does not
-// apply. spec: §12.6 lines 586, 609-614.
+// transport, so the cross-cluster mTLS contract (§12.6) does not
+// apply. spec: §12.6.
 type LocalClusterRegistry struct {
 	local PodRegistry
 	id    ClusterID
@@ -157,18 +154,18 @@ func NewLocalClusterRegistry(local PodRegistry, id ClusterID) *LocalClusterRegis
 
 // localInfo returns the ClusterInfo for the single local cluster. It
 // carries no endpoint and no CACertBundle: the local cluster is reached
-// in-process, so the §12.6 line 614 cross-cluster mTLS fields are unset.
+// in-process, so the §12.6 cross-cluster mTLS fields are unset.
 func (r *LocalClusterRegistry) localInfo() ClusterInfo {
 	return ClusterInfo{ClusterID: r.id, Health: ClusterHealthy}
 }
 
-// ListClusters returns the single local cluster. spec: §12.6 line 603.
+// ListClusters returns the single local cluster. spec: §12.6.
 func (r *LocalClusterRegistry) ListClusters(context.Context) ([]ClusterInfo, error) {
 	return []ClusterInfo{r.localInfo()}, nil
 }
 
 // GetCluster returns the local cluster iff clusterID is the local id,
-// else ErrClusterNotFound. spec: §12.6 line 604.
+// else ErrClusterNotFound. spec: §12.6.
 func (r *LocalClusterRegistry) GetCluster(_ context.Context, clusterID ClusterID) (*ClusterInfo, error) {
 	if clusterID != r.id {
 		return nil, ErrClusterNotFound
@@ -187,9 +184,8 @@ func (r *LocalClusterRegistry) SelectCluster(context.Context, ClusterSelectionRe
 
 // ClusterClient returns the in-process PodRegistry for the local cluster
 // (it satisfies RemotePodOperations as a superset), or ErrClusterNotFound
-// for any other id. No network transport is established — the §12.6 line
-// 614 cross-cluster mTLS contract applies only to remote clients. spec:
-// §12.6 lines 609-614.
+// for any other id. No network transport is established — the §12.6 cross-cluster mTLS contract applies only to remote clients. spec:
+// §12.6.
 func (r *LocalClusterRegistry) ClusterClient(_ context.Context, clusterID ClusterID) (RemotePodOperations, error) {
 	if clusterID != r.id {
 		return nil, ErrClusterNotFound
@@ -197,5 +193,5 @@ func (r *LocalClusterRegistry) ClusterClient(_ context.Context, clusterID Cluste
 	return r.local, nil
 }
 
-// LocalClusterID returns the local cluster id. spec: §12.6 line 607.
+// LocalClusterID returns the local cluster id. spec: §12.6.
 func (r *LocalClusterRegistry) LocalClusterID() ClusterID { return r.id }

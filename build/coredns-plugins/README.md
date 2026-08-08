@@ -1,6 +1,6 @@
 # Dedicated CoreDNS plugins
 
-The dedicated lenny-system CoreDNS instance (spec §13.2 lines 452-536)
+The dedicated lenny-system CoreDNS instance (spec §13.2)
 embeds two non-standard plugins that stock CoreDNS does not ship:
 
 - `ratelimit` — per-source-IP DNS response throttling. The Corefile
@@ -26,7 +26,7 @@ docker build \
 ```
 
 The Helm chart renders a readiness probe against the CoreDNS health
-endpoint (spec §13.2 line 536); a custom image missing either plugin
+endpoint (spec §13.2); a custom image missing either plugin
 fails to load the Corefile and the probe keeps the pod out of the
 `lenny-agent-dns` Service.
 

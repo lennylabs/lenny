@@ -67,7 +67,7 @@ import (
 // gate so a future change that lowered maxConcurrentSessions to 1 or
 // dropped the acknowledgment would no longer exercise the per-slot path.
 //
-// spec: §5.2 line 511 — acknowledgeProcessLevelIsolation is required to
+// spec: §5.2 — acknowledgeProcessLevelIsolation is required to
 // configure maxConcurrentSessions > 1.
 type concurrentPool struct {
 	maxConcurrentSessions          int
@@ -81,10 +81,8 @@ type slot struct {
 	slotID    string
 }
 
-// spec: §5.2 line 509 (slotId multiplexing, dispatch loop keyed on slotId),
-// §5.2 line 511 (acknowledgeProcessLevelIsolation for maxConcurrentSessions
-// > 1), §6.4 line 365/384 (per-slot workspace /workspace/slots/{slotId}/,
-// per-slot cwd).
+// spec: §5.2,
+// §5.2, §6.4.
 // diagnosis: a failure means concurrent-workspace per-slot execution
 // regressed end to end across the gateway->adapter->runtime path. Either two
 // sessions on a maxConcurrentSessions > 1 pod did not land in distinct slots
@@ -162,7 +160,7 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 // layout: each slot's cwd is /workspace/slots/{slotId}/current/, not a shared
 // /workspace/current.
 //
-// spec: §6.4 line 365/384 — per-slot workspace /workspace/slots/{slotId}/,
+// spec: §6.4 — per-slot workspace /workspace/slots/{slotId}/,
 // the runtime MUST NOT assume a global /workspace/current.
 func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapterv1.AdapterClient, srv *adapter.Server, slots []slot) {
 	t.Helper()
@@ -211,8 +209,8 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 // originating slotId onto every response, so the tag the stream observes is
 // the runtime's, carried back across the adapter unchanged.
 //
-// spec: §15.4.1 line 1459 — single stdin channel, dispatch loop keyed on
-// slotId; §6.4 line 401-405 — adapter sets the slot's cwd when dispatching.
+// spec: §15.4.1 — single stdin channel, dispatch loop keyed on
+// slotId; §6.4 — adapter sets the slot's cwd when dispatching.
 func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, slots []slot) {
 	t.Helper()
 	for _, sl := range slots {

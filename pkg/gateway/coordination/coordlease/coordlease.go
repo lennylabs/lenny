@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package coordlease is the §10.1 line 165 CheckpointBarrier
+// Package coordlease is the §10.1 CheckpointBarrier
 // barrier-target mirror: a Postgres-durable, cross-replica index of
 // which gateway replica coordinates which session. The authoritative
 // coordination lease lives in Redis (pkg/gateway/leasestore); the
@@ -8,7 +8,7 @@
 // preStop graceful-drain barrier can enumerate its barrier-target set
 // from Postgres rather than the in-memory lease cache.
 //
-// §10.1 line 165 sources the barrier-target set from
+// §10.1 sources the barrier-target set from
 //
 //	SELECT session_id FROM coordination_lease
 //	WHERE coordinator_replica = $this_replica_id AND released_at IS NULL
@@ -31,7 +31,7 @@
 // deployment; the Postgres-backed implementation lives in the pgstore
 // subpackage and writes the migration-0164 coordination_lease table.
 //
-// spec: §10.1 lines 163-181; §12.1 line 5.
+// spec: §10.1; §12.1.
 package coordlease
 
 import (
@@ -50,7 +50,7 @@ type Lease struct {
 	// CoordinatorReplica is the OTel service.instance.id of the holder.
 	CoordinatorReplica string
 	// CoordinationGeneration is the §4.2 fenced generation carried in
-	// the CheckpointBarrier message (§10.1 line 165).
+	// the CheckpointBarrier message (§10.1).
 	CoordinationGeneration int64
 }
 
@@ -70,7 +70,7 @@ type Store interface {
 	Release(ctx context.Context, tenantID, sessionID string) error
 
 	// ListHeldByReplica returns the active (released_at IS NULL) leases
-	// whose coordinator_replica equals replica — the §10.1 line 165
+	// whose coordinator_replica equals replica — the §10.1
 	// barrier-target set. The query is cross-tenant.
 	ListHeldByReplica(ctx context.Context, replica string) ([]Lease, error)
 
@@ -179,5 +179,5 @@ func (m *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) error {
 
 // ErrEmptyScope is returned by an erasure primitive called with an empty
 // tenant id. An empty scope must never be treated as "delete everything"
-// (§12.8 line 753).
+// (§12.8).
 var ErrEmptyScope = errors.New("coordlease: erasure requires a non-empty tenant_id")

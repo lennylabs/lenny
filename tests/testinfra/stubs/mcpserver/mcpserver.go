@@ -27,7 +27,7 @@
 //	inv := connectorinvoke.New(srv.Client())
 //	// register a connector with MCPServerURL == srv.URL(), then drive it.
 //
-// spec: §9.1 line 10 (Gateway ↔ external MCP tools); §9.3 lines 142-164.
+// spec: §9.1; §9.3.
 package mcpserver
 
 import (

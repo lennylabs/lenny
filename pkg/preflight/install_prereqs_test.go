@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.6 line 503. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestKubernetesVersionCheck_spec_17_6_503(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -39,7 +39,7 @@ func TestKubernetesVersionCheck_spec_17_6_503(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 517. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestSIEMEndpointCheck_spec_17_6_517(t *testing.T) {
 	// Production with no endpoint warns (still passes — non-blocking).
 	d := SIEMEndpointCheck{Environment: "prod", SIEMEndpoint: ""}.Decide()
@@ -60,7 +60,7 @@ func TestSIEMEndpointCheck_spec_17_6_517(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 504; §12.6. F-17.6.1.
+// spec: §17.6; §12.6. F-17.6.1.
 func TestStorageRouterRegionCoverageCheck_spec_17_6_504(t *testing.T) {
 	if d := (StorageRouterRegionCoverageCheck{}).Decide(); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
 		t.Fatalf("empty regions should skip, got passed=%v reason=%q", d.Passed, d.Reason)
@@ -81,7 +81,7 @@ func TestStorageRouterRegionCoverageCheck_spec_17_6_504(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 505; §12.8 Phase 3.5. F-17.6.1.
+// spec: §17.6; §12.8 Phase 3.5. F-17.6.1.
 func TestLegalHoldEscrowCheck_spec_17_6_505(t *testing.T) {
 	if d := (LegalHoldEscrowCheck{Enabled: false}).Decide(); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
 		t.Fatalf("disabled should skip, got %q", d.Reason)
@@ -118,7 +118,7 @@ func (f fakePgBouncerProber) ProbePgBouncer(context.Context) (string, bool, erro
 	return f.mode, f.sentinel, f.err
 }
 
-// spec: §17.6 lines 487-488. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestPgBouncerConfigCheck_spec_17_6_487(t *testing.T) {
 	ctx := context.Background()
 	if d := (PgBouncerConfigCheck{}).Decide(ctx); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
@@ -147,7 +147,7 @@ func (f fakeBillingProber) ProbeBillingTriggers(context.Context) (bool, error) {
 	return f.enabled, f.err
 }
 
-// spec: §17.6 line 489. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestBillingTriggerCheck_spec_17_6_489(t *testing.T) {
 	ctx := context.Background()
 	if d := (BillingTriggerCheck{}).Decide(ctx); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {

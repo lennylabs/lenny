@@ -29,7 +29,7 @@ type fakeSlotBinder struct {
 	drained  []string
 
 	// releaseErr, when non-nil, makes ReleaseSlotReservation fail so the
-	// failed slot is not reclaimed — the §6.2 line 176/179 leak path.
+	// failed slot is not reclaimed — the §6.2 leak path.
 	releaseErr error
 }
 
@@ -145,7 +145,7 @@ func TestSlotRetryExhaustedReturnsStructuredError_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 / §6.2 line 165 — when a pod crosses the ceil(maxConcurrent/2)
+// spec: §5.2 / §6.2 — when a pod crosses the ceil(maxConcurrent/2)
 // fail threshold the pod is drained as a whole and the replacement counter
 // fires once per drain.
 func TestSlotRetryDrainsUnhealthyPod_spec_5_2(t *testing.T) {
@@ -226,7 +226,7 @@ func TestSlotRetryLeakOnReleaseFailure_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 179 — when a pod with a leaked slot crosses the unhealthy
+// spec: §6.2 — when a pod with a leaked slot crosses the unhealthy
 // threshold and is drained for replacement, its leaked-slot tracking is
 // cleared and the gauge series is zeroed (the leaked slots are reclaimed
 // with the terminated pod).
@@ -359,7 +359,7 @@ func TestSlotRetryTransientFailureAgesOutOfWindow_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519 — a reservation-exhaustion sentinel is not a slot
+// spec: §5.2 — a reservation-exhaustion sentinel is not a slot
 // failure: it is returned unchanged (no release, no record, no retry) so
 // the handler maps it to WARM_POOL_EXHAUSTED.
 func TestSlotRetryPassesThroughExhaustionSentinel_spec_5_2(t *testing.T) {

@@ -29,7 +29,7 @@ func lastLine(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return m
 }
 
-// spec: §16.4 line 372 / §25.4 — the middleware reads X-Lenny-Operation-ID
+// spec: §16.4 / §25.4 — the middleware reads X-Lenny-Operation-ID
 // and X-Lenny-Agent-Name and makes them visible on the request context to
 // downstream handlers. F-16.4.3.
 func TestWrapReadsOperationAndAgentHeadersIntoContext_spec_16_4_372(t *testing.T) {
@@ -54,7 +54,7 @@ func TestWrapReadsOperationAndAgentHeadersIntoContext_spec_16_4_372(t *testing.T
 	}
 }
 
-// spec: §16.4 line 372 — the correlation fields appear on the structured
+// spec: §16.4 — the correlation fields appear on the structured
 // request-completion log line. F-16.4.2.
 func TestWrapEmitsCorrelationFieldsOnLogLine_spec_16_4_372(t *testing.T) {
 	var buf bytes.Buffer
@@ -192,7 +192,7 @@ func TestWrapMergePreservesExistingContextFields(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 375 — an error response carries error_code,
+// spec: §16.4 — an error response carries error_code,
 // error_category, and retryable on the completion line, classified through
 // the shared §15.2.1 classifier so a SIEM can bin the line by category.
 // F-16.4.12.
@@ -220,7 +220,7 @@ func TestWrapEmitsErrorCategoryOnLogLine_spec_16_4_375(t *testing.T) {
 
 // The classifier is the source of truth: a bare middleware envelope that
 // omits the category from the body still produces the correct category on
-// the log line. spec: §16.4 line 375. F-16.4.12.
+// the log line. spec: §16.4. F-16.4.12.
 func TestWrapClassifiesCodeWhenBodyOmitsCategory_spec_16_4_375(t *testing.T) {
 	var buf bytes.Buffer
 	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -241,7 +241,7 @@ func TestWrapClassifiesCodeWhenBodyOmitsCategory_spec_16_4_375(t *testing.T) {
 }
 
 // A 2xx response carries no error fields on the completion line.
-// spec: §16.4 line 375. F-16.4.12.
+// spec: §16.4. F-16.4.12.
 func TestWrapOmitsErrorFieldsOnSuccess_spec_16_4_375(t *testing.T) {
 	var buf bytes.Buffer
 	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -261,7 +261,7 @@ func TestWrapOmitsErrorFieldsOnSuccess_spec_16_4_375(t *testing.T) {
 }
 
 // A non-JSON error body (a plaintext 500, a streamed dump) leaves the error
-// fields absent rather than emitting a garbage code. spec: §16.4 line 375.
+// fields absent rather than emitting a garbage code. spec: §16.4.
 func TestWrapOmitsErrorFieldsOnNonEnvelopeBody_spec_16_4_375(t *testing.T) {
 	var buf bytes.Buffer
 	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

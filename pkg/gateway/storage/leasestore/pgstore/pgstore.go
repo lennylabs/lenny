@@ -17,8 +17,8 @@
 // back. A row whose expires_at has passed is treated as absent, exactly
 // as a Redis key's PX TTL expiry would remove it.
 //
-// spec: §12.4 line 206 ("Distributed session leases | Fall back to
-// Postgres advisory locks (higher latency)"); §12.4 line 181.
+// spec: §12.4 ("Distributed session leases | Fall back to
+// Postgres advisory locks (higher latency)"); §12.4.
 package pgstore
 
 import (
@@ -187,10 +187,10 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (leasestore
 // every lease carries a TTL that self-expires, so there is nothing
 // user-scoped to erase here; the §12.8 step-1 lease release for the
 // user's sessions is driven per session by the erasure orchestrator. It
-// rejects empty arguments (§12.8 line 753) and otherwise returns
+// rejects empty arguments (§12.8) and otherwise returns
 // (0, nil), matching the Redis store's behavior.
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 step 1.
+// spec: §12.1; §12.8 step 1.
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, leasestore.ErrEmptyScope
@@ -203,7 +203,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // teardown and returns the count dropped. Idempotent: a tenant with no
 // leases is a no-op returning (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+// spec: §12.1; §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, leasestore.ErrEmptyScope

@@ -97,7 +97,7 @@ type Transport struct {
 	// guard re-validates the callback URL before each attempt dials, so
 	// the §25.5 SSRF/DNS-rebinding check runs on every delivery and not
 	// only at subscription create time. A nil guard skips the check (the
-	// create-time validation still applies). spec: §25.5 lines 2735-2745.
+	// create-time validation still applies). spec: §25.5.
 	guard func(ctx context.Context, callbackURL string) error
 }
 
@@ -116,9 +116,9 @@ func NewTransport(timeout time.Duration) *Transport {
 
 // WithSSRFGuard installs a per-delivery callback-URL validator. The guard
 // runs before every attempt dials; a non-nil error from the guard fails
-// the attempt without a network call, closing the §25.5 line 2741 DNS
+// the attempt without a network call, closing the §25.5 DNS
 // rebinding gap where a host resolves to a public IP at subscription time
-// and to a private IP later. spec: §25.5 lines 2735-2745.
+// and to a private IP later. spec: §25.5.
 func (t *Transport) WithSSRFGuard(guard func(ctx context.Context, callbackURL string) error) *Transport {
 	t.guard = guard
 	return t

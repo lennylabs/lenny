@@ -31,7 +31,7 @@ import (
 // app: lenny-ops pod selector.)
 const opsLeaderLease = "lenny-ops-leader"
 
-// opsPDB is the lenny-ops PodDisruptionBudget. §25.16 line 5119 renders it
+// opsPDB is the lenny-ops PodDisruptionBudget. §25.16 renders it
 // with minAvailable 1; it caps how many replicas may be simultaneously
 // unavailable once lenny-ops runs more than one replica.
 const opsPDB = "lenny-ops"
@@ -103,10 +103,10 @@ func TestOpsLeaderElectionFailover(t *testing.T) {
 	}
 
 	// The PodDisruptionBudget must be rendered and admit the two-replica
-	// posture before the injection. §25.16 line 5119 renders it with
+	// posture before the injection. §25.16 renders it with
 	// minAvailable 1 regardless of replica count.
 	if got := pdbMinAvailable(t, c, opsPDB); got != 1 {
-		t.Fatalf("the %s PodDisruptionBudget has minAvailable %d, want 1 (§25.16 line 5119)", opsPDB, got)
+		t.Fatalf("the %s PodDisruptionBudget has minAvailable %d, want 1 (§25.16)", opsPDB, got)
 	}
 
 	// Wait for leader election to converge on a leader among the ops pods.

@@ -43,14 +43,14 @@ type User struct {
 
 	// RoleAssigned reports whether a platform-managed role assignment is
 	// present on the row. When true, Roles fully replace the user's
-	// OIDC-derived role claim (the §10.2 line 294 precedence rule). When
+	// OIDC-derived role claim (the §10.2 precedence rule). When
 	// false — the state left by `DELETE /v1/admin/tenants/{id}/users/
 	// {userId}/role` — the row is retained (so the user still lists) but
 	// the OIDC claim is authoritative again.
-	// spec: §15.1 lines 827-828, §10.2 line 294.
+	// spec: §15.1, §10.2.
 	RoleAssigned bool
 
-	// RoleAssignedBy / RoleAssignedAt record the §15.1 line 826
+	// RoleAssignedBy / RoleAssignedAt record the §15.1
 	// provenance of the platform-managed role assignment: the operator
 	// subject that set it and when. They are empty/zero on a row with no
 	// assignment.
@@ -88,7 +88,7 @@ type User struct {
 	// starts at 1 and increments on every successful admin Update. The
 	// quoted decimal version is the resource's strong entity tag, enforced
 	// on PUT via the If-Match precondition and exposed on GET/list.
-	// spec: §15.1 lines 1207-1213.
+	// spec: §15.1.
 	Version int64
 }
 
@@ -98,7 +98,7 @@ func (u User) IsActive() bool { return !u.Disabled && u.DeletedAt.IsZero() }
 
 // Store is the §11.4 / §15.1 user registry contract.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. The user is the primary entity of this store, so
 // DeleteByUser purges the row hard rather than soft-deleting;
@@ -119,8 +119,7 @@ type Store interface {
 	// lenny.clear_processing_restriction session-local for the write).
 	// Returns ErrNotFound when no such user row exists.
 	//
-	// spec: §12.8 line 764 (POST .../clear-processing-restriction sets the
-	// lenny.clear_processing_restriction session-local bypass).
+	// spec: §12.8.
 	ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (User, error)
 
 	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
@@ -170,7 +169,7 @@ type Memory struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{users: map[string]User{}} }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -202,7 +201,7 @@ func (m *Memory) Create(_ context.Context, u User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if u.Version == 0 {
 		u.Version = 1
 	}
@@ -244,7 +243,7 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	row.Version++
 	m.users[k] = row
 	return row, nil
@@ -252,7 +251,7 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 
 // ClearProcessingRestriction implements Store. The in-memory store has
 // no Article-18 trigger, so the privileged clear is a direct flag reset.
-// spec: §12.8 line 764.
+// spec: §12.8.
 func (m *Memory) ClearProcessingRestriction(_ context.Context, tenantID, subject string) (User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

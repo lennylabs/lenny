@@ -8,13 +8,13 @@ import (
 	"sync"
 )
 
-// DefaultCacheEntries is the §8.10 line 129 per-replica LRU cache size:
+// DefaultCacheEntries is the §8.10 per-replica LRU cache size:
 // "the gateway fetches it from Postgres on demand (with a per-replica
 // LRU cache, default 128 entries)."
 const DefaultCacheEntries = 128
 
 // Cached fronts a durable Store with a per-replica LRU read cache. It
-// implements the §8.10 line 129 / §8.2 line 129 caching model: the
+// implements the §8.10 / §8.2 caching model: the
 // inner Store (Postgres in production) is the authoritative record, and
 // this wrapper keeps the hot set of recently-read settled nodes in
 // memory so a parent re-reading a child's result does not hit Postgres

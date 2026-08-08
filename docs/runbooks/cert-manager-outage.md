@@ -169,7 +169,7 @@ Escalate if:
 
 ## Production prerequisites
 
-spec §10.3 line 344 requires cert-manager to run with 2+ replicas and leader election in production. A single-replica cert-manager pauses leaf renewal during pod restarts and node maintenance, which surfaces as `CertExpiryImminent` alerts under sustained load. Verify the posture before declaring a production deployment ready:
+spec §10.3 requires cert-manager to run with 2+ replicas and leader election in production. A single-replica cert-manager pauses leaf renewal during pod restarts and node maintenance, which surfaces as `CertExpiryImminent` alerts under sustained load. Verify the posture before declaring a production deployment ready:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash

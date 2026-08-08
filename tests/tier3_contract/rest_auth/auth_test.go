@@ -261,7 +261,7 @@ func TestTamperedTokenReturns401(t *testing.T) {
 	}
 }
 
-// spec: §10.2 + §15.1 line 986 — a no-credentials request must reject
+// spec: §10.2 + §15.1 — a no-credentials request must reject
 // with the canonical UNAUTHORIZED code (401) and carry details.reason
 // = "auth_required" so callers can discriminate the missing-bearer
 // case while scripting against the §15.1 catalog.

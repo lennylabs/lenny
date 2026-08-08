@@ -26,7 +26,7 @@ type OperationsInventory interface {
 	Get(ctx context.Context, id string) (*operations.Operation, []string, bool)
 }
 
-// §25.4 lines 1772-1775 Operations Inventory metrics. Registered on the
+// §25.4 Operations Inventory metrics. Registered on the
 // default registry so the §16.9 lenny-ops /metrics endpoint exposes them.
 var (
 	inventoryRequestsTotal *prometheus.CounterVec
@@ -55,7 +55,7 @@ func init() {
 	inventoryKindsReturned = h
 }
 
-// §25.4 line 1779 audit event + line 1769 error code.
+// §25.4 audit event and error code.
 const (
 	eventInventoryQueried = "operations.inventory_queried"
 	codeOperationNotFound = "OPERATION_NOT_FOUND"
@@ -77,7 +77,7 @@ func (s *Server) registerOperationsRoutes() {
 // handleListOperations serves GET /v1/admin/operations: the §25.4
 // scatter-gather Inventory query with the ?actor=, ?status=, ?kind=,
 // ?since=, ?until=, ?tenantId=, ?operationId=, ?limit=, ?cursor= filters.
-// The §25.4 authorization rules (line 1736) are applied after the
+// The §25.4 authorization rules are applied after the
 // scatter: tenant-admin callers are auto-restricted to their own
 // operations and own-tenant operations; actor=* requires platform-admin.
 func (s *Server) handleListOperations(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +153,7 @@ func (s *Server) listOperations(w http.ResponseWriter, r *http.Request, opt list
 
 	status := http.StatusOK
 	if page.Degradation != nil {
-		// §25.4 line 1769: OPERATIONS_INVENTORY_PARTIAL — at least one
+		// §25.4: OPERATIONS_INVENTORY_PARTIAL — at least one
 		// subsystem's backing store was unreachable; the response is
 		// partial per degradation.warnings.
 		status = http.StatusMultiStatus
@@ -176,7 +176,7 @@ func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
 	p, hasPrincipal := callerPrincipal(r)
 	op, warns, ok := s.inventory.Get(r.Context(), id)
 	if ok && !canSeeOperation(p, hasPrincipal, *op) {
-		// §25.4 line 1745: surfacing an operation the caller may not see
+		// §25.4: surfacing an operation the caller may not see
 		// is a not-found, not a forbidden — the caller learns nothing about
 		// operations outside its visibility.
 		ok = false
@@ -211,7 +211,7 @@ func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
 
 // effectiveActor resolves the §25.4 ?actor= value against the caller's
 // role. The default is "me". A tenant-admin caller is auto-restricted to
-// "me" regardless of the requested value (§25.4 line 1789 — "Tenant-admin
+// "me" regardless of the requested value (§25.4 — "Tenant-admin
 // is auto-restricted to me"). When no principal is present (dev / embedded
 // path) the requested value is honored as-is.
 func effectiveActor(p authmw.Principal, hasPrincipal bool, requested string) string {
@@ -243,7 +243,7 @@ func explicitTenantFilter(p authmw.Principal, hasPrincipal bool, requested strin
 	return ""
 }
 
-// authorizeOperationRows applies the §25.4 line 1736 per-row visibility
+// authorizeOperationRows applies the §25.4 per-row visibility
 // rules to the scattered operations:
 //   - platform-admin with actor=*: sees every operation.
 //   - platform-admin with actor=<sub>: sees operations started by that sub.

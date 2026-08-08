@@ -288,7 +288,7 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 	}
 }
 
-// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5
 // fail-closed contract: a resolver that returns (requireKey=true, err)
 // for a T4 tenant rejects the write with
 // blobstore.ErrClassificationControlViolation, persists nothing, and
@@ -296,7 +296,7 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 // lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
 // advances.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -320,7 +320,7 @@ func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 // whose resolver returns (requireKey=true) but an empty key id fails
 // closed rather than falling through to the bucket default.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -336,7 +336,7 @@ func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 // returns (requireKey=false) with an empty key admits the write under
 // the bucket default with no per-object SSE-KMS key set.
 //
-// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+// spec: §12.5; §12.9.
 func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -352,9 +352,9 @@ func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
 }
 
 // TestCopyFailsClosedWhenT4ResolverEmptyKey asserts the §4.5 derive
-// Copy path honors the same §12.5 line 303 fail-closed contract as Put.
+// Copy path honors the same §12.5 fail-closed contract as Put.
 //
-// spec: §12.5 line 303; §4.5 ll. 311.
+// spec: §12.5; §4.5 ll. 311.
 func TestCopyFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 	f := newFakeS3()
 	// Seed a live source object written with no resolver, then attach a

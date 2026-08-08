@@ -105,26 +105,26 @@ type AuditEvent struct {
 	// the tenant id).
 	TargetResource string
 
-	// OperationID is the §11.7 lines 347-348 optional correlation
+	// OperationID is the §11.7 optional correlation
 	// token, sourced from the X-Lenny-Operation-ID request header (via
 	// the correlation context). The OCSF translator projects it onto
 	// metadata.correlation_uid. Empty when the request carried no
-	// header. spec: §11.7 line 347.
+	// header. spec: §11.7.
 	OperationID string
 
-	// CallerKind is the §11.7 lines 347-348 optional caller class,
+	// CallerKind is the §11.7 optional caller class,
 	// sourced from the OIDC caller_type claim ("human" / "service" /
 	// "agent"). The OCSF translator projects it onto actor.user.type /
 	// type_id, which the §25.9 human-vs-agent reporting reads. Empty
-	// when the token carried no claim. spec: §11.7 line 348.
+	// when the token carried no claim. spec: §11.7.
 	CallerKind string
 
-	// AgentName is the §15.1 line 938 human-readable agent instance
+	// AgentName is the §15.1 human-readable agent instance
 	// identifier, sourced from the X-Lenny-Agent-Name request header
 	// (via the correlation context). §15.1 requires it be propagated to
 	// audit records so the §25.9 audit-query API can attribute a
 	// remediation to the operator agent that issued it. Empty when the
-	// request carried no header. spec: §15.1 line 938. F-15.1.10.
+	// request carried no header. spec: §15.1. F-15.1.10.
 	AgentName string
 
 	// Detail carries event-specific fields the auditor records
@@ -156,7 +156,7 @@ type Router struct {
 	connectorTester      ConnectorTester
 	connectorCreds       connectorcredstore.Store
 	connectorTestLimiter ratelimit.Counter
-	// connectorRefresher / connectorRefreshLimiter back the §9.3 line 136
+	// connectorRefresher / connectorRefreshLimiter back the §9.3
 	// `POST /v1/admin/connectors/{name}/refresh` capability-inference
 	// endpoint. A nil refresher leaves the route unregistered.
 	connectorRefresher      ConnectorCapabilityRefresher
@@ -174,14 +174,13 @@ type Router struct {
 	poolCredHealth             PoolCredentialHealthReader
 	customRoles                customrolestore.Store
 	tenantAccess               tenantaccessstore.Store
-	// capOverrides backs the §5.1 line 49 per-tenant runtime capability
+	// capOverrides backs the §5.1 per-tenant runtime capability
 	// override CRUD surface. Nil leaves the routes unregistered. F-5.1.20.
 	capOverrides runtimecapoverride.Store
 	auditLog     AuditLog
 	auditPruner  AuditPartitionDropper
 	auditMetrics AuditQueryMetrics
-	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9
-	// line 3668/3709 platform-admin cross-tenant audit scatter-gather and
+	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9 platform-admin cross-tenant audit scatter-gather and
 	// its Redis result cache. A nil auditScatter leaves the platform-admin
 	// no-tenantId query on the single-tenant (`platform`) read path.
 	// F-25.9.11.
@@ -205,10 +204,10 @@ type Router struct {
 	// unregistered. F-16.7.1.
 	impersonation ImpersonationService
 	// saltRotator backs POST /v1/admin/tenants/{id}/rotate-erasure-salt
-	// (§12.8 line 857). Nil leaves the route unregistered. F-12.8.5.
+	// (§12.8). Nil leaves the route unregistered. F-12.8.5.
 	saltRotator   ErasureSaltRotator
 	artifactHolds ArtifactLegalHolder
-	// escrowReleaser runs the §12.8 line 884 escrow-GC release when a legal
+	// escrowReleaser runs the §12.8 escrow-GC release when a legal
 	// hold is cleared (hold: false): it deletes the escrow objects the hold
 	// protected and emits legal_hold.escrow_released. Nil leaves the clear
 	// path releasing nothing (a deployment with no force-delete escrow).
@@ -220,12 +219,12 @@ type Router struct {
 	// notification to eligible approvers via the configured
 	// billing.approverNotificationWebhook. Nil leaves the notification
 	// step inactive (the workflow still records the pending request).
-	// spec: §11.2.1 line 175. F-11.2.14.
+	// spec: §11.2.1. F-11.2.14.
 	approverNotifier ApproverNotifier
 	sessions         sessionstore.Store
 	// sessionAdmin backs the §24.11 platform-admin session-investigation
 	// endpoints (GET /v1/admin/sessions/{id}, force-terminate). Nil leaves
-	// them unregistered. spec: §24.11 lines 135-136.
+	// them unregistered. spec: §24.11.
 	sessionAdmin  SessionAdmin
 	interactions  interactionstore.Store
 	experiments   experimentstore.Store
@@ -262,7 +261,7 @@ type Router struct {
 	// elicitationFloor returns the current §9.2 / §17.2 platform-wide
 	// elicitation content-integrity floor. It is a function rather than a
 	// static string so a floor change sourced from the phase-stamp
-	// ConfigMap at runtime (§17.2 line 86) is observed by every read
+	// ConfigMap at runtime (§17.2) is observed by every read
 	// without re-wiring the Router. A nil function reads as the empty
 	// (no-floor) default.
 	elicitationFloor func() string
@@ -278,7 +277,7 @@ type Router struct {
 	// `audit.siem.endpoint` configured. The §11.7 compliance enforcement
 	// gate rejects creating or updating a tenant to a regulated
 	// complianceProfile (and creating an environment under one) with
-	// COMPLIANCE_SIEM_REQUIRED when it is false. spec: §11.7 lines 445-451.
+	// COMPLIANCE_SIEM_REQUIRED when it is false. spec: §11.7.
 	siemConfigured bool
 
 	// pgauditConfigured mirrors whether the platform has both
@@ -286,7 +285,7 @@ type Router struct {
 	// configured. The §11.7 item-5 compliance gate rejects creating or
 	// updating a tenant to a regulated complianceProfile (and creating an
 	// environment under one) with COMPLIANCE_PGAUDIT_REQUIRED when it is
-	// false. spec: §11.7 lines 374-379.
+	// false. spec: §11.7.
 	pgauditConfigured bool
 
 	reconciliationResumer ReconciliationResumer
@@ -308,7 +307,7 @@ type Router struct {
 	// F-10.5.1.
 	runtimeUpgrade RuntimeUpgradeManager
 
-	// artifactReplication backs the §25.11 line 3898-3899
+	// artifactReplication backs the §25.11
 	// POST/GET /v1/admin/artifact-replication/{region}/{resume,status}
 	// endpoints. The routes are registered unconditionally so an agent
 	// always reaches a real endpoint; a nil controller (the default until
@@ -320,13 +319,13 @@ type Router struct {
 	// endpoints. Nil leaves them unregistered.
 	migrations MigrationManager
 
-	// preflighter backs the §15.1 line 890 `POST /v1/admin/preflight`
+	// preflighter backs the §15.1
 	// API-backed infrastructure-connectivity preflight. Nil leaves the
 	// endpoint unregistered.
 	preflighter InfraPreflighter
 
 	// leaseDenials clears the §8.6 extension-denied flag, backing the
-	// §15.1 line 868 DELETE …/extension-denial admin endpoint. Nil leaves
+	// §15.1 DELETE …/extension-denial admin endpoint. Nil leaves
 	// the endpoint unregistered.
 	leaseDenials LeaseDenialClearer
 
@@ -334,18 +333,18 @@ type Router struct {
 	// owning tenant. handleClearExtensionDenial uses it to confine a
 	// non-platform-admin caller to its own tenant before the clear, so a
 	// tenant-admin cannot clear another tenant's extension-denial row
-	// given an opaque session UUID (§10.2 line 261). Nil fails closed: a
+	// given an opaque session UUID (§10.2). Nil fails closed: a
 	// non-platform-admin caller is rejected.
 	tenantResolver leasecontrol.TenantResolver
 
-	// quotaReconciler backs the §15.1 line 879 POST
+	// quotaReconciler backs the §15.1 POST
 	// /v1/admin/quota/reconcile endpoint. The route is always registered
 	// so the §24.6 CLI command reaches a real endpoint; a nil reconciler
 	// (the default until F-11.2.4 wires the Postgres token-usage
 	// checkpoint store) answers 503 QUOTA_RECONCILE_UNAVAILABLE.
 	quotaReconciler QuotaReconciler
 
-	// devMode mirrors Options.DevMode; it selects the §5.3 line 677
+	// devMode mirrors Options.DevMode; it selects the §5.3
 	// dev-mode isolation default for pools and runtimes that omit
 	// isolationProfile.
 	devMode bool
@@ -359,14 +358,14 @@ type Router struct {
 	tenancyMode string
 
 	// maxFinalizingTimeoutSeconds is the gateway-side outer bound
-	// from §11.3 line 219. When > 0, runtime registration and bootstrap
+	// from §11.3. When > 0, runtime registration and bootstrap
 	// reject a runtime whose `setupPolicy.timeoutSeconds` exceeds it,
-	// honouring the §6.2 line 260 invariant
+	// honouring the §6.2 invariant
 	// `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`. Zero
 	// disables enforcement (used in tests that do not exercise the
 	// finalizing-state watchdog).
 	//
-	// spec: §6.2 line 260; §11.3 line 219.
+	// spec: §6.2; §11.3.
 	maxFinalizingTimeoutSeconds int
 }
 
@@ -424,7 +423,7 @@ type Options struct {
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
 	// true, a pool or runtime that omits isolationProfile defaults to
-	// `standard` (runc) per §5.3 line 677 so a developer can run on a
+	// `standard` (runc) per §5.3 so a developer can run on a
 	// cluster without gVisor; pools defaulted this way also receive the
 	// explicit allowStandardIsolation opt-in dev mode supplies on their
 	// behalf. When false the default is the production `sandboxed`.
@@ -492,16 +491,16 @@ func (r *Router) WithKMSProbe(p KMSProbe) *Router {
 	return r
 }
 
-// WithMaxFinalizingTimeoutSeconds wires the §11.3 line 219 gateway
+// WithMaxFinalizingTimeoutSeconds wires the §11.3 gateway
 // outer bound onto the Router so the §15.1 runtime POST/PUT and
 // bootstrap handlers can reject a runtime whose
 // `setupPolicy.timeoutSeconds` exceeds it. A non-positive value
 // disables enforcement; production should pass the same value the
-// finalizing watchdog uses so the §6.2 line 260 invariant
+// finalizing watchdog uses so the §6.2 invariant
 // `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds` is enforced at
 // every admission path.
 //
-// spec: §6.2 line 260; §11.3 line 219.
+// spec: §6.2; §11.3.
 func (r *Router) WithMaxFinalizingTimeoutSeconds(seconds int) *Router {
 	r.maxFinalizingTimeoutSeconds = seconds
 	return r
@@ -526,7 +525,7 @@ func (r *Router) WithElicitationFloor(mode string) *Router {
 // onto the Router. The provider is read on every floor-dependent request
 // (the GET effective-mode resolution, the PUT below-floor guard, and the
 // audit `platform_floor_at_change` field) so a floor change sourced from
-// the phase-stamp ConfigMap at runtime (§17.2 line 86) takes effect
+// the phase-stamp ConfigMap at runtime (§17.2) takes effect
 // without a gateway restart. A nil provider reads as the empty (no-floor)
 // default.
 func (r *Router) WithElicitationFloorProvider(fn func() string) *Router {
@@ -549,13 +548,13 @@ func (r *Router) elicitationFloorValue() string {
 // complianceProfile (soc2, fedramp, hipaa), and creating an environment
 // under such a tenant, with COMPLIANCE_SIEM_REQUIRED (HTTP 422). The
 // production gateway passes `audit.siem.endpoint != ""`.
-// spec: §11.7 lines 445-451.
+// spec: §11.7.
 func (r *Router) WithSIEMConfigured(configured bool) *Router {
 	r.siemConfigured = configured
 	return r
 }
 
-// complianceSIEMRequiredMessage is the §11.7 line 448 verbatim 422 body
+// complianceSIEMRequiredMessage is the §11.7 verbatim 422 body
 // for the SIEM hard-requirement gate.
 func complianceSIEMRequiredMessage(profile string) string {
 	return "tenant.complianceProfile '" + profile + "' requires audit.siem.endpoint to be configured. " +
@@ -565,7 +564,7 @@ func complianceSIEMRequiredMessage(profile string) string {
 // requireSIEMForProfile reports whether the §11.7 gate must reject an
 // operation that lands a tenant on the given complianceProfile: the
 // profile is regulated (soc2, fedramp, hipaa) and no SIEM endpoint is
-// configured. spec: §11.7 lines 445-451.
+// configured. spec: §11.7.
 func (r *Router) requireSIEMForProfile(profile string) bool {
 	return regulatedComplianceProfiles[profile] && !r.siemConfigured
 }
@@ -577,13 +576,13 @@ func (r *Router) requireSIEMForProfile(profile string) bool {
 // fedramp, hipaa), and creating an environment under such a tenant, with
 // COMPLIANCE_PGAUDIT_REQUIRED (HTTP 422). The production gateway passes
 // `audit.pgaudit.enabled && audit.pgaudit.sinkEndpoint != ""`.
-// spec: §11.7 lines 374-379.
+// spec: §11.7.
 func (r *Router) WithPgauditConfigured(configured bool) *Router {
 	r.pgauditConfigured = configured
 	return r
 }
 
-// compliancePgauditRequiredMessage is the §11.7 line 377 422 body for the
+// compliancePgauditRequiredMessage is the §11.7 422 body for the
 // pgaudit hard-requirement gate.
 func compliancePgauditRequiredMessage(profile string) string {
 	return "tenant.complianceProfile '" + profile + "' requires audit.pgaudit.enabled to be true and " +
@@ -595,7 +594,7 @@ func compliancePgauditRequiredMessage(profile string) string {
 // requirePgauditForProfile reports whether the §11.7 item-5 gate must
 // reject an operation that lands a tenant on the given complianceProfile:
 // the profile is regulated (soc2, fedramp, hipaa) and pgaudit is not
-// fully configured. spec: §11.7 lines 374-379.
+// fully configured. spec: §11.7.
 func (r *Router) requirePgauditForProfile(profile string) bool {
 	return regulatedComplianceProfiles[profile] && !r.pgauditConfigured
 }
@@ -606,7 +605,7 @@ func (r *Router) emit(ctx context.Context, p authmw.Principal, eventType, resour
 	if r.audit == nil {
 		return
 	}
-	// spec: §11.7 lines 347-348 / §15.1 line 938 — carry operation_id
+	// spec: §11.7 / §15.1 — carry operation_id
 	// (from the correlation context populated off X-Lenny-Operation-ID),
 	// agent_name (off X-Lenny-Agent-Name), and caller_kind (from the
 	// OIDC caller_type claim) when available so the OCSF translator can
@@ -732,8 +731,7 @@ type TenantPayload struct {
 
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. A list consumer reads it per item to supply
-	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1
-	// line 1209.
+	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -746,7 +744,7 @@ func fromTenant(t tenantstore.Tenant) TenantPayload {
 
 // tenantStateOrActive reports the §12.8 TenantState for the admin API,
 // mapping the empty pre-lifecycle value to `active` so the response
-// always carries a concrete state. spec: §12.8 line 865.
+// always carries a concrete state. spec: §12.8.
 func tenantStateOrActive(state string) string {
 	if state == "" {
 		return tenantstore.TenantStateActive
@@ -772,7 +770,7 @@ func fromTenantWithProbe(t tenantstore.Tenant, probe KMSProbe) TenantPayload {
 		CreatedAt:             rfc3339Nano(t.CreatedAt),
 		UpdatedAt:             rfc3339Nano(t.UpdatedAt),
 		DeletedAt:             rfc3339Nano(t.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		// spec: §15.1 — the ETag is the quoted decimal version.
 		ETag: formatETag(t.Version),
 	}
 	if t.ExperimentTargeting.Configured() {
@@ -800,7 +798,7 @@ func validBillingErasurePolicy(s string) bool {
 		s == tenantstore.BillingErasureExempt
 }
 
-// validQuotaResetPeriod reports whether s is an accepted §11.2 line 31
+// validQuotaResetPeriod reports whether s is an accepted §11.2
 // per-tenant quota reset period: empty (inherit the platform default),
 // hourly, daily, monthly, or rolling.
 func validQuotaResetPeriod(s string) bool {
@@ -809,7 +807,7 @@ func validQuotaResetPeriod(s string) bool {
 
 // gcPriorityOrNormal maps the empty §12.5 GCPriority to the `normal`
 // default so the admin response always carries a concrete value.
-// spec: §12.5 line 317.
+// spec: §12.5.
 func gcPriorityOrNormal(s string) string {
 	if s == "" {
 		return tenantstore.GCPriorityNormal
@@ -854,7 +852,7 @@ func isComplianceDowngrade(current, requested string) bool {
 // data-classification tier (empty, T3, or T4). It delegates to the
 // canonical tenantstore validator so the admin API, the bootstrap
 // upsert path, and the §10.6 environment override agree on the closed
-// enum. spec: §12.9 line 1048; §15.1 line 816.
+// enum. spec: §12.9; §15.1.
 func validWorkspaceTier(s string) bool { return tenantstore.ValidWorkspaceTier(s) }
 
 // emitBillingErasureExemptRegulated emits the §12.8
@@ -918,17 +916,17 @@ func EmitBillingErasureExemptRegulatedStartup(ctx context.Context, tenants tenan
 	return nil
 }
 
-// SIEMStartupFatalMessage is the §11.7 line 450 verbatim fatal message
+// SIEMStartupFatalMessage is the §11.7 verbatim fatal message
 // the gateway logs when it refuses to start with a regulated tenant and
 // no configured SIEM.
 const SIEMStartupFatalMessage = "FATAL: one or more tenants have a regulated complianceProfile but audit.siem.endpoint is not configured. Configure SIEM or downgrade tenant complianceProfile to 'none' via POST /v1/admin/tenants/{id}/compliance-profile/decommission."
 
-// ValidateSIEMForRegulatedTenants enforces the §11.7 line 450 startup
+// ValidateSIEMForRegulatedTenants enforces the §11.7 startup
 // gate: when any active tenant carries a regulated complianceProfile
 // (soc2, fedramp, hipaa) and no SIEM endpoint is configured, it returns
 // an error carrying SIEMStartupFatalMessage so the production gateway
 // refuses to start. When siemConfigured is true the scan is skipped.
-// spec: §11.7 lines 445-451.
+// spec: §11.7.
 func ValidateSIEMForRegulatedTenants(ctx context.Context, tenants tenantstore.Store, siemConfigured bool) error {
 	if siemConfigured {
 		return nil
@@ -945,18 +943,18 @@ func ValidateSIEMForRegulatedTenants(ctx context.Context, tenants tenantstore.St
 	return nil
 }
 
-// PgauditStartupFatalMessage is the §11.7 line 377 fatal message the
+// PgauditStartupFatalMessage is the §11.7 fatal message the
 // gateway logs when it refuses to start with a regulated tenant and
 // pgaudit not fully configured (`audit.pgaudit.enabled` false or
 // `audit.pgaudit.sinkEndpoint` unset).
 const PgauditStartupFatalMessage = "FATAL: one or more tenants have a regulated complianceProfile but audit.pgaudit.enabled is not true with audit.pgaudit.sinkEndpoint configured. Enable pgaudit DDL/ROLE capture to an external sink or downgrade tenant complianceProfile to 'none' via POST /v1/admin/tenants/{id}/compliance-profile/decommission."
 
-// ValidatePgauditForRegulatedTenants enforces the §11.7 line 377 startup
+// ValidatePgauditForRegulatedTenants enforces the §11.7 startup
 // gate: when any active tenant carries a regulated complianceProfile
 // (soc2, fedramp, hipaa) and pgaudit is not fully configured, it returns
 // an error carrying PgauditStartupFatalMessage so the production gateway
 // refuses to start. When pgauditConfigured is true the scan is skipped.
-// spec: §11.7 lines 374-379.
+// spec: §11.7.
 func ValidatePgauditForRegulatedTenants(ctx context.Context, tenants tenantstore.Store, pgauditConfigured bool) error {
 	if pgauditConfigured {
 		return nil
@@ -981,7 +979,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if body.ID == "" {
-		// spec: §10.2 line 210 — the admin API rejects any tenant_id
+		// spec: §10.2 — the admin API rejects any tenant_id
 		// that does not match the format with `400 INVALID_TENANT_ID`.
 		// A missing id is a format violation (the regex requires at
 		// least one character), so it routes through the same code.
@@ -990,7 +988,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if err := auth.ValidateTenantID(body.ID); err != nil {
-		// spec: §10.2 line 210.
+		// spec: §10.2.
 		writeError(w, http.StatusBadRequest, "INVALID_TENANT_ID", err.Error(),
 			map[string]any{"field": "id"})
 		return
@@ -1037,7 +1035,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "billingErasurePolicy"})
 		return
 	}
-	// spec: §12.9 line 1048; §15.1 line 816 — workspaceTier is a closed
+	// spec: §12.9; §15.1 — workspaceTier is a closed
 	// enum (tenant-settable T3 default or T4). An arbitrary string such as
 	// "T2", "T5", or "prod" would be silently treated as "not T4" by every
 	// downstream consumer (KMS probe skipped, t4-node-isolation predicate
@@ -1062,7 +1060,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	// spec: §11.7 line 446 — creating a tenant with a regulated
+	// spec: §11.7 — creating a tenant with a regulated
 	// complianceProfile when no audit.siem.endpoint is configured is
 	// rejected with COMPLIANCE_SIEM_REQUIRED. The gate is unbypassable;
 	// the deployer must configure SIEM before enabling a regulated tenant.
@@ -1072,7 +1070,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "complianceProfile", "complianceProfile": body.ComplianceProfile})
 		return
 	}
-	// spec: §11.7 line 377 — a regulated complianceProfile additionally
+	// spec: §11.7 — a regulated complianceProfile additionally
 	// requires pgaudit DDL/ROLE capture to an external sink. The gate is
 	// unbypassable, symmetric with the SIEM requirement above.
 	if r.requirePgauditForProfile(body.ComplianceProfile) {
@@ -1106,7 +1104,7 @@ func (r *Router) handleCreateTenant(w http.ResponseWriter, req *http.Request) {
 	t.UpdatedAt = t.CreatedAt
 	if err := r.tenants.Create(req.Context(), t); err != nil {
 		if errors.Is(err, tenantstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"tenant with this id already exists",
 				map[string]any{"id": body.ID})
@@ -1162,8 +1160,8 @@ func (r *Router) handleListTenants(w http.ResponseWriter, req *http.Request) {
 	for _, t := range rows {
 		out = append(out, fromTenant(t))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
-	// The id is the §15.1 line 1236 `name` sort field and the tiebreaker.
+	// spec: §15.1 — canonical cursor-paginated envelope.
+	// The id is the §15.1 sort field and the tiebreaker.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(t TenantPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -1189,7 +1187,7 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §12.8 line 873 — a `deleted`-state tenant is a tombstone
+	// spec: §12.8 — a `deleted`-state tenant is a tombstone
 	// retained to prevent id reuse; GET returns 410 Gone with the
 	// deletion timestamp rather than the (nulled) row. Tenants in
 	// `disabling`/`deleting` are still resolvable (200) so an operator
@@ -1200,7 +1198,7 @@ func (r *Router) handleGetTenant(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"tenantId": id, "state": tenantStateOrActive(row.State), "deletedAt": rfc3339Nano(row.DeletedAt)})
 		return
 	}
-	// spec: §15.1 line 1209 — GET carries the ETag header so the client can
+	// spec: §15.1 — GET carries the ETag header so the client can
 	// use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -1237,7 +1235,7 @@ func (r *Router) handleUpdateTenant(w http.ResponseWriter, req *http.Request) {
 	if !validateUpdateTenantBody(w, body) {
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	// Resolve the current tenant so the entity tag (its version) is known
 	// before applying the mutation; a missing tenant 404s ahead of the
 	// precondition. The same row backs the §11.7 / §12.9 ratchet checks
@@ -1307,7 +1305,7 @@ func validateUpdateTenantBody(w http.ResponseWriter, body UpdateTenantRequest) b
 			map[string]any{"field": "billingErasurePolicy"})
 		return false
 	}
-	// spec: §12.9 line 1048; §15.1 line 816 — reject an out-of-enum
+	// spec: §12.9; §15.1 — reject an out-of-enum
 	// workspaceTier before the ratchet check below, which only recognizes
 	// the closed T3/T4 ladder. Without this gate a value like "T2" slips
 	// past isWorkspaceTierDowngrade (off-ladder, so not a downgrade) and
@@ -1359,7 +1357,7 @@ func (r *Router) authorizeTenantUpdate(w http.ResponseWriter, req *http.Request,
 			})
 		return false
 	}
-	// spec: §11.7 line 446 — updating a tenant to a regulated
+	// spec: §11.7 — updating a tenant to a regulated
 	// complianceProfile when no audit.siem.endpoint is configured is
 	// rejected with COMPLIANCE_SIEM_REQUIRED, symmetric with create.
 	// The downgrade ratchet above runs first so a regulated→lower
@@ -1370,7 +1368,7 @@ func (r *Router) authorizeTenantUpdate(w http.ResponseWriter, req *http.Request,
 			map[string]any{"field": "complianceProfile", "complianceProfile": *body.ComplianceProfile})
 		return false
 	}
-	// spec: §11.7 line 377 — updating to a regulated complianceProfile
+	// spec: §11.7 — updating to a regulated complianceProfile
 	// with pgaudit not fully configured is rejected with
 	// COMPLIANCE_PGAUDIT_REQUIRED, symmetric with create.
 	if body.ComplianceProfile != nil && r.requirePgauditForProfile(*body.ComplianceProfile) {
@@ -1489,7 +1487,7 @@ func (r *Router) persistTenantUpdate(w http.ResponseWriter, req *http.Request, i
 		"changedFields": changedFields(body),
 	})
 	r.emitBillingErasureExemptRegulated(req.Context(), principal, updated)
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -1598,7 +1596,7 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 	}
 	// Concurrency guard: previousProfile must match the live value.
 	if body.PreviousProfile != current.ComplianceProfile {
-		// spec: §15.1 line 981 — a state conflict is INVALID_STATE_TRANSITION.
+		// spec: §15.1 — a state conflict is INVALID_STATE_TRANSITION.
 		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
 			"previousProfile does not match the tenant's current complianceProfile",
 			map[string]any{
@@ -1667,7 +1665,7 @@ func (r *Router) handleDecommissionCompliance(w http.ResponseWriter, req *http.R
 // and a deletion request never restarts a lifecycle in flight. A
 // tombstoned (`deleted`) tenant reads as not-found.
 //
-// spec: §12.8 line 865; §24.10 row 3 ("Initiate tenant deletion
+// spec: §12.8; §24.10 row 3 ("Initiate tenant deletion
 // lifecycle ... runs asynchronously"). F-12.8.1, F-24.10.3.
 func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
@@ -1685,7 +1683,7 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present.
+	// spec: §15.1 — DELETE honours If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, row.Version) {
 		return
 	}
@@ -1727,9 +1725,9 @@ func (r *Router) handleDeleteTenant(w http.ResponseWriter, req *http.Request) {
 // details?}`. The `category` and `retryable` fields are populated from
 // the shared §15.2.1 errorclassify table so the admin surface reports
 // the same pair for a given code as the REST and MCP transports
-// (spec: §15.1 line 944, §25.2 lines 302-329). A retryable failure at a
+// (spec: §15.1, §25.2). A retryable failure at a
 // 429 or 5xx status also advertises a backoff via `suggestedRetryAfter`
-// and the matching `Retry-After` header (spec: §25.2 line 329 — the two
+// and the matching `Retry-After` header (spec: §25.2 — the two
 // agree when both are present).
 func writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	writeErrorRetryAfter(w, status, code, message, details, 0)
@@ -1743,7 +1741,7 @@ const adminRetryAfterDefault = 5 * time.Second
 
 // writeErrorRetryAfter is writeError with an explicit backoff hint. A
 // zero retryAfter defers to the category-derived default for retryable
-// 429/5xx failures and omits the hint otherwise. spec: §25.2 line 329.
+// 429/5xx failures and omits the hint otherwise. spec: §25.2.
 func writeErrorRetryAfter(w http.ResponseWriter, status int, code, message string, details map[string]any, retryAfter time.Duration) {
 	cat, retryable := errorclassify.ClassifyStatus(code, status)
 	body := map[string]any{

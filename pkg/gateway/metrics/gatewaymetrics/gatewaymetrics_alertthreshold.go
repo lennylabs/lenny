@@ -15,13 +15,13 @@ type alertThresholdMetrics struct {
 	// 5%) the BillingCorrectionRateHigh alert reads via
 	// scalar(lenny_billing_correction_rate_threshold). F-11.2.23.
 	billingCorrectionRateThreshold prometheus.Gauge
-	// eventBusDropAlertThreshold is the §12.6 line 683 / §16.5 startup-set
+	// eventBusDropAlertThreshold is the §12.6 / §16.5 startup-set
 	// gauge that exposes the deployer-configurable per-minute dropped-
 	// publish ceiling (default 10/min) the EventBusPublishDropped alert
 	// reads via scalar(lenny_event_bus_drop_alert_threshold). F-12.6.23.
 	eventBusDropAlertThreshold prometheus.Gauge
 	// gatewayQueueDepthThreshold / gatewayLatencyThresholdSeconds /
-	// credentialPoolLowThreshold expose the §25.13 line 4737
+	// credentialPoolLowThreshold expose the §25.13
 	// tier-dependent alert thresholds as startup-set gauges. The
 	// §16.5 GatewayQueueDepthHigh, GatewayLatencyHigh, and
 	// CredentialPoolLow alerts read each value via `scalar(...)` so
@@ -31,7 +31,7 @@ type alertThresholdMetrics struct {
 	gatewayLatencyThresholdSeconds prometheus.Gauge
 	credentialPoolLowThreshold     prometheus.Gauge
 	// sloBurnRateFastMultiplier / sloBurnRateSlowMultiplier expose the
-	// §16.5 line 640 operator-configurable burn-rate window multipliers
+	// §16.5 operator-configurable burn-rate window multipliers
 	// (slo.burnRate.fastMultiplier default 14, slowMultiplier default 3).
 	// Every burn-rate alert compares its budget-normalised ratio against
 	// scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(default))
@@ -62,7 +62,7 @@ type alertThresholdMetrics struct {
 // against reg. spec: §16 observability metrics.
 func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, error) {
 	var m alertThresholdMetrics
-	// spec: §11.2.1 line 187 — "deployer-configurable percentage (default
+	// spec: §11.2.1 — "deployer-configurable percentage (default
 	// 5%)". The §16.5 BillingCorrectionRateHigh alert evaluates
 	// lenny_billing_correction_rate_24h > scalar(lenny_billing_correction_rate_threshold);
 	// the gateway emits this gauge at startup from the
@@ -74,7 +74,7 @@ func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §12.6 line 683 — "the EventBusPublishDropped alert fires when
+	// spec: §12.6 — "the EventBusPublishDropped alert fires when
 	// dropped-event rate exceeds eventBus.dropAlertThreshold (default
 	// 10/min)". The §16.5 alert evaluates
 	// rate(lenny_event_bus_publish_dropped_total[5m]) * 60 >
@@ -83,12 +83,12 @@ func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, 
 	// F-12.6.23.
 	eventBusDropAlertThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_event_bus_drop_alert_threshold",
-		Help: "Deployer-configurable EventBusPublishDropped per-minute alert threshold (§12.6 line 683 / §16.5; default 10).",
+		Help: "Deployer-configurable EventBusPublishDropped per-minute alert threshold (§12.6 / §16.5; default 10).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
-	// spec: §25.13 line 4737 — tier-dependent §16.5 thresholds. The
+	// spec: §25.13 — tier-dependent §16.5 thresholds. The
 	// chart emits the configured Helm values into these gauges at
 	// gateway startup; the bundled alert expressions read them via
 	// `scalar(...)` so a tier preset tightening the threshold flows
@@ -96,35 +96,35 @@ func newAlertThresholdMetrics(reg *prometheus.Registry) (alertThresholdMetrics, 
 	// expressions. F-25.13.2.
 	gatewayQueueDepthThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_gateway_queue_depth_threshold",
-		Help: "Configured §16.5 GatewayQueueDepthHigh ceiling (§25.13 line 4737).",
+		Help: "Configured §16.5 GatewayQueueDepthHigh ceiling (§25.13).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
 	gatewayLatencyThresholdSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_gateway_latency_threshold_seconds",
-		Help: "Configured §16.5 GatewayLatencyHigh p95 ceiling in seconds (§25.13 line 4737).",
+		Help: "Configured §16.5 GatewayLatencyHigh p95 ceiling in seconds (§25.13).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
 	credentialPoolLowThreshold, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_credential_pool_low_threshold",
-		Help: "Configured §16.5 CredentialPoolLow utilisation fraction (§25.13 line 4737).",
+		Help: "Configured §16.5 CredentialPoolLow utilisation fraction (§25.13).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
 	sloBurnRateFastMultiplier, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_slo_burn_rate_fast_multiplier",
-		Help: "Configured §16.5 line 640 fast-window burn-rate multiplier (slo.burnRate.fastMultiplier, default 14).",
+		Help: "Configured §16.5 fast-window burn-rate multiplier (slo.burnRate.fastMultiplier, default 14).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
 	sloBurnRateSlowMultiplier, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_slo_burn_rate_slow_multiplier",
-		Help: "Configured §16.5 line 640 slow-window burn-rate multiplier (slo.burnRate.slowMultiplier, default 3).",
+		Help: "Configured §16.5 slow-window burn-rate multiplier (slo.burnRate.slowMultiplier, default 3).",
 	}, nil)
 	if err != nil {
 		return m, err

@@ -20,7 +20,7 @@ import (
 // the admin router drives. *impersonation.Service satisfies it. A nil
 // service leaves the /v1/admin/impersonation routes unregistered.
 //
-// spec: §13.3 line 585; §16.7 line 680.
+// spec: §13.3; §16.7.
 type ImpersonationService interface {
 	Issue(ctx context.Context, req impersonation.IssueRequest) (impersonation.Ticket, string, error)
 	End(ctx context.Context, id, endedBy string) (impersonation.Ticket, error)
@@ -69,7 +69,7 @@ type startImpersonationResponse struct {
 // minted, and a CMP-058 unresolvable target region fails the issuance
 // closed with PLATFORM_AUDIT_REGION_UNRESOLVABLE (no session, no bearer).
 //
-// spec: §13.3 line 585; §16.7 line 680; §11.7 lines 430-433.
+// spec: §13.3; §16.7; §11.7.
 func (r *Router) handleStartImpersonation(w http.ResponseWriter, req *http.Request) {
 	principal, ok := authmw.FromContext(req.Context())
 	if !ok {

@@ -15,7 +15,7 @@ import (
 
 // TestNewRegistersSurface_spec_25_13_4833 asserts the three §25.13
 // alerting-observability metrics land on the supplied registerer with
-// the §25.13 line 4833-4835 names. The two gauges expose their
+// the §25.13 names. The two gauges expose their
 // closed-enum series at boot; the histogram only emits once observed,
 // so an observation is recorded to flush its descriptor.
 func TestNewRegistersSurface_spec_25_13_4833(t *testing.T) {

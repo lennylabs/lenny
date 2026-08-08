@@ -118,12 +118,12 @@ func TestDeriveHappyPathFromTerminal(t *testing.T) {
 	if resp.WorkspaceSnapshotSource != "sealed" {
 		t.Errorf("workspaceSnapshotSource: got %q, want sealed", resp.WorkspaceSnapshotSource)
 	}
-	// spec: §4.5 line 311 — the derive response surfaces the
+	// spec: §4.5 — the derive response surfaces the
 	// content-addressed identity so a client can verify the
 	// derived session owns the inherited workspace bytes.
 	if resp.WorkspaceSnapshotContentHash !=
 		"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" {
-		t.Errorf("workspaceSnapshotContentHash: got %q, want the parent's SHA-256 (spec §4.5 line 311)",
+		t.Errorf("workspaceSnapshotContentHash: got %q, want the parent's SHA-256 (spec §4.5)",
 			resp.WorkspaceSnapshotContentHash)
 	}
 	if resp.ParentSessionID != "sess_source" {
@@ -175,8 +175,7 @@ func TestDeriveNonTerminalWithAllowStaleSucceeds(t *testing.T) {
 	}
 }
 
-// TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1 asserts the §15.1
-// line 622-624 precondition table is consulted via the central
+// TestDeriveEarlyStateWithAllowStaleRejected_spec_15_1 asserts the §15.1 precondition table is consulted via the central
 // pkg/api/v1/session validator: even when the caller passes allowStale,
 // `created/finalizing/ready/starting/input_required` are not derivable
 // and the gateway must return INVALID_STATE_TRANSITION rather than fall
@@ -475,7 +474,7 @@ func TestDeriveStrictlyStricterIsolationSucceeds(t *testing.T) {
 // scoped to the derived session's prefix, and then the derived
 // session's blob survives the parent's session-scoped erasure.
 //
-// spec: §4.5 line 311 — "the gateway copies the parent's workspace
+// spec: §4.5 — "the gateway copies the parent's workspace
 // snapshot bytes into a new MinIO object scoped to the derived
 // session's own path. The derived session owns its artifact
 // independently; GC on the parent's artifacts has no effect on the

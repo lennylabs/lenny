@@ -29,12 +29,11 @@ var (
 // comments only for the gate-index marker; DROP/DO detection runs against the
 // comment-stripped body so a commented-out DROP does not count.
 //
-// The gate requirement is unconditional: §10.5 line 417 mandates the DO $$
+// The gate requirement is unconditional: §10.5 mandates the DO $$
 // preflight block at the top of every Phase 3 up-migration regardless of the
 // expected row count. A migration that omits the gate trips the guard.
 //
-// spec: §10.5 line 417 (DO $$ preflight gate) + line 430 (DROP COLUMN IF
-// EXISTS idempotency).
+// spec: §10.5.
 type phase3Violations struct {
 	isPhase3       bool
 	bareDrop       bool // a DROP COLUMN without IF EXISTS
@@ -69,7 +68,7 @@ func scanPhase3(src string) phase3Violations {
 // has three Phase 3 (DROP COLUMN) migrations, each fronted by a DO $$ gate that
 // counts un-migrated rows: 0118 (ops_event_subscriptions secret/types reshape),
 // 0129 (credential_leases lease_token envelope conversion), and the §5.2
-// mode-collapse 0167 (sandbox_warm_pools.concurrency_style). §10.5 line 417's
+// mode-collapse 0167 (sandbox_warm_pools.concurrency_style). §10.5's
 // gate requirement is unconditional: it applies to every migration that DROPs a
 // column regardless of the expected row count.
 //
@@ -78,7 +77,7 @@ func scanPhase3(src string) phase3Violations {
 // a re-run would fail or the §10.5 un-migrated-rows guard is absent and the
 // contract could run before its data migration.
 //
-// spec: §10.5 line 417 / line 430.
+// spec: §10.5.
 func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
 	t.Parallel()
 	migrationsDir := filepath.Join(repoRootFromCaller(t), "migrations")
@@ -99,10 +98,10 @@ func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
 			continue
 		}
 		if v.bareDrop {
-			t.Errorf("%s drops a column without IF EXISTS (§10.5 line 430: Phase 3 DROP COLUMN must be idempotent)", filepath.Base(up))
+			t.Errorf("%s drops a column without IF EXISTS (§10.5: Phase 3 DROP COLUMN must be idempotent)", filepath.Base(up))
 		}
 		if v.missingGate {
-			t.Errorf("%s is a Phase 3 migration with no DO $$ preflight gate (§10.5 line 417: front the DROP with a DO block that RAISE EXCEPTIONs on un-migrated rows)", filepath.Base(up))
+			t.Errorf("%s is a Phase 3 migration with no DO $$ preflight gate (§10.5: front the DROP with a DO block that RAISE EXCEPTIONs on un-migrated rows)", filepath.Base(up))
 		}
 	}
 }
@@ -110,7 +109,7 @@ func TestPhase3MigrationsAreGuarded_spec_10_5_417(t *testing.T) {
 // TestScanPhase3_spec_10_5_417 exercises the scanner against the boundary
 // cases the §10.5 Phase 3 rules turn on.
 //
-// spec: §10.5 lines 417, 430.
+// spec: §10.5.
 // diagnosis: a failure means the Phase 3 scanner misclassifies a
 // boundary case, so the CI gate would miss a bare DROP COLUMN or a
 // Phase 3 migration with no preflight gate, or falsely flag a safe one.

@@ -47,7 +47,7 @@ const journeyTenant = "acme"
 // against one shared session store, one shared EchoExecutor, and one
 // shared §15.1 session-event bus, mirroring the single-gateway,
 // multi-adapter deployment the spec describes (ExternalAdapterRegistry,
-// §15 line 12): "simultaneously active adapters route by path prefix"
+// §15): "simultaneously active adapters route by path prefix"
 // over one dispatcher rather than one server per protocol.
 type journeyGateway struct {
 	rest            *httptest.Server
@@ -82,7 +82,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
-	// spec: §15.2 line 1331 — the Streamable HTTP SSE channel replays
+	// spec: §15.2 — the Streamable HTTP SSE channel replays
 	// from the same §15.1 event bus REST publishes to, so a client
 	// attached over MCP observes the lifecycle transitions the shared
 	// §15.2.1 rule-1 service layer produces on the REST-proxied tools
@@ -134,14 +134,10 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	}
 }
 
-// spec: §15 line 6 (README.md:75 "One gateway, four protocols. REST,
+// spec: §15 (README.md:75 "One gateway, four protocols. REST,
 // MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses
 // all terminate at the same gateway and share one auth, policy,
-// routing, and audit path."); spec/15_external-api-surface.md §15.2
-// line 6 ("Session flows — MCP. Creating and interacting with
-// sessions ... flows through the MCP API"), lines 1289-1298 (the
-// create_session / send_message / attach_session / interrupt tool
-// list this test's MCP cell drives).
+// routing, and audit path."); spec/15_external-api-surface.md §15.2.
 // diagnosis: each cell drives the full create -> prompt -> stream ->
 // terminate session journey over one protocol against a gateway that
 // wires all four adapters against a shared store, executor, and event
@@ -357,9 +353,7 @@ func runMCPJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) {
 		t.Errorf("MCP session state after terminate_session: got %q, want completed", got)
 	}
 
-	// spec: §15.2 line 1289 (attach_session "returns streaming task"),
-	// line 1331 (Streamable HTTP SSE channel replays the retained
-	// backlog before live delivery) — attach after the journey
+	// spec: §15.2 — attach after the journey
 	// completes and confirm the backlog's final frame is the §8.8
 	// terminal task-status projection (final:true, status:"completed")
 	// the shared §15.2.1 rule-1 REST-proxied terminate_session produced

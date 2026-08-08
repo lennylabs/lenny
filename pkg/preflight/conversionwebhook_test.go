@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
-// spec: §15.5 line 2438 / §17.2 line 58 — the conversion-webhook
+// spec: §15.5 / §17.2 — the conversion-webhook
 // availability check passes when the lenny-crd-conversion Service and
 // Deployment are present and the Deployment reports a ready replica.
 // F-15.5.3 / F-17.2.4 / F-10.5.6.
@@ -89,7 +89,7 @@ func conversionDeployment(ready int32) *appsv1.Deployment {
 	}
 }
 
-// spec: §15.5 line 2438 — gatherConversionWebhook is exercised through
+// spec: §15.5 — gatherConversionWebhook is exercised through
 // Run so the namespace-scoped Service/Deployment reads and the readiness
 // projection are covered end to end. A ready workload yields a passing
 // conversion-webhook-availability entry. F-15.5.3 / F-17.2.4.
@@ -104,7 +104,7 @@ func TestRunConversionWebhookReady_spec_15_5_2438(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2438 — a deployed-but-unready conversion webhook
+// spec: §15.5 — a deployed-but-unready conversion webhook
 // aborts the upgrade. F-15.5.3 / F-17.2.4.
 func TestRunConversionWebhookUnready_spec_15_5_2438(t *testing.T) {
 	objs := []client.Object{conversionService(), conversionDeployment(0)}

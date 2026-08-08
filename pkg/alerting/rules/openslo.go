@@ -12,7 +12,7 @@ import (
 )
 
 // openSLOAPIVersion is the OpenSLO v1 document apiVersion the export
-// emits. spec: §16.10 line 733 ("OpenSLO v1 YAML documents").
+// emits. spec: §16.10.
 const openSLOAPIVersion = "openslo/v1"
 
 // OpenSLOService is the default OpenSLO service name every exported SLO
@@ -290,7 +290,7 @@ func RenderOpenSLO(service, tier, notificationTarget string) ([]byte, error) {
 // so the fragment is self-contained.
 //
 // spec: §16.10 (one condition per AlertPolicy, required non-empty
-// notificationTargets), §16.5 line 627 (multi-window burn rate).
+// notificationTargets), §16.5.
 func burnRatePolicyDoc(policyName string, labels map[string]string, condName, condDesc, severity string, multiplier int, window time.Duration) openSLODoc {
 	return openSLODoc{
 		APIVersion: openSLOAPIVersion,

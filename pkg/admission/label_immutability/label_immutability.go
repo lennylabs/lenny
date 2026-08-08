@@ -102,7 +102,7 @@ var ErrMissingNewLabels = errors.New("label_immutability: NewLabels is required"
 //     labels must not change, and the tenant-id transition rules apply.
 //
 // Decide is the composition of DecideImmutableLabels (the §17.2 item 5
-// rule set) and DecideTenantTransition (the §5.2 line 392 / NET-003
+// rule set) and DecideTenantTransition (the §5.2 / NET-003
 // rule set). It is preserved as the single-call entry point for
 // callers that want both rule sets evaluated against one Request; the
 // production webhooks each call one of the two split deciders directly
@@ -119,14 +119,14 @@ func Decide(r Request) (Decision, error) {
 // DecideImmutableLabels enforces the §17.2 item 5 rule that the
 // canonical egress-governing labels (lenny.dev/managed,
 // lenny.dev/delivery-mode, lenny.dev/egress-profile, lenny.dev/dns-policy)
-// are immutable on existing agent pods. spec: §13.2 line 180 — mutating
+// are immutable on existing agent pods. spec: §13.2 — mutating
 // lenny.dev/egress-profile from `restricted` to `internet`, or adding
 // lenny.dev/dns-policy to a non-opted-out pod, would broaden egress or
 // bypass the dedicated CoreDNS instance without re-admission through the
 // pool controller. The gateway-tenant-id transition rules belong to
 // DecideTenantTransition.
 //
-// spec: §17.2 item 5; §13.2 line 180.
+// spec: §17.2 item 5; §13.2.
 func DecideImmutableLabels(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels
@@ -148,11 +148,11 @@ func DecideImmutableLabels(r Request) (Decision, error) {
 	return Decision{Allowed: true, Code: 200}, nil
 }
 
-// DecideTenantTransition enforces the §5.2 line 392 / NET-003 rule set
+// DecideTenantTransition enforces the §5.2 / NET-003 rule set
 // on lenny.dev/tenant-id transitions. The webhook config that calls
 // this decider is the spec-named lenny-tenant-label-immutability.
 //
-// spec: §5.2 line 392; §13.2 line 498.
+// spec: §5.2; §13.2.
 func DecideTenantTransition(r Request) (Decision, error) {
 	if r.NewLabels == nil {
 		return Decision{}, ErrMissingNewLabels

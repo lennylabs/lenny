@@ -75,7 +75,7 @@ func TestAvailable_spec_4_9_1347(t *testing.T) {
 }
 
 // TestAvailable_revoked_spec_4_9_1379 confirms a revoked credential is
-// treated as not-found per §4.9 line 1379.
+// treated as not-found per §4.9.
 func TestAvailable_revoked_spec_4_9_1379(t *testing.T) {
 	m, store, _, _ := newMaterializer(t, testProxyURL)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk-ant-xyz")

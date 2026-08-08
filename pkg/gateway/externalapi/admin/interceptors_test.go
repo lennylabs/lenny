@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 )
 
-// spec: §4.8 lines 1034-1040 / §8.3 lines 205-224 (SEC-013) — the admin
+// spec: §4.8 / §8.3 — the admin
 // external-interceptor registry CRUD and the fail-policy weakening
 // cooldown control. F-4.8.17.
 
@@ -59,7 +59,7 @@ func TestCreateInterceptor(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1020 — external interceptors must register above the
+// spec: §4.8 — external interceptors must register above the
 // reserved ceiling (INVALID_INTERCEPTOR_PRIORITY).
 func TestCreateInterceptorRejectsReservedPriority_spec_4_8_1020(t *testing.T) {
 	router, _, _, _ := newInterceptorAdmin(t)
@@ -71,7 +71,7 @@ func TestCreateInterceptorRejectsReservedPriority_spec_4_8_1020(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1023 — the PreAuth phase is built-in only
+// spec: §4.8 — the PreAuth phase is built-in only
 // (INVALID_INTERCEPTOR_PHASE).
 func TestCreateInterceptorRejectsPreAuthPhase_spec_4_8_1023(t *testing.T) {
 	router, _, _, _ := newInterceptorAdmin(t)
@@ -114,7 +114,7 @@ func TestCreateInterceptorRejectsImmutableCooldownFields_spec_8_3_SEC013(t *test
 	}
 }
 
-// spec: §4.8 line 1034 / §8.3 line 218 — a fail-closed → fail-open
+// spec: §4.8 / §8.3 — a fail-closed → fail-open
 // transition server-mints the cooldown, emits interceptor.fail_policy_weakened
 // plus interceptor.weakening_cooldown_active with the affected policy
 // count, and arms the cooldown.
@@ -155,7 +155,7 @@ func TestUpdateInterceptorWeakeningArmsCooldown_spec_4_8_1034(t *testing.T) {
 	findAudit(t, audit, "interceptor.weakening_cooldown_active")
 }
 
-// spec: §4.8 line 1034 — the reverse fail-open → fail-closed transition
+// spec: §4.8 — the reverse fail-open → fail-closed transition
 // emits interceptor.fail_policy_strengthened and clears the cooldown
 // immediately.
 func TestUpdateInterceptorStrengtheningClearsCooldown_spec_4_8_1034(t *testing.T) {

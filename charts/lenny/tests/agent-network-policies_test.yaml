@@ -167,7 +167,7 @@ tests:
       - hasDocuments:
           count: 14
 
-  # spec: §13.2 lines 424-432 — the per-pool egress profiles. F-13.2.11.
+  # spec: §13.2 — the per-pool egress profiles. F-13.2.11.
   - it: renders the provider-direct egress profile policy scoped to the egress-profile label
     set:
       agentNamespaces:
@@ -208,7 +208,7 @@ tests:
       - notExists:
           path: spec.egress
 
-  # spec: §13.2 line 432 (NET-002) — the internet profile with two parallel
+  # spec: §13.2 — the internet profile with two parallel
   # ipBlock peers and family-partitioned except blocks. F-13.2.11.
   - it: renders the internet egress profile policy with family-partitioned except blocks
     set:
@@ -238,7 +238,7 @@ tests:
           path: spec.egress[1].to[0].ipBlock.except
           content: fd00:ec2::254/128
 
-  # spec: §13.2 line 488 — the kube-system DNS opt-out policy, scoped to
+  # spec: §13.2 — the kube-system DNS opt-out policy, scoped to
   # the dns-policy label, rendered only when allowClusterDefaultOptOut is
   # set. F-13.2.4.
   - it: adds the kube-dns opt-out policy only when allowClusterDefaultOptOut is set

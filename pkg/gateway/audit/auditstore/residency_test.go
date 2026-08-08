@@ -69,9 +69,9 @@ func newResidencyRouter(regions regionRouterFake, lookup lookupFake, metrics Res
 	}
 }
 
-// --- decide: the §11.7 lines 431-433 three-rule routing ------------------
+// --- decide: the §11.7 three-rule routing ------------------
 
-// spec: §11.7 line 432 (rule 2) — a target tenant with no
+// spec: §11.7 — a target tenant with no
 // dataResidencyRegion routes to the global platform-Postgres.
 func TestResidencyDecideRule2GlobalWhenNoRegion_spec_11_7_432(t *testing.T) {
 	pr := newResidencyRouter(regionRouterFake{}, lookupFake{region: ""}, &metricsFake{}, nil)
@@ -84,7 +84,7 @@ func TestResidencyDecideRule2GlobalWhenNoRegion_spec_11_7_432(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 431 (rule 1) — a target tenant with a resolvable
+// spec: §11.7 — a target tenant with a resolvable
 // dataResidencyRegion routes to that region's platform-Postgres.
 func TestResidencyDecideRule1RegionalPool_spec_11_7_431(t *testing.T) {
 	euPool := &pgxpool.Pool{}
@@ -103,7 +103,7 @@ func TestResidencyDecideRule1RegionalPool_spec_11_7_431(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 433 (rule 3, missing_entry) — a dataResidencyRegion
+// spec: §11.7 — a dataResidencyRegion
 // with no storage.regions entry fails closed.
 func TestResidencyDecideRule3MissingEntry_spec_11_7_433(t *testing.T) {
 	pr := newResidencyRouter(
@@ -121,7 +121,7 @@ func TestResidencyDecideRule3MissingEntry_spec_11_7_433(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 433 (rule 3, postgres_unreachable) — a configured
+// spec: §11.7 — a configured
 // region whose platform-Postgres is unreachable fails closed.
 func TestResidencyDecideRule3PostgresUnreachable_spec_11_7_433(t *testing.T) {
 	euPool := &pgxpool.Pool{}
@@ -141,7 +141,7 @@ func TestResidencyDecideRule3PostgresUnreachable_spec_11_7_433(t *testing.T) {
 }
 
 // A residency-lookup failure halts the write (audit must be durable before
-// any externally observable side effect). spec: §11.7 line 433.
+// any externally observable side effect). spec: §11.7.
 func TestResidencyDecideLookupErrorHaltsWrite_spec_11_7_433(t *testing.T) {
 	pr := newResidencyRouter(regionRouterFake{}, lookupFake{err: errors.New("store down")}, &metricsFake{}, nil)
 	if _, err := pr.decide(context.Background(), "acme"); err == nil {
@@ -168,7 +168,7 @@ func (errAuditRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle
 	return nil, errors.New("no audit shards in unit test")
 }
 
-// spec: §11.7 line 433 (CMP-058) — Append for a platform-tenant event that
+// spec: §11.7 — Append for a platform-tenant event that
 // references an unresolvable target tenant fails closed with
 // PlatformAuditRegionUnresolvableError and bumps both residency counters.
 func TestAppendPlatformTargetedFailsClosedAndBumpsMetrics_spec_11_7_433(t *testing.T) {
@@ -204,7 +204,7 @@ func TestAppendPlatformTargetedFailsClosedAndBumpsMetrics_spec_11_7_433(t *testi
 // A non-platform tenant, an absent target, or a self-target does NOT engage
 // residency routing: the write follows the normal §12.3 R-03 shard path
 // (here the errAuditRouter surfaces its shard error, and no residency
-// counter is bumped). spec: §11.7 lines 430, 435.
+// counter is bumped). spec: §11.7.
 func TestAppendDoesNotEngageResidencyGateOffPath_spec_11_7_435(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -257,7 +257,7 @@ func TestTargetTenantIDExtraction_spec_11_7_430(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 433 — the DataResidencyViolationAttempt payload carries
+// spec: §11.7 — the DataResidencyViolationAttempt payload carries
 // operation, tenant_id (platform), target_tenant_id, requested_region,
 // event_type, and failure_mode.
 func TestBuildViolationPayloadFields_spec_11_7_433(t *testing.T) {
@@ -285,7 +285,7 @@ func TestBuildViolationPayloadFields_spec_11_7_433(t *testing.T) {
 }
 
 // recordViolation bumps both residency series with the spec labels.
-// spec: §11.7 line 433.
+// spec: §11.7.
 func TestRecordViolationBumpsBothCounters_spec_11_7_433(t *testing.T) {
 	mx := &metricsFake{}
 	pr := newResidencyRouter(regionRouterFake{}, lookupFake{}, mx, nil)
@@ -299,7 +299,7 @@ func TestRecordViolationBumpsBothCounters_spec_11_7_433(t *testing.T) {
 }
 
 // The CMP-058 event-type literal must match the audit catalog so the two
-// cannot drift. spec: §11.7 line 433; §16.7 audit catalog.
+// cannot drift. spec: §11.7; §16.7 audit catalog.
 func TestPlatformAuditViolationEventTypeMatchesCatalog(t *testing.T) {
 	if eventDataResidencyViolationAttempt != string(obsaudit.EventDataResidencyViolationAttempt) {
 		t.Fatalf("event-type drift: local %q vs catalog %q",

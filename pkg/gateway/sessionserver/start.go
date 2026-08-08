@@ -46,19 +46,19 @@ import (
 // tokenServiceUnavailableRetryAfterSeconds is the §4.3 Retry-After
 // header emitted with TOKEN_SERVICE_UNAVAILABLE: 5 seconds is the
 // circuit-breaker open-state cool-down in pkg/gateway/subsystem.
-// spec: §4.3 line 214.
+// spec: §4.3.
 const tokenServiceUnavailableRetryAfterSeconds = 5
 
-// DefaultWarmupEstimateSeconds is the §5.2 line 625 fallback estimate
+// DefaultWarmupEstimateSeconds is the §5.2 fallback estimate
 // for a pool's remaining warm-up time, used for the PoolWarmingUp 503's
 // estimatedReadyIn detail and Retry-After header when no historical
 // lenny_warmpool_pod_startup_duration_seconds p50 is available. The
 // Retry-After header is max(30, estimate). Operators tune it through
 // the gateway's WarmupEstimateSeconds option.
-// spec: §5.2 line 625.
+// spec: §5.2.
 const DefaultWarmupEstimateSeconds = 120
 
-// minWarmupRetryAfterSeconds is the §5.2 line 625 floor on the
+// minWarmupRetryAfterSeconds is the §5.2 floor on the
 // PoolWarmingUp Retry-After header: max(30, estimatedWarmupSeconds).
 const minWarmupRetryAfterSeconds = 30
 
@@ -67,22 +67,22 @@ const minWarmupRetryAfterSeconds = 30
 // conditions take their spec-defined codes; a Token Service outage
 // surfaces as TOKEN_SERVICE_UNAVAILABLE (§4.3). Any other failure
 // falls back to a retryable 503 carrying fallbackCode + fallbackMsg
-// plus a §15.1 line 1138 `Retry-After` header. Per §7.1 line 28 the
+// plus a §15.1 header. Per §7.1 the
 // atomic-creation paths (`POST /v1/sessions`, `POST /v1/sessions/start`)
 // pass `SESSION_CREATION_FAILED` so a generic claim failure surfaces
 // the spec-named code instead of the legacy `POD_CLAIM_FAILED`; the
 // `POST /v1/sessions/{id}/start` two-step path passes `STARTING_FAILED`
-// per §6.2 line 303.
+// per §6.2.
 //
 // Pool exhaustion is code-split by lifecycle phase: a create-time claim
 // exhaustion (wrapped as errCreateClaimExhausted by claimAtCreate)
-// surfaces the fallback `SESSION_CREATION_FAILED` per the §7.1 line 23
+// surfaces the fallback `SESSION_CREATION_FAILED` per the §7.1
 // atomicity note and proposal §4.1, while a bare `podclaim.ErrNoIdlePod`
-// from the two-step `/start` claim keeps the §5.2 line 519
+// from the two-step `/start` claim keeps the §5.2
 // `WARM_POOL_EXHAUSTED` code.
-// spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §5.2 lines 602-625
-// (RUNTIME_UNAVAILABLE), §7.1 line 28 (SESSION_CREATION_FAILED),
-// §15.1 line 1138 (Retry-After).
+// spec: §5.2, §5.2
+// (RUNTIME_UNAVAILABLE), §7.1,
+// §15.1.
 func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCode, fallbackMsg string) {
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
@@ -105,7 +105,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		s.writeError(w, http.StatusUnprocessableEntity, deliveryIso.Code,
 			deliveryIso.Reason, nil)
 	case errors.As(err, &levelUnderperforms):
-		// spec: §5.1 line 42 — the runtime declares a higher integrationLevel
+		// spec: §5.1 — the runtime declares a higher integrationLevel
 		// than the adapter handshake observed it deliver. Permanent for this
 		// runtime: a retry against the same (unfixed) runtime fails
 		// identically, so the envelope is the dedicated 422 rather than the
@@ -118,7 +118,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 				"observedLevel": levelUnderperforms.Observed,
 			})
 	case errors.As(err, &proxyDialect):
-		// spec: §4.9 line 1476 — an assigned proxy-mode pool declares a
+		// spec: §4.9 — an assigned proxy-mode pool declares a
 		// wire dialect the session runtime does not speak. Permanent for
 		// this (runtime, pool) pairing: a retry against the same pool from
 		// the same runtime fails identically, so the envelope is the
@@ -127,7 +127,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 			proxyDialect.Error(),
 			map[string]any{"pool": proxyDialect.Pool, "proxyDialect": proxyDialect.Dialect})
 	case errors.As(err, &demotionUnsupported):
-		// spec: §6.1 line 40 — a preConnect pod whose adapter cannot
+		// spec: §6.1 — a preConnect pod whose adapter cannot
 		// DemoteSDK fails the session with the dedicated permanent code
 		// rather than serving it with stale SDK state. Not retryable on a
 		// fresh pod from the same pool (every pod runs the same adapter).
@@ -136,7 +136,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 				"the request includes sdkWarmBlockingPaths files that require demotion",
 			map[string]any{"reason": "sdk_demotion_not_supported"})
 	case errors.As(err, &setupFail):
-		// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — the
+		// spec: §7.5, §7.3, §16.1 — the
 		// gateway records the setup_command_failed audit row + metric on
 		// both branches so the §16 alert can fire and operators can
 		// correlate the rejection reason with the per-command
@@ -148,17 +148,17 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	case errors.As(err, &warming):
 		s.writePoolWarming(w, warming)
 	case errors.Is(err, credrouter.ErrUserCredentialNotFound):
-		// spec: §4.9 lines 1364, §15.1 line 993 — a user-only policy with
+		// spec: §4.9, §15.1 — a user-only policy with
 		// no pre-registered credential for the user and provider.
 		s.writeError(w, http.StatusNotFound, "USER_CREDENTIAL_NOT_FOUND",
 			"no pre-registered credential found for the user and provider; "+
 				"register one via POST /v1/credentials or configure pool fallback", nil)
 	case errors.Is(err, credrouter.ErrNoCredentialAvailable):
-		// spec: §4.9 line 1218 — no provider in the intersection had an
+		// spec: §4.9 — no provider in the intersection had an
 		// assignable credential at the pre-claim check; no pod was claimed.
 		s.writeCredentialPoolExhausted(w, "pre_claim")
 	case errors.As(err, &credAssign):
-		// spec: §4.9 line 1220 — the pre-claim check passed but the lease
+		// spec: §4.9 — the pre-claim check passed but the lease
 		// assignment failed (a credential became unavailable in the race
 		// window). Record the mismatch so operators can tune pool sizing.
 		if s.preclaimMismatch != nil {
@@ -166,7 +166,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		}
 		s.writeCredentialPoolExhausted(w, "assignment_race")
 	case errors.Is(err, errCreateClaimExhausted):
-		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a
+		// spec: §7.1 / §4.1 (proposal) — a
 		// create-time claim exhaustion is part of the §7.1 atomic creation
 		// unit, so it surfaces as the create-handler fallback envelope
 		// (SESSION_CREATION_FAILED + Retry-After) rather than the §5.2
@@ -205,7 +205,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		// §13.4 sub-code rides on details.reason. F-CS1.
 		s.writeUploadArchiveLimitExceeded(w, archiveLimit)
 	default:
-		// spec: §7.1 line 28 / §15.1 line 1138 — the atomic-unit fallback
+		// spec: §7.1 / §15.1 — the atomic-unit fallback
 		// is always retryable; include Retry-After so a client backs off
 		// with a deterministic budget rather than parsing the body.
 		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
@@ -269,19 +269,19 @@ func (s *Server) writeUploadArchiveLimitExceeded(w http.ResponseWriter, ve *uplo
 // STARTING_FAILED). Five seconds matches the §4.3 TOKEN_SERVICE_UNAVAILABLE
 // floor and is short enough that a client retry sees a freshly idle
 // warm pod under the typical §5.2 fill cadence.
-// spec: §7.1 line 28; §15.1 line 1138.
+// spec: §7.1; §15.1.
 const sessionCreationFailedRetryAfterSeconds = 5
 
-// writeSessionCreationFailed writes the §7.1 line 28 SESSION_CREATION_FAILED
+// writeSessionCreationFailed writes the §7.1 SESSION_CREATION_FAILED
 // 503 envelope used by the create paths (POST /v1/sessions, POST
 // /v1/sessions/start) when the atomic unit (steps 2-8) fails outside
 // the classified errors (CREDENTIAL_POOL_EXHAUSTED, WARM_POOL_EXHAUSTED,
 // RUNTIME_UNAVAILABLE, TOKEN_SERVICE_UNAVAILABLE). reason is echoed
 // under details.reason so an operator can distinguish
 // upload_token_issuance_failed from row_persistence_failed without
-// parsing the human message. The §15.1 line 1138 Retry-After header is
+// parsing the human message. The §15.1 Retry-After header is
 // always included so clients back off with a deterministic budget.
-// spec: §7.1 line 28; §15.1 line 1138.
+// spec: §7.1; §15.1.
 func (s *Server) writeSessionCreationFailed(w http.ResponseWriter, reason, message string) {
 	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 	s.writeError(w, http.StatusServiceUnavailable, "SESSION_CREATION_FAILED",
@@ -291,7 +291,7 @@ func (s *Server) writeSessionCreationFailed(w http.ResponseWriter, reason, messa
 // writeCredentialPoolExhausted writes the §4.9 CREDENTIAL_POOL_EXHAUSTED
 // envelope (category POLICY, HTTP 503). details.reason distinguishes
 // the pre-claim miss ("pre_claim") from the assignment-race miss
-// ("assignment_race"). spec: §4.9 lines 1218, 1220; §15.1 line 990.
+// ("assignment_race"). spec: §4.9; §15.1.
 func (s *Server) writeCredentialPoolExhausted(w http.ResponseWriter, reason string) {
 	s.writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_POOL_EXHAUSTED",
 		"no provider has an assignable credential; retry once the pool frees up",
@@ -318,7 +318,7 @@ func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailed
 		})
 }
 
-// writeWarmPoolExhausted writes the §5.2 line 519 WARM_POOL_EXHAUSTED
+// writeWarmPoolExhausted writes the §5.2 WARM_POOL_EXHAUSTED
 // envelope. details.reason distinguishes "no_idle_pods" (the pool holds
 // no pods) from "concurrent_slots_exhausted" (pods exist but every slot
 // is full). The code is the same one session-mode pod exhaustion uses.
@@ -329,7 +329,7 @@ func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailed
 // onPoolExhausted: queue path: the §4.6.1 "Pool exhaustion behavior" paragraph
 // requires the queue-wait timeout to return WARM_POOL_EXHAUSTED with a
 // Retry-After header.
-// spec: §5.2 line 519, §15.2.1 line 1017 (Retry-After), §4.6.1 (queue-wait
+// spec: §5.2, §15.2.1, §4.6.1 (queue-wait
 // timeout carries Retry-After).
 func (s *Server) writeWarmPoolExhausted(w http.ResponseWriter, reason string) {
 	w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
@@ -338,12 +338,12 @@ func (s *Server) writeWarmPoolExhausted(w http.ResponseWriter, reason string) {
 		map[string]any{"reason": reason})
 }
 
-// writePoolWarming writes the §5.2 lines 602-625 "Pool Not Ready"
+// writePoolWarming writes the §5.2
 // response: 503 RUNTIME_UNAVAILABLE with Retry-After max(30,
 // estimatedWarmupSeconds) and a details block carrying the pool name,
 // the PoolWarmingUp condition, the warm-up estimate, and the count of
 // pods still warming.
-// spec: §5.2 lines 602-625.
+// spec: §5.2.
 func (s *Server) writePoolWarming(w http.ResponseWriter, warming *podsession.PoolWarmingError) {
 	estimate := s.warmupEstimateSeconds
 	if estimate <= 0 {
@@ -369,7 +369,7 @@ func (s *Server) writePoolWarming(w http.ResponseWriter, warming *podsession.Poo
 // when the Token Service circuit-breaker is open or the Token Service
 // is otherwise unavailable. The Retry-After header lets a client back
 // off with a deterministic budget rather than parsing the body.
-// spec: §4.3 line 214.
+// spec: §4.3.
 func (s *Server) writeTokenServiceUnavailable(w http.ResponseWriter, cause error) {
 	w.Header().Set("Retry-After", "5")
 	msg := "Token Service is unavailable; retry in a few seconds"
@@ -389,7 +389,7 @@ type CreateAndStartRequest struct {
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 	Environment      string            `json:"environment,omitempty"`
 
-	// Pool is the §14.1 line 311 client-requested target pool selector.
+	// Pool is the §14.1 client-requested target pool selector.
 	// The combined create-and-start body is the same CreateSessionRequest
 	// envelope (§14.1), so the pool pin is honored or rejected identically
 	// to the two-step create path: a pin that does not exist, is not backed
@@ -397,13 +397,13 @@ type CreateAndStartRequest struct {
 	// the tenant is not granted is forbidden. spec: §7.1 / §14.1. F-CS2.
 	Pool string `json:"pool,omitempty"`
 
-	// CallbackURL is the §15.1 line 690 optional completion-notification
+	// CallbackURL is the §15.1 optional completion-notification
 	// webhook. It is validated against the §14 SSRF mitigations at
 	// admission and rejected with 400 INVALID_CALLBACK_URL on failure.
-	// spec: §15.1 line 690; §14 lines 108-112. F-15.1.11.
+	// spec: §15.1; §14. F-15.1.11.
 	CallbackURL string `json:"callbackUrl,omitempty"`
 	// CallbackSecret is the §14 write-only HMAC signing secret for the
-	// callback. spec: §14 line 139. F-15.1.11.
+	// callback. spec: §14. F-15.1.11.
 	CallbackSecret string `json:"callbackSecret,omitempty"`
 }
 
@@ -453,7 +453,7 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §7.2 line 137 — the create-and-start path lands the session
+	// spec: §7.2 — the create-and-start path lands the session
 	// directly in running, so emit status_change(running) for SSE
 	// subscribers (e.g. a parent watching a delegated child) on parity
 	// with the explicit POST /start transition.
@@ -482,13 +482,13 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
-	// spec: §12.8 lines 865-873 — a tenant that has left the `active`
+	// spec: §12.8 — a tenant that has left the `active`
 	// TenantState (disabling/deleting/deleted) rejects new session
 	// creation before any other admission work.
 	if !s.requireTenantState(w, r, tenantID) {
 		return false
 	}
-	// spec: §12.9 line 1048 — the gateway policy engine validates tenant
+	// spec: §12.9 — the gateway policy engine validates tenant
 	// data classification before any pool/credential work, so a
 	// misconfigured workspaceTier fails the create up front.
 	if !s.requireTenantClassification(w, r, tenantID) {
@@ -497,7 +497,7 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return false
 	}
-	// spec: §11.1 line 8 — global, per-user, and per-runtime concurrent-session
+	// spec: §11.1 — global, per-user, and per-runtime concurrent-session
 	// admission caps. Enforced before the admission-rate and policy gates so an
 	// over-limit create consumes no rate budget and reserves no token budget,
 	// matching the two-step create path. The caller's subject is the per-user
@@ -509,7 +509,7 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
 		return false
 	}
-	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+	// spec: §11.1 — per-runtime and per-pool requests-per-minute
 	// admission limits, enforced before the §4.8 policy chain so an over-limit
 	// create never reserves token budget. The requested isolation profile
 	// (defaulted when omitted) resolves the pool, and the client-pinned pool
@@ -524,7 +524,7 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requirePolicyChain(w, r, tenantID) {
 		return false
 	}
-	// spec: §11.1 line 13 / §10.6 — a create-and-start that names no
+	// spec: §11.1 / §10.6 — a create-and-start that names no
 	// environment is admitted only when the caller belongs to at least one
 	// environment or the tenant's noEnvironmentPolicy resolves to allow-all;
 	// the platform default deny-all rejects with 403, closing the fail-open
@@ -582,7 +582,7 @@ func (s *Server) decodeCreateAndStartRequest(w http.ResponseWriter, r *http.Requ
 // and response stages consume, writing the §15.1 error envelope and returning
 // ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
 func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID string, req CreateAndStartRequest) (sessionstore.Session, createAndStartBuild, bool) {
-	// spec: §27.5 line 190 / §27.9 line 250 — parity with handleCreate: an
+	// spec: §27.5 / §27.9 — parity with handleCreate: an
 	// origin=playground caller may only create against a playground-visible
 	// runtime, so the create-and-start ingress enforces the same §27.4
 	// allowedRuntimes boundary. F-27.4.1.
@@ -608,7 +608,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	// isolation-inconsistent pin fails fast before any pod is claimed.
 	// F-CS2 (0018).
 	//
-	// spec: §7.1 line 18 / line 75 — pass the client's raw request profile
+	// spec: §7.1 — pass the client's raw request profile
 	// (empty when omitted), not the defaulted isoProf, so a pinned pool's own
 	// profile governs the session's isolation and only an explicitly-requested
 	// inconsistent profile is rejected. See validateRequestEnvelope for the
@@ -621,7 +621,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// spec: §7.5 line 477 / §5.1 line 76 — runtime setupCommandPolicy.maxCommands
+	// spec: §7.5 / §5.1 — runtime setupCommandPolicy.maxCommands
 	// cap, enforced at the create-and-start ingress for parity with the
 	// two-step create path. F-7.5.5.
 	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
@@ -635,7 +635,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	// but not the authenticated identity, which the chain enforces. This
 	// segment runs before routeExperiment so a priority 101–299 MODIFY of
 	// the runtime hint affects which variant the ExperimentRouter assigns
-	// (spec: §4.8 line 115).
+	// (spec: §4.8).
 	preRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
 		TenantID:         tenantID,
 		UserID:           req.UserID,
@@ -649,13 +649,13 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		runtimeRef = preRoute.RequestedRuntime
 	}
 
-	// spec: §7.1 line 75 — resolve the pool-derived isolation level
+	// spec: §7.1 — resolve the pool-derived isolation level
 	// once so executionMode + scrubPolicy can be persisted on the row
 	// (same path as the two-step create flow). GET / List read the
 	// persisted values via toResponse so the rich envelope survives a
 	// coordinator handoff.
 	//
-	// spec: §7.1 line 18 / line 75 — when the client pins a pool and omits
+	// spec: §7.1 — when the client pins a pool and omits
 	// isolationProfile, the named pool's own profile governs, so resolve the
 	// level against the pool (effective requested profile empty) and persist
 	// the pool-derived profile on the row so the same-call claim
@@ -671,7 +671,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
 		IsolationProfile: persistedRowProfile(level, isoProf),
-		// spec: §14.1 line 311 — persist the client-pinned pool so the
+		// spec: §14.1 — persist the client-pinned pool so the
 		// same-call claim constrains resolution to it and a client that lost
 		// the response can recover its requested pool. F-CS2 (0018).
 		Pool:                   req.Pool,
@@ -682,22 +682,22 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		CreatedAt:              s.clock(),
 	}
 	row.UpdatedAt = row.CreatedAt
-	// spec: §15.1 line 690 / §14 lines 108-139 — validate the optional
+	// spec: §15.1 / §14 — validate the optional
 	// completion-notification callbackUrl against the SSRF mitigations and
 	// seal the callbackSecret before any pod side effects. F-15.1.11.
 	if !s.validateCallback(w, r, req.CallbackURL, req.CallbackSecret, tenantID, &row) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// spec: §7.1 line 77 / §12.9 line 1043 — stamp the tier-keyed default
+	// spec: §7.1 / §12.9 — stamp the tier-keyed default
 	// artifact-retention deadline at create (mirrors the plain create path)
 	// so the GC can reclaim this session's artifacts; the terminal
 	// transition rolls it forward.
 	row.RetentionExpiresAt = row.CreatedAt.Add(s.retentionForTier(r.Context(), tenantID, req.Environment))
-	// spec: §4.2 line 159 — stamp the resume-eligibility deadline so the
+	// spec: §4.2 — stamp the resume-eligibility deadline so the
 	// row reaching `running` carries the same per-session resume window
 	// as the two-step `POST /v1/sessions` + `POST /start` path.
 	row.ResumeEligibleUntil = row.CreatedAt.Add(s.resumeWindow)
-	// spec: §27.3 line 63 / §27.6 lines 200-203 — apply the playground idle /
+	// spec: §27.3 / §27.6 — apply the playground idle /
 	// duration caps + origin=playground label for a /playground/*-originated
 	// create-and-start, on parity with the two-step create path. F-27.3.3 /
 	// F-27.6.1 / F-27.6.2 / F-27.6.8.
@@ -727,7 +727,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	}
 	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
 		row.RuntimeRef = afterRoute.RequestedRuntime
-		// spec: §7.1 line 18 / line 75 — re-resolve against the effective
+		// spec: §7.1 — re-resolve against the effective
 		// requested profile so a pinned pool's own profile still governs after
 		// a runtime-hint MODIFY. F-CS2 (0018).
 		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, req.Pool)
@@ -750,18 +750,18 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	return row, createAndStartBuild{level: level, parsedPlan: parsedPlan, planWarnings: planWarnings}, true
 }
 
-// mintClaimStartPersist runs the §7.1 line 28 atomic create-and-start
+// mintClaimStartPersist runs the §7.1 atomic create-and-start
 // unit: the §7.1 step 8 uploadToken mint, the same-call §7.1
 // Claim → Prepare → Launch sequence on the pod binder, the store INSERT,
 // and the post-persist registration (lease tree, binding, parse-warning
 // publish). A mint, claim, prepare, launch, or persist failure leaves no
 // row behind and reclaims the pod and any credential lease, and it returns
 // the resolved isolation level and minted uploadToken the response echoes.
-// spec: §7.1 (atomicity, lines 28/58/75), §6.2, §8.6, §14.
+// spec: §7.1, §6.2, §8.6, §14.
 func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, build createAndStartBuild) (SessionIsolationLevel, string, bool) {
 	level := build.level
 
-	// spec: §7.1 line 28 — atomicity. Mint the §7.1 step 8 uploadToken
+	// spec: §7.1 — atomicity. Mint the §7.1 step 8 uploadToken
 	// and run the pod claim BEFORE the row is persisted: a failure in any
 	// step of the create-and-start atomic unit (mint, pre-claim,
 	// claim, bind) returns `SESSION_CREATION_FAILED` to the client with
@@ -769,7 +769,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	// the session row" contract. On store.Create failure the bound pod
 	// is released to the §6.2 reclaim path so no pod or credential
 	// lease leaks past the failure.
-	// spec: §7.1 line 58 — TTL = maxCreatedStateTimeoutSeconds. F-7.4.7.
+	// spec: §7.1 — TTL = maxCreatedStateTimeoutSeconds. F-7.4.7.
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
@@ -786,11 +786,10 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	// the credential pre-check and claims the pod (persisting the §4.6
 	// binding on the row); startOnPod then sees that binding and runs the
 	// prepare barrier plus the launch against it without re-claiming. A
-	// claim, prepare, or launch failure leaves no row behind per the §7.1
-	// line 28 atomicity contract; the binder reclaims the pod (and any
+	// claim, prepare, or launch failure leaves no row behind per the §7.1 atomicity contract; the binder reclaims the pod (and any
 	// lease) on the prepare/launch failure path. A Token Service outage
 	// during credential assignment surfaces as TOKEN_SERVICE_UNAVAILABLE
-	// with Retry-After per §4.3 line 214.
+	// with Retry-After per §4.3.
 	var (
 		bound       *podsession.BindResult
 		createClaim *podsession.ClaimResult
@@ -824,7 +823,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		}
 		result, err := s.startOnPod(r.Context(), *row, build.parsedPlan, startCtx)
 		if err != nil {
-			// spec: §7.1 line 28 — a create-step failure rolls back without
+			// spec: §7.1 — a create-step failure rolls back without
 			// persisting the row, releasing the create-time claim. The
 			// combined path claims at /create and then runs prepare/launch
 			// against that claim in the same call, so on a startOnPod error
@@ -863,7 +862,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	}
 
 	if err := s.store.Create(r.Context(), *row); err != nil {
-		// spec: §7.1 line 28 — persistence failure after the bind must
+		// spec: §7.1 — persistence failure after the bind must
 		// roll back the claimed pod so the gateway does not leak a pod
 		// or its credential lease past a "no session_id returned"
 		// failure. spec: §4.6.1, §10.1 — the coordination lease was
@@ -892,7 +891,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	// with a held lease but no binding, the lease-without-binding decoupling
 	// co-location removes. spec: §4.6.1, §10.1.
 	s.publishBinding(r.Context(), bound)
-	// spec: §14 lines 100, 334, 338 — publish parse-time
+	// spec: §14 — publish parse-time
 	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`
 	// warnings on the per-session SSE bus so Ops/audit subscribers see
 	// them asynchronously, parity with the two-step create path.
@@ -956,7 +955,7 @@ func (e *DelegatedChildNotCreatedError) Error() string {
 // assigned credential lease via rollbackBinding before registerBinding runs,
 // mirroring the top-level create path's post-launch persist rollback, so no
 // pod, lease, or registry entry leaks past the failed persist.
-// spec: §8.2 lines 93-97.
+// spec: §8.2.
 func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error) {
 	row, err := s.store.Get(ctx, tenantID, childID)
 	if err != nil {
@@ -1118,7 +1117,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 // runs before the row transitions: a launch failure leaves the row ready so
 // the client can retry POST /start.
 //
-// spec: §4.4, §4.6 (proposal); §15.1 (/start precondition); §6.1 lines 30-34.
+// spec: §4.4, §4.6 (proposal); §15.1 (/start precondition); §6.1.
 func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -1156,7 +1155,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		// launch, which materializes at /start, resolves them.
 		result, err := s.launchOnPod(r.Context(), row, plan)
 		if err != nil {
-			// spec: §7.1 line 28 / §6.2 line 303 — `POST /v1/sessions/{id}/start`
+			// spec: §7.1 / §6.2 — `POST /v1/sessions/{id}/start`
 			// returns `STARTING_FAILED` when the §7.1 atomic-creation unit
 			// fails on the explicit launch half. The row stays `ready` so the
 			// client can retry; the binder already reclaimed the prepared pod
@@ -1176,7 +1175,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
 			return
 		}
-		// spec: §7.5 line 475 — persist the per-command setup output a
+		// spec: §7.5 — persist the per-command setup output a
 		// concurrent-workspace slot launch captured so a subsequent GET
 		// /v1/sessions/{id} can surface it. The exclusive-pool launch-only path
 		// produces no setup output (setup ran at /finalize, persisted there by
@@ -1204,7 +1203,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §7.2 line 137 — surface the ready → running transition.
+	// spec: §7.2 — surface the ready → running transition.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	s.writeSession(w, http.StatusOK, updated)
 }
@@ -1277,7 +1276,7 @@ func hasGitClone(plan workspaceplan.Plan) bool {
 // uses to authenticate the ls-remote that pins a private gitClone source.
 // It binds to the request's tenant and resolves each source through the
 // wired VCS resolver, so a private repo's ref resolution uses the same
-// credential the clone will (§14 line 102). A source with no auth block
+// credential the clone will (§14). A source with no auth block
 // resolves to a zero credential (public). It returns nil when no resolver
 // is wired, leaving public-only resolution unchanged.
 func (s *Server) vcsCredentialFunc(r *http.Request) workspaceplan.VCSCredentialFunc {
@@ -1386,8 +1385,8 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 
 // enforceSetupCommandPolicy runs the §5.1 / §7.5 setupCommandPolicy
 // validation against the client-supplied workspace plan before the row is
-// persisted. The §7.5 line 477 contract names maxCommands as a per-session
-// cap the gateway enforces; §7.5 lines 481-488 add the allowlist /
+// persisted. The §7.5 contract names maxCommands as a per-session
+// cap the gateway enforces; §7.5 add the allowlist /
 // blocklist prefix gate. Without these, the worst-case input is Go's slice
 // limit and any setup command at all, which lets a buggy or malicious
 // client DoS the setup phase or run an arbitrary command in the pod. The
@@ -1397,13 +1396,12 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 //
 // On any violation the helper writes the §15.1 WORKSPACE_PLAN_INVALID
 // envelope with a structured details payload and returns ok=false; the
-// caller MUST abort. The §7.5 line 488 "rejection reason included in the
-// session's setup output" contract is also recorded on the request's
+// caller MUST abort. The §7.5 contract is also recorded on the request's
 // rejected setup-output sink (F-7.5.4 / F-7.5.11) when one is wired —
 // callers that already write the error to the response carry the same
 // reason string via the WORKSPACE_PLAN_INVALID envelope.
 //
-// spec: §5.1 line 76, §7.5 lines 477, 481-490 — F-7.5.1 / F-7.5.5.
+// spec: §5.1, §7.5 — F-7.5.1 / F-7.5.5.
 func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Request,
 	runtimeRef string, plan workspaceplan.Plan,
 ) bool {
@@ -1442,7 +1440,7 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 		if policy.PermitsCommand(c.Cmd) {
 			continue
 		}
-		// spec: §7.5 line 488 — the rejection reason carries the offending
+		// spec: §7.5 — the rejection reason carries the offending
 		// command, its position, and the active mode so an operator can
 		// reconcile against the runtime's setupCommandPolicy without
 		// parsing the human message. The reason string is identical to the
@@ -1504,7 +1502,7 @@ func (s *Server) runtimeManifestFields(ctx context.Context, runtimeName string) 
 	return agentInterface, rt.MinPlatformVersion
 }
 
-// setupOutputsFromBind converts the §7.5 line 475 adapter-side setup
+// setupOutputsFromBind converts the §7.5 adapter-side setup
 // outputs into the sessionstore row form so the gateway can persist the
 // trail. F-7.5.4 / F-7.5.11.
 func setupOutputsFromBind(outs []*adapterv1.SetupCommandOutput) []sessionstore.SetupCommandOutput {
@@ -1529,17 +1527,17 @@ func setupOutputsFromBind(outs []*adapterv1.SetupCommandOutput) []sessionstore.S
 // aggregate cap on the setup phase: 300 seconds. The gateway applies it
 // when the runtime declares no setupPolicy block or declares one with
 // timeoutSeconds == 0 so a runtime cannot pin a warm pod through an
-// unbounded setup phase by omission alone. The §6.4 line 260 invariant
+// unbounded setup phase by omission alone. The §6.4 invariant
 // (`maxFinalizingTimeoutSeconds` ≥ `setupTimeoutSeconds`) and the §26.2
 // reference catalog (every reference runtime ships
 // `setupPolicy.timeoutSeconds: 300`) both reflect the 300s floor. spec:
-// §6.4 line 260 — F-7.5.12.
+// §6.4 — F-7.5.12.
 const DefaultSetupPolicyTimeoutSeconds = 300
 
 func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *adapterv1.SetupPolicy {
 	timeout := int32(DefaultSetupPolicyTimeoutSeconds)
 	onTimeout := string(runtimestore.SetupTimeoutFail)
-	// spec: §7.5 line 490 — shell defaults to true so a runtime that
+	// spec: §7.5 — shell defaults to true so a runtime that
 	// declares no setupCommandPolicy keeps the legacy `/bin/sh -c` path. A
 	// runtime that explicitly declares `setupCommandPolicy.shell: false`
 	// flips the adapter into argv-mode. F-7.5.2.
@@ -1567,11 +1565,11 @@ func (s *Server) runtimeSetupPolicy(ctx context.Context, runtimeName string) *ad
 }
 
 // runtimeIntegrationLevel resolves the runtime's §5.1 author-declared
-// integrationLevel for the §5.1 lines 41-44 first-assignment
+// integrationLevel for the §5.1 first-assignment
 // observed-vs-declared admission check. It returns the empty string (the
 // §5.1 default "basic", which the binder never rejects) when the runtime
 // registry is unwired, the runtime is unresolvable, or the runtime
-// declares no level. spec: §5.1 lines 41-44.
+// declares no level. spec: §5.1.
 func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string) string {
 	if s.runtimes == nil {
 		return ""
@@ -1602,7 +1600,7 @@ type DelegationCredentialQuery struct {
 // for the prospective delegated child. The delegate handler branches on
 // it with errors.Is rather than a string match and maps it to the
 // CREDENTIAL_POOL_EXHAUSTED wire code.
-// spec: §8.3 line 470; §4.9
+// spec: §8.3; §4.9
 var ErrDelegationCredentialUnavailable = errors.New("delegation credential unavailable")
 
 // ErrDelegationUserCredentialNotFound is the typed result the §8.3
@@ -1612,7 +1610,7 @@ var ErrDelegationCredentialUnavailable = errors.New("delegation credential unava
 // draws for the identical §4.9 engine error (credrouter.ErrUserCredentialNotFound),
 // so the delegate handler can surface the same USER_CREDENTIAL_NOT_FOUND
 // code rather than an opaque internal error.
-// spec: §8.3 line 470; §4.9
+// spec: §8.3; §4.9
 var ErrDelegationUserCredentialNotFound = errors.New("delegation user credential not found")
 
 // CheckDelegationCredentialAvailability runs the §8.3 delegation-time
@@ -1628,7 +1626,7 @@ var ErrDelegationUserCredentialNotFound = errors.New("delegation user credential
 // allocation. The synthetic row leaves ID empty, so the origin-constrained
 // branch in resolveCredentialPools selects only when the query set an
 // origin (inherit constrained; independent unconstrained).
-// spec: §8.3 line 470; §4.9
+// spec: §8.3; §4.9
 func (s *Server) CheckDelegationCredentialAvailability(ctx context.Context, q DelegationCredentialQuery) error {
 	row := sessionstore.Session{
 		TenantID:                  q.TenantID,
@@ -1671,12 +1669,12 @@ func (s *Server) CheckDelegationCredentialAvailability(ctx context.Context, q De
 // credentials — preserving the pre-§4.9 behavior for deployments
 // without credential pools.
 //
-// spec: §4.9 lines 1216-1218 (Pre-Claim check), 1326 (intersection).
+// spec: §4.9.
 func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Session) (map[string]string, map[string]string, []string, error) {
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
 		return nil, nil, nil, nil
 	}
-	// spec: §8.3 line 443 — a deny hop grants the child no LLM credentials.
+	// spec: §8.3 — a deny hop grants the child no LLM credentials.
 	// A deny row resolves to zero eligible providers, so PreClaim runs no
 	// assignment and no lease is minted (fail closed). CredentialOriginSessionID
 	// cannot express this: a deny child is self-origin, identical to an
@@ -1702,11 +1700,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	}
 	intersection := credrouter.Intersection(rt.SupportedProviders, policy)
 
-	// spec: §8.3 line 470 (assign a credential from the parent's pool
-	// whose provider appears in that intersection), line 440 (inherit:
-	// the child uses the same credential pool/source as the parent),
-	// line 472 (each hop re-checks the still-inherited origin pool at
-	// delegation time). A delegated child that inherited its credential
+	// spec: §8.3. A delegated child that inherited its credential
 	// origin draws its provider from the origin pool rather than its own
 	// independent set. A session inherited iff its
 	// CredentialOriginSessionID is a non-empty ancestor id; a self-origin
@@ -1718,7 +1712,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	// CREDENTIAL_POOL_EXHAUSTED at assignment) rather than falling back to
 	// the child's own unconstrained set, which would defeat the inherit
 	// guarantee. A deny origin row also fails closed: a deny hop holds no
-	// origin pool (§8.3 line 443, line 490), so an inherit hop whose origin
+	// origin pool (§8.3), so an inherit hop whose origin
 	// traces to a deny session has nothing to inherit and must not derive
 	// eligibility from the deny runtime's supportedProviders.
 	if row.CredentialOriginSessionID != "" && row.CredentialOriginSessionID != row.ID {
@@ -1726,7 +1720,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		if originErr != nil {
 			intersection = nil
 		} else if originRow.CredentialDeny {
-			// spec: §8.3 line 443, 490 — a deny session holds no origin pool, so
+			// spec: §8.3 — a deny session holds no origin pool, so
 			// an inherit hop from it has nothing to inherit and fails closed to
 			// CREDENTIAL_POOL_EXHAUSTED rather than deriving eligibility from the
 			// deny runtime's supportedProviders.
@@ -1748,7 +1742,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		byName[p.Name] = p
 	}
 
-	// spec: §14 credentialPolicy; §4.9 line 1362 — a per-session
+	// spec: §14 credentialPolicy; §4.9 — a per-session
 	// credentialPolicy override narrows the tenant policy's
 	// preferredSource (the gateway validated at admission that the
 	// override only restricts, never expands). When the session carries
@@ -1799,7 +1793,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		}
 	}
 
-	// spec: §4.9 line 1476 — the proxy-dialect admission boundary at the
+	// spec: §4.9 — the proxy-dialect admission boundary at the
 	// runtime↔pool join. A proxy-mode pool declares the wire dialect its
 	// lease exposes (`proxyDialect`); the agent pod's SDK can only speak a
 	// dialect the runtime declares in credentialCapabilities.proxyDialect.
@@ -1819,7 +1813,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 		}
 	}
 
-	// spec: §4.9 line 1476 — the same runtime↔dialect boundary applies to a
+	// spec: §4.9 — the same runtime↔dialect boundary applies to a
 	// user-source provider. A user credential is delivered in proxy mode
 	// (the secret stays gateway-side), so the agent pod's SDK must speak the
 	// provider's canonical proxy dialect. Reject the session when the
@@ -1844,7 +1838,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 // once, in a's order, when it also appears in b. It is the §8.3 inherit
 // constraint's set-∩, kept local to sessionserver so the delegation-path
 // lease.IntersectProviders primitive stays out of the llmproxy import
-// this package already carries. spec: §8.3 line 470.
+// this package already carries. spec: §8.3.
 func intersectProviders(a, b []string) []string {
 	inB := make(map[string]struct{}, len(b))
 	for _, p := range b {
@@ -1865,7 +1859,7 @@ func intersectProviders(a, b []string) []string {
 	return out
 }
 
-// PoolProxyDialectError is the §4.9 line 1476 runtime↔pool proxy-dialect
+// PoolProxyDialectError is the §4.9 runtime↔pool proxy-dialect
 // mismatch surfaced at session-creation credential resolution: an
 // assigned proxy-mode pool declares a wire dialect the session runtime
 // does not declare in credentialCapabilities.proxyDialect.
@@ -1956,7 +1950,7 @@ func rejectionCode(reason string) string {
 // descriptor. A pool is assignable when it holds at least one
 // non-revoked credential; cooldown is rotation-time state and is false
 // at session creation. The live active-leases-versus-maxConcurrent
-// refinement (spec §4.9 line 1218) tightens HasCapacity once a lease-
+// refinement (spec §4.9) tightens HasCapacity once a lease-
 // utilization reader is wired; until then a pool with a usable
 // credential is treated as having capacity.
 func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescriptor {
@@ -1980,7 +1974,7 @@ func poolDescriptor(p credentialpoolstore.CredentialPool) credrouter.PoolDescrip
 // exclusive pod claim or the concurrent-workspace slot reservation. Level
 // always carries the §7.1 sessionIsolationLevel derived from the resolved
 // pool so the create response reports the actual pod's profile rather than a
-// pre-resolved estimate. spec: §7.1 step 4, line 75; §5.2.
+// pre-resolved estimate. spec: §7.1 step 4; §5.2.
 type claimOutcome struct {
 	// Claim is the persisted §4.6 binding (sandbox name, pool, pod IP,
 	// and either the negotiated workspace root for an exclusive claim or the
@@ -2063,7 +2057,7 @@ type startContext struct {
 // envelopes), so the client learns of the failure before uploading and no
 // row is persisted.
 //
-// spec: §4.1 (proposal), §7.1 steps 3-5, line 75; §4.9 lines 1216-1218; §5.2.
+// spec: §4.1 (proposal), §7.1 steps 3-5; §4.9; §5.2.
 func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
 	// spec: §7.1 / §14.1 — row.Pool carries the client-pinned pool selector.
 	// validateRequestEnvelope already rejected an unsatisfiable, unauthorized,
@@ -2076,13 +2070,13 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 		return nil, err
 	}
 	level := isolationLevelForPool(match, row.IsolationProfile)
-	// spec: §5.2 lines 602-625 — reject a create whose pool is still
+	// spec: §5.2 — reject a create whose pool is still
 	// bootstrapping with 503 RUNTIME_UNAVAILABLE + Retry-After before any
 	// claim, so the client retries rather than burning a claim attempt.
 	if match.PoolWarmingUp {
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
-	// spec: §7.1 step 3 / §4.9 lines 1216-1218 — the §7.1 step-3 credential
+	// spec: §7.1 step 3 / §4.9 — the §7.1 step-3 credential
 	// availability pre-check runs at create ahead of the step-4 claim, for
 	// every pool class. It is ordered before the service-mode and
 	// concurrent-workspace short-circuits below (the same ordering startOnPod
@@ -2126,7 +2120,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 				return s.podBinder.ClaimSlot(ctx, slotReq)
 			})
 		if err != nil {
-			// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — slot
+			// spec: §7.1 / §4.1 (proposal) — slot
 			// exhaustion at the create-time reservation surfaces as the §7.1
 			// SESSION_CREATION_FAILED envelope, not the §5.2 WARM_POOL_EXHAUSTED
 			// code the two-step start path returns. Translate the exhaustion
@@ -2159,7 +2153,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 			return s.podBinder.Claim(ctx, bindReq)
 		})
 	if err != nil {
-		// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — pool
+		// spec: §7.1 / §4.1 (proposal) — pool
 		// exhaustion at the step-4 create-time claim surfaces as the §7.1
 		// SESSION_CREATION_FAILED atomicity envelope, not the §5.2
 		// WARM_POOL_EXHAUSTED code the two-step `POST /v1/sessions/{id}/start`
@@ -2183,7 +2177,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 
 // errCreateClaimExhausted marks a create-time pod-claim exhaustion so
 // writePodClaimError routes it to the §7.1 SESSION_CREATION_FAILED
-// atomicity envelope (proposal §4.1, atomicity note at §7.1 line 23)
+// atomicity envelope (proposal §4.1, atomicity note at §7.1)
 // rather than the §5.2 WARM_POOL_EXHAUSTED code the two-step start path
 // uses. The wrapped podclaim.ErrNoIdlePod stays inspectable for any
 // caller that branches on the underlying sentinel.
@@ -2215,7 +2209,7 @@ var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
 // own atomicity gates pass.
 //
 // startOnPod no longer registers the binding or persists the
-// SandboxName field itself: the §7.1 line 28 atomicity contract
+// SandboxName field itself: the §7.1 atomicity contract
 // requires the gateway to skip the persist write entirely when an
 // earlier step in steps 2-8 fails, so the caller decides when to
 // publish the binding. The session-mode and concurrent-slot paths
@@ -2246,10 +2240,10 @@ var errCreateClaimExhausted = errors.New("create-time warm-pod claim exhausted")
 // remaining callers consume them: the combined create-and-start path runs
 // the prepare barrier (which assigns the lease), and the resume-rebuild path
 // runs the whole Claim → Prepare → Launch sequence.
-// spec: §4.1, §4.4, §5 (proposal); §4.2 line 160 — "Pod-to-session binding";
-// §7.1 line 28 — atomic-creation rollback.
+// spec: §4.1, §4.4, §5 (proposal); §4.2 — "Pod-to-session binding";
+// §7.1 — atomic-creation rollback.
 func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, claimed *startContext) (*podsession.BindResult, error) {
-	// spec: §4.9 lines 1216-1218 — run the pre-claim credential
+	// spec: §4.9 — run the pre-claim credential
 	// availability check and resolve the per-provider pool map BEFORE a
 	// pod is claimed, so a session that would fail at credential
 	// assignment is rejected without wasting a warm pod. On the combined
@@ -2277,7 +2271,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	if err != nil {
 		return nil, err
 	}
-	// spec: §5.2 lines 602-625 — a session targeting a pool in the
+	// spec: §5.2 — a session targeting a pool in the
 	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE
 	// before a claim is attempted, so the client receives a retry hint
 	// rather than burning a claim attempt that would surface as a less
@@ -2341,7 +2335,7 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 	// reconnect to the dead binding; reconnecting would fail Prepare against the
 	// no-longer-existing pod and fail the resume instead of recovering it.
 	if claimed != nil && row.PodAssignment != "" && !session.IsRecovery(row.State) {
-		// spec: §5 / §6.3 line 348 (proposal) — the same call measured the
+		// spec: §5 / §6.3 — the same call measured the
 		// create-time pod_claim duration; thread it into the launch-boundary
 		// end-to-end envelope so the single
 		// lenny_session_startup_duration_seconds observation spans pod claim
@@ -2395,8 +2389,8 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 // inputs; launchOnPod resolves credentials on that branch alone. The
 // exclusive launch-only path needs none.
 //
-// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34 (SDK-warm ConfigureWorkspace);
-// §15.1 (/start precondition); §5.2; §6.3 line 372.
+// spec: §4.4, §4.6 (proposal); §6.1;
+// §15.1 (/start precondition); §5.2; §6.3.
 func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.BindResult, error) {
 	// spec: §7.1 / §14.1 — constrain resolution to the client-pinned pool
 	// (row.Pool); empty resolves by runtime + §5.3 profile. F-CS2 (0018).
@@ -2405,7 +2399,7 @@ func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan
 	if err != nil {
 		return nil, err
 	}
-	// spec: §5.2 lines 602-625 — a session targeting a pool in the
+	// spec: §5.2 — a session targeting a pool in the
 	// PoolWarmingUp bootstrap state returns 503 RUNTIME_UNAVAILABLE rather than
 	// reconnecting to a pod that may not be ready. A two-step /start should not
 	// hit this in practice (the pod was claimed at /create and prepared at
@@ -2582,9 +2576,9 @@ func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Sessio
 // separate request (the two-step `POST /v1/sessions/{id}/start` path).
 // It is threaded into the end-to-end lenny_session_startup_duration_seconds
 // so a single combined-call observation includes the pod-claim component
-// per §6.3 line 348, while the per-phase pod_claim histogram is still
+// per §6.3, while the per-phase pod_claim histogram is still
 // emitted exactly once (at /create, not re-emitted here).
-// spec: §4.3, §4.4, §4.6, §5 (proposal); §6.3 line 348; §7.1 steps 11-13.
+// spec: §4.3, §4.4, §4.6, §5 (proposal); §6.3; §7.1 steps 11-13.
 func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest, createPodClaim time.Duration) (*podsession.BindResult, error) {
 	bindReq.SandboxName = row.PodAssignment
 	if row.PoolRef != "" {
@@ -2619,7 +2613,7 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	// a spurious 0s pod_claim sample; the per-phase pod_claim histogram was
 	// recorded once at /create.
 	s.recordStartupPhases(match, result.Timings)
-	// spec: §6.3 line 348 / §5 (proposal) — the end-to-end
+	// spec: §6.3 / §5 (proposal) — the end-to-end
 	// lenny_session_startup_duration_seconds spans pod claim through ready, so
 	// attribute the create-time pod_claim duration to the end-to-end total
 	// (without re-emitting the per-phase sample). On the combined one-call path
@@ -2652,7 +2646,7 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 // pod_claim phase was recorded at /create and the materialization / setup /
 // credential phases at /finalize, each once, so launchPrepared records only
 // the agent_session_start phase and the end-to-end envelope here.
-// spec: §4.4, §4.6 (proposal); §6.1 lines 30-34; §6.3 lines 348, 372.
+// spec: §4.4, §4.6 (proposal); §6.1; §6.3.
 func (s *Server) launchPrepared(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest) (*podsession.BindResult, error) {
 	bindReq.SandboxName = row.PodAssignment
 	if row.PoolRef != "" {
@@ -2779,7 +2773,7 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 				replacement(req.Pool)
 			}
 			health.Forget(sbe.Pod)
-			// spec: §6.2 line 179 — the drained pod is being replaced; its
+			// spec: §6.2 — the drained pod is being replaced; its
 			// leaked slots are reclaimed with it, so drop the per-pod leaked
 			// tracking and zero the gauge series.
 			slots.ForgetPod(sbe.Pod)
@@ -2806,7 +2800,7 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 // a fresh gateway replica can recover the binding after a coordinator
 // handoff. The persist is best-effort: a failure leaves the in-memory
 // Registry authoritative and the next coordination sweep re-publishes
-// the assignment. spec: §4.2 line 160 — "Pod-to-session binding".
+// the assignment. spec: §4.2 — "Pod-to-session binding".
 func (s *Server) registerBinding(ctx context.Context, result *podsession.BindResult) error {
 	if result == nil {
 		return nil
@@ -2843,7 +2837,7 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 // lease-without-binding decoupling co-location removes. The publish must
 // therefore be unconditional once the lease is held.
 //
-// spec: §4.2 line 160 (pod-to-session binding); §4.6.1 (coordinating replica
+// spec: §4.2; §4.6.1 (coordinating replica
 // holds the lease); §10.1 (per-session coordination lease).
 func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResult) {
 	if result == nil {
@@ -2851,7 +2845,7 @@ func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResu
 	}
 	s.podRegistry.Put(result)
 	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
-	// spec: §7.3 line 408 — capture the adapter's reported WorkspaceRoot
+	// spec: §7.3 — capture the adapter's reported WorkspaceRoot
 	// from the §15.5 handshake (carried through BindResult) on the first
 	// non-empty bind so a subsequent Resume can assert the replacement
 	// pod's WorkspaceRoot matches. The pgstore guard ignores an empty
@@ -2860,7 +2854,7 @@ func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResu
 	s.persistWorkspaceRoot(ctx, result.TenantID, result.SessionID, result.WorkspaceRoot)
 	// F-7.4.15: republish any §14 advisory warnings the adapter raised
 	// during FinalizeWorkspace materialization. The
-	// `workspace_plan_strip_components_skip` warning per §7.4 line 459
+	// `workspace_plan_strip_components_skip` warning per §7.4
 	// is the only producer in v1; SSE subscribers see one event per
 	// skipped archive entry so a client can audit the strip-components
 	// rule.
@@ -2937,12 +2931,12 @@ func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, session
 // frame goes on the per-session SSE bus (so clients subscribing to
 // /v1/sessions/{id}/events see it) and on the §16.6 / §25.3
 // operational-event stream (so Ops console and AI DevOps agents see
-// it asynchronously). The emitted payload carries the §14 line 100
+// it asynchronously). The emitted payload carries the §14
 // per-warning structured fields (`entryPath`, `segmentCount`,
 // `stripComponents`) so a consumer that matches on these can extract
 // them without parsing the free-form message.
 //
-// spec: §7.4 line 459; §14 line 100; §16.6 catalogue. F-7.4.15,
+// spec: §7.4; §14; §16.6 catalogue. F-7.4.15,
 // F-14.1.17, F-14.1.18.
 func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 	if result == nil {
@@ -2957,8 +2951,7 @@ func (s *Server) publishWorkspaceWarnings(result *podsession.BindResult) {
 // (via publishWorkspaceWarnings on the BindResult) and the §4.3 finalize
 // prepare barrier (on the PrepareResult) both republish their warnings
 // through it, so the strip-components-skip advisory reaches subscribers
-// regardless of which boundary materialized the workspace. spec: §7.4 line
-// 459; §14 lines 100/334/338; §16.6 catalogue. F-7.4.15, F-14.1.17, F-14.1.18.
+// regardless of which boundary materialized the workspace. spec: §7.4; §14; §16.6 catalogue. F-7.4.15, F-14.1.17, F-14.1.18.
 func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnings []*adapterv1.WorkspacePlanWarning) {
 	for _, w := range warnings {
 		if w == nil {
@@ -2972,7 +2965,7 @@ func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnin
 			"stripComponents": w.GetStripComponents(),
 			"message":         w.GetMessage(),
 		}
-		// spec: §14 line 334 — the materializer-raised
+		// spec: §14 — the materializer-raised
 		// `workspace_plan_unknown_source_type` warning carries
 		// `unknownType` + `schemaVersion`; surface them only when set so
 		// the other warning codes keep their existing payload. F-14.1.2.
@@ -2982,7 +2975,7 @@ func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnin
 		if w.GetSchemaVersion() != 0 {
 			payload["schemaVersion"] = w.GetSchemaVersion()
 		}
-		// spec: §14 line 338 — the materialization-time
+		// spec: §14 — the materialization-time
 		// `workspace_plan_path_collision` warning carries `path`,
 		// `winningSourceIndex`, `losingSourceIndex`. A non-empty path is
 		// the discriminator: only collision warnings set it, so the other
@@ -3002,7 +2995,7 @@ func (s *Server) publishWorkspacePlanWarnings(tenantID, sessionID string, warnin
 // warning without having to subscribe to the per-session SSE feed.
 // No-op when the OpsEmitter is not wired (tests).
 //
-// spec: §14 lines 100/334/338; §16.6 catalogue. F-14.1.17.
+// spec: §14; §16.6 catalogue. F-14.1.17.
 func (s *Server) emitWorkspacePlanWarningOps(tenantID, sessionID string, payload map[string]any) {
 	if s.opsEmitter == nil {
 		return
@@ -3033,7 +3026,7 @@ func (s *Server) emitWorkspacePlanWarningOps(tenantID, sessionID string, payload
 // the gateway publishes them on the same per-session SSE bus the
 // strip-components-skip warnings ride.
 //
-// spec: §14 lines 100, 334, 338; §14 WarningCode. F-14.1.17,
+// spec: §14; §14 WarningCode. F-14.1.17,
 // F-14.1.18.
 func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings []workspaceplan.Warning) {
 	if sessionID == "" || len(warnings) == 0 {
@@ -3048,7 +3041,7 @@ func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings [
 		if w.Field != "" {
 			payload["field"] = w.Field
 		}
-		// spec: §14 line 334 — unknown_source_type fields:
+		// spec: §14 — unknown_source_type fields:
 		// `schemaVersion`, `unknownType`.
 		if w.SchemaVersion != nil {
 			payload["schemaVersion"] = *w.SchemaVersion
@@ -3056,7 +3049,7 @@ func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings [
 		if w.UnknownType != "" {
 			payload["unknownType"] = w.UnknownType
 		}
-		// spec: §14 line 338 — path_collision fields: `path`,
+		// spec: §14 — path_collision fields: `path`,
 		// `winningSourceIndex`, `losingSourceIndex`.
 		if w.Path != "" {
 			payload["path"] = w.Path
@@ -3073,12 +3066,12 @@ func (s *Server) publishParsePlanWarnings(tenantID, sessionID string, warnings [
 }
 
 // rollbackBinding releases a successful startOnPod result whose
-// caller has decided to abort the §7.1 line 28 atomic-creation flow
+// caller has decided to abort the §7.1 atomic-creation flow
 // before the session row was persisted. Exclusive session-mode
 // bindings drop through Binder.Release with a `failed` disposition;
 // concurrent-slot bindings drop through ReleaseSlot. Best-effort:
 // the §6.2 reclaim path runs regardless, so a release error here is
-// logged and swallowed. spec: §7.1 line 28 atomic-creation rollback.
+// logged and swallowed. spec: §7.1 atomic-creation rollback.
 func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindResult) {
 	if result == nil || s.podBinder == nil {
 		return
@@ -3101,7 +3094,7 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 // The combined POST /v1/sessions/start path claims the pod at /create and
 // then runs prepare/launch against that claim in the same call. On a
 // startOnPod error the create-time claim must be released because the row is
-// not persisted (§7.1 line 28). The disposition turns on the claim kind:
+// not persisted (§7.1). The disposition turns on the claim kind:
 //
 //   - No claim (nil) or a claimless service-mode disposition: nothing to
 //     release.
@@ -3122,8 +3115,7 @@ func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindRes
 //     matching the §7.1 atomicity envelope the decomposed createSession path
 //     already honors through its own rollbackClaim.
 //
-// spec: §7.1 line 28 (rollback releases the pod claim on a create-step
-// failure); §4.7 (the combined path reuses the claim/prepare/launch phases);
+// spec: §7.1; §4.7 (the combined path reuses the claim/prepare/launch phases);
 // §5.2 (slot reservation release).
 func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 	if claim == nil {
@@ -3142,7 +3134,7 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 }
 
 // rollbackClaim releases a pod claimed at /create when a later create
-// step fails before the session row is persisted (§7.1 line 28
+// step fails before the session row is persisted (§7.1
 // atomic-creation rollback). The claim holds no live connection, so the
 // release runs against the persisted binding. The disposition follows the
 // claim kind: an exclusive Claim is released through ReclaimClaimed, which
@@ -3153,7 +3145,7 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 // assigned at create (§4.4 of the proposal), so the lease revoke is a
 // no-op here. Best-effort: the §4.6.1 orphan-claim GC reclaims a claim a
 // release error leaves behind, so the error is logged and swallowed.
-// spec: §7.1 line 28 (rollback releases the pod claim); §4.5, §4.6
+// spec: §7.1; §4.5, §4.6
 // (proposal); §5.2 (slot reservation release).
 func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResult, sessionID string) {
 	if claim == nil || s.podBinder == nil {
@@ -3171,7 +3163,7 @@ func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResul
 	}
 }
 
-// recordStartupPhases observes the §6.3 line 372 per-phase
+// recordStartupPhases observes the §6.3 per-phase
 // lenny_session_startup_phase_duration_seconds histogram for the phases
 // the caller actually measured. The decomposed create → finalize →
 // start lifecycle records each §6.3 phase at the boundary where it runs:
@@ -3185,7 +3177,7 @@ func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResul
 // The first-prompt/TTFT phase is tracked separately (F-6.3.3,
 // lenny_session_time_to_first_token_seconds) because it needs runtime
 // streaming feedback the start path does not see.
-// spec: §6.3 lines 358, 372.
+// spec: §6.3.
 func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.BindTimings) {
 	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
 	if !ok {
@@ -3218,12 +3210,12 @@ func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.Bi
 	}
 }
 
-// recordStartupDuration observes the §6.3 line 348 end-to-end pod-warm
+// recordStartupDuration observes the §6.3 end-to-end pod-warm
 // envelope on lenny_session_startup_duration_seconds exactly once per
 // logical start, at the launch boundary, with the full assembled
-// timings. Per §6.3 line 348 the metric is pod claim through agent
+// timings. Per §6.3 the metric is pod claim through agent
 // session ready excluding workspace materialization; setup commands are
-// also excluded because they are deployer-controlled (§6.3 line 363) and
+// also excluded because they are deployer-controlled (§6.3) and
 // the 2s runc / 5s gVisor SLO budgets only the platform phases (claim
 // ≤100ms + credential ≤100ms + agent start ≤1.5s/4.5s). The end-to-end
 // total is therefore PodClaim + CredentialAssignment + AgentSessionStart.
@@ -3231,7 +3223,7 @@ func (s *Server) recordStartupPhases(match podsession.PoolMatch, t podsession.Bi
 // recordStartupPhases and does not emit this end-to-end metric, so a
 // single logical start observes lenny_session_startup_duration_seconds
 // once rather than once at create and again at launch.
-// spec: §6.3 lines 348, 358.
+// spec: §6.3.
 func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.BindTimings) {
 	runtimeClass, ok := isolation.RuntimeClassName(isolation.Profile(match.IsolationProfile))
 	if !ok {
@@ -3250,7 +3242,7 @@ func (s *Server) recordStartupDuration(match podsession.PoolMatch, t podsession.
 // is logged via the configured error handler but does not fail the
 // claim — the in-memory Registry remains authoritative for this
 // replica, and the next coordination sweep will re-publish the
-// assignment. spec: §4.2 line 160 — "Pod-to-session binding".
+// assignment. spec: §4.2 — "Pod-to-session binding".
 func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, podAssignment string) {
 	if podAssignment == "" {
 		return
@@ -3268,14 +3260,14 @@ func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, 
 // the session row at the first non-empty bind. The pgstore-side write
 // guard ignores empty payloads so a follow-on bind that did not capture
 // a value (older adapter, replay path) cannot clobber a recorded one.
-// The recorded value feeds the §7.3 line 408 "same absolute cwd path"
+// The recorded value feeds the §7.3
 // assertion on a subsequent Resume — the gateway reads row.WorkspaceRoot
 // and passes it via ResumeRequest.expected_workspace_root for the
 // replacement pod's adapter to compare against its own WorkspaceRoot.
 // Best-effort: a store failure logs and continues; the in-memory
 // BindResult still carries the value for the current replica.
 //
-// spec: §7.3 line 408 step (d). F-7.3.15.
+// spec: §7.3 step (d). F-7.3.15.
 func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, root string) {
 	if root == "" {
 		return
@@ -3300,7 +3292,7 @@ func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, 
 // state and runs the same archive / terminal-lifecycle teardown as
 // failSession. The §8.10 tree-recovery driver uses it for a node whose
 // individual `maxResumeWindowSeconds` elapsed before recovery reached
-// it (spec: §8.10 line 1027 — "that node transitions to `expired`").
+// it (spec: §8.10 — "that node transitions to `expired`").
 func (s *Server) expireSession(ctx context.Context, tenantID, sessionID string) {
 	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.State = session.StateExpired
@@ -3319,7 +3311,7 @@ func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	})
 	if err == nil {
 		s.archiveSettledChild(ctx, updated)
-		// spec: §7.2 lines 137, 141 / §11.7 / §7.1 line 77 — the
+		// spec: §7.2 / §11.7 / §7.1 — the
 		// start-path failure is a terminal transition, so it emits the
 		// same status_change/session_complete SSE events, the
 		// session.failed audit event, and the retention-window roll as
@@ -3372,14 +3364,14 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	// so the client can re-issue `POST /resume` once pods are available;
 	// only a non-retryable cause demotes the row to failed. F-7.3.23.
 	//
-	// spec: §7.3 lines 470-472 — internally the row traverses
+	// spec: §7.3 — internally the row traverses
 	// `awaiting_client_action → resume_pending → resuming → running`;
 	// the API view collapses to `awaiting_client_action → running`.
 	// Writing the `resuming` transient before resumeOnPod makes the
-	// §7.2 line 197 / 198 mid-resume terminal-collapse edges
+	// §7.2 mid-resume terminal-collapse edges
 	// (resuming → cancelled, resuming → completed) reachable by
 	// concurrent DELETE / cascade / failure-report observers, and the
-	// §6.2 line 249 watchdog uses it as the entry signal for the
+	// §6.2 watchdog uses it as the entry signal for the
 	// resuming wall-clock timeout. F-7.3.8.
 	if s.podBinder != nil {
 		if _, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
@@ -3401,7 +3393,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			if s.incSessionResumeAttempt != nil {
 				s.incSessionResumeAttempt(row.PoolRef, "failure")
 			}
-			// spec: §7.2 line 214 (a) — the row was in `resuming` when
+			// spec: §7.2 — the row was in `resuming` when
 			// the resumeOnPod call started; bump the
 			// coordination_generation before unwinding so any stale
 			// coordinator's subsequent RPC fails the §4.2
@@ -3451,17 +3443,17 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			At:         s.clock(),
 		})
 	}
-	// spec: §7.2 line 137 — surface the resume transition (the
+	// spec: §7.2 — surface the resume transition (the
 	// resume_pending → resuming → running chain collapses to the
 	// resolved state) before the richer session.resumed event below.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-	// spec: §7.2 line 284 — the resume completes the v1 coordinator
+	// spec: §7.2 — the resume completes the v1 coordinator
 	// re-acquisition of a recovering session, so the gateway emits
 	// `inbox_cleared` on the target's own stream: the in-memory inbox from
 	// the prior coordinator is gone and the client learns how many messages
 	// survived in the DLQ. F-7.2.12.
 	s.clearInboxOnResume(r.Context(), updated)
-	// spec: §4.4 line 236 — partial-manifest cleanup runs on every
+	// spec: §4.4 — partial-manifest cleanup runs on every
 	// resume regardless of whether the underlying reassembly
 	// succeeded. The cleaner deletes the chunk objects and
 	// soft-deletes the manifest row under the `deleted_at IS NULL`
@@ -3475,7 +3467,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			log.Printf("sessionserver: partial-manifest cleanup for session %s failed: %v", id, cerr)
 		}
 	}
-	// spec: §7.2 line 138 — `session.resumed` precedes
+	// spec: §7.2 — `session.resumed` precedes
 	// `children_reattached`. The event fires from the resume handler
 	// (rather than from resumeOnPod) so dev-mode / unit-test
 	// deployments without a pod binder still emit the event. The
@@ -3487,7 +3479,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	mode := s.classifyResumeWithAdapter(r.Context(), updated, adapterReportedResumeMode)
 	s.emitResumedEvent(r.Context(), updated, mode)
 	s.emitChildrenReattached(r.Context(), tenantID, id)
-	// spec: §8.10 line 1016 — recover the resumed tree's orphaned
+	// spec: §8.10 — recover the resumed tree's orphaned
 	// descendants bottom-up so that "by the time a parent resumes, its
 	// children are already in a known state". Detached from the request
 	// because the traversal is bounded by maxTreeRecoverySeconds, not by
@@ -3505,7 +3497,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 // codes.FailedPrecondition split writeSetupCommandError uses for the wire
 // envelope, so a row that returns the retryable RESUME_FAILED envelope is
 // never demoted to a terminal state the retry would be rejected against.
-// spec: §7.3 line 423 (awaiting_client_action holding state), §6.2 (transient
+// spec: §7.3, §6.2 (transient
 // setup failure retried on a fresh pod). F-7.3.23.
 func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id string, err error) {
 	if isTransientPodClaimError(err) {
@@ -3541,9 +3533,9 @@ func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id strin
 // cannot drift. A workspace_validation_failed or runtime-registry error
 // is still non-retryable and demotes the row to failed. F-7.3.23.
 //
-// spec: §5.2 line 519 (WARM_POOL_EXHAUSTED), §4.9 lines 1218/1220
-// (CREDENTIAL_POOL_EXHAUSTED), §4.3 line 214 (TOKEN_SERVICE_UNAVAILABLE),
-// §5.2 lines 602-625 (RUNTIME_UNAVAILABLE pool-warming),
+// spec: §5.2, §4.9
+// (CREDENTIAL_POOL_EXHAUSTED), §4.3,
+// §5.2,
 // §7.3 (awaiting_client_action holding state for a retryable resume failure),
 // §6.2 (transient setup failure retried on a fresh pod).
 func isTransientPodClaimError(err error) bool {
@@ -3567,7 +3559,7 @@ func isTransientPodClaimError(err error) bool {
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
 		return true
 	case errors.Is(err, coordfence.ErrRelinquished):
-		// spec: §11.3 line 209 — the coordinator relinquished the session
+		// spec: §11.3 — the coordinator relinquished the session
 		// after its fence retries; another replica owns it. Hold the row
 		// in awaiting_client_action so the client's `POST /resume` retry
 		// routes to the rightful coordinator rather than failing the row.
@@ -3628,7 +3620,7 @@ type reattachedChild struct {
 // A non-terminal child carries `pending_request_id` when an outstanding
 // `lenny/request_input` or §6/§9.2 pending interaction exists for the
 // child — the parent needs the id to answer via `lenny/send_message`
-// (inReplyTo) or the §15.1 interaction endpoints. spec: §7.2 line 153
+// (inReplyTo) or the §15.1 interaction endpoints. spec: §7.2
 // (ReattachedChild.pending_request_id). F-7.2.16.
 func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID string) {
 	if s.events == nil {
@@ -3653,7 +3645,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 		}
 	}
 
-	// spec: §8.10 line 1062 — the resumed parent sees already-settled
+	// spec: §8.10 — the resumed parent sees already-settled
 	// children "in original-settlement order". The archive's Replay
 	// returns nodes sorted by (settled_at, completion_seq), so a settled
 	// child's position in the reattach payload reflects when it actually
@@ -3671,7 +3663,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 				children = append(children, reattachedChild{
 					SessionID: n.NodeSessionID,
 					State:     n.State,
-					// spec: §8.8 lines 885-940 — replay the same §8.8
+					// spec: §8.8 — replay the same §8.8
 					// TaskResult body the archive captured at settle time so
 					// the reattach payload matches the archived result. F-8.8.2.
 					Result:            json.RawMessage(n.Result),
@@ -3702,7 +3694,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 			child.Result, _ = json.Marshal(s.materializeTaskResult(ctx, row, 0))
 		} else {
 			anyActive = true
-			// spec: §7.2 line 153 — populate the pending_request_id when
+			// spec: §7.2 — populate the pending_request_id when
 			// the child has an outstanding request directed at the
 			// parent. lenny/request_input wins over the interaction-store
 			// entries because it carries a structured reply contract; an
@@ -3726,8 +3718,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 // outstanding. It prefers `lenny/request_input` registrations (the
 // §8.5 structured-reply contract) and falls back to a §6/§9.2 pending
 // interaction (tool-use approval / elicitation). When both sources are
-// unwired the function is a no-op. spec: §7.2 line 153 (ReattachedChild
-// schema). F-7.2.16.
+// unwired the function is a no-op. spec: §7.2. F-7.2.16.
 func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID string) string {
 	if s.inputWaits != nil {
 		if ids := s.inputWaits.PendingForSession(sessionID); len(ids) > 0 {
@@ -3751,7 +3742,7 @@ func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID s
 // pgstore FOR UPDATE row lock / memstore mutex; returning this sentinel
 // leaves the row unchanged. The caller (deliverMessageBatch) maps it to
 // the §7.2 path-6 `queued` fail-closed fallback rather than resurrecting
-// a terminal row to running. spec: §7.2 path 6 (line 330 queued fallback).
+// a terminal row to running. spec: §7.2 path 6.
 var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not suspended")
 
 // resumeHeldPod performs the §7.2 path-6 pod-held resume: it transitions a
@@ -3781,7 +3772,7 @@ var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not s
 // §6.2 keeps a released session in `suspended` (podless) with no state change;
 // when the deferred §6.2 sweep lands the guard must additionally distinguish a
 // pod-held row from a podless-suspended row and route the podless case to
-// `resume_pending`/`queued` per §7.2 line 328.
+// `resume_pending`/`queued` per §7.2.
 //
 // On the state write it reuses transitionResume (the {Suspended, Running} edge
 // is legal) and emits the same resume status-change (emitStatusChange) and
@@ -3791,7 +3782,7 @@ var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not s
 // real-pod in-place adapter-resume signal against a still-held pod (waiting for
 // the §4.7 ready_for_input signal) is deferred.
 //
-// spec: §7.2 path 6 (lines 326-327).
+// spec: §7.2 path 6.
 func (s *Server) resumeHeldPod(ctx context.Context, tenantID, id string) error {
 	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
 		if row.State != session.StateSuspended {
@@ -3841,7 +3832,7 @@ func (s *Server) resumeHeldPod(ctx context.Context, tenantID, id string) error {
 // still letting the adapter signal a stronger classification when it
 // has one. F-7.3.22.
 //
-// spec: §4.4 line 263, §7.2 line 138, §10.1 partial-manifest path.
+// spec: §4.4, §7.2, §10.1 partial-manifest path.
 func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		plan, err := storedWorkspacePlan(row)
@@ -3888,7 +3879,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		return "", err
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
-	// spec: §7.3 line 397 — surface last_checkpoint_workspace_bytes and the
+	// spec: §7.3 — surface last_checkpoint_workspace_bytes and the
 	// §4.4 hard workspace size cap so the adapter can refuse a restore
 	// whose archive would exceed the pod's emptyDir budget before
 	// quiescing the runtime. F-7.3.26.
@@ -3896,7 +3887,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	if row.WorkspaceSnapshot != nil {
 		expectedBytes = row.WorkspaceSnapshot.Bytes
 	}
-	// spec: §10.1 line 155 — resolve the checkpoint's chunk set from the
+	// spec: §10.1 — resolve the checkpoint's chunk set from the
 	// manifest row the gateway owns, verify contiguity of [0, chunk_count),
 	// and mint one presigned GET capability per index. The adapter fetches
 	// them in ascending index order and concatenates the bodies into one
@@ -3917,7 +3908,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		RecoveryGeneration:      row.RecoveryGeneration,
 		ExpectedWorkspaceBytes:  expectedBytes,
 		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
-		// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd`
+		// spec: §7.3 step (d) — "Recreate same absolute `cwd`
 		// path." The gateway carries the original session's adapter-
 		// reported WorkspaceRoot (captured on the §15.5 handshake and
 		// persisted at first bind) on every Resume. An empty value
@@ -3943,12 +3934,12 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		return "", lerr
 	}
 	s.podRegistry.Put(result.Result)
-	// spec: §4.2 line 156 — recovery_generation is incremented on each
+	// spec: §4.2 — recovery_generation is incremented on each
 	// pod recovery. Persist the new pod assignment in the same update
 	// so a fresh replica picks up the recovered binding without
 	// re-running resume.
 	s.bumpRecoveryGeneration(ctx, row.TenantID, row.ID, result.Result.SandboxName)
-	// spec: §10.1 lines 33-37 / §4.2 line 158 — announce the session's
+	// spec: §10.1 / §4.2 — announce the session's
 	// coordination_generation to the (re-)bound pod so it rejects any
 	// straggler RPC from a prior coordinator. A relinquish aborts the
 	// resume; a best-effort failure is logged and swallowed.
@@ -3958,7 +3949,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	return result.Mode, nil
 }
 
-// resolveResumeChunks resolves the §10.1 line 155 reassembly chunk set for
+// resolveResumeChunks resolves the §10.1 reassembly chunk set for
 // the checkpoint the session is being restored from. It returns one
 // presigned GET capability per chunk in ascending index order, which the
 // gateway hands the adapter on ResumeRequest.Chunks. When reassembly of the
@@ -3970,20 +3961,20 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 // empty so the resume still proceeds; the adapter then restores nothing
 // beyond what the size pre-check permits.
 //
-// spec: §10.1 line 155 — reassembly on resume; fallback to the last full
+// spec: §10.1 — reassembly on resume; fallback to the last full
 // checkpoint on a contiguity failure.
 func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Session) []adapterclient.ChunkGrant {
 	if s.resumeChunkResolver == nil {
 		return nil
 	}
-	// spec: §10.1 line 154 — reassembly is manifest-driven, so it is not gated
+	// spec: §10.1 — reassembly is manifest-driven, so it is not gated
 	// on the WorkspaceSnapshot.Ref being present. The ref is a validation input
 	// that names the session's last completed checkpoint (written only on a
 	// partial = false success), and the selector takes the active manifest row
 	// at MAX(coordination_generation) regardless of partial. A partial = true
 	// drain whose session never completed a full checkpoint has an empty ref,
 	// yet LatestActiveAny still selects it and its NULL-baseline threshold is 0
-	// (§10.1 line 155), so it must reassemble. Gating on a non-empty ref would
+	// (§10.1), so it must reassemble. Gating on a non-empty ref would
 	// short-circuit that partial-only session to zero chunks even though
 	// classifyResume reports partial_workspace for it.
 	var ref string
@@ -4003,7 +3994,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 		return res.Grants
 	}
 	if errors.Is(err, resumechunks.ErrReassemblyContiguity) || errors.Is(err, resumechunks.ErrBelowRecoveryThreshold) {
-		// spec: §10.1 line 155 — reassembly failed atomically before any
+		// spec: §10.1 — reassembly failed atomically before any
 		// chunk body was fetched (a contiguity failure) or the generation-
 		// selected partial checkpoint did not clear the recovery threshold;
 		// fall back to the last successful full checkpoint so the resume
@@ -4020,7 +4011,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 
 // selectResumeCheckpoint resolves the checkpoint_id the resume reassembles
 // from. It selects the active manifest row for the session at
-// MAX(coordination_generation) regardless of partial (§10.1 line 154), so a
+// MAX(coordination_generation) regardless of partial (§10.1), so a
 // newer partial = true drain row at or above the completed checkpoint's
 // generation is preferred over the older completed checkpoint. The
 // WorkspaceSnapshot.Ref, written only on a successful checkpoint, is the
@@ -4033,7 +4024,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 // resolves to the checkpoint_id the manifest row is keyed by, matching the
 // workspace-download and derive paths.
 //
-// spec: §10.1 line 154 — MAX(coordination_generation) select regardless of
+// spec: §10.1 — MAX(coordination_generation) select regardless of
 // partial; the ref is a validation input in the four-segment form.
 func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID, ref string) string {
 	if s.checkpointManifests == nil {
@@ -4053,7 +4044,7 @@ func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID
 // checkpoint is the row that already failed (selected), or the fallback does
 // not resolve.
 //
-// spec: §10.1 line 155 — fallback to the last successful full checkpoint.
+// spec: §10.1 — fallback to the last successful full checkpoint.
 func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessionstore.Session, selected string) []adapterclient.ChunkGrant {
 	if s.checkpointManifests == nil {
 		return nil
@@ -4062,7 +4053,7 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 	if ferr != nil || full.CheckpointID == "" || full.CheckpointID == selected {
 		return nil
 	}
-	// spec: §16.1 line 195 — the full-checkpoint fallback restores a complete
+	// spec: §16.1 — the full-checkpoint fallback restores a complete
 	// (partial = false) checkpoint, which is not a partial recovery, so it
 	// emits nothing on the recovered arm. The resolver reports Recovered =
 	// false for a full checkpoint regardless, but the fallback deliberately
@@ -4076,7 +4067,7 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 	return fallback.Grants
 }
 
-// emitCheckpointRecovered stamps the §16.1 line 195
+// emitCheckpointRecovered stamps the §16.1
 // lenny_checkpoint_partial_total{recovered=true} counter once when a resume
 // reassembled an above-threshold partial checkpoint. A complete
 // (partial = false) restore, a below-threshold or non-contiguous partial
@@ -4084,7 +4075,7 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 // resolved no chunks all leave res.Recovered false and emit nothing.
 //
 // The recovered=true / (recovered=true + recovered=false) ratio is the
-// counter-level partial-recovery signal §16.1 line 195 keeps; it is correct
+// counter-level partial-recovery signal §16.1 keeps; it is correct
 // in aggregate regardless of which trigger label the recovered=true arm
 // carries. The trigger label is a required member of the closed
 // checkpoint.Trigger enum, and the §10.1 checkpoint_manifest column set does
@@ -4095,15 +4086,12 @@ func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessions
 // (a periodic or pre_scale_down deadline fire is retained the same as an
 // eviction drain), so a reassembled partial can originate from any trigger.
 // eviction is stamped as the enum-valid representative because the preStop
-// drain is the recovery mechanism this counter primarily serves (§10.1 line
-// 172); the per-trigger breakdown of the recovered=true arm therefore
+// drain is the recovery mechanism this counter primarily serves (§10.1); the per-trigger breakdown of the recovered=true arm therefore
 // attributes every recovery to eviction and is join-exact against the
 // recovered=false write-path arm only for eviction-originated partials. The
 // aggregate recovery signal is unaffected.
 //
-// spec: §16.1 line 195 (the recovered signal is counter-level); §10.1 line
-// 172 (the preStop drain stamps eviction); §10.1 line 155 (reassembly on
-// resume).
+// spec: §16.1; §10.1; §10.1.
 func (s *Server) emitCheckpointRecovered(row sessionstore.Session, res resumechunks.ResolveResult) {
 	if s.checkpointRecoveryMetrics == nil || !res.Recovered {
 		return
@@ -4120,7 +4108,7 @@ func (s *Server) emitCheckpointRecovered(row sessionstore.Session, res resumechu
 // generation could not be read) is logged and swallowed because the
 // coordination lease still guards exclusive ownership.
 //
-// spec: §10.1 lines 33-37, §4.2 line 158, §11.3 line 209.
+// spec: §10.1, §4.2, §11.3.
 func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) error {
 	if s.fencer == nil || adapter == nil {
 		return nil
@@ -4158,7 +4146,7 @@ func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Cli
 // observes the degraded classification only by inspecting the gauge
 // rather than by the event.
 //
-// spec: §4.4 line 263; §7.2 line 138; §10.1 partial-manifest path.
+// spec: §4.4; §7.2; §10.1 partial-manifest path.
 func (s *Server) classifyResume(ctx context.Context, row sessionstore.Session) checkpoint.ResumeMode {
 	if s.evictionStateLookup != nil {
 		has, err := s.evictionStateLookup.HasEvictionState(ctx, row.TenantID, row.ID)
@@ -4175,7 +4163,7 @@ func (s *Server) classifyResume(ctx context.Context, row sessionstore.Session) c
 	return checkpoint.ResumeFull
 }
 
-// resumedEventPayload is the §7.2 line 138 `session.resumed` event
+// resumedEventPayload is the §7.2 event
 // schema: `resumeMode`, `workspaceLost`, and an optional
 // `workspaceRecoveryFraction` (populated by the §10.1 partial-manifest
 // path; omitted on full and conversation-only resumes per the
@@ -4186,12 +4174,12 @@ type resumedEventPayload struct {
 	WorkspaceRecoveryFraction *float64 `json:"workspaceRecoveryFraction,omitempty"`
 }
 
-// emitResumedEvent publishes the §7.2 line 138 `session.resumed` event
+// emitResumedEvent publishes the §7.2 event
 // onto the session's event stream. Best-effort: when the gateway is
 // not wired with an event bus (dev mode / unit tests without one) the
 // emission is a no-op.
 //
-// spec: §7.2 line 138, §4.4 line 263, §10.1 partial-manifest path.
+// spec: §7.2, §4.4, §10.1 partial-manifest path.
 func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, mode checkpoint.ResumeMode) {
 	if s.events == nil {
 		return
@@ -4203,12 +4191,12 @@ func (s *Server) emitResumedEvent(_ context.Context, row sessionstore.Session, m
 	s.publishEvent(row.TenantID, row.ID, "session.resumed", payload)
 }
 
-// handoffResumedFrame builds the §10.4 line 391 synthesized
+// handoffResumedFrame builds the §10.4 synthesized
 // `session.resumed` payload for a coordinator-handoff reattach. The
 // resume mode is fixed to `coordinator_handoff`; the handoff re-attaches
 // the live pod, so the workspace is intact (workspaceLost: false) and
 // workspaceRecoveryFraction is 1.0. ok is false only on a marshal error.
-// spec: §10.4 lines 391-393; §7.2 line 138. F-7.2.13, F-10.4.2.
+// spec: §10.4; §7.2. F-7.2.13, F-10.4.2.
 func (s *Server) handoffResumedFrame() ([]byte, bool) {
 	full := 1.0
 	payload := resumedEventPayload{
@@ -4223,7 +4211,7 @@ func (s *Server) handoffResumedFrame() ([]byte, bool) {
 	return data, true
 }
 
-// buildHandoffChildrenReattached builds the §10.4 lines 395-397
+// buildHandoffChildrenReattached builds the §10.4
 // synthesized `children_reattached` payload for a coordinator-handoff
 // reattach. The §10.4 predicate fires the frame "if the session is a
 // parent with archived children whose completion_seq is greater than the
@@ -4233,7 +4221,7 @@ func (s *Server) handoffResumedFrame() ([]byte, bool) {
 // are appended so the resumed parent re-establishes its await set (the
 // §7.2 STR-007 symmetry with the single-coordinator resume path). Returns
 // ok=false when the session is not a parent, has no missed completions,
-// and has no active children. spec: §10.4 lines 395-397; §7.2 line 153.
+// and has no active children. spec: §10.4; §7.2.
 // F-7.2.13, F-10.4.2.
 func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, parentID string, afterSeq uint64) ([]byte, bool) {
 	all, err := s.store.List(ctx, tenantID, sessionstore.ListFilter{})
@@ -4263,7 +4251,7 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 				if n.ParentSessionID != parentID || emitted[n.NodeSessionID] {
 					continue
 				}
-				// spec: §10.4 line 395 — only archived children whose
+				// spec: §10.4 — only archived children whose
 				// completion the client has not yet observed (CompletionSeq
 				// strictly above the resume cursor). A v1 archive writer
 				// that does not stamp a per-session sequence leaves
@@ -4295,7 +4283,7 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 			SessionID:         row.ID,
 			State:             string(row.State),
 			DelegationLeaseID: row.ID,
-			// spec: §7.2 line 153 — surface the pending request id so the
+			// spec: §7.2 — surface the pending request id so the
 			// resumed parent can answer a child blocked on
 			// lenny/request_input or a §6/§9.2 interaction.
 			PendingRequestID: s.lookupPendingRequest(ctx, tenantID, row.ID),
@@ -4314,19 +4302,17 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 }
 
 // bumpCoordinationGenerationOnSnapshotClose increments the §4.2
-// coordination_generation counter on a session row as part of the §7.2
-// line 214 snapshot-close terminal-collapse sequence. The bump runs in
+// coordination_generation counter on a session row as part of the §7.2 snapshot-close terminal-collapse sequence. The bump runs in
 // the same store update that writes the terminal state, fencing any
 // stale coordinator still attempting resume against the prior
 // generation — per §4.2 CoordinatorFence preconditions, any subsequent
 // operational RPC carrying a lower coordination_generation is rejected.
 // recovery_generation is intentionally left untouched: the interrupted
 // resume attempt is recorded as failed-by-terminal and is not retried,
-// so no new recovery is minted (§7.2 line 214 (b)).
+// so no new recovery is minted (§7.2).
 //
 // This helper is the gateway's authoritative CAS-fence primitive for
-// the resuming → {cancelled, completed, failed} edges (§7.2 lines
-// 209-216). The store's monotonicity floor (sessionstore/pgstore guards
+// the resuming → {cancelled, completed, failed} edges (§7.2). The store's monotonicity floor (sessionstore/pgstore guards
 // + memstore guards) blocks any update that tries to decrement the
 // counter, so a duplicate concurrent transition observes the second
 // generation rather than the first.
@@ -4340,8 +4326,8 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 // Returns whether the bump succeeded. Callers may use the boolean for
 // metric / audit emission; v1 only logs on failure.
 //
-// spec: §7.2 line 214 (a) — snapshot-close coordination_generation bump.
-// spec: §4.2 line 158 — CoordinatorFence preconditions. F-7.1.14.
+// spec: §7.2 — snapshot-close coordination_generation bump.
+// spec: §4.2 — CoordinatorFence preconditions. F-7.1.14.
 func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, tenantID, sessionID string) bool {
 	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.CoordinationGeneration++
@@ -4360,7 +4346,7 @@ func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, 
 // only advances; the in-memory Registry already holds the new BindResult
 // on success.
 //
-// A pod recovery is also a §4.2 line 158 retry — the Session Manager
+// A pod recovery is also a §4.2 retry — the Session Manager
 // is responsible for both counters, and a recovery onto a fresh pod
 // is the v1 retry path. retry_count is bumped in the same
 // transaction; the store enforces monotonicity on both columns.
@@ -4371,8 +4357,8 @@ func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, 
 // session.retry_attempted audit row is appended. Both side effects are
 // best-effort and gated on their respective hooks being wired.
 //
-// spec: §4.2 line 156 — "incremented on each pod recovery".
-// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+// spec: §4.2 — "incremented on each pod recovery".
+// spec: §4.2 — "Retry counters and policy enforcement".
 // spec: §16.1 catalog — lenny_session_retry_total. F-7.3.10.
 // spec: §11.7 / §16.7 — session.retry_attempted audit. F-7.3.18.
 func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID, podAssignment string) {
@@ -4391,15 +4377,15 @@ func (s *Server) bumpRecoveryGeneration(ctx context.Context, tenantID, sessionID
 	s.recordSessionRetry(ctx, updated)
 }
 
-// recordSetupCommandFailed emits the §7.5 / §7.3 line 387 audit event
-// and the §16.1 line 124 warm-pool warmup_failure metric for a
+// recordSetupCommandFailed emits the §7.5 / §7.3 audit event
+// and the §16.1 warm-pool warmup_failure metric for a
 // setup-command-failed bind. The audit Detail carries the cmd, exit
 // code, stderr excerpt, and command index pulled from the partial
 // per-command outputs the adapter returned alongside the failure so
 // operators can reconstruct what happened without parsing the gRPC
 // error string. Best-effort: nil hooks degrade to a no-op.
 //
-// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — F-7.5.9.
+// spec: §7.5, §7.3, §16.1 — F-7.5.9.
 func (s *Server) recordSetupCommandFailed(failure *podsession.SetupCommandFailure) {
 	if failure == nil {
 		return
@@ -4423,7 +4409,7 @@ func (s *Server) recordSetupCommandFailed(failure *podsession.SetupCommandFailur
 // outputs into a one-line Detail string for the §11.7 audit row. The
 // failing command is the last entry the adapter returned before aborting,
 // so the helper reports its cmd / exit code / stderr excerpt.
-// spec: §7.5 line 475 — F-7.5.9.
+// spec: §7.5 — F-7.5.9.
 func setupCommandFailedDetail(failure *podsession.SetupCommandFailure) string {
 	if failure == nil {
 		return ""

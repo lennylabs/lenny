@@ -108,7 +108,7 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		// registerIssuerAndStateFlags (§13.3 issuer, §4.9 probe namespace)
 		{"issuer", *f.issuer, "https://lenny.dev.local/token"},
 		{"secretNamespace", *f.secretNamespace, "lenny-system"},
-		// registerRateLimitFlags (§13.3 line 607 normative limits)
+		// registerRateLimitFlags (§13.3 normative limits)
 		{"rlCallerPerSec", *f.rlCallerPerSec, 10},
 		{"rlCallerPerMin", *f.rlCallerPerMin, 300},
 		{"rlTenantPerSec", *f.rlTenantPerSec, 100},

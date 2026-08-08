@@ -34,9 +34,9 @@ type miscMetrics struct {
 	// for recycling session-mode pools so the scaling formula converges
 	// on observed reuse. Labeled by `pool` and `k8s_pod_name` per §16.1.
 	sessionReuseCount *prometheus.HistogramVec
-	// delegationLeaseExtension is the §16 line 66 counter for §8.6
+	// delegationLeaseExtension is the §16 counter for §8.6
 	// lease extensions. Labelled by `tenant_id` and `outcome` (one of
-	// `approved` / `capped` / `denied` — the §8.6 line 743 audit
+	// `approved` / `capped` / `denied` — the §8.6 audit
 	// classification). The §16.1 catalog declares the metric with no
 	// labels; tenant_id and outcome are tier-2 dimensions that keep
 	// cardinality bounded (tenants × 3 outcomes) and let the
@@ -44,7 +44,7 @@ type miscMetrics struct {
 	// the §8.6 elicitation flow drives. Emitted from leasecontrol.Service
 	// on every ExtendLease decision. F-8.6.13.
 	delegationLeaseExtension *prometheus.CounterVec
-	// exportFileScans is the §16.1 line 80 counter for per-file
+	// exportFileScans is the §16.1 counter for per-file
 	// PreExportMaterialization scan outcomes on the §8.7 delegation
 	// file-export path. Labels: pool, tenant_id, policy_name,
 	// interceptor_ref, outcome (admitted | modified | rejected |
@@ -52,20 +52,20 @@ type miscMetrics struct {
 	// §16.5 ExportFileScanFailOpen alert; `rejected` and `failed_closed`
 	// surface in delegation-rejection dashboards. F-8.7.10.
 	exportFileScans *prometheus.CounterVec
-	// exportFileScanDuration is the §16.1 line 81 histogram for the
+	// exportFileScanDuration is the §16.1 histogram for the
 	// per-file PreExportMaterialization interceptor latency. Labels:
 	// pool, tenant_id, interceptor_ref (no outcome/policy_name — latency
 	// is per file regardless of decision). A sustained P99 > 1s flags
 	// the interceptor as being on the delegation hot path. F-8.7.10.
 	exportFileScanDuration *prometheus.HistogramVec
-	// interceptorMTLSHandshake is the §16.1 line 50
+	// interceptorMTLSHandshake is the §16.1
 	// lenny_interceptor_mtls_handshake_duration_seconds histogram
 	// labeled by `result` (success, san_mismatch, cert_expired,
 	// cert_missing, tls_error) — the wall-clock duration and outcome of
 	// the §10.3 NET-063 gateway→in-cluster-interceptor TLS handshake.
 	// The §16.5 InterceptorMTLSHandshakeFailure alert reads it. F-10.3.3.
 	interceptorMTLSHandshake *prometheus.HistogramVec
-	// memoryStoreOperationDuration is the §9.4 / §16.1 line 151
+	// memoryStoreOperationDuration is the §9.4 / §16.1
 	// MemoryStore per-operation duration histogram. Labels: `operation`
 	// (one of write, query, delete, list, delete_by_user,
 	// delete_by_tenant) and `backend` (`postgres` | `custom` | `memory`
@@ -73,21 +73,21 @@ type miscMetrics struct {
 	// alert reads the `delete_by_user` / `delete_by_tenant` quantiles.
 	// F-9.4.1.
 	memoryStoreOperationDuration *prometheus.HistogramVec
-	// memoryStoreErrors is the §9.4 / §16.1 line 152 MemoryStore per-
+	// memoryStoreErrors is the §9.4 / §16.1 MemoryStore per-
 	// operation error counter. Labels: `operation`, `backend`,
 	// `error_type`. F-9.4.1.
 	memoryStoreErrors *prometheus.CounterVec
-	// memoryStoreRecordCount is the §9.4 / §16.1 line 153 approximate
+	// memoryStoreRecordCount is the §9.4 / §16.1 approximate
 	// per-tenant gauge of stored memory records. Labelled by `tenant_id`
 	// only — per-user resolution is forbidden by §16.1.1; the per-user
 	// headroom signal is the threshold counter below. F-9.4.1.
 	memoryStoreRecordCount *prometheus.GaugeVec
-	// memoryStoreUserOverThreshold is the §9.4 / §16.1 line 154 counter
+	// memoryStoreUserOverThreshold is the §9.4 / §16.1 counter
 	// of MemoryStore.Write commits that left the writing user at >= 80%
 	// of memory.maxMemoriesPerUser. Labels: `tenant_id` and `backend`.
 	// Drives the §16.5 MemoryStoreGrowthHigh alert. F-9.4.6.
 	memoryStoreUserOverThreshold *prometheus.CounterVec
-	// timeDrift is the §13.3 line 595 / §16.1 lenny_time_drift_seconds
+	// timeDrift is the §13.3 / §16.1 lenny_time_drift_seconds
 	// gauge: signed offset (seconds) from the NTP reference. The
 	// driftmonitor sampler refreshes this gauge on its tick. The §16.5
 	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
@@ -146,53 +146,53 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16 line 66 — `lenny_delegation_lease_extension_total` counter
+	// §16 — `lenny_delegation_lease_extension_total` counter
 	// of §8.6 lease-extension decisions, labelled by `tenant_id` and
-	// the §8.6 line 743 `outcome` classification (approved/capped/
+	// the §8.6 classification (approved/capped/
 	// denied). Driven by leasecontrol.Service.auditFull on every
 	// ExtendLease return — wired in cmd/lenny-gateway/main.go via the
 	// Options.Metrics field. F-8.6.13.
 	delegationLeaseExtension, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_delegation_lease_extension_total",
-		Help: "§8.6 delegation lease-extension decisions by tenant and §8.6 line 743 outcome.",
+		Help: "§8.6 delegation lease-extension decisions by tenant and §8.6 outcome.",
 	}, []string{"tenant_id", "outcome"})
 	if err != nil {
 		return m, err
 	}
-	// §16.1 line 80 — per-file PreExportMaterialization scan outcomes on
+	// §16.1 — per-file PreExportMaterialization scan outcomes on
 	// the §8.7 delegation file-export path. F-8.7.10.
 	exportFileScans, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_export_file_scans_total",
-		Help: "§8.7 PreExportMaterialization per-file scan outcomes (§16.1 line 80).",
+		Help: "§8.7 PreExportMaterialization per-file scan outcomes (§16.1).",
 	}, []string{"pool", "tenant_id", "policy_name", "interceptor_ref", "outcome"})
 	if err != nil {
 		return m, err
 	}
-	// §16.1 line 81 — per-file PreExportMaterialization interceptor
+	// §16.1 — per-file PreExportMaterialization interceptor
 	// latency. Buckets span sub-millisecond to several seconds so the
 	// P99 > 1s hot-path signal is observable. F-8.7.10.
 	exportFileScanDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_export_file_scan_duration_seconds",
-		Help:    "§8.7 PreExportMaterialization per-file interceptor latency (§16.1 line 81).",
+		Help:    "§8.7 PreExportMaterialization per-file interceptor latency (§16.1).",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
 	}, []string{"pool", "tenant_id", "interceptor_ref"})
 	if err != nil {
 		return m, err
 	}
-	// §10.3 NET-063 / §16.1 line 50 — gateway→in-cluster-interceptor
+	// §10.3 NET-063 / §16.1 — gateway→in-cluster-interceptor
 	// TLS 1.3 handshake latency and outcome. Buckets span sub-
 	// millisecond to a few seconds so a slow or failing handshake is
 	// observable; the `result` label distinguishes the spec's distinct
 	// rejection paths. F-10.3.3.
 	interceptorMTLSHandshake, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_interceptor_mtls_handshake_duration_seconds",
-		Help:    "§10.3 NET-063 gateway→interceptor mTLS handshake latency and outcome (§16.1 line 50).",
+		Help:    "§10.3 NET-063 gateway→interceptor mTLS handshake latency and outcome (§16.1).",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
 	}, []string{"result"})
 	if err != nil {
 		return m, err
 	}
-	// §9.4 line 200 / §16.1 line 151 — MemoryStore per-operation
+	// §9.4 / §16.1 — MemoryStore per-operation
 	// duration histogram. Six operation labels (write, query, delete,
 	// list, delete_by_user, delete_by_tenant); backend distinguishes
 	// the default Postgres backend from custom implementations.
@@ -201,49 +201,49 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	// 300s for delete_by_tenant).
 	memoryStoreOperationDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_memory_store_operation_duration_seconds",
-		Help:    "MemoryStore per-operation duration (§9.4 line 200 / §16.1 line 151).",
+		Help:    "MemoryStore per-operation duration (§9.4 / §16.1).",
 		Buckets: []float64{0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5, 30, 60, 300, 900},
 	}, []string{"operation", "backend"})
 	if err != nil {
 		return m, err
 	}
-	// §9.4 line 200 / §16.1 line 152 — MemoryStore per-operation error
+	// §9.4 / §16.1 — MemoryStore per-operation error
 	// counter.
 	memoryStoreErrors, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_memory_store_errors_total",
-		Help: "MemoryStore per-operation errors (§9.4 line 200 / §16.1 line 152).",
+		Help: "MemoryStore per-operation errors (§9.4 / §16.1).",
 	}, []string{"operation", "backend", "error_type"})
 	if err != nil {
 		return m, err
 	}
-	// §9.4 line 202 / §16.1 line 153 — MemoryStore per-tenant
+	// §9.4 / §16.1 — MemoryStore per-tenant
 	// approximate record count gauge. tenant_id only; user_id is on the
 	// §16.1.1 forbidden-label list as a cardinality hot-spot.
 	memoryStoreRecordCount, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_memory_store_record_count",
-		Help: "Approximate stored memory records per tenant (§9.4 line 202 / §16.1 line 153).",
+		Help: "Approximate stored memory records per tenant (§9.4 / §16.1).",
 	}, []string{"tenant_id"})
 	if err != nil {
 		return m, err
 	}
-	// §9.4 line 202 / §16.1 line 154 — MemoryStore per-user 80% headroom
+	// §9.4 / §16.1 — MemoryStore per-user 80% headroom
 	// counter. Increments on each Write commit that leaves the writing
 	// user at >= 80% of memory.maxMemoriesPerUser. Labels: tenant_id
 	// and backend; no user_id label (forbidden by §16.1.1).
 	memoryStoreUserOverThreshold, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_memory_store_user_count_over_threshold_total",
-		Help: "MemoryStore writes that leave a user at >= 80% of memory.maxMemoriesPerUser (§9.4 line 202 / §16.1 line 154).",
+		Help: "MemoryStore writes that leave a user at >= 80% of memory.maxMemoriesPerUser (§9.4 / §16.1).",
 	}, []string{"tenant_id", "backend"})
 	if err != nil {
 		return m, err
 	}
-	// §13.3 line 595 / §16.1 — NTP drift self-monitor gauge populated by
+	// §13.3 / §16.1 — NTP drift self-monitor gauge populated by
 	// pkg/driftmonitor on its periodic sample. The §16.5
 	// GatewayClockDrift alert keys on `abs(lenny_time_drift_seconds) >
 	// 0.5`. F-13.3.5.
 	timeDriftGauge, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_time_drift_seconds",
-		Help: "Gateway wall-clock signed offset (seconds) from the NTP reference (§13.3 line 595 / §16.1).",
+		Help: "Gateway wall-clock signed offset (seconds) from the NTP reference (§13.3 / §16.1).",
 	}, nil)
 	if err != nil {
 		return m, err

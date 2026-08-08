@@ -16,7 +16,7 @@ import (
 // when a CallPlatformTool names a tool the gateway platform surface does
 // not register. The §9.1 forwarding handler maps it to codes.NotFound so
 // the runtime's MCP client reports an unknown tool rather than a
-// transport fault. spec: §9.1 line 14. F-9.1.1.
+// transport fault. spec: §9.1. F-9.1.1.
 var ErrPlatformToolNotFound = errors.New("leasecontrol: platform tool not found")
 
 // PlatformToolDescriptor is one entry in the §9.1 platform tool catalog
@@ -37,7 +37,7 @@ type PlatformToolDescriptor struct {
 // through the same handlers. The gateway wires a bridge over the
 // platform tool *mcp.Server and the session store; tests pass a fake.
 //
-// spec: §9.1 lines 14-31; §4.7 line 942. F-9.1.1.
+// spec: §9.1; §4.7. F-9.1.1.
 type PlatformToolService interface {
 	// ListPlatformTools returns the platform tool catalog visible to
 	// sessionID. ErrSessionNotFound is returned for an unknown session.
@@ -56,7 +56,7 @@ type PlatformToolService interface {
 // the gateway for the platform tool catalog its intra-pod platform MCP
 // server advertises on tools/list. The gateway returns the same catalog
 // the gateway-edge /mcp surface serves, so the intra-pod server never
-// duplicates tool schemas. spec: §9.1 lines 14-31. F-9.1.1.
+// duplicates tool schemas. spec: §9.1. F-9.1.1.
 func (s *Service) ListPlatformTools(ctx context.Context, req *adapterv1.ListPlatformToolsRequest) (*adapterv1.ListPlatformToolsResponse, error) {
 	if s.platformTools == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: platform tool forwarding is not configured on this gateway")
@@ -93,7 +93,7 @@ func (s *Service) ListPlatformTools(ctx context.Context, req *adapterv1.ListPlat
 //
 // The adapter is the trusted, mesh-authenticated (§10.3) infrastructure
 // for its pod's session, so the gateway dispatches under the session id
-// the adapter presents. spec: §9.1 line 14; §4.7 line 942. F-9.1.1.
+// the adapter presents. spec: §9.1; §4.7. F-9.1.1.
 func (s *Service) CallPlatformTool(ctx context.Context, req *adapterv1.CallPlatformToolRequest) (*adapterv1.CallPlatformToolResponse, error) {
 	if s.platformTools == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: platform tool forwarding is not configured on this gateway")

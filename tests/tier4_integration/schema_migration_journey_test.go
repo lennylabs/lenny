@@ -82,7 +82,7 @@ func newFixtureMigrator(t *testing.T, pg *containers.Postgres) *migrate.Migrate 
 // (contract): Drop old columns/tables in a subsequent release ... Every
 // Phase 3 migration file must begin with a preflight verification block
 // ... and aborts the migration with a non-zero exit code if the result is
-// nonzero"); §17.6 line 848 ("Re-run: ... clear the dirty flag
+// nonzero"); §17.6 ("Re-run: ... clear the dirty flag
 // (`UPDATE schema_migrations SET dirty = false WHERE version = <N>`),
 // release any stale advisory locks, and re-run the migration Job").
 //
@@ -144,7 +144,7 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 	// Phase 3 (contract) attempted with widget-b still un-migrated: the
 	// gate must abort the migration with a non-zero-exit-equivalent
 	// error before any DDL commits, and the failed run must leave the
-	// fixture's schema_migrations row dirty (§17.6 line 848 line "clear
+	// fixture's schema_migrations row dirty (§17.6 line "clear
 	// the dirty flag" implies a failed migration leaves one set).
 	err = m.Migrate(3)
 	if err == nil {
@@ -179,7 +179,7 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 		t.Fatalf("Phase 3 gate rejection still dropped widgets.price_cents; the whole up-file must roll back in one transaction")
 	}
 
-	// Recover per the §17.6 line 848 documented remediation: resolve the
+	// Recover per the §17.6 documented remediation: resolve the
 	// data, clear the dirty flag, and re-run. golang-migrate records the
 	// dirty flag against the target version it failed to reach (3 here),
 	// so "clear the dirty flag" alone leaves the tracker believing

@@ -109,7 +109,7 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 131 / §5.2 — the per-pool checkpointGrantWindow
+// spec: §10.1 / §5.2 — the per-pool checkpointGrantWindow
 // override is declared on the SandboxTemplate, so ResolvePool copies it
 // onto the PoolMatch for the checkpoint driver to prefer over the
 // deployment-wide default. A pool that declares no override leaves the
@@ -132,7 +132,7 @@ func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing
 	}
 }
 
-// spec: §10.1 line 131 / §5.2 — a pool that declares no per-pool
+// spec: §10.1 / §5.2 — a pool that declares no per-pool
 // checkpointGrantWindow leaves the PoolMatch field nil so the checkpoint
 // driver resolves the deployment-wide default.
 func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *testing.T) {
@@ -148,7 +148,7 @@ func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *t
 	}
 }
 
-// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+// spec: §10.1 / §5.2 — a poolstore mirror row that carries a
 // checkpointGrantWindow override wins over the template-derived value, so
 // the gateway-enforced pool policy governs the driver's per-pool window.
 func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T) {
@@ -607,7 +607,7 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 	}
 }
 
-// spec: §5.2 lines 594, 602-625 — ResolvePool surfaces the PoolWarmingUp
+// spec: §5.2 — ResolvePool surfaces the PoolWarmingUp
 // condition and the warming-pod count so the start path can answer a
 // session creation against a bootstrapping pool with the 503 Pool Not
 // Ready response instead of burning a claim attempt.
@@ -631,7 +631,7 @@ func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 600 — a pool with idle pods is not warming; PodsWarming
+// spec: §5.2 — a pool with idle pods is not warming; PodsWarming
 // clamps at zero.
 func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 	c := k8sClient(
@@ -653,7 +653,7 @@ func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 629 — PoolStatusLookup feeds the admin pool GET's
+// spec: §5.2 — PoolStatusLookup feeds the admin pool GET's
 // poolCondition and idlePodCount. One client carries a warming pool, a
 // ready pool, and an absent pool so the three cases share one envtest.
 func TestPoolStatusLookup(t *testing.T) {

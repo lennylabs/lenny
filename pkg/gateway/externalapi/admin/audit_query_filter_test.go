@@ -141,7 +141,7 @@ func TestListAuditEventsFilterByEventType_spec_25_9_3659(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 986 — the DSAR template's category-(b) invocation
+// spec: §12.8 — the DSAR template's category-(b) invocation
 // passes a comma-separated eventType list
 // (admin.impersonation_started,admin.impersonation_ended). A row matches
 // when its event type is any list member.
@@ -332,7 +332,7 @@ func TestListAuditEventsChainIntegrityReport_spec_25_9_3653(t *testing.T) {
 	}
 }
 
-// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9 line 3669
+// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9
 // benign nextval-rollback gap window: a sequence-number jump whose
 // prev_hash links across the gap is reported with reason
 // "nextval_rollback", the value the reconciled §25.9 and the
@@ -364,20 +364,19 @@ func TestListAuditEventsGapWindow_spec_25_9_3669(t *testing.T) {
 // TestListAuditEventsGapWindowNonLinking_spec_25_9_3668 pins that a
 // sequence-number gap whose prev_hash does NOT link across it is not
 // listed as a suspected-gap window at all, and is never labeled the
-// outage reason "postgres_unreachable". §25.9 line 3669 reserves
+// outage reason "postgres_unreachable". §25.9 reserves
 // "postgres_unreachable" for a gap an ops_postgres_outage_log window
 // covers; this handler does not operate that subsystem and cannot compute
-// an outage window, so it never emits that reason. §25.9 line 3668 makes
+// an outage window, so it never emits that reason. §25.9 makes
 // a non-linking-prev_hash gap the tamper case rather than an outage, so it
 // is excluded from the benign nextval-rollback window list entirely.
 // Against the pre-fix gapWindows this non-linking gap was emitted as an
 // outage window with reason "postgres_unreachable", mislabeling a tamper
-// as a Postgres outage — the §25.9 line 3668 condition the spec says is
+// as a Postgres outage — the §25.9 condition the spec says is
 // tampering, not an outage — so this assertion fails against the pre-fix
 // code.
 //
-// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
-// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// spec: §25.9, §25.9.
 // F-11.2.10.
 func TestListAuditEventsGapWindowNonLinking_spec_25_9_3668(t *testing.T) {
 	ts1 := auditTestClock.Add(-2 * time.Hour)
@@ -506,8 +505,7 @@ func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 // `audit.` prefix mapping), so a second list call does not 500 when it
 // encounters the row the first call wrote.
 //
-// spec: §25.9 line 3750; §4.4 line 232 (every audit row is OCSF-egress
-// translatable).
+// spec: §25.9; §4.4.
 func TestAuditQueryExecutedRowReQueriesCleanly(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
@@ -554,10 +552,7 @@ func TestAuditSummaryInvalidGroupBy_spec_25_9_3661(t *testing.T) {
 // reconstruct a multi-subsystem remediation. The row here is a
 // backup.created payload exactly as pkg/ops/backup emits it.
 //
-// spec: §25.9 line 3707 ("audit events tagged with the same operation ID
-// are grouped in queries with ?operationId="); §25.1 line 121 (every
-// audit event produced during a request includes the operation id,
-// "enabling post-incident analysis of multi-step remediations").
+// spec: §25.9; §25.1.
 func TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707(t *testing.T) {
 	// The correlation key the lenny-ops emitters write (camelCase
 	// operationId) does not match the key the §25.9 filter reads (snake

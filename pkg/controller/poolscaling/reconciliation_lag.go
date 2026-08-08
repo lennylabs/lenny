@@ -13,13 +13,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// reconciliationLagSeconds is the §4.6.2 line 557
+// reconciliationLagSeconds is the §4.6.2
 // lenny_pool_config_reconciliation_lag_seconds gauge labeled by pool.
 // The controller resets it to zero on every successful reconciliation
 // cycle (item 1) and the PoolConfigDrift alert in §16.5 fires when it
 // stays above 60s, so the gauge is the join point between the §4.6.2
 // drift design and the §16.5 alert. spec:
-// spec/04_system-components.md lines 557-560.
+// §4.6.2.
 var reconciliationLagSeconds = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_pool_config_reconciliation_lag_seconds",
@@ -51,7 +51,7 @@ func newReconciliationLagMeter(clock func() time.Time) *reconciliationLagMeter {
 }
 
 // MarkSynced records a clean reconciliation for poolName and resets
-// the gauge to zero. spec: §4.6.2 line 557 — "On every successful
+// the gauge to zero. spec: §4.6.2 — "On every successful
 // reconciliation cycle, the controller resets the gauge to zero".
 func (m *reconciliationLagMeter) MarkSynced(poolName string) {
 	if m == nil {

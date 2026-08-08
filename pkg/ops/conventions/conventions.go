@@ -113,7 +113,7 @@ const (
 // (Prometheus-backed) from the gateway's compiled-in default thresholds
 // the in-process tracker uses during the §25.13 Prometheus fallback.
 //
-// spec: §25.2, §25.13 line 4848.
+// spec: §25.2, §25.13.
 type ThresholdSource string
 
 const (
@@ -141,7 +141,7 @@ type Degradation struct {
 	// responses to signal whether the active rule set is the
 	// operator-customized one or the gateway's compiled-in defaults.
 	// Empty on responses unaffected by alert-threshold provenance.
-	// spec: §25.2, §25.13 line 4848.
+	// spec: §25.2, §25.13.
 	ThresholdSource ThresholdSource `json:"thresholdSource,omitempty"`
 	Warnings        []string        `json:"warnings,omitempty"`
 	Since           string          `json:"since,omitempty"`
@@ -185,7 +185,7 @@ const (
 // the §16.3 value on the span's error.category attribute keeps spans within
 // the four categories §16.3 enumerates, so a span never carries a value the
 // trace taxonomy does not list (AUTH) nor omits one it requires (UPSTREAM).
-// spec: §16.3 line 372 (UPSTREAM includes auth failure); §25.2 ErrorCategory.
+// spec: §16.3; §25.2 ErrorCategory.
 func (c ErrorCategory) SpanCategory() tracing.ErrorCategory {
 	switch c {
 	case CategoryTransient:

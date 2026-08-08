@@ -199,7 +199,7 @@ tests:
           path: spec.selector.matchLabels["lenny.dev/component"]
           value: token-service
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled the chart mounts
+  # spec: §4.3 / §10.3 — when mtls.enabled the chart mounts
   # the lenny-token-service-tls Secret and passes the --tls-* flags so
   # the gRPC listener requires and verifies gateway client certs.
   - it: mounts the lenny-token-service-tls Secret when mtls.enabled (default)
@@ -261,7 +261,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --tls-ca=/etc/lenny/mtls/ca.crt
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false (mesh-managed
+  # spec: §4.3 / §10.3 — when mtls.enabled=false (mesh-managed
   # mTLS) the chart skips the volume mounts and the --tls-* flags so
   # the binary runs in dev mode.
   - it: omits mTLS volume mounts and flags when mtls.enabled=false
@@ -279,7 +279,7 @@ tests:
       - isNull:
           path: spec.template.spec.containers[0].volumeMounts
 
-  # spec: §10.5 line 544 ("Token Service: Rolling Deployment update") /
+  # spec: §10.5 /
   # §17.1 — the Token Service declares an explicit RollingUpdate
   # strategy with maxUnavailable 0 so a rollout keeps full token-minting
   # capacity on the gateway auth path. F-10.5.9.

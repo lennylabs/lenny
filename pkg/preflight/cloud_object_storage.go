@@ -13,7 +13,7 @@ import (
 // zero value reports a bucket with no versioning and no lifecycle rules.
 //
 // spec: §17.9.4 (Cloud Object Storage Lifecycle Requirements);
-// §17.6 line 494.
+// §17.6.
 type CloudObjectStorageLifecycleStatus struct {
 	// VersioningEnabled reports whether bucket versioning is enabled
 	// (S3 GetBucketVersioning Status=Enabled, GCS bucket versioning,
@@ -38,9 +38,7 @@ type CloudObjectStorageLifecycleStatus struct {
 // Job wires a real S3 reader when objectStorage.provider=s3; GCS and
 // Azure route through the advisory path until their readers are wired.
 //
-// spec: §17.6 line 494 (S3 GetBucketVersioning +
-// GetBucketLifecycleConfiguration; GCS storage.buckets.get; Azure
-// BlobServiceProperties.IsVersioningEnabled + ManagementPolicy GET).
+// spec: §17.6.
 type CloudObjectStorageLifecycleProber interface {
 	GetLifecycle(ctx context.Context, bucket string) (CloudObjectStorageLifecycleStatus, error)
 }
@@ -54,14 +52,14 @@ func (f CloudObjectStorageLifecycleProbeFunc) GetLifecycle(ctx context.Context, 
 	return f(ctx, bucket)
 }
 
-// DefaultCloudLifecycleMaxExpirationDays is the §17.6 line 494 ceiling
+// DefaultCloudLifecycleMaxExpirationDays is the §17.6 ceiling
 // for the noncurrent-version expiration rule: rules that expire
 // noncurrent versions within this many days satisfy the check. The
 // §17.9.4 configured value is 1 day; the preflight admits anything up to
 // 7 so a deployer who set a slightly longer window still installs.
 const DefaultCloudLifecycleMaxExpirationDays = 7
 
-// CloudObjectStorageLifecycleCheck is the §17.6 line 494 cloud
+// CloudObjectStorageLifecycleCheck is the §17.6 cloud
 // object-storage lifecycle audit. When objectStorage.provider names a
 // cloud backend (s3 | gcs | azure) it verifies, through a provider SDK
 // read, that (a) bucket versioning is enabled and (b) a noncurrent-
@@ -70,7 +68,7 @@ const DefaultCloudLifecycleMaxExpirationDays = 7
 // check is skipped for provider=minio (the post-install Job configures
 // MinIO lifecycle via `mc ilm add`).
 //
-// spec: §17.9.4; §17.6 line 494.
+// spec: §17.9.4; §17.6.
 type CloudObjectStorageLifecycleCheck struct {
 	// Provider is the objectStorage.provider chart value
 	// (minio | s3 | gcs | azure). Empty or "minio" skips the check.
@@ -102,7 +100,7 @@ var cloudObjectStorageProviders = map[string]bool{
 // fail-closed so the install aborts before the gateway writes its first
 // checkpoint to a bucket without versioning.
 //
-// spec: §17.9.4; §17.6 line 494.
+// spec: §17.9.4; §17.6.
 func (c CloudObjectStorageLifecycleCheck) Decide(ctx context.Context) Decision {
 	provider := strings.ToLower(strings.TrimSpace(c.Provider))
 	if provider == "" || provider == "minio" {

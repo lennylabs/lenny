@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
 
-// spec: §12.5 line 317 — the completion hook fires once a job reaches
+// spec: §12.5 — the completion hook fires once a job reaches
 // PhaseCompleted, carrying the job's tenant and user, so the gateway can
 // trigger a tenant-scoped GC sweep for a gcPriority:high tenant. F-12.5.18.
 func TestRunnerCompletionHookFiresOnCompletion_spec_12_5_317(t *testing.T) {
@@ -43,7 +43,7 @@ func TestRunnerCompletionHookFiresOnCompletion_spec_12_5_317(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 317 — a failed erasure job never fires the completion
+// spec: §12.5 — a failed erasure job never fires the completion
 // hook, so a tenant whose erasure aborts mid-store does not trigger a
 // premature immediate sweep. F-12.5.18.
 func TestRunnerCompletionHookSkippedOnFailure_spec_12_5_317(t *testing.T) {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package legalholdreconciler implements the §12.8 line 739 background
+// Package legalholdreconciler implements the §12.8 background
 // reconciler. The reconciler runs co-located with the §12.5 GC
 // goroutine and scans for sessions where `legal_hold = true` and one or
 // more retained checkpoints have already been rotated.
@@ -16,12 +16,12 @@
 //
 // When a gap is detected the reconciler emits a §16.7
 // `legal_hold.checkpoint_gap_detected` critical audit event and
-// increments the §12.5 line 321
+// increments the §12.5
 // `lenny_legal_hold_checkpoint_gaps_total` counter. The reconciler
 // does not attempt to recover deleted checkpoints — it provides
 // detection and audit trail only.
 //
-// spec: §12.8 line 739; §12.5 line 321.
+// spec: §12.8; §12.5.
 package legalholdreconciler
 
 import (
@@ -38,22 +38,22 @@ import (
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// DefaultSweepInterval matches the §12.8 line 739 cadence ("every 15
+// DefaultSweepInterval matches the §12.8 cadence ("every 15
 // minutes") and the §12.5 GC sweep cadence.
 const DefaultSweepInterval = 15 * time.Minute
 
 // AuditAppender is the §11.7 per-tenant audit hash-chain surface the
 // reconciler commits the `legal_hold.checkpoint_gap_detected` event to.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 type AuditAppender interface {
 	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
 }
 
-// MetricsSink emits the §12.5 line 321 / §16.5
+// MetricsSink emits the §12.5 / §16.5
 // `lenny_legal_hold_checkpoint_gaps_total` counter.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 type MetricsSink interface {
 	IncLegalHoldCheckpointGap(tenantID string)
 }
@@ -68,12 +68,12 @@ type MetricsSink interface {
 // partialmanifeststore.Store satisfies this via Get, which returns the
 // row for (tenant, checkpoint_id) even after it has been soft-deleted.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 type PartialManifestLookup interface {
 	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
 }
 
-// Reconciler drives the §12.8 line 739 legal-hold checkpoint-gap
+// Reconciler drives the §12.8 legal-hold checkpoint-gap
 // detection on a periodic cadence. Construct with New.
 type Reconciler struct {
 	catalog   artifactcatalog.Store
@@ -117,7 +117,7 @@ type Options struct {
 // counts every rotated checkpoint row, matching the pre-exclusion
 // behavior.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func New(catalog artifactcatalog.Store, audit AuditAppender, metrics MetricsSink, manifests PartialManifestLookup, opts Options) *Reconciler {
 	r := &Reconciler{
 		catalog:    catalog,
@@ -189,7 +189,7 @@ func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 // glance. A session with every checkpoint live and at least one entry is
 // gap-free.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func (r *Reconciler) detectGap(ctx context.Context, ref artifactcatalog.SessionRef) (bool, checkpointSummary, error) {
 	rows, err := r.catalog.ListBySession(ctx, ref.TenantID, ref.SessionID)
 	if err != nil {
@@ -236,7 +236,7 @@ type checkpointSummary struct {
 // as a partial attempt and counts it, failing toward detection so a
 // possible gap is never silently suppressed.
 //
-// spec: §12.8 line 739; §10.1 line 141.
+// spec: §12.8; §10.1.
 func (r *Reconciler) rowBelongsToPartialManifest(ctx context.Context, tenantID string, row artifactcatalog.Record) (bool, error) {
 	if r.manifests == nil {
 		return false, nil
@@ -263,7 +263,7 @@ func (r *Reconciler) rowBelongsToPartialManifest(ctx context.Context, tenantID s
 // full part_id so two distinct unlinkable checkpoints still count
 // separately rather than collapsing onto an empty key.
 //
-// spec: §10.1 line 141.
+// spec: §10.1.
 func checkpointGroupKey(partID string) string {
 	if id := checkpointIDFromPartID(partID); id != "" {
 		return id
@@ -294,7 +294,7 @@ func (r *Reconciler) shouldEmit(ref artifactcatalog.SessionRef) bool {
 }
 
 // emit commits the §16.7 legal_hold.checkpoint_gap_detected audit row
-// and increments the §12.5 line 321 metric counter. The dedupe stamp
+// and increments the §12.5 metric counter. The dedupe stamp
 // is set after a successful append.
 func (r *Reconciler) emit(ctx context.Context, ref artifactcatalog.SessionRef, s checkpointSummary) error {
 	payload, err := json.Marshal(map[string]any{
@@ -321,7 +321,7 @@ func (r *Reconciler) emit(ctx context.Context, ref artifactcatalog.SessionRef, s
 // done. onTick, when non-nil, receives each sweep's emit-count and
 // error.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func (r *Reconciler) Run(ctx context.Context, onTick func(int, error)) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()

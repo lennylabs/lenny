@@ -71,7 +71,7 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 
 // TestPackIncludesRegularFiles_spec_26_2 confirms Pack archives the
 // workspace's regular files with workspace-relative paths and verbatim
-// content. spec: §26.2 lines 95-114.
+// content. spec: §26.2.
 func TestPackIncludesRegularFiles_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -97,7 +97,7 @@ func TestPackIncludesRegularFiles_spec_26_2(t *testing.T) {
 
 // TestPackExcludesGitDir_spec_26_2 confirms the always-on .git exclusion
 // keeps version-control metadata out of the uploadArchive (gitClone is the
-// §26.2 path for history). spec: §26.2 line 119.
+// §26.2 path for history). spec: §26.2.
 func TestPackExcludesGitDir_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -120,7 +120,7 @@ func TestPackExcludesGitDir_spec_26_2(t *testing.T) {
 }
 
 // TestPackHonorsLennyignore_spec_26_2 confirms .lennyignore patterns are
-// applied and take precedence over .gitignore. spec: §26.2 line 114.
+// applied and take precedence over .gitignore. spec: §26.2.
 func TestPackHonorsLennyignore_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -155,7 +155,7 @@ func TestPackHonorsLennyignore_spec_26_2(t *testing.T) {
 }
 
 // TestPackFallsBackToGitignore_spec_26_2 confirms .gitignore is applied
-// when no .lennyignore is present. spec: §26.2 line 114.
+// when no .lennyignore is present. spec: §26.2.
 func TestPackFallsBackToGitignore_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -176,7 +176,7 @@ func TestPackFallsBackToGitignore_spec_26_2(t *testing.T) {
 }
 
 // TestPackNegationReincludes_spec_26_2 confirms a later `!` rule
-// re-includes a file an earlier rule excluded. spec: §26.2 line 114.
+// re-includes a file an earlier rule excluded. spec: §26.2.
 func TestPackNegationReincludes_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -199,7 +199,7 @@ func TestPackNegationReincludes_spec_26_2(t *testing.T) {
 
 // TestPackAnchoredPattern_spec_26_2 confirms a leading-slash pattern
 // anchors to the workspace root and does not match the same name nested
-// deeper. spec: §26.2 line 114.
+// deeper. spec: §26.2.
 func TestPackAnchoredPattern_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
@@ -221,7 +221,7 @@ func TestPackAnchoredPattern_spec_26_2(t *testing.T) {
 }
 
 // TestPackSkipsSymlinks_spec_26_2 confirms non-regular entries are omitted
-// rather than aborting the pack. spec: §26.2 line 114; §7.4 upload safety.
+// rather than aborting the pack. spec: §26.2; §7.4 upload safety.
 func TestPackSkipsSymlinks_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"real.txt": "data"})
@@ -242,7 +242,7 @@ func TestPackSkipsSymlinks_spec_26_2(t *testing.T) {
 }
 
 // TestPackEmptyDirAndNoIgnore_spec_26_2 confirms directories survive and
-// an absent ignore file leaves IgnoreFile empty. spec: §26.2 line 114.
+// an absent ignore file leaves IgnoreFile empty. spec: §26.2.
 func TestPackEmptyDirAndNoIgnore_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"f.txt": "x"})
@@ -262,7 +262,7 @@ func TestPackEmptyDirAndNoIgnore_spec_26_2(t *testing.T) {
 }
 
 // TestPackRejectsNonDirectory_spec_26_2 confirms Pack errors on a missing
-// or non-directory path. spec: §26.2 line 114.
+// or non-directory path. spec: §26.2.
 func TestPackRejectsNonDirectory_spec_26_2(t *testing.T) {
 	if _, err := Pack(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
 		t.Error("Pack of a missing path should error")
@@ -277,7 +277,7 @@ func TestPackRejectsNonDirectory_spec_26_2(t *testing.T) {
 }
 
 // TestPackSanitizesHeaders_spec_26_2 confirms host uid/gid identity is
-// stripped from archive headers. spec: §26.2 line 114.
+// stripped from archive headers. spec: §26.2.
 func TestPackSanitizesHeaders_spec_26_2(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"f.txt": "x"})

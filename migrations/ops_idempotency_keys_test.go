@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.4 lines 2011-2130. Migration 0116 creates the
+// spec: §25.4. Migration 0116 creates the
 // ops_idempotency_keys table — the §25.4 control-plane idempotency-key
 // registry keyed by (key, caller_id), with the expires_at retention
 // index. It is platform-scoped (no tenant column, no RLS); the down

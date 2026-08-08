@@ -19,20 +19,20 @@ import (
 // drive the pod through ConfigureWorkspace rather than StartSession.
 const CapabilityPreConnect = "preConnect"
 
-// DefaultDemoteTimeout is the §6.1 line 67 default bound (5s) the adapter
+// DefaultDemoteTimeout is the §6.1 default bound (5s) the adapter
 // applies to its SIGTERM-time DemoteSDK teardown before it force-terminates
 // the SDK process. The deployer overrides it via LENNY_DEMOTE_TIMEOUT_SECONDS.
-// spec: §6.1 line 67.
+// spec: §6.1.
 const DefaultDemoteTimeout = 5 * time.Second
 
-// demoteTimeoutEnvVar is the §6.1 line 67 environment variable that bounds
+// demoteTimeoutEnvVar is the §6.1 environment variable that bounds
 // the SIGTERM-time DemoteSDK teardown.
 const demoteTimeoutEnvVar = "LENNY_DEMOTE_TIMEOUT_SECONDS"
 
 // ForceTerminator is the optional capability an SDKWarmRuntime implements so
-// the adapter can hard-stop the SDK process when the §6.1 line 67 bounded
+// the adapter can hard-stop the SDK process when the §6.1 bounded
 // DemoteSDK teardown overruns its timeout. A runtime that does not implement
-// it relies on adapter-process exit to reap the SDK. spec: §6.1 line 67.
+// it relies on adapter-process exit to reap the SDK. spec: §6.1.
 type ForceTerminator interface {
 	// ForceTerminate hard-stops the SDK process immediately, without waiting
 	// for a graceful teardown. The adapter calls it only after a DemoteSDK
@@ -41,9 +41,9 @@ type ForceTerminator interface {
 	ForceTerminate()
 }
 
-// DemoteTimeoutFromEnv resolves the §6.1 line 67 bounded DemoteSDK timeout
+// DemoteTimeoutFromEnv resolves the §6.1 bounded DemoteSDK timeout
 // from LENNY_DEMOTE_TIMEOUT_SECONDS, falling back to DefaultDemoteTimeout
-// when the variable is unset or not a positive integer. spec: §6.1 line 67.
+// when the variable is unset or not a positive integer. spec: §6.1.
 func DemoteTimeoutFromEnv() time.Duration {
 	v := os.Getenv(demoteTimeoutEnvVar)
 	if v == "" {
@@ -56,7 +56,7 @@ func DemoteTimeoutFromEnv() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-// ShutdownDemoteSDK runs the §6.1 line 67 SIGTERM-during-sdk_connecting
+// ShutdownDemoteSDK runs the §6.1 SIGTERM-during-sdk_connecting
 // teardown. For an SDK-warm pod whose SDK has been pre-connected it calls
 // DemoteSDK bounded by timeout so the in-progress SDK connection is torn
 // down cleanly; if DemoteSDK does not return within the bound it
@@ -65,7 +65,7 @@ func DemoteTimeoutFromEnv() time.Duration {
 // for a pod-warm pod (no SDK to tear down) or an SDK-warm pod that never
 // pre-connected, so a SIGTERM handler may call it unconditionally before
 // GracefulStop. A non-positive timeout falls back to DefaultDemoteTimeout.
-// spec: §6.1 line 67.
+// spec: §6.1.
 func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 	sw, ok := s.sdkWarmRuntime()
 	if !ok {
@@ -94,7 +94,7 @@ func (s *Server) ShutdownDemoteSDK(timeout time.Duration) {
 		// longer mid-connection.
 		return
 	case <-ctx.Done():
-		// §6.1 line 67 step 2 — the bounded DemoteSDK overran; force-terminate
+		// §6.1 step 2 — the bounded DemoteSDK overran; force-terminate
 		// the SDK process so it is not abandoned mid-connection. The DemoteSDK
 		// goroutine is left to exit as the adapter process terminates.
 		if ft, ok := sw.(ForceTerminator); ok {
@@ -120,7 +120,7 @@ type SDKWarmRuntime interface {
 	RuntimeProcess
 	// PreConnect starts the agent SDK at warm time, before any session is
 	// assigned, leaving it connected and waiting for its first prompt
-	// (§6.1 line 30). The adapter calls it once during startup for a
+	// (§6.1). The adapter calls it once during startup for a
 	// preConnect runtime. It MUST be idempotent: a repeat call while the
 	// SDK is already connected is a no-op success.
 	PreConnect(ctx context.Context) error
@@ -141,7 +141,7 @@ func (s *Server) sdkWarmRuntime() (SDKWarmRuntime, bool) {
 	return sw, ok
 }
 
-// PreConnect runs the §6.1 line 30 SDK-warm pre-connect: for a preConnect
+// PreConnect runs the §6.1 SDK-warm pre-connect: for a preConnect
 // runtime it starts the agent SDK at warm time so a later
 // ConfigureWorkspace points the already-connected SDK at the workspace
 // rather than starting a runtime from cold. It is a no-op success for a
@@ -219,7 +219,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 		return nil, err
 	}
 	if fresh {
-		// §9.3 line 142: resolve the session's permitted connectors so the
+		// §9.3: resolve the session's permitted connectors so the
 		// pre-connected runtime gets one per-connector MCP server per
 		// connector its policy admits. Best-effort.
 		connectors := s.sessionConnectors(ctx, sessionID)
@@ -241,7 +241,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 				s.releaseSession()
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
-			// §9.3 lines 142-164: open the per-connector MCP servers. F-9.1.2.
+			// §9.3: open the per-connector MCP servers. F-9.1.2.
 			s.startConnectorMCPServers(sessionID, nonce, connectors)
 		}
 	}

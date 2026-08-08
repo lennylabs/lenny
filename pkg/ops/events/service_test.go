@@ -75,7 +75,7 @@ func TestService_Stream_ReplaysBacklog(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2679-2680 — Last-Event-ID (the CloudEvents id /
+// spec: §25.5 — Last-Event-ID (the CloudEvents id /
 // eventKey) skips already-seen events on reconnect.
 func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
@@ -157,7 +157,7 @@ func TestService_Stream_FilterByEventType(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2687-2699 / §25.2 — the polling endpoint returns
+// spec: §25.5 / §25.2 — the polling endpoint returns
 // the canonical pagination envelope (items + opaque cursor + hasMore +
 // cursorKind + headCursor) and the cursor round-trips to the next page.
 func TestService_Poll_PaginationEnvelope(t *testing.T) {

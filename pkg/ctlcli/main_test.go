@@ -68,7 +68,7 @@ func TestParseGlobalFlagsStopsAtCommand(t *testing.T) {
 	}
 }
 
-// spec: §24.0 line 26, §24.16 lines 197/199 — LENNY_API_URL / LENNY_OPS_URL
+// spec: §24.0, §24.16 — LENNY_API_URL / LENNY_OPS_URL
 // / LENNY_API_TOKEN supply defaults when the matching flag is absent.
 // Closes F-24.0.6 and its duplicate F-24.16.1.
 func TestParseGlobalFlagsHonorsEnv(t *testing.T) {
@@ -90,7 +90,7 @@ func TestParseGlobalFlagsHonorsEnv(t *testing.T) {
 	}
 }
 
-// spec: §24.0 line 26 — an explicit flag overrides the environment.
+// spec: §24.0 — an explicit flag overrides the environment.
 func TestParseGlobalFlagsFlagOverridesEnv(t *testing.T) {
 	t.Setenv("LENNY_API_URL", "https://env.example")
 	t.Setenv("LENNY_API_TOKEN", "env-tok")
@@ -117,7 +117,7 @@ func TestParseGlobalFlagsEmptyEnvIsUnset(t *testing.T) {
 	}
 }
 
-// spec: §24 preamble line 8 — --token is the spec-facing flag; --bearer is
+// spec: §24 preamble — --token is the spec-facing flag; --bearer is
 // an alias. Both populate the bearer credential.
 func TestParseGlobalFlagsTokenAlias(t *testing.T) {
 	clearCLIEnv(t)
@@ -131,7 +131,7 @@ func TestParseGlobalFlagsTokenAlias(t *testing.T) {
 	}
 }
 
-// spec: §24.0 line 23, §17.6 line 360 — `version` and `--version` print
+// spec: §24.0, §17.6 — `version` and `--version` print
 // the local CLI build and never touch the gateway, so they work before a
 // deployment exists. Closes F-24.0.4 and F-24.0.7.
 func TestVersionCommandIsOfflineLocal(t *testing.T) {
@@ -261,8 +261,7 @@ func TestAdminTenantsListUsesAdminPrefix(t *testing.T) {
 
 // TestAdminTenantsGet covers `lenny-ctl admin tenants get <id>` mapping to
 // GET /v1/admin/tenants/{id}; the response carries the §12.8 `state`
-// field operators use to monitor the deletion lifecycle. spec: §24.10
-// line 127. F-24.10.1, F-24.10.4.
+// field operators use to monitor the deletion lifecycle. spec: §24.10. F-24.10.1, F-24.10.4.
 func TestAdminTenantsGet(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"id":"acme","state":"deleting"}`,
 		"admin", "tenants", "get", "acme")
@@ -276,7 +275,7 @@ func TestAdminTenantsGet(t *testing.T) {
 
 // TestAdminTenantsDelete covers `lenny-ctl admin tenants delete <id>`
 // mapping to DELETE /v1/admin/tenants/{id} (204 No Content), which
-// initiates the §12.8 deletion lifecycle. spec: §24.10 line 128.
+// initiates the §12.8 deletion lifecycle. spec: §24.10.
 // F-24.10.1.
 func TestAdminTenantsDelete(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusNoContent, ``,
@@ -350,7 +349,7 @@ func TestAdminTenantsForceDeleteRequiresID(t *testing.T) {
 
 // TestAdminTenantsRotateErasureSalt covers `lenny-ctl admin tenants
 // rotate-erasure-salt <id>` mapping to POST
-// /v1/admin/tenants/{id}/rotate-erasure-salt. spec: §12.8 line 857.
+// /v1/admin/tenants/{id}/rotate-erasure-salt. spec: §12.8.
 // F-12.8.5.
 func TestAdminTenantsRotateErasureSalt(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"tenantId":"acme","rotated":true}`,
@@ -411,8 +410,7 @@ func TestAdminTenantsUnknownSubcommand(t *testing.T) {
 // stdout empty for a strict `| jq` pipeline), it must instead route to
 // stderr, and `--quiet` must suppress it entirely. Fails against pre-fix
 // code, which wrote the advisory to stdout and ignored --quiet.
-// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
-// informational messages).
+// spec: §24.16.
 func TestAdminTenantsDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
 	const advisory = "deletion initiated"
 
@@ -447,8 +445,7 @@ func TestAdminTenantsDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
 // parse as a single JSON document (the envelope) with no trailing advisory,
 // the advisory routes to stderr, and `--quiet` suppresses it. Fails against
 // pre-fix code, which appended the advisory to stdout after the JSON.
-// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
-// informational messages).
+// spec: §24.16.
 func TestAdminTenantsForceDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
 	const advisory = "force-delete initiated"
 
@@ -491,7 +488,7 @@ func TestCircuitBreakersOpenRequiresLimitTier(t *testing.T) {
 }
 
 // TestAdminPoolsList covers `lenny-ctl admin pools list` mapping to
-// GET /v1/admin/pools. spec: §24.4 line 61.
+// GET /v1/admin/pools. spec: §24.4.
 func TestAdminPoolsList(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"pools":[]}`,
 		"admin", "pools", "list")
@@ -504,7 +501,7 @@ func TestAdminPoolsList(t *testing.T) {
 }
 
 // TestAdminPoolsGet covers `lenny-ctl admin pools get <name>`. spec:
-// §24.4 line 62.
+// §24.4.
 func TestAdminPoolsGet(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
 		"admin", "pools", "get", "p1")
@@ -558,7 +555,7 @@ func TestAdminPoolsUpdate(t *testing.T) {
 }
 
 // TestAdminPoolsDelete covers DELETE /v1/admin/pools/{name}. spec:
-// §15.1 line 796.
+// §15.1.
 func TestAdminPoolsDelete(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{}`,
 		"admin", "pools", "delete", "p1")
@@ -571,7 +568,7 @@ func TestAdminPoolsDelete(t *testing.T) {
 }
 
 // TestAdminPoolsSyncStatus covers GET /v1/admin/pools/{name}/sync-status.
-// spec: §15.1 line 798.
+// spec: §15.1.
 func TestAdminPoolsSyncStatus(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"inSync":true}`,
 		"admin", "pools", "sync-status", "p1")
@@ -596,7 +593,7 @@ func TestAdminPoolsDrain(t *testing.T) {
 }
 
 // TestAdminPoolsResumeReconciliation covers
-// POST /v1/admin/pools/{name}/resume-reconciliation. spec: §15.1 line 799.
+// POST /v1/admin/pools/{name}/resume-reconciliation. spec: §15.1.
 func TestAdminPoolsResumeReconciliation(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"pool":"p1"}`,
 		"admin", "pools", "resume-reconciliation", "p1")
@@ -609,8 +606,8 @@ func TestAdminPoolsResumeReconciliation(t *testing.T) {
 }
 
 // TestAdminPoolsExitBootstrap covers
-// DELETE /v1/admin/pools/{name}/bootstrap-override. spec: §24.4 line 64,
-// §15.1 line 875.
+// DELETE /v1/admin/pools/{name}/bootstrap-override. spec: §24.4,
+// §15.1.
 func TestAdminPoolsExitBootstrap(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
 		"admin", "pools", "exit-bootstrap", "--pool", "p1")
@@ -623,7 +620,7 @@ func TestAdminPoolsExitBootstrap(t *testing.T) {
 }
 
 // TestAdminPoolsExitBootstrapRequiresPool fails fast with exit code 2 when
-// --pool is omitted. spec: §24.4 line 64.
+// --pool is omitted. spec: §24.4.
 func TestAdminPoolsExitBootstrapRequiresPool(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"admin", "pools", "exit-bootstrap"}, &stdout, &stderr)
@@ -635,7 +632,7 @@ func TestAdminPoolsExitBootstrapRequiresPool(t *testing.T) {
 // TestAdminPoolsCircuitBreaker covers
 // PUT /v1/admin/pools/{name}/circuit-breaker. The CLI fetches the pool's
 // ETag (GET) then issues the PUT with the override body; the captured
-// request is the trailing PUT. spec: §24.4 line 75, §15.1 line 801.
+// request is the trailing PUT. spec: §24.4, §15.1.
 func TestAdminPoolsCircuitBreaker(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"p1"}`,
 		"admin", "pools", "circuit-breaker", "--pool", "p1", "--state", "enabled")
@@ -653,7 +650,7 @@ func TestAdminPoolsCircuitBreaker(t *testing.T) {
 
 // TestAdminPoolsCircuitBreakerRejectsBadState rejects a --state value
 // outside the {enabled, disabled, auto} set before any HTTP call.
-// spec: §24.4 line 75.
+// spec: §24.4.
 func TestAdminPoolsCircuitBreakerRejectsBadState(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"admin", "pools", "circuit-breaker", "--pool", "p1", "--state", "sideways"}, &stdout, &stderr)
@@ -663,8 +660,8 @@ func TestAdminPoolsCircuitBreakerRejectsBadState(t *testing.T) {
 }
 
 // TestAdminPoolsGrantAccess covers
-// POST /v1/admin/pools/{name}/tenant-access. spec: §24.4 line 76,
-// §15.1 line 802.
+// POST /v1/admin/pools/{name}/tenant-access. spec: §24.4,
+// §15.1.
 func TestAdminPoolsGrantAccess(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{}`,
 		"admin", "pools", "grant-access", "--pool", "p1", "--tenant", "acme")
@@ -680,8 +677,8 @@ func TestAdminPoolsGrantAccess(t *testing.T) {
 }
 
 // TestAdminPoolsListAccess covers
-// GET /v1/admin/pools/{name}/tenant-access. spec: §24.4 line 77,
-// §15.1 line 803.
+// GET /v1/admin/pools/{name}/tenant-access. spec: §24.4,
+// §15.1.
 func TestAdminPoolsListAccess(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"tenants":[]}`,
 		"admin", "pools", "list-access", "--pool", "p1")
@@ -694,8 +691,7 @@ func TestAdminPoolsListAccess(t *testing.T) {
 }
 
 // TestAdminPoolsRevokeAccess covers
-// DELETE /v1/admin/pools/{name}/tenant-access/{tenantId}. spec: §24.4 line
-// 78, §15.1 line 804.
+// DELETE /v1/admin/pools/{name}/tenant-access/{tenantId}. spec: §24.4, §15.1.
 func TestAdminPoolsRevokeAccess(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusNoContent, ``,
 		"admin", "pools", "revoke-access", "--pool", "p1", "--tenant", "acme")
@@ -708,7 +704,7 @@ func TestAdminPoolsRevokeAccess(t *testing.T) {
 }
 
 // TestAdminPoolsAccessRequiresPool fails fast with exit code 2 when --pool
-// is omitted from a tenant-access verb. spec: §24.4 lines 76-78.
+// is omitted from a tenant-access verb. spec: §24.4.
 func TestAdminPoolsAccessRequiresPool(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"admin", "pools", "grant-access", "--tenant", "acme"}, &stdout, &stderr)
@@ -718,7 +714,7 @@ func TestAdminPoolsAccessRequiresPool(t *testing.T) {
 }
 
 // TestAdminPoolsGrantAccessRequiresTenant fails fast when --tenant is
-// omitted from grant-access. spec: §24.4 line 76.
+// omitted from grant-access. spec: §24.4.
 func TestAdminPoolsGrantAccessRequiresTenant(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"admin", "pools", "grant-access", "--pool", "p1"}, &stdout, &stderr)
@@ -744,7 +740,7 @@ func TestAdminUnknownResource(t *testing.T) {
 	}
 }
 
-// spec: §24.12 lines 140-144 — erasure-jobs get / retry /
+// spec: §24.12 — erasure-jobs get / retry /
 // clear-restriction CLI group. F-24.12.1.
 func TestAdminErasureJobsGet(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"jobId":"erasure_x","phase":"failed"}`,
@@ -819,7 +815,7 @@ func TestBootstrapRequiresFromValues(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 473 — a first run (the gateway created the Secret)
+// spec: §17.6 — a first run (the gateway created the Secret)
 // prints the first-use prompt with the retrieve command; a re-run prints
 // the "already exists" notice. F-24.1.7.
 func TestBootstrapAdminTokenFirstUsePrompt_spec_17_6_473(t *testing.T) {
@@ -941,7 +937,7 @@ func TestBootstrapRejectsMalformedSeedFile(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 421 — the bootstrap CLI accepts --wait-timeout
+// spec: §17.6 — the bootstrap CLI accepts --wait-timeout
 // (default 120s) for the gateway readiness poll.
 func TestBootstrapWaitTimeoutFlag_spec_17_6_421(t *testing.T) {
 	path := writeSeedFile(t, "bootstrap-values.json",
@@ -956,7 +952,7 @@ func TestBootstrapWaitTimeoutFlag_spec_17_6_421(t *testing.T) {
 	}
 }
 
-// spec: §24.1 line 35 — --dry-run maps to ?dryRun=true; §17.6 line 450 —
+// spec: §24.1 — --dry-run maps to ?dryRun=true; §17.6 —
 // --force-update maps to ?forceUpdate=true.
 func TestBootstrapDryRunAndForceUpdateQuery_spec_24_1_35(t *testing.T) {
 	for _, tc := range []struct {
@@ -985,7 +981,7 @@ func TestBootstrapDryRunAndForceUpdateQuery_spec_24_1_35(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 420 — exit 0 = all seeded, 1 = validation error,
+// spec: §17.6 — exit 0 = all seeded, 1 = validation error,
 // 2 = partial failure.
 func TestBootstrapExitCodeMapping_spec_17_6_420(t *testing.T) {
 	for _, tc := range []struct {
@@ -1036,7 +1032,7 @@ func TestBootstrapExitCodeMapping_spec_17_6_420(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 420 — a 207 partial-failure POST response makes the
+// spec: §17.6 — a 207 partial-failure POST response makes the
 // CLI exit 2; the readiness poll is skipped so the test never blocks.
 func TestBootstrapPartialFailureExitsTwo_spec_17_6_420(t *testing.T) {
 	path := writeSeedFile(t, "bootstrap-values.json",
@@ -1075,7 +1071,7 @@ func TestParseOpenBreaker(t *testing.T) {
 	}
 }
 
-// TestParseOpenBreakerRequiresReason asserts the §24.7 line 106
+// TestParseOpenBreakerRequiresReason asserts the §24.7
 // required `--reason <text>` flag is enforced client-side so the audit
 // event does not silently degrade. F-24.7.1.
 func TestParseOpenBreakerRequiresReason_spec_24_7_106(t *testing.T) {
@@ -1093,7 +1089,7 @@ func TestParseOpenBreakerRequiresReason_spec_24_7_106(t *testing.T) {
 	}
 }
 
-// TestParseOpenBreakerRequiresScope asserts the §24.7 line 106
+// TestParseOpenBreakerRequiresScope asserts the §24.7
 // required `--scope <key>=<value>` flag is enforced client-side so
 // the operator sees a deterministic CLI error rather than a server
 // 422 INVALID_BREAKER_SCOPE. F-24.7.2.
@@ -1107,7 +1103,7 @@ func TestParseOpenBreakerRequiresScope_spec_24_7_106(t *testing.T) {
 	}
 }
 
-// TestLennyCtlDelegatesLocalStatus confirms the §24.19 line 266
+// TestLennyCtlDelegatesLocalStatus confirms the §24.19
 // "one binary, two names" alias: `lenny-ctl status` behaves identically
 // to `lenny status`, dispatching to the Embedded Mode stack rather than
 // failing with an unknown-command error. F-24.19.2.

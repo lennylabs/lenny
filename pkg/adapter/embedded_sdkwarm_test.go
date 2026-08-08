@@ -31,7 +31,7 @@ func sdkWarmEchoLoop(_ context.Context, in io.Reader, out io.Writer) error {
 	}
 }
 
-// spec: §6.1 lines 30-40 — the SDK-warm reference runtime pre-connects at
+// spec: §6.1 — the SDK-warm reference runtime pre-connects at
 // warm time, binds to a session via ConfigureWorkspace, and tears down via
 // DemoteSDK so a subsequent StartSession runs the pod-warm path.
 func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {

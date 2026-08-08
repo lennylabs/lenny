@@ -89,7 +89,7 @@ func TestVCSTokenMintsSessionBoundToken_spec_26_2_119(t *testing.T) {
 		t.Fatalf("result = %+v, want github.com/x-access-token/ghs_abc", out)
 	}
 	// The resolver is asked for the right tenant, an HTTPS URL, and the
-	// read scope (§26.2 line 119: gitClone.url is HTTPS-only in v1).
+	// read scope (§26.2: gitClone.url is HTTPS-only in v1).
 	if r.gotTenant != "acme" || r.gotURL != "https://github.com" || r.gotScope != "vcs.github.read" {
 		t.Fatalf("resolver inputs = (%q,%q,%q), want (acme, https://github.com, vcs.github.read)",
 			r.gotTenant, r.gotURL, r.gotScope)

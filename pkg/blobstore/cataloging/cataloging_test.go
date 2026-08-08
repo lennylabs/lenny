@@ -571,7 +571,7 @@ func TestSoftDeleteRowSurfacesCatalogReadError(t *testing.T) {
 // spec: §12.5 rule 4 — SoftDeleteRow surfaces a non-ErrNotFound catalog
 // soft-delete write error wrapped and named by the chunk URI. Only an
 // ErrNotFound (the row raced past live) is the idempotent no-decrement case;
-// any other write failure must abort so the §11 line 37 Redis decrement,
+// any other write failure must abort so the §11 Redis decrement,
 // which follows the committed deleted_at, never fires against a row whose
 // transition failed.
 //
@@ -646,7 +646,7 @@ func TestHardPruneRemovesExpiredRows(t *testing.T) {
 }
 
 // spyTomb wraps an in-memory store to record the catalog-driven
-// targeted hard-deletes the §12.5 line 320 sweep issues and to fail a
+// targeted hard-deletes the §12.5 sweep issues and to fail a
 // configured URI on demand. F-12.5.23.
 type spyTomb struct {
 	*blobstore.MemoryStore
@@ -662,7 +662,7 @@ func (s *spyTomb) HardDeleteObject(u blobstore.URI) error {
 	return s.MemoryStore.HardDeleteObject(u)
 }
 
-// spec: §12.5 line 320 — the catalog-driven hard-prune deletes exactly
+// spec: §12.5 — the catalog-driven hard-prune deletes exactly
 // the bucket objects Postgres reports past their TTL and leaves live
 // objects untouched. It does not scan the bucket. F-12.5.23.
 func TestHardPruneDeletesOnlyPrunableObjects(t *testing.T) {
@@ -704,7 +704,7 @@ func TestHardPruneDeletesOnlyPrunableObjects(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 341 — the sweep deletes the object before the row,
+// spec: §12.5 — the sweep deletes the object before the row,
 // so a failed object delete leaves the catalog row for the next cycle
 // rather than orphaning a bucket object. F-12.5.23.
 func TestHardPruneKeepsRowWhenObjectDeleteFails(t *testing.T) {
@@ -949,7 +949,7 @@ func TestDeleteByTenantForwarded(t *testing.T) {
 // `legal_hold = false` guard keeps a §12.8-held row out of the Phase 4
 // bulk delete; the unheld row in the same tenant is removed.
 //
-// spec: §12.5 ll. 295; §12.8 line 735.
+// spec: §12.5 ll. 295; §12.8.
 func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()
@@ -982,7 +982,7 @@ func TestDeleteByTenantPreservesLegalHeldCatalogRow(t *testing.T) {
 // the error propagates and no catalog row is reconciled — a held
 // tenant survives intact.
 //
-// spec: §12.5 ll. 295; §12.8 line 735.
+// spec: §12.5 ll. 295; §12.8.
 func TestDeleteByTenantInnerAbortLeavesCatalog(t *testing.T) {
 	mem := blobstore.NewMemoryStore(nil)
 	cat := newFakeCatalog()

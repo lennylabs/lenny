@@ -107,7 +107,7 @@ func TestUsedIsPerTenant(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — Set overwrites the counter with an absolute value
+// spec: §11 — Set overwrites the counter with an absolute value
 // (the rehydration write) and clamps a negative value to zero.
 func TestSetOverwritesAndClamps(t *testing.T) {
 	c := storagequota.NewMemory()
@@ -129,7 +129,7 @@ func TestSetOverwritesAndClamps(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — Rehydrate reconstructs each tenant's counter from
+// spec: §11 — Rehydrate reconstructs each tenant's counter from
 // the authoritative live-byte sum after a Redis restart.
 func TestRehydrateReconstructsPerTenantCounters(t *testing.T) {
 	c := storagequota.NewMemory()
@@ -149,7 +149,7 @@ func TestRehydrateReconstructsPerTenantCounters(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — a per-tenant read fault is collected and the
+// spec: §11 — a per-tenant read fault is collected and the
 // sweep continues so one tenant cannot abort the rest.
 func TestRehydrateCollectsErrorsAndContinues(t *testing.T) {
 	c := storagequota.NewMemory()

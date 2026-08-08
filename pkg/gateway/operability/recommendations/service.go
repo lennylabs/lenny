@@ -13,47 +13,47 @@ import (
 )
 
 // §25.3 capacity-recommendation errors. The admin handler maps these to
-// the §25.3 error-code table (lines 622-625).
+// the §25.3 error-code table.
 var (
 	// ErrUnknownCategory is returned when a ?category= filter names a
-	// value outside the §25.3 closed category enum. spec: §25.3 line 624
+	// value outside the §25.3 closed category enum. spec: §25.3
 	// — UNKNOWN_RECOMMENDATION_CATEGORY (400).
 	ErrUnknownCategory = errors.New("unknown recommendation category")
 
 	// ErrRecommendationsUnavailable is returned when the operator set
 	// disableOnPrometheusOutage and the backing reader reports itself
-	// unavailable. spec: §25.3 line 625 — RECOMMENDATIONS_UNAVAILABLE
+	// unavailable. spec: §25.3 — RECOMMENDATIONS_UNAVAILABLE
 	// (503).
 	ErrRecommendationsUnavailable = errors.New("recommendations unavailable")
 )
 
-// §25.3 warm-pool sizing constants. The formula on line 582 is
+// §25.3 warm-pool sizing constants. The formula on is
 // minWarm = ceil(peak_claim_rate * (startup_p99 + failover_seconds) * 1.3).
 const (
 	// failoverSeconds is the worst-case controller failover window used
-	// in the sizing formula. spec: §4.6.2 line 517 / §17.8 line 1014 —
+	// in the sizing formula. spec: §4.6.2 / §17.8 —
 	// "Use failover_seconds = 25 (leaseDuration 15s + renewDeadline 10s)".
 	failoverSeconds = 25.0
 
 	// podWarmBaselineSeconds is the §17.8 pod-warm creation-to-ready
 	// baseline substituted for startup_p99 when the startup-latency
-	// histogram has no samples yet. spec: §17.8 line 1014 —
+	// histogram has no samples yet. spec: §17.8 —
 	// pod_warmup_seconds = 10 for pod-warm pools.
 	podWarmBaselineSeconds = 10.0
 
 	// warmPoolSafetyFactor is the 1.3 headroom multiplier in the §25.3
-	// warm-pool formula. spec: §25.3 line 582.
+	// warm-pool formula. spec: §25.3.
 	warmPoolSafetyFactor = 1.3
 
 	// credentialTargetUtilization is the utilization the credential
-	// sizing recommendation drives the pool below. spec: §25.3 line 583
+	// sizing recommendation drives the pool below. spec: §25.3
 	// — "Add N credentials to bring utilization below 60%".
 	credentialTargetUtilization = 0.60
 )
 
 // Priority is the §25.3 recommendation priority. It is the `priority`
 // label on the lenny_recommendations_generated_total counter.
-// spec: §25.3 line 618.
+// spec: §25.3.
 type Priority string
 
 const (
@@ -80,8 +80,7 @@ func priorityForConfidence(c float64) Priority {
 // RecommendationTarget is the §25.3 machine-executable recommendation:
 // the admin action an agent applies plus the request body carrying the
 // formula-derived target value (e.g. {"minWarm": 15} or
-// {"addCredentials": 4}). It mirrors the §25.3 suggestedAction body the
-// example responses use (lines 580-587, 3204).
+// {"addCredentials": 4}). It mirrors the §25.3 suggestedAction body the example responses use.
 type RecommendationTarget struct {
 	// Action is the §25.3 action verb (SCALE_WARM_POOL, ADD_CREDENTIALS,
 	// INCREASE_HPA_MAX, INCREASE_MEMORY_LIMIT, REDUCE_RETENTION_TTL,
@@ -111,7 +110,7 @@ type Recommendation struct {
 
 	// Priority is the §25.3 priority band (high|medium|low), the
 	// `priority` label on lenny_recommendations_generated_total.
-	// spec: §25.3 line 618.
+	// spec: §25.3.
 	Priority string `json:"priority"`
 
 	// Summary is the rule's one-line human description.
@@ -145,7 +144,7 @@ type RecommendationsResponse struct {
 	// response is derived from anything other than the operator's
 	// Prometheus rules. The gateway's in-process evaluator runs the
 	// compiled-in defaults, so single-replica reads stamp the envelope
-	// with `thresholdSource: "compiled-in-defaults"` (§25.13 line 4848).
+	// with `thresholdSource: "compiled-in-defaults"` (§25.13).
 	// `lenny-ops` overrides the envelope when it serves from the
 	// operator-customized Prometheus rule set.
 	// spec: §25.2.
@@ -169,42 +168,39 @@ type Evaluation struct {
 	Confidence float64
 
 	// Target is the formula-derived recommendation target, when the
-	// rule defines one. spec: §25.3 lines 580-587.
+	// rule defines one. spec: §25.3.
 	Target *RecommendationTarget
 }
 
 // Evaluator computes a rule's Evaluation against a MetricReader over the
 // resolved sliding window. The same evaluator runs in the gateway
 // (in-process WindowStore reader) and lenny-ops (Prometheus-backed
-// reader). The window argument honours the §25.3 per-rule
-// windowOverrides operator knob (line 596).
+// reader). The window argument honours the §25.3 per-rule windowOverrides operator knob.
 type Evaluator func(m MetricReader, window time.Duration) Evaluation
 
 // AvailabilityReporter is an optional MetricReader extension. A reader
 // whose backing source can be unreachable (the Prometheus-backed reader
 // in lenny-ops) reports its reachability here so the service can honour
 // disableOnPrometheusOutage. The in-process WindowStore is always
-// available and does not implement it. spec: §25.3 line 625.
+// available and does not implement it. spec: §25.3.
 type AvailabilityReporter interface {
 	Available() bool
 }
 
 // Config tunes the §25.3 capacity-recommendation service per the
-// operator knobs in §25.3 (lines 596, 604, 625).
+// operator knobs in §25.3.
 type Config struct {
-	// DisabledRules names rules the service skips entirely. spec: §25.3
-	// line 604 — platform.recommendations.disabledRules.
+	// DisabledRules names rules the service skips entirely. spec: §25.3 — platform.recommendations.disabledRules.
 	DisabledRules []string
 
 	// WindowOverrides overrides a rule's sliding window, keyed by §25.3
-	// category (e.g. {"warm_pool_sizing": 12h}). spec: §25.3 line 596 —
+	// category (e.g. {"warm_pool_sizing": 12h}). spec: §25.3 —
 	// gateway.recommendations.windowOverrides.
 	WindowOverrides map[string]time.Duration
 
 	// DisableOnPrometheusOutage makes GetRecommendations return
 	// ErrRecommendationsUnavailable instead of computing from a fallback
-	// reader when the reader reports itself unavailable. spec: §25.3
-	// line 625 — ops.recommendations.disableOnPrometheusOutage.
+	// reader when the reader reports itself unavailable. spec: §25.3 — ops.recommendations.disableOnPrometheusOutage.
 	DisableOnPrometheusOutage bool
 }
 
@@ -243,8 +239,7 @@ func NewCapacityServiceWithConfig(reader MetricReader, cfg Config) *CapacityServ
 
 // WithMetrics wires the §25.3 recommendation metrics so every emitted
 // recommendation increments lenny_recommendations_generated_total
-// {category, priority}. Returns the receiver for chaining. spec: §25.3
-// line 618.
+// {category, priority}. Returns the receiver for chaining. spec: §25.3.
 func (s *CapacityService) WithMetrics(m *Metrics) *CapacityService {
 	s.metrics = m
 	return s
@@ -261,7 +256,7 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 	if category != nil && !rules.Category(*category).IsValid() {
 		return nil, ErrUnknownCategory
 	}
-	// spec: §25.3 line 625 — fail closed with RECOMMENDATIONS_UNAVAILABLE
+	// spec: §25.3 — fail closed with RECOMMENDATIONS_UNAVAILABLE
 	// when the operator opted out of fallback and the source is down.
 	if s.config.DisableOnPrometheusOutage {
 		if a, ok := s.reader.(AvailabilityReporter); ok && !a.Available() {
@@ -278,7 +273,7 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 	evaluated := 0
 	anyData := false
 	for _, rule := range rules.Catalog() {
-		// spec: §25.3 line 604 — operator-disabled rules never run.
+		// spec: §25.3 — operator-disabled rules never run.
 		if s.disabled[rule.Name] {
 			continue
 		}
@@ -313,11 +308,11 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 			Confidence:    e.Confidence,
 			DataAvailable: e.DataAvailable,
 		})
-		// spec: §25.3 line 618 — count each generated recommendation by
+		// spec: §25.3 — count each generated recommendation by
 		// category and priority.
 		s.metrics.IncGenerated(string(rule.Category), priority)
 	}
-	// spec: §25.13 line 4848 — the gateway's in-process recommendation
+	// spec: §25.13 — the gateway's in-process recommendation
 	// evaluator always runs the compiled-in defaults. lenny-ops layers
 	// the operator-customized source on top when it serves the response.
 	resp.Degradation = &conventions.Degradation{
@@ -344,7 +339,7 @@ func (s *CapacityService) GetRecommendations(_ context.Context, category *string
 
 // windowFor returns the sliding window the rule evaluates over, honouring
 // a per-category override from gateway.recommendations.windowOverrides.
-// spec: §25.3 line 596.
+// spec: §25.3.
 func (s *CapacityService) windowFor(r rules.Rule) time.Duration {
 	if d, ok := s.config.WindowOverrides[string(r.Category)]; ok && d > 0 {
 		return d
@@ -358,7 +353,7 @@ func (s *CapacityService) windowFor(r rules.Rule) time.Duration {
 // best estimate of the peak; lenny-ops substitutes the Prometheus
 // max_over_time). startup_p99 falls back to the §17.8 pod-warm baseline
 // when the startup-latency histogram has no samples. Returns 0 when the
-// claim rate is unavailable. spec: §25.3 line 582.
+// claim rate is unavailable. spec: §25.3.
 func computeMinWarm(m MetricReader, window time.Duration) int {
 	claimRate, ok := m.WindowedRate("lenny_warmpool_claims_total", nil, window)
 	if !ok || claimRate <= 0 {
@@ -376,7 +371,7 @@ func computeMinWarm(m MetricReader, window time.Duration) int {
 // u = in_use / total and a known total pool size, the target total is
 // in_use / 0.60 = u * total / 0.60, so addCredentials =
 // ceil(total * (u/0.60 - 1)). Returns 0 when the pool size is
-// unavailable. spec: §25.3 line 583.
+// unavailable. spec: §25.3.
 func computeAddCredentials(m MetricReader, util float64) int {
 	total, ok := m.GaugeValue("lenny_credential_pool_assignable_count", nil)
 	if !ok || total <= 0 {

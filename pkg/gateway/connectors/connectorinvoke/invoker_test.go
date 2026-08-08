@@ -35,7 +35,7 @@ func seedConnector(t *testing.T, store connectorstore.Store, c connectorstore.Co
 // TestInvokerCallToolUsesStoredCredential_spec_9_3_142 verifies the
 // invoker resolves the connector, attaches the gateway-held credential
 // as the bearer token, and issues an authenticated tools/call — the
-// path §9.3 lines 142-164 describe and the gap F-9.1.5 named ("the
+// path §9.3 describe and the gap F-9.1.5 named ("the
 // credential is never used to make a tools/call").
 func TestInvokerCallToolUsesStoredCredential_spec_9_3_142(t *testing.T) {
 	connectors := connectorstore.NewMemory()
@@ -101,7 +101,7 @@ func TestInvokerPublicConnectorNoBearer_spec_9_3_142(t *testing.T) {
 }
 
 // TestInvokerRejectsUnregisteredConnector_spec_9_3_140 confirms an
-// unregistered connector id is not dialed — §9.3 line 140 only allows
+// unregistered connector id is not dialed — §9.3 only allows
 // dialing endpoints that resolve to a registered connector.
 func TestInvokerRejectsUnregisteredConnector_spec_9_3_140(t *testing.T) {
 	connectors := connectorstore.NewMemory()
@@ -151,8 +151,7 @@ func (f *fakeAuthz) AuthorizeConnector(_ context.Context, _, sessionID, connecto
 	return f.err
 }
 
-// TestInvokerCallToolDeniedByPolicy_spec_9_3_164 verifies the §9.3 line
-// 164 boundary: a connector the calling session's effective delegation
+// TestInvokerCallToolDeniedByPolicy_spec_9_3_164 verifies the §9.3 boundary: a connector the calling session's effective delegation
 // policy denies is rejected before any outbound dial.
 func TestInvokerCallToolDeniedByPolicy_spec_9_3_164(t *testing.T) {
 	connectors := connectorstore.NewMemory()

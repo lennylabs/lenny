@@ -64,7 +64,7 @@ func getMessages(t *testing.T, h http.Handler, path, tenant string) *httptest.Re
 // every recorded node carries a stable id, the derived `from` object, the
 // role/content, the delivery state, and the seq ordering.
 //
-// spec: §15.1 line 692; §15.4.1 lines 1696-1707, 1788-1798. F-15.1.3.
+// spec: §15.1; §15.4.1. F-15.1.3.
 func TestMessagesList_spec_15_1_692(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
@@ -111,7 +111,7 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 	if env.Items[0].From.Kind != "client" || env.Items[0].Role != "user" {
 		t.Errorf("user node from = %+v role=%q", env.Items[0].From, env.Items[0].Role)
 	}
-	// spec: §15.4.1 line 1703 — an agent `from.id` is `sess_{session_id}`.
+	// spec: §15.4.1 — an agent `from.id` is `sess_{session_id}`.
 	if env.Items[1].From.Kind != "agent" || env.Items[1].From.ID != "sess_s1" {
 		t.Errorf("assistant node from = %+v, want agent/sess_s1", env.Items[1].From)
 	}
@@ -121,8 +121,7 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 }
 
 // TestMessagesListPaginationAndSince_spec_15_1_692 verifies the canonical
-// cursor envelope and the spec-named `?since=` seq filter. spec: §15.4.1
-// lines 1792-1793. F-15.1.3.
+// cursor envelope and the spec-named `?since=` seq filter. spec: §15.4.1. F-15.1.3.
 func TestMessagesListPaginationAndSince_spec_15_1_692(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
@@ -157,8 +156,7 @@ func TestMessagesListPaginationAndSince_spec_15_1_692(t *testing.T) {
 
 // TestMessagesListThreadFilter_spec_15_4_1_1791 verifies the v1 implicit
 // single-thread model: a `?threadId=` naming a concrete thread matches no
-// node, while an absent filter returns the implicit thread. spec: §15.4.1
-// lines 1791, 1796. F-15.1.3.
+// node, while an absent filter returns the implicit thread. spec: §15.4.1. F-15.1.3.
 func TestMessagesListThreadFilter_spec_15_4_1_1791(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
@@ -176,10 +174,10 @@ func TestMessagesListThreadFilter_spec_15_4_1_1791(t *testing.T) {
 	}
 }
 
-// TestMessagesListNotFound_spec_15_1_661 verifies the §15.1 line 661
+// TestMessagesListNotFound_spec_15_1_661 verifies the §15.1
 // 404 contract: a missing session, a cross-tenant probe, a derive_failure
 // audit row, and a gateway with no transcript store all return 404. spec:
-// §15.1 line 661. F-15.1.3.
+// §15.1. F-15.1.3.
 func TestMessagesListNotFound_spec_15_1_661(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()

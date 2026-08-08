@@ -54,7 +54,7 @@ func TestDelegateTreeVisibilityInheritsWhenAbsent_spec_8_3_315(t *testing.T) {
 		t.Fatalf("Delegate: %v", err)
 	}
 	if child.TreeVisibility != session.VisibilityParentAndSelf {
-		t.Errorf("inherited treeVisibility = %q, want parent-and-self (§8.3 line 315)", child.TreeVisibility)
+		t.Errorf("inherited treeVisibility = %q, want parent-and-self (§8.3)", child.TreeVisibility)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestDelegateTreeVisibilityRootDefaultsToFull_spec_8_5_540(t *testing.T) {
 		t.Fatalf("Delegate: %v", err)
 	}
 	if child.TreeVisibility != session.VisibilityFull {
-		t.Errorf("default treeVisibility = %q, want full (§8.5 line 540)", child.TreeVisibility)
+		t.Errorf("default treeVisibility = %q, want full (§8.5)", child.TreeVisibility)
 	}
 }
 

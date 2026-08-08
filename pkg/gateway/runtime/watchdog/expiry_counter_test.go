@@ -14,7 +14,7 @@ import (
 )
 
 // spec: §16.1 (lenny_session_expiry_total{reason}); §6.2 (maxClientIdleSeconds
-// clock); §11.3 line 199 (max client idle row). F-11.3.7.
+// clock); §11.3. F-11.3.7.
 //
 // The watchdog must fire the SessionExpiryNotifier on every platform
 // expiry-clock transition it drives, with the §16.1.1 reason it resolved:
@@ -87,7 +87,7 @@ func TestExpiryCounterIdleReasonMaxIdleTime_spec_16_1_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1.1 (reason vocabulary) / §11.3 line 198 (maxSessionAge cap) — the
+// spec: §16.1.1 (reason vocabulary) / §11.3 — the
 // age-cap expiry fires the notifier with reason max_session_age. F-11.3.7.
 //
 // diagnosis: a failure means the maxSessionAge expiry no longer emits
@@ -121,8 +121,7 @@ func TestExpiryCounterMaxAgeReason_spec_16_1_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1.1 (reason vocabulary) / §7.3 line 423 (awaiting_client_action
-// wall-clock deadline) — the awaiting-action deadline shares the age-cap series,
+// spec: §16.1.1 (reason vocabulary) / §7.3 — the awaiting-action deadline shares the age-cap series,
 // so the notifier fires with reason max_session_age. F-7.3.25 / F-11.3.7.
 //
 // diagnosis: a failure means an abandoned awaiting_client_action session

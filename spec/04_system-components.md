@@ -219,6 +219,8 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 
 ### 4.4 Event / Checkpoint Store
 
+#### 4.4.1 Stored Records and Audit Egress
+
 **Role:** Enables session recovery and observability.
 
 **Stores:**
@@ -232,9 +234,13 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 
 **Audit egress translator.** The EventStore's audit-egress path includes an **OCSF translator** ([Section 11.7](11_policy-and-controls.md#117-audit-logging) Wire Format) that maps the canonical Postgres-stored tuple to OCSF v1.1.0 JSON for every consumer that sits outside the authoritative store: the SIEM forwarder (`audit.siem.endpoint`), pgaudit sink consumers, the `/v1/admin/audit-events` query API ([§25.9](25_agent-operability.md#259-audit-log-query-api)), and the CloudEvents-wrapped audit events published on the EventBus ([§12.6](12_storage-architecture.md#126-interface-design)). The translator is pure (no state outside Postgres) and deterministic — identical input produces identical OCSF output — so the same chain hash can be recomputed by an external auditor from either the OCSF record plus `unmapped.lenny_chain` extension or the raw canonical tuple. The translator version and OCSF wire version are surfaced on every response envelope.
 
+#### 4.4.2 Checkpoint Atomicity and Partial Manifests
+
 **Checkpoint Atomicity:** A checkpoint is an atomic unit comprising a workspace snapshot (tar of `/workspace/current`), a session file snapshot (copy of `/sessions/` contents), and a checkpoint metadata record (generation, timestamp, pod state). If either snapshot fails, the entire checkpoint is discarded — partial checkpoints are never stored as valid checkpoints. A checkpoint attempt opens a manifest row with `partial = true` before its first chunk is uploaded. The row reaches `partial = false` only after the adapter has declared the archive complete and the gateway has confirmed every declared byte with a `StatObject`. A row still marked `partial = true` is not a valid checkpoint. **Exception — preStop timeout partial manifest:** When a checkpoint attempt ends before every declared byte is confirmed (deadline fire, stream truncation, adapter crash, or supersession), the gateway writes a *partial checkpoint manifest* (not a full checkpoint record) to Postgres flagged with `partial: true`. This record is not a valid checkpoint; it is a recovery aid that tracks the indexed chunk objects (`chunk-{n}.{chunk_encoding}` — i.e., `chunk-{n}.tar` or `chunk-{n}.tar.gz` matching the manifest's `chunk_encoding` field, see [§10.1](10_gateway-internals.md#101-horizontal-scaling) Partial manifest on checkpoint timeout) that were successfully committed under a dedicated prefix, enabling partial workspace reconstruction on resume. The chunked-object storage model — separate `PutObject`-committed chunks rather than S3 multipart upload parts — is defined in [§10.1](10_gateway-internals.md#101-horizontal-scaling) Partial manifest on checkpoint timeout.
 
 **Partial checkpoint manifest cleanup:** Partial checkpoint manifest records and their referenced chunk objects have a defined cleanup path to prevent permanent orphaning. On resume — whether the partial reconstruction succeeds or fails — the gateway MUST delete every chunk object listed under the manifest's `chunk_object_key_prefix` via per-key `DeleteObject` calls, then **soft-delete** the Postgres row by issuing `UPDATE ... SET deleted_at = now() AT TIME ZONE 'UTC' WHERE ... AND deleted_at IS NULL`. Soft-delete (not hard `DELETE`) is required so that idempotent re-runs are safe: a stale-leader retry, a crash-resumed resume path, or the §12.5 backstop sweep that races the primary cleanup all observe `rows_affected == 0` on the second writer and correctly skip any side effects, matching the same `deleted_at IS NULL` monotonicity guard used for `artifact_store` rows in [§12.5 GC concurrency model rule 6](12_storage-architecture.md#125-artifact-store). The gateway also sweeps the prefix and soft-deletes the row when an attempt aborts and no resume will consume it (a failed periodic checkpoint on a session that completes normally). Both entry points converge on the same idempotent `deleted_at IS NULL` soft-delete the paragraph already guarantees. MinIO chunk deletion is per-key `DeleteObject` — MinIO's delete-on-absent semantics make it independently idempotent on repeated keys. `AbortMultipartUpload` is not used on this path: partial chunks are committed as independent objects via single-part `PutObject` ([§10.1](10_gateway-internals.md#101-horizontal-scaling) Partial manifest on checkpoint timeout), so there is no open multipart upload to abort. This cleanup is executed as part of the resume path in both the success and failure branches, so the manifest is consumed exactly once in the common case. Rows whose `deleted_at` is older than the `artifact_store` tombstone retention window are hard-pruned by the same sweep that prunes `artifact_store` rows ([Section 12.5](12_storage-architecture.md#125-artifact-store)) — the partial-manifest row follows the identical lifecycle as any other GC-managed artifact row. If the MinIO delete call fails (e.g., transient MinIO unavailability), the gateway retries with the same exponential backoff as other artifact deletions; any manifest that escapes this path (e.g., gateway crash before cleanup, or a session that is never resumed before its resume window expires) is picked up by the GC backstop sweep ([Section 12.5](12_storage-architecture.md#125-artifact-store) GC concurrency model rule 6). The `lenny_partial_manifest_cleanup_total` counter (labeled by `outcome: success|failed_deleted|gc_collected`) tracks cleanup disposition for observability.
+
+#### 4.4.3 Checkpoint Quiescence, Timeout, and Abort Handling
 
 **Checkpoint quiescence strategy by level:**
 
@@ -250,6 +256,8 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 
 **Embedded adapter liveness integration:** In embedded adapter mode, the `/healthz` liveness endpoint MUST incorporate checkpoint state. The adapter maintains a shared atomic flag (`checkpointStuck`) that is set in two cases: (a) by the watchdog timer when a `SIGSTOP` has been held for more than `watchdogTimeoutSeconds` (default 60s) without checkpoint completion, and (b) immediately when SIGCONT confirmation polling (see above) exhausts all 5 retries without observing the process leaving the stopped state. Setting `checkpointStuck` immediately on any SIGCONT confirmation failure avoids waiting for the full 60-second watchdog timeout in cases where the process is verifiably still frozen. When `checkpointStuck` is set, the `/healthz` endpoint returns HTTP 503 with `{"status": "unhealthy", "reason": "checkpoint_stuck"}`, causing the liveness probe to fail and Kubernetes to restart the pod. This closes the deadlock window where the adapter's HTTP server remains healthy while the agent process is permanently frozen — the liveness probe now actively detects stuck checkpoints rather than relying solely on adapter process crashes. The `checkpointStuck` flag is cleared on successful checkpoint completion or after SIGCONT is confirmed sent (process state transitions out of `T`/`t`). If the embedded adapter process itself crashes entirely while the agent is SIGSTOPped (not a recovered goroutine panic but a full process exit), the agent process remains stopped; the pod's liveness probe will fail (since the adapter process is gone), Kubernetes will restart the pod, and the session resumes from the last successful checkpoint per [Section 7.2](07_session-lifecycle.md#72-interactive-session-model).
 
+#### 4.4.4 Checkpoint SLOs and Scheduling
+
 **Checkpoint duration SLO and workspace size impact:** Checkpoint duration is dominated by workspace tar creation and MinIO upload. Target SLO: P95 checkpoint duration < 2 seconds for workspaces ≤ 100MB. Expected scaling: ~1 second per 100MB on typical node-local SSD with gigabit-class MinIO connectivity; 500MB workspaces may reach 5-10 seconds. For **Basic/Standard-level** (best-effort, no pause): duration affects only checkpoint freshness, not agent responsiveness. For **Full-level** (cooperative handshake): the runtime is quiesced during the snapshot phase, so checkpoint duration directly impacts agent pause time — deployers with large workspaces should monitor the `lenny_checkpoint_duration_seconds` histogram and consider workspace hygiene (`.lennyignore` excludes, smaller working sets). For **embedded adapter mode** (SIGSTOP): the agent is fully frozen for the entire checkpoint duration, making this the most latency-sensitive path. The Phase 2 startup benchmark harness ([Section 18](18_build-sequence.md)) must include a **checkpoint duration benchmark** that measures end-to-end checkpoint time across workspace sizes (10MB, 100MB, 500MB) and storage backends, and validates the < 2s SLO for ≤ 100MB workspaces. Incremental checkpoints (diffing against the previous snapshot) are deferred but noted as the primary mitigation if the SLO cannot be met at larger workspace sizes.
 
 **Hard workspace size limit.** To prevent unbounded agent quiescence under Full-level or SIGSTOP checkpoint paths, `/workspace/current` (and `/workspace/slots/{slotId}/current/` when `sessionPolicy.maxConcurrentSessions > 1`, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) MUST carry a hard `emptyDir.sizeLimit` set to `workspaceSizeLimitBytes` (pool-level configuration, default: 512Mi). This limit is enforced by the kubelet OOM eviction path — if disk usage under the emptyDir volume exceeds the limit, the pod is evicted. This provides an unconditional hard cap and prevents a runaway workspace from making Full-level checkpoint quiescence unacceptably long. The adapter additionally performs a **pre-checkpoint workspace size probe** before initiating the quiescence handshake: it stats the total size of `/workspace/current` (or the slot-specific path). If the measured size exceeds `workspaceSizeLimitBytes`, the checkpoint is aborted immediately (without quiescing the runtime), the `lenny_checkpoint_size_exceeded_total` counter is incremented (labeled by `pool` and `level`), a `WorkspaceSizeExceeded` warning is logged, and the session emits a `checkpoint.skipped` event with `reason: "workspace_size_limit"` so the client is aware. The `lenny_checkpoint_duration_seconds` histogram (labeled by `pool`, `level`, and `trigger`) MUST be exported for all checkpoint completions (success and failure). Alert rule `CheckpointDurationHigh` ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when the P95 of `lenny_checkpoint_duration_seconds` for Full-level or embedded-adapter pools exceeds 2.5 seconds over a 5-minute window (25% headroom above the 2s SLO for ≤100MB workspaces). Quiescence time scales linearly with workspace size — the direct relationship is: `expected_quiescence_seconds ≈ workspace_bytes / (100 × 1024 × 1024)` — deployers should set `workspaceSizeLimitBytes` to align with their acceptable agent pause budget.
@@ -257,6 +265,8 @@ Additionally, the gateway **caches active credential leases in memory**. Token S
 **Checkpoint freshness SLO:** Every active session MUST have a successful checkpoint recorded within the last `periodicCheckpointIntervalSeconds` (default: 600s / 10 minutes). The gateway enforces this by scheduling periodic checkpoints for active sessions. The `lenny_checkpoint_stale_sessions` gauge (per pool/level, reported by the gateway) counts the number of active sessions whose last checkpoint age exceeds the interval. A `CheckpointStale` warning alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)) fires when any pool has stale sessions for > 60s. This SLO bounds the maximum workspace state that can be lost if an eviction checkpoint fails — any session that has met the SLO loses at most 10 minutes of workspace changes, not unbounded progress. This SLO bounds only recoverable workspace state. It does not bound external, irreversible side effects: an external tool action or `delegate_task` spawn performed after the last durable checkpoint is re-derivable when the session is restored on a fresh pod and can re-fire under the at-least-once guarantee defined in [§7.3](07_session-lifecycle.md#73-retry-and-resume) (External side effects across recovery).
 
 **Periodic checkpoint scheduling:** The gateway schedules periodic checkpoints for all active sessions using a configurable interval (`periodicCheckpointIntervalSeconds`, default: 600s). Periodic checkpoints are best-effort (see non-eviction path below) — they do not block agent progress. Failed periodic checkpoints are logged and retried on the next interval; they do not affect session state. The gateway tracks `last_successful_checkpoint_at` on the session record in Postgres, updated on every successful checkpoint regardless of trigger (periodic, eviction, pre-drain). **Jitter:** To prevent thundering-herd checkpoint storms (all sessions started in the same burst aligning their periodic checkpoints at the same wall-clock second), each session's first periodic checkpoint is scheduled at `periodicCheckpointIntervalSeconds + random(0, periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction)` seconds after session start. `periodicCheckpointJitterFraction` (default: 0.2, range: 0.0–1.0, configurable via `gateway.periodicCheckpointJitterFraction` Helm value) spreads the initial checkpoint uniformly across a 120s window (at the default 600s interval), preventing correlated burst patterns at Tier 3 scale. Subsequent checkpoints are scheduled at the fixed interval from the previous checkpoint (no additional jitter), so sessions naturally desynchronize after the first cycle.
+
+#### 4.4.5 Checkpoint Storage Failure and Eviction Fallback
 
 **Checkpoint storage failure:** MinIO uploads during checkpoint are retried with exponential backoff. A retry that outlives its grant's expiry requests a fresh grant for the same chunk index on the open `Checkpoint` stream, and the gateway re-signs the same key and length. The retry budget differs by checkpoint trigger:
 
@@ -636,6 +646,8 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 
 ### 4.7 Runtime Adapter
 
+#### 4.7.1 Role and Gateway RPC Contract
+
 **Role:** Standardized bridge between the Lenny platform and any pod binary. The adapter protocol uses a two-part model: multiple focused local MCP servers for tool access, and a separate CH-RUNTIMEOPS for operational signals.
 
 **Contract (internal gRPC/HTTP+mTLS API — gateway ↔ adapter):**
@@ -670,11 +682,15 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `ReportSessionScrub` | Report the outcome of the per-slot cleanup at a session release (`released` or `leaked`, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The gateway increments `sessionsServed` on the pod's `agent_pod_state` row, and `leaked` outcomes feed the unhealthy-threshold ledger behind the `lenny.dev/drain-request` annotation ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub that runs when occupancy reaches zero on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On failure the gateway increments `scrubFailureCount` on the pod's `agent_pod_state` row and computes the disposition against `sessionPolicy` ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). On success on a `standard` or `in-place` pool: on a preConnect pool the gateway records the `rewarmStartedAt` stamp on `SandboxClaim.status` and coordinates the SDK re-warm; on a non-preConnect pool it patches the claim directly to `reserved`. A `vm-restart` pool instead takes the terminal retire (draining → released) after a successful scrub report rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A missing report is bounded by a gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period), after which the pod is retired. |
 
+#### 4.7.2 Checkpoint and Interrupt Mutual Exclusion
+
 **Checkpoint / Interrupt mutual exclusion:** The adapter maintains a pod-level operation lock that serializes `Checkpoint` and `Interrupt` RPCs across the pod's slots. On a `maxConcurrentSessions: 1` pod the pod-level lock and the per-session lock coincide. Only one of these operations may execute at a time; if a second arrives while the first is in progress, it is queued and executed after the first completes. Ordering semantics:
 
 - **Interrupt during checkpoint:** The interrupt is queued until the checkpoint completes (or times out per [Section 4.4](#44-event--checkpoint-store)). After the checkpoint finishes, the queued interrupt is delivered normally. Rationale: a checkpoint in progress has already paused or quiesced the runtime (via SIGSTOP or CH-RUNTIMEOPS `checkpoint_request`); delivering an interrupt in that state is undeliverable (signals cannot reach a SIGSTOPped process) or would violate the quiescence guarantee.
 - **Checkpoint during interrupt:** The checkpoint is queued until the runtime acknowledges the interrupt (via `interrupt_acknowledged` on the CH-RUNTIMEOPS for Full-level, or until the adapter observes the runtime resume output for lower levels). This prevents snapshotting mid-interrupt state.
 - **Queue depth:** On a single-session pod, at most one operation may be queued. If a second operation of the same type arrives while one is already queued, the second is coalesced (checkpoint) or dropped with a `BUSY` status (interrupt). The gateway retries dropped interrupts with backoff. On a concurrent-session pod (`maxConcurrentSessions > 1`), the lock admits one pending checkpoint per distinct `slotId` and promotes the pending checkpoints in slot-ID order ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)); a checkpoint whose `slotId` is already pending coalesces; and while an interrupt is pending it holds the whole-pod queue, so any further checkpoint or interrupt is dropped with a `BUSY` status.
+
+#### 4.7.3 Adapter Events on CH-ADAPTEREVENTS
 
 **Adapter → Gateway events (sent over the gRPC CH-ADAPTEREVENTS):**
 
@@ -688,47 +704,11 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `AdapterTerminating`   | Adapter's self-initiated terminal notification (e.g., coordinator-loss hold timeout). Fields: `session_id`, `reason` (`coordinator_lost`, etc.). Allows the gateway to transition the session immediately without waiting for the orphan-session reconciler. See [Section 10.1](10_gateway-internals.md#101-horizontal-scaling). |
 | `FINAL_USAGE_REPORT`   | Final lifecycle-stream message pushed by the child's adapter once all in-flight `ReportUsage` gateway pulls have settled, just before the stream closes. Gateway waits for this (or stream close, whichever comes first) before running `budget_return.lua`. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 
-#### Adapter ↔ Runtime Protocol (Intra-Pod)
+#### 4.7.4 Adapter ↔ Runtime Protocol (Intra-Pod)
 
-The adapter communicates with the runtime binary via two mechanisms:
+The intra-pod channel contracts this section previously stated are owned by [Section 28.5.3](28_communication-channels.md#2853-intra-pod). `CH-MCP-PLATFORM` states the platform MCP server and its tool set, `CH-MCP-CONNECTOR` states the per-connector MCP servers, and `CH-RUNTIMEOPS` states the intra-pod JSON Lines channel, its socket, and its message schemas. The adapter manifest below states the endpoints a runtime reads to reach those channels.
 
-**Part A — Multiple focused local MCP servers** (intra-pod, abstract Unix socket):
-
-- **Platform MCP server** — Lenny-specific tools: `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, `lenny/set_tracing_context`. Note: lease extension is an internal gateway operation and is not exposed as an MCP tool (see [Section 8.6](08_recursive-delegation.md#86-lease-extension)).
-- **One MCP server per authorized connector** — each connector in the session's delegation policy gets its own independent MCP server. No aggregated connector proxy — aggregation is not lossless per MCP spec (capability negotiation is per-server, sampling breaks, tool name collisions, resource URI collisions).
-
-**No workspace MCP server.** Workspace is materialized to `/workspace/current` before the runtime starts. The runtime accesses it via the filesystem directly.
-
-**Part B — CH-RUNTIMEOPS** — bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-runtime-ops`) for operational signals. The socket path is advertised in the adapter manifest (`runtimeOps.socket`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`:
-
-```
-Adapter → Runtime:  lifecycle_capabilities, checkpoint_request,
-                    checkpoint_complete, interrupt_request,
-                    credentials_rotated, terminate
-Runtime → Adapter:  lifecycle_support, checkpoint_ready,
-                    interrupt_acknowledged, credentials_acknowledged,
-                    llm_request_started, llm_request_completed
-```
-
-Optional. Runtimes that don't open it operate in fallback-only mode. Versioned by capability negotiation at the top. Unknown messages silently ignored on both sides. In direct mode `llm_request_completed` optionally carries the per-call `inputTokens` and `outputTokens` counts that supply the direct-mode usage source (see the message-schema table below and [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
-
-**CH-RUNTIMEOPS message schemas** (each message is a JSON object with `type` as discriminator):
-
-| `type`                      | Direction          | Fields                                                                                                                                                              | Notes                                                                       |
-| --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`) | First message sent on channel open. Runtime must reply with `lifecycle_support`. |
-| `lifecycle_support`         | Runtime → Adapter  | `type`, `capabilities` (array of strings — subset of offered capabilities the runtime supports)                                                                    | Runtime's capability handshake reply.                                       |
-| `checkpoint_request`        | Adapter → Runtime  | `type`, `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                                       | Adapter requests runtime quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
-| `checkpoint_complete`       | Adapter → Runtime  | `type`, `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                                              | Confirms snapshot upload result; runtime may resume.                        |
-| `interrupt_request`         | Adapter → Runtime  | `type`, `interruptId` (string), `deadlineMs` (integer)                                                                                                             | Requests the runtime reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
-| `credentials_rotated`       | Adapter → Runtime  | `type`, `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/credentials.json`), `leaseId` (string)                                        | New credentials written; runtime must rebind and reply with `credentials_acknowledged`. |
-| `terminate`                 | Adapter → Runtime  | `type`, `deadlineMs` (integer), `reason` (string: `"session_complete"` \| `"budget_exhausted"` \| `"eviction"` \| `"operator"`)                                    | Graceful shutdown signal. Runtime must exit within `deadlineMs`; adapter sends SIGTERM on timeout. Receipt always means process exit. |
-| `deadline_approaching`      | Adapter → Runtime  | `type`, `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)                              | Advance warning before forced termination. Runtime should wrap up work.     |
-| `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
-| `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
-| `credentials_acknowledged`  | Runtime → Adapter  | `type`, `leaseId` (string), `provider` (string)                                                                                                                    | Runtime has rebound to the new credential. Adapter releases queued LLM requests with new credential. |
-| `llm_request_started`       | Runtime → Adapter  | `type`, `requestId` (string — opaque, runtime-generated), `provider` (string)                                                                                      | Runtime is about to send an outbound LLM request directly to the provider (direct mode only). Adapter increments the in-flight counter for this provider. Only required when the runtime calls the LLM API directly (not via the adapter proxy). |
-| `llm_request_completed`     | Runtime → Adapter  | `type`, `requestId` (string — matches the corresponding `llm_request_started`), `provider` (string), `status` (`"ok"` \| `"error"`), `inputTokens` (integer, optional), `outputTokens` (integer, optional)                               | Runtime's outbound LLM request has completed or errored. Adapter decrements the in-flight counter. When the counter reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`. In direct mode the runtime SHOULD populate `inputTokens` and `outputTokens` from the completed provider response when it can extract them; the adapter accumulates them into a per-session cumulative total internally and reports the incremental delta since the last read over the §4.7 `ReportUsage` RPC (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)). A runtime that cannot extract counts omits both fields, and the session has no direct-mode token source. |
+#### 4.7.5 Adapter Manifest
 
 **Adapter manifest:** Written to `/run/lenny/adapter-manifest.json` on the manifest volume (read-only to the agent container) **before the runtime binary is spawned** — complete and authoritative when the binary starts. Regenerated per session: on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the adapter rewrites the manifest before each session's runtime start, so the manifest a runtime reads at startup is always current for its session. The manifest is stable for the duration of a single session and does not change while the runtime is processing.
 
@@ -780,6 +760,8 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 }
 ```
 
+#### 4.7.6 Adapter Manifest Field Reference
+
 **Adapter manifest field reference:**
 
 | Field                       | Type               | Required | Description                                                                                                                                                                                                                                                                                 | Level relevance           |
@@ -819,11 +801,13 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 
 `runtimeMcpServers` slot reserved from v1 for future use by `type:mcp` runtimes accessible via adapter proxy.
 
-#### Runtime Integration Levels (agent-type only)
+#### 4.7.7 Runtime Integration Levels (agent-type only)
 
 - **Basic** — stdin/stdout binary protocol only. Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout. This is the floor. Zero Lenny knowledge required.
 - **Standard** — basic plus connects to adapter's platform MCP server and connector servers via the adapter manifest. Uses platform capabilities (delegation, discovery, output parts, elicitation). Standard MCP — no Lenny-specific code.
 - **Full** — standard plus opens the CH-RUNTIMEOPS. True session continuity, clean interrupt points, mid-session credential rotation via `credentials_rotated` lifecycle message.
+
+#### 4.7.8 Credential Rotation by Integration Level
 
 **Credential rotation behavior by level:**
 
@@ -850,7 +834,7 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 
 3. **Old credential grace period.** The old credential is NOT invalidated at the provider (removed from the pool's active set or returned to the pool) until one of: (a) `credentials_acknowledged` is received from the runtime, confirming the rebind is complete; or (b) the 60-second timeout elapses and the fallback path takes over. This ensures that if an in-flight LLM request is still completing with the old credential at the provider, it is not rejected mid-stream due to premature credential invalidation. After the grace period, the old lease is marked `released` and the credential is returned to the pool (or to cooldown, depending on the rotation reason). The metric `lenny_credential_rotation_grace_period_seconds` (histogram, labeled by `pool`, `provider`) records the actual duration between `credentials_rotated` and old credential release.
 
-#### Startup Sequence for `type: agent` Runtimes
+#### 4.7.9 Startup Sequence for `type: agent` Runtimes
 
 1. Pod created by Kubernetes
 2. Adapter opens gRPC connection to gateway (mTLS)
@@ -863,7 +847,7 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
 10. Adapter delivers first `{type: "message"}` on stdin
 
-#### Deployment Model
+#### 4.7.10 Deployment Model
 
 - **Default: Sidecar container** communicating with the agent binary over **abstract Unix sockets** (Linux `\0` namespace — no filesystem path). `shareProcessNamespace: false`. The adapter writes the manifest to a dedicated `emptyDir` volume (`/run/lenny/`) mounted **read-only into the agent container** and read-write into the adapter container. Workspace is a separate `emptyDir` volume (`/workspace/`). No single shared volume carries both communication and data — sockets are abstract (kernel-only), the manifest is read-only to the agent, and workspace is isolated. This minimizes what third-party binary authors need to implement — just a binary that reads/writes on a well-defined socket protocol.
 - **Alternative: Embedded** — first-party binaries can embed the adapter directly and expose the same gRPC contract to the gateway.
@@ -883,7 +867,7 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 
 **Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
 
-#### Adapter-Agent Security Boundary
+#### 4.7.11 Adapter-Agent Security Boundary
 
 The boundary between the adapter and the agent binary is **untrusted**. A compromised or misbehaving agent binary must not be able to escalate privileges, extract credentials, or manipulate the adapter. The following controls enforce this:
 

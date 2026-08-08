@@ -15,18 +15,14 @@ import (
 // serves through GET /v1/admin/runbooks/{name}. The gateway does not
 // validate the name at runtime by design, so the mapping "is maintained
 // by convention and version-controlled alongside the runbooks"
-// (§25.7 line 3238). This is the tier-1 link-inventory join that pins
+// (§25.7). This is the tier-1 link-inventory join that pins
 // that convention over the whole issueRunbooks table, not only the eight
 // codes §17.7 names as required by Path B: any entry whose slug is not
 // bundled breaks the closed loop, because an agent that follows the
 // health API's suggestedAction.runbook then receives RUNBOOK_NOT_FOUND
 // from lenny-ops and reaches no remediation steps.
 //
-// spec: §25.7 lines 3221 ("The runbook field is the runbook name as used
-// in GET /v1/admin/runbooks/{name}. This closes the loop ... agent calls
-// health API → sees degraded component with suggested action → fetches
-// the linked runbook"), 3238 ("the mapping is maintained by convention
-// and version-controlled alongside the runbooks").
+// spec: §25.7.
 func TestIssueRunbooksResolveInOpsIndex_spec_25_7_3238(t *testing.T) {
 	// Non-blocking pending a product decision: the issueRunbooks table
 	// maps AUDIT_SIEM_DELIVERY_DEGRADED to the slug "siem-delivery-

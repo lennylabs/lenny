@@ -15,7 +15,7 @@ import (
 
 // stubPreAuth is a built-in interceptor test double for the PreAuth
 // phase. A built-in may register on PreAuth where external interceptors
-// cannot (§4.8 line 1023).
+// cannot (§4.8).
 type stubPreAuth struct {
 	action interceptor.Action
 	err    error
@@ -49,7 +49,7 @@ func chainWith(t *testing.T, ic interceptor.Interceptor) *interceptor.Chain {
 	return c
 }
 
-// spec: §4.8 line 1046 — the auth middleware runs the PreAuth chain
+// spec: §4.8 — the auth middleware runs the PreAuth chain
 // after the principal resolves; an ALLOW passes the request through to
 // the inner handler.
 func TestPreAuthChain_Allow_spec_4_8_1046(t *testing.T) {
@@ -73,7 +73,7 @@ func TestPreAuthChain_Allow_spec_4_8_1046(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1046, §15.1 — a deliberate PreAuth REJECT blocks the
+// spec: §4.8, §15.1 — a deliberate PreAuth REJECT blocks the
 // request with 403 INTERCEPTOR_REJECTED and the inner handler never runs.
 func TestPreAuthChain_Reject_spec_4_8_1046(t *testing.T) {
 	reached := false

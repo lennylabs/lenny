@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep"
 )
 
-// spec: §16.1 line 156 — the experiment-targeting `provider` metric label
+// spec: §16.1 — the experiment-targeting `provider` metric label
 // is the OFREP endpoint hostname for provider:ofrep, and the provider
 // name otherwise.
 func TestTargetingProviderLabel_spec_16_1_156(t *testing.T) {
@@ -45,7 +45,7 @@ func (timeoutErr) Error() string   { return "i/o timeout" }
 func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
 
-// spec: §16.1 line 157 — error_type classifies the §10.7 targeting_failed
+// spec: §16.1 — error_type classifies the §10.7 targeting_failed
 // cause into a bounded label set so the counter does not explode
 // cardinality on arbitrary provider error strings.
 func TestClassifyTargetingError_spec_16_1_157(t *testing.T) {

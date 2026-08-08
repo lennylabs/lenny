@@ -13,6 +13,6 @@ self-managed topology with no datastore. The template emits no
 Kubernetes object; it exists solely to evaluate the check at template
 time. The check is a no-op for cloud-managed and embedded backends.
 
-spec: §17.3 lines 112-117, §17.9.5 lines 1495-1530.
+spec: §17.3, §17.9.5.
 */ -}}
 {{- include "lenny.selfManagedBackendCheck" . -}}

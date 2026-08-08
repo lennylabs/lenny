@@ -6,8 +6,8 @@
 // RATE_LIMITED once a scope's count exceeds its configured per-minute
 // limit.
 //
-// The §11.1 line 7 table names global, per-user, per-runtime, and
-// per-pool scopes; the per-tenant scope is the §13.3 line 607
+// The §11.1 table names global, per-user, per-runtime, and
+// per-pool scopes; the per-tenant scope is the §13.3
 // per-tenant axis ("a separate global per-tenant limit … enforced …
 // using the rate limiter in §11.1"). Global, per-user, and per-tenant
 // run here at the HTTP boundary because the request principal carries
@@ -24,8 +24,7 @@
 // lenny_rate_limit_counter_failure_total so an outage is observable
 // even before the alert's persistence window.
 //
-// Every admitted and rejected response also carries the §15.1 lines
-// 1131-1138 rate-limit triplet (X-RateLimit-Limit, X-RateLimit-
+// Every admitted and rejected response also carries the §15.1 rate-limit triplet (X-RateLimit-Limit, X-RateLimit-
 // Remaining, X-RateLimit-Reset) for the binding scope so clients can
 // proactively respect the budget, and the middleware injects Retry-After
 // on any downstream 503 that did not set its own (F-15.1.7).
@@ -48,17 +47,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 )
 
-// DefaultFailOpenMaxSeconds is the §11.3 line 222 /
-// §12.4 line 220 default for `rateLimitFailOpenMaxSeconds`: 60 s. Once
+// DefaultFailOpenMaxSeconds is the §11.3 /
+// §12.4 default for `rateLimitFailOpenMaxSeconds`: 60 s. Once
 // the gateway has been in fail-open mode for this long, the
 // middleware switches to fail-closed and rejects requests with 429
-// until the counter recovers. spec: §11.3 line 222; §12.4 line 220.
+// until the counter recovers. spec: §11.3; §12.4.
 const DefaultFailOpenMaxSeconds = 60 * time.Second
 
 // Metrics is the subset of gatewaymetrics.Metrics the §11.1 ratelimit
 // middleware emits. A nil Metrics passes every recorder call through
 // to a no-op so the middleware remains usable in tests that do not
-// register a registry. spec: §11.1 line 7; §16.5 RateLimitDegraded.
+// register a registry. spec: §11.1; §16.5 RateLimitDegraded.
 type Metrics interface {
 	IncRateLimitRejected(scope string)
 	SetRateLimitFailopenActive(active bool)
@@ -80,10 +79,10 @@ type Options struct {
 	PerUserPerMinute int
 
 	// PerTenantPerMinute caps one tenant's requests per minute across
-	// all of its users. It is the §13.3 line 607 per-tenant axis (a
+	// all of its users. It is the §13.3 per-tenant axis (a
 	// fair-share brake a single tenant cannot evade by spreading load
 	// across users under the per-user cap). Zero or less leaves the
-	// per-tenant scope unlimited. spec: §13.3 line 607; §11.1 line 7.
+	// per-tenant scope unlimited. spec: §13.3; §11.1.
 	PerTenantPerMinute int
 
 	// Clock overrides time.Now for the window computation. Tests inject
@@ -92,26 +91,26 @@ type Options struct {
 
 	// Metrics receives §11.1 rejection counters and the fail-open
 	// gauge flip. Nil leaves observability disabled — the middleware
-	// still enforces and fails open identically. spec: §11.1 line 7.
+	// still enforces and fails open identically. spec: §11.1.
 	Metrics Metrics
 
 	// Logger receives a structured WARN line on each counter error so
 	// a Redis outage is visible even when no rejection ever fires.
-	// Nil uses the default log package. spec: §11.1 line 7 fail-open
+	// Nil uses the default log package. spec: §11.1 fail-open
 	// observability.
 	Logger *log.Logger
 
-	// FailOpenMax is the §11.3 line 222 /
-	// §12.4 line 220 cap on a single fail-open episode. A request that
+	// FailOpenMax is the §11.3 /
+	// §12.4 cap on a single fail-open episode. A request that
 	// arrives after the cap is rejected with 429 / RATE_LIMITED so a
 	// sustained Redis outage cannot keep the gateway fail-open
 	// indefinitely. The cap is reset on the recovery edge (the next
 	// successful Incr). Zero selects DefaultFailOpenMaxSeconds; a
 	// negative value disables the cap (the legacy unbounded behaviour
-	// preserved for tests). spec: §11.3 line 222; §12.4 line 220.
+	// preserved for tests). spec: §11.3; §12.4.
 	FailOpenMax time.Duration
 
-	// FailOpen is the §12.4 lines 220-224 per-replica degraded-mode
+	// FailOpen is the §12.4 per-replica degraded-mode
 	// controller. When set, a request that fails open on a counter error
 	// is additionally evaluated against the in-memory per-user / per-tenant
 	// emergency ceilings and the cumulative fail-open timer: a single user
@@ -120,7 +119,7 @@ type Options struct {
 	// more than quotaFailOpenCumulativeMaxSeconds in fail-open mode. The
 	// controller's Enter/Exit edges are driven by the same counter
 	// error/recovery edges that flip the failopen gauge. Nil leaves the
-	// legacy allow-until-episode-cap behaviour. spec: §12.4 lines 220-224.
+	// legacy allow-until-episode-cap behaviour. spec: §12.4.
 	FailOpen *failopen.Controller
 }
 
@@ -143,21 +142,21 @@ type middleware struct {
 	// Storing the latched bool here lets repeated outages skip the
 	// gauge write (a constant 1 reads identically), and lets the
 	// recovery edge clear back to 0 the next time Incr succeeds.
-	// spec: §16.5 RateLimitDegraded; §11.1 line 7.
+	// spec: §16.5 RateLimitDegraded; §11.1.
 	failopen atomic.Bool
 
 	// failOpenSinceMu guards failOpenSince so the per-episode bound is
 	// observed consistently across concurrent requests. The pointer
 	// shape allows the recovery edge to clear it back to nil. spec:
-	// §11.3 line 222; §12.4 line 220. F-11.3.22.
+	// §11.3; §12.4. F-11.3.22.
 	failOpenSinceMu sync.Mutex
 	failOpenSince   time.Time
 }
 
-// effectiveFailOpenMax returns the §11.3 line 222 cap with defaulting.
+// effectiveFailOpenMax returns the §11.3 cap with defaulting.
 // A negative override disables the cap so existing tier-1 fail-open
 // tests that exercise the legacy unbounded path keep their wiring.
-// spec: §11.3 line 222; §12.4 line 220.
+// spec: §11.3; §12.4.
 func (m *middleware) effectiveFailOpenMax() time.Duration {
 	if m.opts.FailOpenMax < 0 {
 		return 0
@@ -172,7 +171,7 @@ func (m *middleware) effectiveFailOpenMax() time.Duration {
 // episode has exceeded the configured cap as of `now`. A non-positive
 // effective cap disables the check (legacy unbounded behaviour). The
 // caller MUST already have observed a counter error this request.
-// spec: §11.3 line 222; §12.4 line 220. F-11.3.22.
+// spec: §11.3; §12.4. F-11.3.22.
 func (m *middleware) failOpenEpisodeExpired(now time.Time) bool {
 	cap := m.effectiveFailOpenMax()
 	if cap <= 0 {
@@ -188,8 +187,8 @@ func (m *middleware) failOpenEpisodeExpired(now time.Time) bool {
 }
 
 // noteFailOpenEpisode records the start time of the current fail-open
-// episode if one is not already in flight. spec: §11.3 line 222;
-// §12.4 line 220. F-11.3.22.
+// episode if one is not already in flight. spec: §11.3;
+// §12.4. F-11.3.22.
 func (m *middleware) noteFailOpenEpisode(now time.Time) {
 	m.failOpenSinceMu.Lock()
 	defer m.failOpenSinceMu.Unlock()
@@ -199,8 +198,8 @@ func (m *middleware) noteFailOpenEpisode(now time.Time) {
 }
 
 // clearFailOpenEpisode is invoked on the recovery edge so the next
-// outage starts a fresh per-episode timer. spec: §11.3 line 222;
-// §12.4 line 220. F-11.3.22.
+// outage starts a fresh per-episode timer. spec: §11.3;
+// §12.4. F-11.3.22.
 func (m *middleware) clearFailOpenEpisode() {
 	m.failOpenSinceMu.Lock()
 	m.failOpenSince = time.Time{}
@@ -214,7 +213,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	now := m.clock()
 
-	// spec: §15.1 lines 1131-1138 — every REST response carries the
+	// spec: §15.1 — every REST response carries the
 	// rate-limit triplet, and 429/503 responses carry Retry-After.
 	// Wrap the writer so a downstream 503 (circuit breaker, dual-store
 	// outage, backend error) gets a Retry-After it would not otherwise
@@ -226,12 +225,12 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// request. We defer the per-episode cap evaluation to the end so the
 	// metric/log side-effects fire on the very first error AND the cap
 	// applies even when only the per-user scope sees the error. spec:
-	// §11.3 line 222; §12.4 line 220. F-11.3.22.
+	// §11.3; §12.4. F-11.3.22.
 	counterFailed := false
 
 	// scopes accumulates the (limit, count) of every scope counted this
 	// request so the §15.1 triplet can report the binding scope (the one
-	// with the least headroom). spec: §15.1 lines 1131-1138. F-15.1.7.
+	// with the least headroom). spec: §15.1. F-15.1.7.
 	var scopes []scopeUsage
 
 	if m.opts.GlobalPerMinute > 0 {
@@ -266,7 +265,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// spec: §13.3 line 607 / §11.1 line 7 — per-tenant fair-share brake.
+	// spec: §13.3 / §11.1 — per-tenant fair-share brake.
 	// A tenant whose users collectively saturate the gateway while each
 	// stays under PerUserPerMinute is still capped as a whole. F-11.1.8.
 	if m.opts.PerTenantPerMinute > 0 {
@@ -286,7 +285,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// spec: §11.3 line 222; §12.4 line 220 — after the cumulative
+	// spec: §11.3; §12.4 — after the cumulative
 	// fail-open episode exceeds the cap, switch to fail-closed: a
 	// sustained Redis outage cannot keep the gateway in unbounded
 	// allow-all mode. The decision uses `now` captured at the top of the
@@ -297,7 +296,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §12.4 lines 220-224 — while failing open on a Redis outage,
+	// spec: §12.4 — while failing open on a Redis outage,
 	// apply the per-replica emergency ceilings (per-user / per-tenant) and
 	// the cumulative fail-open timer so a single user cannot monopolize the
 	// tenant allocation and a sustained-outage replica transitions to
@@ -310,7 +309,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// spec: §15.1 lines 1131-1138 — admitted requests carry the triplet
+	// spec: §15.1 — admitted requests carry the triplet
 	// for the binding scope so clients can proactively respect the
 	// budget. With no configured scope (limits all zero, or an
 	// unauthenticated request under only per-user/per-tenant caps) there
@@ -330,7 +329,7 @@ type scopeUsage struct {
 }
 
 // remaining is the requests left in the window for this scope, floored
-// at zero. spec: §15.1 line 1134 (X-RateLimit-Remaining). F-15.1.7.
+// at zero. spec: §15.1. F-15.1.7.
 func (s scopeUsage) remaining() int {
 	if r := s.limit - s.count; r > 0 {
 		return r
@@ -341,7 +340,7 @@ func (s scopeUsage) remaining() int {
 // bindingScope returns the scope with the least remaining headroom —
 // the one a client is closest to exhausting and therefore the one the
 // §15.1 triplet reports. ok is false when no scope was counted.
-// spec: §15.1 lines 1131-1138. F-15.1.7.
+// spec: §15.1. F-15.1.7.
 func bindingScope(scopes []scopeUsage) (scopeUsage, bool) {
 	if len(scopes) == 0 {
 		return scopeUsage{}, false
@@ -357,7 +356,7 @@ func bindingScope(scopes []scopeUsage) (scopeUsage, bool) {
 
 // windowResetUnix is the UTC epoch second at which the current
 // fixed one-minute window resets — the next minute boundary. It mirrors
-// the Counter's `now.Unix()/60` window bucketing. spec: §15.1 line 1135
+// the Counter's `now.Unix()/60` window bucketing. spec: §15.1
 // (X-RateLimit-Reset). F-15.1.7.
 func windowResetUnix(now time.Time) int64 {
 	return (now.Unix()/60 + 1) * 60
@@ -365,7 +364,7 @@ func windowResetUnix(now time.Time) int64 {
 
 // retryAfterSeconds is the whole-second backoff to the next window
 // boundary, floored at one so a request arriving in the final second of
-// a window never advertises a zero wait. spec: §15.1 line 1136
+// a window never advertises a zero wait. spec: §15.1
 // (Retry-After). F-15.1.7.
 func retryAfterSeconds(now time.Time) int {
 	s := 60 - now.Second()
@@ -377,7 +376,7 @@ func retryAfterSeconds(now time.Time) int {
 
 // setRateLimitHeaders writes the §15.1 X-RateLimit triplet. It is the
 // single source of header-name truth so the admitted path and the
-// rejection envelopes stay consistent. spec: §15.1 lines 1131-1138.
+// rejection envelopes stay consistent. spec: §15.1.
 // F-15.1.7.
 func setRateLimitHeaders(h http.Header, limit, remaining int, reset int64) {
 	h.Set("X-RateLimit-Limit", strconv.Itoa(limit))
@@ -389,7 +388,7 @@ func setRateLimitHeaders(h http.Header, limit, remaining int, reset int64) {
 // without one, so the §15.1 "present on 429 and 503 responses"
 // guarantee holds for downstream Service-Unavailable responses (circuit
 // breaker, dual-store outage) that did not set their own backoff hint.
-// A handler that set Retry-After keeps it. spec: §15.1 line 1136.
+// A handler that set Retry-After keeps it. spec: §15.1.
 // F-15.1.7.
 type rateLimitRW struct {
 	http.ResponseWriter
@@ -430,7 +429,7 @@ func (rw *rateLimitRW) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
 // /mcp/v1/ws receives, and nhooyr.io/websocket performs a direct
 // http.Hijacker type assertion (it does not consult Unwrap), so the
 // method must be present on the concrete type for the upgrade to
-// succeed. spec: §27.5 / §27.3.1 line 142.
+// succeed. spec: §27.5 / §27.3.1.
 func (rw *rateLimitRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := rw.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()
@@ -444,7 +443,7 @@ func (rw *rateLimitRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // disables ratelimit enforcement without operator visibility. It also
 // stamps the §11.3 per-episode fail-open start time on the leading
 // edge so the cumulative cap (F-11.3.22) can fire downstream.
-// spec: §11.1 line 7; §11.3 line 222.
+// spec: §11.1; §11.3.
 func (m *middleware) onCounterError(scope string, err error, now time.Time) {
 	if m.opts.Metrics != nil {
 		m.opts.Metrics.IncRateLimitCounterFailure()
@@ -457,7 +456,7 @@ func (m *middleware) onCounterError(scope string, err error, now time.Time) {
 		if m.opts.Metrics != nil {
 			m.opts.Metrics.SetRateLimitFailopenActive(true)
 		}
-		// spec: §12.4 line 224 — drive the per-replica fail-open controller
+		// spec: §12.4 — drive the per-replica fail-open controller
 		// on the same leading edge so the cumulative timer starts and the
 		// quota_failopen_started audit event fires exactly once per episode.
 		if m.opts.FailOpen != nil {
@@ -470,7 +469,7 @@ func (m *middleware) onCounterError(scope string, err error, now time.Time) {
 // onCounterSuccess clears the fail-open state on the recovery edge so
 // the §16.5 RateLimitDegraded alert resolves once Redis is back and the
 // next outage starts a fresh per-episode timer (F-11.3.22).
-// spec: §16.5 RateLimitDegraded; §11.3 line 222.
+// spec: §16.5 RateLimitDegraded; §11.3.
 func (m *middleware) onCounterSuccess() {
 	if !m.failopen.Swap(false) {
 		// Already healthy; the gauge is already 0.
@@ -481,14 +480,14 @@ func (m *middleware) onCounterSuccess() {
 		m.opts.Metrics.SetRateLimitFailopenActive(false)
 	}
 	m.clearFailOpenEpisode()
-	// spec: §12.4 lines 222, 224 — close the cumulative episode and reset
+	// spec: §12.4 — close the cumulative episode and reset
 	// the per-replica per-user backstop counters on the Redis-recovery edge.
 	if m.opts.FailOpen != nil {
 		m.opts.FailOpen.Exit()
 	}
 }
 
-// writeFailOpenExceeded writes the §11.3 line 222 / §12.4 line 220
+// writeFailOpenExceeded writes the §11.3 / §12.4
 // fail-closed response when a single fail-open episode has run past
 // the configured cap. It uses the §15.1 RATE_LIMITED envelope so
 // existing client error-handling paths apply uniformly. The retry-
@@ -525,7 +524,7 @@ func (m *middleware) writeFailOpenExceeded(w http.ResponseWriter, now time.Time)
 // count; the per-user ceiling is derived from it by the controller. The
 // backstop keys reuse the same identity the shared-counter scopes use so a
 // fail-open count for one user does not collide with a tenant bucket.
-// spec: §12.4 lines 222-224. F-12.4.9.
+// spec: §12.4. F-12.4.9.
 func (m *middleware) failOpenRequest(r *http.Request) failopen.FailOpenRequest {
 	req := failopen.FailOpenRequest{TenantLimit: int64(m.opts.PerTenantPerMinute)}
 	if key, ok := userKey(r); ok {
@@ -537,11 +536,11 @@ func (m *middleware) failOpenRequest(r *http.Request) failopen.FailOpenRequest {
 	return req
 }
 
-// writeFailOpenRejected writes the §12.4 line 222/224 degraded-mode 429
+// writeFailOpenRejected writes the §12.4 degraded-mode 429
 // when a request is rejected by a per-replica emergency ceiling or by the
 // cumulative fail-open timer. The envelope reuses the §15.1 RATE_LIMITED
 // code so client error handling applies uniformly; details.scope names the
-// binding control. spec: §12.4 lines 222-224. F-12.4.9.
+// binding control. spec: §12.4. F-12.4.9.
 func (m *middleware) writeFailOpenRejected(w http.ResponseWriter, dec failopen.Decision, now time.Time) {
 	scope := "failopen_" + string(dec.Reason)
 	if m.opts.Metrics != nil {
@@ -591,7 +590,7 @@ func userKey(r *http.Request) (string, bool) {
 // ("", false) when the request carries no authenticated tenant. The
 // "t:" prefix keeps the tenant bucket disjoint from the "u:" per-user
 // and "global" buckets so the three scopes count independently.
-// spec: §13.3 line 607; §11.1 line 7. F-11.1.8.
+// spec: §13.3; §11.1. F-11.1.8.
 func tenantKey(r *http.Request) (string, bool) {
 	p, ok := authmw.FromContext(r.Context())
 	if !ok || p.TenantID == "" {
@@ -614,15 +613,15 @@ func isInfraPath(p string) bool {
 
 // writeRateLimited writes the §15.1 429 RATE_LIMITED envelope and a
 // Retry-After header pointing at the next window boundary. It also
-// emits the §11.1 line 7 `lenny_rate_limit_rejected_total{scope}`
+// emits the §11.1
 // counter so admission rejections are attributable by scope.
-// spec: §11.1 line 7; §15.1 RATE_LIMITED envelope.
+// spec: §11.1; §15.1 RATE_LIMITED envelope.
 func (m *middleware) writeRateLimited(w http.ResponseWriter, scope string, limit int, now time.Time) {
 	if m.opts.Metrics != nil {
 		m.opts.Metrics.IncRateLimitRejected(scope)
 	}
 	retryAfter := retryAfterSeconds(now)
-	// spec: §15.1 lines 1131-1138 — the 429 carries the triplet for the
+	// spec: §15.1 — the 429 carries the triplet for the
 	// rejecting scope (remaining 0) alongside Retry-After. F-15.1.7.
 	setRateLimitHeaders(w.Header(), limit, 0, windowResetUnix(now))
 	w.Header().Set("Content-Type", "application/json")

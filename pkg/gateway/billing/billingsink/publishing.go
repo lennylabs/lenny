@@ -10,7 +10,7 @@ import (
 
 // Publishing decorates a billingstore.Store so that every event a
 // successful Append seals is delivered to the configured delivery sinks.
-// It enforces the §11.2.1 line 137 ordering: the sink publish happens
+// It enforces the §11.2.1 ordering: the sink publish happens
 // only after the wrapped synchronous Postgres write confirms, and runs
 // asynchronously so webhook/queue latency never blocks the billing write
 // path.
@@ -21,7 +21,7 @@ import (
 // via the inserter's own commit path; sink delivery for that degraded
 // window is a tracked residual on the finding.
 //
-// spec: §11.2.1 — Delivery sinks (line 137). F-11.2.14.
+// spec: §11.2.1 Delivery sinks. F-11.2.14.
 type Publishing struct {
 	billingstore.Store
 	pub *Publisher

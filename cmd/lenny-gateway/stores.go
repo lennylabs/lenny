@@ -155,7 +155,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	var billingStream failover.StreamTier
 	var billingTier *redisstream.Tier
 	if pgStore, ok := billing.(*billingpg.Store); ok && redisClient != nil {
-		// spec: §17.8.2 line 1203 — size the per-tenant billing stream MAXLEN.
+		// spec: §17.8.2 — size the per-tenant billing stream MAXLEN.
 		// An explicit --billing-redis-stream-max-len pins it; 0 resolves the
 		// per-tier default so a Tier 3 install gets 72,000 rather than the
 		// Tier 1/2 floor of 50,000 (which fills in ~83s at the Tier 3 rate).
@@ -179,7 +179,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	} else {
 		billingStream = failover.NewMemStream()
 	}
-	// spec: §11.2.1 lines 132-138 — wrap the durable primary so every
+	// spec: §11.2.1 — wrap the durable primary so every
 	// event a synchronous Postgres write seals is published to the
 	// configured delivery sinks (webhook / message queue). The wrap is a
 	// no-op when no sink is configured, and is applied to the failover
@@ -197,7 +197,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	billingPipeline := failover.New(failover.Options{
 		Primary: billingPrimary,
 		Stream:  billingStream,
-		// §12.3 line 76 billingFlushIntervalMs / billingFlushBatchSize /
+		// §12.3 billingFlushIntervalMs / billingFlushBatchSize /
 		// billingFlushMaxPending. OnFlushPressure is wired after
 		// gatewaymetrics.New() below. F-12.3.13.
 		FlushInterval: time.Duration(*billingFlushIntervalMs) * time.Millisecond,
@@ -220,7 +220,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	// chain. Nil-safe: a no-billing minimal gateway drops every tee. F-11.2.1.
 	billingEmitter := billingfanout.NewEmitter(billing)
 
-	// spec: §11.2.1 line 151 / §12.8 line 839 — reject a retention window
+	// spec: §11.2.1 / §12.8 — reject a retention window
 	// below the compliance floor of any tenant's regulated
 	// complianceProfile at startup. billing.retentionDays floors at the
 	// per-profile billing floor (hipaa 2190, soc2/fedramp 365);
@@ -266,7 +266,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 	log.Printf("lenny-gateway: §12.8 audit.gdprRetentionDays floor active (gdpr.* retention %d days)", *gdprRetentionDays)
 	log.Printf("lenny-gateway: §16.4 audit.retentionPreset=%s (non-gdpr retention %d days)", auditRetentionPresetValue, effectiveAuditRetentionDays)
 
-	// spec: §11.7 item 2 lines 357-359 — resolve the periodic background
+	// spec: §11.7 item 2 — resolve the periodic background
 	// integrity-check cadence against the active compliance posture. Any
 	// tenant with a regulated complianceProfile (soc2, fedramp, hipaa)
 	// tightens both the default (60s) and the maximum (120s); an
@@ -292,7 +292,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 
-	// spec: §11.7 line 450 — a regulated-profile tenant with no configured
+	// spec: §11.7 — a regulated-profile tenant with no configured
 	// audit.siem.endpoint is a fatal startup error in production mode; a
 	// non-production deployment logs a warning and continues. This catches
 	// a SIEM endpoint accidentally removed from Helm values from silently
@@ -308,7 +308,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 		}
 	}
 
-	// spec: §11.7 line 377 — a regulated-profile tenant additionally
+	// spec: §11.7 — a regulated-profile tenant additionally
 	// requires audit.pgaudit.enabled with audit.pgaudit.sinkEndpoint
 	// configured; absence is a fatal startup error in production mode,
 	// symmetric with the SIEM gate above. F-11.7.10.
@@ -324,7 +324,7 @@ func (w *gatewayWiring) buildBillingPipeline(
 		}
 	}
 
-	// spec: §11.7 line 375 — when audit.pgaudit.enabled is true, verify
+	// spec: §11.7 — when audit.pgaudit.enabled is true, verify
 	// the pgaudit extension is installed and pgaudit.log includes the DDL
 	// and ROLE classes. A failed check is fatal in production when a
 	// regulated tenant is present; otherwise it is logged. F-11.7.10.
@@ -369,13 +369,13 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	bearerExpectedAudiences := f.bearerExpectedAudiences
 	bearerTrustHMACKeyFile := f.bearerTrustHMACKeyFile
 	// ----- §7.1 uploadToken KeyRing + rotator -----
-	// The §7.1 line 67 contract requires the gateway to rotate signing
+	// The §7.1 contract requires the gateway to rotate signing
 	// keys on a deployer-configurable schedule (default 24h) and keep
 	// the previous key valid through a 5-minute overlap window so
 	// tokens minted just before rotation continue to verify. The boot
 	// key seeds the ring; the rotator goroutine (started below under
 	// watchdogCtx) drives subsequent rotations and the overlap sweep.
-	// spec: §7.1 line 67.
+	// spec: §7.1.
 	var seed [32]byte
 	if _, err := rand.Read(seed[:]); err != nil {
 		log.Fatalf("lenny-gateway: rand: %v", err)
@@ -408,7 +408,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	log.Printf("lenny-gateway: §4 KMS provider = %s (environment=%s)",
 		kmsOpts.Provider, kmsOpts.Environment)
 
-	// spec: §12.8 line 845 — now that the KMS provider is resolved, wire it
+	// spec: §12.8 — now that the KMS provider is resolved, wire it
 	// into the Postgres tenant store so the §12.8 erasure_salt is
 	// envelope-encrypted at rest (the store is built before the provider is
 	// resolved, so the injection is deferred to here). F-12.8.5.
@@ -425,7 +425,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	if err != nil {
 		log.Fatalf("lenny-gateway: kms-backed jwt signer: %v", err)
 	}
-	// spec: §10.2 line 225 — wrap the KMS-backed signer in the
+	// spec: §10.2 — wrap the KMS-backed signer in the
 	// JWTSigner circuit breaker. More than 3 consecutive Sign failures
 	// inside a 30s window trips the breaker open; subsequent Sign calls
 	// short-circuit to ErrSigningUnavailable until the cooldown elapses.
@@ -468,7 +468,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	// verifying through the overlap window without a code change here.
 	var bearerVerifier jwt.Verifier = rotatingVerifier
 	if *bearerTrustHMACKeyFile != "" {
-		// spec: §10.2 line 195. The bare HMAC signer is the dev-mode
+		// spec: §10.2. The bare HMAC signer is the dev-mode
 		// backend; the spec is explicit that it "must never be used in
 		// production deployments". --bearer-trust-hmac-key-file is the
 		// §17.4 Embedded Mode hook that trusts the bundled OIDC
@@ -477,13 +477,13 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		// fails closed at startup instead of silently widening the
 		// trust set. F-10.2.13.
 		if !*devMode {
-			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file requires --dev-mode (§10.2 line 195: the dev HMAC backend must never be used in production)")
+			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file requires --dev-mode (§10.2: the dev HMAC backend must never be used in production)")
 		}
 		trusted, err := jwt.LoadHMACKeyFile(*bearerTrustHMACKeyFile)
 		if err != nil {
 			log.Fatalf("lenny-gateway: --bearer-trust-hmac-key-file: %v", err)
 		}
-		// spec: §17.4 line 182 — "the embedded OIDC provider refuses any
+		// spec: §17.4 — "the embedded OIDC provider refuses any
 		// audience claim not matching dev.local; the gateway rejects
 		// externally-issued tokens." The embedded provider's own Verify
 		// enforces the audience, but the gateway accepts the embedded key
@@ -497,7 +497,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		log.Printf("lenny-gateway: trusting an additional HMAC bearer key from %s (kid %s); embedded tokens must carry aud=dev.local",
 			*bearerTrustHMACKeyFile, trusted.KeyID())
 	}
-	// spec: §10.2 line 237 — wrap the verifier so the standard auth
+	// spec: §10.2 — wrap the verifier so the standard auth
 	// chain enforces iss / aud alongside signature / exp / nbf when an
 	// operator configures the expected values. An unset flag skips
 	// the corresponding check so dev deployments retain their existing
@@ -516,7 +516,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	// lenny-token-service per --token-service-http-url, so the
 	// Token Service is the only component holding the signing key
 	// and the only component writing token.exchanged audit rows.
-	// spec: §4.3 line 193 "Canonical token endpoint" / F-4.3.12.
+	// spec: §4.3 / F-4.3.12.
 
 	// spec: §4.1 — record the §7.1 uploadToken, §4 KMS, and §10.2 / §10.3
 	// signing and verification surfaces on the accumulator for the
@@ -732,7 +732,7 @@ func resolveDDLPools(
 // same objectStorage.{gcs,azure} configuration keys the §17.6 preflight
 // check reads.
 //
-// spec: §12.5 line 315; §17.9.7.
+// spec: §12.5; §17.9.7.
 type t4DefaultEncryptionConfig struct {
 	gcsBucketDefaultCMEK             string
 	azureDefaultEncryptionScope      string
@@ -741,7 +741,7 @@ type t4DefaultEncryptionConfig struct {
 
 // validateT4DefaultEncryption is the fail-closed replacement for the SigV4
 // signature binding that the GCS V4 and Azure SAS paths cannot carry per
-// request (spec §12.5 line 321-325): because the mint signs no encryption
+// request (spec §12.5): because the mint signs no encryption
 // header on these two backends, a misconfigured deployment would silently
 // write T4 checkpoints under the deployment-wide key rather than the
 // tenant-scoped key, defeating the §12.9 cryptographic-erasure property.
@@ -761,7 +761,7 @@ type t4DefaultEncryptionConfig struct {
 // error to log.Fatalf so the gateway refuses to boot before it serves a
 // T4 tenant.
 //
-// spec: §12.5 line 315, 321-325; §17.9.7.
+// spec: §12.5; §17.9.7.
 func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4DefaultEncryptionConfig) error {
 	if !servesT4Tenant {
 		return nil
@@ -769,14 +769,14 @@ func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4Def
 	switch provider {
 	case blobproviderflags.ProviderGCS:
 		if strings.TrimSpace(cfg.gcsBucketDefaultCMEK) == "" {
-			return fmt.Errorf("§12.5 line 315: object-storage-provider=gcs serves a workspaceTier T4 tenant but declares no per-tenant bucket-default CMEK; set objectStorage.gcs.bucketDefaultCmek (--object-storage-gcs-bucket-default-cmek / LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK) — the GCS V4 signed URL cannot carry a per-request CMEK, so the T4 checkpoint PUT inherits the bucket default and the gateway fails closed without it")
+			return fmt.Errorf("§12.5: object-storage-provider=gcs serves a workspaceTier T4 tenant but declares no per-tenant bucket-default CMEK; set objectStorage.gcs.bucketDefaultCmek (--object-storage-gcs-bucket-default-cmek / LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK) — the GCS V4 signed URL cannot carry a per-request CMEK, so the T4 checkpoint PUT inherits the bucket default and the gateway fails closed without it")
 		}
 	case blobproviderflags.ProviderAzure:
 		if strings.TrimSpace(cfg.azureDefaultEncryptionScope) == "" {
-			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant but declares no container default encryption scope; set objectStorage.azure.defaultEncryptionScope (--object-storage-azure-default-encryption-scope / LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE) — the Azure SAS carries no encryption scope, so the T4 chunk PUT lands under the container default and the gateway fails closed without it")
+			return fmt.Errorf("§12.5: object-storage-provider=azure serves a workspaceTier T4 tenant but declares no container default encryption scope; set objectStorage.azure.defaultEncryptionScope (--object-storage-azure-default-encryption-scope / LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE) — the Azure SAS carries no encryption scope, so the T4 chunk PUT lands under the container default and the gateway fails closed without it")
 		}
 		if !cfg.azureDenyEncryptionScopeOverride {
-			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant with a container default encryption scope but no override prevention; set objectStorage.azure.denyEncryptionScopeOverride=true (--object-storage-azure-deny-encryption-scope-override / LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE) so a chunk PUT cannot land under any other scope")
+			return fmt.Errorf("§12.5: object-storage-provider=azure serves a workspaceTier T4 tenant with a container default encryption scope but no override prevention; set objectStorage.azure.denyEncryptionScopeOverride=true (--object-storage-azure-deny-encryption-scope-override / LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE) so a chunk PUT cannot land under any other scope")
 		}
 	}
 	return nil
@@ -792,7 +792,7 @@ func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4Def
 // gcs/azure backend is itself fatal: the gateway cannot verify the T4
 // default-encryption posture and must not start.
 //
-// spec: §12.5 line 315, 321-325; §17.9.7.
+// spec: §12.5; §17.9.7.
 func (w *gatewayWiring) assertT4DefaultEncryption(ctx context.Context, tenants tenantstore.Store) error {
 	// Normalize the provider exactly as blobproviderflags.Resolve does
 	// (lower-cased, whitespace-trimmed) so this fail-closed gate keys off
@@ -865,7 +865,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		readPool         *pgxpool.Pool
 		billingAuditPool *pgxpool.Pool
 		auditSyncPool    *pgxpool.Pool
-		// sqliteDB is the §17.4 line 199 Source-Mode embedded-SQLite
+		// sqliteDB is the §17.4 Source-Mode embedded-SQLite
 		// durability layer. Non-nil only when --sqlite-path is set and
 		// --postgres-dsn is empty; the shutdown path stops the flush loop
 		// (sqliteFlushCancel) and flushes+closes it. F-17.4.2.
@@ -884,7 +884,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		if err := verifyPostgresSchema(context.Background(), pool); err != nil {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
-		// spec: §12.3 lines 49-56 — cloud-managed pooler defense. Under
+		// spec: §12.3 — cloud-managed pooler defense. Under
 		// LENNY_POOLER_MODE=external the managed proxy cannot run the
 		// connect_query __unset__ sentinel, so the per-transaction
 		// lenny_tenant_guard trigger is the load-bearing RLS defense.
@@ -897,7 +897,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			log.Fatalf("lenny-gateway: %v", err)
 		}
 		pgPool = pool
-		// spec: §12.3 line 146 — the optional read-replica reader endpoint.
+		// spec: §12.3 — the optional read-replica reader endpoint.
 		// When --postgres-read-dsn is set, the read-heavy query classes the
 		// spec names route to this replica (the StoreRouter audit-read path
 		// and the session-status / task-tree / usage-report read paths in
@@ -916,7 +916,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			readPool = rpool
 			log.Printf("lenny-gateway: §12.3 routing read-heavy queries (session status, task tree, audit reads, usage reports) to the LENNY_PG_READ_DSN read replica")
 		}
-		// §12.3 line 103 — when the separate billing/audit instance is
+		// §12.3 — when the separate billing/audit instance is
 		// configured, open and verify its pool here so the §12.3 R-03
 		// StoreRouter below can route billing/audit writes to it. The
 		// separate instance carries the migrations/ schema for the
@@ -971,7 +971,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		if primaryDDLPool != nil && primaryDDLPool != billingAuditDDLPool {
 			log.Printf("lenny-gateway: §15.1 per-tenant primary audit sequence provisioning uses the CREATE-privileged LENNY_PG_PRIMARY_DDL_DSN connection")
 		}
-		// §12.3 line 79: a dedicated, small audit sync write pool so the
+		// §12.3: a dedicated, small audit sync write pool so the
 		// synchronous audit hash-chain writes do not consume the shared
 		// request pool's connections. It targets the instance where the
 		// audit ledger physically lives (the separate billing/audit
@@ -1040,7 +1040,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		users = userMem
 		connectors = connectorMem
 		billing = billingMem
-		// spec: §17.4 line 199 — Source Mode replaces Postgres with
+		// spec: §17.4 — Source Mode replaces Postgres with
 		// embedded SQLite for session and metadata storage. With
 		// --sqlite-path set, the in-memory stores above are loaded from
 		// the SQLite file on startup, snapshotted to it every two seconds
@@ -1083,7 +1083,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
 		}
 	}
-	// §4.4 line 236 / §10.1 checkpoint_manifest store: persists the
+	// §4.4 / §10.1 checkpoint_manifest store: persists the
 	// intent, per-chunk confirm, and terminal finalisation rows the §15.1
 	// checkpoint driver writes as it produces a workspace checkpoint, plus
 	// the partial recovery-aid row an eviction checkpoint leaves when it
@@ -1096,7 +1096,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	} else {
 		partialManifests = partialmanifeststore.NewMemoryStore(nil)
 	}
-	// §4.4 line 226 session-log store: persists runtime stderr to MinIO
+	// §4.4 session-log store: persists runtime stderr to MinIO
 	// when a session reaches a terminal state. The store is best-effort;
 	// the Noop implementation drops the bytes and is sufficient for
 	// in-memory deployments. A MinIO endpoint configured below
@@ -1105,14 +1105,14 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// deferred to the §4.5 wiring follow-on; today the close-hook
 	// fires with an empty body so the session-completion path
 	// exercises the contract without writing any object.
-	// spec: §4.4 line 226.
+	// spec: §4.4.
 	var sessionLogs sessionlogstore.Store = sessionlogstore.Noop{}
-	// §4.4 line 234 / §12.5 latest-2 retention catalog. The Postgres-
+	// §4.4 / §12.5 latest-2 retention catalog. The Postgres-
 	// backed store records every successful checkpoint and runs the
 	// rotation in the same transaction; the in-memory store backs the
 	// dev-mode deployment so the checkpointer can call Insert + Rotate
 	// without a live database.
-	// spec: §4.4 line 234.
+	// spec: §4.4.
 	var checkpointRetention checkpointretention.Store
 	if pgPool != nil {
 		checkpointRetention = checkpointretentionpg.New(pgPool, nil)
@@ -1183,7 +1183,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		}
 	}
 
-	// §12.5 line 315 / §17.9.7 — the fail-closed replacement for the SigV4
+	// §12.5 / §17.9.7 — the fail-closed replacement for the SigV4
 	// signature binding that the GCS V4 and Azure SAS checkpoint PUT paths
 	// cannot carry per request. On a gcs or azure backend the presigned
 	// capability signs no encryption header, so a workspaceTier T4 tenant's
@@ -1194,7 +1194,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// silently writes T4 checkpoints under the deployment-wide key. The
 	// §17.6 preflight check reads the same objectStorage.{gcs,azure} keys.
 	//
-	// spec: §12.5 line 315, 321-325; §17.9.7.
+	// spec: §12.5; §17.9.7.
 	if err := w.assertT4DefaultEncryption(context.Background(), tenants); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -1269,7 +1269,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 // degrades the composed seam to the bare artifact_store sum. Taking the method
 // value only when the store is non-nil avoids a method-value-on-nil panic.
 //
-// spec: §11.2 reservation-aware rebuild; §12.4 line 222.
+// spec: §11.2 reservation-aware rebuild; §12.4.
 func outstandingReservationSource(m partialmanifeststore.Store) storagequota.LiveBytesSource {
 	if m == nil {
 		return nil
@@ -1288,8 +1288,7 @@ func outstandingReservationSource(m partialmanifeststore.Store) storagequota.Liv
 // implementation the tier-1 test pins rather than an inline closure only a live
 // cluster exercises.
 //
-// spec: §11.2 line 35 (reserve the probed size, fail closed on a limit-lookup
-// failure); §12.4 storageQuotaBytes.
+// spec: §11.2; §12.4 storageQuotaBytes.
 func tenantStorageQuotaResolver(tenants tenantstore.Store) func(ctx context.Context, tenantID string) (int64, error) {
 	return func(ctx context.Context, tenantID string) (int64, error) {
 		t, err := tenants.Get(ctx, tenantID)
@@ -1327,7 +1326,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	artifactCatalog := w.artifactCatalog
 	partialManifests := w.partialManifests
 
-	// spec: §11.2 / §12.4 line 222 — the reservation-aware storage
+	// spec: §11.2 / §12.4 — the reservation-aware storage
 	// LiveBytesSource (SumLiveBytes + SumOutstandingReservations) is composed
 	// once here, whenever the Postgres artifact catalog is wired, and shared by
 	// the during-outage Failover enforcement read, the RecoveryReconciler
@@ -1362,27 +1361,27 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// inside the Redis-available branch below; nil without Redis).
 		erasureLeaseStore leasestore.LeaseStore
 
-		// coordMirror is the §10.1 line 165 coordination_lease barrier-target
+		// coordMirror is the §10.1 coordination_lease barrier-target
 		// mirror the Sweeper writes and the preStop barrier reads. Postgres-
 		// backed when pgPool is wired; nil otherwise, in which case the
 		// barrier falls back to the in-memory lease cache.
 		coordMirror coordlease.Store
 
 		// coordFencer drives the §10.1 / §4.2 CoordinatorFence after a
-		// resume re-bind (announce coordination_generation; §11.3 line 209
+		// resume re-bind (announce coordination_generation; §11.3
 		// retry/relinquish). Built inside the Redis-available branch below
 		// (it needs the lease store for the relinquish path); nil interface
 		// without Redis, which leaves the resume path unfenced.
 		coordFencer sessionserver.CoordinationFencer
 
-		// storageRecoveryReconciler drives the §12.4 line 210 write-back of
+		// storageRecoveryReconciler drives the §12.4 write-back of
 		// storage-quota counters to Redis on a Redis-recovery edge. Set only
 		// when both Redis and the Postgres artifact catalog are wired.
 		storageRecoveryReconciler *storagequota.RecoveryReconciler
 
 		// delegationBudgetReconciler drives the §11.2 periodic Postgres
 		// checkpoint of the §8.2 delegation tree budget counters and their
-		// §11.2 line 48 two-source reconstruction on a Redis-recovery edge.
+		// §11.2 two-source reconstruction on a Redis-recovery edge.
 		// Set only when the delegation Redis counters, the Postgres pool,
 		// and the SessionStore are all wired. F-11.2.5 / F-12.4.8.
 		delegationBudgetReconciler *delegationbudget.Reconciler
@@ -1394,7 +1393,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		var rcfg redisconn.Config
 		switch {
 		case *redisClusterAddrs != "":
-			// §12.4 lines 260-264: Cluster mode is the CLUSTER KEYSLOT-aware
+			// §12.4: Cluster mode is the CLUSTER KEYSLOT-aware
 			// topology and takes precedence over the direct/Sentinel fields.
 			rcfg = redisconn.Config{
 				ClusterAddrs:  splitAndTrim(*redisClusterAddrs),
@@ -1422,7 +1421,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		if err := redisconn.PingWithTimeout(redisClient, 5*time.Second); err != nil {
 			log.Fatalf("lenny-gateway: redis: %v", err)
 		}
-		// §12.4 lines 237-245: build the per-concern client split. A
+		// §12.4: build the per-concern client split. A
 		// concern with no dedicated URL falls back to the base client, so
 		// the single Tier 1/2 topology resolves every concern to
 		// redisClient unchanged. The auth/TLS template carries the base
@@ -1446,7 +1445,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		breakers = breakerCache
 		// §12.4 Coordination concern: session leases. The Redis-backed
 		// store is the primary; with Postgres also wired the failover
-		// wrapper routes lease operations to the §12.4 line 206 Postgres
+		// wrapper routes lease operations to the §12.4 Postgres
 		// advisory-lock fallback during a Redis outage, so coordination
 		// degrades to higher latency rather than breaking lease
 		// acquisition outright.
@@ -1464,7 +1463,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// the accumulator for buildSessionServer to inject as
 		// CoordinationLeaseStore.
 		w.coordLeaseStore = leaseStore
-		// §10.1 line 165: mirror held leases into Postgres so the preStop
+		// §10.1: mirror held leases into Postgres so the preStop
 		// barrier-target query observes coordinator handoffs that occurred
 		// in the seconds before drain. Without Postgres the mirror is nil
 		// and the barrier falls back to the in-memory lease cache.
@@ -1501,7 +1500,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// is Lua-atomic.
 		storageRedis := storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
 		storageCounter = storageRedis
-		// §12.4 line 222: when the durable artifact catalog is wired,
+		// §12.4: when the durable artifact catalog is wired,
 		// front the Redis counter with the Postgres-fallback failover so a
 		// Redis outage degrades upload pre-checks to the authoritative
 		// Postgres-derived total instead of breaking uploads, and a
@@ -1510,7 +1509,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// Lua fast path resumes. Without a catalog (dev/in-memory) the bare
 		// Redis store keeps the prior fail-on-Redis-error behavior.
 		//
-		// spec: §11.2 / §12.4 line 222 — the during-outage Failover
+		// spec: §11.2 / §12.4 — the during-outage Failover
 		// enforcement read and the recovery-edge rebuild share the single
 		// reservation-aware LiveBytesSource composed above (whenever the
 		// artifact catalog is wired), so a tenant's outstanding checkpoint
@@ -1545,7 +1544,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		default:
 			log.Printf("lenny-gateway: circuit-breaker state in Redis split=%t; coordination replica %s", concernRedis.Split(), replica)
 		}
-		// spec: §17.8.2 line 1164 — a Tier 3 deployment on a single-tenant
+		// spec: §17.8.2 — a Tier 3 deployment on a single-tenant
 		// Redis Sentinel topology gets the RedisClusterRecommended startup
 		// warning unless capacityPlanning.singleTenantRedisTopology=sentinel
 		// documents the operator's intent.
@@ -1602,7 +1601,7 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	storageCounter := w.storageCounter
 	billing := w.billing
 
-	// §12.3 R-03 line 144: billing and audit writes route through the
+	// §12.3 R-03: billing and audit writes route through the
 	// StoreRouter so a future Tier-3 shard split is a router swap with no
 	// billing/audit call-site changes. v1 wires the single-shard router;
 	// it runs in Postgres-only mode when Redis is unconfigured because
@@ -1614,9 +1613,9 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	// is a real *redis.Client — a typed-nil would defeat the nil check in
 	// NewSingleShardRouter, matching the securityBus guard below.
 	// F-12.3.4 / F-12.6.1 / F-12.2.13 / F-12.6.2 / F-12.7.1.
-	// §12.6 lines 556-558 scatter-gather execution bounds, resolved from
+	// §12.6 scatter-gather execution bounds, resolved from
 	// the storeRouter.* Helm values. The single-shard v1 router satisfies
-	// them trivially; the bounds and the §12.6 line 560 metrics are wired
+	// them trivially; the bounds and the §12.6 metrics are wired
 	// now so a later multi-shard split needs no retrofit. F-12.6.18.
 	scatterCfg := storerouter.ScatterConfig{
 		MaxConcurrency:   *scatterMaxConcurrency,
@@ -1626,7 +1625,7 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	var scatterRouter *storerouter.SingleShardRouter
 	var storeRouter storerouter.StoreRouter
 	if pgPool != nil {
-		// §12.4 lines 237-245: the router resolves each RedisConcern to
+		// §12.4: the router resolves each RedisConcern to
 		// its own client when an operator has split concerns onto separate
 		// instances; concernRedis.ByConcern() is nil for the single Tier
 		// 1/2 topology, so RedisShard falls back to the base client.
@@ -1649,7 +1648,7 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 		billing = billingpg.New(r)
 	}
 
-	// §11 line 37 storage-quota release. The cataloging decorator
+	// §11 storage-quota release. The cataloging decorator
 	// decrements the per-tenant storage counter by a deleted artifact's
 	// size after its catalog row commits with `deleted_at` set, so a
 	// terminal session's GC-collected artifacts free their reserved
@@ -1803,7 +1802,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// has no meaning without that link.
 		secretProber admin.SecretAccessProber
 	)
-	// §4.3 line 211 per-subsystem circuit breaker for Token Service
+	// §4.3 per-subsystem circuit breaker for Token Service
 	// calls. A degraded Token Service trips this breaker open after
 	// consecutive transient failures; the credassign client returns
 	// ErrTokenServiceUnavailable so the session-start path can surface
@@ -1825,7 +1824,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 			TenantID:  *tokenServiceTenant,
 			Subsystem: tokenServiceSubsystem,
 		})
-		// §4.9 line 1212: the admin credential-pool handlers probe Token
+		// §4.9: the admin credential-pool handlers probe Token
 		// Service Secret-read access over this same mTLS link before
 		// persisting a new secretRef.
 		secretProber = &tokenServiceSecretProber{stub: tokensv1.NewTokenServiceClient(conn)}
@@ -1940,7 +1939,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		kubeHealthzProbe func(context.Context) error
 		// saTokenVerifier validates the projected SA token's signature and
 		// audience on every pod→gateway GatewayControl request via a
-		// Kubernetes TokenReview (§10.2 line 227). It stays nil when there
+		// Kubernetes TokenReview (§10.2). It stays nil when there
 		// is no in-cluster client or no configured audience, in which case
 		// the SA-token interceptor degrades to the audience-only decode.
 		saTokenVerifier leasecontrol.TokenVerifier
@@ -1979,7 +1978,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Fatalf("lenny-gateway: build cluster client: %v", err)
 		}
 		clusterClient = k8sClient
-		// spec: §25.3 line 441 — the §25.3 health service probes the
+		// spec: §25.3 — the §25.3 health service probes the
 		// Kubernetes API server with a GET /healthz over the cluster
 		// transport. Built here where the rest config is in scope; wired
 		// onto the health aggregator below.
@@ -1988,7 +1987,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Fatalf("lenny-gateway: build apiserver /healthz probe: %v", err)
 		}
 		kubeHealthzProbe = probe
-		// spec: §10.2 line 227 — "Pods cannot forge or extend this token.
+		// spec: §10.2 — "Pods cannot forge or extend this token.
 		// The gateway validates the signature on every pod→gateway
 		// request." When an audience is configured the gateway validates
 		// the projected SA token via a Kubernetes TokenReview (the
@@ -2016,7 +2015,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		if err != nil {
 			log.Fatalf("lenny-gateway: adapter TLS: %v", err)
 		}
-		// spec: §11.3 lines 205-206 — gateway→pod keepalive: 10s interval
+		// spec: §11.3 — gateway→pod keepalive: 10s interval
 		// and 5s timeout. Without these the gRPC client library default
 		// (no keepalive) leaves a half-open TCP connection holding
 		// adapter state past the §11.3 timeout. F-11.3.12.
@@ -2036,12 +2035,12 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		// over-release the pod, so a concurrent-mode pool requires Redis.
 		var slotCounter *slotcounter.Counter
 		if redisClient != nil {
-			// §5.2 line 521: the SessionStore is the post-recovery
+			// §5.2: the SessionStore is the post-recovery
 			// rehydration seed source. After a Redis restart the first
 			// slot reservation on each concurrent-mode pod re-seeds the
 			// pod's active_slots counter from GetActiveSlotsByPod before
 			// any new slot is allowed, closing the over-commit race.
-			// §12.4 line 208: the SessionStore is also the Redis-outage
+			// §12.4: the SessionStore is also the Redis-outage
 			// capacity-gate fallback. When Redis is unreachable the counter
 			// gates intra-pod slot admission on GetActiveSlotsByPod under a
 			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
@@ -2106,7 +2105,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// Postgres-outage fallback; nil makes concurrent-mode slot
 			// assignment and release fail closed (see SlotClaimer).
 			SlotCounter: slotCounter,
-			// §5.1 line 43 — log the runtime.integrationLevel.underdeclared
+			// §5.1 — log the runtime.integrationLevel.underdeclared
 			// warning when the adapter handshake observes a higher level
 			// than the runtime declared, so the author can raise the
 			// declared level in a future release.
@@ -2162,13 +2161,13 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			OnError: func(sessionID string, err error) {
 				log.Printf("lenny-gateway: checkpoint of session %s failed: %v", sessionID, err)
 			},
-			// §4.4 line 234 / §12.5 — record the snapshot ref to the
+			// §4.4 / §12.5 — record the snapshot ref to the
 			// retention catalog and Rotate so the table never holds
 			// more than the latest-2 active rows per session. The
 			// Metrics field is wired after gatewaymetrics.New() below
-			// so the §4.4 line 254 duration histogram is emitted.
+			// so the §4.4 duration histogram is emitted.
 			Retention: checkpointRetention,
-			// §10.1 line 131 / §17.8.1 / §5.2 — the deployment-wide
+			// §10.1 / §17.8.1 / §5.2 — the deployment-wide
 			// checkpointGrantWindow default and the presigned-capability
 			// TTL the grant/confirm loop signs into each grant. GrantWindow
 			// is the fallback the driver applies when a pool declares no
@@ -2177,7 +2176,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			GrantWindow:     *checkpointGrantWindow,
 			CapabilityTTL:   time.Duration(*checkpointCapabilityTTLSeconds) * time.Second,
 			PoolGrantWindow: sessionserver.NewPoolPolicyReader(pools),
-			// §10.1 lines 130-141 — the produce → store pipeline seams: the
+			// §10.1 — the produce → store pipeline seams: the
 			// gateway writes the checkpoint_manifest intent/confirm/finalise
 			// rows, signs per-chunk presigned PUT capabilities, confirms each
 			// committed chunk's bytes-actually-written with a StatObject, and
@@ -2257,10 +2256,10 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	sessions := w.sessions
 	exec := w.exec
 
-	// spec: §10.4 line 389 — replay buffer depth is operator-tunable
+	// spec: §10.4 — replay buffer depth is operator-tunable
 	// via gateway.sessionEventReplayBufferDepth. F-10.4.5.
 	eventBus := sessionevents.NewBus(*sessionEventReplayBufferDepth)
-	// §4.4 line 225 / §12.4 (lenny:events: relay row): when Redis is
+	// §4.4 / §12.4 (lenny:events: relay row): when Redis is
 	// wired, attach the cross-replica relay so a client reconnecting via
 	// Last-Event-ID to a different replica sees prior events (the §15.1
 	// streaming-reconnect contract). Single-replica dev mode keeps the
@@ -2270,7 +2269,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 		eventBus = eventBus.WithRedisRelay(sessionevents.NewRedisRelay(concernRedis.For(storerouter.RedisConcernCachePubSub)))
 		log.Printf("lenny-gateway: §4.4 session SSE event bus relay attached to Redis (cross-replica replay enabled)")
 	}
-	// spec: §7.3 line 397 — wire the durable last_seq writer + the
+	// spec: §7.3 — wire the durable last_seq writer + the
 	// coordinator-handoff seed loader so per-session SeqNum survives
 	// replica restart and handoff without rewinds. The sessions
 	// store carries the persisted last_seq column; both hooks are
@@ -2280,12 +2279,12 @@ func (w *gatewayWiring) buildSessionMessaging() {
 		lastSeq := lastSeqStore{sessions: sessions}
 		eventBus = eventBus.WithLastSeqPersister(lastSeq).WithLastSeqLoader(lastSeq)
 	}
-	// spec: §7.2 lines 274-343 — the session inbox + DLQ coordinator.
+	// spec: §7.2 — the session inbox + DLQ coordinator.
 	// The DLQ is a Redis sorted set, so durability requires Redis; the
 	// dev / no-Redis posture leaves messagingCoord nil and the gateway
 	// no-ops the inbox-to-DLQ migration and the terminal DLQ drain. The
 	// inbox is in-memory by default and Redis-list-backed when
-	// durableInbox is set (§7.2 line 286). F-7.2.4, F-12.4.6, F-7.3.12.
+	// durableInbox is set (§7.2). F-7.2.4, F-12.4.6, F-7.3.12.
 	var messagingCoord *sessioninbox.Coordinator
 	if redisClient != nil {
 		// §12.4 Session-data concern: durable inbox + DLQ.
@@ -2307,7 +2306,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	// One §8.10 tree archive shared by the sessionserver (which archives
 	// children on terminal transitions) and the platform MCP tools. In
 	// production the durable record lives in Postgres (migration 0100);
-	// a per-replica LRU cache (§8.10 line 129, default 128 entries)
+	// a per-replica LRU cache (§8.10, default 128 entries)
 	// fronts it so a parent re-reading a child's result does not hit
 	// Postgres every time. Developer mode keeps the in-memory archive,
 	// which is durable for the lifetime of the single replica.
@@ -2315,16 +2314,16 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	if pgPool != nil {
 		treeArchive = treearchive.NewCached(treearchivepg.New(pgPool, nil, treearchivepg.WithReadPool(readPool)), *treeArchiveCacheEntries)
 	}
-	// §8.2 lines 57, 127 / §12.4 lines 193, 213: the Redis-backed
+	// §8.2 / §12.4: the Redis-backed
 	// per-tree delegation budget counters gate every admission and are
-	// decremented when a child settles (the §8.2 line 130 completed-
+	// decremented when a child settles (the §8.2 completed-
 	// subtree offload). Shared by the delegation service (admission
 	// Reserve) and the sessionserver (terminal-state Return). When Redis
 	// is not configured the reserver stays nil and only the static
 	// ValidateChildSlice ceiling is enforced. F-8.2.18 / F-8.2.12 / F-8.2.13.
 	var treeBudgetReserver delegation.TreeBudgetReserver
 	// hwmReader is the concrete *treebudget.Reserver kept alongside the
-	// interface so the §8.3 line 379 high-watermark read (not part of the
+	// interface so the §8.3 high-watermark read (not part of the
 	// narrow Reserve/Return interfaces) is reachable from the
 	// sessionserver. Nil when Redis is not configured, which leaves the
 	// nil interface genuinely nil so the typed-nil-in-interface trap is
@@ -2350,7 +2349,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	if pgPool != nil {
 		interactions = interactionpg.New(pgPool)
 	}
-	// spec: §7.2 lines 124-134 — the tool-use approval loop. When a
+	// spec: §7.2 — the tool-use approval loop. When a
 	// runtime emits a tool_call(approvalRequired) over the §4.7 Attach
 	// stream the pod executor consults the gate, which records the
 	// KindToolUse interaction, publishes the tool_use_requested SSE
@@ -2369,7 +2368,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	if pgPool != nil {
 		evals = evalpg.New(pgPool)
 	}
-	// spec: §10.7 line 1088 — the lenny_eval_aggregates materialized-view
+	// spec: §10.7 — the lenny_eval_aggregates materialized-view
 	// read + REFRESH path requires a Postgres backend. Enable it only when
 	// a positive refresh interval is configured against Postgres; with the
 	// default 0 (or no Postgres) the §10.7 results API aggregates on read.
@@ -2387,13 +2386,13 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	if pgPool != nil {
 		experiments = experimentpg.New(pgPool)
 	}
-	// spec: §9.4 line 196 / §12.8 line 746 — when the feature flag
+	// spec: §9.4 / §12.8 — when the feature flag
 	// disables the MemoryStore, construct no store. The MCP tools
 	// short-circuit on a nil Memory in mcptools.Deps. F-9.4.7.
 	var memories memorystore.Store
 	var memoryBackendLabel string
 	if *memoryEnabled {
-		// spec: §9.4 line 198 — the Embedder seam advertised for custom
+		// spec: §9.4 — the Embedder seam advertised for custom
 		// providers is preflighted at startup so a misconfigured
 		// dimension width (e.g., a provider that returns 1536-wide
 		// vectors against the migration-0044 vector(256) column) fails
@@ -2403,7 +2402,7 @@ func (w *gatewayWiring) buildSessionMessaging() {
 		// still cheap and pins the contract for future seam swaps.
 		// F-9.4.8.
 		if err := memorystore.ValidateEmbedder(memorystore.NewHashingEmbedder()); err != nil {
-			log.Fatalf("lenny-gateway: memorystore embedder preflight failed (§9.4 line 198): %v", err)
+			log.Fatalf("lenny-gateway: memorystore embedder preflight failed (§9.4): %v", err)
 		}
 		if pgPool != nil {
 			pgmem := memorypg.NewWithMaxPerUser(pgPool, *memoryMaxPerUser)

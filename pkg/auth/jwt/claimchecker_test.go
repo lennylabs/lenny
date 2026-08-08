@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §10.2 line 237 — ClaimChecker layers iss / aud onto the
+// spec: §10.2 — ClaimChecker layers iss / aud onto the
 // standard auth chain. Each subtest pins one branch.
 
 func newCCSigner() *HMACSigner {
@@ -85,7 +85,7 @@ func TestClaimCheckerPassesThroughInnerError(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 237 — nbf is part of the standard auth chain. A
+// spec: §10.2 — nbf is part of the standard auth chain. A
 // token whose not-before lies in the future (beyond the ±skew window)
 // is rejected with reason=not_yet_valid.
 func TestHMACVerifyRejectsFutureNotBefore(t *testing.T) {

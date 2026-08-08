@@ -15,7 +15,7 @@ package coordination
 type MemoryTier string
 
 const (
-	// MemoryTierSingleReplicaOnly is the §25.4 line 2212 default: a
+	// MemoryTierSingleReplicaOnly is the §25.4 default: a
 	// Tier-3 acquisition succeeds only when lenny-ops runs as a single
 	// replica (detected via the K8s Endpoints lookup). Multi-replica
 	// deployments reject the acquisition so two replicas never grant
@@ -31,7 +31,7 @@ const (
 )
 
 // ParseMemoryTier maps an operator-supplied ops.locks.memoryTier string
-// to a MemoryTier. The empty string resolves to the §25.4 line 2212
+// to a MemoryTier. The empty string resolves to the §25.4
 // default (single-replica-only); an unrecognized value returns ok=false
 // so the binary can reject a typo at startup rather than silently
 // degrading to an unintended safety posture.
@@ -54,8 +54,7 @@ func ParseMemoryTier(s string) (MemoryTier, bool) {
 // The §25.4 single-replica-only policy consults it to decide whether an
 // in-memory (Tier-3) acquisition is safe.
 //
-// spec: §25.4 line 2208 ("detected via K8s Endpoints lookup at startup
-// and re-checked every 30s").
+// spec: §25.4.
 type ReplicaCounter interface {
 	ReplicaCount() int
 }
@@ -98,7 +97,7 @@ type CoordinationDecision struct {
 //   - "single-replica-only" (default): grant only when the deployment is
 //     a single replica; reject otherwise.
 //
-// spec: §25.4 lines 2206-2212, 1539.
+// spec: §25.4.
 func (g *CoordinationGate) Evaluate() CoordinationDecision {
 	switch g.tier {
 	case MemoryTierNever:

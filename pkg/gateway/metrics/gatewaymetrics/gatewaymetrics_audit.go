@@ -12,7 +12,7 @@ import (
 type auditMetrics struct {
 	// auditChainIntegrity is the §16.1 lenny_audit_chain_integrity_total
 	// counter classified by `state` (the §11.7 ChainIntegrity enum). The
-	// §12.3 line 101 startup chain-continuity check increments it once
+	// §12.3 startup chain-continuity check increments it once
 	// per tenant; the §16.5 AuditChainGap alert reads the broken series
 	// via `increase(lenny_audit_chain_integrity_total{state="broken"}[15m])`.
 	// F-12.3.9.
@@ -84,7 +84,7 @@ type auditMetrics struct {
 	// region-scoped counter above so the cross-operation §16.5 view has a
 	// single series. F-12.5.20 / F-16.7.2.
 	dataResidencyViolation *prometheus.CounterVec
-	// platformAuditRegionUnresolvable is the §11.7 line 433
+	// platformAuditRegionUnresolvable is the §11.7
 	// lenny_platform_audit_region_unresolvable_total counter, labeled by
 	// the requested region and the failure_mode (missing_entry |
 	// postgres_unreachable). The CMP-058 platform-tenant audit residency
@@ -99,12 +99,11 @@ type auditMetrics struct {
 	// already got the response), but the durable store rejected the
 	// cache row, so the next retry with the same key WILL re-execute
 	// the operation. Labelled by tenant so a noisy tenant doesn't
-	// hide a platform-wide spike. spec: §11.5 line 277; F-11.5.4.
+	// hide a platform-wide spike. spec: §11.5; F-11.5.4.
 	idempotencyCacheWriteFailures *prometheus.CounterVec
 	// idempotencyCacheSkipped counts cache writes the middleware
 	// declined by policy — currently `server_error` (inner-handler
-	// 5xx, must not be replayed for the 24-hour TTL). spec: §11.5
-	// line 277; F-11.5.3.
+	// 5xx, must not be replayed for the 24-hour TTL). spec: §11.5; F-11.5.3.
 	idempotencyCacheSkipped *prometheus.CounterVec
 }
 
@@ -112,10 +111,10 @@ type auditMetrics struct {
 // against reg. spec: §16 observability metrics.
 func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	var m auditMetrics
-	// §11.5 line 277 — `lenny_idempotency_cache_write_failures_total`
+	// §11.5 — `lenny_idempotency_cache_write_failures_total`
 	// counts §11.5 idempotency-key Put failures (inner handler ran,
 	// durable store rejected the cache row; next retry WILL
-	// re-execute). spec: §11.5 line 277; F-11.5.4.
+	// re-execute). spec: §11.5; F-11.5.4.
 	idempotencyCacheWriteFailures, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_idempotency_cache_write_failures_total",
 		Help: "§11.5 idempotency-key cache Put failures (silent re-execution risk).",
@@ -123,10 +122,10 @@ func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §11.5 line 277 — `lenny_idempotency_cache_skipped_total` counts
+	// §11.5 — `lenny_idempotency_cache_skipped_total` counts
 	// cache writes the middleware declined by policy. reason:
 	// `server_error` (inner-handler 5xx; not replayed for the 24-hour
-	// TTL). spec: §11.5 line 277; F-11.5.3.
+	// TTL). spec: §11.5; F-11.5.3.
 	idempotencyCacheSkipped, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_idempotency_cache_skipped_total",
 		Help: "§11.5 idempotency-key cache writes the middleware declined by policy.",
@@ -134,7 +133,7 @@ func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 lenny_audit_chain_integrity_total — the §12.3 line 101
+	// §16.1 lenny_audit_chain_integrity_total — the §12.3
 	// startup chain-continuity check classifies each tenant's chain by
 	// §11.7 state; the §16.5 AuditChainGap alert reads state="broken".
 	// F-12.3.9.
@@ -145,7 +144,7 @@ func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §11.7 item 2 line 359 lenny_audit_grant_drift_total — the periodic
+	// §11.7 item 2 lenny_audit_grant_drift_total — the periodic
 	// background integrity check increments it when it detects a grant /
 	// trigger / erasure-guard drift after startup. Unlabeled to match the
 	// §16.5 AuditGrantDrift alert expression (`> 0`). F-11.7.3.
@@ -231,7 +230,7 @@ func newAuditMetrics(reg *prometheus.Registry) (auditMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §17.3 line 130 / §25.11 line 4085 ArtifactStore replication-health
+	// §17.3 / §25.11 ArtifactStore replication-health
 	// surface — the replication Controller's MeasureAll wires these via
 	// LagObserver.ReplicationLag / ReplicationFailures. F-17.3.7.
 	minioReplicationLagSeconds, err := metrics.NewGauge(prometheus.GaugeOpts{

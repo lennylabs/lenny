@@ -66,7 +66,7 @@ func TestCtrInvocationArgsDockerPath(t *testing.T) {
 // substrate no longer fails closed when the host tarball is absent, so a
 // missing image silently no-ops instead of surfacing an open error.
 //
-// spec: §24.19.1 line 275 (the `--file <tar>` import path), §17.4 (the
+// spec: §24.19.1, §17.4 (the
 // Docker-backed substrate streams the host tarball through `docker exec -i`).
 func TestImportFromFileMissingTarballOnDockerPath_spec_24_19_1(t *testing.T) {
 	ctr := CtrInvocation{Binary: "docker", socket: containerCtrSocket, container: "lenny-embedded-k3s-x"}
@@ -92,8 +92,7 @@ func TestImportFromFileMissingTarballOnDockerPath_spec_24_19_1(t *testing.T) {
 // reports a non-zero exit when the ctr invocation fails, so a broken import
 // is mistaken for success.
 //
-// spec: §24.19.1 line 275 (the `--file <tar>` import path on the host
-// substrate).
+// spec: §24.19.1.
 func TestImportFromFileHostPathRunError_spec_24_19_1(t *testing.T) {
 	tar := filepath.Join(t.TempDir(), "image.tar")
 	if err := os.WriteFile(tar, []byte("not-a-real-tar"), 0o644); err != nil {
@@ -120,7 +119,7 @@ func TestImportFromFileHostPathRunError_spec_24_19_1(t *testing.T) {
 // operator without Docker at the tarball fallback, leaving them with the raw
 // os/exec not-found error.
 //
-// spec: §17.4 line 290, §24.19.1 line 274.
+// spec: §17.4, §24.19.1.
 func TestImportFromHostDaemonSuggestsTarFallbackWhenDockerMissing_spec_24_19_1(t *testing.T) {
 	origLookPath := lookPathDocker
 	t.Cleanup(func() { lookPathDocker = origLookPath })
@@ -148,7 +147,7 @@ func TestImportFromHostDaemonSuggestsTarFallbackWhenDockerMissing_spec_24_19_1(t
 	}
 }
 
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 (Docker-backed
+// spec: §24.19.1, §17.4 (Docker-backed
 // substrate) — when the running stack records a Docker-backed k3s
 // container but the `docker` binary is absent, the image bridge fails
 // closed with K3S_UNAVAILABLE and points the operator at Docker Desktop.
@@ -177,7 +176,7 @@ func TestCtrCommandDockerSubstrateMissingDocker_spec_24_19_1(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — when the recorded
+// spec: §24.19.1, §17.4 — when the recorded
 // Docker-backed k3s container is not running, the bridge reports
 // K3S_UNAVAILABLE rather than running `docker exec` against a dead
 // container.
@@ -215,7 +214,7 @@ func TestCtrCommandDockerSubstrateContainerDown_spec_24_19_1(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — when the recorded
+// spec: §24.19.1, §17.4 — when the recorded
 // Docker-backed k3s container is up, CtrCommand returns a `docker exec`
 // invocation addressing the in-container containerd socket, so the bridge
 // reaches containerd inside the container rather than via absent host paths.
@@ -247,7 +246,7 @@ func TestCtrCommandDockerSubstrateRunning_spec_24_19_1(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4 — the host
+// spec: §24.19.1, §17.4 — the host
 // child-process substrate (Linux) reports K3S_UNAVAILABLE when the host
 // k3s binary and containerd socket are absent, with no stack state file
 // recorded. This pins the host path unchanged: it depends on the on-disk

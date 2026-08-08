@@ -14,11 +14,11 @@
 // from the session's create-to-terminal wall-clock span.
 //
 // treeUsage is the sum of a task's own usage plus every descendant's. Per
-// §8.8 line 917 it is null until every descendant has settled, so the
+// §8.8 it is null until every descendant has settled, so the
 // builder walks the subtree (live rows ∪ archived nodes) and returns nil
 // when any descendant is still non-terminal.
 //
-// spec: §8.8 lines 897-917.
+// spec: §8.8.
 package resultrollup
 
 import (
@@ -60,7 +60,7 @@ func New(sessions sessionstore.Store, tokens sessionusage.Store, archive treearc
 // session's accumulated tokens and derives the time dimensions from the
 // row. A nil Builder or a nil token store yields a usage with zero tokens
 // and the derived time dimensions.
-// spec: §8.8 lines 897-903.
+// spec: §8.8.
 func (b *Builder) Usage(ctx context.Context, sess sessionstore.Session) *sessionrecord.Usage {
 	if b == nil {
 		return nil
@@ -113,13 +113,13 @@ func (b *Builder) wallClockSeconds(sess sessionstore.Session) float64 {
 // TreeUsage builds the §8.8 treeUsage rollup for the subtree rooted at
 // sess: the sum of sess's usage plus every descendant's, with totalTasks
 // the node count. It returns nil when sess is non-terminal, when any
-// descendant is non-terminal (§8.8 line 917), or when the Builder lacks
+// descendant is non-terminal (§8.8), or when the Builder lacks
 // the session store needed to enumerate the subtree.
 //
 // rootUsage is sess's own freshly-built usage (the same value the caller
 // puts on TaskResult.usage); passing it avoids a second token lookup and
 // keeps the leaf node's usage and treeUsage consistent.
-// spec: §8.8 lines 904-917.
+// spec: §8.8.
 func (b *Builder) TreeUsage(ctx context.Context, sess sessionstore.Session, rootUsage *sessionrecord.Usage) *sessionrecord.TreeUsage {
 	if b == nil || b.sessions == nil || rootUsage == nil {
 		return nil

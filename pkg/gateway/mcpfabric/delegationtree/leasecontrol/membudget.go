@@ -35,7 +35,7 @@ type MemoryBudgetSource struct {
 	// sessionTenant maps a session id to its tenant.
 	sessionTenant map[string]string
 
-	// parentLease records the §8.6 line 648 parent-lease ceilings keyed
+	// parentLease records the §8.6 parent-lease ceilings keyed
 	// by child session id. A child session's effective extension max
 	// is capped at the parent's lease grant per dimension. F-8.6.15.
 	parentLease map[string]SessionLease
@@ -44,9 +44,9 @@ type MemoryBudgetSource struct {
 	// extension-denied flag, cool-off expiry, and grant counters. The
 	// Deny, TreeBudget, ApplyGrant, and ClearSubtreeDenial paths delegate
 	// the denial concern to it so a user rejection survives a coordinator
-	// handoff (§8.6 line 730), the flag is read from the store rather than
-	// the in-memory cache (§8.6 line 731), and the grant re-checks the
-	// flag inside the store's commit transaction (§8.6 line 732). A nil
+	// handoff (§8.6), the flag is read from the store rather than
+	// the in-memory cache (§8.6), and the grant re-checks the
+	// flag inside the store's commit transaction (§8.6). A nil
 	// denials leaves the tree-local in-memory denial state authoritative.
 	// The per-session extension deltas stay in memory in both modes; the
 	// store only owns the denial state and a durable per-tree grant
@@ -59,7 +59,7 @@ type memTree struct {
 	rootSessionID string
 	tenantID      string
 
-	// base holds each §8.6 line 643 dimension's present value. base.Tokens
+	// base holds each §8.6 dimension's present value. base.Tokens
 	// is the configured CurrentTokenBudget, base.Seconds the
 	// CurrentMaxAgeSeconds, and so on for the remaining dimensions.
 	// F-8.6.1.
@@ -80,14 +80,14 @@ type memTree struct {
 	// dimension while the others proceed independently. F-8.6.1; F-8.6.11.
 	effMaxCeilings Dimensions
 
-	// extensions records per-requesting-session §8.6 line 737-741
+	// extensions records per-requesting-session §8.6
 	// extension deltas. Keyed by sessionID, each value carries the
 	// session-specific per-dimension deltas atop base. TreeBudget
 	// (sessionID) returns the requesting session's view (base + delta);
 	// other sessions in the same tree see the unchanged base, satisfying
 	// "Extensions apply to the requesting session only" and "Existing
 	// children are unaffected". F-8.6.12.
-	// spec: §8.6 line 737-741
+	// spec: §8.6
 	extensions map[string]Dimensions
 
 	// extensionDenied and coolOffExpiry are the §8.6 per-tree denial
@@ -103,22 +103,22 @@ type memTree struct {
 
 	// approvalMode is the resolved §8.6 extensionApproval mode (auto vs
 	// elicitation). The dispatcher that selects between the two lands
-	// with the §8.6 line 714 elicitation flow; until then the field is
+	// with the §8.6 elicitation flow; until then the field is
 	// plumbed but not consulted by the handler, which auto-approves
 	// under the ceiling. Zero applies DefaultApprovalMode.
-	// spec: §8.6 line 674
+	// spec: §8.6
 	approvalMode ApprovalMode
 
 	// successCoolOff is the resolved §8.6 coolOffSeconds for the
 	// elicitation-mode post-approval window. Zero applies
 	// DefaultSuccessCoolOff once the dispatcher consumes it.
-	// spec: §8.6 line 675
+	// spec: §8.6
 	successCoolOff time.Duration
 
-	// autoMaxPerMinute is the resolved §8.6 line 712
+	// autoMaxPerMinute is the resolved §8.6
 	// maxAutoExtensionsPerMinute for the tree. Zero means no limit.
 	// F-8.6.7.
-	// spec: §8.6 line 712
+	// spec: §8.6
 	autoMaxPerMinute int
 }
 
@@ -160,13 +160,13 @@ func (m *MemoryBudgetSource) WithClock(clock func() time.Time) *MemoryBudgetSour
 
 // WithDenialStore makes the §8.6 extension-denied flag, cool-off expiry,
 // and grant counters durable by delegating them to store: the
-// handoff-safe path §8.6 lines 730-733 require. With a store set, Deny
+// handoff-safe path §8.6 require. With a store set, Deny
 // persists to it, TreeBudget reads the flag from it (database-clock
 // compared), ApplyGrant re-checks the flag inside the store's commit
 // transaction before the per-session in-memory delta is applied, and
 // ClearSubtreeDenial clears it through the store. A nil store restores
 // the in-memory-only behavior. It returns the receiver for chaining.
-// spec: §8.6 lines 730-733. F-8.6.5.
+// spec: §8.6. F-8.6.5.
 func (m *MemoryBudgetSource) WithDenialStore(store DenialStore) *MemoryBudgetSource {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -200,7 +200,7 @@ type TreeConfig struct {
 	// RuntimeBase is the runtime-override maxExtendableBudget base.
 	RuntimeBase int64
 
-	// CurrentMaxAgeSeconds is the §8.6 line 643 additionalMaxAge
+	// CurrentMaxAgeSeconds is the §8.6 additionalMaxAge
 	// dimension's present value (the tree's current perChildMaxAge in
 	// seconds). F-8.6.11.
 	CurrentMaxAgeSeconds int64
@@ -211,7 +211,7 @@ type TreeConfig struct {
 	// this value. F-8.6.11.
 	EffectiveMaxAgeSeconds int64
 
-	// The §8.6 line 643 extendable dimensions beyond tokens and seconds:
+	// The §8.6 extendable dimensions beyond tokens and seconds:
 	// maxChildrenTotal, maxParallelChildren, maxTreeSize, and the two
 	// fileExportLimits components. Each carries a current value and a
 	// flat effective ceiling, following the seconds-dimension pattern. A
@@ -233,31 +233,31 @@ type TreeConfig struct {
 	// ApprovalMode is the §8.6 extensionApproval mode resolved for the
 	// tree via the deployment→tenant→runtime layering. The unspecified
 	// zero value is normalized to DefaultApprovalMode.
-	// spec: §8.6 line 674
+	// spec: §8.6
 	ApprovalMode ApprovalMode
 
 	// SuccessCoolOff is the §8.6 coolOffSeconds for the elicitation-mode
 	// post-approval window. Zero applies DefaultSuccessCoolOff.
-	// spec: §8.6 line 675
+	// spec: §8.6
 	SuccessCoolOff time.Duration
 
-	// AutoMaxPerMinute is the §8.6 line 712 autoModeRateLimit
+	// AutoMaxPerMinute is the §8.6 autoModeRateLimit
 	// maxAutoExtensionsPerMinute resolved for the tree through the
 	// deployment→tenant→runtime layering. Zero means no limit (the spec
 	// default), so auto mode grants independently without ever falling
 	// back to elicitation. A positive value caps auto-approved extensions
 	// per one-minute window before the fallback engages. F-8.6.7.
-	// spec: §8.6 line 712
+	// spec: §8.6
 	AutoMaxPerMinute int
 }
 
-// SessionLease is the §8.6 line 648 "parent's own lease limits" snapshot
+// SessionLease is the §8.6 snapshot
 // recorded for a delegated child session. The MemoryBudgetSource keys
 // it on the child session id; the handler reads it as the second hard
 // ceiling so a child cannot extend beyond what the parent's lease
 // granted. Zero on either field disables that dimension's cap.
 // F-8.6.15.
-// spec: §8.6 line 648
+// spec: §8.6
 type SessionLease struct {
 	// TokenCeiling caps the child's per-extension token grant at the
 	// parent lease's token grant value. Zero means "no cap on this
@@ -270,7 +270,7 @@ type SessionLease struct {
 	// cap on this dimension".
 	MaxAgeCeiling int64
 
-	// The remaining §8.6 line 643 dimensions' parent-lease caps. Zero on
+	// The remaining §8.6 dimensions' parent-lease caps. Zero on
 	// any of them disables that dimension's per-parent cap. F-8.6.1.
 	ChildrenCeiling         int64
 	ParallelChildrenCeiling int64
@@ -349,7 +349,7 @@ func (m *MemoryBudgetSource) AddSession(sessionID, rootSessionID, tenantID strin
 	m.sessionTenant[sessionID] = tenantID
 }
 
-// SetParentLease records the §8.6 line 648 parent-lease ceiling for a
+// SetParentLease records the §8.6 parent-lease ceiling for a
 // delegated child session. The handler caps the child's extension
 // effective max at this value (per dimension) so the child cannot
 // extend beyond what the parent's own lease granted. Calling with a
@@ -358,7 +358,7 @@ func (m *MemoryBudgetSource) AddSession(sessionID, rootSessionID, tenantID strin
 // registered via AddSession or RegisterTree; an unknown session is a
 // no-op so callers can call this defensively before AddSession.
 // F-8.6.15.
-// spec: §8.6 line 648
+// spec: §8.6
 func (m *MemoryBudgetSource) SetParentLease(sessionID string, parent SessionLease) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -387,15 +387,14 @@ func (m *MemoryBudgetSource) MarkDenied(rootSessionID string) {
 	t.coolOffExpiry = m.clock().Add(coolOff)
 }
 
-// Deny marks the requesting subtree extension-denied and starts the §8.6
-// line 734 rejection cool-off, satisfying the BudgetSource.Deny contract
+// Deny marks the requesting subtree extension-denied and starts the §8.6 rejection cool-off, satisfying the BudgetSource.Deny contract
 // the elicitation coordinator calls on a user rejection. The in-memory
 // source records the denial tree-wide (see memTree.extensionDenied),
 // keyed by the rootSessionID; the requestingSessionID and tenantID flow
 // through for the Postgres source, which keys the flag per subtree and
 // persists it to delegation_tree_budget. An unknown tree is a no-op so a
 // late rejection on a torn-down tree does not error. F-8.6.2.
-// spec: §8.6 line 729, line 734
+// spec: §8.6
 func (m *MemoryBudgetSource) Deny(ctx context.Context, tenantID, rootSessionID, _ /*requestingSessionID*/ string) error {
 	m.mu.Lock()
 	t, ok := m.trees[rootSessionID]
@@ -435,7 +434,7 @@ func (m *MemoryBudgetSource) ClearDenial(rootSessionID string) {
 
 // ClearSubtreeDenial clears the §8.6 extension-denied flag for the
 // subtree rooted at sessionID inside the delegation tree rooted at
-// rootSessionID, backing the §15.1 line 868 admin endpoint
+// rootSessionID, backing the §15.1 admin endpoint
 // DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial.
 // It returns found=false when rootSessionID names no known tree so the
 // admin handler can answer 404 rather than silently succeeding.
@@ -447,7 +446,7 @@ func (m *MemoryBudgetSource) ClearDenial(rootSessionID string) {
 // subtree; the (found bool, error) signature is the seam for it — a
 // Postgres implementation returns the not-found and storage-error cases
 // through the same two return values.
-// spec: §8.6 line 735; §15.1 line 868
+// spec: §8.6; §15.1
 func (m *MemoryBudgetSource) ClearSubtreeDenial(ctx context.Context, rootSessionID, _ string) (found bool, err error) {
 	m.mu.Lock()
 	t, ok := m.trees[rootSessionID]
@@ -492,7 +491,7 @@ func (m *MemoryBudgetSource) TenantOf(_ context.Context, sessionID string) (stri
 // returned Current dimensions reflect the requesting session's
 // per-session view: the tree base plus any extension previously granted
 // to sessionID itself. Siblings see the unchanged base — extensions
-// apply to the requesting session only per §8.6 line 737-741. F-8.6.1;
+// apply to the requesting session only per §8.6. F-8.6.1;
 // F-8.6.12.
 func (m *MemoryBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID string) (TreeBudget, error) {
 	m.mu.Lock()
@@ -507,7 +506,7 @@ func (m *MemoryBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID
 		EffectiveMax:  t.effectiveMaxDims(),
 		ParentCeiling: m.parentLease[sessionID].ceilings(),
 	}
-	// §8.6 line 731: with a durable store the denial flag MUST be read
+	// §8.6: with a durable store the denial flag MUST be read
 	// from the store (database-clock compared), not the in-memory cache
 	// that could be stale across a coordinator handoff. The store read
 	// runs outside the mutex.
@@ -530,7 +529,7 @@ func (m *MemoryBudgetSource) TreeBudget(ctx context.Context, tenantID, sessionID
 }
 
 // ApplyGrant raises the requesting session's extension deltas by the
-// per-dimension grant. §8.6 lines 737-741 scope an extension to the
+// per-dimension grant. §8.6 scope an extension to the
 // requesting session only — existing children are unaffected, only new
 // children spawned after the extension benefit from the expanded parent
 // budget — so the bump is recorded against requestingSessionID rather
@@ -551,7 +550,7 @@ func (m *MemoryBudgetSource) ApplyGrant(ctx context.Context, tenantID, rootSessi
 	denials := m.denials
 	m.mu.Unlock()
 
-	// §8.6 line 732: with a durable store the in-flight atomic re-check
+	// §8.6: with a durable store the in-flight atomic re-check
 	// and the budget-counter increment happen inside one Postgres
 	// transaction under the delegation_tree_budget row lock. If a denial
 	// was persisted between this request's TreeBudget read and the
@@ -607,7 +606,7 @@ func (m *MemoryBudgetSource) RejectionCoolOff(_ context.Context, tenantID, rootS
 // registered with, falling back to DefaultApprovalMode when the
 // registration left it unspecified. The dispatcher that selects auto
 // vs. elicitation behaviour reads it.
-// spec: §8.6 line 674
+// spec: §8.6
 func (m *MemoryBudgetSource) ApprovalMode(_ context.Context, tenantID, rootSessionID string) ApprovalMode {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -624,7 +623,7 @@ func (m *MemoryBudgetSource) ApprovalMode(_ context.Context, tenantID, rootSessi
 // SuccessCoolOff returns the §8.6 elicitation-mode post-approval
 // cool-off configured for the tree, or zero when none is set so the
 // caller applies DefaultSuccessCoolOff.
-// spec: §8.6 line 675
+// spec: §8.6
 func (m *MemoryBudgetSource) SuccessCoolOff(_ context.Context, tenantID, rootSessionID string) time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -635,11 +634,11 @@ func (m *MemoryBudgetSource) SuccessCoolOff(_ context.Context, tenantID, rootSes
 	return t.successCoolOff
 }
 
-// AutoExtensionsPerMinute returns the §8.6 line 712
+// AutoExtensionsPerMinute returns the §8.6
 // maxAutoExtensionsPerMinute configured for the tree, or zero when none
 // is set so the auto-mode rate limiter treats the tree as unlimited. It
 // satisfies the autoRateLimitProvider seam the Service consults. F-8.6.7.
-// spec: §8.6 line 712
+// spec: §8.6
 func (m *MemoryBudgetSource) AutoExtensionsPerMinute(_ context.Context, tenantID, rootSessionID string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

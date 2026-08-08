@@ -39,7 +39,7 @@ import (
 // openapi.json, so the central §25.1 scope gate in Router.Handler
 // enforces them before routing and no per-handler constant is needed.
 //
-// spec: §25.9 line 3653; §15.2 scope taxonomy.
+// spec: §25.9; §15.2 scope taxonomy.
 const scopeRawCanonical = "tools:audit:raw_canonical_read"
 
 // auditTranslationLog is the optional §25.9 OCSF-translation-state
@@ -49,7 +49,7 @@ const scopeRawCanonical = "tools:audit:raw_canonical_read"
 // implement it, every row is treated as `succeeded` (translated
 // inline) and the retranslate endpoint reports rows ineligible.
 //
-// spec: §11.7 lines 422-426 (the ocsf_translation_state machine).
+// spec: §11.7.
 type auditTranslationLog interface {
 	TranslationState(ctx context.Context, tenantID string, seq uint64) (audit.OCSFTranslationState, int, error)
 	SetTranslationState(ctx context.Context, tenantID string, seq uint64, state audit.OCSFTranslationState, retryCount int) error
@@ -106,8 +106,7 @@ func rowToCanonical(row audit.Row, integrity audit.ChainIntegrity) AuditEventPay
 }
 
 // AuditEventPayload is the §25.9 audit-event canonical Postgres tuple.
-// The default response wire form is the OCSF translation per §4.4
-// line 232 / §11.7; the canonical tuple is retained for the future
+// The default response wire form is the OCSF translation per §4.4 / §11.7; the canonical tuple is retained for the future
 // `?format=raw-canonical` callers (chain auditors who recompute the
 // hash against the exact bytes Postgres hashed over).
 type AuditEventPayload struct {
@@ -122,7 +121,7 @@ type AuditEventPayload struct {
 	ChainIntegrity string          `json:"chainIntegrity,omitempty"`
 }
 
-// ChainIntegrityReport is the §25.9 line 3653 top-level envelope field
+// ChainIntegrityReport is the §25.9 top-level envelope field
 // tallying the per-row chainIntegrity verdicts of the returned records.
 type ChainIntegrityReport struct {
 	Verified            int `json:"verified"`
@@ -133,7 +132,7 @@ type ChainIntegrityReport struct {
 	Unchecked           int `json:"unchecked,omitempty"`
 }
 
-// AuditGapWindow is one §25.9 line 3679 suspected temporal-gap window in
+// AuditGapWindow is one §25.9 suspected temporal-gap window in
 // the `auditMetadata` envelope object. A window is emitted between two
 // consecutive rows whose sequence numbers are non-contiguous.
 type AuditGapWindow struct {
@@ -142,13 +141,13 @@ type AuditGapWindow struct {
 	Reason string `json:"reason"`
 }
 
-// AuditMetadata is the §25.9 line 3679 envelope object listing suspected
+// AuditMetadata is the §25.9 envelope object listing suspected
 // gap windows in the chain.
 type AuditMetadata struct {
 	SuspectedGaps []AuditGapWindow `json:"suspectedGaps,omitempty"`
 }
 
-// AuditEventEnvelope is the §4.4 line 232 / §25.9 OCSF audit-egress
+// AuditEventEnvelope is the §4.4 / §25.9 OCSF audit-egress
 // response envelope. Every paginated `/v1/admin/audit-events` response
 // carries the envelope; the `items[]` array holds the OCSF v1.1.0
 // records produced by `pkg/audit/ocsf.Translate`. `translatorVersion`
@@ -193,7 +192,7 @@ func (r *Router) WithAuditLog(auditLog AuditLog) *Router {
 // acknowledges the resulting data loss. *auditretention.Pruner
 // satisfies it.
 //
-// spec: §16.4 line 378 (force-drop override); §25.9 (the backing
+// spec: §16.4; §25.9 (the backing
 // POST /v1/admin/audit-partitions/{partition}/drop endpoint).
 type AuditPartitionDropper interface {
 	ForceDrop(ctx context.Context, tenantID, requesterSub string, now time.Time) (auditretention.ForceDropResult, error)
@@ -249,7 +248,7 @@ func (r *Router) recordAuditQuery(endpoint string, start time.Time, shards, brok
 	}
 }
 
-// forceDropRequest is the §25.9 line 3664 force-drop body
+// forceDropRequest is the §25.9 force-drop body
 // `{"acknowledgeDataLoss": true, "partition": "<partition-name>"}`. The
 // data-loss acknowledgement is mandatory (the lenny-ctl backing is
 // `audit drop-partition <partition> --force --acknowledge-data-loss`) and
@@ -269,31 +268,29 @@ type forceDropRequest struct {
 // tenant chain identifier (v1 keys the audit table by tenant; native
 // range partitioning is a separate concern).
 //
-// The §25.9 line 3664 wire contract requires the `?force=true` query
+// The §25.9 wire contract requires the `?force=true` query
 // parameter, the `audit:partition:drop` scope, and a request body whose
 // `partition` field matches the path segment (anti-footgun cross-check).
 //
-// spec: §16.4 line 378 (force-drop override + data-loss
-// acknowledgement); §16.7 line 687 (audit.partition_drop_forced); §25.9
-// line 3664 (force query param, scope, partition cross-check).
+// spec: §16.4; §16.7; §25.9.
 func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.Request) {
 	if r.auditPruner == nil {
 		writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED",
 			"audit force-drop requires a durable audit store", nil)
 		return
 	}
-	// §25.9 line 3664 — the destructive drop is gated on the dedicated
+	// §25.9 — the destructive drop is gated on the dedicated
 	// tools:audit:partition_drop scope. The central §25.1 scope gate in
 	// Router.Handler resolves the route's x-lenny-scope (now the
 	// fine-grained partition_drop form) and rejects a scope-narrowed
 	// token with SCOPE_FORBIDDEN before this handler runs, so no
-	// per-handler scope check is needed here. spec: §25.1 line 94.
+	// per-handler scope check is needed here. spec: §25.1.
 	partition := strings.TrimSpace(req.PathValue("partition"))
 	if partition == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "partition is required", nil)
 		return
 	}
-	// §25.9 line 3664 — the ?force=true query parameter is mandatory so an
+	// §25.9 — the ?force=true query parameter is mandatory so an
 	// unqualified POST can never drop a partition.
 	if req.URL.Query().Get("force") != "true" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -315,7 +312,7 @@ func (r *Router) handleForceDropAuditPartition(w http.ResponseWriter, req *http.
 			"acknowledgeDataLoss must be true to force-drop audit rows the SIEM forwarder has not delivered", nil)
 		return
 	}
-	// §25.9 line 3664 — the body partition must match the path so a
+	// §25.9 — the body partition must match the path so a
 	// fat-fingered path or copy-pasted body cannot drop the wrong
 	// partition.
 	if body.Partition != partition {
@@ -370,7 +367,7 @@ func (r *Router) auditTenant(w http.ResponseWriter, req *http.Request) (string, 
 }
 
 // auditRows loads the tenant's rows, mapping a backend read failure to
-// the §25.9 line 3714 `503 AUDIT_STORE_UNAVAILABLE` degradation code
+// the §25.9 degradation code
 // (the audit read path fails only when the authoritative Postgres store
 // is unreachable; there is no read cache). Returns ok=false with the
 // response already written on failure.
@@ -421,14 +418,14 @@ func (r *Router) auditReceipts(ctx context.Context, tenant string) map[uint64]au
 // exceeding 90 days without a narrowing filter is rejected with
 // AUDIT_QUERY_TOO_BROAD.
 //
-// The default response wire form is the §4.4 line 232 / §11.7 OCSF
+// The default response wire form is the §4.4 / §11.7 OCSF
 // v1.1.0 translation: every row runs through `pkg/audit/ocsf.Translate`
 // and the records are returned in the envelope (`items[]`,
 // `ocsfVersion`, `translatorVersion`). The `unmapped.lenny_chain`
 // extension on each record carries the per-row chainIntegrity verdict
 // and prev_hash. The envelope's `chainIntegrityReport` tallies the
 // verdicts and `auditMetadata.suspectedGaps` lists detected temporal
-// gaps (§25.9 lines 3653, 3670-3679).
+// gaps (§25.9).
 //
 // spec: §25.9 (audit log query API); §4.4 (OCSF audit-egress translator).
 func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request) {
@@ -437,7 +434,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	if !ok {
 		return
 	}
-	// spec: §25.9 line 3659 — limit default 100, max 1000. Out-of-range
+	// spec: §25.9 — limit default 100, max 1000. Out-of-range
 	// or unparseable values are rejected as 400 INVALID_ARGUMENT rather
 	// than silently coerced to the default.
 	limit := 100
@@ -454,16 +451,16 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	if !ok {
 		return
 	}
-	// spec: §25.9 line 3668 — a platform-admin query that names no tenantId
+	// spec: §25.9 — a platform-admin query that names no tenantId
 	// reads every tenant's chain across all audit shards (scatter-gather),
-	// cached per §25.9 line 3709. Routed only when a scatter reader is
+	// cached per §25.9. Routed only when a scatter reader is
 	// wired; otherwise the platform-admin no-tenantId query stays on the
 	// single-`platform`-tenant path below. F-25.9.11.
 	if r.isCrossTenantAuditQuery(req) {
 		r.listAuditEventsCrossTenant(w, req, limit, req.URL.Query().Get("cursor"), filter)
 		return
 	}
-	// spec: §25.9 line 3659 — ?cursor= is the opaque pagination token.
+	// spec: §25.9 — ?cursor= is the opaque pagination token.
 	afterSeq, ok := decodeCursor(w, req.URL.Query().Get("cursor"))
 	if !ok {
 		return
@@ -528,7 +525,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(envelope)
 
-	// spec: §25.9 line 3750 — record the access (audit-of-audit) and, when
+	// spec: §25.9 — record the access (audit-of-audit) and, when
 	// a tampered chain segment surfaced in the result, the broken-chain
 	// signal that feeds the §16.5 chain-integrity alert pipeline.
 	r.emitAuditQueryExecuted(req, tenant, filter, len(items))
@@ -541,12 +538,12 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 }
 
 // handleGetAuditEvent implements GET /v1/admin/audit-events/{seq}.
-// The response wire form is the §4.4 line 232 OCSF v1.1.0 translation
+// The response wire form is the §4.4 OCSF v1.1.0 translation
 // of the row carrying its §25.9 per-row chainIntegrity verdict, unless
 // ?format=raw-canonical returns the pre-OCSF canonical tuple. A missing
-// row returns the §25.9 line 3732 AUDIT_EVENT_NOT_FOUND code.
+// row returns the §25.9 AUDIT_EVENT_NOT_FOUND code.
 //
-// spec: §25.9 lines 3653, 3660, 3732; §4.4 line 232.
+// spec: §25.9; §4.4.
 func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
@@ -558,7 +555,7 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
 		return
 	}
-	// spec: §25.9 line 3653 — ?format=raw-canonical returns the
+	// spec: §25.9 — ?format=raw-canonical returns the
 	// Lenny-internal canonical tuple (pre-OCSF) for chain auditors who
 	// recompute the hash against the exact bytes Postgres hashed over.
 	// Scope-restricted to audit:raw-canonical:read.
@@ -571,8 +568,7 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 		// token. This per-handler check covers only the
 		// ?format=raw-canonical branch and now returns the cataloged
 		// SCOPE_FORBIDDEN. An absent scope claim defers to the role
-		// ceiling (HasScope returns true). spec: §25.9 line 3653; §15.1
-		// line 1030.
+		// ceiling (HasScope returns true). spec: §25.9; §15.1.
 		if p, _ := authmw.FromContext(req.Context()); !p.HasScope(scopeRawCanonical) {
 			writeScopeForbidden(w, scopeRawCanonical, p.Scopes.Raw)
 			return
@@ -629,8 +625,7 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 // for the SIEM-forwarder/EventBus consumers where blocking on a single
 // bad row would halt the per-tenant stream.
 //
-// spec: §4.4 line 232 (OCSF translator); §25.9 lines 3670-3679 (per-row
-// chainIntegrity surfaced on each record).
+// spec: §4.4; §25.9.
 func ocsfRecordForRow(row audit.Row, integrity audit.ChainIntegrity) (ocsf.Record, error) {
 	// A row scanned from Postgres carries its stored UUID; the in-memory
 	// chain does not, so synthesize a stable UID from (tenant_id, seq)
@@ -681,7 +676,7 @@ func tallyIntegrity(report *ChainIntegrityReport, integrity audit.ChainIntegrity
 // redacted (its canonical bytes were rewritten in place, so next carries
 // a stale prev_hash the receipt authorizes). It is false when the
 // prev_hash does not link and prev holds no valid receipt, the
-// tamper-or-removal signal §25.9 line 3668 classifies as broken. The
+// tamper-or-removal signal §25.9 classifies as broken. The
 // receipts map keys a lawful redaction by the predecessor's sequence
 // number; a nil map means no redaction is authorized.
 //
@@ -689,8 +684,7 @@ func tallyIntegrity(report *ChainIntegrityReport, integrity audit.ChainIntegrity
 // pkg/audit (Chain.classifyRow), kept local to the admin surface so the
 // classifier itself stays unchanged.
 //
-// spec: §11.7 item 3 (prev_hash linkage); §25.9 line 3668 (a gap with a
-// non-linking prev_hash is broken, an intact-link gap is benign).
+// spec: §11.7 item 3 (prev_hash linkage); §25.9.
 func prevHashLinks(prev, next audit.Row, receipts map[uint64]audit.RedactionReceipt) bool {
 	if prev.Redacted {
 		rcpt, ok := receipts[prev.Seq]
@@ -703,40 +697,36 @@ func prevHashLinks(prev, next audit.Row, receipts map[uint64]audit.RedactionRece
 	return next.PrevHash == audit.LinkHash(prev)
 }
 
-// gapReasonNextvalRollback is the §25.9 line 3669 gap-window reason for a
+// gapReasonNextvalRollback is the §25.9 gap-window reason for a
 // benign nextval transaction rollback: a sequence-number gap whose
 // prev_hash chain links across it. The rollback consumed a per-tenant
 // sequence value without committing a row while Postgres was available,
 // so it carries no ops_postgres_outage_log window, requires no
 // reconciliation, and is never re-stamped rechained_post_outage.
 //
-// §25.9 line 3669 also defines the reason "postgres_unreachable" for an
+// §25.9 also defines the reason "postgres_unreachable" for an
 // outage-attributed window computed from ops_postgres_outage_log. The
 // gateway does not operate that subsystem (its table is never queried
 // here), so this handler cannot compute an outage window and never emits
 // that reason; the only suspected-gap window it produces is the benign
-// nextval rollback. A non-linking gap is the §25.9 line 3668 tamper case,
+// nextval rollback. A non-linking gap is the §25.9 tamper case,
 // not an outage: it is excluded from this benign window list, and the
 // per-row chainIntegrity verdict carries the tamper signal instead.
 const gapReasonNextvalRollback = "nextval_rollback"
 
-// gapWindows computes the §25.9 line 3669 suspected temporal-gap windows
+// gapWindows computes the §25.9 suspected temporal-gap windows
 // from sequence-number discontinuities in the full ordered chain. It
 // lists only the benign nextval-rollback window: a gap whose prev_hash
 // links across it (the row after the gap carries the link hash of the row
 // before it), reported with reason "nextval_rollback". A gap whose
-// prev_hash does not link is the §25.9 line 3668 tamper case rather than a
+// prev_hash does not link is the §25.9 tamper case rather than a
 // benign rollback, and it is not listed here as a suspected outage window;
 // the per-row chainIntegrity verdict carries the tamper signal instead.
 // The receipts map lets a lawful predecessor redaction still count as
 // linked, matching the chain classifier. The window spans the timestamps
 // of the rows bracketing the gap.
 //
-// spec: §25.9 line 3668-3669 (a gap with an intact prev_hash link is the
-// benign nextval rollback reported with reason "nextval_rollback"; only a
-// gap with a non-linking prev_hash is broken, and "postgres_unreachable"
-// is reserved for an ops_postgres_outage_log-covered outage window the
-// gateway does not compute here).
+// spec: §25.9.
 func gapWindows(rows []audit.Row, receipts map[uint64]audit.RedactionReceipt) []AuditGapWindow {
 	var out []AuditGapWindow
 	for i := 1; i < len(rows); i++ {
@@ -744,7 +734,7 @@ func gapWindows(rows []audit.Row, receipts map[uint64]audit.RedactionReceipt) []
 			continue
 		}
 		if !prevHashLinks(rows[i-1], rows[i], receipts) {
-			// A non-linking gap is the §25.9 line 3668 tamper case, not a
+			// A non-linking gap is the §25.9 tamper case, not a
 			// benign rollback and not an ops_postgres_outage_log outage. It
 			// is not attributed to an outage in the suspected-gap window
 			// list; the per-row chainIntegrity verdict carries the signal.
@@ -786,7 +776,7 @@ func decodeCursor(w http.ResponseWriter, cursor string) (uint64, bool) {
 	return seq, true
 }
 
-// emitAuditQueryExecuted records the §25.9 line 3750 audit.query_executed
+// emitAuditQueryExecuted records the §25.9 audit.query_executed
 // event: the access to the audit trail itself, with the query parameters,
 // result count, cache hit/miss, and shards touched. v1 is single-shard
 // with no read cache, so cacheHit is false and shardsTouched is 1.
@@ -812,7 +802,7 @@ func (r *Router) emitAuditQueryExecuted(req *http.Request, tenant string, filter
 		})
 }
 
-// emitChainIntegrityBroken records the §25.9 line 3750
+// emitChainIntegrityBroken records the §25.9
 // audit.chain_integrity_broken_detected event when a query surfaces a
 // tampered chain segment, the data source the §16.5 chain-integrity
 // alert pipeline consumes.
@@ -832,7 +822,7 @@ type AuditSummaryGroup struct {
 	Count int    `json:"count"`
 }
 
-// AuditSummaryResponse is the §25.9 line 3661
+// AuditSummaryResponse is the §25.9
 // GET /v1/admin/audit-events/summary response: aggregate counts grouped
 // by event type, actor, or resource type over a time window.
 type AuditSummaryResponse struct {
@@ -850,8 +840,7 @@ type AuditSummaryResponse struct {
 // hours). Groups are returned in descending count order, ties broken by
 // key for a stable response.
 //
-// spec: §25.9 line 3661 (summary endpoint; ?since=, ?until=,
-// ?groupBy=eventType|actorId|resourceType).
+// spec: §25.9.
 func (r *Router) handleAuditSummary(w http.ResponseWriter, req *http.Request) {
 	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)
@@ -958,18 +947,17 @@ type retranslateResponse struct {
 // cannot be re-translated. On success the row transitions back to
 // pending for the next translator sweep.
 //
-// spec: §25.9 line 3662; §11.7 lines 418, 424 (DEADLETTER_REDACTED on
-// a redacted dead-letter row).
+// spec: §25.9; §11.7.
 func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Request) {
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
 	}
-	// §25.9 line 3662 — retranslate is gated on tools:audit:retranslate.
+	// §25.9 — retranslate is gated on tools:audit:retranslate.
 	// The central §25.1 scope gate in Router.Handler resolves the route's
 	// x-lenny-scope (the fine-grained retranslate form) and rejects a
 	// scope-narrowed token with SCOPE_FORBIDDEN before this handler runs,
-	// so no per-handler scope check is needed here. spec: §25.1 line 94.
+	// so no per-handler scope check is needed here. spec: §25.1.
 	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
@@ -1022,7 +1010,7 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 		return
 	}
 
-	// spec: §11.7 line 424 — a retranslate against a redacted
+	// spec: §11.7 — a retranslate against a redacted
 	// dead-letter row is rejected: the canonical payload was rewritten
 	// by the §12.8 erasure step and the original bytes are gone.
 	if found.Redacted && state == audit.OCSFDeadLettered {
@@ -1067,18 +1055,18 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 	})
 }
 
-// auditPublishStateStore is the optional §25.9 line 3663
+// auditPublishStateStore is the optional §25.9
 // eventbus_publish_state read+write surface backing the republish
 // endpoint. The Postgres-backed auditstore implements it; the in-memory
 // chain does not, because it drives no §12.6 outbound publish queue, so
 // its rows are always reported `published` and never eligible for
-// republication. spec: §12.3.7 eventbus_publish_state; §25.9 line 3663.
+// republication. spec: §12.3.7 eventbus_publish_state; §25.9.
 type auditPublishStateStore interface {
 	PublishState(ctx context.Context, tenantID string, seq uint64) (eventbus.PublishState, int, error)
 	SetPublishState(ctx context.Context, tenantID string, seq uint64, state eventbus.PublishState, retryCount int) error
 }
 
-// republishResponse echoes the reset row state per §25.9 line 3663.
+// republishResponse echoes the reset row state per §25.9.
 type republishResponse struct {
 	Seq                  uint64 `json:"seq"`
 	EventbusPublishState string `json:"eventbusPublishState"`
@@ -1101,17 +1089,17 @@ type republishResponse struct {
 // audit row identifier (v1 keys the audit table by tenant + sequence
 // number); the spec names it {id}.
 //
-// spec: §25.9 line 3663; §16.7 (eventbus.republish_requested).
+// spec: §25.9; §16.7 (eventbus.republish_requested).
 func (r *Router) handleRepublishAuditEvent(w http.ResponseWriter, req *http.Request) {
 	tenant, ok := r.auditTenant(w, req)
 	if !ok {
 		return
 	}
-	// §25.9 line 3663 — republish is gated on tools:audit:republish. The
+	// §25.9 — republish is gated on tools:audit:republish. The
 	// central §25.1 scope gate in Router.Handler resolves the route's
 	// x-lenny-scope (the fine-grained republish form) and rejects a
 	// scope-narrowed token with SCOPE_FORBIDDEN before this handler runs,
-	// so no per-handler scope check is needed here. spec: §25.1 line 94.
+	// so no per-handler scope check is needed here. spec: §25.1.
 	seq, err := strconv.ParseUint(req.PathValue("seq"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "seq must be a positive integer", nil)
@@ -1129,7 +1117,7 @@ func (r *Router) handleRepublishAuditEvent(w http.ResponseWriter, req *http.Requ
 		}
 	}
 	if found == nil {
-		// spec: §25.9 line 3663 — a missing id returns 404 NOT_FOUND.
+		// spec: §25.9 — a missing id returns 404 NOT_FOUND.
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "audit event not found", nil)
 		return
 	}
@@ -1150,7 +1138,7 @@ func (r *Router) handleRepublishAuditEvent(w http.ResponseWriter, req *http.Requ
 		}
 	}
 	if state != eventbus.PublishFailed {
-		// spec: §25.9 line 3663 — published rows and in-flight rows
+		// spec: §25.9 — published rows and in-flight rows
 		// (pending / retry_pending) are not re-queued; the discriminator
 		// is details.currentState.
 		writeError(w, http.StatusConflict, "ALREADY_PUBLISHED",

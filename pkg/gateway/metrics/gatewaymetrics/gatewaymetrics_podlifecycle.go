@@ -35,7 +35,7 @@ type podLifecycleMetrics struct {
 	// maxSessionsPerPod drain on a concurrent non-`vm-restart` pool.
 	// spec: §16.1, §16.1.1.
 	podRetirement *prometheus.CounterVec
-	// checkpointPartialTotal counts the §16.1 line 195 partial-manifest
+	// checkpointPartialTotal counts the §16.1 partial-manifest
 	// rows finalised on a terminal abort arm and reassembled on resume.
 	// Labels: `pool` (finite, sandbox-warm-pool registry), `recovered`
 	// (`true` | `false`), `manifest_reason` (`timeout` | `stream_truncated`
@@ -47,26 +47,26 @@ type podLifecycleMetrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
-	// barrierTargetSource counts the §10.1 line 165 preStop barrier
+	// barrierTargetSource counts the §10.1 preStop barrier
 	// target-set reads by source (postgres | cache_fallback) so
 	// operators can detect how often the degraded in-memory lease-cache
 	// path is exercised when the coordination-lease read fails.
 	barrierTargetSource *prometheus.CounterVec
-	// sigkillStreams counts the §10.1 line 161 in-flight streams the
+	// sigkillStreams counts the §10.1 in-flight streams the
 	// kubelet SIGKILLs at the grace deadline because their eviction
 	// checkpoint did not finish in budget. Labels: `pool`,
 	// `service_instance_id`.
 	sigkillStreams *prometheus.CounterVec
-	// coordinatorHandoffStale counts the §10.1 line 61 generation-stale
+	// coordinatorHandoffStale counts the §10.1 generation-stale
 	// coordinator-handoff rejections: a CoordinatorFence the gateway
 	// issued was rejected because the pod had already been fenced to an
 	// equal-or-higher generation by another coordinator.
 	coordinatorHandoffStale prometheus.Counter
-	// coordinatorFenceRetry counts the §11.3 line 209 CoordinatorFence
+	// coordinatorFenceRetry counts the §11.3 CoordinatorFence
 	// retries after a rejection or a transient transport fault, before
 	// the coordinator relinquishes.
 	coordinatorFenceRetry prometheus.Counter
-	// coordinatorFenceRelinquished counts the §11.3 line 209 cases where
+	// coordinatorFenceRelinquished counts the §11.3 cases where
 	// the coordinator gave up leadership of a session after exhausting
 	// its fence retries, releasing the coordination lease.
 	coordinatorFenceRelinquished prometheus.Counter
@@ -112,10 +112,10 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §16.1 line 195 — `lenny_checkpoint_partial_total` counts partial-
+	// §16.1 — `lenny_checkpoint_partial_total` counts partial-
 	// manifest rows once per finalised terminal abort arm (`recovered =
 	// false`) and once per above-threshold reassembly on resume (`recovered
-	// = true`). §16.1 line 195 is the single source of the label domains,
+	// = true`). §16.1 is the single source of the label domains,
 	// which §10.1 cross-references rather than re-enumerating. `pool`,
 	// `recovered`, and `trigger` are finite; `manifest_reason` mirrors the
 	// §10.1 manifest column and its partial-only sub-domain (`timeout` |
@@ -124,7 +124,7 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	// `pre_scale_down` | `eviction`.
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_checkpoint_partial_total",
-		Help: "Partial-manifest checkpoint rows finalised on abort and reassembled on resume (§16.1 line 195).",
+		Help: "Partial-manifest checkpoint rows finalised on abort and reassembled on resume (§16.1).",
 	}, []string{"pool", "recovered", "manifest_reason", "trigger"})
 	if err != nil {
 		return m, err
@@ -144,7 +144,7 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §10.1 line 165 — `lenny_prestop_barrier_target_source_total`
+	// §10.1 — `lenny_prestop_barrier_target_source_total`
 	// counts preStop CheckpointBarrier target-set reads by source
 	// (postgres | cache_fallback) so operators can detect how often the
 	// degraded in-memory lease-cache path is taken when the
@@ -156,7 +156,7 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.1 line 161 — `lenny_gateway_sigkill_streams_total`
+	// spec: §10.1 — `lenny_gateway_sigkill_streams_total`
 	// counts in-flight streams forcibly terminated when the kubelet
 	// SIGKILLs the pod at the grace deadline because their eviction
 	// checkpoint did not complete in budget. Labels mirror the cap
@@ -169,33 +169,33 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §10.1 line 61 — `lenny_coordinator_handoff_stale_total` counts the
+	// §10.1 — `lenny_coordinator_handoff_stale_total` counts the
 	// generation-stale coordinator-handoff rejections: a CoordinatorFence
 	// the gateway issued was refused because the pod had already been
 	// fenced to an equal-or-higher generation by another coordinator.
 	coordinatorHandoffStale, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_coordinator_handoff_stale_total",
-		Help: "Generation-stale coordinator handoff rejections (§10.1 line 61).",
+		Help: "Generation-stale coordinator handoff rejections (§10.1).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
-	// §11.3 line 209 — `lenny_coordinator_fence_retry_total` counts the
+	// §11.3 — `lenny_coordinator_fence_retry_total` counts the
 	// CoordinatorFence retries after a stale rejection or a transient
 	// transport fault, before the coordinator relinquishes leadership.
 	coordinatorFenceRetry, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_coordinator_fence_retry_total",
-		Help: "Coordinator retries after a fencing rejection (§11.3 line 209).",
+		Help: "Coordinator retries after a fencing rejection (§11.3).",
 	}, nil)
 	if err != nil {
 		return m, err
 	}
-	// §11.3 line 209 — `lenny_coordinator_fence_relinquished_total` counts
+	// §11.3 — `lenny_coordinator_fence_relinquished_total` counts
 	// the cases where the coordinator gave up leadership of a session
 	// after exhausting its fence retries, releasing the coordination lease.
 	coordinatorFenceRelinquished, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_coordinator_fence_relinquished_total",
-		Help: "Coordinator leadership relinquished after fence retries (§11.3 line 209).",
+		Help: "Coordinator leadership relinquished after fence retries (§11.3).",
 	}, nil)
 	if err != nil {
 		return m, err

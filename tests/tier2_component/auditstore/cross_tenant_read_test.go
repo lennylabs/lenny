@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-2 component coverage for the §12.3 line 141
+// Tier-2 component coverage for the §12.3
 // cross_tenant_read emission on the background-worker code paths
 // (auditstore.PendingTranslation and PendingRepublish). Each worker
 // invocation runs inside a pgtenant.InAllTenants transaction and
@@ -31,7 +31,7 @@ func startAuditStore(t *testing.T) (*auditstore.Store, *containers.Postgres) {
 	return auditstore.New(pg.Router(t)), pg
 }
 
-// spec: §12.3 line 141
+// spec: §12.3
 // diagnosis: PendingTranslation runs a cross-tenant SELECT under
 // app.current_tenant='__all__' and MUST emit one cross_tenant_read
 // row to the `platform` chain per worker invocation. The audit
@@ -59,7 +59,7 @@ func TestPendingTranslationEmitsCrossTenantRead(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 141
+// spec: §12.3
 // diagnosis: PendingRepublish runs the same cross-tenant SELECT
 // under __all__ and MUST emit one cross_tenant_read row per worker
 // invocation.

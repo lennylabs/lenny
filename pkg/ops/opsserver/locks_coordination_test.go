@@ -23,7 +23,7 @@ func gatedLockServer(tier coordination.MemoryTier, replicas coordination.Replica
 	})
 }
 
-// spec: §25.4 lines 2206-2208 — single-replica-only grants the acquire on
+// spec: §25.4 — single-replica-only grants the acquire on
 // a single replica with no degradation envelope.
 func TestAcquireSingleReplicaOnlyGrantsOnSingleReplica(t *testing.T) {
 	srv := gatedLockServer(coordination.MemoryTierSingleReplicaOnly, fixedReplicas(1))
@@ -38,7 +38,7 @@ func TestAcquireSingleReplicaOnlyGrantsOnSingleReplica(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2208, 2326, 1539 — single-replica-only rejects the
+// spec: §25.4 — single-replica-only rejects the
 // in-memory acquire in a multi-replica deployment with 503
 // REMEDIATION_LOCK_NO_COORDINATION / TRANSIENT.
 func TestAcquireSingleReplicaOnlyRejectsMultiReplica(t *testing.T) {
@@ -55,7 +55,7 @@ func TestAcquireSingleReplicaOnlyRejectsMultiReplica(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2215 — "always" grants but attaches a replica-local
+// spec: §25.4 — "always" grants but attaches a replica-local
 // warning in the degradation envelope.
 func TestAcquireAlwaysGrantsWithDegradationWarning(t *testing.T) {
 	srv := gatedLockServer(coordination.MemoryTierAlways, fixedReplicas(3))
@@ -79,7 +79,7 @@ func TestAcquireAlwaysGrantsWithDegradationWarning(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2210 — "never" rejects every acquire even on a single
+// spec: §25.4 — "never" rejects every acquire even on a single
 // replica.
 func TestAcquireNeverRejects(t *testing.T) {
 	srv := gatedLockServer(coordination.MemoryTierNever, fixedReplicas(1))
@@ -105,7 +105,7 @@ type tieredFakeLocks struct {
 
 func (f tieredFakeLocks) ActiveTier() string { return f.tier }
 
-// spec: §25.4 lines 2204-2208 — the memoryTier gate governs only the
+// spec: §25.4 — the memoryTier gate governs only the
 // in-memory (Tier-3) acquire path. When a durable tier (Postgres/Redis) is
 // serving, even the most conservative "never" policy must not reject an
 // acquire, because the in-memory tier is not in play.
@@ -125,7 +125,7 @@ func TestAcquireDurableTierBypassesGate(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2208, 2326 — when the in-memory tier is the active one,
+// spec: §25.4 — when the in-memory tier is the active one,
 // the gate still rejects under single-replica-only on a multi-replica
 // deployment.
 func TestAcquireMemoryTierStillGated(t *testing.T) {

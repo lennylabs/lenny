@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
-// spec: §4.8 line 1054 — with no chain configured, runPostAgentOutput
+// spec: §4.8 — with no chain configured, runPostAgentOutput
 // returns the agent output parts unchanged and does not reject.
 func TestRunPostAgentOutputNoChainPassesThrough(t *testing.T) {
 	s := &Server{}
@@ -28,7 +28,7 @@ func TestRunPostAgentOutputNoChainPassesThrough(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1054 — a deliberate PostAgentOutput REJECT blocks
+// spec: §4.8 — a deliberate PostAgentOutput REJECT blocks
 // delivery and writes a 403 INTERCEPTOR_REJECTED envelope carrying the phase.
 func TestRunPostAgentOutputRejectReturns403(t *testing.T) {
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostAgentOutput, rejectInterceptor{})}
@@ -49,7 +49,7 @@ func TestRunPostAgentOutputRejectReturns403(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1054 — a PostAgentOutput MODIFY rewrites the output parts
+// spec: §4.8 — a PostAgentOutput MODIFY rewrites the output parts
 // the gateway delivers to the client.
 func TestRunPostAgentOutputModifyRewritesParts(t *testing.T) {
 	modified, _ := json.Marshal([]executor.MessagePart{{Type: "text", Text: "redacted"}})

@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// spec: §12.6 line 709 / §16.1 — the production BusMetrics +
+// spec: §12.6 / §16.1 — the production BusMetrics +
 // RetranscribeMetrics surface registers and increments the catalogued
 // EventBus metric family.
 func TestPromMetricsRegistersAndCounts_spec_12_6_709(t *testing.T) {
@@ -70,7 +70,7 @@ func TestPromMetricsRegistersAndCounts_spec_12_6_709(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 709 — the publish path emits the §16.1 metrics. A
+// spec: §12.6 — the publish path emits the §16.1 metrics. A
 // PromMetrics passed to a RedisEventBus records a real publish against
 // the registry, not only the in-memory CountingBusMetrics test double.
 func TestRedisEventBusEmitsPromMetrics_spec_12_6_709(t *testing.T) {

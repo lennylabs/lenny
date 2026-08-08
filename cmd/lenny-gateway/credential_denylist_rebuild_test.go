@@ -103,7 +103,7 @@ func oneUser() []credentialstore.RevokedUserCredential {
 // both the pool and user terms of the two-store union in one authoritative
 // Reset, and that a revocation confined to one store seeds only that term.
 //
-// spec: §4.9 lines 1692-1697 (both terms of the rebuild union seeded in one Reset).
+// spec: §4.9.
 func TestRebuildDenyListSeedsBothTerms(t *testing.T) {
 	leases := &stubLeaseCounter{counts: map[credential.CredentialKey]int{poolKeyA: 1, userKeyA: 1}}
 
@@ -147,7 +147,7 @@ func TestRebuildDenyListSeedsBothTerms(t *testing.T) {
 // active lease. A revoked credential whose only lease is expired or absent is
 // not seeded, and an all-expired set produces an empty Reset.
 //
-// spec: §4.9 lines 1694-1695 (rebuild seeds only revoked credentials with an active lease).
+// spec: §4.9.
 func TestRebuildDenyListLeaseExistenceFilter(t *testing.T) {
 	// userKeyA has an active lease; userKeyB has none (absent from counts).
 	leases := &stubLeaseCounter{counts: map[credential.CredentialKey]int{userKeyA: 1, userKeyB: 0}}
@@ -186,7 +186,7 @@ func TestRebuildDenyListLeaseExistenceFilter(t *testing.T) {
 // time Postgres or KMS fault), the candidate key is retained rather than
 // dropped, so a transient fault over-approximates the deny list.
 //
-// spec: §4.9 lines 1694-1695 (fail closed on a per-key store error).
+// spec: §4.9.
 func TestRebuildDenyListPerKeyStoreErrorRetainsKey(t *testing.T) {
 	leases := &stubLeaseCounter{
 		counts: map[credential.CredentialKey]int{},
@@ -208,7 +208,7 @@ func TestRebuildDenyListPerKeyStoreErrorRetainsKey(t *testing.T) {
 // error from either listing query aborts the whole rebuild without producing a
 // key set, so no Reset is ever committed on a partial union.
 //
-// spec: §4.9 lines 1692-1697 (fail closed on a listing-query error).
+// spec: §4.9.
 func TestRebuildDenyListListingErrorCommitsNoPartialReset(t *testing.T) {
 	leases := &stubLeaseCounter{counts: map[credential.CredentialKey]int{poolKeyA: 1, userKeyA: 1}}
 
@@ -235,7 +235,7 @@ func TestRebuildDenyListListingErrorCommitsNoPartialReset(t *testing.T) {
 // it commits the complete union and flips the flag so /readyz admits the
 // replica.
 //
-// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+// spec: §4.9; §10.4 readiness precedence.
 func TestRebuildDenyListGatesReadinessThenCommitsOnRecovery(t *testing.T) {
 	pools := &stubPoolLister{err: errors.New("pg down at boot")}
 	users := &stubUserLister{revoked: oneUser()}
@@ -289,7 +289,7 @@ func TestRebuildDenyListGatesReadinessThenCommitsOnRecovery(t *testing.T) {
 // when its context is cancelled while a listing query is still failing, so a
 // replica shutting down mid-boot does not leak the rebuild goroutine.
 //
-// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+// spec: §4.9; §10.4 readiness precedence.
 func TestRebuildDenyListStopsOnContextCancel(t *testing.T) {
 	pools := &stubPoolLister{err: errors.New("pg down at boot")}
 	users := &stubUserLister{}
@@ -331,7 +331,7 @@ func TestRebuildDenyListStopsOnContextCancel(t *testing.T) {
 // complete. With no revoked credential the union is empty and the Reset still
 // commits (an empty but complete deny list).
 //
-// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+// spec: §4.9; §10.4 readiness precedence.
 func TestRunCredentialDenyListRebuildFlipsReadinessFlag(t *testing.T) {
 	w := &gatewayWiring{}
 	w.watchdogCtx = context.Background()

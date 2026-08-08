@@ -327,7 +327,7 @@ global:
   # `required`. The Kind e2e overlay pins a deployment-unique placeholder.
   spiffeTrustDomain: lenny-kind-e2e
 
-# §25.4 line 1567 — "No anonymous access except /healthz." lenny-ops
+# §25.4 — "No anonymous access except /healthz." lenny-ops
 # leaves that authentication MUST unenforced when no bearer-trust key is
 # configured: cmd/lenny-ops/main.go buildAuthConfig returns a nil
 # AuthConfig outside production, so the surface admits anonymous callers.
@@ -374,7 +374,7 @@ minio:
   # rendered NetworkPolicies (the gateway reaches MinIO through minio.endpoint,
   # which carries its own :9000 port); production keeps the chart-default 9443.
   tlsPort: 9000
-  # §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+  # §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
   # exception to backends: embedded only; all other backends enforce TLS. The
   # e2e MinIO is a real in-cluster (non-embedded) backend, so the chart's
   # §12.5 guard requires tls.enabled: true. datastores.yaml issues a

@@ -26,19 +26,19 @@ import (
 )
 
 // probeTimeout bounds a health ping so a hung backend cannot stall the
-// §25.3 health request path. spec: §25.3 line 441 — "Each probe has a
+// §25.3 health request path. spec: §25.3 — "Each probe has a
 // hard timeout of 2 seconds."
 const probeTimeout = 2 * time.Second
 
 // certExpiryWarning is the lead time at which a cert-manager-issued
 // certificate is reported degraded so an operator notices before it
 // lapses. It matches the §16.5 CertExpiryImminent alert threshold
-// (min(lenny_cert_expiry_seconds) < 3600). spec: §16.5; §25.3 line 441.
+// (min(lenny_cert_expiry_seconds) < 3600). spec: §16.5; §25.3.
 const certExpiryWarning = time.Hour
 
 // ProbeFunc is a §25.3 single-query dependency probe. It returns nil when
 // the backing dependency answered within the caller's deadline and an
-// error otherwise. spec: §25.3 line 441 — "TCP connect + single-query
+// error otherwise. spec: §25.3 — "TCP connect + single-query
 // probes".
 type ProbeFunc func(ctx context.Context) error
 
@@ -50,7 +50,7 @@ const breakerCacheStaleAfter = 5 * time.Second
 // breakerCacheAction builds the §25.3 singular remediation hint for a
 // degraded circuit-breaker cache. The remediation is to restore Redis
 // connectivity; detail describes the gateway's fail-open behaviour
-// while the snapshot is stale. spec: §25.3 lines 459-501.
+// while the snapshot is stale. spec: §25.3.
 func breakerCacheAction(detail string) *conventions.SuggestedAction {
 	return &conventions.SuggestedAction{
 		Action:    "INVESTIGATE_REDIS",
@@ -71,7 +71,7 @@ func Postgres(pool *pgxpool.Pool, name string) health.Checker {
 					Name:   name,
 					Status: health.StatusUnhealthy,
 					Detail: "postgres ping failed: " + err.Error(),
-					// spec: §25.3 lines 459-501 / §25.7 line 3226 — the
+					// spec: §25.3 / §25.7 — the
 					// Issue selects both the Path B runbook and the
 					// structured suggestedAction through the catalog the
 					// aggregator applies; the checker does not duplicate
@@ -100,7 +100,7 @@ func Redis(client redis.UniversalClient, name string) health.Checker {
 					Name:   name,
 					Status: health.StatusUnhealthy,
 					Detail: "redis ping failed: " + err.Error(),
-					// spec: §25.3 lines 459-501 / §25.7 line 3227 — the
+					// spec: §25.3 / §25.7 — the
 					// aggregator resolves the structured hint and runbook
 					// from the Issue code.
 					Issue: "REDIS_UNREACHABLE",
@@ -140,7 +140,7 @@ func CircuitBreakerCache(cache BreakerCache, name string) health.Checker {
 					// The breaker-cache staleness is a Redis-connectivity
 					// symptom rather than a §25.7 Path B issue code, so the
 					// checker carries the singular hint directly.
-					// spec: §25.3 lines 459-501.
+					// spec: §25.3.
 					SuggestedAction: breakerCacheAction("the gateway admits requests against an empty breaker snapshot until the first refresh succeeds"),
 				}
 			}
@@ -192,7 +192,7 @@ type SIEMFailureRate interface {
 // every replica, so failing readiness would remove all replicas from
 // the Service and turn an audit-integrity degradation into a full
 // outage. The degraded verdict surfaces on the §25.3 health API and
-// drives the §16.5 alert instead. spec: §11.7 item 4 line 372.
+// drives the §16.5 alert instead. spec: §11.7 item 4.
 func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, name string) health.Checker {
 	if thresholdPercent <= 0 {
 		thresholdPercent = 5
@@ -206,7 +206,7 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 					Name:   name,
 					Status: health.StatusDegraded,
 					Detail: fmt.Sprintf("SIEM delivery failure rate %.1f%% exceeds the %.1f%% threshold; audit rows persist in Postgres but the external immutable copy is lagging", fr, thresholdPercent),
-					// spec: §25.3 lines 459-501 — the aggregator resolves
+					// spec: §25.3 — the aggregator resolves
 					// the structured hint and runbook from the Issue code.
 					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",
 				}
@@ -216,7 +216,7 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 					Name:   name,
 					Status: health.StatusDegraded,
 					Detail: "the most recent SIEM batch delivery failed",
-					// spec: §25.3 lines 459-501 — the aggregator resolves
+					// spec: §25.3 — the aggregator resolves
 					// the structured hint and runbook from the Issue code.
 					Issue: "AUDIT_SIEM_DELIVERY_DEGRADED",
 				}
@@ -265,7 +265,7 @@ func ObjectStore(probe ProbeFunc, name string) health.Checker {
 // runs the supplied GET /healthz probe within the 2-second timeout. The
 // gateway depends on the API server to claim warm pods, so an
 // unreachable API server is reported unhealthy with an inline
-// investigate hint. spec: §25.3 line 441 ("K8s API server (/healthz)").
+// investigate hint. spec: §25.3 ("K8s API server (/healthz)").
 func APIServer(probe ProbeFunc, name string) health.Checker {
 	return health.CheckerFunc{
 		ComponentName: name,
@@ -296,7 +296,7 @@ func APIServer(probe ProbeFunc, name string) health.Checker {
 // runs a single-query reachability check against the connector registry
 // within the 2-second timeout. A query failure means the registry store
 // is unreachable, so the gateway cannot resolve a session's connectors.
-// spec: §25.3 line 441 ("registered connectors").
+// spec: §25.3.
 func Connectors(probe ProbeFunc, name string) health.Checker {
 	return health.CheckerFunc{
 		ComponentName: name,
@@ -325,7 +325,7 @@ func Connectors(probe ProbeFunc, name string) health.Checker {
 
 // CertReader reads the expiry of the cert-manager-issued certificate the
 // gateway depends on. FileCertReader satisfies it from a mounted PEM
-// file. spec: §25.3 line 441 ("cert-manager (certificate status)").
+// file. spec: §25.3 ("cert-manager (certificate status)").
 type CertReader interface {
 	// NotAfter returns the certificate's expiry instant. A non-nil error
 	// means the certificate could not be read or parsed.
@@ -338,8 +338,7 @@ type CertReader interface {
 // degraded when it expires within certExpiryWarning, and healthy
 // otherwise. An imminent or lapsed certificate stamps
 // CERT_EXPIRY_IMMINENT so the aggregator resolves the renew-certificate
-// suggestedAction and the cert-manager-outage runbook. spec: §25.3 line
-// 441; §16.5 CertExpiryImminent.
+// suggestedAction and the cert-manager-outage runbook. spec: §25.3; §16.5 CertExpiryImminent.
 func CertManager(reader CertReader, name string) health.Checker {
 	return health.CheckerFunc{
 		ComponentName: name,

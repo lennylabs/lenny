@@ -99,7 +99,7 @@ func newPodClaimQueue(poll time.Duration, now func() time.Time) *podClaimQueue {
 // (pods exist but every slot is full), or ErrTenantMismatch (the only pods
 // with capacity are pinned to another tenant). These are the signals a
 // `queue` pool waits on; every other error is a hard failure that aborts the
-// wait. spec: §5.2 line 519, §4.6.1 (after both paths are exhausted).
+// wait. spec: §5.2, §4.6.1 (after both paths are exhausted).
 func isExhaustion(err error) bool {
 	return errors.Is(err, podclaim.ErrNoIdlePod) ||
 		errors.Is(err, podclaim.ErrNoConcurrentSlot) ||

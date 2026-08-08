@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.1 line 58 — abandoned `created`-state rows past the
+// spec: §7.1 — abandoned `created`-state rows past the
 // `maxCreatedStateTimeoutSeconds` deadline are reclaimable by the
 // sweep. A row whose CreatedAt is older than the timeout is dropped;
 // a row inside the window survives.
@@ -37,7 +37,7 @@ func TestSweepDropsExpiredCreatedRows_spec_7_1_20(t *testing.T) {
 		t.Errorf("dropped = %d, want 1 (only the row past the §7.1 timeout)", dropped)
 	}
 	if _, err := store.Get(context.Background(), "acme", "expired"); err == nil {
-		t.Errorf("expired row was not removed; sweep failed to enforce §7.1 line 58")
+		t.Errorf("expired row was not removed; sweep failed to enforce §7.1")
 	}
 	if _, err := store.Get(context.Background(), "acme", "fresh"); err != nil {
 		t.Errorf("fresh row was swept: %v (sweep must not touch rows inside the window)", err)
@@ -176,7 +176,7 @@ func TestSweepRunStopsOnContextCancel_spec_7_1_20(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 630 — a `created`-expiry release returns the pod claimed
+// spec: §15.1 — a `created`-expiry release returns the pod claimed
 // at /create to the pool and revokes any assigned lease before the row is
 // retired. The sweep calls the injected Reclaimer with the row's
 // PodAssignment, PoolRef, and ID exactly once per eligible row, ahead of the
@@ -212,7 +212,7 @@ func TestSweepReclaimsPodBeforeDelete_spec_15_1_630(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 630, §7.1 line 28 — a reclaim failure aborts the sweep with
+// spec: §15.1, §7.1 — a reclaim failure aborts the sweep with
 // the error and leaves the row in place, so the next tick retries the release
 // rather than dropping a row whose pod was never returned to the pool. The
 // abort-on-error semantics that the per-row Delete failure already had extend
@@ -247,7 +247,7 @@ func TestSweepAbortsAndKeepsRowOnReclaimError_spec_15_1_630(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 630 — a `created` row with no persisted pod binding
+// spec: §15.1 — a `created` row with no persisted pod binding
 // (PodAssignment empty, e.g. a row that failed before the at-create claim
 // landed) is dropped without invoking the Reclaimer, so the sweep never
 // deletes a phantom claim. The lease revoke is also skipped because no pod
@@ -278,7 +278,7 @@ func TestSweepSkipsReclaimWhenNoPodBound_spec_15_1_630(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 630 — a sweep wired with no Reclaimer (the in-memory
+// spec: §15.1 — a sweep wired with no Reclaimer (the in-memory
 // dev/test gateway) drops the row without attempting a pod release, so the
 // nil-dependency path degrades to a plain row drop rather than panicking.
 func TestSweepWithoutReclaimerDropsRow_spec_15_1_630(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 // lenny-cred-readers group needs. A path that is empty (its root was
 // unconfigured) is skipped.
 //
-// spec: §6.4 lines 401-405 — "Adapter — creates ... per-slot directory
+// spec: §6.4 — "Adapter — creates ... per-slot directory
 // trees ... on slotId assignment".
 func EnsureTree(p SlotPaths) error {
 	for _, d := range []struct {
@@ -52,7 +52,7 @@ func EnsureTree(p SlotPaths) error {
 // drops as much per-slot state as possible. An already-absent tree is not
 // an error (os.RemoveAll returns nil for a missing path).
 //
-// spec: §6.4 lines 401-405 — "... removes it during slot cleanup".
+// spec: §6.4 — "... removes it during slot cleanup".
 func RemoveTree(p SlotPaths) error {
 	var firstErr error
 	for _, dir := range []string{p.slotRoot(), p.Sessions, p.Artifacts, p.CredentialsDir} {

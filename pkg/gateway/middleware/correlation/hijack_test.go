@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// spec: §27.5 / §27.3.1 line 142 — the correlation wrapper is the
+// spec: §27.5 / §27.3.1 — the correlation wrapper is the
 // outermost writer-wrapping middleware on the MCP WebSocket upgrade path.
 // nhooyr.io/websocket performs a direct http.Hijacker assertion, so the
 // captureRW wrapper must re-expose Hijack or the upgrade fails.

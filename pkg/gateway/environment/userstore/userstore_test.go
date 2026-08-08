@@ -190,7 +190,7 @@ func TestValidateSubject(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is mandatory on Store and the
+// spec: §12.1 — DeleteByUser is mandatory on Store and the
 // user is the primary entity of this store, so DeleteByUser purges
 // the row hard.
 func TestDeleteByUserHardPurges_spec_12_1(t *testing.T) {
@@ -209,7 +209,7 @@ func TestDeleteByUserHardPurges_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is idempotent: a second call on
+// spec: §12.1 — DeleteByUser is idempotent: a second call on
 // the same scope returns 0 and nil per §12.8 erasure semantics.
 func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	s := userstore.NewMemory()
@@ -219,7 +219,7 @@ func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant hard-deletes
 // every user row belonging to the tenant; other tenants are unaffected.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := userstore.NewMemory()
@@ -241,10 +241,10 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 826-828 — the platform-managed role assignment carries
+// spec: §15.1 — the platform-managed role assignment carries
 // presence (RoleAssigned) plus operator/timestamp provenance. The Memory
 // store must round-trip all three through Create/Update/Get so the role
-// resolver (§10.2 line 294) and the tenant-users list see consistent
+// resolver (§10.2) and the tenant-users list see consistent
 // values. F-15.1.3.
 func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 	s := userstore.NewMemory()
@@ -268,7 +268,7 @@ func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 	}
 
 	// Removing the assignment clears presence and provenance while the row
-	// is retained — the §15.1 line 828 DELETE semantics.
+	// is retained — the §15.1 DELETE semantics.
 	updated, err := s.Update(ctx, "acme", "alice@acme.com", func(u *userstore.User) error {
 		u.Roles = nil
 		u.RoleAssigned = false

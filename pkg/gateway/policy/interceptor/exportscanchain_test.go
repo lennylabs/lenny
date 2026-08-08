@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §4.8 lines 1036-1050 — the PreExportMaterialization phase is not
+// spec: §4.8 — the PreExportMaterialization phase is not
 // independently registerable; it invokes the same interceptor named by
 // contentPolicy.interceptorRef, registered at PreDelegation.
 func TestExportScanChainForRunsNamedPreDelegationInterceptor_spec_4_8_1038(t *testing.T) {
@@ -69,7 +69,7 @@ func TestExportScanChainForUnresolvable_spec_8_3_rule1(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1050 — only a contentPolicy.interceptorRef interceptor
+// spec: §4.8 — only a contentPolicy.interceptorRef interceptor
 // (PreDelegation) is invoked at PreExportMaterialization; an interceptor
 // registered at a different phase must not be resolvable by ref.
 func TestExportScanChainForIgnoresOtherPhases_spec_4_8_1050(t *testing.T) {

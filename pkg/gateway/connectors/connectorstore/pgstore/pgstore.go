@@ -4,7 +4,7 @@
 // persisting the §9.3 connector registry to the connectors table. It
 // is a drop-in alternative to connectorstore.Memory.
 //
-// spec: §4.2 line 173 — connectors are tenant-scoped. Each row
+// spec: §4.2 — connectors are tenant-scoped. Each row
 // carries a `tenant_id` column under the standard lenny_tenant_guard
 // trigger and lenny_tenant_isolation RLS policy. Every operation
 // runs inside a pgtenant transaction that sets app.current_tenant to
@@ -72,7 +72,7 @@ func (s *Store) Create(ctx context.Context, c connectorstore.Connector) error {
 	if err != nil {
 		return err
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if c.Version == 0 {
 		c.Version = 1
 	}
@@ -151,7 +151,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*co
 			return err
 		}
 		c.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// spec: §15.1 — bump the optimistic-concurrency version on
 		// every successful Update so the next If-Match compares against it.
 		c.Version++
 		auth, err := authJSON(c.Auth)
@@ -258,7 +258,7 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, id string, at time.Tim
 // method returns (0, nil) — the orchestrator skips connectorstore on
 // user-scoped runs.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -268,7 +268,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // number of rows removed. The erasure orchestrator invokes this from
 // the §12.8 Phase 4 tenant-deletion controller.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" || tenantID == connectorstore.AllTenantsSentinel {
 		return 0, errors.New("connectorstore: DeleteByTenant requires a concrete tenant_id")

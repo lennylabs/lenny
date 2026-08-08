@@ -15,7 +15,7 @@ import (
 // Postgres backend persists, so the snapshot carries every field the
 // store contract exposes.
 //
-// spec: §17.4 line 199 — embedded SQLite for session and metadata storage.
+// spec: §17.4 — embedded SQLite for session and metadata storage.
 func (s *Store) ExportState() ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -33,7 +33,7 @@ import (
 func TestAlertingMetricsExposedOnGatewayScrape(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
-	// §25.13 lines 4833-4836: the chart renders the §16.5 catalog into
+	// §25.13: the chart renders the §16.5 catalog into
 	// one or more formats (prometheusrule, configmap) and stamps
 	// lenny_alerting_rules_bundled{format}=1 for each rendered format;
 	// requesting both formats renders two label series. The operator's
@@ -56,27 +56,27 @@ func TestAlertingMetricsExposedOnGatewayScrape(t *testing.T) {
 
 	samples := parseGaugeSamples(t, string(body))
 
-	// spec: §25.13 line 4836 — "1 if rules are rendered in the given
+	// spec: §25.13 — "1 if rules are rendered in the given
 	// format (prometheusrule, configmap)." Both requested formats render,
 	// so both label series must read 1 on the scraped exposition.
 	for _, format := range []string{"prometheusrule", "configmap"} {
 		name := `lenny_alerting_rules_bundled{format="` + format + `"}`
 		got, ok := samples[name]
 		if !ok {
-			t.Errorf("/metrics did not expose %s (§25.13 line 4836); the gauge is not on the scraped registry", name)
+			t.Errorf("/metrics did not expose %s (§25.13); the gauge is not on the scraped registry", name)
 			continue
 		}
 		if got != 1 {
-			t.Errorf("%s = %v, want 1 (rendered) (§25.13 line 4836)", name, got)
+			t.Errorf("%s = %v, want 1 (rendered) (§25.13)", name, got)
 		}
 	}
 
-	// spec: §25.13 line 4837 — "Count of operator-overridden rules from
+	// spec: §25.13 — "Count of operator-overridden rules from
 	// monitoring.alertOverrides." The startup input was 2.
 	if got, ok := samples["lenny_alerting_rule_overrides"]; !ok {
-		t.Errorf("/metrics did not expose lenny_alerting_rule_overrides (§25.13 line 4837); the gauge is not on the scraped registry")
+		t.Errorf("/metrics did not expose lenny_alerting_rule_overrides (§25.13); the gauge is not on the scraped registry")
 	} else if got != 2 {
-		t.Errorf("lenny_alerting_rule_overrides = %v, want 2 (§25.13 line 4837)", got)
+		t.Errorf("lenny_alerting_rule_overrides = %v, want 2 (§25.13)", got)
 	}
 }
 

@@ -92,7 +92,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		auditOpsStore *auditstore.Store
 	)
 	if w.pgPool != nil {
-		// spec: §11.7 item 3 line 368 — bound the per-tenant audit
+		// spec: §11.7 item 3 — bound the per-tenant audit
 		// advisory-lock acquisition with the operator-tunable
 		// statement_timeout + jittered retry budget, and emit the
 		// lenny_audit_lock_acquire_seconds / _concurrency_timeout_total
@@ -110,10 +110,10 @@ func (w *gatewayWiring) buildAuditPipeline() {
 				RetryBaseMs:      *auditLockRetryBaseMs,
 			}),
 			auditstore.WithLockMetrics(auditLockMetrics),
-			// §12.3 line 79: route synchronous audit writes onto the
+			// §12.3: route synchronous audit writes onto the
 			// dedicated sync write pool when one was opened. F-12.3.14.
 			auditstore.WithSyncWritePool(w.auditSyncPool),
-			// spec: §11.7 lines 430-435 (CMP-058) — route a platform-tenant
+			// spec: §11.7 — route a platform-tenant
 			// audit write that references a non-platform target_tenant_id to
 			// the target tenant's regional platform-Postgres, failing closed
 			// with PLATFORM_AUDIT_REGION_UNRESOLVABLE when the region cannot
@@ -128,7 +128,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 				tenantResidencyLookup{tenants: w.tenants},
 				gwMetrics,
 			),
-			// spec: §25.9 line 3710 — bound the cross-tenant audit
+			// spec: §25.9 — bound the cross-tenant audit
 			// scatter-gather fan-out by the shared storeRouter scatter
 			// config (max concurrency, per-shard + aggregate timeout). v1 is
 			// single-shard so the bounds are inert until a multi-shard router
@@ -138,7 +138,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 				PerShardTimeout:  time.Duration(*scatterPerShardTimeoutSeconds) * time.Second,
 				AggregateTimeout: time.Duration(*scatterAggregateTimeoutSeconds) * time.Second,
 			}))
-		// §12.3 line 81: opt-in T2 audit-event batching. When enabled, the
+		// §12.3: opt-in T2 audit-event batching. When enabled, the
 		// non-PII cross_tenant_read worker receipts are buffered and
 		// flushed in batches through the dedicated sync write pool instead
 		// of one synchronous write each; T3/T4 PII audit events stay
@@ -150,13 +150,13 @@ func (w *gatewayWiring) buildAuditPipeline() {
 			}, nil)
 			pgAudit.SetBatchBuffer(auditBatchBuffer)
 		}
-		// spec: §11.7 line 428 — guard the caller-driven audit-write
+		// spec: §11.7 — guard the caller-driven audit-write
 		// boundaries (the admin sink and the §4.8 policy-rejection sink)
 		// with the write-time tenant-scope validator so a forged-tenant
 		// row cannot be injected. Reads stay on the raw chain.
 		auditValidator = auditscope.New(pgAudit, nil)
 		auditSink = admin.NewAuditLogSink(auditValidator, nil)
-		// spec: §25.9 lines 3668, 3709 — the Postgres-backed chain serves
+		// spec: §25.9 — the Postgres-backed chain serves
 		// the platform-admin cross-tenant scatter-gather and its 5-minute
 		// result cache (opt-out via --audit-scatter-gather-cache-enabled).
 		// The in-memory dev chain (below) has no scatter reader, so its
@@ -200,7 +200,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		// high-water mark in siem_delivery_state and checkpoints each
 		// SIEM-acknowledged row. F-12.3.6.
 		siemDeliveryStore = pgAudit
-		// §16.4 lines 378-382 audit-retention pruner: a leader-elected
+		// §16.4 audit-retention pruner: a leader-elected
 		// sweep deletes audit rows past audit.retentionDays, holding
 		// gdpr.* erasure receipts under the longer audit.gdprRetentionDays
 		// floor and any SIEM-undelivered row behind the delivery guard.
@@ -219,14 +219,14 @@ func (w *gatewayWiring) buildAuditPipeline() {
 				SIEMConfigured:    *auditSIEMEndpoint != "",
 				Interval:          time.Duration(*auditRetentionPruneIntervalSeconds) * time.Second,
 				Clock:             clockinject.Now,
-				// spec: §16.4 line 378 — surface the
+				// spec: §16.4 — surface the
 				// lenny_audit_partition_drop_blocked gauge so the §16.5
 				// AuditPartitionDropBlocked alert evaluates when the SIEM
 				// delivery guard holds a partition past its retention TTL.
 				Metrics: auditRetentionMetrics{gwMetrics},
 			},
 		)
-		// spec: §12.6 lines 685-689 — the EventBus retranscribe worker, the
+		// spec: §12.6 — the EventBus retranscribe worker, the
 		// durable correctness layer that re-publishes every audit row whose
 		// first EventBus publish failed (eventbus_publish_state IN
 		// ('failed','retry_pending')) even when the in-memory replay buffer
@@ -291,7 +291,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		MaxAttempts:   *auditOCSFMaxAttempts,
 		BatchSize:     *auditOCSFBatchSize,
 	}
-	// §12.3 line 97: emit the configured SIEM delivery-lag threshold so
+	// §12.3: emit the configured SIEM delivery-lag threshold so
 	// AuditSIEMDeliveryLag compares lenny_audit_siem_delivery_lag_seconds
 	// against an operator-tunable scalar rather than a literal. F-12.3.17.
 	gwMetrics.SetSIEMMaxDeliveryLagSeconds(float64(*auditSIEMMaxDeliveryLagSeconds))
@@ -313,7 +313,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		cancelValidate()
 		siemHealthChecker = backends.SIEM(forwarder, siemMetrics, *auditSIEMFailureThresholdPercent, "siem")
 		if siemDeliveryStore != nil {
-			// §12.3 line 97: durable Postgres chain → the SIEM egress is
+			// §12.3: durable Postgres chain → the SIEM egress is
 			// the outbox / CDC forwarder. It tails committed audit_log
 			// rows past the siem_delivery_state high-water mark and
 			// advances the mark only after the SIEM acknowledges each

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 )
 
-// spec: §16.1 lines 51, 53, 55 — the assignment service emits the
+// spec: §16.1 — the assignment service emits the
 // credential lease-assignment counter (provider, pool, source), the
 // lease-duration histogram (provider, pool), and the pool-utilization
 // gauge (pool, in [0,1]).

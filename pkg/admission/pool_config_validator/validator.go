@@ -5,9 +5,9 @@
 // webhook is the sole admission gate for the semantic budget invariants
 // of pool configuration (rule set 1) and a defense-in-depth backstop
 // for the field-ownership authorization path (rule set 2); see
-// spec/04_system-components.md §4.6.3 line 598 onward. It runs in Fail
+// spec/04_system-components.md §4.6.3 onward. It runs in Fail
 // mode with a 5s timeout, so a configuration the webhook cannot inspect
-// is rejected (spec/04_system-components.md §4.6.3 line 603).
+// is rejected (spec/04_system-components.md §4.6.3).
 //
 // This package validates the §4.6.2 / §4.6.3 semantic budget
 // invariants that are visible at the CRD layer — the relationships
@@ -38,8 +38,7 @@
 // package.
 //
 // A rejection carries the spec-mandated INVALID_POOL_CONFIGURATION
-// reason code and HTTP 422 (spec/04_system-components.md §4.6.3 line
-// 605; spec/05_runtime-registry-and-pool-model.md §5.2 line 515).
+// reason code and HTTP 422 (spec/04_system-components.md §4.6.3; spec/05_runtime-registry-and-pool-model.md §5.2).
 package pool_config_validator
 
 import (
@@ -64,14 +63,13 @@ var scaleToZeroCronParser = cron.NewParser(
 // ReasonInvalidPoolConfiguration is the machine-readable failure code
 // the webhook attaches to every rejection. The API server relays it to
 // the offending client, and the PoolScalingController keys its
-// admission-denial backoff on it (spec/04_system-components.md §4.6.3
-// line 605, spec/16_observability.md line 128).
+// admission-denial backoff on it (spec/04_system-components.md §4.6.3, §16.1).
 const ReasonInvalidPoolConfiguration = "INVALID_POOL_CONFIGURATION"
 
 // codeInvalidPoolConfiguration is the HTTP status the webhook returns
 // for a rule-set-1 rejection: 422 Unprocessable Entity
-// (spec/04_system-components.md §4.6.3 line 605,
-// spec/05_runtime-registry-and-pool-model.md §5.2 line 515). A
+// (spec/04_system-components.md §4.6.3,
+// spec/05_runtime-registry-and-pool-model.md §5.2). A
 // malformed admission request the webhook cannot map to a known CRD
 // kind is rejected fail-closed with HTTP 400 by the webhook adapter.
 const codeInvalidPoolConfiguration = 422
@@ -80,22 +78,21 @@ const codeInvalidPoolConfiguration = 422
 // code the webhook attaches to a rule-set-2 (authorization) rejection.
 // A write to a SandboxTemplate or SandboxWarmPool spec from any
 // principal other than the PoolScalingController ServiceAccount is
-// rejected with this code (spec/04_system-components.md §4.6.3 line
-// 601).
+// rejected with this code (spec/04_system-components.md §4.6.3).
 const ReasonUnauthorizedPoolConfigWrite = "UNAUTHORIZED_POOL_CONFIG_WRITE"
 
 // codeUnauthorizedPoolConfigWrite is the HTTP status the webhook
 // returns for a rule-set-2 rejection: 403 Forbidden. This mirrors the
 // lenny-label-immutability webhook, which the spec names as the model
 // for this userInfo-based authorization path
-// (spec/04_system-components.md §4.6.3 line 601).
+// (spec/04_system-components.md §4.6.3).
 const codeUnauthorizedPoolConfigWrite = 403
 
 // PoolScalingControllerSA is the only principal whose writes to a
 // SandboxTemplate or SandboxWarmPool spec are admitted under rule set
 // 2. It is the same ServiceAccount username the lenny-label-immutability
 // webhook references, kept in one place so the two webhooks cannot
-// drift (spec/04_system-components.md §4.6.3 line 601).
+// drift (spec/04_system-components.md §4.6.3).
 const PoolScalingControllerSA = label_immutability.PoolScalingControllerSA
 
 // clockPattern matches a 24-hour HH:MM schedule-window boundary, the
@@ -132,7 +129,7 @@ type Decision struct {
 
 	// Warnings carries advisory messages the API server relays to the
 	// client without rejecting the request (AdmissionResponse.Warnings).
-	// spec: §5.2 line 516 — `terminationGracePeriodSeconds` floor above
+	// spec: §5.2 — `terminationGracePeriodSeconds` floor above
 	// 600s emits a warning, not a rejection, unless
 	// `maxTerminationGracePeriodSeconds` is set and breached.
 	Warnings []string
@@ -142,7 +139,7 @@ type Decision struct {
 	// the pool's effective terminationGracePeriodSeconds or the
 	// maxTerminationGracePeriodSeconds ceiling). The webhook transport
 	// increments `lenny_pool_termination_budget_exceeded_total` (labeled
-	// by pool) on these rejections so the §16.1 line 129 counter surfaces
+	// by pool) on these rejections so the §16.1 counter surfaces
 	// budget-driven admission failures. Other rule-set-1 rejections
 	// (warm-count budgets, execution-mode acknowledgments, the BarrierAck
 	// floor) leave it false.
@@ -172,11 +169,10 @@ func reject(msg string) Decision {
 
 // rejectBudget builds a rule-set-1 rejection flagged as a
 // termination-budget violation so the webhook transport increments
-// `lenny_pool_termination_budget_exceeded_total` (spec/16_observability.md
-// line 129). It is used only for the two grace-period-budget rejections
+// `lenny_pool_termination_budget_exceeded_total` (§16.1). It is used only for the two grace-period-budget rejections
 // in decideTerminationBudget — the floor-vs-terminationGracePeriodSeconds
 // and floor-vs-maxTerminationGracePeriodSeconds comparisons named by
-// spec/10_gateway-internals.md §10.1 line 119.
+// spec/10_gateway-internals.md §10.1.
 func rejectBudget(msg string) Decision {
 	d := reject(msg)
 	d.BudgetExceeded = true
@@ -190,7 +186,7 @@ func rejectBudget(msg string) Decision {
 // PoolScalingController ServiceAccount. The API server populates
 // userInfo from the authenticated principal, which cannot be spoofed
 // by the caller, so this is a sound authorization boundary
-// (spec/04_system-components.md §4.6.3 line 601).
+// (spec/04_system-components.md §4.6.3).
 //
 // The PoolScalingController is the sole writer of these spec fields;
 // every other write is a manual edit that the PoolScalingController
@@ -198,7 +194,7 @@ func rejectBudget(msg string) Decision {
 // write at admission directs operators to the admin API instead. This
 // rule applies in addition to rule set 1, which validates the semantic
 // budget invariants of every write including the PoolScalingController's
-// own (spec/04_system-components.md §4.6.3 line 600); the webhook adapter
+// own (spec/04_system-components.md §4.6.3); the webhook adapter
 // runs rule set 1 first and rule set 2 only when rule set 1 admits.
 //
 // username is the AdmissionRequest's userInfo.username. The webhook is
@@ -236,12 +232,11 @@ func DecideAuthorization(username string) Decision {
 //     minWarm is the floor; a floor above the ceiling is unsatisfiable.
 //     The §4.6.1 warm-pool disruption text treats minWarm idle pods as
 //     the normal steady state below the maxWarm ceiling
-//     (spec/04_system-components.md §4.6.1 line 478).
+//     (spec/04_system-components.md §4.6.1).
 //
 //   - scalePolicy.bootstrapMinWarm <= maxWarm. bootstrapMinWarm is the
 //     static warm-count target a new pool holds while in bootstrap mode
-//     (spec/04_system-components.md §4.6.2 line ~493 "bootstrap mode";
-//     pkg/apis/lenny/v1/sandboxwarmpool_types.go line 46). A bootstrap
+//     (spec/04_system-components.md §4.6.2 line ~493 "bootstrap mode"; pkg/apis/lenny/v1/sandboxwarmpool_types.go). A bootstrap
 //     target above the maxWarm ceiling would have the WarmPoolController
 //     immediately violate maxWarm on the pool's first reconciliation.
 //
@@ -249,9 +244,7 @@ func DecideAuthorization(username string) Decision {
 //     end, a non-empty duration (start != end), and a per-window
 //     minWarm that is non-negative and does not exceed maxWarm. A
 //     schedule window overrides the demand-derived warm count
-//     (spec/04_system-components.md §4.6.1 line ~470 "time-of-day
-//     schedules"; pkg/apis/lenny/v1/sandboxwarmpool_types.go lines
-//     9-26). A window minWarm above maxWarm would push the pool past
+//     (spec/04_system-components.md §4.6.1 line ~470 "time-of-day schedules"; pkg/apis/lenny/v1/sandboxwarmpool_types.go). A window minWarm above maxWarm would push the pool past
 //     its ceiling whenever the window is active.
 func DecideWarmPool(pool *lennyv1.SandboxWarmPool) Decision {
 	spec := pool.Spec
@@ -304,8 +297,7 @@ func DecideWarmPool(pool *lennyv1.SandboxWarmPool) Decision {
 // expressions must parse and the optional IANA timezone must load. A
 // configuration the PoolScalingController's embedded cron scheduler
 // cannot parse is rejected at admission so the controller never silently
-// fails to evaluate the window (spec/04_system-components.md §4.6.1 line
-// 400).
+// fails to evaluate the window (spec/04_system-components.md §4.6.1).
 func decideScaleToZero(p *lennyv1.ScaleToZeroPolicy) Decision {
 	if p.Timezone != "" {
 		if _, err := time.LoadLocation(p.Timezone); err != nil {
@@ -420,7 +412,7 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	spec := tpl.Spec
 
-	// spec: §13.2 line 439 — the §13.2 egress/delivery coherence
+	// spec: §13.2 — the §13.2 egress/delivery coherence
 	// cross-controls are independent of executionMode, so they run before
 	// the mode-specific switch. This is the pool-registration-validation
 	// layer (layer 1) of the NET-006 mutual exclusivity; the
@@ -453,8 +445,7 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	return decideTerminationBudget(spec, effectiveMaxConcurrent(spec))
 }
 
-// effectiveMaxConcurrent resolves the per-pod slot multiplier the §10.1
-// line 119 / §5.2 line 516 termination-budget floor uses. A service-mode
+// effectiveMaxConcurrent resolves the per-pod slot multiplier the §10.1 / §5.2 termination-budget floor uses. A service-mode
 // pool fans the per-slot checkpoint cap across `maxConcurrent` slots (the
 // floor sums per-slot caps); a single-workspace session pool checkpoints
 // one workspace, so the multiplier is 1. The session-mode
@@ -462,8 +453,7 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 // mirror, which the pool-config-validator step folds in. An unset or sub-1
 // maxConcurrent collapses to a single slot.
 //
-// spec: §10.1 line 119 (single-workspace floor), §5.2 line 516 (per-slot
-// checkpoint floor).
+// spec: §10.1, §5.2.
 func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
 	if spec.ExecutionMode == "service" && spec.MaxConcurrent > 1 {
 		return spec.MaxConcurrent
@@ -484,7 +474,7 @@ func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
 // admission-denial backoff keys consistently across every rule-set-1
 // rejection.
 //
-// spec: §13.2 lines 438-442 (NET-006).
+// spec: §13.2.
 func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 	if spec.DeliveryMode == "proxy" && spec.EgressProfile == "provider-direct" {
 		return reject(
@@ -495,11 +485,11 @@ func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 				"with deliveryMode: direct (Section 13.2)",
 		)
 	}
-	// spec: §13.2 line 450 (NET-002) — the `internet` egress profile
+	// spec: §13.2 — the `internet` egress profile
 	// requires a sandboxed isolation profile (`sandboxed` or `microvm`). A
 	// `standard` (runc) pod shares the host kernel, so broad internet
 	// egress plus a runc escape reaches the node directly. An unset
-	// isolation profile defaults to `standard` (§5.3 line 677), so it is
+	// isolation profile defaults to `standard` (§5.3), so it is
 	// rejected here as well; the deployer must set sandboxed/microvm
 	// explicitly to combine with internet egress.
 	if spec.EgressProfile == "internet" && spec.IsolationProfile != "sandboxed" && spec.IsolationProfile != "microvm" {
@@ -542,10 +532,10 @@ func decideRecycleScrubProfile(spec lennyv1.SandboxTemplateSpec) Decision {
 	return allow()
 }
 
-// MaxTieredCheckpointCapSeconds returns the §10.1 line 104 tiered
+// MaxTieredCheckpointCapSeconds returns the §10.1 tiered
 // checkpoint cap matching workspaceSizeLimitBytes. Unknown/unset sizes
 // (workspaceSizeLimitBytes <= 0) fall back to the conservative 90s
-// maximum tier per §10.1 line 108 — the same behaviour the gateway
+// maximum tier per §10.1 — the same behaviour the gateway
 // applies when last_checkpoint_workspace_bytes is NULL.
 //
 // Tier table:
@@ -553,7 +543,7 @@ func decideRecycleScrubProfile(spec lennyv1.SandboxTemplateSpec) Decision {
 //   - ≤ 300 MB → 60s
 //   - any larger or unknown → 90s (the §4.4 hard cap is 512 MB)
 //
-// spec: §10.1 lines 104-108.
+// spec: §10.1.
 func MaxTieredCheckpointCapSeconds(workspaceSizeLimitBytes int64) int64 {
 	const (
 		mb        = int64(1) << 20
@@ -573,18 +563,18 @@ func MaxTieredCheckpointCapSeconds(workspaceSizeLimitBytes int64) int64 {
 	}
 }
 
-// defaultCheckpointBarrierAckTimeoutSeconds is the §10.1 line 122 wall-
+// defaultCheckpointBarrierAckTimeoutSeconds is the §10.1 wall-
 // clock deadline default the gateway waits for `CheckpointBarrierAck`
 // from every coordinated pod during a rolling drain.
 const defaultCheckpointBarrierAckTimeoutSeconds = 90
 
-// minStreamDrainSeconds is the §5.2 line 516 / §10.1 line 122
+// minStreamDrainSeconds is the §5.2 / §10.1
 // preStop-Stage-3 stream-drain budget the webhook adds to the per-slot
 // checkpoint budget when computing the terminationGracePeriodSeconds
 // floor.
 const minStreamDrainSeconds = 30
 
-// nodeDrainWarnSeconds is the §5.2 line 516 typical cluster-automation
+// nodeDrainWarnSeconds is the §5.2 typical cluster-automation
 // node drain timeout. A computed terminationGracePeriodSeconds floor
 // above this value emits an advisory warning unless
 // MaxTerminationGracePeriodSeconds is set and breached.
@@ -632,9 +622,9 @@ const agentDefaultTerminationGraceSeconds = 120
 //     field is rejected fail-closed when its 120s default under-provisions.
 //   - When spec.maxTerminationGracePeriodSeconds is set and the floor
 //     exceeds it, the configuration is rejected (deployers opt into a
-//     hard ceiling per §5.2 line 516).
+//     hard ceiling per §5.2).
 //   - When checkpointBarrierAckTimeoutSeconds < max_tiered_checkpoint_cap,
-//     the configuration is rejected per §10.1 line 124 BarrierAck-floor
+//     the configuration is rejected per §10.1 BarrierAck-floor
 //     rule (a BarrierAck below the tier cap would declare a legitimately
 //     slow uploader unresponsive). This is an independent rule; the
 //     BarrierAck term does not enter the grace floor above.
@@ -642,7 +632,7 @@ const agentDefaultTerminationGraceSeconds = 120
 // Advisory warnings (admit + emit warning, not reject):
 //   - When the computed floor exceeds nodeDrainWarnSeconds (600s) without
 //     a maxTerminationGracePeriodSeconds breach, the deployer is asked to
-//     verify the cluster node-drain timeout per §5.2 line 516.
+//     verify the cluster node-drain timeout per §5.2.
 func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int32) Decision {
 	workspaceLimit := int64(0)
 	if spec.WorkspaceSizeLimitBytes != nil {

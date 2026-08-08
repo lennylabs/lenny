@@ -50,7 +50,7 @@ func doctorServer(rem doctor.Remediator) *opsserver.Server {
 	return opsserver.New(opsserver.Options{Doctor: svc})
 }
 
-// spec: §25.6 line 2941 — POST without ?fix=true is read-only and reports
+// spec: §25.6 — POST without ?fix=true is read-only and reports
 // detected fixable findings without applying.
 func TestDiagnosticsRun_ReadOnly_spec_25_6_2941(t *testing.T) {
 	rem := &fakeDoctorRem{detected: []doctor.Detected{
@@ -73,7 +73,7 @@ func TestDiagnosticsRun_ReadOnly_spec_25_6_2941(t *testing.T) {
 	}
 }
 
-// spec: §25.6 lines 2943-2982 — POST ?fix=true applies remediations and
+// spec: §25.6 — POST ?fix=true applies remediations and
 // returns the §25.2 progress envelope with the applied count.
 func TestDiagnosticsRun_Fix_spec_25_6_2943(t *testing.T) {
 	rem := &fakeDoctorRem{detected: []doctor.Detected{

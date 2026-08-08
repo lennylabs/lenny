@@ -176,7 +176,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// delegationPolicies was constructed above so the delegation
 	// admission gate (§8.2 LayerPolicy) and the admin CRUD share one
 	// store handle.
-	// spec: §12.5 line 301 / line 307 — the §12.5 T4 KMS availability
+	// spec: §12.5 — the §12.5 T4 KMS availability
 	// probe Lifecycle, backed by the resolved §4 kms.Provider so the
 	// zero-byte encrypt/decrypt round-trip uses the same provider
 	// credentials a T4 artifact write would. One Lifecycle instance is
@@ -188,7 +188,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	kmsProbeLifecycle := tenantkms.NewProviderProbeLifecycle(w.kmsProvider, clockinject.Now)
 
 	// §9.3 outbound MCP transport shared by the connector live test and
-	// the §9.3 line 136 capability refresh. The §9.3 line 164
+	// the §9.3 capability refresh. The §9.3
 	// connector-access authorizer resolves the calling session's effective
 	// delegation policy (runtime-level + §10.6 environment default) so a
 	// session cannot invoke a connector its policy does not permit. The
@@ -198,11 +198,11 @@ func (w *gatewayWiring) buildAdminRouter(
 	connectorAuthorizer = connectorauthz.New(delegationSvc, w.sessions, environments)
 	connectorInvoker = connectorinvoke.NewInvoker(w.connectors, connectorCreds, connectorMCPClient, nil, connectorAuthorizer).
 		WithClock(clockinject.Now).
-		// spec: §10.6 line 607 — enforce the calling session's environment
+		// spec: §10.6 — enforce the calling session's environment
 		// connectorSelector capability filter on each connector tools/call.
 		// F-10.6.2.
 		WithEnvironments(environments).
-		// spec: §4.8 lines 1057-1058, 1077 — run the PreConnectorRequest and
+		// spec: §4.8 — run the PreConnectorRequest and
 		// PostConnectorResponse interceptor phases on the gateway-proxied
 		// connector path. All connector traffic flows through the gateway, so
 		// the phases always apply. F-4.8.14.
@@ -212,7 +212,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// metric store backing the rules engine, plus its §25.3 metrics
 	// (lenny_recommendations_generated_total and the
 	// lenny_recommendations_ring_buffer_bytes gauge registered over the
-	// store's current memory use). spec: §25.3 lines 588-598, 618.
+	// store's current memory use). spec: §25.3.
 	recommendationStore := recommendations.NewWindowStore(7 * 24 * time.Hour)
 	recommendationsMetrics, err := recommendations.NewMetrics(gwMetrics.Registerer())
 	if err != nil {
@@ -222,7 +222,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		log.Fatalf("lenny-gateway: §25.3 recommendation ring-buffer gauge: %v", err)
 	}
 
-	// §10.3 lines 344-350 — operator-driven cluster-internal CA rotation.
+	// §10.3 — operator-driven cluster-internal CA rotation.
 	// The stage machine is durable (carotationstore: Postgres when a pool
 	// is wired, else in-memory) so an interrupted rotation resumes after a
 	// restart; each committed transition emits the platform.ca_rotated
@@ -247,7 +247,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		caRotationMgr = mgr
 	}
 
-	// §10.5 lines 466-540 — operator-driven RuntimeUpgrade state machine.
+	// §10.5 — operator-driven RuntimeUpgrade state machine.
 	// The phase is durable (runtimeupgradestore: Postgres when a pool is
 	// wired, else in-memory) so a runtime image rollout survives a gateway
 	// restart and resumes from the recorded phase; the previous pool spec
@@ -257,9 +257,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// so the §16.5 RuntimeUpgradeStuck alert evaluates the durable phase
 	// after a restart. F-10.5.1.
 	var runtimeUpgradeMgr admin.RuntimeUpgradeManager
-	// ruStore is hoisted out of the construction block so the §10.5
-	// GET /internal/runtime-upgrade/active endpoint (line 508 deletion
-	// guard, line 502 Phase 3 gate) can read the same durable record the
+	// ruStore is hoisted out of the construction block so the §10.5 GET /internal/runtime-upgrade/active endpoint can read the same durable record the
 	// manager drives.
 	ruStore = runtimeupgradestore.NewMemory()
 	{
@@ -297,7 +295,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		WithRuntimeCapabilityOverrides(w.capOverrides).
 		WithUsers(w.users).
 		WithPools(w.pools).
-		// §15.1 line 797: the pool-drain endpoint updates the
+		// §15.1: the pool-drain endpoint updates the
 		// lenny_pool_draining_sessions_total gauge through gwMetrics.
 		WithPoolDrainMetrics(gwMetrics).
 		WithBreakers(w.breakers).
@@ -311,13 +309,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		// §15.1 connector live-connectivity test. The outbound MCP
 		// client dials untrusted external endpoints, so it carries a
 		// bounded egress timeout; the per-connector limiter enforces the
-		// §15.1 line 1180 10/min cap.
+		// §15.1 10/min cap.
 		WithConnectorTest(
 			connectorinvoke.NewTester(connectorMCPClient),
 			connectorCreds,
 			ratelimit.NewMemory(),
 		).
-		// §9.3 line 136 connector capability inference on the sanctioned
+		// §9.3 connector capability inference on the sanctioned
 		// outbound path. Carries the same per-connector 10/min cap as the
 		// live test since it also dials the external endpoint.
 		WithConnectorRefresh(connectorInvoker, ratelimit.NewMemory()).
@@ -355,22 +353,22 @@ func (w *gatewayWiring) buildAdminRouter(
 		adminRouter = adminRouter.WithRuntimeUpgrade(runtimeUpgradeMgr)
 	}
 	if w.artifactCatalog != nil {
-		// §12.8 line 735 / 794(b): the durable artifact_store catalog backs
+		// §12.8: the durable artifact_store catalog backs
 		// artifact-scoped legal holds (POST /v1/admin/legal-hold with
 		// artifactId) and the artifact half of the GDPR-erasure legal-hold
 		// preflight.
 		adminRouter = adminRouter.WithArtifactLegalHold(w.artifactCatalog)
 	}
 	if leaseBudgets != nil {
-		// §15.1 line 868: expose DELETE …/extension-denial backed by the
+		// §15.1: expose DELETE …/extension-denial backed by the
 		// same leasecontrol budget source the GatewayControl handler reads.
 		adminRouter = adminRouter.WithLeaseDenials(leaseBudgets)
-		// §10.2 line 261: the same budget source resolves a tree's owning
+		// §10.2: the same budget source resolves a tree's owning
 		// tenant (TenantOf), so a non-platform-admin caller is confined to
 		// its own tenant before the durable clear runs (ADM-4).
 		adminRouter = adminRouter.WithTenantResolver(leaseBudgets)
 	}
-	// §5.2 line 629: surface live poolCondition / idlePodCount on the
+	// §5.2: surface live poolCondition / idlePodCount on the
 	// admin pool GET when the gateway has a Kubernetes client (an
 	// agent-namespace deployment). The minimal Postgres-only posture
 	// leaves the reader unwired and the fields are omitted.
@@ -384,7 +382,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// hoursOfData / estimatedConvergenceAt from the SandboxWarmPool
 		// CRD status the PoolScalingController writes.
 		adminRouter = adminRouter.WithPoolBootstrapStatusReader(lookup)
-		// spec: §4.6.2 lines 558-560 — populate crdGeneration /
+		// spec: §4.6.2 — populate crdGeneration /
 		// lastReconciledAt / lagSeconds / inSync on the sync-status
 		// endpoint from the SandboxTemplate annotations the
 		// PoolScalingController stamps. Only available with a cluster
@@ -392,7 +390,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// the sync-status handler reports the Postgres-only generation.
 		adminRouter = adminRouter.WithCRDGenerationReader(lookup)
 	}
-	// spec: §17.2 line 86 — wire the dynamic floor provider so the admin
+	// spec: §17.2 — wire the dynamic floor provider so the admin
 	// effective-mode resolution and below-floor guard observe a ConfigMap
 	// floor change without re-wiring. Always wired (even when the startup
 	// flag is empty) because the reconcile may raise the floor at runtime.
@@ -421,24 +419,24 @@ func (w *gatewayWiring) buildAdminRouter(
 		},
 	)
 	adminRouter = adminRouter.WithImpersonation(impersonationSvc)
-	// §6.2 line 260 / §11.3 line 219: pin the admin runtime validator
+	// §6.2 / §11.3: pin the admin runtime validator
 	// to the same outer bound the finalizing-state watchdog enforces, so
 	// the §15.1 POST/PUT /v1/admin/runtimes and POST /v1/admin/bootstrap
 	// handlers reject a runtime whose setupPolicy.timeoutSeconds exceeds
 	// gateway.maxFinalizingTimeoutSeconds.
 	adminRouter = adminRouter.WithMaxFinalizingTimeoutSeconds(*maxFinalizingTimeoutSeconds)
-	// spec: §11.7 lines 445-451 — record whether audit.siem.endpoint is
+	// spec: §11.7 — record whether audit.siem.endpoint is
 	// configured so the admin compliance gate can reject regulated-profile
 	// tenant create/update and environment creation with
 	// COMPLIANCE_SIEM_REQUIRED when SIEM is absent. F-11.7.2.
 	adminRouter = adminRouter.WithSIEMConfigured(*auditSIEMEndpoint != "")
-	// spec: §11.7 lines 374-379 — record whether pgaudit is fully
+	// spec: §11.7 — record whether pgaudit is fully
 	// configured (audit.pgaudit.enabled true and a sinkEndpoint set) so
 	// the admin compliance gate rejects regulated-profile tenant
 	// create/update and environment creation with COMPLIANCE_PGAUDIT_REQUIRED
 	// when it is not. F-11.7.10.
 	adminRouter = adminRouter.WithPgauditConfigured(*auditPgauditEnabled && *auditPgauditSinkEndpoint != "")
-	// §15.1 lines 891-892 / §24.13 lines 150-151: wire the
+	// §15.1 / §24.13: wire the
 	// schema-migration management endpoints when a Postgres DSN is set
 	// (the migrations the runner applies live in the same database).
 	if *postgresDSN != "" {
@@ -448,7 +446,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			adminRouter = adminRouter.WithMigrationManager(mig)
 		}
 	}
-	// §15.1 line 890 / §24.2: API-backed `lenny-ctl preflight`. The
+	// §15.1 / §24.2: API-backed `lenny-ctl preflight`. The
 	// endpoint probes the gateway's own configured backends, so it is
 	// registered only when at least one backend DSN is set. The probes
 	// re-dial (the endpoint is POST because the dials are
@@ -473,17 +471,17 @@ func (w *gatewayWiring) buildAdminRouter(
 	// post-outage-rechain counters, scatter-gather fan-out). F-25.9.13.
 	adminRouter = adminRouter.WithAuditMetrics(gwMetrics)
 	if auditPruner != nil {
-		// §16.4 line 378 force-drop override surface. F-11.7.17.
+		// §16.4 force-drop override surface. F-11.7.17.
 		adminRouter = adminRouter.WithAuditPruner(auditPruner)
 	}
-	// §12.5 line 317: the erasure-completion → tenant-scoped GC sweep
+	// §12.5: the erasure-completion → tenant-scoped GC sweep
 	// trigger. The erasure runner is built here but the retention-GC
 	// collector is constructed later, so the runner closes over this
 	// indirection and the GC block below assigns the real sweep once the
 	// collector exists. Nil during the startup window before the GC block
 	// runs (no erasure job can complete that early).
 	var immediateGCSweep func(ctx context.Context, tenantID string)
-	// spec: §12.8 step 2 line 794 — the §4.9 semantic cache holds
+	// spec: §12.8 step 2 — the §4.9 semantic cache holds
 	// per-user cached LLM query/response pairs, so a user erasure must
 	// purge it. The cache is opt-in (--llm-semantic-cache); when enabled
 	// the in-memory store is built here and the same instance is reused on
@@ -612,7 +610,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			SessionScoped: sessionScoped,
 			UserScoped:    userScoped,
 		}
-		// spec: §12.8 lines 792-836 — fail closed if the wired erasure
+		// spec: §12.8 — fail closed if the wired erasure
 		// stores violate the dependency order (a foreign-key child erased
 		// after its parent would leave orphan rows or violate a constraint).
 		if err := erasure.ValidateOrder(erasureCfg); err != nil {
@@ -622,11 +620,11 @@ func (w *gatewayWiring) buildAdminRouter(
 		erasureJobs := erasurejob.NewMemory()
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
-			// spec: §12.8 line 768 — emit the in-progress gauge and
+			// spec: §12.8 — emit the in-progress gauge and
 			// per-job duration histogram for erasure-throughput / SLA
 			// monitoring.
 			WithLifecycleMetrics(gwMetrics).
-			// spec: §12.8 line 768 / §12.9 — record the tier-specific SLA
+			// spec: §12.8 / §12.9 — record the tier-specific SLA
 			// deadline on each job (T4 Restricted 1h, otherwise 72h).
 			WithDeadlineResolver(func(ctx context.Context, tenantID string) time.Duration {
 				if t, err := w.tenants.Get(ctx, tenantID); err == nil && t.WorkspaceTier == tenantkms.WorkspaceTierT4 {
@@ -634,14 +632,14 @@ func (w *gatewayWiring) buildAdminRouter(
 				}
 				return 72 * time.Hour
 			}).
-			// §12.5 line 317: on completion, trigger an immediate
+			// §12.5: on completion, trigger an immediate
 			// tenant-scoped GC sweep for a `gcPriority: high` tenant.
 			WithCompletionHook(func(ctx context.Context, tenantID, _ string) {
 				if immediateGCSweep != nil {
 					immediateGCSweep(ctx, tenantID)
 				}
 			})
-		// spec: §12.8 lines 743-758 (layer 3) — re-run the MemoryStore
+		// spec: §12.8 — re-run the MemoryStore
 		// erasure preflight at the start of every job so a backend that
 		// regressed after the startup check (e.g. a rolling upgrade of an
 		// external vector DB) aborts the job as memory_store_preflight_failed
@@ -664,17 +662,17 @@ func (w *gatewayWiring) buildAdminRouter(
 		// failover pipeline.
 		if be, ok := w.billingLedger.(erasurejob.BillingErasureStore); ok {
 			billingEraser := erasurejob.NewBillingEraser(be, w.tenants)
-			// §12.8 line 856: on Postgres, serialize the per-user pseudonymize
+			// §12.8: on Postgres, serialize the per-user pseudonymize
 			// and the salt-rotation migration through the cross-replica
 			// `erasure_salt_migration:{tenant_id}` advisory lock.
 			if w.pgPool != nil {
 				billingEraser = billingEraser.WithRotationLock(saltlockpg.New(w.pgPool))
 			}
 			erasureRunner = erasureRunner.WithBilling(billingEraser)
-			// §12.8 line 857: platform-admin compromise-response salt rotation.
+			// §12.8: platform-admin compromise-response salt rotation.
 			adminRouter = adminRouter.WithErasureSaltRotation(billingEraser)
 		}
-		// spec: §12.8 lines 810-829 — step-14 OCSF dead-letter PII redaction.
+		// spec: §12.8 — step-14 OCSF dead-letter PII redaction.
 		// When the audit chain is Postgres-backed, scrub raw canonical PII out
 		// of the user's dead-lettered audit_log rows in place under a
 		// KMS-signed RedactionReceipt, then emit gdpr.erasure_deadletter_redacted
@@ -698,7 +696,7 @@ func (w *gatewayWiring) buildAdminRouter(
 				Signer: receiptSigner,
 				// Re-derive the OCSF translation error class the row was
 				// dead-lettered with, so the redacted payload preserves it for
-				// pipeline-failure forensics (§12.8 line 810).
+				// pipeline-failure forensics (§12.8).
 				Classify: func(row audit.Row) string {
 					_, err := ocsf.Translate(ocsf.Input{
 						ID:                 row.ID,
@@ -721,7 +719,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			erasureRunner = erasureRunner.WithDeadLetterRedaction(redactionSvc.RedactForUser)
 		}
 		adminRouter = adminRouter.WithErasure(erasureRunner, erasureJobs)
-		// spec: §12.8 line 768 — publish the erasure-SLA gauges
+		// spec: §12.8 — publish the erasure-SLA gauges
 		// (lenny_erasure_job_age_seconds, lenny_erasure_job_deadline_seconds)
 		// on a periodic tick so the §16.5 ErasureJobOverdue alert can detect
 		// a stalled job before its deadline breaches. The Runner cannot
@@ -742,7 +740,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// erasure receipt. The persisted TenantState column is the durable
 	// anchor; an in-memory Job is reconstructed from it each pass. A
 	// Postgres advisory lock keeps the destructive loop on one replica.
-	// spec: §12.8 line 865, lines 872-889. F-12.8.1, F-24.10.3.
+	// spec: §12.8. F-12.8.1, F-24.10.3.
 	{
 		var tenantErasers []namedTenantEraser
 		if w.erasureLeaseStore != nil {
@@ -799,7 +797,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// region-scoped escrow before deletion proceeds. An unconfigured
 		// escrow (no --legal-hold-escrow-bucket) leaves the migrator
 		// resolving every region as unresolvable, so the override fails
-		// closed rather than destroying evidence. spec: §12.8 lines 880-889.
+		// closed rather than destroying evidence. spec: §12.8.
 		if auditAppender != nil {
 			escrowCfg := escrowConfigFromFlags(*legalHoldEscrowBucket, *legalHoldEscrowEndpoint)
 			// §12.8 sub-step 4 escrow record store: durable when Postgres is
@@ -830,7 +828,7 @@ func (w *gatewayWiring) buildAdminRouter(
 				metrics:  gwMetrics,
 				clock:    clockinject.Now,
 			}
-			// §12.8 line 884 escrow-GC release: clearing a hold (hold: false)
+			// §12.8 escrow-GC release: clearing a hold (hold: false)
 			// deletes the escrow objects it protected and emits
 			// legal_hold.escrow_released.
 			adminRouter = adminRouter.WithEscrowReleaser(&legalholdescrow.Releaser{
@@ -865,7 +863,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// the replica that served the request.
 		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(w.pgPool), revProp)
 	}
-	// spec: §17.6 lines 455-474 — the initial admin credential. Wired
+	// spec: §17.6 — the initial admin credential. Wired
 	// when the gateway has both an in-cluster client (to write the
 	// Secret) and a durable token store (so the minted token is
 	// revocable on rotation). A deployment lacking either, or with
@@ -989,7 +987,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	adminRouter = adminRouter.WithBillingCorrections(
 		w.billing, corrections, *billingDualControlThreshold,
 	)
-	// spec: §11.2.1 line 175 — wire billing.approverNotificationWebhook so
+	// spec: §11.2.1 — wire billing.approverNotificationWebhook so
 	// a dual-control correction entering the pending state notifies
 	// eligible approvers. Nil leaves the channel unconfigured. F-11.2.14.
 	if approverNotifier, err := buildApproverNotifier(*billingApproverWebhookURL, billingApproverWebhookSecret); err != nil {
@@ -998,7 +996,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		adminRouter = adminRouter.WithApproverNotifier(approverNotifier)
 		log.Printf("lenny-gateway: §11.2.1 billing approver-notification webhook configured")
 	}
-	// spec: §24.6 line 99 / §15.1 line 879 — back `POST /v1/admin/quota/reconcile`
+	// spec: §24.6 / §15.1 — back `POST /v1/admin/quota/reconcile`
 	// with the §11.2 MAX-rule reconcile over the Postgres token-usage
 	// checkpoint. Until the checkpoint store is wired (no Redis/Postgres)
 	// the route keeps answering 503 QUOTA_RECONCILE_UNAVAILABLE.

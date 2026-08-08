@@ -13,10 +13,10 @@ import (
 // redaction (which carries a signature-bearing RedactionReceipt) apart
 // from a tamper that merely cleared the payload.
 //
-// spec: §12.8 line 810.
+// spec: §12.8.
 const RedactedPayloadMarker = "redacted"
 
-// RedactedPayload is the §12.8 line 810 shape the dead-letter redaction
+// RedactedPayload is the §12.8 shape the dead-letter redaction
 // rewrites a scrubbed audit_log row's payload to. The raw canonical PII
 // fields are dropped; the fields the spec preserves for pipeline-failure
 // forensics (the OCSF translation error class and the original event type)
@@ -24,7 +24,7 @@ const RedactedPayloadMarker = "redacted"
 // flags record that the rewrite happened so a chain verifier and the
 // §11.7 integrity check can locate the row and demand a RedactionReceipt.
 //
-// spec: §12.8 line 810 — `{"redacted": true, "redacted_at": "<timestamp>",
+// spec: §12.8 — `{"redacted": true, "redacted_at": "<timestamp>",
 // "user_id_redacted_from_row": true, "error_class": "<preserved>",
 // "event_type": "<preserved>"}`.
 type RedactedPayload struct {
@@ -35,13 +35,13 @@ type RedactedPayload struct {
 	EventType             string `json:"event_type"`
 }
 
-// BuildRedactedPayload returns the §12.8 line 810 redacted payload for a
+// BuildRedactedPayload returns the §12.8 redacted payload for a
 // dead-lettered row, preserving the original event type and OCSF
 // translation error class (the failure forensics the spec keeps) while
 // dropping every PII-bearing field. redactedAt is the instant the rewrite
 // commits, mirrored onto the gdpr.erasure_deadletter_redacted event.
 //
-// spec: §12.8 line 810.
+// spec: §12.8.
 func BuildRedactedPayload(originalEventType, originalErrorClass string, redactedAt time.Time) json.RawMessage {
 	b, _ := json.Marshal(RedactedPayload{
 		Redacted:              true,
@@ -59,7 +59,7 @@ func BuildRedactedPayload(originalEventType, originalErrorClass string, redacted
 // a lawful GDPR redaction (which a RedactionReceipt then authenticates) or
 // an unexplained tamper.
 //
-// spec: §12.8 line 810.
+// spec: §12.8.
 func IsRedactedPayload(payload json.RawMessage) bool {
 	if len(payload) == 0 {
 		return false

@@ -27,7 +27,7 @@ func seedTenant(t *testing.T, store sessionstore.Store, tenant, id string) {
 	}
 }
 
-// spec: §12.5 line 317 — SweepTenant collects only the named tenant's
+// spec: §12.5 — SweepTenant collects only the named tenant's
 // expired artifacts and never touches another tenant's sessions, so the
 // `gcPriority: high` immediate sweep stays scoped to the erased tenant.
 // F-12.5.18.
@@ -51,7 +51,7 @@ func TestSweepTenantScopesToOneTenant_spec_12_5_317(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 317 — an empty tenant id is rejected so a misfired hook
+// spec: §12.5 — an empty tenant id is rejected so a misfired hook
 // cannot sweep the whole store. F-12.5.18.
 func TestSweepTenantRejectsEmptyTenant_spec_12_5_317(t *testing.T) {
 	store := memstore.New()
@@ -63,7 +63,7 @@ func TestSweepTenantRejectsEmptyTenant_spec_12_5_317(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 321 — an out-of-cycle SweepTenant emits the same
+// spec: §12.5 — an out-of-cycle SweepTenant emits the same
 // observability signals as a scheduled Tick (one run outcome, per-store
 // deleted count, a duration sample). F-12.5.18.
 func TestSweepTenantEmitsMetrics_spec_12_5_321(t *testing.T) {

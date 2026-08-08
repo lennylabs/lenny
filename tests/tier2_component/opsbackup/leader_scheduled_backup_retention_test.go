@@ -52,7 +52,7 @@ var leaderReplicaTimings = opsservice.LeaseTimings{
 // (independent of backup completion) to handle cases where backups have
 // stopped." and "The retention Job is leader-elected (runs only on the
 // leader lenny-ops replica) so concurrent runs across replicas are not
-// possible." (spec/25_agent-operability.md lines 4110, 4130, 4161)
+// possible." (§25.11)
 //
 // diagnosis: a failure here means the §25.11 scheduled-backup/retention
 // cron no longer fires exactly once across a multi-replica lenny-ops: the

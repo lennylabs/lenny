@@ -357,9 +357,7 @@ func TestDeletePodRemovesSandbox(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 482 (WatchPods MUST NOT emit an initial state
-// snapshot; a pre-existing pod produces no event until it changes, at
-// which point a delta — here Updated — is emitted).
+// spec: §12.6.
 func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
 	r.SetWatchTuningForTest(10*time.Millisecond, 32)
@@ -397,8 +395,7 @@ func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 482 (when the channel falls behind, WatchPods emits
-// a synthetic resync frame carrying no PodRecord rather than blocking).
+// spec: §12.6.
 func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
 		seedSandbox("alpha", "echo-pool", "idle"),
@@ -447,8 +444,7 @@ func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 421 (toPodRecord projects ExecutionMode from the
-// denormalized Sandbox spec and SessionID from the status).
+// spec: §12.6.
 func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T) {
 	sb := seedSandbox("alpha", "echo-pool", "claimed")
 	sb.Spec.ExecutionMode = "task"
@@ -466,8 +462,7 @@ func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T
 	}
 }
 
-// spec: §12.6 line 422 (CreatePod stamps the per-pod PodSpec fields onto
-// the Sandbox so they round-trip through toPodRecord).
+// spec: §12.6.
 func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 	r := newRegistry(t, "lenny-agents")
 	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "microvm", ExecutionMode: "concurrent"}
@@ -487,7 +482,7 @@ func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 422 — PodSpec carries RuntimeDefinitionRef,
+// spec: §12.6 — PodSpec carries RuntimeDefinitionRef,
 // WorkspacePlan, and resource limits (ResourceClass), and CreatePod
 // stamps them onto the Sandbox spec so a gateway-created pod expresses
 // the runtime, workspace, and resource class it was created for rather
@@ -545,7 +540,7 @@ func TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422(t *testin
 	}
 }
 
-// spec: §12.6 line 422 — an empty WorkspacePlan (a warm pod, whose
+// spec: §12.6 — an empty WorkspacePlan (a warm pod, whose
 // workspace is materialized at session claim) leaves the Sandbox spec
 // field nil rather than writing an empty JSON blob the API server would
 // reject.

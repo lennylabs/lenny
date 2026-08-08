@@ -32,7 +32,7 @@ func newCooldownService(t *testing.T, now time.Time, resolver delegation.Interce
 	})
 }
 
-// spec: §4.8 line 1034 / §8.3 line 218 (SEC-013) — a delegate_task /
+// spec: §4.8 / §8.3 — a delegate_task /
 // send_message whose effective interceptorRef names an interceptor inside
 // the fail-closed → fail-open weakening cooldown is rejected with
 // INTERCEPTOR_WEAKENING_COOLDOWN carrying the interceptor ref and the

@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
-// spec: §12.8 line 872, lines 878-889 — the §12.8 Phase 3.5 legal-hold
+// spec: §12.8 — the §12.8 Phase 3.5 legal-hold
 // segregation step. The standard path pauses the deletion while any
 // active tenant-scoped hold is in force; an unblock resumes it. The
 // override / escrow path (POST /v1/admin/tenants/{id}/force-delete) is
@@ -226,7 +226,7 @@ func TestNilKMST4TenantCompletesWithoutDestroy_spec_12_5_301(t *testing.T) {
 	// A probe-only host (nil KMS) cannot run control-plane Phase 4a; a T4
 	// tenant's deletion still completes and the receipt records that the
 	// key was not destroyed by the controller (operator destroys it
-	// out-of-band per §12.5 line 301).
+	// out-of-band per §12.5).
 	eraser := &fakeEraser{counts: map[string]int{}}
 	receipts := &fakeReceipts{}
 	r := &tenantdeletion.Reconciler{

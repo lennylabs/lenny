@@ -60,8 +60,7 @@ type SourceVariant interface {
 	sourceVariantTag()
 	// Path returns the workspace-relative destination this variant
 	// writes to. The parser fills in §14 spec defaults for optional
-	// path fields (e.g., gitClone.path defaults to "." per §14 line
-	// 91) so the returned value is always non-empty for a validated
+	// path fields (e.g., gitClone.path defaults to "." per §14) so the returned value is always non-empty for a validated
 	// source.
 	Path() string
 }
@@ -151,7 +150,7 @@ const (
 	WarnStripComponentsSkip       WarningCode = "workspace_plan_strip_components_skip"
 	WarnPathCollision             WarningCode = "workspace_plan_path_collision"
 	WarnDurableSchemaVersionAhead WarningCode = "workspace_plan_durable_schema_version_ahead"
-	// WarnRuntimeOptionsUnschematized is the §14 line 155 warning the
+	// WarnRuntimeOptionsUnschematized is the §14 warning the
 	// gateway emits when a CreateSessionRequest carries runtimeOptions but
 	// the target runtime registered no runtimeOptionsSchema, so the
 	// options pass through unvalidated. F-14.1.15.
@@ -161,17 +160,16 @@ const (
 // Warning is a non-fatal advisory the parser raised against a plan.
 //
 // The per-warning structured-field set follows §14:
-//   - `workspace_plan_unknown_source_type` (spec: §14 line 334): the
+//   - `workspace_plan_unknown_source_type` (spec: §14): the
 //     warning carries `schemaVersion` (the plan's declared schema
 //     version, copied so a downstream consumer that filters on warnings
 //     can correlate them to plans without reparsing) and `unknownType`
 //     (the open-string discriminator the consumer skipped).
-//   - `workspace_plan_path_collision` (spec: §14 line 338): `path`,
+//   - `workspace_plan_path_collision` (spec: §14): `path`,
 //     `winningSourceIndex`, `losingSourceIndex`. `sourceIndex` is
 //     preserved equal to `winningSourceIndex` for backwards-compatible
 //     pre-§14-line-338 single-index consumers.
-//   - `workspace_plan_durable_schema_version_ahead` (spec: §15.5 lines
-//     2466, 2471-2474): emitted by ParseStored when a persisted plan
+//   - `workspace_plan_durable_schema_version_ahead` (spec: §15.5): emitted by ParseStored when a persisted plan
 //     carries a `schemaVersion` higher than this gateway understands.
 //     The warning carries `knownVersion` (this gateway's schema) and
 //     `encounteredVersion` (the persisted plan's schema) so durable
@@ -188,20 +186,20 @@ type Warning struct {
 	Field       string      `json:"field,omitempty"`
 	Message     string      `json:"message"`
 
-	// Structured fields per §14 line 334
+	// Structured fields per §14
 	// (`workspace_plan_unknown_source_type`). Optional; populated only
 	// on unknown-source-type warnings.
 	SchemaVersion *int   `json:"schemaVersion,omitempty"`
 	UnknownType   string `json:"unknownType,omitempty"`
 
-	// Structured fields per §14 line 338 (`workspace_plan_path_collision`).
+	// Structured fields per §14.
 	// Optional; populated only on collision warnings so the JSON output
 	// is unchanged for the other warning codes.
 	Path               string `json:"path,omitempty"`
 	WinningSourceIndex *int   `json:"winningSourceIndex,omitempty"`
 	LosingSourceIndex  *int   `json:"losingSourceIndex,omitempty"`
 
-	// Structured fields per §15.5 line 2466
+	// Structured fields per §15.5
 	// (`workspace_plan_durable_schema_version_ahead`). Optional; populated
 	// only on the durable-forward-read warning so the JSON output is
 	// unchanged for the other warning codes. KnownVersion is this
@@ -220,8 +218,7 @@ type Warning struct {
 // KnownVersion / EncounteredVersion as `details.knownVersion` /
 // `details.encounteredVersion` so a client (and the §15.5 forward-read
 // durable-consumer contract) can distinguish "you submitted a bad plan"
-// from "this gateway is too old to read this plan." spec: §14.1 line
-// 326. F-14.1.1.
+// from "this gateway is too old to read this plan." spec: §14.1. F-14.1.1.
 type ValidationError struct {
 	Reason  string   `json:"reason"`
 	Field   string   `json:"field,omitempty"`
@@ -231,7 +228,7 @@ type ValidationError struct {
 	// KnownVersion / EncounteredVersion accompany a
 	// ReasonUnsupportedSchemaVersion error: the gateway's known schema
 	// revision and the higher revision the plan declared. Both are nil
-	// for every other reason. spec: §14.1 line 326. F-14.1.1.
+	// for every other reason. spec: §14.1. F-14.1.1.
 	KnownVersion       *int `json:"knownVersion,omitempty"`
 	EncounteredVersion *int `json:"encounteredVersion,omitempty"`
 }
@@ -361,7 +358,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 		// ok
 	default:
 		if stored && *root.SchemaVersion > SchemaVersion {
-			// spec: §15.5 lines 2471-2474 — durable consumers MUST
+			// spec: §15.5 — durable consumers MUST
 			// forward-read records with unrecognized `schemaVersion`.
 			// Rejection at read time creates compliance gaps; the
 			// gateway emits a `durable_schema_version_ahead`
@@ -373,7 +370,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 				Code:    WarnDurableSchemaVersionAhead,
 				Field:   "schemaVersion",
 				Message: fmt.Sprintf("stored plan schemaVersion %d exceeds gateway-known %d; forward-reading per §15.5 durable-consumer rule", encountered, known),
-				// Mirror the §15.5 line 2466 catalog body verbatim so a
+				// Mirror the §15.5 catalog body verbatim so a
 				// durable consumer can route on the same field shape it
 				// sees in MessageEnvelope.annotations.
 				KnownVersion:       &known,
@@ -390,7 +387,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 			}
 			if *root.SchemaVersion > SchemaVersion {
 				reason = ReasonUnsupportedSchemaVersion
-				// spec: §14.1 line 326 — the gateway maps this reason to
+				// spec: §14.1 — the gateway maps this reason to
 				// `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` and echoes the
 				// version pair so a rollback can be diagnosed. F-14.1.1.
 				known := SchemaVersion
@@ -414,7 +411,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	}
 	var subErrs []SubErr
 
-	// spec: §14 line 99 — per-command timeoutSeconds is an unsigned
+	// spec: §14 — per-command timeoutSeconds is an unsigned
 	// duration; a negative value is meaningless and silently degrades to
 	// the "no per-command bound" path (F-7.5.6 fix) when downstream code
 	// gates on `> 0`. Reject it explicitly so a typo or sign bug surfaces
@@ -438,7 +435,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 			continue
 		}
 		if warn != nil {
-			// spec: §14 line 334 — the unknown-source-type warning
+			// spec: §14 — the unknown-source-type warning
 			// carries the plan's `schemaVersion` so a downstream
 			// consumer can correlate the warning to the plan version
 			// without re-reading the request body. F-14.1.18.
@@ -459,8 +456,7 @@ func parse(raw []byte, stored bool) (Plan, []Warning, error) {
 	}
 
 	// Collision detection: emit a warning when two known sources write
-	// to the same workspace-relative path. Last-writer-wins per §14
-	// line 338, which mandates the structured fields `path`,
+	// to the same workspace-relative path. Last-writer-wins per §14, which mandates the structured fields `path`,
 	// `winningSourceIndex` (the later, winning entry — `j` here), and
 	// `losingSourceIndex` (the earlier, overwritten entry — `i`).
 	// `SourceIndex` is preserved equal to `winningSourceIndex` for
@@ -576,7 +572,7 @@ func parseSource(raw json.RawMessage, i int, stored, forward bool) (Source, *War
 		if subErr := validateGitClone(&v, i, stored); subErr != nil {
 			return Source{}, nil, subErr
 		}
-		// spec: §14 line 91 — `path` default is `.` (the repo root) when
+		// spec: §14 — `path` default is `.` (the repo root) when
 		// omitted. Apply the default explicitly here so the parsed Plan
 		// and the round-tripped JSON both carry the spec-named default
 		// rather than the empty-string ambiguity the parser would
@@ -594,7 +590,7 @@ func parseSource(raw json.RawMessage, i int, stored, forward bool) (Source, *War
 	default:
 		// §14 open-string discriminator: unknown types pass through
 		// with a warning so the consumer can decide whether to skip
-		// them. spec: §14 line 334 — fields are `schemaVersion` (stamped
+		// them. spec: §14 — fields are `schemaVersion` (stamped
 		// by the caller in parse) and `unknownType`. F-14.1.18.
 		return Source{Type: head.Type, Raw: rawMap},
 			&Warning{

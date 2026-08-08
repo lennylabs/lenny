@@ -10,7 +10,7 @@
 // coalesced events commit to, that a dropped distinct event is absent from
 // the durable chain while the surviving events land, nor that the
 // operator-facing lenny_audit_rate_limited_total counter (the observable
-// signal §25.9 line 3704 promises operators) actually increments. This
+// signal §25.9 promises operators) actually increments. This
 // test wires the diagnostics-audit Emit and RateLimited exactly as
 // cmd/lenny-ops buildDiagnosticsAudit does — Emit through the same
 // opsaudit.Recorder over a real auditstore.Store routed through the §12.6
@@ -41,13 +41,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// spec: §25.9 line 3703 ("repeated diagnostic calls for the same
-// {resourceType, resourceId} within a 60s window emit only one audit event
-// with an incremented invocationCount field, instead of one per call");
-// §25.9 line 3704 ("ops.audit.diagnosticsRatePerMinute (default 60) caps
+// spec: §25.9;
+// §25.9 ("ops.audit.diagnosticsRatePerMinute (default 60) caps
 // the number of distinct diagnostic audit events per minute per service
 // account. Excess is dropped silently with an lenny_audit_rate_limited_total
-// counter increment (so operators can detect)"); §11.7 line 435
+// counter increment (so operators can detect)"); §11.7
 // (ops_event.* commit to the platform-tenant hash chain).
 //
 // diagnosis: a failure means the §25.9 rate-limit seam is not correctly
@@ -79,7 +77,7 @@ func TestDiagnosticsAuditRateLimit_DropsAreCountedNotChained_spec_25_9_3704(t *t
 		t.Fatal("recorder not durable with a wired store")
 	}
 
-	// A real Prometheus counter with the §25.9 line 3729 label set, so the
+	// A real Prometheus counter with the §25.9 label set, so the
 	// RateLimited seam increments an actual counter the operator /metrics
 	// exposition would surface, not a test double.
 	rateLimited := prometheus.NewCounterVec(prometheus.CounterOpts{

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
-// spec: §8.3 line 157 / §4.8 line 974 — a `lenny/delegate_task` whose
+// spec: §8.3 / §4.8 — a `lenny/delegate_task` whose
 // TaskSpec.input exceeds the effective contentPolicy.maxInputSize is
 // rejected by the §4.8 DelegationPolicyEvaluator. The MCP shim surfaces
 // the evaluator's canonical INPUT_TOO_LARGE code (not the generic
@@ -43,7 +43,7 @@ func TestDelegateTaskInputTooLargeSurfacesCanonicalCode_spec_8_3_157(t *testing.
 	}
 }
 
-// spec: §8.3 line 157 — a TaskSpec.input within the effective
+// spec: §8.3 — a TaskSpec.input within the effective
 // maxInputSize is admitted; the evaluator does not block it. F-13.5.1.
 func TestDelegateTaskInputWithinCapAdmitted_spec_8_3_157(t *testing.T) {
 	chain := interceptor.NewChain()

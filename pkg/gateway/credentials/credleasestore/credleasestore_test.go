@@ -199,7 +199,7 @@ func TestLeasesBySessionNoMatch(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses, so the sweep deletes leases past ExpiresAt.
 
 // expiringLease returns a valid pool-backed proxy lease with the given
@@ -247,7 +247,7 @@ func TestDeleteExpiredRemovesPastLeasesAndCounts(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// spec: §4.9 — the startup rebuild seeds a deny-list
 // entry only for a revoked credential that still has an active lease, so
 // the existence count must exclude a lease already past its expiry and
 // report a nil error the caller can distinguish from an unanswerable

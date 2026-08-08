@@ -42,7 +42,7 @@ func (f *fakeTimer) isStopped() bool {
 	return f.stopped
 }
 
-// fakeExpiryClock is the §4.9 line 1149 expiry-timer test seam: it
+// fakeExpiryClock is the §4.9 expiry-timer test seam: it
 // records every armed timer and reports a fixed wall clock so a test can
 // assert the requested delay and fire the timer deterministically.
 type fakeExpiryClock struct {
@@ -145,7 +145,7 @@ func attachControlStream(t *testing.T, s *Server) (*fakeControlStream, func()) {
 	return stream, cancel
 }
 
-// spec: §4.9 line 1149 — in direct delivery mode the adapter arms a local
+// spec: §4.9 — in direct delivery mode the adapter arms a local
 // timer at each lease's expiresAt.
 func TestDirectLeaseArmsExpiryTimerAtExpiresAt_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -168,7 +168,7 @@ func TestDirectLeaseArmsExpiryTimerAtExpiresAt_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — when the timer fires without a replacement, the
+// spec: §4.9 — when the timer fires without a replacement, the
 // adapter deletes the provider's credential-file entry and reports
 // AUTH_EXPIRED on the CH-ADAPTEREVENTS.
 func TestExpiryFireDeletesEntryAndReportsAuthExpired_spec_4_9(t *testing.T) {
@@ -200,7 +200,7 @@ func TestExpiryFireDeletesEntryAndReportsAuthExpired_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — proxy-mode leases get no adapter timer; the
+// spec: §4.9 — proxy-mode leases get no adapter timer; the
 // gateway enforces proxy-request expiry server-side.
 func TestProxyLeaseArmsNoExpiryTimer_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -219,7 +219,7 @@ func TestProxyLeaseArmsNoExpiryTimer_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — a direct lease with no expiresAt cannot expire,
+// spec: §4.9 — a direct lease with no expiresAt cannot expire,
 // so no timer is armed.
 func TestDirectLeaseWithoutExpiryArmsNoTimer_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -231,7 +231,7 @@ func TestDirectLeaseWithoutExpiryArmsNoTimer_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — an already-expired direct lease arms a timer with
+// spec: §4.9 — an already-expired direct lease arms a timer with
 // a non-positive delay so it fires immediately (time.AfterFunc semantics).
 func TestExpiredDirectLeaseArmsImmediateTimer_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -244,7 +244,7 @@ func TestExpiredDirectLeaseArmsImmediateTimer_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — "without a replacement lease having been
+// spec: §4.9 — "without a replacement lease having been
 // delivered": a rotation re-arms the timer for the new lease, and the
 // stale timer's late fire is a no-op.
 func TestRotationReplacesTimerAndStaleFireIsNoop_spec_4_9(t *testing.T) {
@@ -291,7 +291,7 @@ func TestRotationReplacesTimerAndStaleFireIsNoop_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — revoking a provider cancels its expiry timer so
+// spec: §4.9 — revoking a provider cancels its expiry timer so
 // it cannot fire after the lease is already gone.
 func TestRevokeCancelsExpiryTimer_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -317,7 +317,7 @@ func TestRevokeCancelsExpiryTimer_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — releasing the pod to idle cancels every armed
+// spec: §4.9 — releasing the pod to idle cancels every armed
 // expiry timer so a stale lease cannot fire against a finished session.
 func TestReleaseSessionCancelsExpiryTimers_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -339,7 +339,7 @@ func TestReleaseSessionCancelsExpiryTimers_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1149 — independent per-provider timers; expiring one
+// spec: §4.9 — independent per-provider timers; expiring one
 // provider leaves the other's lease and timer intact.
 func TestPerProviderExpiryIsIndependent_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -385,7 +385,7 @@ func TestPerProviderExpiryIsIndependent_spec_4_9(t *testing.T) {
 
 // slotExpiryServer builds a server wired to the fake expiry clock with the
 // per-slot roots resolved so a slot-qualified AssignCredentials arms a
-// per-slot timer. spec: §6.1 line 28; §4.9 line 1470.
+// per-slot timer. spec: §6.1; §4.9.
 func slotExpiryServer(t *testing.T, clk *fakeExpiryClock) *Server {
 	t.Helper()
 	base := t.TempDir()
@@ -419,7 +419,7 @@ func extendReq(session, provider, leaseID string, newExpiresAt time.Time) *adapt
 	}
 }
 
-// spec: §4.9 line 1470 — the Token Service unavailability guard moves a
+// spec: §4.9 — the Token Service unavailability guard moves a
 // still-valid direct-mode lease's deadline by re-arming its expiry timer,
 // without re-delivering credential material: the credential file is
 // unchanged and the re-armed timer still deletes the entry when it fires at
@@ -475,7 +475,7 @@ func TestExtendCredentialLeaseMovesDeadlineWithoutRewrite_spec_4_9(t *testing.T)
 	}
 }
 
-// spec: §4.9 line 1470 — an extension with no armed timer for the provider
+// spec: §4.9 — an extension with no armed timer for the provider
 // is a no-op: nothing is armed and the response is still returned.
 func TestExtendCredentialLeaseAbsentProviderIsNoop_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -489,7 +489,7 @@ func TestExtendCredentialLeaseAbsentProviderIsNoop_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1470 — an extension naming a lease id that differs from
+// spec: §4.9 — an extension naming a lease id that differs from
 // the armed timer's is a no-op: the current timer is left untouched so a
 // stale extension cannot move a replaced lease's deadline.
 func TestExtendCredentialLeaseMismatchedLeaseIsNoop_spec_4_9(t *testing.T) {
@@ -517,7 +517,7 @@ func TestExtendCredentialLeaseMismatchedLeaseIsNoop_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1470 — a proxy-mode lease arms no adapter timer, so an
+// spec: §4.9 — a proxy-mode lease arms no adapter timer, so an
 // extension against it is a no-op (the gateway lease store enforces proxy
 // expiry).
 func TestExtendCredentialLeaseProxyModeIsNoop_spec_4_9(t *testing.T) {
@@ -534,7 +534,7 @@ func TestExtendCredentialLeaseProxyModeIsNoop_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1470 — an extension with an empty session id is rejected
+// spec: §4.9 — an extension with an empty session id is rejected
 // with InvalidArgument, mirroring RotateCredentials's guard.
 func TestExtendCredentialLeaseEmptySessionRejected_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
@@ -546,7 +546,7 @@ func TestExtendCredentialLeaseEmptySessionRejected_spec_4_9(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 28; §4.9 line 1470 — a per-slot extension moves only the
+// spec: §6.1; §4.9 — a per-slot extension moves only the
 // named slot's timer to the new deadline, and a sibling slot's timer is
 // untouched.
 func TestExtendCredentialLeaseSlotIsIsolated_spec_6_1(t *testing.T) {
@@ -597,7 +597,7 @@ func TestExtendCredentialLeaseSlotIsIsolated_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 28; §4.9 line 1470 — per-slot extension no-op paths: an
+// spec: §6.1; §4.9 — per-slot extension no-op paths: an
 // absent slot, and a mismatched lease id, leave timers untouched.
 func TestExtendCredentialLeaseSlotNoopPaths_spec_6_1(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}

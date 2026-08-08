@@ -12,7 +12,7 @@
 // Verify loads the persisted rows and walks them with the shared
 // pkg/audit verification logic.
 //
-// The row hash is computed over the §11.7 item 3 line 361 canonical
+// The row hash is computed over the §11.7 item 3 canonical
 // tuple (id, prev_hash, tenant_id, sequence_number, event_type,
 // event_schema_version, payload_canonical_json, created_at). The row id
 // is generated at seal time so it can enter the hash, and
@@ -46,7 +46,7 @@ var ErrNotFound = errors.New("auditstore: audit row not found")
 
 // ErrEmptyScope — an erasure primitive was called with an empty tenant
 // id (or user id). Empty arguments must never be treated as "delete
-// everything" (§12.8 line 753).
+// everything" (§12.8).
 var ErrEmptyScope = errors.New("auditstore: erasure requires a non-empty tenant_id (and user_id)")
 
 // EventStore is the §12.2 EventStore (audit) role interface. *Store
@@ -54,7 +54,7 @@ var ErrEmptyScope = errors.New("auditstore: erasure requires a non-empty tenant_
 // §12.1 mandatory erasure pair so a substitute backend that omits
 // either method cannot compile into the gateway binary.
 //
-// spec: §12.1 line 5 — every store role interface MUST expose
+// spec: §12.1 — every store role interface MUST expose
 // DeleteByUser and DeleteByTenant, enforced at compile time by Go
 // interface satisfaction.
 type EventStore interface {
@@ -72,7 +72,7 @@ type EventStore interface {
 // raw *pgxpool.Pool, so a future audit-shard split rotates only the
 // router implementation and no audit-write call site changes.
 //
-// spec: §12.3 R-03 line 144 — all audit log inserts MUST be routed
+// spec: §12.3 R-03 — all audit log inserts MUST be routed
 // through the StoreRouter interface rather than accessing a Postgres
 // pool directly. AllAuditShards is the §25.9 scatter-gather surface the
 // OCSF translation and EventBus retranscribe workers iterate so a
@@ -88,14 +88,14 @@ type Store struct {
 	router  Router
 	lockCfg LockConfig
 	metrics *LockMetrics
-	// syncWritePool is the §12.3 line 79 dedicated audit sync write pool
+	// syncWritePool is the §12.3 dedicated audit sync write pool
 	// (audit.syncWritePoolSize, default 4). When set, the synchronous
 	// Append / AppendBatch write path uses it instead of the shared
 	// request pool so audit writes do not contend with request-serving
 	// connections. Reads stay on the router pool. Nil keeps the v1
 	// behavior of writing through the router's audit shard. F-12.3.14.
 	syncWritePool *pgxpool.Pool
-	// batchBuffer is the §12.3 line 81 opt-in T2 batching buffer. When
+	// batchBuffer is the §12.3 opt-in T2 batching buffer. When
 	// set (audit.batchingEnabled: true), non-PII T2 operational audit
 	// events ride the batched-insert path instead of a synchronous
 	// write. Nil keeps every audit write synchronous. F-12.3.14.
@@ -114,7 +114,7 @@ type Store struct {
 	// platform-Postgres. Nil keeps every write on the §12.3 R-03 router
 	// shard (the single-region default). F-11.7.9.
 	platformResidency *platformResidencyRouter
-	// scatterCfg bounds the §25.9 line 3710 cross-tenant scatter-gather
+	// scatterCfg bounds the §25.9 cross-tenant scatter-gather
 	// fan-out (max concurrency, per-shard timeout). The zero value
 	// resolves to the storerouter defaults. F-25.9.11.
 	scatterCfg storerouter.ScatterConfig
@@ -142,7 +142,7 @@ func WithLockConfig(cfg LockConfig) Option { return func(s *Store) { s.lockCfg =
 // no samples.
 func WithLockMetrics(m *LockMetrics) Option { return func(s *Store) { s.metrics = m } }
 
-// WithSyncWritePool wires the §12.3 line 79 dedicated audit sync write
+// WithSyncWritePool wires the §12.3 dedicated audit sync write
 // pool (audit.syncWritePoolSize). The synchronous Append / AppendBatch
 // write path uses it so audit writes do not consume request-serving
 // connections from the shared pool. F-12.3.14.
@@ -150,7 +150,7 @@ func WithSyncWritePool(pool *pgxpool.Pool) Option {
 	return func(s *Store) { s.syncWritePool = pool }
 }
 
-// WithBatchBuffer wires the §12.3 line 81 opt-in T2 batching buffer.
+// WithBatchBuffer wires the §12.3 opt-in T2 batching buffer.
 // When set, non-PII T2 operational audit events (the cross_tenant_read
 // worker receipts) are enqueued onto the buffer instead of written
 // synchronously. F-12.3.14.
@@ -185,14 +185,14 @@ func (s *Store) shard(ctx context.Context, tenantID string) (*pgxpool.Pool, erro
 
 // readShard resolves the audit pool for read-heavy queries (Rows, Get,
 // Verify). When a read replica is configured it returns the replica so
-// the §12.3 line 146 audit-read class lands off the primary; otherwise
-// it resolves to the same pool as shard. spec: §12.3 line 146.
+// the §12.3 audit-read class lands off the primary; otherwise
+// it resolves to the same pool as shard. spec: §12.3.
 func (s *Store) readShard(ctx context.Context, tenantID string) (*pgxpool.Pool, error) {
 	return s.router.AuditReadShard(ctx, storerouter.TenantID(tenantID))
 }
 
 // writeShard resolves the pool for the synchronous audit write path.
-// It prefers the §12.3 line 79 dedicated audit sync write pool when one
+// It prefers the §12.3 dedicated audit sync write pool when one
 // is wired (audit.syncWritePoolSize) so audit writes do not contend
 // with request-serving connections, falling back to the router's audit
 // shard otherwise. F-12.3.14.
@@ -223,9 +223,9 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash,
 // exponential backoff; exhausting the budget returns an
 // *AuditUnavailableError (HTTP 503 audit_unavailable). A non-lock
 // failure is returned immediately without consuming a retry.
-// spec: §11.7 item 3 line 368.
+// spec: §11.7 item 3.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	// spec: §11.7 lines 430-435 (CMP-058) — a platform-tenant audit write
+	// spec: §11.7 — a platform-tenant audit write
 	// that references a non-platform target tenant via target_tenant_id is
 	// residency-routed to the target tenant's regional platform-Postgres,
 	// falling back to global when no region is set and failing closed with
@@ -248,7 +248,7 @@ func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload 
 // appendOnPool runs the §11.7 item 3 per-tenant lock + seal + insert
 // retry loop against an explicit pool. The Append fast path and the
 // CMP-058 residency-routed path both call it; only the resolved pool
-// differs. spec: §11.7 item 3 line 368.
+// differs. spec: §11.7 item 3.
 func (s *Store) appendOnPool(ctx context.Context, pool *pgxpool.Pool, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	cfg := s.lockCfg.withDefaults()
 	var lastErr error
@@ -375,8 +375,7 @@ func (s *Store) Get(ctx context.Context, tenantID string, seq uint64) (audit.Row
 // Service path that pairs an issued_tokens INSERT with the
 // token.exchanged audit INSERT) call AppendInTx from inside their own
 // pgtenant.InTx so the audit row and the bound write share one COMMIT.
-// spec: §11.7 (per-tenant advisory lock) and §13.3 line 589 (write-
-// before-issue single Postgres transaction).
+// spec: §11.7 (per-tenant advisory lock) and §13.3.
 func AppendInTx(ctx context.Context, tx pgx.Tx, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
 	if err := acquireAuditLock(ctx, tx, tenantID, DefaultLockConfig(), nil); err != nil {
 		return audit.Row{}, err
@@ -484,11 +483,10 @@ func sealAndInsert(ctx context.Context, tx pgx.Tx, tenantID, eventType string, p
 // than deleted, and ordinary rows retain their structured actor/subject
 // identifiers under the §11.7 tamper-evidence basis and age out under
 // audit.retentionDays. This method returns (0, nil) after rejecting an
-// empty scope (§12.8 line 753).
+// empty scope (§12.8).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 step 13 (no
-// user-scoped audit deletion); §12.8 line 775 (audit retention
-// carve-out for gdpr.* and dead-lettered rows).
+// spec: §12.1; §12.8 step 13 (no
+// user-scoped audit deletion); §12.8.
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, ErrEmptyScope
@@ -499,7 +497,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // DeleteByTenant satisfies the §12.1 mandatory-erasure primitive. It
 // deletes every non-gdpr.% row of the tenant's audit chain for the
 // §12.8 Phase-4 tenant teardown and retains the gdpr.* erasure-receipt
-// remnant that must outlive the tenant (§12.8 line 840); the returned
+// remnant that must outlive the tenant (§12.8); the returned
 // count is the rows deleted and excludes the retained receipts.
 // audit_log is append-only:
 // the lenny_audit_immutability trigger rejects DELETE unless the
@@ -510,7 +508,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // erasure-role connection into the orchestrator is F-12.2.16). Empty
 // tenant id is rejected.
 //
-// spec: §12.1 line 5 (mandatory primitive); §11.7 item 7 (erasure_mode
+// spec: §12.1; §11.7 item 7 (erasure_mode
 // escape on the append-only ledger); §12.8 Phase 4 (tenant deletion).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
@@ -525,10 +523,10 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 		if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
 			return err
 		}
-		// spec: §12.8 line 840 / Phase 4 — skip gdpr.* erasure-receipt rows
+		// spec: §12.8 / Phase 4 — skip gdpr.* erasure-receipt rows
 		// so the tenant teardown retains the compliance receipts that must
 		// outlive the tenant (audit_redaction_receipts are separately
-		// exempt, §12.8 line 831). The retained gdpr.*-only remnant is a
+		// exempt, §12.8). The retained gdpr.*-only remnant is a
 		// standalone compliance set exempt from §11.7 chain verification;
 		// the continuity check skips any tenant in state='deleting' or
 		// state='deleted' (the states the tenant carries from this Phase-4
@@ -552,13 +550,13 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 
 // PruneOptions parameterizes a §16.4 audit-retention sweep.
 type PruneOptions struct {
-	// GeneralCutoff is the §16.4 line 378 retention boundary: rows
+	// GeneralCutoff is the §16.4 retention boundary: rows
 	// whose event_type does not match the gdpr.* erasure-receipt
 	// prefix and whose created_at predates this instant are eligible
 	// for deletion. Derived from audit.retentionDays.
 	GeneralCutoff time.Time
 
-	// GDPRCutoff is the separate §16.4 line 380 / §12.8 line 839
+	// GDPRCutoff is the separate §16.4 / §12.8
 	// retention boundary for gdpr.* erasure-receipt rows, which are
 	// exempt from the general window and held under the longer
 	// audit.gdprRetentionDays floor (>= 2190 days for regulated
@@ -566,14 +564,13 @@ type PruneOptions struct {
 	GDPRCutoff time.Time
 
 	// SIEMConfigured reports whether audit.siem.endpoint is set. When
-	// true and Force is false, the §16.4 line 378 SIEM delivery guard
+	// true and Force is false, the §16.4 SIEM delivery guard
 	// holds any row whose sequence_number exceeds the SIEM forwarder's
 	// last acknowledged high-water mark (siem_delivery_state), so a
 	// stalled forwarder cannot lose undelivered events to retention.
 	SIEMConfigured bool
 
-	// Force bypasses the SIEM delivery guard. The §16.4
-	// line 378 operator override path
+	// Force bypasses the SIEM delivery guard. The §16.4 operator override path
 	// (POST /v1/admin/audit-partitions/{partition}/drop) sets it after
 	// an explicit data-loss acknowledgement.
 	Force bool
@@ -582,12 +579,12 @@ type PruneOptions struct {
 // PruneRetention deletes the tenant's audit rows that have aged past
 // the §16.4 retention window and returns the count deleted. gdpr.*
 // erasure-receipt rows are held under the separate opts.GDPRCutoff
-// window (§16.4 line 380); every other row is eligible once it predates
+// window (§16.4); every other row is eligible once it predates
 // opts.GeneralCutoff. When opts.SIEMConfigured is true and opts.Force is
 // false, the SIEM delivery guard withholds any row whose
 // sequence_number is above the forwarder's last acknowledged high-water
 // mark in siem_delivery_state, so a stalled SIEM forwarder never loses
-// an undelivered event to retention (§16.4 line 378).
+// an undelivered event to retention (§16.4).
 //
 // The DELETE runs under SET LOCAL lenny.erasure_mode = 'true' so the
 // lenny_audit_immutability trigger admits it, exactly as DeleteByTenant
@@ -595,9 +592,7 @@ type PruneOptions struct {
 // tenant id is rejected so a misconfigured sweep cannot drop another
 // tenant's chain.
 //
-// spec: §16.4 lines 378-382 (audit-retention partition GC, gdpr.*
-// carve-out, SIEM delivery guard); §11.7 line 456 (regulated retention
-// floor); §12.8 line 839 (gdprRetentionDays floor).
+// spec: §16.4; §11.7; §12.8.
 func (s *Store) PruneRetention(ctx context.Context, tenantID string, opts PruneOptions) (int, error) {
 	if tenantID == "" {
 		return 0, ErrEmptyScope
@@ -679,7 +674,7 @@ type RetentionWindow struct {
 // high-water mark, so the §16.4 force-drop override can record the
 // §16.7 audit.partition_drop_forced payload before it deletes the rows.
 //
-// spec: §16.4 line 378 (force-drop override); §16.7 line 687
+// spec: §16.4; §16.7
 // (audit.partition_drop_forced payload).
 func (s *Store) RetentionWindowStats(ctx context.Context, tenantID string, cutoff time.Time) (RetentionWindow, error) {
 	if tenantID == "" {
@@ -736,15 +731,14 @@ func (s *Store) RetentionWindowStats(ctx context.Context, tenantID string, cutof
 // by the SIEM delivery guard, because their sequence_number is above the
 // forwarder's last acknowledged high-water mark in siem_delivery_state.
 // A non-zero result is the "partition drop blocked by SIEM lag"
-// condition the §16.4 line 378 / §16.5 AuditPartitionDropBlocked alert
+// condition the §16.4 / §16.5 AuditPartitionDropBlocked alert
 // describes: events past their retention TTL that the GC must hold
 // because the forwarder has not consumed them. gdpr.* rows are excluded
 // (they are held under the separate gdprRetentionDays floor, not the
 // SIEM guard), and a tenant with no siem_delivery_state row has an
 // implicit high-water mark of 0, so every past-TTL row is held.
 //
-// spec: §16.4 line 378 (SIEM delivery guard holds undelivered partitions
-// past their retention TTL); §16.5 (AuditPartitionDropBlocked).
+// spec: §16.4; §16.5 (AuditPartitionDropBlocked).
 func (s *Store) SIEMHeldCount(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	if tenantID == "" {
 		return 0, ErrEmptyScope

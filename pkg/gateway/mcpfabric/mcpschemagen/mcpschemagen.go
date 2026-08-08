@@ -3,7 +3,7 @@
 // Package mcpschemagen derives MCP tool input JSON schemas from the
 // gateway OpenAPI document.
 //
-// spec: §15.2.1 rule 4 line 1386 — "The REST API's OpenAPI spec is the
+// spec: §15.2.1 rule 4 — "The REST API's OpenAPI spec is the
 // single authoritative schema for all overlapping operations. MCP tool
 // schemas for overlapping operations (e.g., create_session) are generated
 // from the OpenAPI spec's request/response definitions, not maintained
@@ -66,7 +66,7 @@ func DefaultOverlaps() []OverlapSpec {
 			ToolName:    "lenny/create_session",
 			OperationID: "postV1Sessions",
 			Options: Options{
-				// spec: §11.5 line 277 — the MCP create_session body
+				// spec: §11.5 — the MCP create_session body
 				// carries an optional idempotencyKey read by the MCP
 				// idempotency hook. It has no REST request-body field, so
 				// it is an MCP-only extension merged on top of the
@@ -115,7 +115,7 @@ type requestBody struct {
 }
 
 // BuildToolInputSchema resolves the self-contained MCP input schema for the
-// operation identified by operationID. spec: §15.2.1 rule 4 line 1386.
+// operation identified by operationID. spec: §15.2.1 rule 4.
 func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json.RawMessage, error) {
 	var doc openapiDoc
 	if err := json.Unmarshal(rawDoc, &doc); err != nil {

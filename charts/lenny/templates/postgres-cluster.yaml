@@ -18,8 +18,8 @@ The CloudNativePG operator (and its `postgresql.cnpg.io` CRDs) must already
 be installed in the cluster; this template renders only the `Cluster`
 resource, mirroring how the §17.9.5 table names "CloudNativePG operator".
 
-spec: §17.9.5 lines 1497-1503 (self-managed Postgres = CloudNativePG),
-§17.3 lines 114-117 (Postgres RPO=0 sync replication, < 30s auto failover),
+spec: §17.9.5,
+§17.3,
 §12.3 (Postgres HA requirements).
 */ -}}
 {{- if .Values.postgres.deploy }}

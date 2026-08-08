@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §11.1 lines 10-11 — concurrent-upload + per-session
+// spec: §11.1 — concurrent-upload + per-session
 // cumulative-size admission caps. These unit tests exercise the
 // uploadLimiter state machine directly (the handler integration lives
 // in upload_limits_test.go). F-11.1.5, F-11.1.6.
@@ -32,7 +32,7 @@ func TestNewUploadLimiterNilWhenAllZero(t *testing.T) {
 }
 
 // A nil *uploadLimiter is the unconfigured posture; every method must be
-// a safe pass-through. spec: §11.1 lines 10-11.
+// a safe pass-through. spec: §11.1.
 func TestUploadLimiterNilPassthrough(t *testing.T) {
 	var l *uploadLimiter
 	release, scope, ok := l.acquireSlot("s1")
@@ -100,7 +100,7 @@ func TestUploadLimiterGlobalConcurrency(t *testing.T) {
 
 // When both scopes are configured, the per-session scope is checked
 // first so a client flooding one session sees the precise reason rather
-// than a global-capacity message. spec: §11.1 line 10.
+// than a global-capacity message. spec: §11.1.
 func TestUploadLimiterPerSessionCheckedBeforeGlobal(t *testing.T) {
 	l := newUploadLimiter(1, 10, 0)
 	r1, _, ok := l.acquireSlot("s1")
@@ -114,7 +114,7 @@ func TestUploadLimiterPerSessionCheckedBeforeGlobal(t *testing.T) {
 }
 
 // release is idempotent: a double call must not drive either counter
-// negative. spec: §11.1 line 10.
+// negative. spec: §11.1.
 func TestUploadLimiterReleaseIdempotent(t *testing.T) {
 	l := newUploadLimiter(0, 5, 0)
 	r, _, _ := l.acquireSlot("s1")
@@ -188,7 +188,7 @@ func TestUploadLimiterCloseSessionClearsBytes(t *testing.T) {
 
 // closeSession must not disturb in-flight concurrency slots: a slot
 // acquired before the window closes still releases cleanly afterward.
-// spec: §11.1 lines 10-11.
+// spec: §11.1.
 func TestUploadLimiterCloseSessionLeavesInflight(t *testing.T) {
 	l := newUploadLimiter(1, 0, 20)
 	r, _, ok := l.acquireSlot("s1")
@@ -218,7 +218,7 @@ func TestUploadLimiterUnlimitedBytesNeverTracks(t *testing.T) {
 
 // Concurrency counters stay consistent under parallel acquire/release.
 // Run with -race to surface data races on the shared maps and counter.
-// spec: §11.1 line 10.
+// spec: §11.1.
 func TestUploadLimiterConcurrentAcquireRelease(t *testing.T) {
 	l := newUploadLimiter(0, 1000, 0)
 	var wg sync.WaitGroup

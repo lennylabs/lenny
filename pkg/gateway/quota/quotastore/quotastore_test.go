@@ -23,14 +23,14 @@ func newCounter(t *testing.T) *quotastore.Counter {
 	return quotastore.New(cl)
 }
 
-// spec: §12.1 line 5 — the QuotaStore role interface exposes the
+// spec: §12.1 — the QuotaStore role interface exposes the
 // mandatory erasure pair, enforced at compile time.
 func TestCounterSatisfiesQuotaStore_spec_12_1(t *testing.T) {
 	t.Parallel()
 	var _ quotastore.QuotaStore = (*quotastore.Counter)(nil)
 }
 
-// spec: §12.8 line 753 — the erasure primitives reject empty scope.
+// spec: §12.8 — the erasure primitives reject empty scope.
 func TestErasureRejectsEmptyScope_spec_12_8_line753(t *testing.T) {
 	t.Parallel()
 	c := newCounter(t)
@@ -46,7 +46,7 @@ func TestErasureRejectsEmptyScope_spec_12_8_line753(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 step 6 — DeleteByUser removes every
+// spec: §12.1 / §12.8 step 6 — DeleteByUser removes every
 // per-user counter (both fixed-window and sliding-window buckets) for
 // the user, leaving the other user's counters intact.
 func TestDeleteByUserScoped_spec_12_8_step6(t *testing.T) {
@@ -84,7 +84,7 @@ func TestDeleteByUserScoped_spec_12_8_step6(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // token-usage counter for the tenant across users, leaving other
 // tenants untouched, and is idempotent.
 func TestDeleteByTenantScopedAndIdempotent_spec_12_8_phase4(t *testing.T) {

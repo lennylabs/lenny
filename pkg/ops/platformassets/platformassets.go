@@ -11,7 +11,7 @@
 // links it. lenny-ops imports it so the assets travel with the operability
 // binary that orchestrates the upgrade.
 //
-// spec: §25.8 Air-Gapped Support item 5 (line 3425).
+// spec: §25.8 Air-Gapped Support item 5.
 package platformassets
 
 import (

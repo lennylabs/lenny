@@ -63,7 +63,7 @@ func containsID(rows []sessionserver.SessionResponse, id string) bool {
 	return false
 }
 
-// spec: §7.1 derive rule 2 / §15.1 lines 647-663 — under the
+// spec: §7.1 derive rule 2 / §15.1 — under the
 // persistDeriveFailureRows opt-in, a derive that fails at the copy stage
 // persists a terminal failed row with failureClass=derive_failure, and the
 // §16.1 audit counter bumps "persisted". F-15.1.14.
@@ -91,7 +91,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 		t.Fatalf("audit outcomes: got %v, want [persisted]", ctr.outcomes)
 	}
 
-	// §15.1 line 651 — GET returns 200 with the derive_failure envelope.
+	// §15.1 — GET returns 200 with the derive_failure envelope.
 	got := sessionRequest(t, h, http.MethodGet, "/v1/sessions/sess_df")
 	if got.Code != http.StatusOK {
 		t.Fatalf("get derive_failure row: got %d, want 200; body=%s", got.Code, got.Body.String())
@@ -102,7 +102,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 		t.Errorf("envelope: got state=%q failureClass=%q, want failed/derive_failure", resp.State, resp.FailureClass)
 	}
 
-	// §15.1 line 652 — included in the default list, excluded with the flag.
+	// §15.1 — included in the default list, excluded with the flag.
 	// The seeded source session (sess_source) is also present; the
 	// derive_failure row (sess_df) is the membership the matrix asserts.
 	if rows := listSessions(t, h, ""); !containsID(rows, "sess_df") {
@@ -112,7 +112,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 		t.Errorf("includeDeriveFailures=false must drop sess_df, got %v", listIDs(rows))
 	}
 
-	// §15.1 lines 654-658 — action endpoints reject the terminal row with
+	// §15.1 — action endpoints reject the terminal row with
 	// 409 INVALID_STATE_TRANSITION.
 	for _, ep := range []string{"terminate", "interrupt", "resume", "finalize", "start"} {
 		ar := sessionRequest(t, h, http.MethodPost, "/v1/sessions/sess_df/"+ep)

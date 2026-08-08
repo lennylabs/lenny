@@ -22,8 +22,7 @@
 // because a comma inside a regex quantifier such as {1,128} collides with
 // reflect.StructTag's strconv.Unquote handling.
 //
-// spec: §17.6 lines 651-666 (Helm values.schema.json + lenny-ctl values
-// validate), §17.9.2 line 1374 (answer-file CI lint).
+// spec: §17.6, §17.9.2.
 package values
 
 // Object is a documented chart-values section whose internal structure is
@@ -58,15 +57,15 @@ type Root struct {
 	// §17.9.2 answer files pin it; the chart validates the value with the
 	// lenny.clusterType helper. Left a plain string (no enum) so the
 	// chart default may leave it unset (the docker-compose answer file's
-	// cluster=n/a case). spec: §17.9.1 line 1351.
-	Cluster string `json:"cluster,omitempty" desc:"Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla). §17.9.1 line 1351."`
+	// cluster=n/a case). spec: §17.9.1.
+	Cluster string `json:"cluster,omitempty" desc:"Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla)."`
 	// IsolationProfile is the §17.9.1 isolation-profile composition
 	// dimension (baseline | sandboxed | hypervisor). It sets the default
 	// isolationProfile stamped on the §26 seeded reference runtimes; the
 	// lenny.seededIsolationProfile helper maps it to the §5.3 profile
 	// (baseline→standard, sandboxed→sandboxed, hypervisor→microvm).
-	// spec: §17.9.1 line 1354.
-	IsolationProfile           string     `json:"isolationProfile,omitempty" desc:"Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes. §17.9.1 line 1354."`
+	// spec: §17.9.1.
+	IsolationProfile           string     `json:"isolationProfile,omitempty" desc:"Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes."`
 	ComplianceProfile          string     `json:"complianceProfile,omitempty"`
 	ObjectStorage              Object     `json:"objectStorage,omitempty"`
 	MinIO                      Object     `json:"minio,omitempty"`
@@ -118,7 +117,7 @@ type Root struct {
 
 // Global models the platform-wide chart values. The section is fully
 // enumerated so the schema rejects unknown global.* keys and validates
-// the security-affecting noEnvironmentPolicy enum. spec: §17.6 line 365,
+// the security-affecting noEnvironmentPolicy enum. spec: §17.6,
 // §16.1.1 (deploymentTier), §10.3 (spiffeTrustDomain, saTokenAudience).
 type Global struct {
 	// DeploymentTier is the §16.1.1 static metric tier label. It is left a
@@ -126,26 +125,26 @@ type Global struct {
 	// the empty string to omit the deployment_tier metric relabel.
 	DeploymentTier string `json:"deploymentTier,omitempty" desc:"Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1."`
 	DevMode        bool   `json:"devMode,omitempty" desc:"Relaxes multi-tenant admission controls for local development. Never enable on a multi-tenant cluster. §4.9."`
-	// MaintenanceMode is the §25.6 line 2974 global guard: when true the
+	// MaintenanceMode is the §25.6 global guard: when true the
 	// doctor --fix auto-remediation surface skips every remediation.
-	MaintenanceMode bool `json:"maintenanceMode,omitempty" desc:"When true, the §25.6 doctor --fix auto-remediation surface skips every remediation. §25.6 line 2974."`
-	// NoEnvironmentPolicy is the §10.6/§17.6 line 365 platform-wide default
+	MaintenanceMode bool `json:"maintenanceMode,omitempty" desc:"When true, the §25.6 doctor --fix auto-remediation surface skips every remediation."`
+	// NoEnvironmentPolicy is the §10.6/§17.6 platform-wide default
 	// access policy. The gateway refuses to start when it is unset outside
 	// --dev-mode, so the schema constrains it to the two documented values.
-	NoEnvironmentPolicy string  `json:"noEnvironmentPolicy,omitempty" enum:"deny-all|allow-all" desc:"Platform-wide default access policy for a session that names no environment. §10.6 / §17.6 line 365."`
+	NoEnvironmentPolicy string  `json:"noEnvironmentPolicy,omitempty" enum:"deny-all|allow-all" desc:"Platform-wide default access policy for a session that names no environment. §10.6 /."`
 	SpiffeTrustDomain   string  `json:"spiffeTrustDomain,omitempty" desc:"SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3."`
 	TraceSamplingRate   float64 `json:"traceSamplingRate,omitempty" min:"0" max:"1" desc:"Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3."`
 	SaTokenAudience     string  `json:"saTokenAudience,omitempty" desc:"Projected SA-token audience the gateway validates on every pod→gateway request. §10.3."`
 }
 
 // Playground models the §27 web-playground chart values. The section is
-// fully enumerated so the schema enforces the §17.6 line 373
+// fully enumerated so the schema enforces the §17.6
 // devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum, and
 // rejects out-of-range bearer-token TTLs.
 type Playground struct {
 	Enabled  bool   `json:"enabled,omitempty" desc:"Turns the §27 playground on. Off by default."`
 	AuthMode string `json:"authMode,omitempty" enum:"oidc|apiKey|dev" desc:"Playground authentication mode. §27.3."`
-	// DevTenantID is the §17.6 line 373 schema-constrained value. The
+	// DevTenantID is the §17.6 schema-constrained value. The
 	// pattern matches the canonical tenant_id regex from §10.2 so a typo
 	// (trailing whitespace, a `.` character) is rejected at helm
 	// install/upgrade time rather than as a gateway CrashLoopBackOff.

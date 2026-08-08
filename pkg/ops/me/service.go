@@ -77,7 +77,7 @@ func (s *Service) Me(p authmw.Principal) Identity {
 // satisfied by the principal's role set and whose Scope the
 // principal's §25.1 scope claim permits, sorted by Tool name.
 //
-// spec: §25.1 line 96 — "`/v1/admin/me/authorized-tools` — pre-filters
+// spec: §25.1 — "`/v1/admin/me/authorized-tools` — pre-filters
 // the tool list to what the caller's scopes permit." The role check
 // alone only enforces the role ceiling; a narrowly-scoped token must
 // see a further-reduced list, not the full role-eligible catalog.

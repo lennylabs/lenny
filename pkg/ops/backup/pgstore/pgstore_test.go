@@ -19,7 +19,7 @@ import (
 // schema (migrations 0123 + 0127), and returns a connected Store. It
 // downloads the PostgreSQL bundle, so it is skipped under -short.
 //
-// spec: §25.11 lines 3963-4295.
+// spec: §25.11.
 func newTestStore(t *testing.T) (*pgstore.Store, context.Context) {
 	t.Helper()
 	if testing.Short() {
@@ -298,7 +298,7 @@ func TestRestoreRoundTrip_spec_25_11(t *testing.T) {
 	}
 }
 
-// TestFailStalePending asserts the §25.11 lines 3976-3977 reconcile: a
+// TestFailStalePending asserts the §25.11 reconcile: a
 // pending row older than the cutoff is failed with JOB_CREATE_FAILED while
 // a fresh pending row and a non-pending row are untouched.
 func TestFailStalePending_spec_25_11(t *testing.T) {

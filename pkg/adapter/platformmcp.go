@@ -25,14 +25,14 @@ func (s *Server) startPlatformMCP(nonce string) error {
 		return err
 	}
 	srv := mcp.NewServer()
-	// §4.7 lines 879-883: when SO_PEERCRED is disabled, the static nonce
+	// §4.7: when SO_PEERCRED is disabled, the static nonce
 	// is replayable, so the server adds a per-connection challenge-response.
 	srv.RequireChallenge = s.NonceOnlyMode
 	// spec: §5.1 — record that the runtime connected to the platform MCP
 	// server so the observed-integration-level probe classifies it as at
 	// least Standard. F-5.1.11.
 	srv.OnHandshake = s.markMCPHandshakeSeen
-	// §9.1 lines 14-31: serve the platform tool catalog and forward every
+	// §9.1: serve the platform tool catalog and forward every
 	// tools/call to the gateway over GatewayControl, scoped to this
 	// session. Without a forwarder the server serves an empty catalog (the
 	// dev path with no gateway link). F-9.1.1.

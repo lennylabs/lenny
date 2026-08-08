@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
 
-// spec: §10.5 line 508 — GET /internal/runtime-upgrade/active reports
+// spec: §10.5 — GET /internal/runtime-upgrade/active reports
 // whether a pool has an active (non-terminal) RuntimeUpgrade so the
 // sandboxtemplate-deletion-guard webhook can refuse a delete.
 
@@ -86,7 +86,7 @@ func TestSchemaGatedWhenSchemaVersionSet_spec_10_5_502(t *testing.T) {
 	})}
 	body := decode(t, get(t, h, "coding-agents"))
 	if body["active"] != true || body["schemaGated"] != true {
-		t.Errorf("active=%v schemaGated=%v, want both true (§10.5 line 502 Phase 3 gate)", body["active"], body["schemaGated"])
+		t.Errorf("active=%v schemaGated=%v, want both true (§10.5 Phase 3 gate)", body["active"], body["schemaGated"])
 	}
 }
 

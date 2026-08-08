@@ -66,7 +66,7 @@ func seedSession(t *testing.T, store sessionstore.Store, tenantID, sessionID, po
 	}
 }
 
-// spec: §4.4 line 256 — a session whose `last_successful_checkpoint_at`
+// spec: §4.4 — a session whose `last_successful_checkpoint_at`
 // is older than the interval is stale; the per-(pool, level) gauge
 // reports the count.
 func TestFreshnessReaperCountsStaleSessions(t *testing.T) {
@@ -92,7 +92,7 @@ func TestFreshnessReaperCountsStaleSessions(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — terminal sessions are not active and must NOT
+// spec: §4.4 — terminal sessions are not active and must NOT
 // count toward the staleness gauge. A completed session whose
 // `last_successful_checkpoint_at` is never set would otherwise mask
 // as permanently stale.
@@ -123,7 +123,7 @@ func TestFreshnessReaperIgnoresTerminalSessions(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — a session that has never been checkpointed is
+// spec: §4.4 — a session that has never been checkpointed is
 // stale once an interval boundary has passed; the `IsZero()` branch
 // of FreshnessCheck applies.
 func TestFreshnessReaperCountsNeverCheckpointed(t *testing.T) {
@@ -146,7 +146,7 @@ func TestFreshnessReaperCountsNeverCheckpointed(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — the gauge is labelled per (pool, level); the
+// spec: §4.4 — the gauge is labelled per (pool, level); the
 // reaper resolves the labels via the ResolveLabels callback so the
 // gateway can wire it against its runtime / pool registry.
 func TestFreshnessReaperHonoursLabelResolver(t *testing.T) {
@@ -183,7 +183,7 @@ func TestFreshnessReaperHonoursLabelResolver(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — the reaper sweeps every tenant returned by
+// spec: §4.4 — the reaper sweeps every tenant returned by
 // the TenantLister so a multi-tenant deployment reports a fleet-wide
 // staleness count.
 func TestFreshnessReaperSweepsAcrossTenants(t *testing.T) {
@@ -207,7 +207,7 @@ func TestFreshnessReaperSweepsAcrossTenants(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — a previously stale (pool, level) cell that
+// spec: §4.4 — a previously stale (pool, level) cell that
 // has no stale sessions on this cycle must zero out so the gauge does
 // not pin at the peak count.
 func TestFreshnessReaperZeroesCellsAfterRecovery(t *testing.T) {
@@ -240,7 +240,7 @@ func TestFreshnessReaperZeroesCellsAfterRecovery(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — a per-tenant list error must not stop the
+// spec: §4.4 — a per-tenant list error must not stop the
 // sweep; the reaper logs the error via OnError and moves on so a
 // transient failure for one tenant cannot mask staleness in others.
 func TestFreshnessReaperContinuesAfterPerTenantError(t *testing.T) {
@@ -268,7 +268,7 @@ func TestFreshnessReaperContinuesAfterPerTenantError(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 256 — a nil gauge / store / tenants lister must
+// spec: §4.4 — a nil gauge / store / tenants lister must
 // degrade gracefully; the reaper does not panic so a partially
 // configured gateway start cannot crash the process.
 func TestFreshnessReaperNoOpOnUnconfiguredFields(t *testing.T) {
@@ -277,7 +277,7 @@ func TestFreshnessReaperNoOpOnUnconfiguredFields(t *testing.T) {
 	r.Sweep(context.Background())
 }
 
-// spec: §4.4 line 256 — Run takes an immediate first sweep so the
+// spec: §4.4 — Run takes an immediate first sweep so the
 // gauge reflects the current state without waiting one
 // SweepInterval. Subsequent ticks follow the configured cadence.
 func TestFreshnessReaperRunSweepsImmediately(t *testing.T) {

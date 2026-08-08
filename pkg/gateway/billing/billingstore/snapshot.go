@@ -9,7 +9,7 @@ import "encoding/json"
 // in-memory billing-event ledger across a process restart. Only the
 // per-tenant event map is serialized; the injected clock is left intact.
 //
-// spec: §17.4 line 199 — embedded SQLite for session and metadata storage.
+// spec: §17.4 — embedded SQLite for session and metadata storage.
 func (m *Memory) ExportState() ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -78,7 +78,7 @@ func (f *fakeGateway) RestartGateway(context.Context) error {
 	return f.err
 }
 
-// fakeProgress captures §25.11 line 4196 operation_progressed payloads.
+// fakeProgress captures §25.11 operation_progressed payloads.
 type fakeProgress struct{ infos []backup.RestoreProgressInfo }
 
 func (f *fakeProgress) RestoreProgressed(_ context.Context, info backup.RestoreProgressInfo) {
@@ -161,7 +161,7 @@ func assertLockHeld(t *testing.T, locker *backup.MemLocker, want bool) {
 	}
 }
 
-// spec: §25.11 lines 4146-4149 — all shards complete, no GDPR reconciler
+// spec: §25.11 — all shards complete, no GDPR reconciler
 // configured: per-shard events fire, the gateway rolls, and the lock is
 // released.
 func TestCompleteRestoreHappyPathNoErasure_spec_25_11(t *testing.T) {
@@ -206,7 +206,7 @@ func TestCompleteRestoreHappyPathNoErasure_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4146 / line 4149 — any shard failing fails the
+// spec: §25.11 — any shard failing fails the
 // restore in the restore phase, holds the lock, and does not roll the
 // gateway.
 func TestCompleteRestoreShardFailureHoldsLock_spec_25_11(t *testing.T) {
@@ -241,7 +241,7 @@ func TestCompleteRestoreShardFailureHoldsLock_spec_25_11(t *testing.T) {
 	assertLockHeld(t, locker, true)
 }
 
-// spec: §25.11 line 4147 — a fresh ledger lets the reconciler replay the
+// spec: §25.11 — a fresh ledger lets the reconciler replay the
 // enumerated subjects, suppress held subjects, and emit a single
 // gdpr.backup_reconcile_completed event before the gateway rolls.
 func TestCompleteRestoreErasureReplayAndSuppress_spec_25_11(t *testing.T) {
@@ -283,7 +283,7 @@ func TestCompleteRestoreErasureReplayAndSuppress_spec_25_11(t *testing.T) {
 	assertLockHeld(t, locker, false)
 }
 
-// spec: §25.11 line 4147 — a ledger restored in lockstep (most recent
+// spec: §25.11 — a ledger restored in lockstep (most recent
 // write <= backupTakenAt) blocks replay with gdpr.backup_reconcile_blocked,
 // aborts with RESTORE_ERASURE_RECONCILE_FAILED + failure_phase
 // erasure_reconcile + block_reason legal_hold_ledger_stale, holds the
@@ -321,7 +321,7 @@ func TestCompleteRestoreLedgerStaleBlocks_spec_25_11(t *testing.T) {
 	assertLockHeld(t, locker, true)
 }
 
-// fakeReconcileMetrics records §25.11 line 4320
+// fakeReconcileMetrics records §25.11
 // lenny_backup_reconcile_blocked_total increments by reason.
 type fakeReconcileMetrics struct {
 	byReason map[string]int
@@ -334,7 +334,7 @@ func (f *fakeReconcileMetrics) ReconcileBlocked(reason string) {
 	f.byReason[reason]++
 }
 
-// spec: §25.11 line 4320 — the ledger-stale block increments
+// spec: §25.11 — the ledger-stale block increments
 // lenny_backup_reconcile_blocked_total{reason="legal_hold_ledger_stale"}
 // so the BackupReconcileBlocked alert can fire.
 func TestCompleteRestoreLedgerStaleIncrementsReconcileBlocked_spec_25_11_4320(t *testing.T) {
@@ -353,7 +353,7 @@ func TestCompleteRestoreLedgerStaleIncrementsReconcileBlocked_spec_25_11_4320(t 
 	}
 }
 
-// spec: §25.11 line 4147 — an operator's ConfirmLegalHoldLedger watermark
+// spec: §25.11 — an operator's ConfirmLegalHoldLedger watermark
 // (LedgerConfirmedAt) overrides the stale-ledger gate so the reconciler
 // proceeds on the next completion attempt.
 func TestCompleteRestoreLedgerConfirmedOverridesGate_spec_25_11(t *testing.T) {
@@ -387,7 +387,7 @@ func TestCompleteRestoreLedgerConfirmedOverridesGate_spec_25_11(t *testing.T) {
 	assertLockHeld(t, locker, false)
 }
 
-// spec: §25.11 line 4147 — an individual replay failure aborts the
+// spec: §25.11 — an individual replay failure aborts the
 // reconciler with RESTORE_ERASURE_RECONCILE_FAILED (no block_reason) and
 // holds the lock.
 func TestCompleteRestoreReplayFailureAborts_spec_25_11(t *testing.T) {
@@ -421,7 +421,7 @@ func TestCompleteRestoreReplayFailureAborts_spec_25_11(t *testing.T) {
 	assertLockHeld(t, locker, true)
 }
 
-// spec: §25.11 line 4147 — an enumeration error and a ledger-watermark
+// spec: §25.11 — an enumeration error and a ledger-watermark
 // error both surface as RESTORE_ERASURE_RECONCILE_FAILED.
 func TestCompleteRestoreReconcilerInfraErrors_spec_25_11(t *testing.T) {
 	cases := map[string]*fakeErasure{
@@ -445,7 +445,7 @@ func TestCompleteRestoreReconcilerInfraErrors_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4148-4149 — a gateway restart that does not complete
+// spec: §25.11 — a gateway restart that does not complete
 // leaves the restore completed but the lock held and a retry marker; a
 // later ReconcileRunningRestores retries the restart and releases the
 // lock.
@@ -504,7 +504,7 @@ func TestCompleteRestoreNotFound_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4146-4149 — the leader-only completion reconciler
+// spec: §25.11 — the leader-only completion reconciler
 // drives a running restore whose Job has succeeded through steps 5-8,
 // leaves an active Job untouched, and fails a restore whose Job failed.
 func TestReconcileRunningRestores_spec_25_11(t *testing.T) {

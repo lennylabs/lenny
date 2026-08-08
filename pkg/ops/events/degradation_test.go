@@ -68,7 +68,7 @@ func publishOne(s *opsstream.Service, typ string) {
 	s.Publish(context.Background(), events.OperationalEvent{Type: typ, Severity: "warning"})
 }
 
-// spec: §25.5 lines 2768-2772 (case 1) — Redis unreachable, gateway up:
+// spec: §25.5 — Redis unreachable, gateway up:
 // the poll surface serves normally and attaches the canonical
 // degradation envelope with actualSource "gateway-buffer" (HTTP 200,
 // EVENT_STREAM_DEGRADED returned as response metadata).
@@ -105,7 +105,7 @@ func TestHandlePoll_RedisDown_AttachesDegradation_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2775-2780 (case 4) — Redis AND gateway unreachable:
+// spec: §25.5 — Redis AND gateway unreachable:
 // polling for the stream returns 503 EVENT_STREAM_UNAVAILABLE because
 // gateway-originated events have nowhere to land and polling cannot
 // partial-serve.
@@ -128,7 +128,7 @@ func TestHandlePoll_DualOutage_503_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2769 (case 2) — Redis up: no fall-back is needed, so
+// spec: §25.5 — Redis up: no fall-back is needed, so
 // the poll carries no degradation envelope regardless of gateway state.
 func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 	for _, gw := range []bool{true, false} {
@@ -173,7 +173,7 @@ func TestHandlePoll_NilHealth_NoDegradation(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2779 (case 4) — the SSE surface writes the
+// spec: §25.5 — the SSE surface writes the
 // :degradation comment carrying actualSource lenny-ops-local-buffer and
 // unavailableFields ["gateway-events"], then still serves this replica's
 // own (lenny-ops-originated) events from the local buffer.
@@ -214,7 +214,7 @@ func TestHandleStream_DualOutage_DegradationComment_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2772 (case 1) — the SSE surface announces the
+// spec: §25.5 — the SSE surface announces the
 // gateway-buffer fall-back via the :degradation comment during a Redis
 // outage.
 func TestHandleStream_RedisDown_DegradationComment_spec_25_5(t *testing.T) {
@@ -242,7 +242,7 @@ func TestHandleStream_RedisDown_DegradationComment_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2769 — Redis up: the SSE surface emits no degradation
+// spec: §25.5 — Redis up: the SSE surface emits no degradation
 // comment.
 func TestHandleStream_Healthy_NoComment_spec_25_5(t *testing.T) {
 	s := opsstream.New(opsstream.Options{
@@ -279,9 +279,7 @@ func TestStaticSourceHealth(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2768-2780 (the degradation matrix keys on the two source-
-// health signals and enumerates Redis-reachable as the healthy, envelope-free
-// state) — a replica with no Redis client wired is healthy, not degraded. Its
+// spec: §25.5 — a replica with no Redis client wired is healthy, not degraded. Its
 // poll response carries no degradation envelope and its SSE connection emits no
 // :degradation comment, so the three-case matrix stays the whole matrix.
 func TestReadSurface_NoRedisWired_ServesHealthyWithNoDegradationEnvelope_spec_25_5(t *testing.T) {

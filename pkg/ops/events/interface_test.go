@@ -13,14 +13,14 @@ import (
 )
 
 // TestEventStreamServiceSurface_spec_25_5_2574 pins the canonical
-// §25.5 lines 2574-2585 EventStreamService method set. The interface
+// §25.5 EventStreamService method set. The interface
 // is the substitution contract for stream sources and test doubles;
 // the test guards the eight methods, their names, and their argument
 // shapes against accidental drift.
 func TestEventStreamServiceSurface_spec_25_5_2574(t *testing.T) {
 	iface := reflect.TypeOf((*events.EventStreamService)(nil)).Elem()
 	if iface.NumMethod() != 8 {
-		t.Fatalf("EventStreamService method count = %d, want 8 per §25.5 lines 2574-2585",
+		t.Fatalf("EventStreamService method count = %d, want 8 per §25.5",
 			iface.NumMethod())
 	}
 	want := map[string]struct{}{
@@ -41,7 +41,7 @@ func TestEventStreamServiceSurface_spec_25_5_2574(t *testing.T) {
 		delete(want, name)
 	}
 	for missing := range want {
-		t.Errorf("EventStreamService missing method %q per §25.5 lines 2574-2585", missing)
+		t.Errorf("EventStreamService missing method %q per §25.5", missing)
 	}
 }
 

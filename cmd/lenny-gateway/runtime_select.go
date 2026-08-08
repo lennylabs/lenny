@@ -13,12 +13,12 @@ import (
 // from the §17.4 local-dev runtime selectors. Precedence:
 //
 //  1. agentRuntime == "echo" (LENNY_AGENT_RUNTIME=echo) forces the
-//     built-in echo executor — the §17.4 line 262 zero-credential mode,
+//     built-in echo executor — the §17.4 zero-credential mode,
 //     selectable explicitly in Compose Mode and the default in Source
 //     Mode.
 //  2. a non-empty runtimeBin (--runtime-bin / LENNY_AGENT_BINARY)
 //     dispatches each message to a child process speaking the §15.4.1
-//     adapter protocol — the §17.4 line 323 custom-runtime override.
+//     adapter protocol — the §17.4 custom-runtime override.
 //  3. otherwise the built-in echo executor, the Source Mode default.
 //
 // An explicit LENNY_AGENT_RUNTIME=echo wins over a runtime binary: the
@@ -27,9 +27,7 @@ import (
 // rejected so a typo fails closed at startup rather than silently
 // falling back to echo.
 //
-// spec: §17.4 line 262 (zero-credential echo default / explicit
-// LENNY_AGENT_RUNTIME=echo selection), line 323 (LENNY_AGENT_BINARY
-// custom-runtime override).
+// spec: §17.4.
 func resolveExecutor(runtimeBin, agentRuntime string) (executor.Executor, string, error) {
 	switch {
 	case strings.EqualFold(agentRuntime, "echo"):

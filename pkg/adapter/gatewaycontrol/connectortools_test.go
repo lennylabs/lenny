@@ -10,7 +10,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §9.3 line 142 — the client maps the GatewayControl
+// spec: §9.3 — the client maps the GatewayControl
 // ListSessionConnectors response into mcp.ConnectorRef descriptors the
 // adapter renders into the manifest connectorServers array. F-9.1.2.
 func TestClientListSessionConnectors_spec_9_3_142(t *testing.T) {
@@ -37,7 +37,7 @@ func TestClientListSessionConnectors_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 lines 142-164 — the client maps the connector tool catalog
+// spec: §9.3 — the client maps the connector tool catalog
 // into mcp.Tool descriptors. F-9.1.2.
 func TestClientListConnectorTools_spec_9_3_142(t *testing.T) {
 	stub := &stubGatewayControl{connToolsResp: &adapterv1.ListConnectorToolsResponse{
@@ -59,7 +59,7 @@ func TestClientListConnectorTools_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 lines 142-164 — the client forwards the session, connector,
+// spec: §9.3 — the client forwards the session, connector,
 // tool, and arguments and returns the gateway's MCP result verbatim.
 func TestClientCallConnectorTool_spec_9_3_142(t *testing.T) {
 	stub := &stubGatewayControl{connCallResp: &adapterv1.CallConnectorToolResponse{

@@ -12,7 +12,7 @@ import (
 // TestParseHappyPath exercises the §4.3 per-replica identity shape:
 // spiffe://lenny.dev/gateway/replica-3 parses to trust-domain
 // lenny.dev with path /gateway/replica-3.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestParseHappyPath(t *testing.T) {
 	t.Parallel()
 	got, err := Parse("spiffe://lenny.dev/gateway/replica-3")
@@ -34,7 +34,7 @@ func TestParseHappyPath(t *testing.T) {
 // case-insensitive trust-domain rule: a mixed-case host parses to a
 // lower-case trust domain so downstream audit comparisons match the
 // configured mtls.spiffeTrustDomain value.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestParseLowercasesTrustDomain(t *testing.T) {
 	t.Parallel()
 	got, err := Parse("spiffe://Lenny.Dev/gateway/replica-3")
@@ -53,7 +53,7 @@ func TestParseLowercasesTrustDomain(t *testing.T) {
 // spiffe://. The §4.3 admission contract is that only SPIFFE IDs
 // carry workload identity; an https:// or urn:: SAN must be ignored
 // by the auditor.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestParseRejectsNonSpiffeScheme(t *testing.T) {
 	t.Parallel()
 	cases := []string{
@@ -73,7 +73,7 @@ func TestParseRejectsNonSpiffeScheme(t *testing.T) {
 // rejection of user info, port, query, fragment, and dot path
 // segments. Each must produce an error so a malformed credential
 // cannot smuggle metadata through the auditor.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestParseRejectsForbiddenComponents(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -100,7 +100,7 @@ func TestParseRejectsForbiddenComponents(t *testing.T) {
 // Service auditor uses: a certificate carrying a spiffe:// URI SAN
 // must yield the parsed ID. Multiple URIs are tolerated; the first
 // SPIFFE-ID URI wins.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestFromCertReturnsFirstSpiffeURISAN(t *testing.T) {
 	t.Parallel()
 	spiffe, _ := url.Parse("spiffe://lenny.dev/gateway/replica-2")
@@ -118,7 +118,7 @@ func TestFromCertReturnsFirstSpiffeURISAN(t *testing.T) {
 // TestFromCertReturnsErrNoSPIFFEIDWhenAbsent covers the negative path
 // — a non-SPIFFE certificate produces ErrNoSPIFFEID so the auditor
 // can degrade cleanly when the per-replica path is not configured.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestFromCertReturnsErrNoSPIFFEIDWhenAbsent(t *testing.T) {
 	t.Parallel()
 	cert := &x509.Certificate{}
@@ -133,7 +133,7 @@ func TestFromCertReturnsErrNoSPIFFEIDWhenAbsent(t *testing.T) {
 
 // TestFromCertNilCertificateReturnsError guards against a nil pointer
 // at the auditor edge.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func TestFromCertNilCertificateReturnsError(t *testing.T) {
 	t.Parallel()
 	if _, err := FromCert(nil); err == nil {

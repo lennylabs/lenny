@@ -9,6 +9,6 @@
 -- rbac-config and §9.2 elicitation-content-integrity sub-resources share
 -- this column because they are stored on the tenant row. Existing rows
 -- default to version 1.
--- See spec/15_external-api-surface.md §15.1 lines 1207-1224.
+-- See spec/15_external-api-surface.md §15.1.
 ALTER TABLE tenants
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;

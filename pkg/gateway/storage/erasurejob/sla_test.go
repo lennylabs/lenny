@@ -11,9 +11,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
 
-// spec: §12.8 line 768 — erasure throughput / SLA metrics.
+// spec: §12.8 — erasure throughput / SLA metrics.
 
-// fakeLifecycle records the §12.8 line 768 lifecycle metric calls.
+// fakeLifecycle records the §12.8 lifecycle metric calls.
 type fakeLifecycle struct {
 	inc, dec  int
 	durations []float64
@@ -91,7 +91,7 @@ func TestRunnerRecordsDeadline(t *testing.T) {
 	}
 }
 
-// fakeAgeSink records the §12.8 line 768 SLA gauge calls.
+// fakeAgeSink records the §12.8 SLA gauge calls.
 type fakeAgeSink struct {
 	ages     map[string]float64
 	cleared  map[string]bool

@@ -92,7 +92,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// rotation/revocation are gateway-local. It is wired only when the
 	// public proxy URL is configured; otherwise Available reports every
 	// provider unavailable and sessions fall through to pool.
-	// spec: §4.9 lines 1340-1381.
+	// spec: §4.9.
 	var userCredMaterializer *usercreds.Materializer
 	if userLeaseStore, ok := w.llmLeases.(usercreds.LeaseStore); ok {
 		userCredMaterializer = usercreds.New(usercreds.Config{
@@ -105,15 +105,15 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	credServer := credentialserver.New(credentials).
 		WithAudit(credentialAuditor{sink: auditSink})
 	if userCredMaterializer != nil {
-		// spec: §4.9 lines 1350-1351 — the PUT (rotate) and revoke endpoints
+		// spec: §4.9 — the PUT (rotate) and revoke endpoints
 		// reach the active user leases through the materializer.
 		credServer = credServer.WithLeasePropagator(userCredMaterializer)
-		// spec: §4.9 lines 1347-1351 — the session-creation router resolves a
+		// spec: §4.9 — the session-creation router resolves a
 		// user source only when the materializer reports the credential
 		// available and deliverable.
 		sessionSrv.SetUserCredChecker(userCredMaterializer.Available)
 		if w.podBinder != nil {
-			// spec: §4.9 lines 1246-1262 — the §4.7 binder materializes each
+			// spec: §4.9 — the §4.7 binder materializes each
 			// user-source provider into a proxy-mode lease pushed to the pod.
 			w.podBinder.UserCredentials = userCredMaterializer
 		}
@@ -127,7 +127,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// them under the same per-tenant KMS KEKs the credential store
 	// uses. The flow is wired only when --connector-oauth-callback-url
 	// is set: the OAuth provider needs an absolute redirect URI.
-	// §4.3 line 200 / §13.3 connector OAuth tokens are T4 Restricted
+	// §4.3 / §13.3 connector OAuth tokens are T4 Restricted
 	// and must be envelope-encrypted at rest. The Postgres-backed store
 	// envelope-encrypts both access and refresh tokens under the
 	// per-tenant KMS KEK; the in-memory store is for tests and the
@@ -167,7 +167,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 		if err != nil {
 			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
 		}
-		// spec: §9.3 line 157 — pending state binds to (session, connector)
+		// spec: §9.3 — pending state binds to (session, connector)
 		// with TTL=10min. Production binds it to Redis so the flow survives
 		// a gateway restart and a callback resolves on any replica
 		// (F-9.3.5); the in-memory store is the single-process fallback and
@@ -187,7 +187,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,
 		}
-		// spec: §9.3 line 129 — resolve a confidential connector's client
+		// spec: §9.3 — resolve a confidential connector's client
 		// secret from its auth.clientSecretRef Kubernetes Secret at
 		// token-exchange time. Wired whenever the gateway holds a cluster
 		// client (the production --agent-namespace path); without it a

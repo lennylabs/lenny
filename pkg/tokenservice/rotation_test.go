@@ -16,7 +16,7 @@ import (
 )
 
 // fakeRotationStore satisfies IssuedTokenRotationStore so the handler's
-// §13.3 line 597 self-rotation branch can be exercised without Postgres.
+// §13.3 self-rotation branch can be exercised without Postgres.
 // prevRevoked / prevSub control what the atomic rotation transaction
 // reports back about the previous token.
 type fakeRotationStore struct {
@@ -72,7 +72,7 @@ func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop 
 	}), signer
 }
 
-// spec: §13.3 line 597 / §16.7 line 666 — a self-rotation (caller
+// spec: §13.3 / §16.7 — a self-rotation (caller
 // presents its own current token, requests a privilege-equivalent
 // replacement) revokes the previous token atomically with the mint and
 // emits one token.revoked row with revocation_reason=rotation_replaced,
@@ -128,7 +128,7 @@ func TestHandlerRotationRevokesPreviousToken_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 666 — a successful cluster propagation publish sets
+// spec: §16.7 — a successful cluster propagation publish sets
 // propagation_mode=eventbus on the rotation token.revoked row.
 func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -153,7 +153,7 @@ func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — a self-exchange that narrows scope is a
+// spec: §13.3 — a self-exchange that narrows scope is a
 // scope_narrow, NOT a rotation: the previous token stays live and no
 // token.revoked is emitted.
 func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
@@ -184,7 +184,7 @@ func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — a self-exchange that drops an audience is a
+// spec: §13.3 — a self-exchange that drops an audience is a
 // dialect derivation, NOT a rotation: the previous token stays live.
 func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -211,7 +211,7 @@ func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T)
 	}
 }
 
-// spec: §13.3 line 597 — a delegation child mint (actor_token present)
+// spec: §13.3 — a delegation child mint (actor_token present)
 // is never a rotation even when the actor is the caller's own token.
 func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -238,7 +238,7 @@ func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — when the previous token is absent or already
+// spec: §13.3 — when the previous token is absent or already
 // revoked the store reports revoked=false; the replacement still mints
 // but no token.revoked row is emitted (idempotent re-rotation).
 func TestHandlerRotationPreviousAlreadyGoneEmitsNoRevoked_spec_16_7_5(t *testing.T) {
@@ -266,7 +266,7 @@ func TestHandlerRotationPreviousAlreadyGoneEmitsNoRevoked_spec_16_7_5(t *testing
 	}
 }
 
-// spec: §13.3 line 597 — when the issued-token store has no atomic
+// spec: §13.3 — when the issued-token store has no atomic
 // rotation surface (the in-memory dev path), a self-rotation still mints
 // the replacement; there is no durable previous-token row to revoke, so
 // no token.revoked is emitted.

@@ -103,7 +103,7 @@ func runningSession(t *testing.T, store sessionstore.Store) {
 	}
 }
 
-// spec: §4.8 line 1053 — a PreToolResult MODIFY rewrites the tool result
+// spec: §4.8 — a PreToolResult MODIFY rewrites the tool result
 // content delivered back to the agent while preserving the correlation id.
 func TestPreToolResultModifyRewritesContent_spec_4_8_line_1053(t *testing.T) {
 	// The JSON-RPC call id is 1 (set by the call() helper); the MODIFY must
@@ -123,7 +123,7 @@ func TestPreToolResultModifyRewritesContent_spec_4_8_line_1053(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053 — a PreToolResult REJECT blocks delivery of the tool
+// spec: §4.8 — a PreToolResult REJECT blocks delivery of the tool
 // result to the agent; the dispatcher surfaces it as an isError result.
 func TestPreToolResultReject_spec_4_8_line_1053(t *testing.T) {
 	chain := chainAt(t, interceptor.PhasePreToolResult,
@@ -137,7 +137,7 @@ func TestPreToolResultReject_spec_4_8_line_1053(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053, line 1060 — a PreToolResult MODIFY that alters the
+// spec: §4.8 — a PreToolResult MODIFY that alters the
 // immutable correlation id is rejected by the chain with the immutable-field
 // violation before the gateway applies it.
 func TestPreToolResultModifyImmutableIdRejected_spec_4_8_line_1060(t *testing.T) {
@@ -207,7 +207,7 @@ func TestPreToolResultGenericRejectCarriesNoViolatedFields_spec_4_8_15_1(t *test
 	}
 }
 
-// spec: §4.8 line 1054 — a PostAgentOutput MODIFY rewrites the agent output
+// spec: §4.8 — a PostAgentOutput MODIFY rewrites the agent output
 // parts before delivery to the client.
 func TestPostAgentOutputModifyRewritesOutput_spec_4_8_line_1054(t *testing.T) {
 	modified, _ := json.Marshal([]map[string]string{{"type": "text", "text": "redacted-output"}})
@@ -226,7 +226,7 @@ func TestPostAgentOutputModifyRewritesOutput_spec_4_8_line_1054(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1054 — a PostAgentOutput REJECT blocks delivery of the
+// spec: §4.8 — a PostAgentOutput REJECT blocks delivery of the
 // agent output to the client.
 func TestPostAgentOutputReject_spec_4_8_line_1054(t *testing.T) {
 	chain := chainAt(t, interceptor.PhasePostAgentOutput,
@@ -240,7 +240,7 @@ func TestPostAgentOutputReject_spec_4_8_line_1054(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1053 — with no interceptor registered at PreToolResult, the
+// spec: §4.8 — with no interceptor registered at PreToolResult, the
 // tool result reaches the agent unchanged.
 func TestPreToolResultNoChainPassesThrough_spec_4_8_line_1053(t *testing.T) {
 	srv, store := newMCP(t)

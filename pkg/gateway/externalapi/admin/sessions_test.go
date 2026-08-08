@@ -17,12 +17,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §24.11 lines 135-136 — platform-admin session investigation:
+// spec: §24.11 — platform-admin session investigation:
 // GET /v1/admin/sessions/{id} and POST .../force-terminate. F-24.11.2 /
 // F-24.11.3.
 
 // fakeSessionAdmin is an in-memory admin.SessionAdmin: GetByID resolves
-// across the seeded set, and ForceTerminate applies the §24.11 line 136
+// across the seeded set, and ForceTerminate applies the §24.11
 // transition (idempotent on an already-terminal row).
 type fakeSessionAdmin struct {
 	rows       map[string]sessionstore.Session

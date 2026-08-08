@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// TestMergeWorkspaceDefaultsAppends covers the §5.1 line 197-198 Append
+// TestMergeWorkspaceDefaultsAppends covers the §5.1 Append
 // merge: derived files are appended onto base files with a conflicting
 // path replaced by the derived entry, and derived setup commands are
 // appended after the base setup commands.
@@ -75,7 +75,7 @@ func TestMergeWorkspaceDefaultsInheritsAndDoesNotAlias(t *testing.T) {
 	}
 }
 
-// TestMergeSharedAssetsAppends covers the §5.1 line 208 Append merge:
+// TestMergeSharedAssetsAppends covers the §5.1 Append merge:
 // derived assets are appended with a conflicting destPath replaced by
 // the derived entry.
 func TestMergeSharedAssetsAppends(t *testing.T) {
@@ -105,7 +105,7 @@ func TestMergeSharedAssetsAppends(t *testing.T) {
 	}
 }
 
-// TestMergeRuntimeOptionsSchemaOverride covers the §5.1 line 199
+// TestMergeRuntimeOptionsSchemaOverride covers the §5.1
 // Override merge: a derived schema replaces the base, and an absent
 // derived schema inherits the base.
 func TestMergeRuntimeOptionsSchemaOverride(t *testing.T) {

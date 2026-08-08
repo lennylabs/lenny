@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// spec: §17.4 line 268 — the hard startup assertion. The gateway starts
+// spec: §17.4 — the hard startup assertion. The gateway starts
 // only when dev mode is on or an upstream TLS terminator is acknowledged.
 func TestResolveStartupGate_spec_17_4_268(t *testing.T) {
 	cases := []struct {
@@ -40,7 +40,7 @@ func TestResolveStartupGate_spec_17_4_268(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 269 — the warning text is the exact verbatim string.
+// spec: §17.4 — the warning text is the exact verbatim string.
 func TestTLSDisabledWarning_verbatim_spec_17_4_269(t *testing.T) {
 	const want = "WARNING: TLS disabled — dev mode active. Do not use in production."
 	if TLSDisabledWarning != want {
@@ -48,7 +48,7 @@ func TestTLSDisabledWarning_verbatim_spec_17_4_269(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 269 — the warning is logged once at startup and then
+// spec: §17.4 — the warning is logged once at startup and then
 // repeated on the configured cadence while the process runs.
 func TestStartWarnTicker_emitsAtStartupAndRepeats_spec_17_4_269(t *testing.T) {
 	var mu sync.Mutex
@@ -94,7 +94,7 @@ func TestStartWarnTicker_emitsAtStartupAndRepeats_spec_17_4_269(t *testing.T) {
 	mu.Unlock()
 }
 
-// spec: §17.4 line 269 — cancelling the context stops the broadcast.
+// spec: §17.4 — cancelling the context stops the broadcast.
 func TestStartWarnTicker_stopsOnContextCancel_spec_17_4_269(t *testing.T) {
 	var mu sync.Mutex
 	count := 0

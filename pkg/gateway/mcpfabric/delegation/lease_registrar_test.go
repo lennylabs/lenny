@@ -48,7 +48,7 @@ func registrarService(t *testing.T, store sessionstore.Store, reg delegation.Lea
 	})
 }
 
-// spec: §8.6 line 648 — an admitted child is registered with the lease-
+// spec: §8.6 — an admitted child is registered with the lease-
 // extension budget source under its root's tree and capped at the
 // parent's own granted lease, so a later in-process budget-exhaustion
 // extension (the gateway LLM Proxy's ExtendForBudget trigger) from the
@@ -103,7 +103,7 @@ func TestDelegate_RegistersChildLeaseTree_spec_8_6_line_648(t *testing.T) {
 	}
 }
 
-// spec: §8.9 line 1010 — a child of the tree root inherits the root's id
+// spec: §8.9 — a child of the tree root inherits the root's id
 // as its tree key, and a root parent carrying no granted lease yields a
 // zero parent-lease ceiling (the tree's effective-max still applies). F-15.3.5.
 func TestDelegate_ChildOfRoot_ZeroParentCeiling_spec_8_9_line_1010(t *testing.T) {

@@ -243,7 +243,7 @@ func TestRunReportsNetworkPolicyListFailureFailClosed(t *testing.T) {
 // object-store egress arm rendered without the paired allow-minio
 // agent-namespace ingress clause fails the install fail-closed.
 //
-// spec: §13.2 line 209; §17.6 (NET-071).
+// spec: §13.2; §17.6 (NET-071).
 func TestRunFailsOnUnpairedObjectStoreEgress(t *testing.T) {
 	objs := allBaselineWebhooks()
 	egress := lennyNetPolicy("allow-pod-egress-objectstore")
@@ -270,7 +270,7 @@ func TestRunFailsOnUnpairedObjectStoreEgress(t *testing.T) {
 // serving a workspaceTier T4 tenant with no per-tenant bucket-default
 // CMEK fails the install fail-closed.
 //
-// spec: §12.5 line 315; §17.9.7; §17.6.
+// spec: §12.5; §17.9.7; §17.6.
 func TestRunFailsOnT4GCSWithoutDefaultEncryption(t *testing.T) {
 	c := runClient(t, allBaselineWebhooks()...)
 

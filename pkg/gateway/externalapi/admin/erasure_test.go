@@ -208,12 +208,12 @@ func TestEraseUserReceiptRecordsBillingPseudonymization(t *testing.T) {
 	if be["verified"] != true {
 		t.Errorf("billingErasure.verified = %v, want true", be["verified"])
 	}
-	// spec: §12.8 line 851 — the salt-removal verification outcome is
+	// spec: §12.8 — the salt-removal verification outcome is
 	// recorded explicitly in the receipt.
 	if receipt.Detail["verificationOutcome"] != "verified" {
 		t.Errorf("verificationOutcome = %v, want verified", receipt.Detail["verificationOutcome"])
 	}
-	// spec: §12.8 line 762 — the receipt carries the per-phase timeline,
+	// spec: §12.8 — the receipt carries the per-phase timeline,
 	// ending in the completed transition.
 	assertReceiptPhaseLogCompleted(t, receipt)
 	if cnt, _ := billing.CountUser(context.Background(), "acme", "alice@acme.com"); cnt != 0 {
@@ -262,7 +262,7 @@ func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
 	if be["disposition"] != "exempt" {
 		t.Errorf("billingErasure.disposition = %v, want exempt", be["disposition"])
 	}
-	// spec: §12.8 line 851 — an exempt tenant runs no salt verification.
+	// spec: §12.8 — an exempt tenant runs no salt verification.
 	if receipt.Detail["verificationOutcome"] != "exempt" {
 		t.Errorf("verificationOutcome = %v, want exempt", receipt.Detail["verificationOutcome"])
 	}
@@ -272,7 +272,7 @@ func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 762, 851 — when no BillingEraser is wired the
+// spec: §12.8 — when no BillingEraser is wired the
 // completion receipt still carries the per-phase timeline and records a
 // not_applicable verification outcome (no salt was destroyed).
 func TestEraseUserReceiptRecordsPhaseLogWithoutBilling(t *testing.T) {
@@ -469,7 +469,7 @@ func TestEraseUserBlockedByLegalHold(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 794(b) — an artifact-level hold on an artifact owned
+// spec: §12.8 — an artifact-level hold on an artifact owned
 // by one of the user's sessions blocks the erasure even when the session
 // itself is not held.
 func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
@@ -508,7 +508,7 @@ func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
 	if !ok {
 		t.Fatal("a hold-blocked erasure must emit gdpr.erasure_blocked_by_hold")
 	}
-	// spec: §12.8 line 794 — the blocked event carries the resource tuples.
+	// spec: §12.8 — the blocked event carries the resource tuples.
 	tuples, ok := blocked.Detail["holds"].([]map[string]any)
 	if !ok || len(tuples) != 1 || tuples[0]["resourceType"] != "artifact" {
 		t.Errorf("blocked event holds = %v, want one artifact tuple", blocked.Detail["holds"])
@@ -547,7 +547,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	}
 	// §12.8: the override is recorded synchronously as gdpr.legal_hold_overridden.
 	override := awaitAuditEvent(t, audit, "gdpr.legal_hold_overridden")
-	// spec: §12.8 line 796 — the event carries the same fields as the
+	// spec: §12.8 — the event carries the same fields as the
 	// receipt (legal_hold_override, override_by, override_justification,
 	// override_at, overridden_holds) plus jobId.
 	if override.Detail["overrideJustification"] != "court order lifted, ticket-9" {
@@ -557,7 +557,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 		t.Errorf("override event should carry legalHoldOverride=true: %+v", override.Detail)
 	}
 	if at, ok := override.Detail["overrideAt"].(string); !ok || at == "" {
-		t.Errorf("override event overrideAt = %v (want non-empty RFC3339 string per §12.8 line 796)", override.Detail["overrideAt"])
+		t.Errorf("override event overrideAt = %v (want non-empty RFC3339 string per §12.8)", override.Detail["overrideAt"])
 	}
 	if override.Detail["overriddenHolds"] == nil {
 		t.Errorf("override event should carry the overriddenHolds list: %+v", override.Detail)
@@ -566,7 +566,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	// override decision without triangulating on userId alone.
 	jobID, ok := override.Detail["jobId"].(string)
 	if !ok || jobID == "" {
-		t.Errorf("override event jobId = %v (want non-empty string per §12.8 line 796)", override.Detail["jobId"])
+		t.Errorf("override event jobId = %v (want non-empty string per §12.8)", override.Detail["jobId"])
 	}
 	// The completion receipt records that an override was exercised, with
 	// the same override_at the event carried.

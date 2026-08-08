@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration coverage for the §10.1 line 155 reassembly-on-resume
+// Tier-4 integration coverage for the §10.1 reassembly-on-resume
 // path, re-expressed against the gateway-minted presigned-GET restore that
 // replaced the deleted in-adapter CheckpointSource.
 //
@@ -15,8 +15,7 @@
 // fetches the minted capabilities the way the adapter's restoreChunks does,
 // and pins that the reassembled byte stream reproduces the source archive.
 //
-// spec: §4.2 line 156 (recovery_generation), §10.1 line 155 (reassembly on
-// resume from presigned chunk GET capabilities).
+// spec: §4.2, §10.1.
 
 package tier4_integration_test
 
@@ -29,7 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §10.1 line 155 — the gateway mints one GET capability per chunk in
+// spec: §10.1 — the gateway mints one GET capability per chunk in
 // [0, chunk_count); fetching them in index order and concatenating the
 // bodies reproduces the checkpoint archive byte-for-byte. A completed
 // multi-chunk resume leaves the objects and the manifest row intact, a
@@ -116,7 +115,7 @@ func TestResumeReassemblesMultiChunkCheckpointFromPresignedGET(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a partial checkpoint with a non-NULL
+// spec: §10.1 — a partial checkpoint with a non-NULL
 // baseline_full_checkpoint_bytes is reassembled only when its confirmed
 // workspace bytes clear baseline * partialRecoveryThresholdFraction; below
 // the threshold the resume falls back to the last full checkpoint.

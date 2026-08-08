@@ -4,7 +4,7 @@
 // DeleteBySession removes every archived node of one tree, scoped to the
 // tenant and root, leaving sibling trees and other tenants intact.
 //
-// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+// spec: §12.8.
 package treearchive_test
 
 import (

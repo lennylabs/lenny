@@ -13,7 +13,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §5.2 lines 631-636 — the WarmPoolController (which owns
+// spec: §5.2 — the WarmPoolController (which owns
 // Sandbox.spec) copies the pool's SandboxTemplate topology spread
 // constraints onto every Sandbox it creates, so the Sandbox-to-Pod
 // reconciler can stamp them onto the agent pod.

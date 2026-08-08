@@ -24,7 +24,7 @@ import (
 // proxyUsageRecorder bridges the §4.9 LLM proxy's authoritative
 // proxy-extracted token counts into the gateway's §15.1 usage store
 // (metering rollup) and the §11.2 quota counter (admission
-// enforcement). spec: spec/04_system-components.md line 1468 —
+// enforcement). spec: §4.9 —
 // proxy-extracted counts are the authoritative record for quota
 // accounting; pod-reported counts are ignored for sessions in proxy
 // mode.
@@ -42,19 +42,19 @@ type proxyUsageRecorder struct {
 	// session's running totals so the §8.8 TaskResult.usage / treeUsage
 	// rollups can read a settled task's token consumption. A nil store
 	// disables per-session metering (the rollups surface zero tokens).
-	// spec: §8.8 lines 897-917.
+	// spec: §8.8.
 	sessionUsage sessionusage.Store
 
 	// quota is the §11.2 Redis-backed hierarchical token counter. A nil
 	// counter disables quota recording (the metering write still runs).
 	quota *quotastore.Counter
-	// budgetTracker is the §12.4 line 268 in-memory per-replica budget
+	// budgetTracker is the §12.4 in-memory per-replica budget
 	// tracker. When set (the in_memory_reconciled enforcement mode) the
 	// recorder folds the proxy-extracted tenant token count into the
 	// budget slice instead of the Redis counter. A nil tracker selects the
 	// default Redis-counter path.
 	budgetTracker *quotabudget.Tracker
-	// failopenAccum is the §12.4 / §11.2 line 48 MAX-rule source (2): a
+	// failopenAccum is the §12.4 / §11.2 MAX-rule source (2): a
 	// cumulative in-memory per-(tenant, user) token counter the recorder
 	// folds every proxy-extracted token delta into (in the Redis-counter
 	// mode) so the Redis-recovery reconcile can restore usage that a Redis
@@ -69,7 +69,7 @@ type proxyUsageRecorder struct {
 	// session's §8.2 token budget and terminates an over-budget session.
 	// A nil enforcer disables mid-session enforcement (no budget cap).
 	budget *sessionbudget.Enforcer
-	// activity stamps §6.2 line 277 proxy-mode activity: each proxied LLM
+	// activity stamps §6.2 proxy-mode activity: each proxied LLM
 	// response resets the session's idle clock so a session whose agent is
 	// mid-generation is not reaped by the §11.3 idle watchdog. A nil
 	// stamper disables the reset. F-11.3.7.
@@ -91,7 +91,7 @@ type proxyUsageRecorder struct {
 	// extension falls through to a recover-on-next-request BUDGET_EXHAUSTED
 	// rather than pinning the request. It is the operator-tunable gateway
 	// deadline (§8.6 does not fix it); a non-positive value selects
-	// defaultProxyExtensionWaitTimeout. spec: §8.6 line 629; proposal 0023.
+	// defaultProxyExtensionWaitTimeout. spec: §8.6; proposal 0023.
 	proxyExtensionWaitTimeout time.Duration
 
 	// grantMu guards grantedDelta.
@@ -105,13 +105,13 @@ type proxyUsageRecorder struct {
 	// budget as base MaxTokenBudget plus grantedDelta[sessionID] so the raise
 	// survives the next Record (proposal 0023 S3/S4 raise-survival invariant). A
 	// session is cleared from the map when the recorder observes its termination
-	// or when the enforcer forgets it. spec: §8.6 line 629; proposal 0023.
+	// or when the enforcer forgets it. spec: §8.6; proposal 0023.
 	grantedDelta map[string]int64
 }
 
 // defaultProxyExtensionWaitTimeout is the recorder's fallback in-path §8.6
 // extension wait when the operator has not tuned one. It matches the
-// llmproxy handler default so the two paths agree. spec: §8.6 line 629.
+// llmproxy handler default so the two paths agree. spec: §8.6.
 const defaultProxyExtensionWaitTimeout = 5 * time.Second
 
 // directUsageObserver is the consumer-side seam the recorder feeds each
@@ -161,7 +161,7 @@ func newProxyUsageRecorder(usage usagestore.Store, sessions sessionstore.Store, 
 // the delta and add it to the base MaxTokenBudget it passes to Record. Applying
 // both here keeps the two in lockstep for the in-path and deferred grant paths
 // alike. A non-positive delta records nothing and still clears the deny flag
-// through the enforcer. spec: §8.6 line 629, line 719; proposal 0023.
+// through the enforcer. spec: §8.6; proposal 0023.
 func (r *proxyUsageRecorder) RaiseBudget(sessionID string, delta int64) {
 	if r == nil || sessionID == "" {
 		return
@@ -180,7 +180,7 @@ func (r *proxyUsageRecorder) RaiseBudget(sessionID string, delta int64) {
 // and drops its accumulated grant delta, the recorder's SessionReclaimer path
 // for a session whose deferred extension outcome is terminal. Clearing the
 // delta keeps the map from retaining a raised budget for a session that is
-// being torn down. spec: §8.6 line 629, line 719; proposal 0023.
+// being torn down. spec: §8.6; proposal 0023.
 func (r *proxyUsageRecorder) TerminateSession(sessionID string) {
 	if r == nil || sessionID == "" {
 		return
@@ -208,7 +208,7 @@ func (r *proxyUsageRecorder) grantedDeltaFor(sessionID string) int64 {
 // same terminal-side-effects pipeline that forgets the enforcer counter, so
 // neither the recorder's per-session delta map nor the detector's per-session
 // map grows without bound as sessions settle. Nil-safe on the recorder and on
-// the anomaly observer. spec: §8.6 line 629 (grant delta); §11.2 line 42
+// the anomaly observer. spec: §8.6; §11.2
 // (direct-mode anomaly per-session state). proposal 0023, 0024.
 func (r *proxyUsageRecorder) forget(sessionID string) {
 	if r == nil || sessionID == "" {
@@ -225,7 +225,7 @@ func (r *proxyUsageRecorder) forget(sessionID string) {
 	}
 }
 
-// setBudgetTracker selects the §12.4 line 268 in_memory_reconciled quota
+// setBudgetTracker selects the §12.4 in_memory_reconciled quota
 // path: recordQuota folds the proxy-extracted tenant token count into the
 // per-replica budget slice instead of the Redis counter. Nil-safe so the
 // caller can pass a nil tracker (Redis mode) or invoke it on a nil
@@ -275,7 +275,7 @@ func (r *proxyUsageRecorder) setAnomalyObserver(o directUsageObserver) {
 // extension deadline (the --proxy-extension-wait-timeout flag). A
 // non-positive value leaves the recorder's defaultProxyExtensionWaitTimeout
 // in place, so a zeroed flag never collapses the wait window to nothing.
-// Nil-safe on the recorder. spec: §8.6 line 629; proposal 0023.
+// Nil-safe on the recorder. spec: §8.6; proposal 0023.
 func (r *proxyUsageRecorder) setProxyExtensionWaitTimeout(d time.Duration) {
 	if r == nil || d <= 0 {
 		return
@@ -299,7 +299,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 		return false, llmproxy.OutcomeGranted
 	}
 	if lease.DeliveryMode != credential.DeliveryProxy {
-		// spec: §4.9 line 1468 — only proxy-mode counts are authoritative.
+		// spec: §4.9 — only proxy-mode counts are authoritative.
 		return false, llmproxy.OutcomeGranted
 	}
 	if lease.TenantID == "" {
@@ -308,7 +308,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 		// rather than emit an "unknown" tenant series.
 		return false, llmproxy.OutcomeGranted
 	}
-	// spec: §6.2 lines 277 — proxy-mode activity. Each proxied response is
+	// spec: §6.2 — proxy-mode activity. Each proxied response is
 	// direct evidence of active agent work; reset the idle clock so a
 	// long-running LLM call is not mistaken for idle. The stamper coalesces
 	// to ≤1/s per session. F-11.3.7.
@@ -328,7 +328,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 		lookupCtx, cancel := context.WithTimeout(ctx, proxyUsageLookupTimeout)
 		if sess, err := r.sessions.Get(lookupCtx, lease.TenantID, lease.SessionID); err == nil {
 			rec.Runtime = sess.RuntimeRef
-			// spec: §14 line 106 — denormalize the session's labels onto the
+			// spec: §14 — denormalize the session's labels onto the
 			// proxy-extracted usage record so a label-scoped usage report
 			// captures the session's token consumption, not only its
 			// session.created count. F-14.1.13.
@@ -337,7 +337,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 			// authenticated subject, the same id QuotaEvaluator reads from
 			// the request metadata at admission.
 			userID = sess.UserID
-			// spec: §8.2 lines 38-48 — the session's effective LLM token
+			// spec: §8.2 — the session's effective LLM token
 			// cap is the delegation lease's per-subtree maxTokenBudget.
 			// Zero (no lease, or no budget set) leaves the session
 			// unbounded so the §11.2 mid-session enforcer is a no-op for it.
@@ -353,7 +353,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 	// sinks and excludes only the mid-session enforcer below.
 	tokens := r.recordAccounting(rec, lease.TenantID, lease.SessionID, userID, u.InputTokens, u.OutputTokens)
 
-	// spec: §11.2 line 44 / §8.6 line 629 — enforce the per-session token
+	// spec: §11.2 / §8.6 — enforce the per-session token
 	// budget against the cumulative proxy-recorded usage. Record detects
 	// exhaustion, dispatches the single §8.6 extension through the enforcer's
 	// injected seam, applies the raise / deny / terminate side-effects, and
@@ -366,7 +366,7 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 	// the authoritative record before the session can be torn down.
 	outcome = llmproxy.OutcomeGranted
 	if r.budget != nil {
-		// spec: §8.6 line 629 / proposal 0023 S3/S4 raise-survival — the base
+		// spec: §8.6 / proposal 0023 S3/S4 raise-survival — the base
 		// MaxTokenBudget read from the session store never reflects a prior §8.6
 		// grant (ApplyGrant writes only the leasecontrol view and the Redis tree
 		// counter, never the session-store lease). Add the accumulated granted
@@ -396,14 +396,14 @@ func (r *proxyUsageRecorder) RecordUsage(ctx context.Context, lease credential.L
 // authoritative §15.1 billing and §8.8 rollup records, so they run on a fresh
 // background-derived context with their own timeout rather than the request
 // context. A cancelled request must not drop the usage the pod already
-// consumed. spec: §15.1 (metering), §8.8 lines 897-917 (per-session rollup),
+// consumed. spec: §15.1 (metering), §8.8,
 // §11.2 (quota counter).
 func (r *proxyUsageRecorder) recordAccounting(rec usagestore.Record, tenantID, sessionID, userID string, input, output int) int64 {
 	recordCtx, cancel := context.WithTimeout(context.Background(), proxyUsageRecordTimeout)
 	_ = r.usage.Record(recordCtx, rec)
 	cancel()
 
-	// spec: §8.8 lines 897-917 — fold the counts into the originating
+	// spec: §8.8 — fold the counts into the originating
 	// session's per-session totals so the §8.8 TaskResult usage / treeUsage
 	// rollups can read them at settle time. Best-effort for the same reason
 	// as the metering write.
@@ -428,12 +428,11 @@ func (r *proxyUsageRecorder) recordAccounting(rec usagestore.Record, tenantID, s
 // per-session accumulator, the §11.2 quota counter, and the fail-open
 // accumulator — plus the S5 anomaly detector, and it deliberately EXCLUDES the
 // mid-session sessionbudget.Enforcer.Record breach path that RecordUsage runs.
-// §11.2 line 44 and §8.3 line 631 forbid both an in-path termination and an
+// §11.2 and §8.3 forbid both an in-path termination and an
 // in-path extension for a direct-mode session: a direct-mode session "is not
 // terminated in-path on budget breach ... and it is not eligible for the
 // in-path extension." The over-run bound is settlement-time reconciliation
-// against the parent's delegation budget via budget_return.lua per §11.2 line
-// 44 and §8.3 line 435; §11.2 line 42 requires only monitoring the
+// against the parent's delegation budget via budget_return.lua per §11.2 and §8.3; §11.2 requires only monitoring the
 // under-reporting anomaly, which the S5 detector does.
 //
 // The §6.2 idle clock is stamped only when the pulled delta is non-zero.
@@ -442,22 +441,20 @@ func (r *proxyUsageRecorder) recordAccounting(rec usagestore.Record, tenantID, s
 // wedged direct-mode pod that emits no tokens would never idle-terminate and
 // its pod, lease, and session would leak. A non-zero delta is direct evidence
 // the agent issued LLM work during the interval, so it resets the clock. This
-// is the §6.2 line 253 direct-mode idle reconciliation under the gateway pull.
+// is the §6.2 direct-mode idle reconciliation under the gateway pull.
 //
 // A proxy-mode lease is dropped: proxy-extracted counts are already
 // authoritative and recorded by RecordUsage on the §4.9 path, so recording a
 // proxy lease here would double-count. A lease without a tenant attribution is
 // dropped for the same reason RecordUsage drops it.
 //
-// spec: §11.2 lines 42-44 (direct-mode integrity control, no in-path
-// termination or extension), §8.3 lines 435, 631, §6.2 line 253 (idle-clock
-// reset on non-zero delta), §4.9 line 1468. F-15.3.7, F-11.2.20.
+// spec: §11.2, §8.3, §6.2, §4.9. F-15.3.7, F-11.2.20.
 func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease credential.Lease, u llmproxy.Usage) {
 	if r == nil {
 		return
 	}
 	if lease.DeliveryMode != credential.DeliveryDirect {
-		// spec: §4.9 line 1468 — a proxy (or unset) lease's counts are the
+		// spec: §4.9 — a proxy (or unset) lease's counts are the
 		// §4.9 proxy's authoritative record; recording them here would
 		// double-count. Fail closed by dropping rather than accepting.
 		return
@@ -469,7 +466,7 @@ func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease creden
 		return
 	}
 
-	// spec: §6.2 line 253 — reset the direct-mode idle clock only on a
+	// spec: §6.2 — reset the direct-mode idle clock only on a
 	// non-zero pulled delta. A zero-delta poll is a bare timer tick, not
 	// evidence of agent work, so a hung pod that emits no tokens still
 	// idle-terminates. A non-zero delta is direct evidence of LLM work.
@@ -489,7 +486,7 @@ func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease creden
 		lookupCtx, cancel := context.WithTimeout(ctx, proxyUsageLookupTimeout)
 		if sess, err := r.sessions.Get(lookupCtx, lease.TenantID, lease.SessionID); err == nil {
 			rec.Runtime = sess.RuntimeRef
-			// spec: §14 line 106 — denormalize the session's labels onto the
+			// spec: §14 — denormalize the session's labels onto the
 			// usage record so a label-scoped report captures direct-mode token
 			// consumption, matching RecordUsage. F-14.1.13.
 			rec.Labels = sess.Labels
@@ -506,11 +503,11 @@ func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease creden
 	// mode gates on a non-zero delta).
 	r.recordAccounting(rec, lease.TenantID, lease.SessionID, userID, u.InputTokens, u.OutputTokens)
 
-	// spec: §11.2 line 42 — feed the S5 direct-mode integrity detector every
+	// spec: §11.2 — feed the S5 direct-mode integrity detector every
 	// pulled delta so it can raise lenny_gateway_token_usage_anomaly_total on
 	// a sustained zero-token or implausibly-small under-reporting pattern. The
 	// enforcer breach path (RecordUsage line 347) is intentionally NOT run
-	// here: §11.2 line 44 and §8.3 line 631 forbid an in-path termination and
+	// here: §11.2 and §8.3 forbid an in-path termination and
 	// an in-path extension for a direct-mode session. F-11.2.20.
 	if r.anomaly != nil && lease.SessionID != "" {
 		r.anomaly.Observe(lease.TenantID, lease.SessionID, int64(u.InputTokens), int64(u.OutputTokens))
@@ -521,7 +518,7 @@ func (r *proxyUsageRecorder) RecordDirectUsage(ctx context.Context, lease creden
 // tri-state so the enforcer stays decoupled from the llmproxy package. The
 // two enums are structurally identical; the mapping is explicit so a future
 // divergence in either enum is a compile-time break here rather than a silent
-// mis-branch on the proxy write path. spec: §8.6 line 629; proposal 0023 S6.
+// mis-branch on the proxy write path. spec: §8.6; proposal 0023 S6.
 func proxyOutcome(o sessionbudget.Outcome) llmproxy.Outcome {
 	switch o {
 	case sessionbudget.Granted:
@@ -568,14 +565,14 @@ func (r *proxyUsageRecorder) recordQuota(tenantID, userID string, tokens int64) 
 	if period == "" {
 		period = quota.ResetHourly
 	}
-	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
+	// spec: §12.4 — in the in_memory_reconciled mode the
 	// per-tenant token count decrements the per-replica budget slice; the
 	// Redis hierarchical counter is not the enforcement source.
 	if r.budgetTracker != nil {
 		r.budgetTracker.Add(ctx, tenantID, period, now, tokens)
 		return
 	}
-	// spec: §12.4 source (2); §11.2 line 48 — fold the proxy-extracted
+	// spec: §12.4 source (2); §11.2 — fold the proxy-extracted
 	// tokens into the cumulative in-memory accumulator before the Redis
 	// write below. When the write is dropped during a fail-open window the
 	// accumulator still carries the usage, so the Redis-recovery reconcile

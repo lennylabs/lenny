@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
 )
 
-// spec: §12.8 lines 880-889 — the gateway-side Phase 3.5 force-delete
+// spec: §12.8 — the gateway-side Phase 3.5 force-delete
 // escrow migrator. F-12.8.2, F-24.10.2, F-24.10.5.
 
 // stubCatalog is a minimal artifactcatalog.Store exposing only the held

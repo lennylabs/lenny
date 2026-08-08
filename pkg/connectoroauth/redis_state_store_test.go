@@ -36,7 +36,7 @@ func redisSampleFlow() FlowContext {
 	}
 }
 
-// spec: §9.3 line 157 — the Redis StateStore round-trips the per-flow
+// spec: §9.3 — the Redis StateStore round-trips the per-flow
 // PKCE context so a callback resolves its flow even on another replica.
 func TestRedisStateStore_PutConsumeRoundTrip_spec_9_3_157(t *testing.T) {
 	store, _ := newRedisStateStoreT(t)
@@ -63,7 +63,7 @@ func TestRedisStateStore_PutConsumeRoundTrip_spec_9_3_157(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 157 — an unknown state (never stored) is rejected.
+// spec: §9.3 — an unknown state (never stored) is rejected.
 func TestRedisStateStore_ConsumeUnknown_spec_9_3_157(t *testing.T) {
 	store, _ := newRedisStateStoreT(t)
 	if _, err := store.Consume("never-stored", time.Now()); !errors.Is(err, ErrStateUnknown) {
@@ -87,7 +87,7 @@ func TestRedisStateStore_ReplayIsConsumed_spec_9_3_157(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 157 — TTL=10min via Redis native key expiry; an entry
+// spec: §9.3 — TTL=10min via Redis native key expiry; an entry
 // past its TTL is evicted and reads back as unknown.
 func TestRedisStateStore_TTLExpiry_spec_9_3_157(t *testing.T) {
 	store, mr := newRedisStateStoreT(t)

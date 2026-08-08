@@ -318,7 +318,7 @@ func TestClientRunSetup(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "setup.done")); err != nil {
 		t.Errorf("RunSetup did not run the setup command: %v", err)
 	}
-	// spec: §7.5 line 475 — every executed command must surface a record
+	// spec: §7.5 — every executed command must surface a record
 	// on RunSetupResponse.outputs so the gateway can persist the trail.
 	// F-7.5.4.
 	if len(outputs) != 1 || outputs[0].GetCmd() != "touch setup.done" {
@@ -336,7 +336,7 @@ func TestClientRunSetupFailingCommand(t *testing.T) {
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
 	}
-	// spec: §7.5 line 475 / §7.5 line 488 — partial outputs survive the
+	// spec: §7.5 / §7.5 — partial outputs survive the
 	// failure so the gateway can persist them and surface the rejection
 	// reason. F-7.5.4.
 	if len(outputs) == 0 {
@@ -606,7 +606,7 @@ func dialRecordingAdapter(t *testing.T, rec *recordingAdapter) *adapterclient.Cl
 	return cl
 }
 
-// spec: §11.3 line 240 — the gateway client forwards remaining_ms and
+// spec: §11.3 — the gateway client forwards remaining_ms and
 // trigger to the adapter and surfaces whether the runtime was reached.
 // F-11.3.5.
 func TestSignalDeadlineForwardsAndReportsDelivery_spec_11_3_240(t *testing.T) {
@@ -892,8 +892,8 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 
 // TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck covers
 // F-7.3.22 (adapter echoes recovery_generation) and F-7.3.26 (adapter
-// honours the §7.3 line 397 symmetric pre-extraction size check before
-// extracting the archive). spec: §4.4 / §7.3 line 397.
+// honours the §7.3 symmetric pre-extraction size check before
+// extracting the archive). spec: §4.4 / §7.3.
 func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "w.txt"), []byte("restored"), 0o644); err != nil {
@@ -1038,7 +1038,7 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 // TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468 confirms the
 // proxy-mode-safe wrapper refuses pod-reported counts; the §4.9 LLM
 // proxy is the authoritative counter for these sessions.
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1057,7 +1057,7 @@ func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
 
 // TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468 confirms the
 // wrapper falls through to the underlying RPC for direct-mode leases.
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1141,7 +1141,7 @@ func TestReportUsageThreadsCumulativeFlag_Spec4_7(t *testing.T) {
 // adapter for a direct-mode lease, and that the proxy-mode filter still
 // short-circuits before the RPC for a cumulative pull so a proxy lease is
 // never double-counted regardless of which read the caller requests.
-// spec: §4.7 (ReportUsageRequest.cumulative), §4.9 line 1468 (proxy filter).
+// spec: §4.7 (ReportUsageRequest.cumulative), §4.9.
 func TestReportUsageForLeaseThreadsCumulativeFlag_Spec4_7(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1197,7 +1197,7 @@ func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
 	if got := rec.gotRotate.GetSessionId().GetValue(); got != "sess-rot" {
 		t.Errorf("RotateCredentials session id = %q, want sess-rot", got)
 	}
-	// spec: §4.9 line 1413 — the rotationTrigger rides the RPC. F-13.3.10.
+	// spec: §4.9 — the rotationTrigger rides the RPC. F-13.3.10.
 	if got := rec.gotRotate.GetRotationTrigger(); got != "proactive_renewal" {
 		t.Errorf("RotateCredentials rotation_trigger = %q, want proactive_renewal", got)
 	}
@@ -1210,7 +1210,7 @@ func TestRotateCredentialsSendsSessionAndLeases(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1413 / §4.7 line 822 — a fault trigger rides the RPC so
+// spec: §4.9 / §4.7 — a fault trigger rides the RPC so
 // the adapter applies the 300s in-flight gate ceiling. F-13.3.10.
 func TestRotateCredentialsForwardsFaultTrigger(t *testing.T) {
 	rec := &recordingAdapter{}
@@ -1309,7 +1309,7 @@ func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1470 / §4.7 — the Token Service unavailability guard's
+// spec: §4.9 / §4.7 — the Token Service unavailability guard's
 // gateway-side driver marshals session_id, provider, lease_id, and the
 // new deadline as expires_at_unix_ms so the adapter re-arms the direct-mode
 // expiry timer to the later deadline without a re-mint. Asserting the
@@ -1348,7 +1348,7 @@ func TestExtendCredentialLeaseMarshalsFieldsAndMillisecondDeadline(t *testing.T)
 // The extension does not swallow an adapter-side failure: if the adapter
 // cannot re-arm the timer, the error surfaces so the renewal worker does not
 // advance its tracked deadline past the still-enforced original one.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func TestExtendCredentialLeasePropagatesAdapterError(t *testing.T) {
 	rec := &recordingAdapter{extendErr: status.Error(codes.FailedPrecondition, "no session")}
 	cl := dialRecordingAdapter(t, rec)

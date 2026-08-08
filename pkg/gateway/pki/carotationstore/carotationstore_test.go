@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §10.3 lines 344-350 — the Memory store round-trips the rotation
+// spec: §10.3 — the Memory store round-trips the rotation
 // record and enforces the optimistic version guard so concurrent stage
 // transitions cannot clobber one another.
 func TestMemory_initGetPutRoundTrip(t *testing.T) {

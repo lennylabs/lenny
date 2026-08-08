@@ -65,7 +65,7 @@ func TestUsageRecordsSessionCreation(t *testing.T) {
 	}
 }
 
-// TestUsageLabelFilter_spec_14_106 drives the §14 line 106 label-scoped
+// TestUsageLabelFilter_spec_14_106 drives the §14 label-scoped
 // usage report end to end: two sessions are created with distinct labels
 // and GET /v1/usage?label=team=search returns only the matching session's
 // usage. F-14.1.13.

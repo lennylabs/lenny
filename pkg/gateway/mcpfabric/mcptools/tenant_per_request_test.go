@@ -37,7 +37,7 @@ func callWithPrincipal(t *testing.T, h http.Handler, p authmw.Principal, tool, a
 }
 
 // TestCreateSessionStampsPrincipalTenant_spec_15_2_1335 pins
-// §9.2 / §16.1 / §15.2 line 1335 end-to-end: a multi-tenant deployment
+// §9.2 / §16.1 / §15.2 end-to-end: a multi-tenant deployment
 // calling lenny/create_session via the authenticated MCP transport
 // stamps the principal's tenant on the persisted session row — not
 // the Register-time fallback. F-9.2.13 / F-15.2.15.

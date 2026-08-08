@@ -59,7 +59,7 @@ func dispatch(t *testing.T, srv *mcp.Server, name, args string) (mcp.ToolResult,
 
 // TestClientToolsRegisteredWithService_spec_15_2_3 asserts the §15.2
 // client-facing tools register when a SessionService is wired and are
-// absent when it is nil. spec: §15.2 lines 1284-1306. F-15.2.3.
+// absent when it is nil. spec: §15.2. F-15.2.3.
 func TestClientToolsRegisteredWithService_spec_15_2_3(t *testing.T) {
 	want := []string{
 		"lenny/create_and_start_session", "lenny/start_session", "lenny/finalize_workspace",

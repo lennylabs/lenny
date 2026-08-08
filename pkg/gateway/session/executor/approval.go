@@ -12,7 +12,7 @@ import (
 // records it as a KindToolUse interaction and publishes the
 // `tool_use_requested(tool_call_id, tool, args)` SSE event before
 // blocking the call on a user resolution.
-// spec: §7.2 line 134; schemas/lenny-adapter-jsonl.schema.json tool_call.
+// spec: §7.2; schemas/lenny-adapter-jsonl.schema.json tool_call.
 type PendingToolCall struct {
 	// ID is the tool_call.id — the tool_call_id the §15.1
 	// approve/deny endpoint resolves against.
@@ -44,7 +44,7 @@ type ApprovalDecision struct {
 // `tool_use_requested` SSE event, and blocks until the §15.1
 // approve/deny endpoint resolves the call. A nil gate leaves the
 // executor's prior behavior intact (the approval-required frame is
-// skipped like any other intermediate frame). spec: §7.2 lines 124-134.
+// skipped like any other intermediate frame). spec: §7.2.
 // F-7.2.9, F-7.2.18.
 type ApprovalGate interface {
 	// AwaitApproval records the pending tool-use approval for the

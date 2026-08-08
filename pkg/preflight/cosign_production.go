@@ -6,7 +6,7 @@ import "strings"
 
 // productionLikeEnvironments are the deployment-posture values
 // (chart value `environment`, rendered onto --environment) for which
-// §5.3 line 669 makes image provenance verification a prerequisite:
+// §5.3 makes image provenance verification a prerequisite:
 // "Image provenance verification (signing, attestation) is a
 // prerequisite for any production or staging deployment." A dev
 // install renders without the signing material configured, so it is
@@ -18,7 +18,7 @@ var productionLikeEnvironments = map[string]struct{}{
 	"stage":      {},
 }
 
-// CheckCosignProduction emits the §5.3 line 669 advisory for a
+// CheckCosignProduction emits the §5.3 advisory for a
 // production-or-staging install that ships with cosign image-signature
 // verification disabled. It mirrors the §17.6 non-blocking WARNING the
 // preflight Job already raises for unverifiable production controls
@@ -34,7 +34,7 @@ var productionLikeEnvironments = map[string]struct{}{
 // a production install that completes with no signature verification now
 // surfaces an operator notification instead of completing silently.
 //
-// spec: §5.3 line 669.
+// spec: §5.3.
 func CheckCosignProduction(environment string, cosignEnabled bool) Decision {
 	env := strings.ToLower(strings.TrimSpace(environment))
 	if _, productionLike := productionLikeEnvironments[env]; !productionLike {

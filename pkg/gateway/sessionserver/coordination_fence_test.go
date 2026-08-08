@@ -15,7 +15,7 @@ import (
 )
 
 // fenceTestServer builds a sessionserver wired only with the in-memory
-// store so the CAS-fence tests can exercise the §7.2 line 214 (a)
+// store so the CAS-fence tests can exercise the §7.2
 // snapshot-close bump without any §15.1 precondition gates getting in
 // the way of the seeded states.
 func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
@@ -27,9 +27,8 @@ func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
 }
 
 // TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14
-// verifies §7.2 line 197 (resuming → cancelled via DELETE
-// /v1/sessions/{id}) bumps coordination_generation in the same logical
-// write that records the terminal state, per the §7.2 line 214 (a)
+// verifies §7.2 bumps coordination_generation in the same logical
+// write that records the terminal state, per the §7.2
 // snapshot-close fence. F-7.1.14.
 func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *testing.T) {
 	srv, store := fenceTestServer(t)
@@ -56,7 +55,7 @@ func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *test
 		t.Errorf("CoordinationGeneration = %d, want 5 (bumped on resuming → cancelled)", got.CoordinationGeneration)
 	}
 	if got.RecoveryGeneration != 2 {
-		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2 line 214 (b))", got.RecoveryGeneration)
+		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2)", got.RecoveryGeneration)
 	}
 }
 
@@ -89,13 +88,13 @@ func TestDeleteFromRunningDoesNotBumpCoordinationGeneration_spec_7_2_F_7_1_14(t 
 
 // TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8
 // drives a §7.3 mid-resume failure report against a session seeded in
-// `resuming`. The §7.3 lines 470-472 collapse rule says the API view
+// `resuming`. The §7.3 collapse rule says the API view
 // is resume_pending → running, but the internal state machine MUST
 // traverse `resuming` so the mid-resume terminal-collapse edges
-// (§7.2 lines 197-198) are reachable. The fence bump verifies the
+// (§7.2) are reachable. The fence bump verifies the
 // row was actually in `resuming` at the moment of collapse.
 //
-// spec: §7.3 lines 470-472; §7.2 lines 197-198, 214. F-7.3.8.
+// spec: §7.3; §7.2. F-7.3.8.
 func TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8(t *testing.T) {
 	srv, store := fenceTestServer(t)
 	row := sessionstore.Session{
@@ -124,7 +123,7 @@ func TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8(t *te
 }
 
 // TestStoreMonotonicityRejectsCoordinationGenerationDecrease_spec_4_2_F_7_1_14
-// covers the §4.2 line 156 monotonicity floor on CoordinationGeneration.
+// covers the §4.2 monotonicity floor on CoordinationGeneration.
 // Without this floor, a buggy caller could "rewind" the counter and
 // silently re-admit a stale coordinator. F-7.1.14.
 func TestStoreMonotonicityRejectsCoordinationGenerationDecrease_spec_4_2_F_7_1_14(t *testing.T) {

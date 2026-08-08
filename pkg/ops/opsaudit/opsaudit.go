@@ -5,7 +5,7 @@
 // lifecycle, escalation flush, self-health transitions, identity
 // discovery, operations-inventory queries, and the §25.6/§25.10/§25.11/
 // §25.8 diagnostics/drift/backup/upgrade events — is platform-scoped
-// (§11.7 line 435: every ops_event.* event routes to PlatformPostgres()
+// (§11.7: every ops_event.* event routes to PlatformPostgres()
 // under the platform tenant). The Recorder commits each one to the §11.7
 // hash chain through a single appender so the durable audit trail the
 // §25.9 audit query API and §11.7 residency rules cross-reference is
@@ -18,10 +18,8 @@
 // halt the lock release, escalation flush, or health transition that
 // produced the event.
 //
-// spec: §11.7 line 435 (ops_event.* route to the platform tenant);
-// §25.4 lines 2338-2340 (lock audit events), 2415 (escalation_persisted),
-// 2470-2476 (ops_health_status_changed), 1641 (identity.discovered),
-// 1779 (operations.inventory_queried).
+// spec: §11.7;
+// §25.4.
 package opsaudit
 
 import (
@@ -41,7 +39,7 @@ import (
 // jwtaudit.PlatformTenantID / auditscope's platform tenant so the whole
 // platform writes one chain.
 //
-// spec: §11.7 line 435.
+// spec: §11.7.
 const PlatformTenantID = "platform"
 
 // Appender is the §11.7 per-tenant audit hash-chain append surface the

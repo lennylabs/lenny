@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
-// spec: §7.2 path 6 (lines 326-330) — a `delivery: "immediate"` message to a
+// spec: §7.2 path 6 — a `delivery: "immediate"` message to a
 // suspended, pod-held session atomically resumes and delivers; on a resume or a
 // post-resume delivery failure the coordinator fails closed to inbox buffering
 // (`queued`) so line 330's "the message is not silently dropped" holds.
@@ -201,8 +201,7 @@ func TestResumeAndDeliverResumeFailureBuffersQueuedRowUnchanged(t *testing.T) {
 // cannot silently drift to UPSTREAM (the post-resume executor.Send bucket) or a
 // non-existent constant.
 //
-// spec: §16.3 (error taxonomy — TRANSIENT for a recoverable store-write fault),
-// 7.2 (path 6 line 330 — the message is not silently dropped)
+// spec: §16.3 (error taxonomy — TRANSIENT for a recoverable store-write fault), 7.2
 //
 // diagnosis: a failure means the resume-fault span was tagged with the wrong
 // §16.3 category — an UPSTREAM/pod fault or a non-taxonomy value — instead of

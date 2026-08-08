@@ -10,15 +10,14 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/helm"
 )
 
-// TestCoreDeploymentInventory is the §17.2 core_deployment_inventory_test.go
-// suite (line 84). It renders the chart with stock values and fail-closes
+// TestCoreDeploymentInventory is the §17.2 core_deployment_inventory_test.go suite. It renders the chart with stock values and fail-closes
 // when any item of the §17.8.5 mandatory lenny-ops inventory is absent, so
 // a chart-author omission of a mandatory core deployment cannot ship
 // silently the way iter3/iter4 caught for gated webhooks. lenny-ops is
 // mandatory in every install from Phase 3.5 onward, so this suite needs no
 // feature-flag parameterisation.
 //
-// spec: §17.2 line 84 (core_deployment_inventory_test.go); §17.8.5
+// spec: §17.2; §17.8.5
 // (mandatory lenny-ops deployment inventory). F-17.2.15.
 func TestCoreDeploymentInventory(t *testing.T) {
 	helm.SkipUnlessAvailable(t)

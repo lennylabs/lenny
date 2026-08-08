@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §11.1 line 8/9 — the global, per-user, per-runtime, and per-user
+// spec: §11.1 — the global, per-user, per-runtime, and per-user
 // active-delegated-children concurrent-session admission counts.
 
 func seedFull(t *testing.T, s *memstore.Store, sess sessionstore.Session) {

@@ -4,7 +4,7 @@
 // admintoken.SecretStore contract, backing the §17.6
 // lenny-system/lenny-admin-token Secret with a real Kubernetes Secret.
 //
-// spec: §17.6 lines 455-474 — F-17.6.3.
+// spec: §17.6 — F-17.6.3.
 package k8ssecret
 
 import (
@@ -20,7 +20,7 @@ import (
 
 // Store implements admintoken.SecretStore over a controller-runtime
 // client. The gateway ServiceAccount needs `get`/`create`/`patch` on
-// Secrets in the target namespace (§17.6 line 474).
+// Secrets in the target namespace (§17.6).
 type Store struct {
 	c client.Client
 }

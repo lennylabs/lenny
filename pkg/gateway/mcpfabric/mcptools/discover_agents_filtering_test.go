@@ -168,7 +168,7 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 672 — `list_runtimes` accepts the optional
+// spec: §10.6 — `list_runtimes` accepts the optional
 // `environmentId` stub. When the named environment is known and
 // reachable, the response narrows to runtimes that environment admits.
 // F-10.6.10.
@@ -206,7 +206,7 @@ func TestListRuntimesToolEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 672 — an unknown `environmentId` collapses the
+// spec: §10.6 — an unknown `environmentId` collapses the
 // response to empty so a typo never broadens visibility. F-10.6.10.
 func TestListRuntimesToolEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing.T) {
 	srv, runtimes, envs, tenants := newMCPFiltered(t)
@@ -452,7 +452,7 @@ func TestDiscoverAgentsPlatformDefaultFallback(t *testing.T) {
 }
 
 // TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38 pins the
-// §9.1 line 38 / §15.1 line 698 contract on the MCP discovery surface:
+// §9.1 / §15.1 contract on the MCP discovery surface:
 // `lenny/list_runtimes` reports `mcpEndpoint: /mcp/runtimes/{name}` on
 // every type:mcp runtime; type:agent runtimes carry an empty value
 // (omitted from the JSON envelope). F-9.1.4 / coordinated with F-9.1.3.

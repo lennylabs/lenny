@@ -14,7 +14,7 @@ import (
 var msgClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // TestMessagingLimiterWithinLimits — a send that stays under every §8.3
-// limit is allowed. spec: §8.3 lines 269-272. F-7.2.6.
+// limit is allowed. spec: §8.3. F-7.2.6.
 func TestMessagingLimiterWithinLimits(t *testing.T) {
 	lim := newMessagingLimiter(nil, MessagingRateLimit{})
 	ok, err := lim.allow(context.Background(), "acme", "sess_a", "sess_b", msgClock)
@@ -24,7 +24,7 @@ func TestMessagingLimiterWithinLimits(t *testing.T) {
 }
 
 // TestMessagingLimiterOutboundExceeded — the §8.3 maxPerMinute per-sender
-// burst rejects the send that crosses the cap. spec: §8.3 line 270.
+// burst rejects the send that crosses the cap. spec: §8.3.
 func TestMessagingLimiterOutboundExceeded(t *testing.T) {
 	lim := newMessagingLimiter(nil, MessagingRateLimit{MaxPerMinute: 2, MaxPerSession: 100, MaxInboundPerMinute: 100})
 	for i := 1; i <= 2; i++ {
@@ -40,7 +40,7 @@ func TestMessagingLimiterOutboundExceeded(t *testing.T) {
 // TestMessagingLimiterInboundExceeded — the §8.3 maxInboundPerMinute cap
 // is a per-target aggregate across senders: two distinct senders to one
 // target trip the cap regardless of each sender's own outbound budget.
-// spec: §8.3 line 309 (the O(N²) storm brake). F-7.2.6.
+// spec: §8.3 (the O(N²) storm brake). F-7.2.6.
 func TestMessagingLimiterInboundExceeded(t *testing.T) {
 	lim := newMessagingLimiter(nil, MessagingRateLimit{MaxPerMinute: 100, MaxPerSession: 100, MaxInboundPerMinute: 2})
 	if ok, _ := lim.allow(context.Background(), "acme", "sender1", "target", msgClock); !ok {
@@ -56,7 +56,7 @@ func TestMessagingLimiterInboundExceeded(t *testing.T) {
 
 // TestMessagingLimiterLifetimeExceeded — the §8.3 maxPerSession lifetime
 // cap rejects beyond its limit even when the per-minute windows have
-// budget. spec: §8.3 line 270 (`maxPerSession`). F-7.2.6.
+// budget. spec: §8.3. F-7.2.6.
 func TestMessagingLimiterLifetimeExceeded(t *testing.T) {
 	lim := newMessagingLimiter(nil, MessagingRateLimit{MaxPerMinute: 100, MaxPerSession: 2, MaxInboundPerMinute: 100})
 	for i := 1; i <= 2; i++ {
@@ -71,7 +71,7 @@ func TestMessagingLimiterLifetimeExceeded(t *testing.T) {
 
 // TestMessagingLimiterEmptySenderSkipsOutbound — with no resolved sender
 // the per-sender outbound/lifetime caps are skipped but the per-target
-// inbound brake still applies. spec: §8.3 line 309. F-7.2.6.
+// inbound brake still applies. spec: §8.3. F-7.2.6.
 func TestMessagingLimiterEmptySenderSkipsOutbound(t *testing.T) {
 	lim := newMessagingLimiter(nil, MessagingRateLimit{MaxPerMinute: 1, MaxPerSession: 1, MaxInboundPerMinute: 2})
 	// Two sends with empty sender exceed neither the (skipped) outbound

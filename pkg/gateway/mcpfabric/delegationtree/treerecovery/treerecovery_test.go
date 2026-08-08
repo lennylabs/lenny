@@ -125,7 +125,7 @@ func newOrch(t *testing.T, cfg treerecovery.Config) *treerecovery.Orchestrator {
 
 // --- tests -----------------------------------------------------------
 
-// spec: §8.10 line 1016 — recovery is bottom-up (leaves first), and
+// spec: §8.10 — recovery is bottom-up (leaves first), and
 // within a level deterministically by session id.
 func TestRecoverTreeBottomUpOrder_spec_8_10_1016(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("gvisor-default")}}
@@ -170,7 +170,7 @@ func TestRecoverTreeBottomUpOrder_spec_8_10_1016(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1014 — the root and already-terminal nodes are not
+// spec: §8.10 — the root and already-terminal nodes are not
 // recovered; the recovery acts only on the in-flight descendants.
 func TestRecoverTreeSkipsRootAndTerminal_spec_8_10_1014(t *testing.T) {
 	rows := []sessionstore.Session{
@@ -198,7 +198,7 @@ func TestRecoverTreeSkipsRootAndTerminal_spec_8_10_1014(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1016 — the Recoverable predicate scopes recovery to
+// spec: §8.10 — the Recoverable predicate scopes recovery to
 // genuinely orphaned nodes, so a descendant still live on its pod is not
 // torn down when the root resumes for its own reasons.
 func TestRecoverTreeRecoverablePredicate(t *testing.T) {
@@ -225,7 +225,7 @@ func TestRecoverTreeRecoverablePredicate(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — a node whose reattach fails is marked
+// spec: §8.10 — a node whose reattach fails is marked
 // terminally failed; the pass reports partial_failure.
 func TestRecoverTreeReattachErrorFailsNode_spec_8_10_1025(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("p")}}
@@ -256,7 +256,7 @@ func TestRecoverTreeReattachErrorFailsNode_spec_8_10_1025(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — when maxLevelRecoverySeconds is exceeded, the
+// spec: §8.10 — when maxLevelRecoverySeconds is exceeded, the
 // unrecovered nodes at that depth are marked failed and the metric
 // records a level timeout.
 func TestRecoverTreeLevelTimeout_spec_8_10_1025(t *testing.T) {
@@ -299,7 +299,7 @@ func TestRecoverTreeLevelTimeout_spec_8_10_1025(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — when maxTreeRecoverySeconds is exceeded, every
+// spec: §8.10 — when maxTreeRecoverySeconds is exceeded, every
 // remaining node is marked failed and the pass reports total_timeout.
 func TestRecoverTreeTreeTimeout_spec_8_10_1025(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("p")}}
@@ -369,7 +369,7 @@ func TestRecoverTreeListerErrorPropagates(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1027 — the per-node maxResumeWindowSeconds runs
+// spec: §8.10 — the per-node maxResumeWindowSeconds runs
 // concurrently with tree recovery; a node whose remaining window is
 // shorter than the level/tree budgets is bounded by its own window.
 func TestRecoverTreeNodeResumeWindow_spec_8_10_1027(t *testing.T) {

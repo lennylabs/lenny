@@ -5,10 +5,10 @@
 // Component test for the §4.2 / §12.3 platform-admin __all__
 // cross-tenant bypass. Exercises the trigger (writes pass without
 // per-row tenant_id matching), the RLS policy (SELECTs see rows
-// from every tenant), and the §12.3 line 141 cross_tenant_read
+// from every tenant), and the §12.3 cross_tenant_read
 // audit emission tied to every such code path.
 //
-// spec: §4.2 line 165 — the integration test (here named
+// spec: §4.2 — the integration test (here named
 // TestRLSPlatformAdminAllSentinel and TestRLSAllTenantsContext —
 // the latter retained for backward-compatible test selection)
 // verifies (a) cross-tenant read returns rows from multiple
@@ -33,7 +33,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// spec: §4.2 line 165 (a), (b), (c) — TestRLSPlatformAdminAllSentinel
+// spec: §4.2, (b), (c) — TestRLSPlatformAdminAllSentinel
 // is the spec-named integration test. The three sub-tests below mirror
 // the three lettered sub-cases the spec requires.
 //
@@ -43,9 +43,9 @@ import (
 // tenant. Both layers must accept the __all__ sentinel so a
 // platform-admin path can read or write across tenants, but only
 // when the gateway has opted in via lenny.allow_all_sentinel —
-// satisfying the §4.2 line 165 LENNY_POOLER_MODE = external posture.
+// satisfying the §4.2 LENNY_POOLER_MODE = external posture.
 //
-// spec: §4.2 line 165, §12.3 line 141.
+// spec: §4.2, §12.3.
 func TestRLSPlatformAdminAllSentinel(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -109,7 +109,7 @@ func TestRLSPlatformAdminAllSentinel(t *testing.T) {
 	})
 
 	// (c) — the trigger rejects __all__ when lenny.allow_all_sentinel
-	// is unset, satisfying the §4.2 line 165 LENNY_POOLER_MODE =
+	// is unset, satisfying the §4.2 LENNY_POOLER_MODE =
 	// external posture. A connection that bypasses pgtenant.InAllTenants
 	// (out-of-process leak) reaches the trigger with no opt-in GUC and
 	// is rejected.
@@ -132,7 +132,7 @@ func TestRLSPlatformAdminAllSentinel(t *testing.T) {
 			`INSERT INTO sessions (id, tenant_id, state, runtime_ref, root_session_id)
 			 VALUES (gen_random_uuid(), 'tenant-a', 'created', 'echo', gen_random_uuid())`)
 		if err == nil {
-			t.Errorf("write under __all__ without opt-in succeeded; trigger must reject (§4.2 line 165)")
+			t.Errorf("write under __all__ without opt-in succeeded; trigger must reject (§4.2)")
 		}
 		// The trigger raises a specific error message.
 		if err != nil && !strings.Contains(err.Error(), "__all__ sentinel requires lenny.allow_all_sentinel") {
@@ -214,7 +214,7 @@ func TestRLSAllTenantsContext(t *testing.T) {
 			t.Fatalf("begin: %v", err)
 		}
 		defer func() { _ = tx.Rollback(ctx) }()
-		// spec: §4.2 line 165 — opt in to the __all__ sentinel before
+		// spec: §4.2 — opt in to the __all__ sentinel before
 		// setting it. The migration 0057 RLS policy requires
 		// lenny.allow_all_sentinel = 'true' alongside the __all__
 		// value, mirroring pgtenant.InAllTenants.
@@ -259,7 +259,7 @@ func TestRLSAllTenantsContext(t *testing.T) {
 	})
 
 	t.Run("audit emits cross_tenant_read", func(t *testing.T) {
-		// §12.3 line 141: every code path that sets
+		// §12.3: every code path that sets
 		// app.current_tenant = '__all__' MUST emit a cross_tenant_read
 		// audit event recording the caller identity, endpoint, and
 		// query category. The platform-admin's audit chain is

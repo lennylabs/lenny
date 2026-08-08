@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §11.2.1 line 151 — the compliance-aware floors: hipaa 2190,
+// spec: §11.2.1 — the compliance-aware floors: hipaa 2190,
 // soc2 365, fedramp 365; an empty/unregulated profile has no floor.
 // F-11.2.15.
 func TestComplianceFloorDays_spec_11_2_151(t *testing.T) {
@@ -28,7 +28,7 @@ func TestComplianceFloorDays_spec_11_2_151(t *testing.T) {
 	}
 }
 
-// spec: §11.2.1 line 151 — retentionDays below an active regulated
+// spec: §11.2.1 — retentionDays below an active regulated
 // profile's floor is rejected with the CONFIG_INVALID message naming the
 // binding profile; at or above the floor is accepted. F-11.2.15.
 func TestValidateRetentionDays_spec_11_2_151(t *testing.T) {
@@ -117,7 +117,7 @@ func (f *fakeDeleter) DeleteOlderThan(_ context.Context, tenantID string, cutoff
 	return f.counts[tenantID], nil
 }
 
-// spec: §11.2.1 line 151 — Tick computes cutoff = now − retentionDays
+// spec: §11.2.1 — Tick computes cutoff = now − retentionDays
 // and prunes every tenant, summing the counts. F-11.2.15.
 func TestPrunerTickPrunesEveryTenant_spec_11_2_151(t *testing.T) {
 	del := &fakeDeleter{counts: map[string]int{"acme": 3, "globex": 5}}

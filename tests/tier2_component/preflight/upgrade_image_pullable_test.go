@@ -61,7 +61,7 @@ func doPreflight(srv *opsserver.Server, body string) *httptest.ResponseRecorder 
 // histogramSampleCount reads the observation count for one label
 // combination of a registered HistogramVec, mirroring the
 // lenny_platform_image_pull_check_duration_seconds{component=...} series
-// the §25.8 line 3619 metric exposes.
+// the §25.8 metric exposes.
 func histogramSampleCount(t *testing.T, h *prometheus.HistogramVec, labelValue string) uint64 {
 	t.Helper()
 	var m dto.Metric
@@ -77,7 +77,7 @@ func histogramSampleCount(t *testing.T, h *prometheus.HistogramVec, labelValue s
 // an air-gapped install with a mirror missing a target image would pass
 // preflight and only fail mid-upgrade instead of being caught up front.
 //
-// spec: §25.8 line 3500 — "Resolves all target images through
+// spec: §25.8 — "Resolves all target images through
 // ImageResolver and validates they are pullable. For each component,
 // issues a HEAD request to the registry manifest endpoint (or `crane
 // manifest --platform linux/amd64` equivalent). This catches missing
@@ -93,7 +93,7 @@ func TestUpgradePreflight_ImageNotPullableAgainstRealRegistry(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	hist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "lenny_platform_image_pull_check_duration_seconds",
-		Help:    "test-local mirror of the §25.8 line 3619 histogram.",
+		Help:    "test-local mirror of the §25.8 histogram.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"component"})
 	if err := reg.Register(hist); err != nil {
@@ -141,7 +141,7 @@ func TestUpgradePreflight_ImageNotPullableAgainstRealRegistry(t *testing.T) {
 // image as unpullable (or vice versa), which would either block a valid
 // upgrade or let a genuinely missing mirror image through.
 //
-// spec: §25.8 line 3500 (image-pullability HEAD check).
+// spec: §25.8.
 func TestUpgradePreflight_ImagePullableAgainstRealRegistry(t *testing.T) {
 	stub := stubRegistry(t, map[string]bool{
 		"/v2/lenny-gateway/manifests/1.6.0": true,

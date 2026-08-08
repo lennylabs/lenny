@@ -19,7 +19,7 @@ import (
 // persisted to the target stream and replayable within the §7.2 replay
 // window like any other SessionEvent.
 //
-// spec: §7.2 line 284 (inbox_cleared); §15.4.1 (message_expired).
+// spec: §7.2; §15.4.1 (message_expired).
 type busEmitter struct {
 	bus *sessionevents.Bus
 	now func() time.Time
@@ -59,7 +59,7 @@ func (e *busEmitter) publish(tenantID, sessionID, eventType string, payload any)
 	e.bus.PublishForTenant(tenantID, sessionID, eventType, string(data), e.now())
 }
 
-// drainMessagingOnTerminal runs the §7.2 line 343 / §7.3 line 425 inbox
+// drainMessagingOnTerminal runs the §7.2 / §7.3 inbox
 // + DLQ drain when sess reaches a terminal state. The coordinator emits
 // a `message_expired` event with `reason: "target_terminated"` on each
 // registered sender's event stream and deletes the DLQ key, so a sender
@@ -68,7 +68,7 @@ func (e *busEmitter) publish(tenantID, sessionID, eventType string, payload any)
 // rather than failing the terminal transition. No-op when messaging is
 // not wired.
 //
-// spec: §7.2 line 343; §7.3 line 425; §15.4.1 reason target_terminated.
+// spec: §7.2; §7.3; §15.4.1 reason target_terminated.
 // F-7.3.12.
 func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore.Session) {
 	if s.messaging == nil {
@@ -79,7 +79,7 @@ func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore
 	}
 }
 
-// clearInboxOnResume emits the §7.2 line 284 `inbox_cleared` event on
+// clearInboxOnResume emits the §7.2 event on
 // sess's own event stream when the gateway re-acquires coordination of a
 // recovering session via POST /resume. In the default in-memory mode the
 // prior coordinator's inbox is gone, so the target client learns its inbox
@@ -89,7 +89,7 @@ func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore
 // transient Redis blip does not fail the resume. No-op when messaging is
 // not wired.
 //
-// spec: §7.2 line 284. F-7.2.12.
+// spec: §7.2. F-7.2.12.
 func (s *Server) clearInboxOnResume(ctx context.Context, sess sessionstore.Session) {
 	if s.messaging == nil {
 		return
@@ -99,7 +99,7 @@ func (s *Server) clearInboxOnResume(ctx context.Context, sess sessionstore.Sessi
 	}
 }
 
-// migrateInboxOnResumePending runs the §7.2 lines 305-311 atomic inbox
+// migrateInboxOnResumePending runs the §7.2 atomic inbox
 // drain to the DLQ when sess enters resume_pending. In the default
 // in-memory mode the buffered inbox messages are written to the DLQ
 // (scored by the resume-window TTL) so they survive a coordinator crash
@@ -108,7 +108,7 @@ func (s *Server) clearInboxOnResume(ctx context.Context, sess sessionstore.Sessi
 // (pod failure is non-negotiable) and is logged. No-op when messaging is
 // not wired.
 //
-// spec: §7.2 lines 305-311. F-7.2.4.
+// spec: §7.2. F-7.2.4.
 func (s *Server) migrateInboxOnResumePending(ctx context.Context, sess sessionstore.Session) {
 	if s.messaging == nil {
 		return

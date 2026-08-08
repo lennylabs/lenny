@@ -32,7 +32,7 @@ func (e protocolError) Error() string { return "protocol error: " + e.msg }
 // per-frame message/heartbeat/shutdown behavior is reused unchanged and
 // each slot keeps its own sequence counter.
 //
-// spec: §5.2 line 509, §15.4.1 line 1459 — dispatch loop keyed on slotId
+// spec: §5.2, §15.4.1 — dispatch loop keyed on slotId
 // over a single stdin channel.
 func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (err error) {
 	ctx, cancel := context.WithCancel(ctx)

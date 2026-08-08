@@ -10,8 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// spec: §6.1 (sdk_connecting watchdog, reserved terminus), §6.2 lines
-// 89-123, §3.3 — the SDK-warm warm path routes through sdk_connecting with
+// spec: §6.1 (sdk_connecting watchdog, reserved terminus), §6.2, §3.3 — the SDK-warm warm path routes through sdk_connecting with
 // a watchdog. The phase has two non-failure termini: idle on the warm-fill
 // edge (this arm writes it) and reserved on the recycle re-warm edge (the
 // claim projection writes it, so this arm makes a clean no-action exit).
@@ -136,7 +135,7 @@ func TestDecideSDKWarm_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 69 — TimedOut isolates the watchdog transition so the
+// spec: §6.1 — TimedOut isolates the watchdog transition so the
 // reconciler emits the timeout counter only when the SDK hung, not when
 // the pod genuinely failed.
 func TestSDKWarmInputs_TimedOut_spec_6_1(t *testing.T) {

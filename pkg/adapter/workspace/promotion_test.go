@@ -11,7 +11,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// TestMaterializePromotesIntoRoot_spec_7_4_433 covers §7.4 line 433: the
+// TestMaterializePromotesIntoRoot_spec_7_4_433 covers §7.4: the
 // resolved tree is built in /workspace/staging and atomically promoted
 // onto the workspace root, so every source's content lands under root and
 // the sibling build tree is gone after a committed promotion. F-7.4.12,
@@ -47,7 +47,7 @@ func TestMaterializePromotesIntoRoot_spec_7_4_433(t *testing.T) {
 // adapter wrote each source straight into the workspace root, so a failure
 // in a later source left earlier sources committed. With the build-then-
 // promote pattern a failure in any source discards the whole build tree,
-// so no partial plan reaches /workspace/current. spec: §7.4 line 460.
+// so no partial plan reaches /workspace/current. spec: §7.4.
 func TestMaterializeRollsBackEntirePlanOnLaterSourceFailure_spec_7_4_460(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir() // empty: the uploadFile ref below is never staged
@@ -67,7 +67,7 @@ func TestMaterializeRollsBackEntirePlanOnLaterSourceFailure_spec_7_4_460(t *test
 // TestMaterializePreservesPriorRootOnFailure_spec_7_4_460 confirms a
 // failed materialization leaves the pre-existing /workspace/current
 // untouched: the build tree is discarded and root is never moved aside.
-// spec: §7.4 line 460 ("returned to its pre-extraction state"). F-7.4.12.
+// spec: §7.4. F-7.4.12.
 func TestMaterializePreservesPriorRootOnFailure_spec_7_4_460(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "kept.txt"), []byte("untouched"), 0o644); err != nil {

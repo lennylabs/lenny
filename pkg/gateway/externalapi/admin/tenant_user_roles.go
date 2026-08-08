@@ -15,16 +15,15 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// eventUserRoleAssigned / eventUserRoleRemoved are the §15.1 lines
-// 827-828 platform-managed role-assignment audit event types. The admin
+// eventUserRoleAssigned / eventUserRoleRemoved are the §15.1 platform-managed role-assignment audit event types. The admin
 // emit path serializes event-type strings (see r.emit), so they are
-// plain constants. spec: §15.1 lines 827-828.
+// plain constants. spec: §15.1.
 const (
 	eventUserRoleAssigned = "user.role_assigned"
 	eventUserRoleRemoved  = "user.role_removed"
 )
 
-// tenantUserRolePayload is the §15.1 line 826 tenant-user wire shape:
+// tenantUserRolePayload is the §15.1 tenant-user wire shape:
 // the user id and its platform-managed role assignment with provenance.
 // `role` is empty when the user has no platform-managed assignment (the
 // state in which the OIDC claim is authoritative). createdAt / updatedAt
@@ -35,13 +34,13 @@ type tenantUserRolePayload struct {
 	AssignedAt string `json:"assignedAt,omitempty"`
 	AssignedBy string `json:"assignedBy,omitempty"`
 	// ETag lets a list consumer supply If-Match on a later role PUT
-	// without a follow-up GET. spec: §15.1 line 1209.
+	// without a follow-up GET. spec: §15.1.
 	ETag      string `json:"etag,omitempty"`
 	createdAt string
 	updatedAt string
 }
 
-// assignedRole projects the single §15.1 line 826 platform-managed role.
+// assignedRole projects the single §15.1 platform-managed role.
 // The dedicated role surface assigns exactly one role; a user given
 // several roles through the multi-role `/v1/admin/users` surface projects
 // its first. A row with no assignment projects the empty string.
@@ -65,12 +64,12 @@ func tenantUserRoleFromUser(u userstore.User) tenantUserRolePayload {
 }
 
 // handleListTenantUsers implements GET /v1/admin/tenants/{id}/users — the
-// §15.1 line 826 tenant user listing with platform-managed role
+// §15.1 tenant user listing with platform-managed role
 // assignments. A tenant-admin caller is scoped to its own tenant by the
 // path-tenant resolver; a platform-admin reads any tenant. Soft-deleted
 // and disabled users are excluded unless `?includeDeleted=true` /
 // `?includeDisabled=true` opt them in. The result is the canonical §15.1
-// cursor-paginated envelope. spec: §15.1 line 826.
+// cursor-paginated envelope. spec: §15.1.
 func (r *Router) handleListTenantUsers(w http.ResponseWriter, req *http.Request) {
 	tenant, err := authorizeTenantPath(req, req.PathValue("id"))
 	if err != nil {
@@ -90,7 +89,7 @@ func (r *Router) handleListTenantUsers(w http.ResponseWriter, req *http.Request)
 	for _, u := range rows {
 		out = append(out, tenantUserRoleFromUser(u))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// spec: §15.1 — canonical cursor-paginated envelope.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x tenantUserRolePayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -104,22 +103,22 @@ func (r *Router) handleListTenantUsers(w http.ResponseWriter, req *http.Request)
 		})
 }
 
-// putTenantUserRoleRequest is the §15.1 line 827 PUT body.
+// putTenantUserRoleRequest is the §15.1 PUT body.
 type putTenantUserRoleRequest struct {
 	Role string `json:"role"`
 }
 
 // handlePutTenantUserRole implements PUT
-// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1 line 827
+// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1
 // platform-managed role assignment. The named role replaces the user's
 // platform-managed assignment and takes precedence over the OIDC claim
-// (§10.2 line 294). Valid roles are the tenant-scoped built-ins
+// (§10.2). Valid roles are the tenant-scoped built-ins
 // (tenant-admin, tenant-viewer, billing-viewer, user) and any custom role
 // defined in the tenant RBAC config; platform-admin is rejected because
 // it is a platform-spanning role the tenant surface does not grant. The
 // user must already be a registered user record (the GET above lists the
 // assignable users); a missing record is 404. If-Match is required and
-// enforced against the user row version. spec: §15.1 line 827.
+// enforced against the user row version. spec: §15.1.
 func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Request) {
 	tenant, err := authorizeTenantPath(req, req.PathValue("id"))
 	if err != nil {
@@ -142,7 +141,7 @@ func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Reques
 			map[string]any{"field": "role"})
 		return
 	}
-	// spec: §15.1 line 827 — the valid-role list is the tenant-scoped set;
+	// spec: §15.1 — the valid-role list is the tenant-scoped set;
 	// platform-admin is a platform-spanning role this surface cannot grant.
 	if role == auth.RolePlatformAdmin {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -166,7 +165,7 @@ func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 827 — the role PUT requires If-Match against the
+	// spec: §15.1 — the role PUT requires If-Match against the
 	// user row's entity tag.
 	if !enforceIfMatch(w, req, current.Version) {
 		return
@@ -194,18 +193,18 @@ func (r *Router) handlePutTenantUserRole(w http.ResponseWriter, req *http.Reques
 		"user_id":   userID,
 		"role":      string(role),
 	})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag.
+	// spec: §15.1 — a successful PUT carries the bumped ETag.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	writeJSON(w, http.StatusOK, tenantUserRoleFromUser(updated))
 }
 
 // handleDeleteTenantUserRole implements DELETE
-// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1 line 828
+// /v1/admin/tenants/{id}/users/{userId}/role — the §15.1
 // removal of the platform-managed role assignment. The user record is
 // retained (so the user still lists) but its assignment is cleared, so
 // the §10.2 role resolver falls through to the OIDC claim. The endpoint
 // is idempotent: removing an absent assignment is a 204 no-op that emits
-// no event. If-Match is honoured when present. spec: §15.1 line 828.
+// no event. If-Match is honoured when present. spec: §15.1.
 func (r *Router) handleDeleteTenantUserRole(w http.ResponseWriter, req *http.Request) {
 	tenant, err := authorizeTenantPath(req, req.PathValue("id"))
 	if err != nil {
@@ -226,7 +225,7 @@ func (r *Router) handleDeleteTenantUserRole(w http.ResponseWriter, req *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present.
+	// spec: §15.1 — DELETE honours If-Match when present.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}

@@ -133,7 +133,7 @@ func warmPoolDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 		}, objs...)
 }
 
-// spec: §25.6 line 2956 — warmPoolStuckReplenish fires for a pool the
+// spec: §25.6 — warmPoolStuckReplenish fires for a pool the
 // §25.6.1 diagnosis classifies DEMAND_EXCEEDS_SUPPLY with zero in-flight
 // warm-up claims (no warming, no claimed pods), whose PoolDrained=True
 // condition on the referenced SandboxTemplate has dwelt past the 5m window;
@@ -414,7 +414,7 @@ func TestRemediator_WarmPoolStuck_TemplateReadError_Propagates(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2953 — bootstrapConfigDrift fires when the live
+// spec: §25.6 — bootstrapConfigDrift fires when the live
 // lenny-bootstrap ConfigMap content diverges from the Helm-rendered
 // value; the fix re-applies the rendered content.
 //
@@ -518,7 +518,7 @@ func TestRemediator_BootstrapDrift_NoRenderSource_NotDetected(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2955 — prometheusRuleMissing fires when monitoring is
+// spec: §25.6 — prometheusRuleMissing fires when monitoring is
 // enabled but a rendered PrometheusRule is absent from the release
 // namespace; the fix re-applies the rendered object.
 //

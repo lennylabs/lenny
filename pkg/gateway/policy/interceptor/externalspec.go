@@ -17,7 +17,7 @@ import (
 // on its own (the address and the target phase) so the gateway wiring
 // stays in one place.
 //
-// spec: §4.8 line 1019 — the registration table's required fields are
+// spec: §4.8 — the registration table's required fields are
 // name, endpoint, priority, failPolicy, and timeout, plus the phase the
 // interceptor targets.
 type ExternalSpec struct {

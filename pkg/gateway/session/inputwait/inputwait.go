@@ -32,26 +32,25 @@ var (
 // lenny/request_input rounds the session has consumed (`Consumed`).
 // The counter is monotonically non-decreasing for a session — Register
 // increments it on every accepted request, regardless of subsequent
-// Resolve / Cancel — so the gateway can enforce the §8.8 line 869
+// Resolve / Cancel — so the gateway can enforce the §8.8
 // `one_shot` constraint: a runtime whose `capabilities.interaction:
 // one_shot` declaration limits it to a single `request_input` call
 // over the task lifetime. The counter is process-local; a one_shot
 // runtime is short-lived by definition so v1 in-memory tracking is
-// sufficient for the §8.8 contract. spec: §8.8 line 869. F-8.8.10.
+// sufficient for the §8.8 contract. spec: §8.8. F-8.8.10.
 type Registry struct {
 	mu       sync.Mutex
 	pending  map[string]*entry
 	consumed map[string]int
-	// now sources the wall clock for the §8.8 line 990 `blockedSince`
+	// now sources the wall clock for the §8.8
 	// timestamp stamped on each pending request. It is overridable in
 	// tests so the §8.8 deadlock detector's blocked-since witnesses are
-	// deterministic. spec: §8.8 line 990. F-8.8.6.
+	// deterministic. spec: §8.8. F-8.8.6.
 	now func() time.Time
 }
 
-// entry is a single pending request: the answer channel plus the §8.8
-// line 951 question `parts` the lenny/await_children partial result
-// carries back to the awaiting parent. spec: §8.8 line 951; F-8.8.5.
+// entry is a single pending request: the answer channel plus the §8.8 question `parts` the lenny/await_children partial result
+// carries back to the awaiting parent. spec: §8.8; F-8.8.5.
 type entry struct {
 	ch           chan string
 	parts        []json.RawMessage
@@ -62,9 +61,8 @@ type entry struct {
 // surfaced to lenny/await_children. RequestID is the correlation id the
 // parent answers with `inReplyTo`; Parts is the MessagePart[] question.
 // BlockedSince is the wall-clock instant the request was registered —
-// the §8.8 line 990 `blockedSince` witness the subtree deadlock
-// detector reports on each `blockedRequests` entry. spec: §8.8 line
-// 951, line 990; F-8.8.5 / F-8.8.6.
+// the §8.8 witness the subtree deadlock
+// detector reports on each `blockedRequests` entry. spec: §8.8; F-8.8.5 / F-8.8.6.
 type PendingRequest struct {
 	RequestID    string
 	Parts        []json.RawMessage
@@ -109,7 +107,7 @@ func key(sessionID, requestID string) string {
 // returned when (sessionID, requestID) is already pending. Register
 // also bumps the §8.8 per-session lifetime counter so a Consumed()
 // caller can detect a second request before allocating a channel.
-// The §8.8 line 951 question `parts` are stored alongside the channel
+// The §8.8 question `parts` are stored alongside the channel
 // so a lenny/await_children call can surface them in the input_required
 // partial result without a second round-trip to the child. A nil parts
 // slice is permitted (the registry does not interpret the payload).
@@ -130,7 +128,7 @@ func (r *Registry) Register(sessionID, requestID string, parts []json.RawMessage
 // the session has registered over its lifetime. The counter is
 // monotonically non-decreasing — Resolve and Cancel do not decrement.
 // Returns zero when the session has never registered a request.
-// spec: §8.8 line 869. F-8.8.10.
+// spec: §8.8. F-8.8.10.
 func (r *Registry) Consumed(sessionID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -191,7 +189,7 @@ func (r *Registry) Pending(sessionID, requestID string) bool {
 
 // PendingForSession returns every request id currently registered for
 // sessionID. The order is unspecified; callers that need a stable
-// pick (e.g. the §7.2 line 153 `ReattachedChild.pending_request_id`
+// pick (e.g. the §7.2
 // surface) MUST sort the result themselves. Returns nil when no
 // request is pending for the session.
 func (r *Registry) PendingForSession(sessionID string) []string {
@@ -208,10 +206,9 @@ func (r *Registry) PendingForSession(sessionID string) []string {
 }
 
 // PendingDetailsForSession returns every pending request for sessionID
-// with its §8.8 line 951 question `parts`, sorted by request id so the
+// with its §8.8 question `parts`, sorted by request id so the
 // lenny/await_children input_required partial result is deterministic
-// across polls. Returns nil when no request is pending. spec: §8.8
-// line 951; F-8.8.5.
+// across polls. Returns nil when no request is pending. spec: §8.8; F-8.8.5.
 func (r *Registry) PendingDetailsForSession(sessionID string) []PendingRequest {
 	prefix := sessionID + "\x00"
 	r.mu.Lock()

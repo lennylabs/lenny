@@ -45,7 +45,7 @@ func TestSetupOptionsFromProtoEmptyDispositionIsFail(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 490 — F-7.5.2. A nil policy preserves the legacy
+// spec: §7.5 — F-7.5.2. A nil policy preserves the legacy
 // shell=true (`/bin/sh -c`) execution mode so a runtime that does not
 // declare a setupCommandPolicy at all still runs setup the legacy way.
 func TestSetupOptionsFromProtoNilDefaultsShellTrue(t *testing.T) {
@@ -55,7 +55,7 @@ func TestSetupOptionsFromProtoNilDefaultsShellTrue(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 490 — F-7.5.2. An explicit Shell flag on the wire
+// spec: §7.5 — F-7.5.2. An explicit Shell flag on the wire
 // (proto3 bool) is mirrored onto SetupOptions so the runtime's
 // setupCommandPolicy.shell choice survives the gateway → adapter hop.
 func TestSetupOptionsFromProtoHonorsShellFlag(t *testing.T) {

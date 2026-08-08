@@ -29,7 +29,7 @@ const manifestAccept = "application/vnd.oci.image.manifest.v1+json, " +
 // checker follows the RFC 6750 challenge to fetch an anonymous pull token
 // and retries once before concluding the image is unpullable.
 //
-// spec: §25.8 Phase 1 (line 3500).
+// spec: §25.8 Phase 1.
 type RegistryImagePullChecker struct {
 	// Client issues the manifest and token requests. Required; use
 	// NewRegistryImagePullChecker to default it.
@@ -53,7 +53,7 @@ func NewRegistryImagePullChecker(timeout time.Duration) *RegistryImagePullChecke
 // fails transiently (UPGRADE gate dependency unavailable) rather than
 // reporting a spurious missing image.
 //
-// spec: §25.8 Phase 1 (line 3500): "For each component, issues a HEAD
+// spec: §25.8 Phase 1: "For each component, issues a HEAD
 // request to the registry manifest endpoint (or `crane manifest
 // --platform linux/amd64` equivalent). This catches missing mirrors before
 // any changes are made."

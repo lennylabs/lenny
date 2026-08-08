@@ -66,7 +66,7 @@ func (s *RestoreSource) List(ctx context.Context, _ operations.Filter) ([]operat
 // project maps one ops_restore_state row onto the canonical §25.4
 // Operation envelope. The resources block surfaces the restore's own
 // status endpoint and the restore/resume path a failed restore needs
-// (§25.4 line 1811 requires a failed restore to be resolvable from the
+// (§25.4 requires a failed restore to be resolvable from the
 // inventory). spec: §25.4 (Operations Inventory), §25.11 (restore API).
 func (s *RestoreSource) project(r backup.RestoreState) operations.Operation {
 	// spec: §25.4 canonical operationId = <kind-prefix>-<natural-key>; the
@@ -105,8 +105,7 @@ func (s *RestoreSource) project(r backup.RestoreState) operations.Operation {
 // inventory status. A running restore is in_progress; a failed restore is
 // a terminal failure operators must resolve; a completed restore is
 // completed. An unrecognized value is treated as in_progress so an active
-// restore is never silently dropped from the default view. spec: §25.4
-// lines 1807, 1811.
+// restore is never silently dropped from the default view. spec: §25.4.
 func restoreStatus(status string) operations.Status {
 	switch status {
 	case backup.RestoreStatusCompleted:
@@ -121,7 +120,7 @@ func restoreStatus(status string) operations.Status {
 }
 
 // restoreProgress projects a restore's per-shard state onto the §25.2
-// canonical progress envelope §25.4 line 358 requires an inventory restore
+// canonical progress envelope §25.4 requires an inventory restore
 // to carry. totalSteps is the shard count, completedSteps the shards whose
 // pg_restore finished, and currentStep the first shard still in flight. The
 // ETA fields are left to the Inventory's §25.2 enrichment (which draws the

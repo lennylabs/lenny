@@ -13,7 +13,7 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-// spec: §12.5 line 282 — transient transport-class PutObject failures
+// spec: §12.5 — transient transport-class PutObject failures
 // are retried on the exponential-backoff schedule (1s, 5s, 30s) and
 // terminal errors short-circuit the retry budget.
 func TestIsTransientPutError(t *testing.T) {
@@ -80,7 +80,7 @@ func (netTimeout) Temporary() bool { return true }
 
 var _ net.Error = netTimeout{}
 
-// spec: §12.8 line 735 — the durable §12.5 catalog row drives the
+// spec: §12.8 — the durable §12.5 catalog row drives the
 // per-session legal-hold guard, replacing the in-process sync.Map
 // fallback whenever the catalog is wired. DeleteBySession refuses a
 // session whose catalog reports legal_hold=true.

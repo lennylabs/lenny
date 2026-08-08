@@ -16,7 +16,7 @@ import (
 
 // stubMinter records the params it was called with and returns a
 // configurable token or error, so the wiring tests assert the service
-// invokes the §8.2 line 59 exchange on the admission path.
+// invokes the §8.2 exchange on the admission path.
 type stubMinter struct {
 	called    bool
 	gotParams delegation.ChildTokenParams
@@ -39,7 +39,7 @@ func mintTestService(t *testing.T, store sessionstore.Store, m delegation.ChildT
 	})
 }
 
-// spec: §8.2 lines 59-60 — when a ParentToken is present and a minter is
+// spec: §8.2 — when a ParentToken is present and a minter is
 // wired, Delegate invokes the in-process child-token exchange and stamps
 // the minted token onto the Result.
 func TestDelegate_InvokesChildTokenMinter_Spec8_2_59(t *testing.T) {
@@ -81,7 +81,7 @@ func TestDelegate_InvokesChildTokenMinter_Spec8_2_59(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 61 — a minter ErrParentRevoked propagates out of
+// spec: §8.2 — a minter ErrParentRevoked propagates out of
 // Delegate and no child row is created.
 func TestDelegate_ParentRevoked_NoChild_Spec8_2_61(t *testing.T) {
 	store := memstore.New()
@@ -103,7 +103,7 @@ func TestDelegate_ParentRevoked_NoChild_Spec8_2_61(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 63 — a minter ErrAuditContention propagates out of
+// spec: §8.2 — a minter ErrAuditContention propagates out of
 // Delegate (retryable).
 func TestDelegate_AuditContention_Spec8_2_63(t *testing.T) {
 	store := memstore.New()
@@ -122,7 +122,7 @@ func TestDelegate_AuditContention_Spec8_2_63(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 59 — a request without ParentToken skips the exchange
+// spec: §8.2 — a request without ParentToken skips the exchange
 // leg even when a minter is wired (the in-process minimal / unauthenticated
 // path), and the child is still admitted.
 func TestDelegate_NoParentToken_SkipsExchange(t *testing.T) {

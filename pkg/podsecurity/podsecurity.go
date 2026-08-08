@@ -82,7 +82,7 @@ type PodSpec struct {
 	CredentialContainerNames []string
 
 	// CredVolumeName is the name of the pod-level credential tmpfs
-	// volume carrying /run/lenny/credentials.json. §13.1 line 27: a
+	// volume carrying /run/lenny/credentials.json. §13.1: a
 	// non-adapter, non-agent container that mounts this volume (by name)
 	// or mounts the /run/lenny path prefix reaches the credential file
 	// and is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. Empty disables
@@ -127,7 +127,7 @@ type ContainerSpec struct {
 	CapabilitiesDrop []string
 	CapabilitiesAdd  []string
 
-	// VolumeMounts is the container's volume mounts. §13.1 line 27: a
+	// VolumeMounts is the container's volume mounts. §13.1: a
 	// non-adapter, non-agent container that mounts the credential volume
 	// or the /run/lenny path prefix reaches the credential file. This is
 	// the operative attack surface the validator inspects, because the
@@ -227,7 +227,7 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 		violations = append(violations, fmt.Sprintf("fsGroup must equal lenny-cred-readers GID %d, got %d (POD_SPEC_CRED_FSGROUP_MISSING)", lennyCredReadersGID, *spec.FSGroup))
 	}
 
-	// §13.1 line 25: the adapter and agent UIDs are declared in the
+	// §13.1: the adapter and agent UIDs are declared in the
 	// pod's spec.securityContext.supplementalGroups list, making
 	// lenny-cred-readers a shared group both containers are members of.
 	// Line 25 further states the admission webhook "validate[s] the
@@ -302,7 +302,7 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 				c.Name, lennyCredReadersGID,
 			))
 		}
-		// §13.1 line 27: the operative credential-read surface is the
+		// §13.1: the operative credential-read surface is the
 		// volume mount, not the group membership. The pod-level fsGroup
 		// grants every container lenny-cred-readers membership regardless
 		// of its explicit runAsGroup, so the runAsGroup check above cannot

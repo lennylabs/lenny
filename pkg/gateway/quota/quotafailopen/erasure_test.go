@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// spec: §12.8 step 6; §12.1 line 5 — DeleteByUser removes the named user's
+// spec: §12.8 step 6; §12.1 — DeleteByUser removes the named user's
 // accumulated windows while leaving other users and the per-tenant rollup
 // intact, so a post-recovery reconcile cannot resurrect the erased user.
 func TestDeleteByUser_RemovesOnlyTargetUser_spec_12_8_step6(t *testing.T) {
@@ -45,7 +45,7 @@ func TestDeleteByUser_RemovesOnlyTargetUser_spec_12_8_step6(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 753 — an empty scope is never a wildcard.
+// spec: §12.8 — an empty scope is never a wildcard.
 func TestDeleteByUser_EmptyScopeRejected_spec_12_8(t *testing.T) {
 	a := New()
 	a.Record("acme", "alice", quota.ResetHourly, fixed, 100)

@@ -60,7 +60,7 @@ func (s *Store) Create(ctx context.Context, u userstore.User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if u.Version == 0 {
 		u.Version = 1
 	}
@@ -131,7 +131,7 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 			return err
 		}
 		u.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+		// spec: §15.1 — bump the entity-tag version on every write.
 		u.Version++
 		if _, err := tx.Exec(ctx, `UPDATE users SET
 			email = $3, display_name = $4, roles = $5, disabled = $6,
@@ -161,8 +161,7 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 // erasure job for the user is still in a non-terminal phase. This is the
 // privileged §24.12 clear-processing-restriction admin path; a plain
 // Update flipping the flag is rejected by the trigger while a job is
-// active. spec: §12.8 line 764 (clear-processing-restriction sets the
-// session-local bypass, analogous to lenny.erasure_mode).
+// active. spec: §12.8.
 func (s *Store) ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (userstore.User, error) {
 	var out userstore.User
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -264,7 +263,7 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, subject string, at tim
 // Hard-deletes the user row keyed by (tenantID, userID); returns the
 // number of rows removed (0 if no such row).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("userstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -289,7 +288,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Removes every user row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("userstore: DeleteByTenant requires a concrete tenant_id")

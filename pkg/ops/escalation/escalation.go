@@ -69,7 +69,7 @@ const (
 	ErrCodeInvalid = "ESCALATION_INVALID"
 )
 
-// defaultReconciliationWritesPerSecond is the §25.4 line 2414 default
+// defaultReconciliationWritesPerSecond is the §25.4 default
 // flush rate (ops.escalation.reconciliationWritesPerSecond).
 const defaultReconciliationWritesPerSecond = 20
 
@@ -182,10 +182,10 @@ type Options struct {
 	Audit AuditSink
 	// RequireDurable rejects a create with ESCALATION_NO_DURABLE_STORE
 	// when no durable tier accepts it, instead of buffering in memory
-	// (§25.4 line 2396 ops.escalation.requireDurable).
+	// (§25.4 ops.escalation.requireDurable).
 	RequireDurable bool
 	// ReconciliationWritesPerSecond paces the flush so a large recovery
-	// does not spike Postgres (§25.4 line 2414). Zero applies the default
+	// does not spike Postgres (§25.4). Zero applies the default
 	// of 20; a negative value disables pacing.
 	ReconciliationWritesPerSecond int
 }

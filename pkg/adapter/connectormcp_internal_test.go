@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
 )
 
-// spec: §9.3 line 142 — the per-connector socket derives from the
+// spec: §9.3 — the per-connector socket derives from the
 // platform MCP socket: abstract base yields an abstract socket, a
 // filesystem base yields a sibling .sock, and a path-unsafe id is
 // sanitised. F-9.1.2.
@@ -49,7 +49,7 @@ func (f *fakeConnForwarder) CallConnectorTool(_ context.Context, _, _, _ string,
 	return nil, nil
 }
 
-// spec: §9.3 line 142 — sessionConnectors resolves the policy-permitted
+// spec: §9.3 — sessionConnectors resolves the policy-permitted
 // connectors and is a best-effort no-op when the prerequisites are
 // absent. F-9.1.2.
 func TestSessionConnectors_spec_9_3_142(t *testing.T) {

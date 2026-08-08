@@ -11,13 +11,13 @@ import (
 )
 
 // TokenVerifier validates a projected ServiceAccount token's signature,
-// expiry, and audience. The §10.2 line 227 contract — "Pods cannot forge
+// expiry, and audience. The §10.2 contract — "Pods cannot forge
 // or extend this token. The gateway validates the signature on every
 // pod→gateway request" — is satisfied by the production implementation
 // (TokenReviewVerifier), which delegates the cryptographic check to the
 // kube-apiserver. A nil verifier degrades RequireSATokenInterceptor to the
 // audience-only decode (the local-development path with no cluster client).
-// spec: §10.2 line 227.
+// spec: §10.2.
 type TokenVerifier interface {
 	// Verify returns nil when token is a kube-apiserver-issued projected
 	// SA token that is currently valid for audience, and a non-nil error
@@ -36,7 +36,7 @@ type TokenReviewer interface {
 // TokenReviewVerifier validates a projected SA token by submitting a
 // Kubernetes TokenReview. The kube-apiserver verifies the token signature
 // and expiry against the cluster's service-account issuer, so a pod cannot
-// forge or extend the token (§10.2 line 227). Passing the deployment
+// forge or extend the token (§10.2). Passing the deployment
 // audience in the TokenReview spec also binds the check to this
 // deployment's audience, so a token minted for another Lenny gateway is
 // rejected even though both are signed by the same cluster issuer.
@@ -46,7 +46,7 @@ type TokenReviewer interface {
 // operations) is agent-paced rather than a hot loop, so the per-request
 // apiserver round-trip is acceptable; a short-TTL positive cache is a
 // future optimization if call volume grows.
-// spec: §10.2 line 227.
+// spec: §10.2.
 type TokenReviewVerifier struct {
 	Reviews TokenReviewer
 }
@@ -64,7 +64,7 @@ func (v TokenReviewVerifier) Verify(ctx context.Context, token, audience string)
 // (`system:serviceaccount:<namespace>:<name>`). A caller that authorizes a
 // specific service account, rather than only proving the token is authentic
 // for this deployment, needs that username; Verify is the outcome-only form.
-// spec: §10.2 line 227.
+// spec: §10.2.
 func (v TokenReviewVerifier) VerifyUser(ctx context.Context, token, audience string) (string, error) {
 	review := &authnv1.TokenReview{
 		Spec: authnv1.TokenReviewSpec{

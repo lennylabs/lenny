@@ -16,7 +16,7 @@ import (
 // alert policies reference. It runs offline from the embedded
 // pkg/alerting/rules catalog (the same source the bundled §16.5
 // burn-rate alerts and the chart's OpenSLO ConfigMap derive from), so it
-// reaches no gateway. spec: §16.10 lines 732-736.
+// reaches no gateway. spec: §16.10.
 func cmdSLO(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: slo requires a subcommand (export)")

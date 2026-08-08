@@ -90,19 +90,18 @@ type PoolConfig struct {
 	// SDKWarmDisabled is the SDK-warm circuit-breaker flag (§4.6.3
 	// PoolScalingController-owned).
 	SDKWarmDisabled bool
-	// SDKWarmCircuitBreakerOverride is the §6.1 line 63 operator override
+	// SDKWarmCircuitBreakerOverride is the §6.1 operator override
 	// read from the pool's sdk_warm_config column. An empty value (or
 	// `auto`) leaves the breaker under automatic control; `enabled`
 	// bypasses the minOpenUntil grace window and evaluates the live
 	// demotion rate so a tripped breaker clears ahead of the grace period;
-	// `disabled` forces SDK-warm off regardless of the rate. spec: §6.1
-	// lines 63-65, §15.1 line 801.
+	// `disabled` forces SDK-warm off regardless of the rate. spec: §6.1, §15.1.
 	SDKWarmCircuitBreakerOverride poolstore.SDKWarmCircuitBreakerOverride
-	// AcknowledgeHighDemotionRate is the §6.1 line 48 operator
+	// AcknowledgeHighDemotionRate is the §6.1 operator
 	// acknowledgment that suppresses this pool's SDKWarmDemotionRateHigh
 	// warning event. It does not affect the 90% circuit-breaker trip.
 	AcknowledgeHighDemotionRate bool
-	// DemotionRateThreshold is the §6.1 line 48 deployer-configurable
+	// DemotionRateThreshold is the §6.1 deployer-configurable
 	// `sdkWarm.demotionRateThreshold`: the rolling 1-hour SDK-warm
 	// demotion-rate fraction above which the SDKWarmDemotionRateHigh
 	// warning event fires. A nil value (or a non-positive value) inherits
@@ -131,16 +130,16 @@ type PoolConfig struct {
 	// pods are created, while MaxWarm is intentionally left at the pool's
 	// current ceiling so existing warm pods drain naturally rather than
 	// being pre-terminated and the SandboxWarmPool CRD is retained for
-	// re-activation. spec: §10.7 line 1102 (active → paused).
+	// re-activation. spec: §10.7.
 	ForceZeroMinWarm bool
 
 	// DrainAndDelete marks a concluded experiment's variant pool for the
-	// §10.7 line 1104 full-drain-then-delete lifecycle: the
+	// §10.7 full-drain-then-delete lifecycle: the
 	// SandboxWarmPool spec is driven to minWarm=0/maxWarm=0 to trigger a
 	// full drain, and once status.readyCount reaches 0 the
 	// PoolScalingController deletes the SandboxWarmPool CRD. The
 	// SandboxTemplate is retained (it may be referenced by other
-	// experiments or kept for audit). spec: §10.7 line 1104
+	// experiments or kept for audit). spec: §10.7
 	// (active|paused → concluded).
 	DrainAndDelete bool
 
@@ -149,7 +148,7 @@ type PoolConfig struct {
 	// onto the SandboxTemplate and SandboxWarmPool CRDs as the
 	// `lenny.dev/config-generation` annotation so the gateway-side
 	// PoolConfigDrift check can compare Postgres- and CRD-side
-	// generations. spec: spec/04_system-components.md lines 557-560.
+	// generations. spec: §4.6.2.
 	Generation int64
 
 	// ResumeEpoch is the §4.6.2 item 3 condition (c) cross-process resume
@@ -243,7 +242,7 @@ type PoolConfigSource interface {
 // DemotionSignal is the rolling SDK-warm demotion signal for one pool —
 // the input the §6.1 controls consume. The 5-minute window drives the
 // circuit-breaker trip; the 1-hour window drives the
-// SDKWarmDemotionRateHigh warning event (§6.1 line 48).
+// SDKWarmDemotionRateHigh warning event (§6.1).
 type DemotionSignal struct {
 	// Rate is the rolling 5-minute demotion rate in [0,1]: SDK-warm
 	// demotions divided by claims over the window.
@@ -253,8 +252,7 @@ type DemotionSignal struct {
 	// has refilled; the breaker holds a tripped pool open in that case
 	// rather than auto-closing on a cold-start zero rate.
 	HasSample bool
-	// HourRate is the rolling 1-hour demotion rate in [0,1]. The §6.1
-	// line 48 SDKWarmDemotionRateHigh event fires when it exceeds
+	// HourRate is the rolling 1-hour demotion rate in [0,1]. The §6.1 SDKWarmDemotionRateHigh event fires when it exceeds
 	// demotionRateThreshold (60%). A source that does not compute the
 	// 1-hour window leaves it zero with HourHasSample=false.
 	HourRate float64
@@ -308,7 +306,7 @@ type Reconciler struct {
 	// trips the breaker but still honors a breaker already persisted on
 	// a pool's status until its grace window elapses.
 	Demotion DemotionRateSource
-	// Events records the §6.1 line 48 SDKWarmDemotionRateHigh warning
+	// Events records the §6.1 SDKWarmDemotionRateHigh warning
 	// event on the SandboxWarmPool when a pool's rolling 1-hour demotion
 	// rate exceeds demotionRateThreshold and the pool has not set
 	// acknowledgeHighDemotionRate. When nil, the event is not emitted; the
@@ -354,7 +352,7 @@ type Reconciler struct {
 	// from DefaultSafetyFactorForTier(capacityPlanning.tier) so a Tier 3
 	// deployment automatically picks up the 1.2 override. A non-positive
 	// value falls back to the agent-type Tier 1/2 default (1.5). spec:
-	// spec/17_deployment-topology.md line 1008.
+	// §17.8.2.
 	DefaultSafetyFactor float64
 
 	// retryState is the lazily-constructed admission-retry tracker.
@@ -362,12 +360,12 @@ type Reconciler struct {
 	// constructed with the zero value.
 	retryState *admissionRetryState
 
-	// lagMeter publishes the §4.6.2 line 557
+	// lagMeter publishes the §4.6.2
 	// lenny_pool_config_reconciliation_lag_seconds gauge. It is
 	// lazily constructed on the first Sync.
 	lagMeter *reconciliationLagMeter
 
-	// warmupMeter publishes the §16.5 line 488
+	// warmupMeter publishes the §16.5
 	// lenny_pool_warmup_seconds_baseline gauge that the
 	// WarmPoolReplenishmentSlow alert reads as its per-pool 2×
 	// threshold source. It is lazily constructed on the first Sync.
@@ -492,7 +490,7 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		return fmt.Errorf("list pool configs: %w", err)
 	}
 	now := r.now()
-	// spec: §4.6.2 line 557 — refresh the lag gauge for every tracked
+	// spec: §4.6.2 — refresh the lag gauge for every tracked
 	// pool so it advances even on a quiet tick.
 	r.lagMeter.Sample()
 	desired := make(map[string]struct{}, len(configs))
@@ -519,7 +517,7 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		if tmplErr != nil {
 			return tmplErr
 		}
-		// spec: §10.7 line 1104 — a concluded experiment's variant pool is
+		// spec: §10.7 — a concluded experiment's variant pool is
 		// drained to 0/0 and its SandboxWarmPool deleted once readyCount
 		// reaches 0. The SandboxTemplate above is retained. Every other
 		// pool reconciles its SandboxWarmPool through the normal upsert.
@@ -531,10 +529,10 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		if warmErr != nil {
 			return warmErr
 		}
-		// spec: §4.6.2 line 557 — both tuples synced cleanly, reset the
+		// spec: §4.6.2 — both tuples synced cleanly, reset the
 		// lag gauge to zero.
 		r.lagMeter.MarkSynced(cfg.Name)
-		// spec: §16.5 line 488 — mirror the pool's warm-up baseline so
+		// spec: §16.5 — mirror the pool's warm-up baseline so
 		// WarmPoolReplenishmentSlow fires at 2× the per-pool value.
 		r.warmupMeter.Set(cfg.Name, warmupBaselineForAlert(cfg))
 	}
@@ -599,7 +597,7 @@ func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, 
 // carries none.
 func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.Time) error {
 	spec := cfg.Template
-	// spec: §5.2 lines 631-636 — the PoolScalingController owns
+	// spec: §5.2 — the PoolScalingController owns
 	// SandboxTemplate.spec and writes the soft zone/node spread defaults
 	// when the deployer has not overridden them per pool.
 	if len(spec.TopologySpreadConstraints) == 0 {
@@ -610,7 +608,7 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tmpl, func() error {
 		tmpl.Spec = spec
-		// spec: §4.6.2 lines 558, 560 — stamp pool_config_generation and
+		// spec: §4.6.2 — stamp pool_config_generation and
 		// the last-reconciled timestamp onto the CRD so the gateway-side
 		// PoolConfigDrift / sync-status check can compare it to Postgres.
 		stampReconcileAnnotations(&tmpl.ObjectMeta, cfg.Generation, now)
@@ -619,9 +617,8 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.
 	return err
 }
 
-// stampReconcileAnnotations writes the §4.6.2 line 558
-// pool_config_generation onto the resource together with the §4.6.2 line
-// 560 last-reconciled timestamp. The gateway-side PoolConfigDrift /
+// stampReconcileAnnotations writes the §4.6.2
+// pool_config_generation onto the resource together with the §4.6.2 last-reconciled timestamp. The gateway-side PoolConfigDrift /
 // sync-status check reads the generation and compares it to the Postgres
 // pool_config_generation; a mismatch over the drift window fires the
 // PoolConfigDrift alert. A zero generation leaves both annotations
@@ -633,7 +630,7 @@ func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.
 // the write; refreshing the timestamp unconditionally would make the
 // object differ every tick and rewrite the CRD on every reconcile. The
 // timestamp therefore records the last time new config was applied,
-// which is the lastReconciledAt the §4.6.2 line 560 sync-status endpoint
+// which is the lastReconciledAt the §4.6.2 sync-status endpoint
 // reports.
 func stampReconcileAnnotations(meta *metav1.ObjectMeta, generation int64, now time.Time) {
 	if generation <= 0 {
@@ -660,7 +657,7 @@ const (
 	poolLabelKey    = "lenny.dev/pool"
 )
 
-// defaultTopologySpreadConstraints returns the §5.2 lines 633-634 soft
+// defaultTopologySpreadConstraints returns the §5.2 soft
 // spread defaults: maxSkew 1 across zones and across nodes, both with
 // whenUnsatisfiable ScheduleAnyway so scheduling never blocks on an
 // unsatisfiable spread. The selector scopes the skew to the named
@@ -702,7 +699,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	}
 
 	// Read the rolling SDK-warm demotion signal once for this pool. Both
-	// the §6.1 circuit-breaker decision and the §6.1 line 48
+	// the §6.1 circuit-breaker decision and the §6.1
 	// SDKWarmDemotionRateHigh event consume it, and reading it here (rather
 	// than inside the CreateOrUpdate mutate closure, which can run more than
 	// once on a write conflict) issues at most one metrics query per pool
@@ -737,7 +734,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 		} else {
 			pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
 		}
-		// spec: §4.6.2 lines 558, 560 — same generation + reconcile-time
+		// spec: §4.6.2 — same generation + reconcile-time
 		// stamp on the SandboxWarmPool so a partial sync (template-only)
 		// still exposes the mismatch.
 		stampReconcileAnnotations(&pool.ObjectMeta, cfg.Generation, now)
@@ -753,7 +750,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	if err := r.syncPoolStatus(ctx, pool, decision, wd.ScalingMode, wd.HoursOfData); err != nil {
 		return err
 	}
-	// spec: §6.1 line 48 — emit the SDKWarmDemotionRateHigh warning event
+	// spec: §6.1 — emit the SDKWarmDemotionRateHigh warning event
 	// when the rolling 1-hour demotion rate exceeds the threshold and the
 	// pool has not acknowledged it.
 	r.emitDemotionRateHigh(pool, cfg, sig, haveSig)
@@ -763,7 +760,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	return nil
 }
 
-// emitDemotionRateHigh records the §6.1 line 48 SDKWarmDemotionRateHigh
+// emitDemotionRateHigh records the §6.1 SDKWarmDemotionRateHigh
 // warning event on the pool when the rolling 1-hour demotion rate exceeds
 // the pool's demotionRateThreshold (the deployer-configurable
 // `sdkWarm.demotionRateThreshold`, defaulting to 60%). The pool's
@@ -787,11 +784,11 @@ func (r *Reconciler) emitDemotionRateHigh(pool *lennyv1.SandboxWarmPool, cfg Poo
 		sig.HourRate*100, threshold*100, cfg.Name)
 }
 
-// demotionRateThresholdFor resolves the §6.1 line 48 demotionRateThreshold
+// demotionRateThresholdFor resolves the §6.1 demotionRateThreshold
 // the warning-event gate uses for a pool: the deployer-configured
 // `sdkWarm.demotionRateThreshold` when it is set to a positive fraction,
 // otherwise the platform default (demotionRateHighThresholdDefault, 60%).
-// spec: §6.1 line 48.
+// spec: §6.1.
 func demotionRateThresholdFor(cfg PoolConfig) float64 {
 	if cfg.DemotionRateThreshold != nil && *cfg.DemotionRateThreshold > 0 {
 		return *cfg.DemotionRateThreshold
@@ -799,7 +796,7 @@ func demotionRateThresholdFor(cfg PoolConfig) float64 {
 	return demotionRateHighThresholdDefault
 }
 
-// drainAndDeleteWarmPool implements the §10.7 line 1104 conclude
+// drainAndDeleteWarmPool implements the §10.7 conclude
 // lifecycle for a variant pool: it drives the SandboxWarmPool to a full
 // drain (minWarm=0, maxWarm=0) and, once status.readyCount has reached
 // 0, deletes the SandboxWarmPool CRD. The SandboxTemplate is left in
@@ -816,7 +813,7 @@ func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig,
 		}
 		return fmt.Errorf("get warm pool for drain-delete: %w", err)
 	}
-	// spec: §10.7 line 1104 — delete only once the pool has fully
+	// spec: §10.7 — delete only once the pool has fully
 	// drained (readyCount == 0). Until then, hold the spec at 0/0 so the
 	// WarmPoolController keeps draining and never replenishes.
 	if pool.Status.ReadyCount <= 0 {
@@ -843,7 +840,7 @@ func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig,
 // (haveSig is false when no DemotionRateSource is wired) and the
 // persisted breaker state from the live pool, then returns the decision
 // the caller writes to spec.sdkWarmDisabled and
-// status.sdkWarmCircuitBreaker. It also applies the §6.1 line 63 operator
+// status.sdkWarmCircuitBreaker. It also applies the §6.1 operator
 // override (enabled / disabled / auto) on top of the automatic decision.
 //
 // It returns a nil decision when no breaker evaluation applies: when no
@@ -857,7 +854,7 @@ func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.SandboxWarmPo
 	cur := breakerStateFromStatus(pool.Status.SDKWarmCircuitBreaker)
 	override := cfg.SDKWarmCircuitBreakerOverride
 
-	// spec: §6.1 line 63, §15.1 line 801 — `disabled` forces SDK-warm off
+	// spec: §6.1, §15.1 — `disabled` forces SDK-warm off
 	// regardless of the demotion rate. It is evaluated before the automatic
 	// decision and ignores the rolling window entirely.
 	if override == poolstore.SDKWarmOverrideDisabled {
@@ -883,7 +880,7 @@ func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.SandboxWarmPo
 		in.HasWindowSample = sig.HasSample
 	}
 
-	// spec: §6.1 lines 63-65 — `enabled` clears a tripped breaker ahead of
+	// spec: §6.1 — `enabled` clears a tripped breaker ahead of
 	// its minOpenUntil grace window by evaluating against a closed Current.
 	// The live demotion rate (0 when no source is wired) then drives the
 	// decision: SDK-warm is restored, and the breaker re-trips only if the
@@ -991,7 +988,7 @@ type warmDecision struct {
 // procedure" steps 1-4.
 func (r *Reconciler) resolveWarm(ctx context.Context, cfg PoolConfig) (warmDecision, error) {
 	now := r.now()
-	// spec: §10.7 line 1102 — a paused experiment's variant pool pins
+	// spec: §10.7 — a paused experiment's variant pool pins
 	// minWarm to 0 regardless of any observed demand, short-circuiting
 	// the scaling formula so no new warm pods are created while paused.
 	if cfg.ForceZeroMinWarm {
@@ -1043,7 +1040,7 @@ func (r *Reconciler) resolveWarm(ctx context.Context, cfg PoolConfig) (warmDecis
 	if in.PoolType == "" {
 		in.PoolType = strategy.PoolStandard
 	}
-	// spec: §17.8.2 line 1008 — a pool that does not pin SafetyFactor
+	// spec: §17.8.2 — a pool that does not pin SafetyFactor
 	// inherits the deployment's tier-resolved default. r.DefaultSafetyFactor
 	// carries poolScaling.safetyFactor (or DefaultSafetyFactorForTier of the
 	// configured tier); the const fallback keeps a zero-value Reconciler at

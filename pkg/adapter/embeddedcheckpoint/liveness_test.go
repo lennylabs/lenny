@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §4.4 line 250 — `/healthz` returns 200 when checkpointStuck is
+// spec: §4.4 — `/healthz` returns 200 when checkpointStuck is
 // false.
 func TestLivenessHandlerReturnsHealthyByDefault(t *testing.T) {
 	flag := &StuckFlag{}
@@ -24,7 +24,7 @@ func TestLivenessHandlerReturnsHealthyByDefault(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 250 — `/healthz` returns 503 with reason
+// spec: §4.4 — `/healthz` returns 503 with reason
 // checkpoint_stuck when the flag is set.
 func TestLivenessHandlerReturns503WhenStuck(t *testing.T) {
 	flag := &StuckFlag{}

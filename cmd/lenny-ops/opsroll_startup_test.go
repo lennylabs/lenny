@@ -173,7 +173,7 @@ func (f fixedRunningStartup) RunningState(context.Context, string) (map[string]a
 }
 
 // TestOpsRollStartupHookAdvancesWithoutValuesSource_spec_25_10_3788 asserts
-// the §25.10 line 3788 skip path: with no rendered-values ConfigMap
+// the §25.10 skip path: with no rendered-values ConfigMap
 // configured, the hook still self-advances OpsRoll->CRDUpdate but writes no
 // target snapshot, so against=target reports DRIFT_NO_TARGET_SNAPSHOT.
 func TestOpsRollStartupHookAdvancesWithoutValuesSource_spec_25_10_3788(t *testing.T) {

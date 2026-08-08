@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §15.1 lines 826-828 — the tenant-scoped user listing and the
+// spec: §15.1 — the tenant-scoped user listing and the
 // platform-managed role assignment surface. F-15.1.3.
 
 func seedRoleUser(t *testing.T, s userstore.Store, u userstore.User) {

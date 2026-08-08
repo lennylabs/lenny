@@ -22,7 +22,7 @@ func TestOutstandingReservationSource_NilStoreYieldsNil(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — the seam composed from the artifact-store live-byte
+// spec: §12.4 — the seam composed from the artifact-store live-byte
 // sum and outstandingReservationSource folds a tenant's held checkpoint
 // reservation into the during-outage enforcement total, so the reserved
 // headroom counts against the quota rather than being handed back invisibly
@@ -58,7 +58,7 @@ func TestOutstandingReservationSource_FoldsIntoLiveBytesSeam(t *testing.T) {
 	}
 }
 
-// spec: §11.2 step 3 (line 37) / §12.4 line 222 — the reservation-aware storage
+// spec: §11.2 step 3 / §12.4 — the reservation-aware storage
 // LiveBytesSource is composed whenever the Postgres artifact catalog is wired,
 // independent of whether Redis is configured. A Postgres-catalog deployment
 // without Redis rebuilds its in-memory storage counter from Postgres at

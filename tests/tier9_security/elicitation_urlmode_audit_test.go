@@ -86,7 +86,7 @@ func (a *capturingDelegationAuditor) snapshot() []auditRow {
 // from the audit log, or the audit row leaked the rejected URL's query or
 // fragment.
 //
-// spec: §16.7 (elicitation.url_mode_domain_rejected); §9.2 line 86. F-EL3,
+// spec: §16.7 (elicitation.url_mode_domain_rejected); §9.2. F-EL3,
 // F-9.2.11.
 func TestURLModeDropWritesAuditRowThroughGateway_spec_16_7(t *testing.T) {
 	auditor := &capturingDelegationAuditor{}

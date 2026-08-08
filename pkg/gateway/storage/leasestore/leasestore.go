@@ -43,7 +43,7 @@ var (
 	ErrNotFound = errors.New("leasestore: no lease for session")
 	// ErrEmptyScope — an erasure primitive was called with an empty
 	// tenant id (or user id). Empty arguments must never be treated as
-	// "delete everything" (§12.8 line 753).
+	// "delete everything" (§12.8).
 	ErrEmptyScope = errors.New("leasestore: erasure requires a non-empty tenant_id (and user_id)")
 )
 
@@ -52,7 +52,7 @@ var (
 // §12.1 mandatory erasure pair so a substitute backend that omits
 // either method cannot compile into the gateway binary.
 //
-// spec: §12.1 line 5 — every store role interface MUST expose
+// spec: §12.1 — every store role interface MUST expose
 // DeleteByUser and DeleteByTenant, enforced at compile time by Go
 // interface satisfaction.
 type LeaseStore interface {
@@ -210,10 +210,9 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (Lease, err
 // every lease carries a TTL that self-expires, so there is nothing
 // user-scoped to erase here; the §12.8 step-1 lease release for the
 // user's sessions is driven per-session by the erasure orchestrator,
-// not by this whole-user method. It rejects empty arguments (§12.8
-// line 753) and otherwise returns (0, nil).
+// not by this whole-user method. It rejects empty arguments (§12.8) and otherwise returns (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 step 1 (lease
+// spec: §12.1; §12.8 step 1 (lease
 // release is session-scoped); F-12.1.3 suggested resolution ("for
 // LeaseStore the erasure primitive can be a no-op — leases are
 // TTL-bound — but the method must still be present").
@@ -232,7 +231,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // than waiting out the TTL. It is idempotent: a tenant with no leases
 // is a no-op returning (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.2 (LeaseStore key
+// spec: §12.1; §12.2 (LeaseStore key
 // prefix); §12.8 Phase 4 (tenant deletion).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {

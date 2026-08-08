@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.11 lines 4165-4295. Migration 0123 creates the backup,
+// spec: §25.11. Migration 0123 creates the backup,
 // schedule, retention, and restore-state durable schema. Platform-scoped
 // (no RLS, no tenant column); the down migration drops all four tables.
 func TestOpsBackupsMigration_spec_25_11(t *testing.T) {

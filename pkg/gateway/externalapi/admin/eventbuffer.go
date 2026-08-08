@@ -42,7 +42,7 @@ func (r *Router) emitOpsEvent(ctx context.Context, eventType events.EventType, s
 			payload = b
 		}
 	}
-	// spec: §15.1 lines 937-938 — operation_id and agent_name are
+	// spec: §15.1 — operation_id and agent_name are
 	// propagated to operational events. They ride as CloudEvents
 	// extension attributes (lowercase-alphanumeric names) alongside the
 	// existing lenny-prefixed extensions, so an agent can join an

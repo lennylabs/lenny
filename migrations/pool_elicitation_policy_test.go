@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §9.2 lines 86, 90-98 — the per-pool elicitation policy
+// spec: §9.2 — the per-pool elicitation policy
 // (elicitationDepthPolicy and urlModeElicitation) is stored on the
 // sandbox_warm_pools row so the gateway resolves it at
 // lenny/request_elicitation dispatch time. Migration 0110 adds the

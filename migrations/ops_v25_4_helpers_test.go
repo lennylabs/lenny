@@ -21,7 +21,7 @@ func mustReadMigration(t *testing.T, name string) string {
 
 // assertPlatformScoped asserts a §25 control-plane migration carries no
 // tenant-isolation apparatus: the ops_* / platform_* tables are
-// platform-scoped (§25.4 line 1492 PlatformPostgres()), so they must not
+// platform-scoped (§25.4 PlatformPostgres()), so they must not
 // declare a tenant_id column, an RLS policy, or the tenant guard.
 func assertPlatformScoped(t *testing.T, num, up string) {
 	t.Helper()

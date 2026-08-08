@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 812-827 — migration 0160 creates the append-only
+// spec: §12.8 — migration 0160 creates the append-only
 // audit_redaction_receipts table that pins every §12.8 step-14 in-place
 // GDPR redaction to a signed RedactionReceipt. The receipt is the
 // provenance token the §11.7 chain verifier and the §16.5
@@ -24,12 +24,12 @@ func TestAuditRedactionReceiptsMigration_spec_12_8_812(t *testing.T) {
 		"legal_basis          TEXT        NOT NULL",
 		"signature_kms_key_id TEXT",
 		"UNIQUE (tenant_id, sequence_number)",
-		// §12.8 line 818 — the legal_basis enum is closed; an unrecognized
+		// §12.8 — the legal_basis enum is closed; an unrecognized
 		// value must be rejected at write time.
 		"'gdpr_art17'",
 		"'gdpr_art17_with_art17_3_exception'",
 		"'operator_acknowledged_override'",
-		// §12.8 line 827 — grant separation: erasure inserts, app reads,
+		// §12.8 — grant separation: erasure inserts, app reads,
 		// no role updates or deletes.
 		"GRANT INSERT ON audit_redaction_receipts TO lenny_erasure",
 		"GRANT SELECT ON audit_redaction_receipts TO lenny_app",

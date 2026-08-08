@@ -21,7 +21,7 @@ import (
 )
 
 // recordingMetrics is a test double that captures every Metrics call.
-// spec: §11.1 line 7; §16.5 RateLimitDegraded.
+// spec: §11.1; §16.5 RateLimitDegraded.
 type recordingMetrics struct {
 	mu              sync.Mutex
 	rejected        map[string]int
@@ -166,7 +166,7 @@ func TestInfraPathsExempt(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 589 — the OpenAPI discovery endpoints are
+// spec: §15.1 — the OpenAPI discovery endpoints are
 // unauthenticated and must be reachable without a bearer; the rate-
 // limit middleware exempts them so an SDK generator can fetch the
 // document under load. F-15.1.17.
@@ -201,7 +201,7 @@ func TestCounterErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// TestGlobalRejectionEmitsCounter_spec_11_1 — §11.1 line 7 admission
+// TestGlobalRejectionEmitsCounter_spec_11_1 — §11.1 admission
 // rejection must increment lenny_rate_limit_rejected_total{scope}.
 func TestGlobalRejectionEmitsCounter_spec_11_1(t *testing.T) {
 	rm := &recordingMetrics{}
@@ -323,11 +323,10 @@ func (c *movingClock) Now() time.Time {
 	return t
 }
 
-// TestDefaultFailOpenMaxIsSixtySeconds_spec_11_3_222 pins the §11.3
-// line 222 / §12.4 line 220 default to 60s. F-11.3.22.
+// TestDefaultFailOpenMaxIsSixtySeconds_spec_11_3_222 pins the §11.3 / §12.4 default to 60s. F-11.3.22.
 func TestDefaultFailOpenMaxIsSixtySeconds_spec_11_3_222(t *testing.T) {
 	if ratelimitmw.DefaultFailOpenMaxSeconds != 60*time.Second {
-		t.Errorf("DefaultFailOpenMaxSeconds = %s, want 60s per §11.3 line 222 / §12.4 line 220",
+		t.Errorf("DefaultFailOpenMaxSeconds = %s, want 60s per §11.3 / §12.4",
 			ratelimitmw.DefaultFailOpenMaxSeconds)
 	}
 }
@@ -454,7 +453,7 @@ func TestNoMetricsIsSafe_spec_11_1(t *testing.T) {
 
 // fireAs sends one request through h carrying a principal for the
 // given (subject, tenant) pair so the per-tenant scope can be exercised
-// across distinct tenants. spec: §13.3 line 607.
+// across distinct tenants. spec: §13.3.
 func fireAs(h http.Handler, path, subject, tenant string) int {
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
@@ -465,7 +464,7 @@ func fireAs(h http.Handler, path, subject, tenant string) int {
 	return rr.Code
 }
 
-// spec: §13.3 line 607 — the per-tenant fair-share brake counts every
+// spec: §13.3 — the per-tenant fair-share brake counts every
 // request from a tenant's users together, so users who each stay under
 // the per-user cap cannot collectively evade the tenant cap. F-11.1.8.
 func TestOverPerTenantLimitRejected_spec_13_3_607(t *testing.T) {
@@ -490,7 +489,7 @@ func TestOverPerTenantLimitRejected_spec_13_3_607(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — the per-tenant counter is keyed on tenant id
+// spec: §13.3 — the per-tenant counter is keyed on tenant id
 // alone, so one tenant's saturation never throttles another. F-11.1.8.
 func TestPerTenantLimitIsPerTenant_spec_13_3_607(t *testing.T) {
 	h := ratelimitmw.Wrap(noContent, ratelimitmw.Options{
@@ -508,7 +507,7 @@ func TestPerTenantLimitIsPerTenant_spec_13_3_607(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — an unauthenticated request carries no tenant,
+// spec: §13.3 — an unauthenticated request carries no tenant,
 // so the per-tenant scope is skipped (the global scope still applies).
 // F-11.1.8.
 func TestPerTenantSkippedWithoutPrincipal_spec_13_3_607(t *testing.T) {
@@ -522,7 +521,7 @@ func TestPerTenantSkippedWithoutPrincipal_spec_13_3_607(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — a per-tenant counter error fails open (admission
+// spec: §11.1 — a per-tenant counter error fails open (admission
 // must not block on a transient counter outage) and records the
 // counter-failure metric. F-11.1.8.
 func TestPerTenantFailsOpenOnCounterError_spec_11_1(t *testing.T) {

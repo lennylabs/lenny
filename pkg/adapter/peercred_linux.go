@@ -57,8 +57,7 @@ func peerCredUID(conn net.Conn) (uint32, error) {
 
 // PeercredSelftest verifies that SO_PEERCRED is functional in the current
 // pod environment before the adapter signals READY, per §4.7 "Mandatory
-// SO_PEERCRED startup self-test" (spec/04_system-components.md lines
-// 870-877). It opens an abstract Unix socket, connects to it from the same
+// SO_PEERCRED startup self-test" (§4.7.11). It opens an abstract Unix socket, connects to it from the same
 // process, and asserts that the peer UID reported by SO_PEERCRED on the
 // accepted connection matches the adapter's own UID. A syscall error or a
 // UID mismatch returns a non-nil error; the caller logs FATAL, increments

@@ -121,7 +121,7 @@ func materializeFakeScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// failingAssigner fails every AssignProto, simulating the §8.3 line 470
+// failingAssigner fails every AssignProto, simulating the §8.3
 // post-pod-claim credential-assignment race: the pre-claim check passed (the
 // pool resolves) yet the lease mint fails in the assignment window.
 type failingAssigner struct{}
@@ -447,7 +447,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, dial)
 	// The pre-check resolves an assignable pool, but the lease mint fails in the
-	// assignment window: the §8.3 line 470 post-pod-claim race.
+	// assignment window: the §8.3 post-pod-claim race.
 	binder.Credentials = failingAssigner{}
 	srv := sessionserver.New(store, sessionserver.Options{
 		IDFunc:                  func() string { return "unused" },

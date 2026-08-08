@@ -7,8 +7,7 @@
 // state uses, so the §25.10 field-by-field diff compares configuration
 // against configuration.
 //
-// spec: §25.10 line 3770 ("Running state — read via GatewayClient calls
-// to GET /v1/admin/runtimes, GET /v1/admin/pools, etc.").
+// spec: §25.10.
 //
 // The admin LIST endpoints return more per-resource fields than the
 // desired-state snapshot carries: an optimistic-concurrency etag,
@@ -26,7 +25,7 @@ import (
 	"strconv"
 )
 
-// §25.10 line 3828 comparison scopes. The empty string and "all" select
+// §25.10 comparison scopes. The empty string and "all" select
 // every resource type; the narrow scopes restrict collection to one.
 const (
 	ScopeAll             = "all"
@@ -69,16 +68,16 @@ type listEnvelope struct {
 
 // commonObservedFields are the server-generated provenance fields every
 // admin payload carries that the operator's desired-state snapshot does
-// not declare: the §15.1 optimistic-concurrency etag (lines 1207-1209)
+// not declare: the §15.1 optimistic-concurrency etag
 // and the server-clock create/update/delete timestamps. Stripping them
 // keeps them out of the diff as spurious "added" drift.
 var commonObservedFields = []string{"etag", "createdAt", "updatedAt", "deletedAt"}
 
 // poolObservedFields are the live pool-status fields the admin GET
 // populates from the running cluster rather than from the desired pool
-// config: the bootstrap condition and idle count (§5.2 line 629), the
-// active-session count and lifecycle phase (§15.1 line 797), the CRD
-// reconciliation status (§4.6.2 line 559), and the cold-start bootstrap
+// config: the bootstrap condition and idle count (§5.2), the
+// active-session count and lifecycle phase (§15.1), the CRD
+// reconciliation status (§4.6.2), and the cold-start bootstrap
 // status object (§17.8.2 step 3).
 var poolObservedFields = []string{
 	"poolCondition", "idlePodCount", "activeSessions", "syncStatus", "phase", "bootstrapStatus",
@@ -107,7 +106,7 @@ func New(client AdminGetter) *Reader {
 // resource type ("runtimes", "pools", "tenants", "credential-pools")
 // mapping resource identity to its normalized config. The "all" scope
 // (and any unrecognized scope) drives the wide collection; a narrow
-// scope collects only its one resource type. §25.10 lines 3770, 3828.
+// scope collects only its one resource type. §25.10.
 func (r *Reader) RunningState(ctx context.Context, scope string) (map[string]any, error) {
 	out := map[string]any{}
 	switch scope {
@@ -133,7 +132,7 @@ func (r *Reader) RunningState(ctx context.Context, scope string) (map[string]any
 	case ScopeCredentialPools:
 		return out, r.collectCredentialPools(ctx, out)
 	default:
-		// §25.10 line 3828 enumerates the valid scopes. An unrecognized
+		// §25.10 enumerates the valid scopes. An unrecognized
 		// value collects nothing rather than erroring, so a caller typo
 		// reports an empty running state (no drift) instead of failing the
 		// request — the pre-wiring empty-running-state posture.

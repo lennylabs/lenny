@@ -23,7 +23,7 @@ func withTraceContextPropagator(t *testing.T) {
 	t.Cleanup(func() { otel.SetTextMapPropagator(prev) })
 }
 
-// spec: §16.3 lines 320, 326 ("Client → Gateway (HTTP headers)") — an inbound
+// spec: §16.3 ("Client → Gateway (HTTP headers)") — an inbound
 // W3C traceparent is extracted into the OTel context so a downstream span
 // continues the client's trace rather than starting a detached root. The
 // regression the finding names ("a traceparent received from a client is
@@ -59,7 +59,7 @@ func TestWrapExtractsInboundTraceparentIntoOTelContext_spec_16_3_326(t *testing.
 	}
 }
 
-// spec: §16.3 line 326 — a request with no traceparent yields no remote span
+// spec: §16.3 — a request with no traceparent yields no remote span
 // context, so a downstream span starts a fresh root rather than inheriting a
 // bogus parent. F-16.3.3.
 func TestWrapWithoutTraceparentLeavesContextRootable_spec_16_3_326(t *testing.T) {

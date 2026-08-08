@@ -9,8 +9,7 @@ import (
 )
 
 // Preflight check names, surfaced in the §25.8 preflight result and the
-// details.failures list. They mirror the §25.8 Phase-1 validations (spec
-// lines 3496-3503).
+// details.failures list. They mirror the §25.8 Phase-1 validations.
 const (
 	CheckNoUpgradeInProgress = "no_upgrade_in_progress"
 	CheckVersionPrerequisite = "version_prerequisite"
@@ -19,23 +18,20 @@ const (
 	CheckPostgresConnections = "postgres_connections"
 )
 
-// HealthChecker reports whether the platform is healthy, per the §25.8
-// Phase-1 health gate (spec line 3497, gateway GET /v1/admin/health/
-// summary). A nil checker skips the gate with a degradation note.
+// HealthChecker reports whether the platform is healthy, per the §25.8 Phase-1 health gate. A nil checker skips the gate with a degradation note.
 type HealthChecker interface {
 	Healthy(ctx context.Context) (healthy bool, detail string, err error)
 }
 
 // ImagePullChecker reports whether a resolved image reference is pullable,
-// per the §25.8 Phase-1 image gate (spec line 3500, HEAD to the registry
-// manifest endpoint). A nil checker skips the gate with a degradation note
+// per the §25.8 Phase-1 image gate. A nil checker skips the gate with a degradation note
 // (the resolved plan is still returned for the preview).
 type ImagePullChecker interface {
 	Pullable(ctx context.Context, ref string) (ok bool, detail string, err error)
 }
 
 // ConnChecker reports whether Postgres has enough free connections for the
-// migration phase, per the §25.8 Phase-1 connection gate (spec line 3501).
+// migration phase, per the §25.8 Phase-1 connection gate.
 // A nil checker skips the gate.
 type ConnChecker interface {
 	HasFreeConnections(ctx context.Context) (ok bool, detail string, err error)
@@ -131,7 +127,7 @@ func NewPreflighter(opts PreflighterOptions) *Preflighter {
 // gates failed returns a PreflightResult with Passed=false and no error,
 // so the handler maps the structured failure to the canonical envelope.
 //
-// spec: §25.8 Phase 1 (lines 3496-3503), POST .../upgrade/preflight.
+// spec: §25.8 Phase 1, POST .../upgrade/preflight.
 func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (PreflightResult, error) {
 	res := PreflightResult{Plan: req.ImagePlan, TargetVersion: req.TargetVersion, Passed: true}
 

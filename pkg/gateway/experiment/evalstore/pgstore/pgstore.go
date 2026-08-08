@@ -101,7 +101,7 @@ func (s *Store) Put(ctx context.Context, r evalstore.EvalResult) (evalstore.Eval
 
 // FindByIdempotencyKey returns the newest in-window eval result for
 // (tenantID, sessionID, key) — the §10.7 dedup lookup. An empty key
-// returns ok=false without a query. spec: §10.7 line 940.
+// returns ok=false without a query. spec: §10.7.
 func (s *Store) FindByIdempotencyKey(ctx context.Context, tenantID, sessionID, key string, notBefore time.Time) (evalstore.EvalResult, bool, error) {
 	if key == "" {
 		return evalstore.EvalResult{}, false, nil
@@ -223,7 +223,7 @@ var _ evalstore.AggregateReader = (*Store)(nil)
 // variant id; a variant with no eval rows is absent from the map. The
 // matview pre-aggregates across all rows, so this read path serves only
 // the unfiltered, no-breakdown request — the handler routes filtered or
-// broken-down requests to the base table. spec: §10.7 lines 954, 1088.
+// broken-down requests to the base table. spec: §10.7.
 func (s *Store) AggregatesByExperiment(ctx context.Context, tenantID, experimentID string) (map[string]evalstore.VariantAggregate, error) {
 	out := map[string]evalstore.VariantAggregate{}
 	if experimentID == "" {
@@ -289,7 +289,7 @@ func (s *Store) AggregatesByExperiment(ctx context.Context, tenantID, experiment
 // refresh_lenny_eval_aggregates() function (migration 0156). The
 // function executes with its BYPASSRLS owner's privileges, so the
 // gateway's non-superuser lenny_app role drives the refresh without
-// itself bypassing row-level security. spec: §10.7 line 1088.
+// itself bypassing row-level security. spec: §10.7.
 func (s *Store) RefreshAggregates(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `SELECT refresh_lenny_eval_aggregates()`)
 	return err
@@ -332,7 +332,7 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 // walks the user's sessions and calls DeleteBySession per session.
 // DeleteByUser at this layer returns (0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -340,7 +340,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Removes every eval-result row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("evalstore: DeleteByTenant requires a concrete tenant_id")

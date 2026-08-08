@@ -1,4 +1,4 @@
--- §24.13 line 150 / §10.5 line 417: the expand-contract phase-tracking
+-- §24.13 / §10.5: the expand-contract phase-tracking
 -- table that backs `GET /v1/admin/schema/migrations/status`. The
 -- migration Job (lenny-migrate) UPSERTs one row per migration version it
 -- advances through at end-of-run, recording the resolved expand-contract
@@ -13,8 +13,7 @@
 -- prefers a recorded row when present so the operator sees the real
 -- applied-at timestamp, Job name, and Phase 3 gate result.
 --
--- spec: §24.13 line 150 (`phase`, `gateCheckResult`, `migrationJobName`,
--- `appliedAt`); §10.5 line 417 (Phase 3 enforcement-gate count outcome).
+-- spec: §24.13; §10.5.
 
 CREATE TABLE schema_migration_phase (
     version            BIGINT      PRIMARY KEY,

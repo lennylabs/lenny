@@ -1453,7 +1453,7 @@ The REST API ([Section 15.1](#151-rest-api)) and MCP tools ([Section 15.2](#152-
 
 ### 15.3 Internal Control API (Custom Protocol)
 
-Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-components.md#47-runtime-adapter) (Runtime Adapter) for the full RPC surface. The wire contract is published as machine-readable artifacts in [Section 15.4](#154-runtime-adapter-specification); this section (15.4 and its subsections) is the normative prose reference and is kept in sync with those artifacts.
+Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-components.md#47-runtime-adapter) (Runtime Adapter) for the full RPC surface. [Section 28](28_communication-channels.md) is the normative reference for the gateway-to-pod channel contract, and [Section 15.4](#154-runtime-adapter-specification) is the normative reference for the wire artifacts that contract is published as, which are kept in sync with the prose.
 
 ### 15.4 Runtime Adapter Specification
 
@@ -1512,143 +1512,9 @@ The `message` type carries an `input` field containing a `MessagePart[]` array (
 
 Runtimes that use a line-buffered or fully-buffered stdout MUST flush after every outbound message. The reference Go implementation (`examples/runtimes/echo/`) writes directly to `os.Stdout` (unbuffered) and requires no explicit flush call.
 
-#### Internal `MessagePart` Format
-
-`agent_text` streaming event is replaced by `agent_output` carrying `MessagePart` array. `TaskResult` and `TaskSpec` use `MessagePart` arrays. This is Lenny's internal content model — the adapter translates to/from external protocol formats (MCP, A2A) at the boundary.
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "part_abc123",
-  "type": "text",
-  "mimeType": "text/plain",
-  "inline": "content here",
-  "ref": "lenny-blob://...",
-  "annotations": { "role": "primary", "final": true },
-  "parts": [],
-  "status": "streaming | complete | failed"
-}
-```
-
-**Properties:**
-
-- **`schemaVersion` is an integer identifying the MessagePart schema revision (default `1`).** Present on every persisted `MessagePart`. The forward-compatibility contract has obligations on both sides:
-  - **Producer obligation:** Producers MUST set `schemaVersion` to the highest version required by the fields they emit. When a schema version introduces semantically important fields (e.g., `citations` in v2), the producer MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
-  - **Consumer obligation — streaming/live delivery:** Consumers MUST NOT reject a `MessagePart` solely because its `schemaVersion` is higher than the consumer understands. When a consumer encounters a `schemaVersion` it does not recognize, it processes the fields it does understand and MUST surface a **degradation signal**: a `schema_version_ahead` annotation on the parent `MessageEnvelope` (with `"knownVersion"` and `"encounteredVersion"` fields) so the end user or upstream caller is informed that the response may be incomplete. Consumers MUST NOT silently discard unknown fields without this signal. This ensures data loss from schema mismatch is always visible rather than hidden. `schema_version_ahead` is scoped specifically to the "new writer, old reader" direction on the `schemaVersion` field of a record; it is one of several distinct degradation annotation kinds catalogued in [Section 15.5](#155-api-versioning-and-stability) item 7 (Degradation annotation catalog) and MUST NOT be reused for unrelated signals such as retired MCP protocol versions.
-  - **Consumer obligation — durable storage (TaskRecord):** When `MessagePart` arrays are persisted as part of a `TaskRecord` ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)), the forward-read rule from [Section 15.5](#155-api-versioning-and-stability) item 7 applies: if a reader encounters a `MessagePart` with a `schemaVersion` it does not recognize, it MUST **forward-read** — process all fields it understands and preserve all unknown fields verbatim (pass-through) — rather than rejecting the record. Billing and audit records retained for 13 months will span multiple schema revisions; silent data loss or outright rejection in these records is unacceptable. If a durable consumer cannot safely pass through unknown fields (e.g., it writes to a schema-strict sink), it MUST emit a `durable_schema_version_ahead` structured error to an operator alert channel and queue the record for manual review rather than dropping it. This rule is consistent with the general durable-consumer rule in [Section 15.5](#155-api-versioning-and-stability) item 7 and extends it explicitly to `MessagePart` arrays embedded within persisted `TaskRecord` objects.
-- **`type` is an open string — not a closed enum — with a versioned canonical type registry.** The registry defines platform-defined types and their guaranteed translation behavior per adapter. Unprefixed names are reserved for the platform registry; third-party extensibility uses the `x-<vendor>/` namespace (see namespace convention below). Any type not in the current registry version is treated as a custom type and falls back to `text` with the original type preserved in `annotations.originalType`. Types may be added to the registry in minor releases; removing a type or changing its translation behavior is a breaking change requiring a major version bump. To preserve forward-compatibility across minor releases, unknown unprefixed types are **not** rejected at ingress — they are passed through with the same custom-type fallback, plus an `unregistered_platform_type` warning annotation, so that a newly registered type can be emitted by an updated runtime before all gateways have been upgraded. This retains open-string extensibility while making translation deterministic across adapter implementations.
-
-  **Canonical Type Registry (v1):**
-
-  | Type               | Description                                   | MCP Translation                                              | OpenAI Translation                           | A2A Translation                                      |
-  | ------------------ | --------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------- |
-  | `text`             | Plain or formatted text                       | `TextContent` block                                          | `text` content                               | A2A `TextPart`                                       |
-  | `code`             | Source code with optional language annotation | `TextContent` with `language` annotation                     | `text` content                               | A2A `TextPart` with `mimeType`                       |
-  | `reasoning_trace`  | Model reasoning/chain-of-thought              | `TextContent` with `thinking` annotation                     | `text` content (reasoning not representable) | A2A `TextPart` with `metadata.semantic: "reasoning"` |
-  | `citation`         | Source citation or reference                  | `TextContent` with citation annotation                       | `text` content                               | A2A `TextPart` with `metadata.semantic: "citation"`  |
-  | `screenshot`       | Screen capture image                          | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
-  | `image`            | General image content                         | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
-  | `diff`             | Code diff / patch                             | `TextContent` with `language: "diff"`                        | `text` content                               | A2A `TextPart` with `mimeType: "text/x-diff"`        |
-  | `file`             | File content (binary or text)                 | `ResourceContent` block                                      | Resolved to inline `text` or dropped         | A2A `FilePart`                                       |
-  | `execution_result` | Compound output from code execution           | Flattened to sequential `TextContent` blocks with `parentId` | Flattened to sequential `text` entries       | A2A composite part                                   |
-  | `error`            | Error or diagnostic message                   | `TextContent` with `isError: true`                           | `text` content                               | A2A `TextPart` with `metadata.semantic: "error"`     |
-
-  **Custom types** (any `type` value not listed above): collapsed to `text` with `annotations.originalType` set to the original type string. Runtimes may emit any custom type; the gateway passes them through internally but adapters apply the fallback rule at the protocol boundary. The registry is published as part of the runtime adapter specification and versioned alongside the adapter protocol.
-
-  **Namespace convention for third-party types.** To avoid collisions with future platform-defined types, all vendor- or community-defined custom types MUST use a reverse-DNS namespace prefix in the form `x-<vendor>/<typeName>` (e.g., `x-acme/heatmap`, `x-myorg/audio-transcript`). Unprefixed names are reserved for platform-defined registry types. The gateway logs and annotates unknown unprefixed types at ingress (adding an `unregistered_platform_type` warning annotation with the unrecognized type string) but does **not** reject them — they fall through to the standard custom-type-to-`text` collapse so that newly registered types introduced in a minor release are forward-compatible across gateway versions that have not yet been upgraded.
-
-  **`schemaVersion` per-type contract.** The `schemaVersion` field on a `MessagePart` is scoped to the envelope schema (field set, semantics of existing fields). The stable field set guaranteed at each registry version is:
-
-  | Type               | `schemaVersion` 1 — guaranteed fields                                               | Notes on future versions                                              |
-  | ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-  | `text`             | `type`, `inline`, `mimeType` (`text/plain`)                                         | v2 may add `citations[]`                                              |
-  | `code`             | `type`, `inline`, `mimeType`, `annotations.language`                                | —                                                                     |
-  | `reasoning_trace`  | `type`, `inline`                                                                    | v2 may add structured `steps[]`                                       |
-  | `citation`         | `type`, `inline`, `annotations.source`                                              | —                                                                     |
-  | `screenshot`       | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
-  | `image`            | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
-  | `diff`             | `type`, `inline`, `annotations.language` (`diff`)                                   | —                                                                     |
-  | `file`             | `type`, `inline` or `ref`, `mimeType`                                               | —                                                                     |
-  | `execution_result` | `type`, `parts[]` (each part is a full `MessagePart`)                                | v2 may add `exitCode`, `duration`                                     |
-  | `error`            | `type`, `inline` (human-readable message), `annotations.errorCode` (optional)       | —                                                                     |
-
-  A producer emitting fields that were introduced in a later schema version MUST set `schemaVersion` to that version. Consumers that encounter a `(type, schemaVersion)` combination they do not recognize apply the forward-compatibility rules defined above: degradation signal for live delivery; forward-read with unknown-field preservation for durable storage (see [Section 15.5](#155-api-versioning-and-stability) item 7).
-
-- **`mimeType` handles encoding separately.** The gateway validates, logs, and routes based on MIME type without understanding semantics.
-- **`inline` vs `ref` — resolution protocol.** A part either contains bytes inline (`inline` field set, base64 for binary content) or references external blob storage (`ref` field set). The two fields are mutually exclusive on any given part; setting both is a validation error (`400 MESSAGEPART_INLINE_REF_CONFLICT`). The gateway selects the representation automatically based on part size:
-
-  | Part size | Gateway action | Consumer sees |
-  | --- | --- | --- |
-  | ≤ 64 KB | Store inline (base64 for binary, UTF-8 for text) | `inline` field populated; `ref` absent |
-  | > 64 KB and ≤ 50 MB | Stage to blob store; set `ref` to `LennyBlobURI` | `ref` populated; `inline` absent |
-  | > 50 MB | Rejected at ingress | `413 MESSAGEPART_TOO_LARGE` |
-
-  **`LennyBlobURI` scheme.** Blob references use the URI scheme `lenny-blob://`:
-
-  ```
-  lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl={seconds}&enc=aes256gcm
-  ```
-
-  | Component | Description |
-  | --- | --- |
-  | `tenant_id` | Tenant namespace — prevents cross-tenant dereference |
-  | `session_id` | Originating session — scopes the blob to one session |
-  | `part_id` | Stable part identifier (matches `MessagePart.id`) |
-  | `ttl` | Seconds until the blob expires in storage (see TTL table below) |
-  | `enc` | Encryption indicator; always `aes256gcm` for stored blobs |
-
-  **Immutability guarantee.** Blob storage is write-once per `(tenant_id, session_id, part_id)` triple. The gateway writes a blob exactly once when staging a `MessagePart`; subsequent reads always return the same bytes. No `generation` component is needed in the URI because part IDs are globally unique within a session — the internal `coordination_generation` counter ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) is used only for coordinator fencing and never causes part IDs to be reused or existing blobs to be overwritten. A `lenny-blob://` URI is safe to cache and share for the duration of its `ttl`.
-
-  **TTL policy by context:**
-
-  | Context | Default TTL | Configurable? |
-  | --- | --- | --- |
-  | Live streaming delivery (session active) | 3 600 s (1 h) | Yes — `blobStore.liveDeliveryTtlSeconds` |
-  | Persisted in `TaskRecord` | 2 592 000 s (30 d) | Yes — `blobStore.taskRecordTtlSeconds` |
-  | Audit / billing event payload | 34 128 000 s (13 months) | Yes — `blobStore.auditTtlSeconds` |
-  | Delegation export (parent → child) | Duration of child session + 1 h | Fixed |
-
-  **Consumer fallback obligation.** When a consumer encounters a `ref` it cannot dereference (blob expired, storage unavailable, network partition), it MUST:
-  1. Surface a `blob_ref_unresolvable` degradation annotation on the `MessageEnvelope` (fields: `partId`, `ref`, `reason`).
-  2. Substitute a placeholder `MessagePart` of type `error` with `inline: "Blob reference unresolvable: {reason}"`.
-  3. Never silently drop the part.
-
-  **Adapter dereference obligation.** External protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields before serializing outbound messages to external clients — external protocols do not speak `lenny-blob://`. The REST adapter passes `ref` values through as-is (REST clients may dereference directly via `GET /v1/blobs/{ref}`).
-- **`annotations` as an open metadata map.** `role`, `confidence`, `language`, `final`, `audience` — any metadata. The gateway can index and filter on annotations without understanding the part type.
-- **`parts` for nesting.** Compound outputs (e.g., `execution_result` containing code, stdout, stderr, chart) are first-class.
-- **`id` enables part-level streaming updates** — concurrent part delivery where text streams while an image renders.
-
-**Rationale for internal format over MCP content blocks directly:** Runtimes are insulated from external protocol evolution. When MCP adds new block types or A2A parts change, only the gateway's `ExternalProtocolAdapter` translation layer updates — runtimes are untouched.
-
-**MCP content block → MessagePart mapping (inbound translation):** When the gateway receives MCP content blocks from a client and delivers them to a runtime, the adapter translates each MCP block to a `MessagePart` as follows:
-
-| MCP content block type | → `MessagePart.type` | `MessagePart.inline` source                  | `MessagePart.mimeType`          | `MessagePart.ref` source   | Notes                                                             |
-| ---------------------- | ------------------- | ------------------------------------------- | ------------------------------ | ------------------------- | ----------------------------------------------------------------- |
-| `TextContent`          | `text`              | `text` field                                | `text/plain`                   | —                         | `language` annotation → `annotations.language` if present        |
-| `ImageContent` (url)   | `image`             | —                                           | from `mimeType` if present     | `url.url`                 | URL set as `ref`; inline not populated                            |
-| `ImageContent` (base64)| `image`             | base64 data string                          | `mimeType`                     | —                         | Stored inline                                                     |
-| `EmbeddedResource` (text blob) | `file`    | resource text content                       | `text/plain` or resource MIME  | —                         | Stored inline when small; large blobs staged to artifact store    |
-| `EmbeddedResource` (blob)      | `file`    | —                                           | resource MIME type             | artifact URI              | Staged to artifact store; `ref` set to `lenny-blob://` URI        |
-| `EmbeddedResource` (uri)       | `file`    | —                                           | resource MIME type             | resource URI              | `ref` set directly from resource URI                              |
-| MCP `isError: true` annotation | `error`   | inherited from enclosing block              | —                              | —                         | `type` overridden to `error`; `annotations.errorCode` populated if present |
-
-Runtime authors who produce output using MCP-familiar content block objects can use the `from_mcp_content()` helper (see below) to perform this translation without manual field mapping.
-
-**Minimum required fields for Basic-level runtimes:** Only `type` and `inline` are required. All other fields (`schemaVersion`, `id`, `mimeType`, `ref`, `annotations`, `parts`, `status`) are optional and have sensible defaults — `schemaVersion` defaults to `1` if absent, `id` is generated by the adapter if absent, `mimeType` defaults to `text/plain` for `type: "text"`, `status` defaults to `complete` for non-streaming responses. A minimal valid `MessagePart` is `{"type": "text", "inline": "hello"}`.
-
-**Simplified text-only response shorthand:** Basic-level runtimes may emit a simplified response form with a top-level `text` field instead of an `output` array:
-
-```json
-{ "type": "response", "text": "The answer is 4." }
-```
-
-The adapter normalizes this to the canonical form `{"type": "response", "output": [{"type": "text", "inline": "The answer is 4."}]}` before forwarding to the gateway. This shorthand is strictly equivalent — runtimes that need structured output (multiple parts, non-text types, annotations) use the full `output` array form.
-
-**Optional SDK helper `from_mcp_content(blocks)`** converts MCP content blocks to `MessagePart` arrays for runtime authors who want to produce output using familiar MCP formats. Availability:
-
-- **Go:** Ships in the `github.com/lennylabs/runtime-sdk-go/messagepart` sub-package of the Runtime Author SDK ([§15.7](#157-runtime-author-sdks)) (Phase 2 deliverable). Import the package and call `messagepart.FromMCPContent(blocks)`.
-- **Other languages:** Not yet published as a library. Use the mapping table above to implement the conversion inline — the logic is a straightforward switch on `content.type`. A copy-paste reference implementation is distributed alongside the runtime adapter specification artifacts ([Section 15.4](#154-runtime-adapter-specification)).
-- **No SDK required:** Runtimes can construct `MessagePart` objects directly without any Lenny SDK dependency. The SDK helper is a convenience only.
+The internal `MessagePart` format is stated by the `CH-MSGSOCK` card in
+[Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+contract.
 
 #### Translation Fidelity Matrix
 
@@ -1707,7 +1573,7 @@ Adapters ignore hint keys they do not recognize. Runtimes that do not set `proto
 
 #### `MessageEnvelope` — Unified Message Format
 
-All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see Protocol Reference below.
+All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
 
 ```json
 {
@@ -1833,237 +1699,11 @@ The event is persisted to the sender session's event store and replayable within
 
 **Future-proof:** `MessageEnvelope` with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, and `delegationDepth` accommodates all future conversational patterns without schema changes: threaded messages, multiple participants, non-linear context retrieval, broadcast, external agent participation.
 
-#### Protocol Reference — Message Schemas
-
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4.1](#1541-adapterbinary-protocol)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`, `slotId`) can be safely ignored.
-
-##### Inbound: `message`
-
-```json
-{
-  "type": "message",
-  "id": "msg_001",
-  "input": [{ "type": "text", "inline": "What is 2+2?" }],
-  "from": { "kind": "client", "id": "client_8f3a2b" },
-  "threadId": "t_01",
-  "delivery": "queued",
-  "slotId": "slot_01"
-}
-```
-
-Basic-level: read `type`, `id`, `input`. Ignore all other fields. `slotId` is optional and is present only on pods with `maxConcurrentSessions > 1`.
-
-##### Inbound: `heartbeat`
-
-```json
-{ "type": "heartbeat", "ts": 1717430400 }
-```
-
-Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and sends SIGTERM.
-
-##### Inbound: `shutdown`
-
-```json
-{ "type": "shutdown", "reason": "drain", "deadline_ms": 10000 }
-```
-
-Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
-
-##### Inbound: `tool_result`
-
-Schema:
-
-```json
-{
-  "type": "tool_result",
-  "id": "<string, required — matches the tool_call.id this result responds to>",
-  "content": ["<MessagePart[], required — result content>"],
-  "isError": "<boolean, optional — true if tool execution failed; defaults to false>",
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Example:
-
-```json
-{
-  "type": "tool_result",
-  "id": "tc_001",
-  "content": [{ "type": "text", "inline": "file contents here" }],
-  "isError": false
-}
-```
-
-**Correlation:** Every `tool_result.id` MUST match the `id` of a previously emitted `tool_call`. The adapter validates this — a `tool_result` with an unknown `id` is dropped and logged as a protocol error. Agents may have multiple outstanding `tool_call` requests; results may arrive in any order.
-
-**Delivery semantics:** Tool calls use synchronous request/response semantics within the stdin/stdout channel. The agent emits a `tool_call`, then continues reading stdin until it receives the matching `tool_result` (identified by `id`). Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` — the agent must handle interleaved delivery. There is no async callback or webhook mechanism; all tool results are delivered inline on stdin.
-
-**Tool access by level:**
-
-| Level        | Tool access                                                                                                        | `tool_call` / `tool_result` behavior                                                                                                                                                                                                                               |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Basic**    | No MCP tools available. The agent binary has no platform MCP server or connector MCP servers.                      | Agents MAY still emit `tool_call` for adapter-local tools (e.g., `read_file`, `write_file` provided by the adapter's local sandbox tooling). The adapter resolves these locally and returns `tool_result` on stdin. No platform or connector tools are accessible. |
-| **Standard** | Platform MCP server tools (`lenny/delegate_task`, `lenny/request_input`, etc.) and per-connector MCP server tools. | The agent calls MCP tools via the MCP client connection to the adapter's local servers (not via `tool_call` on stdin). The stdin `tool_call`/`tool_result` channel is used for adapter-local tools only.                                                           |
-| **Full**     | Same as Standard plus CH-RUNTIMEOPS capabilities.                                                              | Same as Standard.                                                                                                                                                                                                                                                  |
-
-##### Outbound: `response`
-
-```json
-{
-  "type": "response",
-  "output": [{ "type": "text", "inline": "The answer is 4." }],
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Basic-level shorthand (adapter normalizes to canonical form above):
-
-```json
-{ "type": "response", "text": "The answer is 4." }
-```
-
-**Error reporting via `response`.** The `response` message supports an optional `error` field for structured error reporting: `{"code": string, "message": string}`, matching the `TaskResult.error` shape. When `error` is present, the adapter maps the task to `failed` state and populates `TaskResult.error` from the response error. This allows runtimes to report failure details while still delivering partial output in the `output` array, without relying solely on non-zero exit codes (which lose error context). When `error` is absent and the process exits zero, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
-
-**Relationship between `lenny/output` and stdout `response`:** At Standard and Full levels, runtimes may emit output parts incrementally via the `lenny/output` platform MCP tool. The stdout `{type: "response"}` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`; runtimes that have already emitted all output parts via `lenny/output` send an empty `output` array (`[])`. The adapter concatenates `lenny/output` parts (in call order) with the final `response.output` parts to form the complete task output. Basic-level runtimes, which have no access to `lenny/output`, must include all output in the stdout `response.output` array. Standard-level runtimes may use either delivery path or both.
-
-##### Outbound: `tool_call`
-
-Schema:
-
-```json
-{
-  "type": "tool_call",
-  "id": "<string, required — unique call identifier; used to correlate the inbound tool_result>",
-  "name": "<string, required — tool name>",
-  "arguments": "<object, required — tool-specific parameters; validated by the adapter against the tool's input schema>",
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Example:
-
-```json
-{
-  "type": "tool_call",
-  "id": "tc_001",
-  "name": "read_file",
-  "arguments": { "path": "/workspace/foo.txt" }
-}
-```
-
-The `id` field is generated by the agent and must be unique within the session. Recommended format: `tc_` prefix with a monotonic counter or random suffix (e.g., `tc_001`, `tc_a7f3b`). The adapter uses this `id` to route the corresponding `tool_result` back on stdin.
-
-**Adapter-Local Tool Reference**
-
-Adapter-local tools are resolved entirely within the adapter process — no MCP server, no platform access, and no network call is required. They are available at all levels (Basic, Standard, Full). The following tools are built into every adapter:
-
-| Tool name     | Description                                                       |
-| ------------- | ----------------------------------------------------------------- |
-| `read_file`   | Read the contents of a file in the workspace                      |
-| `write_file`  | Create or overwrite a file in the workspace                       |
-| `list_dir`    | List the entries of a directory in the workspace                  |
-| `delete_file` | Delete a file or empty directory from the workspace               |
-
-Discovery: agents discover adapter-local tools by inspecting the `adapterLocalTools` array in the adapter manifest (`/run/lenny/adapter-manifest.json`). Each entry contains the tool `name`, a human-readable `description`, and a JSON Schema `inputSchema` for its `arguments` object. Adapters MUST populate this array before spawning the runtime; the set is fixed for the lifetime of the pod.
-
-Schemas for the four built-in tools:
-
-```json
-[
-  {
-    "name": "read_file",
-    "description": "Read the contents of a file in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the file." }
-      },
-      "required": ["path"]
-    }
-  },
-  {
-    "name": "write_file",
-    "description": "Create or overwrite a file in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path":    { "type": "string", "description": "Workspace-relative or absolute path to the file." },
-        "content": { "type": "string", "description": "UTF-8 text content to write." }
-      },
-      "required": ["path", "content"]
-    }
-  },
-  {
-    "name": "list_dir",
-    "description": "List the entries of a directory in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the directory." }
-      },
-      "required": ["path"]
-    }
-  },
-  {
-    "name": "delete_file",
-    "description": "Delete a file or empty directory from the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the target." }
-      },
-      "required": ["path"]
-    }
-  }
-]
-```
-
-All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined to the pod's workspace volume (`/workspace`). The adapter rejects any path that resolves outside `/workspace` with a `tool_result` carrying `isError: true` and `content[0].inline` set to the string `"path_outside_workspace"`. Custom adapters MAY extend this list with additional adapter-local tools; they MUST declare all custom tools in `adapterLocalTools` before spawning the runtime.
-
-##### Outbound: `heartbeat_ack`
-
-```json
-{ "type": "heartbeat_ack" }
-```
-
-##### Outbound: `status` (optional)
-
-```json
-{ "type": "status", "state": "thinking", "message": "Analyzing code..." }
-```
-
-**Exit Codes**
-
-| Code | Meaning                                                            |
-| ---- | ------------------------------------------------------------------ |
-| 0    | Normal completion — session ended cleanly or shutdown honored      |
-| 1    | Runtime error — adapter logs stderr and reports failure to gateway |
-| 2    | Protocol error — agent could not parse inbound messages            |
-| 137  | SIGKILL (set by OS) — adapter treats as crash, pod is not reused   |
-
-Any non-zero exit during an active session causes the gateway to report a session error to the client. During draining, exit code 0 confirms graceful shutdown; non-zero triggers an alert but the session result (if any) is still delivered.
-
-**Annotated Protocol Trace — Basic-Level Session**
-
-```
-1. Adapter starts agent binary, stdin/stdout pipes open.
-2. Adapter writes to stdin:
-   {"type": "message", "id": "msg_001", "input": [{"type": "text", "inline": "Hello"}], "from": {"kind": "client", "id": "client_8f3a2b"}, "threadId": "t_01"}
-3. Agent reads line from stdin, parses JSON, reads type/id/input (ignores other fields).
-4. Agent writes to stdout (either form is valid):
-   {"type": "response", "text": "Echo: Hello"}
-   — or equivalently —
-   {"type": "response", "output": [{"type": "text", "inline": "Echo: Hello"}]}
-5. Adapter reads line from stdout, delivers response to gateway.
-6. [Heartbeat interval] Adapter writes:
-   {"type": "heartbeat", "ts": 1717430410}
-7. Agent writes:
-   {"type": "heartbeat_ack"}
-8. Gateway initiates shutdown. Adapter writes:
-   {"type": "shutdown", "reason": "drain", "deadline_ms": 10000}
-9. Agent finishes, exits with code 0.
-10. Adapter reports clean termination to gateway.
-```
+The message schemas of the adapter↔binary stdin and stdout messages, which are `message`,
+`heartbeat`, `shutdown`, `tool_result`, `response`, `tool_call`, `heartbeat_ack`, and `status`, are
+stated by the `CH-MSGSOCK` card in
+[Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+contract.
 
 #### 15.4.2 RPC Lifecycle State Machine
 
@@ -2112,7 +1752,7 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 - **Transport.** All intra-pod MCP servers use **abstract Unix sockets** exclusively (names listed in the adapter manifest, e.g., `@lenny-platform-mcp`, `@lenny-connector-github`). There is no stdio transport for intra-pod MCP — stdio is reserved for the binary protocol between the adapter and the runtime. **Platform compatibility note:** Abstract Unix sockets (names beginning with `@`) are a Linux kernel feature. They are available wherever the adapter and runtime binary run inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter and runtime binary run in an in-cluster pod — on macOS and Windows that pod runs under Docker Desktop's Linux VM (see [Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Embedded Mode) — so Standard- and Full-level runtime authors on macOS and Windows can develop against Embedded Mode. Source Mode (`make run`) runs the adapter on the host, where abstract sockets are **not supported on macOS**; `make run` therefore supports macOS for Basic-level runtimes only, since Basic level uses the stdin/stdout binary protocol exclusively and does not open any Unix sockets. macOS developers who use Source Mode for Standard- or Full-level work should use `docker compose up` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Compose Mode) instead, which runs the adapter inside a Linux container.
 - **Protocol version.** The adapter's local MCP servers speak **MCP 2025-03-26** (the platform's target MCP spec version; see [Section 15.2](#152-mcp-api) for version negotiation details). The local servers also accept **MCP 2024-11-05** for backward compatibility. Intra-pod MCP version support follows the same rolling two-version policy as the gateway ([Section 15.5](#155-api-versioning-and-stability) item 2): the oldest accepted version enters a 6-month deprecation window when a new MCP spec version is adopted, and removal applies only to new connection negotiations (active sessions on the deprecated version are not forcibly terminated).
 - **Client libraries.** Runtime authors should use an existing MCP client library for their language (e.g., `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript/Node.js, `mcp` for Python). These libraries work against the adapter's local servers with one Lenny-specific addition: the runtime must send the manifest nonce as the first message of the MCP `initialize` handshake (see Authentication below).
-- **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed in Part A of this section (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
+- **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed by the `CH-MCP-PLATFORM` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
 - **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake, identical in mechanism to the CH-RUNTIMEOPS handshake ([Section 4.7](04_system-components.md#47-runtime-adapter), item 1). The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, regenerated per session alongside the rest of the manifest).
 
   **Nonce wire format (v1 — intra-pod only).** The nonce is a Lenny-private convention for intra-pod MCP connections only; it does not appear on any external-facing MCP endpoint and is not part of the MCP specification. The canonical injection location is the top-level `_lennyNonce` field in the MCP `initialize` request's `params` object:
@@ -2211,10 +1851,10 @@ Pseudocode (Basic-level):
                     "type": "response",
                     "text": "echo [seq={seq}]: {msg.input[0].inline}"
                 }))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
                 exit(0)
             default:
@@ -2272,10 +1912,10 @@ Pseudocode (Standard-level addition — nonce + MCP):
                                 "inline": "echo [seq={seq}]: {msg.input[0].inline}"}]
                 })
                 write_line(stdout, json({"type": "response", "output": []}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
                 platform_mcp.close()
                 exit(0)
@@ -2369,10 +2009,10 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
                                 "inline": "echo [seq={seq}]: {msg.input[0].inline}"}]
                 })
                 write_line(stdout, json({"type": "response", "output": []}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
                 // shutdown arrives on stdin even for Full-level; lifecycle terminate
                 // may arrive first — handle whichever comes first
@@ -2399,7 +2039,7 @@ Runtime-author information is distributed across this specification. The followi
 
 **Standard-level (add MCP integration):**
 
-7. **[Section 4.7](04_system-components.md#47-runtime-adapter)** — Runtime Adapter. Read for the **adapter manifest field reference** (`platformMcpServer.socket`, `connectorServers`, `mcpNonce`). The CH-RUNTIMEOPS message schemas (Part B) are Full-level only — skip for Standard level. The gRPC RPC table at the top of 4.7 is the gateway↔adapter contract and is not relevant to binary authors.
+7. **[Section 4.7](04_system-components.md#47-runtime-adapter)** — Runtime Adapter. Read for the **adapter manifest field reference** (`platformMcpServer.socket`, `connectorServers`, `mcpNonce`). The CH-RUNTIMEOPS message schemas are stated by the `CH-RUNTIMEOPS` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) and are Full-level only — skip for Standard level. The gRPC RPC table at the top of 4.7 is the gateway↔adapter contract and is not relevant to binary authors.
 8. **[Section 9.1](09_mcp-integration.md#91-where-mcp-is-used)** — MCP Integration. How the platform MCP server and connector MCP servers are exposed to your runtime.
 9. **[Section 8.2](08_recursive-delegation.md#82-delegation-mechanism)** — Delegation Mechanism. How `lenny/delegate_task` works if your runtime delegates sub-tasks.
 10. **[Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)** — Runtime. Runtime definition schema (`type`, `capabilities`, `baseRuntime`), registration via admin API.
@@ -2432,7 +2072,7 @@ The validator then reports:
 - **Observed > declared** (author under-declared). Exit `0` but print a WARN and set `"status": "underdeclared"`. Suggested remediation: raise `integrationLevel` in `runtime.yaml` to match observed behaviour so that callers and admission can rely on the higher level.
 - **Observed < declared** (runtime under-performs its claim). Exit **non-zero** with structured error `runtime_level_underperforms`: `{ "declared": "<x>", "observed": "<y>", "missing": [<capability names not exercised at observed level>] }`. The runtime does not meet the contract it has published; conformance tests for the missing level's categories are reported as failed.
 
-The observed-level probe is the local-tooling counterpart of the registration-time admission check described in [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) `integrationLevel` documentation; both compare declared against the `lifecycle_support` handshake from [§4.7](04_system-components.md#47-runtime-adapter).
+The observed-level probe is the local-tooling counterpart of the registration-time admission check described in [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) `integrationLevel` documentation; both compare declared against the `lifecycle_support` handshake stated by the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod).
 
 **Test categories by integration level.** Each higher level inherits every test category from the levels below it.
 
@@ -2553,9 +2193,9 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
     - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-runtime-ops` (Full: agent-side CH-RUNTIMEOPS). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
     - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the CH-RUNTIMEOPS), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
     - **Credential delivery.** Read-only access patterns for `/run/lenny/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
-    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from [§4.7](04_system-components.md#47-runtime-adapter) and [§15.4.1](#1541-adapterbinary-protocol).
+    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) and [§15.4.1](#1541-adapterbinary-protocol).
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
-- **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined in [§4.7](04_system-components.md#47-runtime-adapter): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the platform MCP tool set; this list tracks it. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§15.4.1](#1541-adapterbinary-protocol)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
+- **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined by the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. The `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) is authoritative for the platform MCP tool set and [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the adapter manifest; this list tracks the tool set. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§15.4.1](#1541-adapterbinary-protocol)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
 - **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode env-var refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
 - **Workspace utilities.** Helpers for materializing files into `/workspace`, respecting the workspace plan ([§14](14_workspace-plan-schema.md)), and uploading checkpoints ([§7.1](07_session-lifecycle.md#71-normal-flow) seal-and-export).
 - **Telemetry.** Prometheus counters for request counts, errors, and latencies, and OpenTelemetry spans wrapping each request.
@@ -2697,7 +2337,7 @@ type Message struct {
 // [§15.4.1](#1541-adapterbinary-protocol) "Outbound: `response`" — Parts
 // becomes `output`, and the Streaming / Final flags drive how the SDK
 // reconciles incremental output delivered via the `lenny/output` platform
-// MCP tool ([§4.7](04_system-components.md#47-runtime-adapter) Part A) with
+// MCP tool (the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod)) with
 // the final response frame.
 type Reply struct {
     // Parts is the MessagePart array the runtime emits for this turn. The

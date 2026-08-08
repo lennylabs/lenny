@@ -59,7 +59,7 @@ func TestPoolLimitOnly_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 198 — when both the runtime and the pool declare a cap,
+// spec: §11.3 — when both the runtime and the pool declare a cap,
 // the most-restrictive (smaller positive) value wins. F-11.3.3.
 func TestRuntimeAndPoolMostRestrictiveWins_spec_11_3_198(t *testing.T) {
 	rts := runtimestore.NewMemory()
@@ -102,7 +102,7 @@ func TestDerivedRuntimeLimitResolves_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 198 — neither surface declares a cap, a missing
+// spec: §11.3 — neither surface declares a cap, a missing
 // runtime/pool reference, and empty refs all yield 0 so the watchdog falls
 // back to the platform default. F-11.3.3.
 func TestNoCapAndMissingRefsYieldZero_spec_11_3_198(t *testing.T) {
@@ -128,7 +128,7 @@ func TestNoCapAndMissingRefsYieldZero_spec_11_3_198(t *testing.T) {
 	}
 }
 
-// spec: §14 line 154 / §27.6 line 200 — a per-session timeout override (also
+// spec: §14 / §27.6 — a per-session timeout override (also
 // the carrier for the playground duration cap) tightens the runtime/pool cap,
 // and an unset (zero) override leaves the resolved cap unchanged. F-27.6.2.
 func TestPerSessionTimeoutTightensCap_spec_27_6(t *testing.T) {

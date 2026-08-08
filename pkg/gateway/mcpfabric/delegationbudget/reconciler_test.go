@@ -76,7 +76,7 @@ func (f *fakeMetrics) IncDelegationBudgetReconstruction(o string) {
 	f.outcomes[o]++
 }
 
-// spec: §11.2 line 44 — the checkpoint persists only trees with real
+// spec: §11.2 — the checkpoint persists only trees with real
 // budget state; a tree whose Redis counters are all zero (no delegation
 // admitted) is skipped so the table does not accumulate empty rows.
 func TestCheckpointPersistsNonZeroTreesOnly_spec_11_2_44(t *testing.T) {
@@ -101,7 +101,7 @@ func TestCheckpointPersistsNonZeroTreesOnly_spec_11_2_44(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — reconstruction restores each axis to
+// spec: §11.2 — reconstruction restores each axis to
 // max(postgres_checkpoint, live). liveMemory is the alive node count
 // times the per-node footprint.
 func TestReconcileRestoresMaxRule_spec_11_2_48(t *testing.T) {
@@ -131,7 +131,7 @@ func TestReconcileRestoresMaxRule_spec_11_2_48(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — a tree whose checkpoint is older than
+// spec: §11.2 — a tree whose checkpoint is older than
 // 2 x interval AND whose live state cannot be enumerated is
 // irrecoverable: the root is moved to awaiting_client_action and no
 // counters are restored.
@@ -163,7 +163,7 @@ func TestReconcileIrrecoverableMarksRoot_spec_11_2_48(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — when live enumeration is not possible but the
+// spec: §11.2 — when live enumeration is not possible but the
 // checkpoint is still fresh (within 2 x interval), the tree is
 // recoverable from the checkpoint alone: the live estimate is zero, so
 // the checkpoint values are restored unchanged and the root is not
@@ -197,7 +197,7 @@ func TestReconcileFreshUnenumerableRestoresFromCheckpoint_spec_11_2_48(t *testin
 	}
 }
 
-// spec: §11.2 lines 44, 48 — the probe loop reconstructs on the
+// spec: §11.2 — the probe loop reconstructs on the
 // Redis-down-to-up edge and then checkpoints; a steady-reachable tick
 // only checkpoints (no reconstruction).
 func TestTickRecoveryEdgeReconcilesThenCheckpoints_spec_12_4_218(t *testing.T) {

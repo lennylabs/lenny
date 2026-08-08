@@ -60,7 +60,7 @@ type installAnswers struct {
 	// from cluster detection (§17.9). It is advisory metadata; the
 	// non-interactive path does not load a second file from it. Curated
 	// answer files in charts/lenny/answers/ accordingly omit the field;
-	// the wizard records it on save (§17.9.2 line 1376) so the captured
+	// the wizard records it on save (§17.9.2) so the captured
 	// answer file documents the detection. F-17.9.15.
 	Profile string `json:"profile,omitempty"`
 	// Domain is the gateway's external DNS name. Empty leaves the
@@ -235,7 +235,7 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "lenny-ctl: --non-interactive requires --answers <path>")
 			return 2
 		}
-		// Detection phase (§17.6 lines 671-697): probe the target cluster
+		// Detection phase (§17.6): probe the target cluster
 		// and present a summary before any question, so the operator sees
 		// what was found and the question phase can apply detection-driven
 		// defaults. --offline skips the probes entirely. F-17.6.9.
@@ -314,7 +314,7 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	// Preflight phase (§17.6 line 696 / §24.20 line 295: detection →
+	// Preflight phase (§17.6 / §24.20: detection →
 	// question → preview → preflight → helm install). The wizard probes
 	// the resolved Postgres/Redis/MinIO backends before mutating the
 	// cluster; any hard failure aborts so a misconfigured DSN surfaces
@@ -359,7 +359,7 @@ func cmdInstall(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stderr, "lenny-ctl: release %q installed in namespace %q\n",
 		answers.Release.Name, answers.Release.Namespace)
 
-	// Smoke-test phase (§24.20 line 295/299: ... → helm install → bootstrap
+	// Smoke-test phase (§24.20: ... → helm install → bootstrap
 	// seed → smoke test). The wizard probes /healthz and exercises the chat
 	// reference runtime so a broken install surfaces here rather than on the
 	// operator's first session. --skip-smoke-test opts out. F-24.20.4.
@@ -377,7 +377,7 @@ func parseInstallFlags(args []string) (installConfig, error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		// --answers is the sole §24.20 spelling of the answer-file flag
-		// (§24.20 lines 300, 304). F-24.20.7.
+		// (§24.20). F-24.20.7.
 		case "--answers":
 			if i+1 >= len(args) {
 				return cfg, fmt.Errorf("%s requires a path", args[i])
@@ -409,7 +409,7 @@ func parseInstallFlags(args []string) (installConfig, error) {
 			}
 			cfg.namespace, i = args[i+1], i+1
 		// --context overrides the kubeconfig context the detection phase
-		// probes (§17.6 line 673). It has no effect under --offline or
+		// probes (§17.6). It has no effect under --offline or
 		// --answers (neither runs detection).
 		case "--context":
 			if i+1 >= len(args) {
@@ -427,7 +427,7 @@ func parseInstallFlags(args []string) (installConfig, error) {
 		case "--offline":
 			cfg.offline = true
 		// --skip-smoke-test opts out of the post-install smoke-test phase
-		// (§24.20 line 299). F-24.20.4.
+		// (§24.20). F-24.20.4.
 		case "--skip-smoke-test":
 			cfg.skipSmoke = true
 		default:
@@ -555,7 +555,7 @@ func validateAnswers(a installAnswers) []string {
 			))
 		}
 	}
-	// spec: §17.6 lines 688-689 — every selected reference runtime must
+	// spec: §17.6 — every selected reference runtime must
 	// name a §26 catalog entry. "none" is a valid selection only as the
 	// sole entry (it disables the catalog). F-17.6.10.
 	for _, rt := range a.ReferenceRuntimes {
@@ -604,8 +604,7 @@ func validateAnswers(a installAnswers) []string {
 // deriveSpiffeTrustDomain produces a deployment-unique §10.3 (NET-064)
 // trust domain from the release identity when the operator did not set
 // one. The result is sanitized to lowercase alphanumerics and hyphens
-// so it is a valid SPIFFE trust-domain host component. spec: §10.3
-// line 316. F-10.3.4.
+// so it is a valid SPIFFE trust-domain host component. spec: §10.3. F-10.3.4.
 func deriveSpiffeTrustDomain(namespace, name string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower("lenny-" + namespace + "-" + name) {
@@ -630,8 +629,7 @@ const ingressTLSSecretName = "lenny-gateway-ingress-tls"
 // composeIngress maps the wizard's domain and TLS answers onto the
 // gateway.ingress chart values. It returns nil when neither a domain nor
 // a TLS strategy was answered, so a stock render keeps the opt-in
-// Ingress off (gateway.ingress.enabled defaults false). spec: §17.9.2
-// line 1376 / §17.6. F-17.9.6.
+// Ingress off (gateway.ingress.enabled defaults false). spec: §17.9.2 / §17.6. F-17.9.6.
 func composeIngress(a installAnswers) map[string]any {
 	if a.Domain == "" && a.TLS == "" {
 		return nil
@@ -676,7 +674,7 @@ func composeValues(a installAnswers) ([]byte, error) {
 		values["global"] = global
 	}
 
-	// §10.3 lines 365-366 F-10.3.14: auth.oidc.issuerUrl / clientId are
+	// §10.3 F-10.3.14: auth.oidc.issuerUrl / clientId are
 	// required platform keys outside dev mode. Render the collected OIDC
 	// registration so a wizard-driven production install passes the
 	// gateway startup configuration gate rather than CrashLoopBackOff.
@@ -691,7 +689,7 @@ func composeValues(a installAnswers) ([]byte, error) {
 		values["auth"] = map[string]any{"oidc": oidc}
 	}
 
-	// spec: §17.9.1 line 1350 — the environment dimension drives gateway
+	// spec: §17.9.1 — the environment dimension drives gateway
 	// log verbosity and the environment-keyed chart defaults via the
 	// lenny.gatewayLogLevel helper. Write it into the values document so
 	// the rendered chart reacts; previously it was echoed only into the
@@ -700,7 +698,7 @@ func composeValues(a installAnswers) ([]byte, error) {
 		values["environment"] = a.Environment
 	}
 
-	// spec: §17.9.2 line 1376 / §17.6 — the wizard's domain and TLS
+	// spec: §17.9.2 / §17.6 — the wizard's domain and TLS
 	// answers reach the gateway Ingress (`gateway.ingress.*`). Domain
 	// turns the opt-in Ingress on and sets its host; the TLS strategy
 	// selects the serving-certificate posture: cert-manager stamps the
@@ -719,7 +717,7 @@ func composeValues(a installAnswers) ([]byte, error) {
 	if a.Redis.URL != "" {
 		values["redis"] = map[string]any{"url": a.Redis.URL}
 	}
-	// spec: §17.9.3 line 1413 — emit the `minio:` block only when
+	// spec: §17.9.3 — emit the `minio:` block only when
 	// `endpoint` is supplied. The chart's MinIO wiring
 	// (`charts/lenny/templates/{datastore-secret,gateway-deployment}.yaml`)
 	// gates every LENNY_MINIO_* env on a non-empty endpoint, so a
@@ -776,7 +774,7 @@ func composeValues(a installAnswers) ([]byte, error) {
 		values["agentNamespaces"] = nss
 	}
 
-	// spec: §17.6 lines 688-689 — the reference-runtime selection. An empty
+	// spec: §17.6 — the reference-runtime selection. An empty
 	// list leaves the chart default (the whole §26 catalog); ["none"]
 	// disables the catalog; any other list narrows it via
 	// referenceRuntimes.include. F-17.6.10.
@@ -837,7 +835,7 @@ func promptAnswers(r *bufio.Reader, w io.Writer, det clusterDetection) installAn
 	fmt.Fprintln(w, "Press Enter to accept the bracketed default for any question.")
 	fmt.Fprintln(w)
 
-	// spec: §17.9.2 line 1376 — record the §17.9.2 catalog answer-file base
+	// spec: §17.9.2 — record the §17.9.2 catalog answer-file base
 	// the detection phase suggests from the cluster type, so a captured
 	// answer file (--save-answers) documents the suggestion. It is advisory
 	// metadata; the non-interactive path does not load a second file from
@@ -853,7 +851,7 @@ func promptAnswers(r *bufio.Reader, w io.Writer, det clusterDetection) installAn
 	}
 	a.Tier = ask(r, w, "Capacity tier (tier1|tier2|tier3)", defTier)
 	a.Domain = ask(r, w, "Gateway domain (blank to keep the chart default)", "")
-	// spec: §17.6 line 689 — the TLS-strategy default is detection-driven
+	// spec: §17.6 — the TLS-strategy default is detection-driven
 	// (cert-manager when a Ready ClusterIssuer exists, bring-your-own
 	// otherwise) and the question is skipped when exactly one ClusterIssuer
 	// is Ready, since the answer is then unambiguous. F-17.6.9.
@@ -895,7 +893,7 @@ func promptAnswers(r *bufio.Reader, w io.Writer, det clusterDetection) installAn
 	a.Features.LLMProxy = askBool(r, w, "Enable the LLM-proxy admission webhook", false)
 	a.Features.DrainReadiness = askBool(r, w, "Enable the drain-readiness admission webhook", false)
 	a.Features.Compliance = askBool(r, w, "Enable the compliance admission webhooks", false)
-	// spec: §17.6 lines 688-689 — the reference-runtime multi-select. All
+	// spec: §17.6 — the reference-runtime multi-select. All
 	// of §26 is installed by default; the operator names a subset to
 	// minimize the image-pull footprint, or "none" to register no
 	// reference runtime. F-17.6.10.
@@ -995,7 +993,7 @@ func answerFileKeys() []string {
 // (they live in a Kubernetes Secret); the wizard pulls them from the
 // environment when present so the probe can authenticate, and otherwise
 // leaves MinIO unconfigured so it is skipped rather than failing on an
-// anonymous request. spec: §17.6 line 696; §24.2 line 47.
+// anonymous request. spec: §17.6; §24.2.
 func installPreflightConfig(a installAnswers) infra.Config {
 	cfg := infra.Config{
 		PostgresDSN: a.Postgres.DSN,
@@ -1018,7 +1016,7 @@ func installPreflightConfig(a installAnswers) infra.Config {
 // from cmdInstall so a test drives it with fake probers. An empty config
 // (every backend a chart default with no external DSN) probes nothing
 // and passes — there is nothing reachable to validate before install.
-// spec: §17.6 line 696; §24.20 line 295. F-24.2.5 / F-24.20.3.
+// spec: §17.6; §24.20. F-24.2.5 / F-24.20.3.
 func runInstallPreflight(ctx context.Context, cfg infra.Config, probers infra.Probers, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "# Preflight: validating Postgres/Redis/MinIO connectivity before install")
 	report := infra.Run(ctx, cfg, probers)

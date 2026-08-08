@@ -4,7 +4,7 @@ package sessionserver
 
 // §4.2 task-record design clarification:
 //
-// The §4.2 line 157 Session Manager bullet ("Task records and
+// The §4.2 Session Manager bullet ("Task records and
 // parent/child lineage (task tree)") is realised in v1 by the
 // sessions table — there is no separate task table. Every task
 // record IS a session row, identified by sessions.id and linked to
@@ -21,7 +21,7 @@ package sessionserver
 // long-lived task metadata onto a dedicated table, but the v1
 // invariant is "task record == session row linked by
 // parent_session_id".
-// spec: §4.2 line 157.
+// spec: §4.2.
 
 import (
 	"context"
@@ -41,7 +41,7 @@ import (
 // corruption to operators via the §11.7 audit log + §16.1
 // `lenny_delegation_tree_cycle_detected_total` counter so it does
 // not silently disappear. The source field is `rest` for the
-// /v1/sessions/{id}/tree handler. spec: §8.9 line 1003; F-8.9.10.
+// /v1/sessions/{id}/tree handler. spec: §8.9; F-8.9.10.
 type TreeCycleObserver interface {
 	OnTreeCycle(ctx context.Context, ev TreeCycleEvent)
 }
@@ -56,13 +56,13 @@ type TreeCycleEvent struct {
 }
 
 // TreeNode is one node in the §8 delegation task tree. The wire field
-// is `taskId` per §8.5 line 540 — "Each node includes `taskId`, `state`,
+// is `taskId` per §8.5 — "Each node includes `taskId`, `state`,
 // and `runtimeRef`". The v1 invariant "task record == session row"
-// (§4.2 line 157) means TaskID is the session row's id; the REST and
+// (§4.2) means TaskID is the session row's id; the REST and
 // MCP projections of `lenny/get_task_tree` use the same field name per
 // the §15.2.1 REST↔MCP semantic-equivalence rule. F-8.9.5.
 //
-// Attributes carries the §8.9 line 1010 per-node tracking projection
+// Attributes carries the §8.9 per-node tracking projection
 // (generation, pod, lease, failure history) so an operator can inspect
 // a child's recovery generation, pod assignment, granted lease, and
 // failure history from the tree. F-8.9.1.
@@ -87,7 +87,7 @@ type TreeResponse struct {
 //
 // The tree is reconstructed from the §7.1 ParentSessionID lineage
 // pointers on the session rows, then scoped to the {id} session's
-// effective §8.3 `treeVisibility` per §8.5 line 540: `full` returns the
+// effective §8.3 `treeVisibility` per §8.5: `full` returns the
 // entire tree rooted at the apex (including siblings and their
 // descendants), `parent-and-self` returns the session's parent and
 // itself, and `self-only` returns just the session. This keeps the REST
@@ -110,7 +110,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §8.9 line 1010 — the §12.5 `idx_sessions_root` index
+	// spec: §8.9 — the §12.5 `idx_sessions_root` index
 	// supports a single-shard tree-scoped projection. Read only the
 	// rows belonging to the requested session's delegation tree
 	// instead of the whole tenant; the cost is O(tree size), not
@@ -131,7 +131,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// spec: §8.5 line 540 / §8.3 lines 311-319 — scope the response to the
+	// spec: §8.5 / §8.3 — scope the response to the
 	// session's effective treeVisibility. F-8.5.2 / F-8.9.2.
 	respRoot, allowed := sessionstore.VisibleTree(caller, all, caller.TreeVisibility)
 	count := 0
@@ -150,7 +150,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 // treeWalkContext carries the per-walk fields buildTreeNode passes
 // to the cycle observer. The observer fires once per repeated node;
 // the walker still truncates the cycle to keep the response well-
-// formed. spec: §8.9 line 1003; F-8.9.10.
+// formed. spec: §8.9; F-8.9.10.
 type treeWalkContext struct {
 	ctx           context.Context
 	tenantID      string
@@ -168,7 +168,7 @@ type treeWalkContext struct {
 // but the tree walker stays defensive in case of a corrupt store).
 // When the guard fires, the walker emits a §8.9 cycle observation
 // so the corruption surfaces rather than silently truncates.
-// spec: §8.9 line 1003; F-8.9.10.
+// spec: §8.9; F-8.9.10.
 func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByParent map[string][]sessionstore.Session, count *int, seen map[string]bool) TreeNode {
 	*count++
 	node := TreeNode{
@@ -191,7 +191,7 @@ func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByPa
 	}
 	seen[sess.ID] = true
 	for _, child := range childrenByParent[sess.ID] {
-		// spec: §8.5 line 540 — under a narrowed treeVisibility the walker
+		// spec: §8.5 — under a narrowed treeVisibility the walker
 		// descends only into the visible nodes; an out-of-scope child is
 		// pruned. F-8.5.2 / F-8.9.2.
 		if wctx.allowed != nil && !wctx.allowed[child.ID] {

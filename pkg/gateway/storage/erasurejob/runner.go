@@ -35,7 +35,7 @@ type Runner struct {
 	clock            func() time.Time
 }
 
-// LifecycleMetrics receives the §12.8 line 768 erasure throughput
+// LifecycleMetrics receives the §12.8 erasure throughput
 // signals: the in-progress gauge bracket (IncActive/DecActive) and the
 // per-job duration observation. *gatewaymetrics.Metrics satisfies it via
 // IncErasureJobsActive / DecErasureJobsActive / ObserveErasureJobDuration.
@@ -46,7 +46,7 @@ type LifecycleMetrics interface {
 }
 
 // FailurePhase labels for the §12.8 CMP-026 lenny_erasure_job_failed_total
-// counter. The MemoryStore erasure preflight (§12.8 lines 743-758) adds
+// counter. The MemoryStore erasure preflight (§12.8) adds
 // PhaseMemoryStorePreflight to the store_delete / pseudonymization /
 // verification phases the spec enumerates.
 const (
@@ -80,8 +80,7 @@ func (r *Runner) WithBilling(b *BillingEraser) *Runner {
 	return r
 }
 
-// WithMemoryPreflight attaches the §12.8 per-job MemoryStore erasure
-// preflight (lines 743-758, defense-in-depth layer 3). The check re-runs
+// WithMemoryPreflight attaches the §12.8 per-job MemoryStore erasure preflight. The check re-runs
 // the seeded-row write/erase/requery cycle at job start, before any store
 // deletion; a backend that passed the startup preflight but later
 // regressed (e.g., after a rolling upgrade of an external vector DB)
@@ -104,7 +103,7 @@ func (r *Runner) WithMemoryPreflight(preflight func(context.Context) error) *Run
 // failure aborts the job under FailurePhaseDeadLetterRedaction with the
 // store deletion already durable. Returns the Runner for call chaining.
 //
-// spec: §12.8 lines 810-829.
+// spec: §12.8.
 func (r *Runner) WithDeadLetterRedaction(hook func(ctx context.Context, tenantID, userID string) (int, error)) *Runner {
 	r.deadLetterRedact = hook
 	return r
@@ -119,7 +118,7 @@ func (r *Runner) WithFailureObserver(obs func(tenantID, failurePhase string)) *R
 	return r
 }
 
-// WithLifecycleMetrics attaches the §12.8 line 768 erasure throughput
+// WithLifecycleMetrics attaches the §12.8 erasure throughput
 // metrics. Run brackets each executing job with IncErasureJobsActive /
 // DecErasureJobsActive and observes the job's wall-clock duration on
 // termination. A nil m disables emission. Returns the Runner for call
@@ -129,7 +128,7 @@ func (r *Runner) WithLifecycleMetrics(m LifecycleMetrics) *Runner {
 	return r
 }
 
-// WithDeadlineResolver attaches the §12.8 line 768 tier-specific SLA
+// WithDeadlineResolver attaches the §12.8 tier-specific SLA
 // resolver. Start stamps the resolved deadline (T3 72h, T4 1h) onto the
 // job so the overdue sampler and the completion receipt can present it. A
 // nil resolver leaves Job.Deadline zero. Returns the Runner for call
@@ -139,7 +138,7 @@ func (r *Runner) WithDeadlineResolver(f func(ctx context.Context, tenantID strin
 	return r
 }
 
-// WithCompletionHook attaches the §12.5 line 317 erasure-completion hook,
+// WithCompletionHook attaches the §12.5 erasure-completion hook,
 // invoked with the job's tenant and user id once the job reaches
 // PhaseCompleted. The gateway wires it to the `gcPriority: high`
 // immediate-sweep trigger: a high-priority tenant's expired artifacts are
@@ -147,7 +146,7 @@ func (r *Runner) WithDeadlineResolver(f func(ctx context.Context, tenantID strin
 // the global GC cycle. The hook runs after the completion is durably
 // recorded so a hook panic or slow sweep never rolls back the completed
 // job; it is best-effort and a nil hook disables it. Returns the Runner
-// for call chaining. spec: §12.5 line 317.
+// for call chaining. spec: §12.5.
 func (r *Runner) WithCompletionHook(hook func(ctx context.Context, tenantID, userID string)) *Runner {
 	r.onComplete = hook
 	return r
@@ -161,7 +160,7 @@ var errBillingVerification = errors.New(
 
 // advance sets the job's lifecycle phase and appends the transition to
 // its PhaseLog with the current clock time, so the §12.8 completion
-// receipt can present the per-phase timeline. spec: §12.8 line 762.
+// receipt can present the per-phase timeline. spec: §12.8.
 func (r *Runner) advance(ctx context.Context, jobID string, p Phase) error {
 	_, err := r.jobs.Update(ctx, jobID, func(j *Job) error {
 		j.Phase = p
@@ -251,7 +250,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 		return nil
 	}
 
-	// §12.8 line 768 throughput metrics: bracket the executing job with
+	// §12.8 throughput metrics: bracket the executing job with
 	// the in-progress gauge and observe its wall-clock duration on
 	// termination (success or failure), so operators can monitor erasure
 	// throughput and detect stalled jobs before they breach the SLA.
@@ -351,7 +350,7 @@ func (r *Runner) Run(ctx context.Context, jobID string) error {
 	}); err != nil {
 		return err
 	}
-	// §12.5 line 317: fire the erasure-completion hook after the
+	// §12.5: fire the erasure-completion hook after the
 	// completion is durable. The gateway uses it to trigger a
 	// tenant-scoped GC sweep for a `gcPriority: high` tenant. It is
 	// best-effort — a hook error must not retroactively fail the

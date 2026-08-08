@@ -36,21 +36,20 @@ import (
 type Store struct {
 	pool *pgxpool.Pool
 	// kms envelope-encrypts the §12.8 erasure_salt at rest. A nil
-	// provider rejects any write that carries a non-empty salt: §12.8
-	// line 845 forbids storing the salt in plaintext. F-12.8.5.
+	// provider rejects any write that carries a non-empty salt: §12.8 forbids storing the salt in plaintext. F-12.8.5.
 	kms kms.Provider
 }
 
 // Option configures a Store at construction.
 type Option func(*Store)
 
-// WithKMS wires the §12.8 line 845 envelope-encryption provider used to
+// WithKMS wires the §12.8 envelope-encryption provider used to
 // seal the per-tenant erasure_salt at rest. Without it, a tenant write
 // carrying a non-empty ErasureSalt is rejected rather than persisted in
 // plaintext. F-12.8.5.
 func WithKMS(p kms.Provider) Option { return func(s *Store) { s.kms = p } }
 
-// SetSaltKMS injects the §12.8 line 845 envelope-encryption provider after
+// SetSaltKMS injects the §12.8 envelope-encryption provider after
 // construction. It is a startup-only wiring hook for the gateway binary,
 // where the KMS provider is resolved after the tenant store is built; it
 // must be called before any erasure-salt read or write and is not safe to
@@ -73,15 +72,15 @@ func New(pool *pgxpool.Pool, opts ...Option) *Store {
 func saltKEKAlias(tenantID string) string { return "tenant:" + tenantID }
 
 // sealSalt envelope-encrypts a §12.8 erasure salt for the erasure_salt
-// column. An empty salt seals to a NULL column — the §12.8 line 850
+// column. An empty salt seals to a NULL column — the §12.8
 // destroyed state. A non-empty salt with no KMS provider is rejected:
-// §12.8 line 845 forbids storing the salt in plaintext. F-12.8.5.
+// §12.8 forbids storing the salt in plaintext. F-12.8.5.
 func (s *Store) sealSalt(ctx context.Context, tenantID string, salt []byte) ([]byte, error) {
 	if len(salt) == 0 {
 		return nil, nil
 	}
 	if s.kms == nil {
-		return nil, errors.New("tenantstore/pgstore: erasure_salt requires a KMS provider; §12.8 line 845 forbids plaintext salt storage")
+		return nil, errors.New("tenantstore/pgstore: erasure_salt requires a KMS provider; §12.8 forbids plaintext salt storage")
 	}
 	c, err := envelope.New(s.kms, saltKEKAlias(tenantID))
 	if err != nil {
@@ -94,7 +93,7 @@ func (s *Store) sealSalt(ctx context.Context, tenantID string, salt []byte) ([]b
 	return envelope.Encode(sealed)
 }
 
-// openSalt reverses sealSalt. A NULL/empty blob is the §12.8 line 850
+// openSalt reverses sealSalt. A NULL/empty blob is the §12.8
 // destroyed state and opens to a nil salt. F-12.8.5.
 func (s *Store) openSalt(ctx context.Context, tenantID string, blob []byte) ([]byte, error) {
 	if len(blob) == 0 {
@@ -155,7 +154,7 @@ func marshalCredentialPolicy(c credential.CredentialPolicy) ([]byte, error) {
 // gcPriorityOrDefault maps an empty §12.5 GCPriority to the `normal`
 // default so a write never sends the empty string the gc_priority CHECK
 // constraint (the column is NOT NULL DEFAULT 'normal') would reject.
-// spec: §12.5 line 317.
+// spec: §12.5.
 func gcPriorityOrDefault(s string) string {
 	if s == "" {
 		return tenantstore.GCPriorityNormal
@@ -221,14 +220,14 @@ func (s *Store) Create(ctx context.Context, t tenantstore.Tenant) error {
 	if state == "" {
 		state = tenantstore.TenantStateActive
 	}
-	// §12.8 line 845: a tenant carrying an erasure_salt at create time
+	// §12.8: a tenant carrying an erasure_salt at create time
 	// (rare; the salt is normally minted during an erasure job) has it
 	// envelope-encrypted before persist.
 	saltBlob, err := s.sealSalt(ctx, t.ID, t.ErasureSalt)
 	if err != nil {
 		return err
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	version := t.Version
 	if version == 0 {
 		version = 1
@@ -307,7 +306,7 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 		return tenantstore.Tenant{}, err
 	}
 	t.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	t.Version++
 	targeting, err := marshalTargeting(t.ExperimentTargeting)
 	if err != nil {
@@ -321,7 +320,7 @@ func (s *Store) Update(ctx context.Context, id string, mutate func(*tenantstore.
 	if err != nil {
 		return tenantstore.Tenant{}, err
 	}
-	// §12.8 line 845/850: re-seal the (possibly mutated) erasure_salt;
+	// §12.8: re-seal the (possibly mutated) erasure_salt;
 	// a destroyed salt (nil) writes NULL, removing the KMS-wrapped
 	// ciphertext from the row.
 	newSaltBlob, err := s.sealSalt(ctx, id, t.ErasureSalt)
@@ -380,7 +379,7 @@ func (s *Store) List(ctx context.Context, filter tenantstore.ListFilter) ([]tena
 	defer rows.Close()
 	var out []tenantstore.Tenant
 	for rows.Next() {
-		// §12.8 line 847: only the erasure job reads the salt, so List
+		// §12.8: only the erasure job reads the salt, so List
 		// (the admin tenant inventory) leaves ErasureSalt unopened rather
 		// than running a KMS decrypt per row.
 		t, _, err := scanTenant(rows)
@@ -397,7 +396,7 @@ func (s *Store) List(ctx context.Context, filter tenantstore.ListFilter) ([]tena
 func (s *Store) SoftDelete(ctx context.Context, id string, at time.Time) error {
 	// §12.8 Phase 6: a soft-deleted tenant is a tombstone, so its
 	// TenantState advances to `deleted` alongside the deleted_at marker.
-	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE tenants SET deleted_at = $2, updated_at = $2, state = 'deleted',
 		 version = version + 1 WHERE id = $1 AND deleted_at IS NULL`, id, at)

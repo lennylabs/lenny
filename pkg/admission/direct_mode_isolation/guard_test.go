@@ -121,7 +121,7 @@ func TestAllowsUnsafeCombinationsOutsideMultiTenant(t *testing.T) {
 	}
 }
 
-// spec: §13.2 lines 438-442 (NET-006) — deliveryMode: proxy with
+// spec: §13.2 — deliveryMode: proxy with
 // egressProfile: provider-direct is mutually exclusive in every tenancy
 // mode, so the webhook rejects it before the multi-tenant gate.
 
@@ -166,7 +166,7 @@ func TestRejectsProxyProviderDirectComboInEveryTenancyMode_spec_13_2_NET006(t *t
 }
 
 func TestAllowsCoherentEgressDeliveryPairings_spec_13_2_NET006(t *testing.T) {
-	// The two correct pairings (§13.2 line 442) and the benign cases the
+	// The two correct pairings (§13.2) and the benign cases the
 	// NET-006 check must not touch.
 	for _, tc := range []struct {
 		name string

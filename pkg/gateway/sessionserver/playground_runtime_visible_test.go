@@ -13,7 +13,7 @@ import (
 )
 
 // TestCreatePlaygroundRejectsRuntimeOutsideAllowedRuntimes_spec_27_5_190 pins
-// the §27.5 line 190 / §27.9 line 250 authorization boundary: an
+// the §27.5 / §27.9 authorization boundary: an
 // origin=playground create against a runtime that playground.allowedRuntimes
 // excludes is rejected with 403 FORBIDDEN, so the §27.4 picker filter is not
 // just a display affordance a caller could bypass by POSTing directly.

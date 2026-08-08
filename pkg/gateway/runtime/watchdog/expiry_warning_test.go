@@ -14,7 +14,7 @@ import (
 )
 
 // captureExpiryWarning is a TerminalHook that also implements
-// watchdog.ExpiryWarningNotifier so the sweep's §11.3 line 240 warning is
+// watchdog.ExpiryWarningNotifier so the sweep's §11.3 warning is
 // observable in tests.
 type captureExpiryWarning struct {
 	warnings []expiryWarningCall
@@ -44,7 +44,7 @@ func activeRunning(t *testing.T, store sessionstore.Store, id, tenant string, bo
 	})
 }
 
-// spec: §11.3 line 240 — the gateway warns 5 minutes before maxSessionAge. The
+// spec: §11.3 — the gateway warns 5 minutes before maxSessionAge. The
 // session stays non-terminal at warning time (sweepMaxAge expires it later).
 // F-11.3.5.
 func TestExpiryWarningFiresWithinWindow_spec_11_3_240(t *testing.T) {

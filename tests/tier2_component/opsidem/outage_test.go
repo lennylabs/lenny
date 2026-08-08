@@ -97,7 +97,7 @@ func postIdem(srv *opsserver.Server, path, key, caller, body string) *httptest.R
 
 const fullBackupBody = `{"type":"full","confirm":true}`
 
-// spec: §25.4 lines 2037-2042 — "The following endpoints **require**
+// spec: §25.4 — "The following endpoints **require**
 // `Idempotency-Key` at Tier 2/3 and return `400 IDEMPOTENCY_KEY_REQUIRED`
 // when omitted: ... `POST /v1/admin/backups` for `type: "full"`. At Tier
 // 1 (dev), the key is optional on these endpoints." Verified against the
@@ -152,7 +152,7 @@ func TestOpsIdempotencyTierRequiredKey_spec_25_4(t *testing.T) {
 	})
 }
 
-// spec: §25.4 lines 2048-2059 — during a Postgres outage, "Endpoints
+// spec: §25.4 — during a Postgres outage, "Endpoints
 // requiring idempotency keys return `503 IDEMPOTENCY_STORE_UNAVAILABLE`"
 // because "silently proceeding without it would violate the contract",
 // while "Endpoints that accept optional idempotency keys proceed without

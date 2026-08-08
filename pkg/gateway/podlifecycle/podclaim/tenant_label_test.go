@@ -67,7 +67,7 @@ func getPod(t *testing.T, c client.Client, name string) corev1.Pod {
 	return pod
 }
 
-// spec: §17.2 item 5 (line 46) / §5.2 line 392 / §13.2 NET-003
+// spec: §17.2 item 5 / §5.2 / §13.2 NET-003
 // The §5.2 tenant pin must land on the agent *pod*, not only the Sandbox
 // CR, or the pod-scoped lenny-tenant-label-immutability webhook has no
 // `unset → {tenant_id}` transition to guard. Before F-17.2.3 the
@@ -87,7 +87,7 @@ func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 392 / §17.2 item 5
+// spec: §5.2 / §17.2 item 5
 // A second slot on an already-pinned pod re-stamps the same tenant pin
 // idempotently — the webhook treats unset→same-value as a no-op edge.
 func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
@@ -108,7 +108,7 @@ func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3(t *testing.T) {
 
 // spec: §17.2 item 5
 // Session-mode warm-pool binding (Claimer.Claim) is also a "first
-// assignment" per §5.2 line 392, so it too lands the pin on the pod.
+// assignment" per §5.2, so it too lands the pin on the pod.
 func TestClaimStampsTenantLabelOnSessionPod_spec_17_2_3(t *testing.T) {
 	claimer, c := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
 	mustCreate(t, c, agentPod("sbx-1", ""))
@@ -141,7 +141,7 @@ func TestClaimSlotToleratesMissingPod_spec_17_2_3(t *testing.T) {
 	}
 }
 
-// spec: §5.3 row 3 (microvm → kata) / §17.2 lines 97-101
+// spec: §5.3 row 3 (microvm → kata) / §17.2
 // F-5.3.8: drive a microvm (Kata) pod through the gateway slot-claim
 // path end-to-end — the production SlotClaimer binds a slot on a genuine
 // Kata-RuntimeClass pod and lands the §5.2 tenant pin on it. Kata's slot

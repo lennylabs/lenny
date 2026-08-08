@@ -200,7 +200,7 @@ func newWiredService(pg, rd *fakeTier, gate *CoordinationGate) (*Service, *recor
 	return NewService(opts), m, a
 }
 
-// spec: §25.4 lines 2168-2174 — with both stores available the acquire is
+// spec: §25.4 — with both stores available the acquire is
 // served at Tier 1 (Postgres).
 func TestServiceAcquireServesPostgresTier_spec_25_4(t *testing.T) {
 	pg, rd := newFakeTier(StorePostgres), newFakeTier(StoreRedis)
@@ -220,7 +220,7 @@ func TestServiceAcquireServesPostgresTier_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2168-2172, 2220 — a Postgres outage falls through to
+// spec: §25.4 — a Postgres outage falls through to
 // Redis (Tier 2) and increments the outage epoch exactly once.
 func TestServiceFallsToRedisAndBumpsEpoch_spec_25_4(t *testing.T) {
 	pg, rd := newFakeTier(StorePostgres), newFakeTier(StoreRedis)
@@ -249,7 +249,7 @@ func TestServiceFallsToRedisAndBumpsEpoch_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2204-2212 — both stores down falls to the in-memory
+// spec: §25.4 — both stores down falls to the in-memory
 // tier, granted under single-replica-only on a single replica.
 func TestServiceFallsToMemoryWhenBothDown_spec_25_4(t *testing.T) {
 	pg, rd := newFakeTier(StorePostgres), newFakeTier(StoreRedis)
@@ -267,7 +267,7 @@ func TestServiceFallsToMemoryWhenBothDown_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2208-2210, 2326 — both stores down with memoryTier
+// spec: §25.4 — both stores down with memoryTier
 // "never" rejects with REMEDIATION_LOCK_NO_COORDINATION.
 func TestServiceMemoryTierNeverRejects_spec_25_4(t *testing.T) {
 	pg, rd := newFakeTier(StorePostgres), newFakeTier(StoreRedis)
@@ -279,7 +279,7 @@ func TestServiceMemoryTierNeverRejects_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2092 — a live conflict at a consensus tier is returned
+// spec: §25.4 — a live conflict at a consensus tier is returned
 // to the caller, not retried at a lower tier.
 func TestServiceConflictDoesNotFallThrough_spec_25_4(t *testing.T) {
 	pg, rd := newFakeTier(StorePostgres), newFakeTier(StoreRedis)
@@ -296,7 +296,7 @@ func TestServiceConflictDoesNotFallThrough_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2131 — List returns the union across reachable tiers,
+// spec: §25.4 — List returns the union across reachable tiers,
 // deduplicated by id.
 func TestServiceListUnionAcrossTiers_spec_25_4(t *testing.T) {
 	pg := newFakeTier(StorePostgres)
@@ -322,7 +322,7 @@ func TestServiceListUnionAcrossTiers_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2126-2131 — Get/Release search the tiers and Release
+// spec: §25.4 — Get/Release search the tiers and Release
 // emits the audit event.
 func TestServiceReleaseEmitsAudit_spec_25_4(t *testing.T) {
 	pg := newFakeTier(StorePostgres)
@@ -343,7 +343,7 @@ func TestServiceReleaseEmitsAudit_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2282-2297, 2335 — Steal emits the steal metric (by
+// spec: §25.4 — Steal emits the steal metric (by
 // scope pattern) and the lock_stolen audit event.
 func TestServiceStealMetricAndAudit_spec_25_4(t *testing.T) {
 	pg := newFakeTier(StorePostgres)
@@ -367,7 +367,7 @@ func TestServiceStealMetricAndAudit_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2226-2267 — Reconcile drives the Postgres reconciler,
+// spec: §25.4 — Reconcile drives the Postgres reconciler,
 // records split-brain conflicts as a metric + audit event, and syncs the
 // epoch to the reconciled MAX.
 func TestServiceReconcileSplitBrain_spec_25_4(t *testing.T) {
@@ -401,7 +401,7 @@ func TestServiceReconcileSplitBrain_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2226 — Reconcile is a no-op without a Postgres tier.
+// spec: §25.4 — Reconcile is a no-op without a Postgres tier.
 func TestServiceReconcileNoPostgresNoop_spec_25_4(t *testing.T) {
 	rd := newFakeTier(StoreRedis)
 	svc, _, _ := newWiredService(nil, rd, NewCoordinationGate(MemoryTierAlways, nil))
@@ -410,7 +410,7 @@ func TestServiceReconcileNoPostgresNoop_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2193, 2338 — the reap removes expired in-memory locks
+// spec: §25.4 — the reap removes expired in-memory locks
 // and emits a lock_expired audit event for each.
 func TestServiceReapEmitsExpiredAudit_spec_25_4(t *testing.T) {
 	svc, _, a := newWiredService(nil, nil, NewCoordinationGate(MemoryTierAlways, nil))
@@ -430,7 +430,7 @@ func TestServiceReapEmitsExpiredAudit_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2215 — MemoryTierWarning surfaces the replica-local
+// spec: §25.4 — MemoryTierWarning surfaces the replica-local
 // warning only under the "always" policy.
 func TestServiceMemoryTierWarning_spec_25_4(t *testing.T) {
 	always, _, _ := newWiredService(nil, nil, NewCoordinationGate(MemoryTierAlways, nil))

@@ -19,7 +19,7 @@ import (
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
-// spec: §11.7 lines 347-348 — every audit event carries the optional
+// spec: §11.7 — every audit event carries the optional
 // operation_id (X-Lenny-Operation-ID) and caller_kind (OIDC
 // caller_type) fields when available; the OCSF mapping projects them
 // onto metadata.correlation_uid and actor.user.type. F-11.7.13.
@@ -120,7 +120,7 @@ func TestEmitAdminEventOmitsEmptyCorrelationFields_F11713(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 938 — X-Lenny-Agent-Name is propagated to audit
+// spec: §15.1 — X-Lenny-Agent-Name is propagated to audit
 // records. The explicit AgentName field lands in the payload. F-15.1.10.
 func TestEmitAdminEventCarriesAgentName_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
@@ -172,7 +172,7 @@ func TestEmitAdminEventOmitsEmptyAgentName_spec_15_1_938(t *testing.T) {
 
 // End-to-end through the admin router: the X-Lenny-Agent-Name carried on
 // the correlation context lands on the committed hash-chain row alongside
-// operation_id. spec: §15.1 lines 937-938. F-15.1.10.
+// operation_id. spec: §15.1. F-15.1.10.
 func TestRouterEmitPopulatesAgentName_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
 	sink := admin.NewChainAuditSink(chains, nil)

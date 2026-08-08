@@ -438,7 +438,7 @@ func generatedToolset() []Tool {
 		},
 		{
 			Name:          "admin.drain_pool",
-			Description:   "Drain a pool (§15.1 line 797 — stop admitting new sessions, report in-flight count)",
+			Description:   "Drain a pool (stop admitting new sessions, report in-flight count)",
 			InputSchema:   mustSchema(`{"properties":{"name":{"type":"string"},"operationId":{"description":"Optional UUID for multi-step operation correlation.","format":"uuid","type":"string"}},"required":["name"],"type":"object"}`),
 			Method:        "POST",
 			Path:          "/v1/admin/pools/{name}/drain",

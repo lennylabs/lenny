@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 )
 
-// spec: §7.1 line 92 — concurrent derives on the same source session
+// spec: §7.1 — concurrent derives on the same source session
 // serialize. The first acquirer wins; the second blocks until the
 // first releases.
 func TestMemory_SerializesSameSource_spec_7_1_92(t *testing.T) {
@@ -57,7 +57,7 @@ func TestMemory_SerializesSameSource_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — distinct source sessions do not serialize. Two
+// spec: §7.1 — distinct source sessions do not serialize. Two
 // derives on different sources MUST both acquire concurrently.
 func TestMemory_DistinctSourcesProceedConcurrently_spec_7_1_92(t *testing.T) {
 	m := derivelock.NewMemory(time.Second)
@@ -76,7 +76,7 @@ func TestMemory_DistinctSourcesProceedConcurrently_spec_7_1_92(t *testing.T) {
 	defer rel2()
 }
 
-// spec: §7.1 line 92 — caller that does not acquire within the wait
+// spec: §7.1 — caller that does not acquire within the wait
 // budget receives ErrContended, which the session-server maps to 429
 // DERIVE_LOCK_CONTENTION.
 func TestMemory_ReturnsErrContendedAfterWait_spec_7_1_92(t *testing.T) {
@@ -103,7 +103,7 @@ func TestMemory_ReturnsErrContendedAfterWait_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — ctx cancellation short-circuits the wait so a
+// spec: §7.1 — ctx cancellation short-circuits the wait so a
 // caller dropping the request does not hold a goroutine until the
 // budget elapses.
 func TestMemory_ContextCancellationShortCircuits_spec_7_1_92(t *testing.T) {
@@ -126,7 +126,7 @@ func TestMemory_ContextCancellationShortCircuits_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — Release is idempotent. A second invocation does
+// spec: §7.1 — Release is idempotent. A second invocation does
 // not double-unlock the per-source mutex (which would panic).
 func TestMemory_ReleaseIdempotent_spec_7_1_92(t *testing.T) {
 	m := derivelock.NewMemory(time.Second)
@@ -145,7 +145,7 @@ func TestMemory_ReleaseIdempotent_spec_7_1_92(t *testing.T) {
 	rel2()
 }
 
-// spec: §7.1 line 92 — concurrent acquire/release churn on a single
+// spec: §7.1 — concurrent acquire/release churn on a single
 // source session never admits two simultaneous holders. The Memory
 // implementation reclaims its per-source map entry only when the last
 // referencing goroutine leaves; a release that dropped the entry while a
@@ -191,7 +191,7 @@ func TestMemory_ConcurrentChurnNeverDoubleAdmits_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — Redis-backed lock serializes across replicas.
+// spec: §7.1 — Redis-backed lock serializes across replicas.
 // We simulate two replicas by issuing two Acquire calls against the
 // same Redis instance; the second must time out and return ErrContended.
 func TestRedis_SerializesSameSourceAcrossReplicas_spec_7_1_92(t *testing.T) {
@@ -217,7 +217,7 @@ func TestRedis_SerializesSameSourceAcrossReplicas_spec_7_1_92(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 92 — releasing the Redis lock allows the next caller
+// spec: §7.1 — releasing the Redis lock allows the next caller
 // to acquire immediately, without waiting for the TTL.
 func TestRedis_ReleaseClearsLock_spec_7_1_92(t *testing.T) {
 	mr, client := newMiniRedis(t)
@@ -248,7 +248,7 @@ func TestRedis_ReleaseClearsLock_spec_7_1_92(t *testing.T) {
 	rel2()
 }
 
-// spec: §7.1 line 92 — the release script only deletes the lock when
+// spec: §7.1 — the release script only deletes the lock when
 // the stored token matches. A stale releaser whose lock has already
 // expired and been re-acquired by a peer MUST NOT delete the peer's
 // lock.

@@ -31,10 +31,7 @@ import (
 // instead of the digest form, defeating the requireDigest guarantee that a
 // registry mutation cannot silently change which bits an upgrade rolls out.
 //
-// spec: §25.8 line 3506 ("Old lenny-ops patches its own Deployment's image
-// tag via K8s API to the resolved ops image reference. The patch is a
-// strategic merge patch using the digest form when
-// platform.registry.requireDigest: true").
+// spec: §25.8.
 func TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest(t *testing.T) {
 	t.Skip("pkg/ops/upgradeservice has no OpsRoll Deployment-patch call site: " +
 		"grep for StrategicMergePatchType across pkg/ops/upgradeservice and " +

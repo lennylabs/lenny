@@ -33,7 +33,7 @@ capacityPlanning:
 global:
   deploymentTier: tier2
 
-# §12.3 line 117 per-tier write ceiling: Tier 2 reference instance
+# §12.3 per-tier write ceiling: Tier 2 reference instance
 # (4 vCPU / 16 GB) sustains ~600 write IOPS. Emitted on
 # lenny_postgres_write_ceiling_iops for the PostgresWriteSaturation
 # alert. F-12.3.8.
@@ -94,15 +94,15 @@ ops:
   # Tier 2 is a production posture. Enabling ops.production turns on the
   # §25.11 confirm:true requirement for full backups.
   production: true
-  # §25.4 line 903 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
+  # §25.4 / §17.8.4 — Tier 2/3 run the self-monitor every 10s to
   # catch fast failure-and-recovery cycles.
   selfHealth:
     checkIntervalSeconds: 10
-  # §25.5 line 2598 / §17.8.4 — Tier 2 ops:events:stream MAXLEN of 50,000
+  # §25.5 / §17.8.4 — Tier 2 ops:events:stream MAXLEN of 50,000
   # (~25 MB Redis budget) for a longer catch-up window at moderate rates.
   events:
     streamMaxLen: 50000
-  # §25.5 lines 2655-2659 — Tier 2 webhook delivery retention of 7 days
+  # §25.5 — Tier 2 webhook delivery retention of 7 days
   # (standard incident-investigation window).
   webhooks:
     deliveryRetentionDays: 7
@@ -121,7 +121,7 @@ backups:
   restoreTest:
     enabled: false
 
-# §25.13 line 4737 / §16.5 — tier-tightened alert thresholds. Tier 2
+# §25.13 / §16.5 — tier-tightened alert thresholds. Tier 2
 # applies the §25.13 example tier-2 row: queue depth 10/5m, p95 latency
 # 2s/5m, credential pool utilisation 70 percent. F-25.13.2.
 monitoring:

@@ -224,7 +224,7 @@ func TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3(t *testing.T) 
 	}
 }
 
-// spec: §13.3 line 597 / §11.7 / §10.2 — RecordWithRotationAudit fails closed
+// spec: §13.3 / §11.7 / §10.2 — RecordWithRotationAudit fails closed
 // when the audit sequence is absent: neither the new token is minted nor the
 // predecessor revoked, so an atomic rotation whose audit sequence_number
 // cannot be drawn leaves both tokens in their pre-rotation state.
@@ -282,7 +282,7 @@ func TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3(t *te
 	}
 }
 
-// spec: §13.3 line 597 / §16.7 / §11.7 / §10.2 — RevokeWithAudit fails closed
+// spec: §13.3 / §16.7 / §11.7 / §10.2 — RevokeWithAudit fails closed
 // when the audit sequence is absent: the revoked_at stamp and the token.revoked
 // audit row share one transaction, so a missing audit sequence rolls back the
 // stamp too, leaving the token live rather than durably revoked with no audit

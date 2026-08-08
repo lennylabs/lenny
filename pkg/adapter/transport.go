@@ -25,19 +25,19 @@ import (
 // set to SERVING; the gateway probes adapter liveness through it
 // (§4.7). Pass TLSServerOption to serve the §4.7 mTLS link.
 func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
-	// spec: §16.3 line 327 ("Gateway → Pod (gRPC metadata)") — the OTel
+	// spec: §16.3 ("Gateway → Pod (gRPC metadata)") — the OTel
 	// stats handler extracts the inbound traceparent from gRPC metadata so
 	// the adapter's spans continue the gateway's trace, and propagates it
 	// onward. Prepended so a caller-supplied handler in opts cannot shadow
 	// the propagation seam. F-16.3.3.
 	//
-	// spec: §16.4 line 376 — the credential-redaction interceptor is the
+	// spec: §16.4 — the credential-redaction interceptor is the
 	// per-method access-log/trace surface for AssignCredentials and
 	// RotateCredentials: it records only the RPC name, lease ID, provider
 	// type, and outcome, never the secret payload. Prepended so it owns the
 	// credential access-log surface before any caller-supplied interceptor.
 	// F-16.4.8.
-	// spec: §10.1 line 49 — the hold-state interceptors reject every
+	// spec: §10.1 — the hold-state interceptors reject every
 	// non-allowlisted RPC with coordinator_hold while the adapter is
 	// awaiting a new coordinator, so the enforcement is uniform across
 	// every operational method without each handler re-checking.
@@ -67,12 +67,10 @@ type TLSConfigMod func(*tls.Config)
 // WithServerName returns a TLSConfigMod that pins tls.Config.ServerName.
 // A client with a pinned ServerName makes Go's standard crypto/tls
 // verification chain reject any certificate whose SAN does not cover
-// that exact name, regardless of the dial target host. The §10.3
-// NET-060 adapter→gateway dial pins the gateway's DNS SAN this way
-// (spec line 322) so a cluster-CA-signed certificate issued to the
+// that exact name, regardless of the dial target host. The §10.3 NET-060 adapter→gateway dial pins the gateway's DNS SAN this way so a cluster-CA-signed certificate issued to the
 // Token Service, controller, or any other lenny-system workload cannot
 // impersonate the gateway.
-// spec: §10.3 line 322 (NET-060)
+// spec: §10.3
 func WithServerName(name string) TLSConfigMod {
 	return func(c *tls.Config) { c.ServerName = name }
 }
@@ -93,7 +91,7 @@ func TLSServerOption(certFile, keyFile, clientCAFile string, mods ...TLSConfigMo
 	if certFile == "" && keyFile == "" {
 		return nil, nil
 	}
-	// spec: §10.3 line 338 — serve the leaf via a filesystem-watching
+	// spec: §10.3 — serve the leaf via a filesystem-watching
 	// GetCertificate callback so a cert-manager renewal of the projected
 	// volume is picked up without restarting the pod or dropping the
 	// gRPC connection.
@@ -140,7 +138,7 @@ func TLSClientOption(certFile, keyFile, caFile string, mods ...TLSConfigMod) (gr
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if certFile != "" || keyFile != "" {
-		// spec: §10.3 line 338 — present the client leaf via a
+		// spec: §10.3 — present the client leaf via a
 		// filesystem-watching GetClientCertificate callback so a renewed
 		// adapter certificate is used on the next dial without a restart.
 		reloader, err := certreload.New(certFile, keyFile)

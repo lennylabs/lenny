@@ -35,7 +35,7 @@ func TestPhase1SchemasParse(t *testing.T) {
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
 		"schemas/runtime-ops-events.schema.json",
-		// spec: §11.7 line 365 — per-version audit-event registry.
+		// spec: §11.7 — per-version audit-event registry.
 		"schemas/audit-events/v1.json",
 	}
 
@@ -80,12 +80,12 @@ func TestWorkspacePlanExamplesValidate(t *testing.T) {
 		{"schemas/examples/workspaceplan.full.json", true},
 		{"schemas/examples/workspaceplan.invalid-setuid.json", false},
 		{"schemas/examples/workspaceplan.invalid-ssh.json", false},
-		// spec: §14 line 336 — the published schema MUST use allOf +
+		// spec: §14 — the published schema MUST use allOf +
 		// per-variant if/then so an unknown source.type matches no branch
 		// and passes (the consumer skips it per the open-string
 		// discriminator). A oneOf-based schema would reject this. F-14.1.4.
 		{"schemas/examples/workspaceplan.unknown-source-type.json", true},
-		// spec: §14 line 336 — per-variant field strictness: a known type
+		// spec: §14 — per-variant field strictness: a known type
 		// carrying an unknown field is still rejected (the variant subschema
 		// keeps additionalProperties:false under the allOf construction).
 		// F-14.1.4.

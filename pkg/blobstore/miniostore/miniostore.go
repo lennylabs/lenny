@@ -38,11 +38,11 @@ import (
 // the MinIO Store applies on transient transport-class failures: 1s,
 // 5s, 30s — three retry attempts after the initial try. Total budget
 // (initial + 3 retries) caps the effective Put latency at 36s under
-// repeated transient failures, matching the §4.4 line 262 retry-
+// repeated transient failures, matching the §4.4 retry-
 // exhausted contract that increments
 // lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
 //
-// spec: §12.5 line 282.
+// spec: §12.5.
 var putRetryBackoffs = []time.Duration{1 * time.Second, 5 * time.Second, 30 * time.Second}
 
 // Config configures a MinIO-backed blob store.
@@ -130,7 +130,7 @@ type Store struct {
 	// here uses the seam for the durable §12.8 hold path that
 	// previously lived only in the in-memory legalHolds sync.Map.
 	//
-	// spec: §12.8 line 735.
+	// spec: §12.8.
 	catalog legalHoldCatalog
 }
 
@@ -139,7 +139,7 @@ type Store struct {
 // declared here so the miniostore package does not import the
 // catalog package directly, and so tests can swap a fake.
 //
-// spec: §12.8 line 735.
+// spec: §12.8.
 type legalHoldCatalog interface {
 	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
@@ -209,7 +209,7 @@ func (s *Store) hasLegalHold(key string) bool {
 // follows the §12.5 ll. 295 canonical layout
 // `{tenant_id}/{object_type}/{session_id}/{part_id}` so the §12.5
 // GC sweep can prefix-scope by object class (e.g.,
-// `{tenant_id}/eviction/` for the §4.4 line 291 eviction-context
+// `{tenant_id}/eviction/` for the §4.4 eviction-context
 // cleanup path).
 //
 // spec: §12.5 ll. 295, 315.
@@ -224,7 +224,7 @@ func objectKey(u blobstore.URI) string {
 // sessionPrefix is the MinIO object-key prefix shared by every blob
 // of a (tenant, object_type, session) tuple. The trailing slash keeps
 // the prefix from matching a longer session id (sess_1 must not
-// match sess_10) and lets the §12.5 line 315 prefix-scoped GC sweep
+// match sess_10) and lets the §12.5 prefix-scoped GC sweep
 // target the right object class.
 //
 // spec: §12.5 ll. 295, 315.
@@ -247,7 +247,7 @@ func sessionPrefix(tenantID string, objectType blobstore.ObjectType, sessionID s
 //     error and fires
 //     lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}.
 //
-// Retry behaviour (§12.5 line 282): a transient transport-class
+// Retry behaviour (§12.5): a transient transport-class
 // PutObject failure is retried on the putRetryBackoffs schedule
 // (1s, 5s, 30s — three retries after the initial attempt). Non-
 // transient failures (auth, quota, malformed body, conflict) return
@@ -361,7 +361,7 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 // errorType argument is the §16.5 label value: `transport`, `auth`,
 // `quota`, or `other`.
 //
-// spec: §12.5 line 282; §16.5 ArtifactUploadError.
+// spec: §12.5; §16.5 ArtifactUploadError.
 func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
 }
@@ -370,7 +370,7 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 // session sweep (DeleteBySession) refuses to remove blobs whose
 // session row carries legal_hold=true.
 //
-// spec: §12.8 line 735.
+// spec: §12.8.
 func (s *Store) SetCatalog(c legalHoldCatalog) {
 	s.catalog = c
 }
@@ -381,7 +381,7 @@ func (s *Store) SetCatalog(c legalHoldCatalog) {
 // network DNS / dial / timeout / 5xx responses; terminal covers 4xx
 // responses except 408 Request Timeout (which is also transient).
 //
-// spec: §12.5 line 282.
+// spec: §12.5.
 func isTransientPutError(err error) bool {
 	if err == nil {
 		return false
@@ -417,7 +417,7 @@ func isTransientPutError(err error) bool {
 // the §16.5 MinIOUnavailable alert's `error_type="minio_unreachable"`
 // selector for the retry-exhausted transport case.
 //
-// spec: §16.5 ArtifactUploadError; §12.5 line 282.
+// spec: §16.5 ArtifactUploadError; §12.5.
 func classifyPutError(err error) string {
 	resp := minio.ToErrorResponse(err)
 	switch resp.StatusCode {
@@ -616,10 +616,10 @@ func (s *Store) statBlob(ctx context.Context, u blobstore.URI) (blobstore.BlobIn
 // key's suffix after the (tenant, object_type, session) prefix) and Size,
 // in the store's native lexicographic list order. §12.5 tombstoned objects
 // are excluded so a soft-deleted chunk is not offered for reassembly. The
-// §10.1 line 155 resume path calls it to enumerate a checkpoint's chunk
+// §10.1 resume path calls it to enumerate a checkpoint's chunk
 // objects and verify contiguity before minting GET capabilities.
 //
-// spec: §10.1 line 155 — list objects under chunk_object_key_prefix.
+// spec: §10.1 — list objects under chunk_object_key_prefix.
 func (s *Store) ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	objType := u.ObjectType
 	if objType == "" {
@@ -781,7 +781,7 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, sessionID string)
 	// the sweep so the §12.8 orchestrator surfaces
 	// ERASURE_BLOCKED_BY_LEGAL_HOLD upstream.
 	//
-	// spec: §12.8 line 735.
+	// spec: §12.8.
 	if s.catalog != nil {
 		held, lerr := s.catalog.IsLegalHeldAt(ctx, tenantID, sessionID)
 		if lerr != nil {
@@ -834,7 +834,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 
 var _ blobstore.Eraser = (*Store)(nil)
 
-// spec: §12.5 ll. 295; §12.8 line 735.
+// spec: §12.5 ll. 295; §12.8.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, nil
@@ -983,7 +983,7 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 // the single object named by u. RemoveObject is idempotent on an
 // absent key, so a missing object is a no-op.
 //
-// spec: §12.5 line 320 — catalog-driven targeted prune.
+// spec: §12.5 — catalog-driven targeted prune.
 func (s *Store) HardDeleteObject(u blobstore.URI) error {
 	ctx := context.Background()
 	key := objectKey(u)

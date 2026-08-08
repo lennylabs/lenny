@@ -24,7 +24,7 @@ func sseFrame(t *testing.T, w http.ResponseWriter, fl http.Flusher, seq int, typ
 	fl.Flush()
 }
 
-// attachGateway is a fake gateway exercising the §24.17 line 213 attach
+// attachGateway is a fake gateway exercising the §24.17 attach
 // render loop. It serves the §15.1 SSE event stream and the GetSession
 // fast path. sessionState controls what GET /v1/sessions/{id} reports;
 // frames are the SSE frames the events endpoint emits in order. It
@@ -232,7 +232,7 @@ func TestSessionAttachMissingID_spec_24_17_214(t *testing.T) {
 }
 
 // TestAttachWantedDefaultsOffForNonTTY_spec_24_17_213 confirms the
-// §24.17 line 213 default: without --attach and with a non-interactive
+// §24.17 default: without --attach and with a non-interactive
 // stdout (a buffer, the scripted/piped path), attach stays off. F-24.17.4.
 func TestAttachWantedDefaultsOffForNonTTY_spec_24_17_213(t *testing.T) {
 	if attachWanted(sessionFlags{}, &bytes.Buffer{}) {

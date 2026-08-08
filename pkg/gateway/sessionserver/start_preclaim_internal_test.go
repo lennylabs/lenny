@@ -85,7 +85,7 @@ func sessionRow() sessionstore.Session {
 	return sessionstore.Session{ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code"}
 }
 
-// spec: §4.9 lines 1326 — the resolved provider→pool map is the
+// spec: §4.9 — the resolved provider→pool map is the
 // intersection of supportedProviders and the policy's providerPools,
 // each routed to its defaultPool.
 func TestResolveCredentialPoolsPoolSource(t *testing.T) {
@@ -110,7 +110,7 @@ func TestResolveCredentialPoolsPoolSource(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1326 — only providers in both the runtime's
+// spec: §4.9 — only providers in both the runtime's
 // supportedProviders and the policy's providerPools are assigned.
 func TestResolveCredentialPoolsIntersectionNarrows(t *testing.T) {
 	policy := credential.CredentialPolicy{
@@ -164,9 +164,7 @@ func inheritedChildRow() sessionstore.Session {
 	return row
 }
 
-// spec: §8.3 line 470 (assign a credential from the parent's pool whose
-// provider appears in the intersection), line 440 (inherit: child uses
-// the same credential pool/source as the parent). An inherit child's
+// spec: §8.3. An inherit child's
 // eligible provider set is narrowed to the origin runtime's eligible set:
 // the child runtime supports both providers, but the origin runtime
 // supports only anthropic_direct, so the child is assigned only
@@ -195,7 +193,7 @@ func TestResolveCredentialPoolsInheritNarrowsToOrigin(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 470 — a self-origin session (CredentialOriginSessionID
+// spec: §8.3 — a self-origin session (CredentialOriginSessionID
 // equal to its own id) is not an inherit child: the constraint is skipped
 // and the independent/top-level path assigns the child's own full
 // intersection. This pins that the inherit constraint fires only for an
@@ -225,7 +223,7 @@ func TestResolveCredentialPoolsSelfOriginUnconstrained(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 470 — an empty CredentialOriginSessionID (a top-level
+// spec: §8.3 — an empty CredentialOriginSessionID (a top-level
 // session that never delegated) leaves the constraint off: the child's
 // own full intersection is assigned.
 func TestResolveCredentialPoolsEmptyOriginUnconstrained(t *testing.T) {
@@ -251,8 +249,7 @@ func TestResolveCredentialPoolsEmptyOriginUnconstrained(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 472 (each hop re-checks the still-inherited origin pool
-// at delegation time). An inherit child
+// spec: §8.3. An inherit child
 // whose origin session cannot be resolved fails closed: the constrained
 // intersection is emptied, so resolveCredentialPools returns
 // ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED at assignment)
@@ -280,7 +277,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnMissingOrigin(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 472 — an inherit child
+// spec: §8.3 — an inherit child
 // whose origin session resolves but whose origin runtime cannot be
 // resolved (the origin row references a runtime that no longer exists)
 // also fails closed rather than falling back to the child's own set.
@@ -310,7 +307,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnMissingOriginRuntime(t *testi
 	}
 }
 
-// spec: §8.3 line 470 — the origin∩child intersection can be empty even
+// spec: §8.3 — the origin∩child intersection can be empty even
 // when the child and origin each individually have an assignable pool: a
 // disjoint origin runtime (supporting a provider the child does not, and
 // vice versa) yields no shared provider, so the inherit child is denied
@@ -335,7 +332,7 @@ func TestResolveCredentialPoolsInheritDisjointDenies(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 443 — a deny hop grants the child no LLM credentials.
+// spec: §8.3 — a deny hop grants the child no LLM credentials.
 // A row stamped CredentialDeny returns from resolveCredentialPools before
 // any intersection is computed: an empty provider map and no error, so
 // PreClaim runs no assignment and no lease is minted (fail closed). Over
@@ -363,7 +360,7 @@ func TestResolveCredentialPoolsDenyRowReceivesNoCredential(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 443, 490 — an inherit hop whose credential origin
+// spec: §8.3 — an inherit hop whose credential origin
 // resolves to a deny session fails closed. A deny session holds no origin
 // pool, so the child has nothing to inherit and resolveCredentialPools
 // returns ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED at
@@ -397,7 +394,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnDenyOrigin(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 470 — the local intersectProviders set-∩ is
+// spec: §8.3 — the local intersectProviders set-∩ is
 // order-stable in a's order, deduplicates, and drops elements absent from
 // b. It backs the inherit constraint's origin∩child computation.
 func TestIntersectProvidersSetSemantics(t *testing.T) {
@@ -427,7 +424,7 @@ func TestIntersectProvidersSetSemantics(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1314-1319 — the fallback chain skips a pool whose
+// spec: §4.9 — the fallback chain skips a pool whose
 // credentials are all revoked and routes to the next pool in order.
 func TestResolveCredentialPoolsFallbackOrder(t *testing.T) {
 	policy := credential.CredentialPolicy{
@@ -449,7 +446,7 @@ func TestResolveCredentialPoolsFallbackOrder(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1218 — every pool exhausted (all credentials revoked)
+// spec: §4.9 — every pool exhausted (all credentials revoked)
 // rejects with ErrNoCredentialAvailable before a pod is claimed.
 func TestResolveCredentialPoolsExhausted(t *testing.T) {
 	policy := credential.CredentialPolicy{
@@ -467,7 +464,7 @@ func TestResolveCredentialPoolsExhausted(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1364, 1370 — a user-only policy with no user-credential
+// spec: §4.9 — a user-only policy with no user-credential
 // checker (v1: user-source delivery deferred) rejects with
 // ErrUserCredentialNotFound.
 func TestResolveCredentialPoolsUserOnlyMiss(t *testing.T) {
@@ -510,7 +507,7 @@ func TestResolveCredentialPoolsNoRegistries(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 470 — CheckDelegationCredentialAvailability is the thin
+// spec: §8.3 — CheckDelegationCredentialAvailability is the thin
 // §8.3 delegation-time wrapper over the §4.9 engine. It builds a synthetic
 // child row from the DelegationCredentialQuery (ChildRuntimeRef→RuntimeRef;
 // TenantID, UserID, and CredentialOriginSessionID verbatim), runs
@@ -636,7 +633,7 @@ func claimAtCreateScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// spec: §5.2 (service mode is claimless), §7.1 step 4, line 75.
+// spec: §5.2 (service mode is claimless), §7.1 step 4.
 // claimAtCreate resolves a service-mode pool and returns a nil ClaimResult
 // (no pod claimed) plus the service-mode §7.1 level, so the create path
 // persists the row with no PodAssignment and never touches the SSA claim.
@@ -698,7 +695,7 @@ func credPolicyStores(t *testing.T, credStatus credentialpoolstore.CredentialSta
 	return tenants, runtimes, credPools
 }
 
-// spec: §4.9 lines 1216-1218, §7.1 step 3 — the credential availability
+// spec: §4.9, §7.1 step 3 — the credential availability
 // pre-check runs at create AHEAD of the step-4 claim. An exclusive pool
 // whose only credential source is exhausted fails the pre-check, so
 // claimAtCreate returns ErrNoCredentialAvailable before the (SSA) Claim
@@ -789,7 +786,7 @@ func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolsto
 	}
 }
 
-// spec: §4.9 lines 1216-1218, §7.1 step 3 — the §7.1 step-3 credential
+// spec: §4.9, §7.1 step 3 — the §7.1 step-3 credential
 // availability pre-check runs at create for a concurrent-workspace pool
 // (maxConcurrentSessions > 1) too, AHEAD of the slot-reservation claim. An
 // exhausted credential source therefore rejects the create with
@@ -807,7 +804,7 @@ func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
 	}
 }
 
-// spec: §4.1 (proposal), §7.1 line 23 (atomicity), §5.2 — when the
+// spec: §4.1 (proposal), §7.1, §5.2 — when the
 // credential pre-check passes but the concurrent pool has no idle pod to
 // reserve a slot on, claimAtCreate surfaces the exhaustion as the §7.1
 // SESSION_CREATION_FAILED atomicity envelope (errCreateClaimExhausted
@@ -883,7 +880,7 @@ func TestLaunchOnPodConcurrentPoolDispatchesSlotBind(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1218, §15.1 line 990 — the pre-claim exhaustion
+// spec: §4.9, §15.1 — the pre-claim exhaustion
 // envelope is CREDENTIAL_POOL_EXHAUSTED, HTTP 503, category POLICY,
 // non-retryable bit aside; the reason distinguishes pre-claim.
 func TestWriteCredentialPoolExhaustedShape(t *testing.T) {
@@ -914,7 +911,7 @@ func TestWriteCredentialPoolExhaustedShape(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1364, §15.1 line 993 — the user-only miss envelope is
+// spec: §4.9, §15.1 — the user-only miss envelope is
 // USER_CREDENTIAL_NOT_FOUND, HTTP 404, category PERMANENT.
 func TestWriteUserCredentialNotFoundShape(t *testing.T) {
 	s := &Server{}
@@ -940,7 +937,7 @@ func TestWriteUserCredentialNotFoundShape(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1220 — when the pre-claim check passed but the lease
+// spec: §4.9 — when the pre-claim check passed but the lease
 // assignment raced and failed, the gateway emits the mismatch metric
 // (labeled by the failing pool and provider) and returns
 // CREDENTIAL_POOL_EXHAUSTED with reason assignment_race.
@@ -972,8 +969,7 @@ func TestWritePodClaimErrorAssignmentRaceEmitsMetric(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 (a create-step failure rolls back without persisting the
-// row, releasing the create-time claim), §4.7 (the combined create-and-start
+// spec: §7.1, §4.7 (the combined create-and-start
 // path reuses the claim/prepare/launch phases), §5.2 (slot reservation
 // release). The combined POST /v1/sessions/start path claims at /create then
 // runs prepare/launch in the same call; on a startOnPod error

@@ -25,7 +25,7 @@
 // the registry is the single source of truth, read per invocation, never
 // snapshotted into a lease).
 //
-// spec: §4.8 lines 1034-1040; §8.3 lines 205-224 (SEC-013).
+// spec: §4.8; §8.3.
 package interceptorstore
 
 import (
@@ -48,12 +48,12 @@ type Interceptor struct {
 	Name string
 
 	// Endpoint is the gRPC address (host:port) of the interceptor
-	// service per the §4.8 registration table (line 1019).
+	// service per the §4.8 registration table.
 	Endpoint string
 
 	// Priority orders execution within a phase; lower runs first. An
 	// external interceptor must register above
-	// interceptor.ReservedPriorityCeiling (§4.8 line 1020).
+	// interceptor.ReservedPriorityCeiling (§4.8).
 	Priority int32
 
 	// FailPolicy governs the chain's response to a transport error or
@@ -65,7 +65,7 @@ type Interceptor struct {
 	TimeoutMs int
 
 	// Phases is the §4.8 phase set this interceptor registers for. No
-	// phase may be PhasePreAuth (§4.8 line 1023).
+	// phase may be PhasePreAuth (§4.8).
 	Phases []interceptor.Phase
 
 	// FailOpenTransitionAt is the §8.3 SEC-013 server-minted timestamp
@@ -153,7 +153,7 @@ func Validate(ic Interceptor) error {
 	if ic.TimeoutMs < 0 {
 		return errors.New("interceptorstore: timeoutMs must be >= 0")
 	}
-	// §4.8 line 1020 — external interceptors must register above the
+	// §4.8 — external interceptors must register above the
 	// reserved ceiling.
 	if ic.Priority <= interceptor.ReservedPriorityCeiling {
 		return fmt.Errorf("%w: %q has priority %d", interceptor.ErrInvalidPriority, ic.Name, ic.Priority)
@@ -165,7 +165,7 @@ func Validate(ic Interceptor) error {
 		if !p.IsValid() {
 			return fmt.Errorf("interceptorstore: unknown phase %q", p)
 		}
-		// §4.8 line 1023 — the PreAuth phase is built-in only.
+		// §4.8 — the PreAuth phase is built-in only.
 		if p == interceptor.PhasePreAuth {
 			return fmt.Errorf("%w: %q", interceptor.ErrInvalidPhase, ic.Name)
 		}

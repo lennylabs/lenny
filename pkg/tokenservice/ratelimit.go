@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// §13.3 line 607 / line 611 limit tier vocabulary. The labels match
+// §13.3 limit tier vocabulary. The labels match
 // the §16.1 `lenny_oauth_token_rate_limited_total` /
 // `lenny_oauth_token_rate_limited_sampled_total` label vocabulary and
 // the §13.3 `token.exchange_rate_limited` audit payload's `limit_tier`
@@ -20,7 +20,7 @@ const (
 
 // RateLimitOptions configures the §13.3 per-(tenant, sub) and global
 // per-tenant rate limits on POST /v1/oauth/token. Zero on any field
-// disables that tier. The §13.3 line 607 defaults are 10 req/s and
+// disables that tier. The §13.3 defaults are 10 req/s and
 // 300 req/min per (tenant, sub) plus 100 req/s per tenant; the binary
 // flag layer fills them in.
 type RateLimitOptions struct {
@@ -30,7 +30,7 @@ type RateLimitOptions struct {
 	CallerPerMinute int
 	// TenantPerSecond caps per-tenant per-second.
 	TenantPerSecond int
-	// SampleWindow is the §13.3 line 611 rolling window for audit
+	// SampleWindow is the §13.3 rolling window for audit
 	// sampling (first rejection per (tenant, sub, tier) emits the row;
 	// subsequent rejections in the window increment the sampled
 	// counter only). Zero means 10 seconds, the §13.3 default.
@@ -57,7 +57,7 @@ type RateLimitDecision struct {
 // per-replica memory. It backs both the audit-sampling decision and
 // the 429 response.
 //
-// spec: §13.3 line 607 (limits), line 609 (sampled audit), line 611
+// spec: §13.3
 // (per-replica local state).
 type RateLimiter struct {
 	opts   RateLimitOptions
@@ -180,7 +180,7 @@ func (l *RateLimiter) incMin(key string, at time.Time, limit int) (time.Time, bo
 
 // deny builds the deny decision and computes whether this rejection
 // should emit a sampled audit row (first rejection per
-// (tenant, sub, tier) in the window per §13.3 line 609).
+// (tenant, sub, tier) in the window per §13.3).
 func (l *RateLimiter) deny(tenantID, sub, tier string, at, resetAt time.Time) RateLimitDecision {
 	retry := time.Until(resetAt)
 	if retry <= 0 {

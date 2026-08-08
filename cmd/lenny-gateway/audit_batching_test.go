@@ -4,7 +4,7 @@ package main
 
 import "testing"
 
-// spec: §12.3 line 99 — AuditBatchingNoSIEM fires only when production
+// spec: §12.3 — AuditBatchingNoSIEM fires only when production
 // mode has T2 audit batching enabled and no SIEM endpoint configured.
 // Non-production, batching-disabled, or SIEM-configured deployments do
 // not warn. F-12.3.15.

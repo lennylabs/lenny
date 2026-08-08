@@ -11,10 +11,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
-// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+// spec: §16.1, §7.3 — F-7.5.9.
 //
 // lenny_warmpool_warmup_failure_total{error_type} is exposed on /metrics
-// with the spec-named error_type label. The §7.3 line 387 closed enum
+// with the spec-named error_type label. The §7.3 closed enum
 // includes setup_command_failed which the gateway emits when a bind-time
 // setup command exits non-zero.
 

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+#
+# Every citation this file carries is written inside a sentence, so the
+# words standing behind its member belong to the sentence rather than to
+# the pointer. Each is copied from a carrier the tree holds.
+services:
+  gateway:
+    environment:
+      # §12.3 line 117 per-tier write ceiling: Tier 2 reference instance
+      LENNY_WRITE_CEILING: "2"
+      # Rendered unconditionally (§13.2 line 440 step 2): the enforcement target
+      LENNY_ENFORCEMENT_TARGET: "gateway"
+      # providers is the §13.2 line 434 CIDR allowlist for the
+      # egress policy the tenant is admitted under.
+      LENNY_EGRESS_PROVIDERS: "10.0.0.0/8"
+      # certmanager is the §10.3 line 304 gate for the cert-manager prerequisite.
+      LENNY_CERT_MANAGER: "true"

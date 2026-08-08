@@ -25,7 +25,7 @@ import (
 // PodLifecycleManager, and PoolManager — a breaking upstream change or
 // an alternative backend swaps the implementations behind these
 // interfaces with every consumer untouched. spec:
-// spec/04_system-components.md lines 333-363; §17.1 row 9. F-17.1.11.
+// §4.6.1; §17.1 row 9. F-17.1.11.
 var (
 	_ PoolReader          = (*AgentSandboxPoolReader)(nil)
 	_ PodLifecycleManager = (*AgentSandboxPodLifecycleManager)(nil)
@@ -34,7 +34,7 @@ var (
 
 // AgentSandboxPoolReader is the v1 default PoolReader: a thin
 // translator over the lenny.dev/v1alpha1 SandboxTemplate / SandboxWarmPool /
-// Sandbox CRDs. spec: spec/04_system-components.md line 359.
+// Sandbox CRDs. spec: §4.6.1.
 type AgentSandboxPoolReader struct {
 	// Client is the controller-runtime client every read uses.
 	Client client.Client
@@ -139,7 +139,7 @@ func (r *AgentSandboxPoolReader) statusFromTemplate(ctx context.Context, tmpl *l
 // then this type exposes the spec surface so future replacements (a
 // custom kubebuilder backend, a multi-cluster router) can be dropped
 // in without changing every call site.
-// spec: spec/04_system-components.md lines 340-345, 359, 363.
+// spec: §4.6.1.
 type AgentSandboxPodLifecycleManager struct {
 	AgentSandboxPoolReader
 }
@@ -162,8 +162,7 @@ type AgentSandboxPodLifecycleManager struct {
 // carries no session identifier; the returned PodHandle echoes sessionID
 // for the caller's attribution alone.
 //
-// spec: spec/04_system-components.md lines 340-345, 386, 388 (occupancy
-// projection); §4.6.3 (gateway is not a Sandbox.status writer).
+// spec: §4.6.1; §4.6.3 (gateway is not a Sandbox.status writer).
 func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error) {
 	pod, err := m.findIdleSandbox(ctx, poolName)
 	if err != nil {
@@ -453,7 +452,7 @@ func (m *AgentSandboxPoolManager) TransitionPodState(ctx context.Context, handle
 // GarbageCollect implements PoolManager. The v1 default sweep finds
 // orphan Sandboxes (no matching pool) and reports them; the
 // WarmPoolController's GC reconciler owns the actual delete. spec:
-// spec/04_system-components.md line 353.
+// §4.6.1.
 func (m *AgentSandboxPoolManager) GarbageCollect(ctx context.Context) ([]OrphanResult, error) {
 	var templates lennyv1.SandboxTemplateList
 	if err := m.Client.List(ctx, &templates, client.InNamespace(m.Namespace)); err != nil {

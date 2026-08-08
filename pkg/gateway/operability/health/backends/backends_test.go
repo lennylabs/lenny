@@ -36,7 +36,7 @@ func TestCircuitBreakerCacheStaleIsDegraded(t *testing.T) {
 	}
 	// The breaker-cache degradation is not a Path B issue code, so the
 	// checker carries the structured singular hint directly.
-	// spec: §25.3 lines 459-501.
+	// spec: §25.3.
 	if got.SuggestedAction == nil || got.SuggestedAction.Runbook == "" {
 		t.Error("a degraded component must carry a §25.3 structured suggested action with a runbook")
 	}
@@ -59,7 +59,7 @@ type fakeSIEM struct {
 func (f fakeSIEM) Healthy() bool        { return f.healthy }
 func (f fakeSIEM) FailureRate() float64 { return f.rate }
 
-// spec: §11.7 item 4 line 372 — below the configured failure threshold
+// spec: §11.7 item 4 — below the configured failure threshold
 // and with a healthy last delivery, the SIEM component is healthy.
 func TestSIEMHealthyBelowThreshold(t *testing.T) {
 	c := backends.SIEM(fakeSIEM{healthy: true, rate: 1}, fakeSIEM{rate: 1}, 5, "siem")
@@ -69,7 +69,7 @@ func TestSIEMHealthyBelowThreshold(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 4 line 372 — when the delivery failure rate exceeds
+// spec: §11.7 item 4 — when the delivery failure rate exceeds
 // the threshold, the §25.3 health API reports the siem component
 // degraded with an operability hint. F-11.7.16.
 func TestSIEMDegradedAboveThreshold(t *testing.T) {
@@ -84,7 +84,7 @@ func TestSIEMDegradedAboveThreshold(t *testing.T) {
 	// The checker stamps the Issue; the aggregator's catalog resolves the
 	// structured suggestedAction and the Path B runbook from it. Assert
 	// the issue code is one the catalog can resolve to a hint with a
-	// runbook. spec: §25.3 lines 459-501; §25.7 line 3234.
+	// runbook. spec: §25.3; §25.7.
 	single, _ := health.ActionsForIssue(got.Issue, got.Name)
 	if single == nil || single.Runbook == "" {
 		t.Errorf("ActionsForIssue(%q) = %+v, want a singular hint with a runbook", got.Issue, single)
@@ -121,7 +121,7 @@ func okProbe() backends.ProbeFunc {
 	return func(context.Context) error { return nil }
 }
 
-// spec: §25.3 line 441 / lines 527-528 — the MinIO/objectStore probe
+// spec: §25.3 — the MinIO/objectStore probe
 // reports unhealthy and stamps MINIO_UNREACHABLE on a failed HeadBucket.
 func TestObjectStoreUnhealthy_spec_25_3_441(t *testing.T) {
 	c := backends.ObjectStore(errProbe("head bucket: connection refused"), "objectStore")
@@ -141,7 +141,7 @@ func TestObjectStoreHealthy_spec_25_3_441(t *testing.T) {
 	}
 }
 
-// spec: §25.3 line 441 — the K8s API server probe reports unhealthy with
+// spec: §25.3 — the K8s API server probe reports unhealthy with
 // an investigate hint when GET /healthz fails.
 func TestAPIServerUnhealthy_spec_25_3_441(t *testing.T) {
 	c := backends.APIServer(errProbe("/healthz returned 500"), "kubernetes-api")
@@ -161,7 +161,7 @@ func TestAPIServerHealthy_spec_25_3_441(t *testing.T) {
 	}
 }
 
-// spec: §25.3 line 441 — the registered-connectors probe reports
+// spec: §25.3 — the registered-connectors probe reports
 // unhealthy with an investigate hint when the registry query fails.
 func TestConnectorsUnhealthy_spec_25_3_441(t *testing.T) {
 	c := backends.Connectors(errProbe("registry list: timeout"), "connectors")
@@ -192,7 +192,7 @@ func (f fakeCertReader) NotAfter(context.Context) (time.Time, error) {
 	return f.notAfter, f.err
 }
 
-// spec: §25.3 line 441 / §16.5 CertExpiryImminent — a valid certificate
+// spec: §25.3 / §16.5 CertExpiryImminent — a valid certificate
 // with ample lifetime is healthy.
 func TestCertManagerHealthy_spec_25_3_441(t *testing.T) {
 	c := backends.CertManager(fakeCertReader{notAfter: time.Now().Add(48 * time.Hour)}, "cert-manager")

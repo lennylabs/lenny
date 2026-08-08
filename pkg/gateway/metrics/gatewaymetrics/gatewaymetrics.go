@@ -124,13 +124,12 @@ func New() (*Metrics, error) {
 }
 
 // IncDelegationLeaseExtension records a §8.6 lease-extension
-// decision against the §16 line 66
+// decision against the §16
 // `lenny_delegation_lease_extension_total` counter. The `outcome`
-// label is the §8.6 line 743 audit classification
+// label is the §8.6 audit classification
 // (`approved`/`capped`/`denied`) — emitted by
 // leasecontrol.Service alongside its audit record so the dashboard and
-// the audit chain share one source of truth. spec: §16 line 66; §8.6
-// line 743; F-8.6.13.
+// the audit chain share one source of truth. spec: §16; §8.6; F-8.6.13.
 func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 	if m == nil {
 		return
@@ -138,12 +137,11 @@ func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
 	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
 }
 
-// IncDelegationBudgetReconstruction records one §11.2 line 48 delegation
+// IncDelegationBudgetReconstruction records one §11.2 delegation
 // tree budget reconstruction event. `outcome` is `success` (counters
 // restored via the MAX rule) or `irrecoverable` (the tree root was moved
 // to awaiting_client_action because the checkpoint was too stale and the
-// live state could not be enumerated). spec: §11.2 line 48; §12.4 line
-// 218; F-11.2.5.
+// live state could not be enumerated). spec: §11.2; §12.4; F-11.2.5.
 func (m *Metrics) IncDelegationBudgetReconstruction(outcome string) {
 	if m == nil {
 		return
@@ -151,11 +149,11 @@ func (m *Metrics) IncDelegationBudgetReconstruction(outcome string) {
 	m.delegationBudgetReconstruction.WithLabelValues(outcome).Inc()
 }
 
-// IncQuotaCheckpointReconcile records one §11.2 line 48 / §24.6
+// IncQuotaCheckpointReconcile records one §11.2 / §24.6
 // token-usage counter reconcile event. `outcome` is `restored` (the MAX
 // rule was applied to a still-current window) or `skipped` (the
-// checkpoint's window had already rolled over). spec: §11.2 line 48;
-// §24.6 line 99; F-11.2.4 / F-24.6.3.
+// checkpoint's window had already rolled over). spec: §11.2;
+// §24.6; F-11.2.4 / F-24.6.3.
 func (m *Metrics) IncQuotaCheckpointReconcile(outcome string) {
 	if m == nil {
 		return
@@ -165,7 +163,7 @@ func (m *Metrics) IncQuotaCheckpointReconcile(outcome string) {
 
 // IncExportFileScan records one §8.7 PreExportMaterialization per-file
 // scan outcome. `outcome` is one of admitted, modified, rejected,
-// failed_open, or failed_closed. spec: §16.1 line 80; F-8.7.10.
+// failed_open, or failed_closed. spec: §16.1; F-8.7.10.
 func (m *Metrics) IncExportFileScan(pool, tenantID, policyName, interceptorRef, outcome string) {
 	if m == nil {
 		return
@@ -174,8 +172,7 @@ func (m *Metrics) IncExportFileScan(pool, tenantID, policyName, interceptorRef, 
 }
 
 // ObserveExportFileScanDuration records the per-file §8.7
-// PreExportMaterialization interceptor latency in seconds. spec: §16.1
-// line 81; F-8.7.10.
+// PreExportMaterialization interceptor latency in seconds. spec: §16.1; F-8.7.10.
 func (m *Metrics) ObserveExportFileScanDuration(pool, tenantID, interceptorRef string, seconds float64) {
 	if m == nil {
 		return
@@ -186,7 +183,7 @@ func (m *Metrics) ObserveExportFileScanDuration(pool, tenantID, interceptorRef s
 // ObserveInterceptorMTLSHandshake records a §10.3 NET-063
 // gateway→in-cluster-interceptor TLS handshake outcome. `result` is one
 // of success, san_mismatch, cert_expired, cert_missing, tls_error. spec:
-// §10.3 line 332; §16.1 line 50; F-10.3.3.
+// §10.3; §16.1; F-10.3.3.
 func (m *Metrics) ObserveInterceptorMTLSHandshake(result string, seconds float64) {
 	if m == nil {
 		return
@@ -337,13 +334,13 @@ func mergeBuckets(in []bucketSample) []bucketSample {
 	return out
 }
 
-// IncCheckpointOrphanedObjects increments the §4.4 line 248
+// IncCheckpointOrphanedObjects increments the §4.4
 // `lenny_checkpoint_orphaned_objects_total` counter labeled by pool
 // and trigger. Called from the gateway checkpointer's chunk-release
 // path when a chunk object's per-key delete fails and no reclaimer
 // will retry it (the rotation-side release of a completed checkpoint,
 // which the §12.5 backstop sweep never re-selects).
-// spec: §4.4 line 248.
+// spec: §4.4.
 func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	if m == nil {
 		return
@@ -351,12 +348,12 @@ func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	m.checkpointOrphanedObjects.WithLabelValues(pool, trigger).Inc()
 }
 
-// IncCheckpointSizeExceeded increments the §4.4 line 255
+// IncCheckpointSizeExceeded increments the §4.4
 // `lenny_checkpoint_size_exceeded_total` counter labeled by pool and
 // level. Called from the gateway upload driver when the adapter
 // rejects the run at its pre-checkpoint workspace-size probe, reported
 // over the Checkpoint stream as a FailedPrecondition status.
-// spec: §4.4 line 255.
+// spec: §4.4.
 func (m *Metrics) IncCheckpointSizeExceeded(pool, level string) {
 	if m == nil {
 		return
@@ -364,11 +361,11 @@ func (m *Metrics) IncCheckpointSizeExceeded(pool, level string) {
 	m.checkpointSizeExceeded.WithLabelValues(pool, level).Inc()
 }
 
-// IncSessionEvictionTotalLoss increments the §4.4 lines 283–289
+// IncSessionEvictionTotalLoss increments the §4.4
 // `lenny_session_eviction_total_loss_total` counter labeled by pool
 // and had_prior_checkpoint. Called from the eviction-fallback writer
 // when both MinIO and Postgres failed for an eviction checkpoint.
-// spec: §4.4 line 286.
+// spec: §4.4.
 func (m *Metrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bool) {
 	if m == nil {
 		return
@@ -380,12 +377,12 @@ func (m *Metrics) IncSessionEvictionTotalLoss(pool string, hadPriorCheckpoint bo
 	m.sessionEvictionTotalLoss.WithLabelValues(pool, label).Inc()
 }
 
-// IncCheckpointEvictionPartialKeysLogged increments the §4.4 line 279
+// IncCheckpointEvictionPartialKeysLogged increments the §4.4
 // `lenny_checkpoint_eviction_partial_keys_logged_total` counter
 // labeled by pool and keys_committed ("0" for total-MinIO-failure, "1+"
 // for partial-upload scenarios). Called from the eviction-fallback
 // writer's WARN-log path before the total-loss orchestration fires.
-// spec: §4.4 line 279.
+// spec: §4.4.
 func (m *Metrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted string) {
 	if m == nil {
 		return
@@ -393,10 +390,10 @@ func (m *Metrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted str
 	m.checkpointEvictionPartialKeysLogged.WithLabelValues(pool, keysCommitted).Inc()
 }
 
-// IncPartialManifestCleanup increments the §4.4 line 236
+// IncPartialManifestCleanup increments the §4.4
 // `lenny_partial_manifest_cleanup_total` counter labeled by outcome
 // (`success`, `failed_deleted`, or `gc_collected`).
-// spec: §4.4 line 236.
+// spec: §4.4.
 func (m *Metrics) IncPartialManifestCleanup(outcome string) {
 	if m == nil {
 		return
@@ -416,12 +413,12 @@ func (m *Metrics) IncCheckpointPartialManifestsSuperseded(pool string) {
 	m.checkpointPartialManifestsSuperseded.WithLabelValues(pool).Inc()
 }
 
-// ObserveCheckpointDuration observes one §4.4 line 254
+// ObserveCheckpointDuration observes one §4.4
 // `lenny_checkpoint_duration_seconds` histogram value labeled by
 // pool, level, and trigger. Called from the checkpointer at the
 // end of every snapshot regardless of outcome. The §16.5
 // CheckpointDurationHigh alert reads the P95 of this histogram.
-// spec: §4.4 line 254.
+// spec: §4.4.
 func (m *Metrics) ObserveCheckpointDuration(pool, level, trigger string, seconds float64) {
 	if m == nil {
 		return
@@ -429,13 +426,13 @@ func (m *Metrics) ObserveCheckpointDuration(pool, level, trigger string, seconds
 	m.checkpointDuration.WithLabelValues(pool, level, trigger).Observe(seconds)
 }
 
-// ObserveSessionStartupDuration records the §6.3 line 348 end-to-end
+// ObserveSessionStartupDuration records the §6.3 end-to-end
 // pod-warm startup latency (pod claim through agent session ready,
 // excluding upload and workspace materialization) for a successful
 // session start. The StartupLatencyBurnRate and
 // StartupLatencyGVisorBurnRate alerts read the P95 of this histogram
 // through the lenny_session_startup_duration_slow_ratio recording rule.
-// spec: §16.1 line 14, §6.3 line 348.
+// spec: §16.1, §6.3.
 func (m *Metrics) ObserveSessionStartupDuration(pool, runtimeClass, isolationProfile string, seconds float64) {
 	if m == nil {
 		return
@@ -443,12 +440,12 @@ func (m *Metrics) ObserveSessionStartupDuration(pool, runtimeClass, isolationPro
 	m.sessionStartupDuration.WithLabelValues(pool, runtimeClass, isolationProfile).Observe(seconds)
 }
 
-// ObserveSessionStartupPhase records the §6.3 line 372 latency of one
+// ObserveSessionStartupPhase records the §6.3 latency of one
 // hot-path startup phase. phase is one of pod_claim,
 // workspace_materialization, setup_commands, credential_assignment, or
 // agent_session_start. Observed once per phase per successful start so
 // the per-phase latency budget (§6.3 table) can be attributed.
-// spec: §6.3 line 372.
+// spec: §6.3.
 func (m *Metrics) ObserveSessionStartupPhase(phase, runtimeClass string, seconds float64) {
 	if m == nil {
 		return
@@ -456,15 +453,14 @@ func (m *Metrics) ObserveSessionStartupPhase(phase, runtimeClass string, seconds
 	m.sessionStartupPhaseDuration.WithLabelValues(phase, runtimeClass).Observe(seconds)
 }
 
-// ObserveSessionTimeToFirstToken records the §6.3 line 356 / §16.1
-// line 15 end-to-end TTFT: wall-clock seconds from session start
+// ObserveSessionTimeToFirstToken records the §6.3 / §16.1 end-to-end TTFT: wall-clock seconds from session start
 // request (POST /v1/sessions admission, i.e. session.CreatedAt) to
 // the first agent-streamed response event emitted to the SSE client.
 // Observed once per session — the first qualifying response event
 // records, all subsequent events for the same session are ignored.
 // The TTFTBurnRate alert reads the P95 of this histogram via an
 // inline expression against the le="10" bucket (the 10s SLO
-// threshold). spec: §6.3 line 356, §16.1 line 15.
+// threshold). spec: §6.3, §16.1.
 func (m *Metrics) ObserveSessionTimeToFirstToken(pool, runtimeClass, isolationProfile string, seconds float64) {
 	if m == nil {
 		return
@@ -472,15 +468,14 @@ func (m *Metrics) ObserveSessionTimeToFirstToken(pool, runtimeClass, isolationPr
 	m.sessionTimeToFirstToken.WithLabelValues(pool, runtimeClass, isolationProfile).Observe(seconds)
 }
 
-// IncWarmpoolClaim increments the §6.3 line 352 / §16.1 line 122
+// IncWarmpoolClaim increments the §6.3 / §16.1
 // `lenny_warmpool_claims_total{pool,runtime_class}` counter on each
 // idle→claimed transition in the §6.1 warm pool. This counter is the
 // denominator of the §6.3 SDK-warm demotion-rate ratio
 // (`lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total`)
 // that deployers must track to verify SDK-warm net benefit. The
 // numerator (`lenny_warmpool_sdk_demotions_total`) is emitted by
-// IncWarmpoolSDKDemotion on the §6.1 binder demotion path. spec: §6.3
-// line 352, §16.1 line 122.
+// IncWarmpoolSDKDemotion on the §6.1 binder demotion path. spec: §6.3, §16.1.
 func (m *Metrics) IncWarmpoolClaim(pool, runtimeClass string) {
 	if m == nil {
 		return
@@ -489,11 +484,10 @@ func (m *Metrics) IncWarmpoolClaim(pool, runtimeClass string) {
 }
 
 // RecordSDKDemotion records one §6.1 SDK-warm demotion: it increments the
-// §6.1 line 34 / §16.1 line 121 `lenny_warmpool_sdk_demotions_total{pool}`
-// counter (the numerator of the §6.3 line 352 demotion-rate ratio over
-// IncWarmpoolClaim) and observes the SDK teardown penalty into the §6.3
-// line 352 `lenny_warmpool_sdk_demotion_duration_seconds{pool}` histogram.
-// spec: §6.1 line 34, §6.3 line 352, §16.1 line 121.
+// §6.1 / §16.1
+// counter (the numerator of the §6.3 demotion-rate ratio over
+// IncWarmpoolClaim) and observes the SDK teardown penalty into the §6.3 histogram.
+// spec: §6.1, §6.3, §16.1.
 func (m *Metrics) RecordSDKDemotion(pool string, teardownSeconds float64) {
 	if m == nil {
 		return
@@ -559,12 +553,12 @@ func (m *Metrics) IncSessionExpiry(pool, reason string) {
 	m.sessionExpiry.WithLabelValues(pool, reason).Inc()
 }
 
-// IncWarmpoolWarmupFailure increments the §16.1 line 124
+// IncWarmpoolWarmupFailure increments the §16.1
 // `lenny_warmpool_warmup_failure_total{error_type}` counter for one warm-
-// pool startup failure. error_type is the §7.3 line 387 non-retryable
+// pool startup failure. error_type is the §7.3 non-retryable
 // failure category the gateway classified (`setup_command_failed`,
 // `workspace_plan_invalid`, `runtime_image_pull_failed`,
-// `network_policy_denied`). spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+// `network_policy_denied`). spec: §16.1, §7.3 — F-7.5.9.
 func (m *Metrics) IncWarmpoolWarmupFailure(errorType string) {
 	if m == nil {
 		return
@@ -587,7 +581,7 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 	m.injectionGateFailClosed.WithLabelValues(cause).Inc()
 }
 
-// ObserveWorkspaceSealDuration records the §7.1 line 112
+// ObserveWorkspaceSealDuration records the §7.1
 // `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
 // terminal session's seal-and-export. outcome is "success" when the seal
 // completed, "timeout" when the retry window was exhausted, or
@@ -595,7 +589,7 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 // reported as permanent and returned immediately without retrying. The
 // §16.5 WorkspaceSealStuck alert fires on a nonzero outcome="timeout"
 // count alone.
-// spec: §7.1 line 112.
+// spec: §7.1.
 func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
 	if m == nil {
 		return
@@ -603,7 +597,7 @@ func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds flo
 	m.workspaceSealDuration.WithLabelValues(pool, outcome).Observe(seconds)
 }
 
-// IncCheckpointStorageFailure increments the §4.4 line 262
+// IncCheckpointStorageFailure increments the §4.4
 // `lenny_checkpoint_storage_failure_total` counter labeled by pool,
 // level, and trigger. Called from the non-eviction MinIO-upload path
 // when all retries are exhausted and the failed checkpoint is
@@ -611,7 +605,7 @@ func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds flo
 // `retry_exhausted` so the wider counter rolls up consistently with
 // the §12.5 ll. 303 kms_unavailable rejection counted by
 // IncCheckpointKMSUnavailable below.
-// spec: §4.4 line 262.
+// spec: §4.4.
 func (m *Metrics) IncCheckpointStorageFailure(pool, level, trigger string) {
 	if m == nil {
 		return
@@ -637,7 +631,7 @@ func (m *Metrics) IncCheckpointKMSUnavailable() {
 	m.checkpointStorageFailure.WithLabelValues("", "", "", "kms_unavailable").Inc()
 }
 
-// IncCheckpointTierStoreMismatch increments the §12.9 line 1048
+// IncCheckpointTierStoreMismatch increments the §12.9
 // `lenny_checkpoint_storage_failure_total{reason="tier_store_mismatch"}`
 // counter when a non-envelope-capable artifact store (the in-memory or
 // §17.4 local-filesystem backend) rejects a T4 tenant's write because it
@@ -646,7 +640,7 @@ func (m *Metrics) IncCheckpointKMSUnavailable() {
 // rejection drives the same CheckpointStorageUnavailable alert family as
 // the KMS-unavailable case, with the reason label distinguishing them.
 //
-// spec: §12.9 line 1048; §15.1 line 1078.
+// spec: §12.9; §15.1.
 func (m *Metrics) IncCheckpointTierStoreMismatch() {
 	if m == nil {
 		return
@@ -674,7 +668,7 @@ func (m *Metrics) AddGCTombstonesPruned(table string, n int) {
 // of expired lease rows the bounded sweep worker removed this tick. The
 // counter is unlabeled per §16.1.1.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func (m *Metrics) AddCredentialLeasesSwept(n int) {
 	if m == nil || n <= 0 {
 		return
@@ -685,7 +679,7 @@ func (m *Metrics) AddCredentialLeasesSwept(n int) {
 // IncGCRun bumps the §12.5 ll. 321 `lenny_gc_runs_total` counter once
 // per retention-GC sweep. outcome is `success` or `error`.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func (m *Metrics) IncGCRun(outcome string) {
 	if m == nil {
 		return
@@ -697,7 +691,7 @@ func (m *Metrics) IncGCRun(outcome string) {
 // `lenny_gc_artifacts_deleted` counter by n for the named per-store
 // adapter. Called once per sweep per per-store result.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func (m *Metrics) AddGCArtifactsDeleted(store string, n int) {
 	if m == nil || n <= 0 {
 		return
@@ -708,7 +702,7 @@ func (m *Metrics) AddGCArtifactsDeleted(store string, n int) {
 // IncGCError bumps the §12.5 ll. 321 `lenny_gc_errors_total` counter
 // once per per-store adapter error observed in a sweep.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func (m *Metrics) IncGCError(store string) {
 	if m == nil {
 		return
@@ -719,7 +713,7 @@ func (m *Metrics) IncGCError(store string) {
 // ObserveGCDuration records the §12.5 ll. 321 retention-GC sweep
 // duration. Called once per Tick regardless of outcome.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func (m *Metrics) ObserveGCDuration(seconds float64) {
 	if m == nil {
 		return
@@ -731,7 +725,7 @@ func (m *Metrics) ObserveGCDuration(seconds float64) {
 // `lenny_drain_readiness_checks_total` counter once per webhook
 // decision. outcome is `allowed`, `blocked`, or `forced`.
 //
-// spec: §12.5 line 291.
+// spec: §12.5.
 func (m *Metrics) IncDrainReadinessCheck(outcome string) {
 	if m == nil {
 		return
@@ -743,7 +737,7 @@ func (m *Metrics) IncDrainReadinessCheck(outcome string) {
 // `lenny_legal_hold_checkpoint_gaps_total` counter once per held
 // session whose checkpoint sequence carries a gap.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func (m *Metrics) IncLegalHoldCheckpointGap(tenantID string) {
 	if m == nil {
 		return
@@ -751,13 +745,13 @@ func (m *Metrics) IncLegalHoldCheckpointGap(tenantID string) {
 	m.legalHoldCheckpointGaps.WithLabelValues(tenantID).Inc()
 }
 
-// IncLegalHoldEscrowRegionUnresolvable bumps the §12.8 line 883
+// IncLegalHoldEscrowRegionUnresolvable bumps the §12.8
 // `lenny_legal_hold_escrow_region_unresolvable_total` counter when a
 // Phase 3.5 force-delete override aborts because the tenant's escrow
 // region has no configuration. The §16.5 LegalHoldEscrowResidencyViolation
 // alert reads it.
 //
-// spec: §12.8 line 883.
+// spec: §12.8.
 func (m *Metrics) IncLegalHoldEscrowRegionUnresolvable(tenantID string) {
 	if m == nil {
 		return
@@ -765,12 +759,12 @@ func (m *Metrics) IncLegalHoldEscrowRegionUnresolvable(tenantID string) {
 	m.legalHoldEscrowRegionUnresolvable.WithLabelValues(tenantID).Inc()
 }
 
-// IncLegalHoldOverriddenTenant bumps the §12.8 line 887
+// IncLegalHoldOverriddenTenant bumps the §12.8
 // `lenny_gdpr_legal_hold_overridden_tenant_total` counter once per
 // tenant-scope force-delete legal-hold override. The §16.5
 // LegalHoldOverrideUsedTenant warning alert reads it.
 //
-// spec: §12.8 line 887.
+// spec: §12.8.
 func (m *Metrics) IncLegalHoldOverriddenTenant(tenantID string) {
 	if m == nil {
 		return
@@ -789,7 +783,7 @@ func (m *Metrics) IncLegalHoldOverriddenTenant(tenantID string) {
 // rollup so the CheckpointStorageUnavailable alert fires from the
 // same signal.
 //
-// spec: §12.5 line 282; §16.5 ArtifactUploadError.
+// spec: §12.5; §16.5 ArtifactUploadError.
 func (m *Metrics) IncArtifactUploadError(tenantID, errorType string) {
 	if m == nil {
 		return
@@ -802,9 +796,9 @@ func (m *Metrics) IncArtifactUploadError(tenantID, errorType string) {
 	m.checkpointStorageFailure.WithLabelValues("", "", "", errorType).Inc()
 }
 
-// IncRateLimitRejected increments the §11.1 line 7
+// IncRateLimitRejected increments the §11.1
 // `lenny_rate_limit_rejected_total` counter for one 429 admission
-// rejection. scope is `global` or `user`. spec: §11.1 line 7.
+// rejection. scope is `global` or `user`. spec: §11.1.
 func (m *Metrics) IncRateLimitRejected(scope string) {
 	if m == nil {
 		return
@@ -815,7 +809,7 @@ func (m *Metrics) IncRateLimitRejected(scope string) {
 // SetRateLimitFailopenActive flips the §16.5 RateLimitDegraded source
 // gauge. The ratelimit middleware sets 1 once a counter error is
 // observed and 0 once the next Incr succeeds, so the alert reflects
-// the live degraded state. spec: §16.5 RateLimitDegraded; §11.1 line 7.
+// the live degraded state. spec: §16.5 RateLimitDegraded; §11.1.
 func (m *Metrics) SetRateLimitFailopenActive(active bool) {
 	if m == nil {
 		return
@@ -831,7 +825,7 @@ func (m *Metrics) SetRateLimitFailopenActive(active bool) {
 // `lenny_rate_limit_counter_failure_total` counter. The middleware
 // calls this on every Incr error so an operator can rate-aggregate
 // counter outages even when the failopen-active gauge is pinned to 1.
-// spec: §11.1 line 7.
+// spec: §11.1.
 func (m *Metrics) IncRateLimitCounterFailure() {
 	if m == nil {
 		return
@@ -839,10 +833,10 @@ func (m *Metrics) IncRateLimitCounterFailure() {
 	m.rateLimitCounterFailure.Inc()
 }
 
-// SetQuotaFailopenCumulativeSeconds records the §12.4 line 224 cumulative
+// SetQuotaFailopenCumulativeSeconds records the §12.4 cumulative
 // fail-open timer onto its gauge. The failopen.CumulativeTimer calls this
 // on every fail-open transition so the §16.5 QuotaFailOpenCumulativeThreshold
-// alert sees the live value. spec: §12.4 line 224; §16.1 / §16.5.
+// alert sees the live value. spec: §12.4; §16.1 / §16.5.
 func (m *Metrics) SetQuotaFailopenCumulativeSeconds(seconds float64) {
 	if m == nil {
 		return
@@ -853,7 +847,7 @@ func (m *Metrics) SetQuotaFailopenCumulativeSeconds(seconds float64) {
 // SetQuotaUserFailopenFraction exports the configured
 // quotaUserFailOpenFraction. The gateway sets it once at startup so the
 // §16.5 QuotaFailOpenUserFractionInoperative warning fires for a weakened
-// (>= 0.5) per-user fail-open cap. spec: §12.4 line 222; §16.1 / §16.5.
+// (>= 0.5) per-user fail-open cap. spec: §12.4; §16.1 / §16.5.
 func (m *Metrics) SetQuotaUserFailopenFraction(fraction float64) {
 	if m == nil {
 		return
@@ -861,11 +855,11 @@ func (m *Metrics) SetQuotaUserFailopenFraction(fraction float64) {
 	m.quotaUserFailopenFraction.Set(fraction)
 }
 
-// SetDualStoreUnavailable flips the §10.1 line 45 DualStoreUnavailable
+// SetDualStoreUnavailable flips the §10.1 DualStoreUnavailable
 // source gauge. The dual-store monitor sets 1 the moment it declares
 // both Postgres and Redis unreachable and clears to 0 once at least one
 // store recovers, so the §16.5 alert reflects the live degraded state.
-// spec: §10.1 line 45.
+// spec: §10.1.
 func (m *Metrics) SetDualStoreUnavailable(unavailable bool) {
 	if m == nil {
 		return
@@ -882,7 +876,7 @@ func (m *Metrics) SetDualStoreUnavailable(unavailable bool) {
 // §11.5 cache Put failure. The middleware calls this when the inner
 // handler already executed (the client already got the response) and
 // the durable store rejected the cache row, so the next retry with the
-// same key WILL re-execute the operation. spec: §11.5 line 277;
+// same key WILL re-execute the operation. spec: §11.5;
 // F-11.5.4.
 func (m *Metrics) IncIdempotencyCacheWriteFailure(tenantID string) {
 	if m == nil {
@@ -894,7 +888,7 @@ func (m *Metrics) IncIdempotencyCacheWriteFailure(tenantID string) {
 // IncIdempotencyCacheSkipped increments
 // `lenny_idempotency_cache_skipped_total{tenant_id,reason}` once per
 // §11.5 cache write the middleware declined by policy. reason is one
-// of: "server_error" (inner-handler 5xx). spec: §11.5 line 277;
+// of: "server_error" (inner-handler 5xx). spec: §11.5;
 // F-11.5.3.
 func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 	if m == nil {
@@ -905,7 +899,7 @@ func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 
 // ObserveDelegationDepth records a §8.2 delegation-admission depth
 // observation onto the `lenny_delegation_depth` histogram labeled by
-// `pool`. spec: §8.2; §16.1 line 27.
+// `pool`. spec: §8.2; §16.1.
 func (m *Metrics) ObserveDelegationDepth(pool string, depth int) {
 	if m == nil {
 		return
@@ -920,7 +914,7 @@ func (m *Metrics) ObserveDelegationDepth(pool string, depth int) {
 // for a rejected hop; under `mode: warn` it records the
 // would-have-blocked layers for an admitted hop. The counter is not
 // emitted under `mode: permissive` (the caller decides; this helper
-// is unconditional). spec: §8.2 line 70; §16.1 line 79.
+// is unconditional). spec: §8.2; §16.1.
 func (m *Metrics) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string) {
 	if m == nil {
 		return
@@ -933,7 +927,7 @@ func (m *Metrics) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode stri
 // walker hits a cycle in the §8.2 ParentSessionID lineage. `source`
 // is `rest` for the /v1/sessions/{id}/tree handler and `mcp` for the
 // lenny/get_task_tree platform-tool and lenny/await_children walks.
-// spec: §8.9 line 1003; F-8.9.10.
+// spec: §8.9; F-8.9.10.
 func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 	if m == nil {
 		return
@@ -941,7 +935,7 @@ func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
 }
 
-// IncDelegationDeadlockDetected increments the §8.8 line 981
+// IncDelegationDeadlockDetected increments the §8.8
 // `lenny_delegation_deadlock_detected_total` counter once per
 // newly-detected deadlocked subtree root, scoped by tenant. F-8.8.6.
 func (m *Metrics) IncDelegationDeadlockDetected(tenantID string) {
@@ -964,12 +958,11 @@ func (m *Metrics) ObserveDelegationDeadlockResolution(resolution string, seconds
 	m.delegationDeadlockDuration.WithLabelValues(resolution).Observe(seconds)
 }
 
-// ObserveDelegationParallelChildrenHighWatermark records the §8.3 line
-// 379 maximum simultaneous in-flight children for one delegation tree
+// ObserveDelegationParallelChildrenHighWatermark records the §8.3 maximum simultaneous in-flight children for one delegation tree
 // onto the `lenny_delegation_parallel_children_high_watermark`
 // histogram, sampled once when the tree root settles. `pool` is the
 // root session's assigned pool (empty when unresolved) and `tenant_id`
-// scopes the observation. spec: §8.3 line 379; §16.1 line 73. F-8.9.6.
+// scopes the observation. spec: §8.3; §16.1. F-8.9.6.
 func (m *Metrics) ObserveDelegationParallelChildrenHighWatermark(pool, tenantID string, value int64) {
 	if m == nil {
 		return
@@ -977,11 +970,11 @@ func (m *Metrics) ObserveDelegationParallelChildrenHighWatermark(pool, tenantID 
 	m.delegationParallelChildrenHWM.WithLabelValues(pool, tenantID).Observe(float64(value))
 }
 
-// IncCheckpointEvictionFallback increments the §4.4 line 263
+// IncCheckpointEvictionFallback increments the §4.4
 // `lenny_checkpoint_eviction_fallback_total` counter labeled by pool
 // and had_prior_checkpoint. Called from the eviction-fallback writer
 // at the entry to the Postgres minimal-state write.
-// spec: §4.4 line 263.
+// spec: §4.4.
 func (m *Metrics) IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool) {
 	if m == nil {
 		return
@@ -1039,11 +1032,11 @@ func (m *Metrics) IncPodClaimTimeout(pool string) {
 	m.podClaimTimeout.WithLabelValues(pool).Inc()
 }
 
-// IncSlotAssignmentConflict increments the §5.2 line 519
+// IncSlotAssignmentConflict increments the §5.2
 // `lenny_slot_assignment_conflict_total` counter for pool. Called by
 // the gateway slot claimer when a concurrent-mode reservation found a
 // candidate pod at its maxConcurrent bound.
-// spec: §5.2 line 519 "atomic reservation failures due to slot contention".
+// spec: §5.2.
 func (m *Metrics) IncSlotAssignmentConflict(pool string) {
 	if m == nil {
 		return
@@ -1051,13 +1044,13 @@ func (m *Metrics) IncSlotAssignmentConflict(pool string) {
 	m.slotAssignmentConflict.WithLabelValues(pool).Inc()
 }
 
-// IncCredentialPreclaimMismatch increments the §4.9 line 1220
+// IncCredentialPreclaimMismatch increments the §4.9
 // `lenny_credential_preclaim_mismatch_total` counter for the
 // (pool, provider) pair. Called when the pre-claim credential
 // availability check passed but the subsequent lease assignment failed,
 // so the gateway released the claimed pod and returned
 // CREDENTIAL_POOL_EXHAUSTED to the client.
-// spec: §4.9 line 1220.
+// spec: §4.9.
 func (m *Metrics) IncCredentialPreclaimMismatch(pool, provider string) {
 	if m == nil {
 		return
@@ -1071,7 +1064,7 @@ func (m *Metrics) IncCredentialPreclaimMismatch(pool, provider string) {
 // service after each lease is minted and recorded; in v1 source is
 // always `primary` (the §4.9 fallback chain is the source of `fallback`
 // and the semantic cache the source of `cached`).
-// spec: §16.1 line 51.
+// spec: §16.1.
 func (m *Metrics) IncCredentialLeaseAssignment(provider, pool, source string) {
 	if m == nil {
 		return
@@ -1083,7 +1076,7 @@ func (m *Metrics) IncCredentialLeaseAssignment(provider, pool, source string) {
 // `lenny_credential_rotation_total` counter for errorType. Called by the
 // §4.9 LLM-proxy Fallback Flow each time a faulted lease is rotated to
 // the chain's next pool.
-// spec: §16.1 line 118.
+// spec: §16.1.
 func (m *Metrics) IncCredentialRotation(errorType string) {
 	if m == nil {
 		return
@@ -1096,7 +1089,7 @@ func (m *Metrics) IncCredentialRotation(errorType string) {
 // (pool, provider, errorType) tuple. Called when the fallback chain is
 // exhausted and the session is terminated with
 // CREDENTIAL_FALLBACK_EXHAUSTED.
-// spec: §4.9 line 1395.
+// spec: §4.9.
 func (m *Metrics) IncCredentialFallbackExhausted(pool, provider, errorType string) {
 	if m == nil {
 		return
@@ -1108,7 +1101,7 @@ func (m *Metrics) IncCredentialFallbackExhausted(pool, provider, errorType strin
 // `lenny_credential_lease_duration_seconds` histogram for a lease's
 // wall-clock duration from assignment to release. Called by the
 // credential-assignment service on Release.
-// spec: §16.1 line 55.
+// spec: §16.1.
 func (m *Metrics) ObserveCredentialLeaseDuration(provider, pool string, seconds float64) {
 	if m == nil {
 		return
@@ -1120,7 +1113,7 @@ func (m *Metrics) ObserveCredentialLeaseDuration(provider, pool string, seconds 
 // `lenny_credential_pool_utilization` gauge for pool to ratio (in
 // [0,1]). Called by the credential-assignment service after each assign
 // or release recomputes in-use credentials over the pool size.
-// spec: §16.1 line 53.
+// spec: §16.1.
 func (m *Metrics) SetCredentialPoolUtilization(pool string, ratio float64) {
 	if m == nil {
 		return
@@ -1132,7 +1125,7 @@ func (m *Metrics) SetCredentialPoolUtilization(pool string, ratio float64) {
 // `lenny_gateway_llm_proxy_active_connections` gauge. The proxy handler
 // increments on request entry and decrements on exit so the gauge
 // reflects in-flight requests on the replica.
-// spec: §16.1 line 97.
+// spec: §16.1.
 func (m *Metrics) IncLLMProxyConnections() {
 	if m == nil {
 		return
@@ -1142,7 +1135,7 @@ func (m *Metrics) IncLLMProxyConnections() {
 
 // DecLLMProxyConnections decrements the §16.1 LLM-proxy active-connection
 // gauge.
-// spec: §16.1 line 97.
+// spec: §16.1.
 func (m *Metrics) DecLLMProxyConnections() {
 	if m == nil {
 		return
@@ -1154,7 +1147,7 @@ func (m *Metrics) DecLLMProxyConnections() {
 // `lenny_gateway_llm_translation_duration_seconds` histogram for one
 // translator leg. direction is `request` or `response`. Called by the
 // proxy handler around each TranslateRequest / TranslateResponse call.
-// spec: §16.1 line 99.
+// spec: §16.1.
 func (m *Metrics) ObserveLLMTranslation(pool, provider, proxyDialect, direction string, seconds float64) {
 	if m == nil {
 		return
@@ -1166,7 +1159,7 @@ func (m *Metrics) ObserveLLMTranslation(pool, provider, proxyDialect, direction 
 // `lenny_gateway_llm_translation_errors_total` counter for the
 // (pool, provider, error_type) tuple. errorType is the §4.9 translator
 // taxonomy value carried by a *llmproxy.TranslationError.
-// spec: §16.1 line 100.
+// spec: §16.1.
 func (m *Metrics) IncLLMTranslationError(pool, provider, errorType string) {
 	if m == nil {
 		return
@@ -1174,11 +1167,11 @@ func (m *Metrics) IncLLMTranslationError(pool, provider, errorType string) {
 	m.llmTranslationErrors.WithLabelValues(pool, provider, errorType).Inc()
 }
 
-// IncSlotFailure increments the §5.2 line 12 `lenny_slot_failure_total`
+// IncSlotFailure increments the §5.2
 // counter for the (errorType, pool, podName) tuple. Called by the
 // concurrent-mode slot binder when a slot bind stage failed after the
 // slot was reserved.
-// spec: §5.2 line 12.
+// spec: §5.2.
 func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
 	if m == nil {
 		return
@@ -1186,12 +1179,12 @@ func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
 	m.slotFailure.WithLabelValues(errorType, pool, podName).Inc()
 }
 
-// IncSlotRehydration increments the §5.2 line 521
+// IncSlotRehydration increments the §5.2
 // `lenny_slot_rehydration_total` counter for the (pod, pool) pair.
 // Called by the concurrent-mode slot claimer when a pod's slot counter
 // was seeded from Postgres after a Redis restart — once per pod per
 // Redis restart.
-// spec: §5.2 line 521 ("lenny_slot_rehydration_total counter (labeled
+// spec: §5.2 ("lenny_slot_rehydration_total counter (labeled
 // by pod, pool) is emitted on each rehydration event").
 func (m *Metrics) IncSlotRehydration(pod, pool string) {
 	if m == nil {
@@ -1212,11 +1205,11 @@ func (m *Metrics) IncSlotPodReplacement(pool string) {
 	m.slotPodReplacement.WithLabelValues(pool).Inc()
 }
 
-// SetAdapterLeakedSlots sets the §6.2 line 179 `lenny_adapter_leaked_slots`
+// SetAdapterLeakedSlots sets the §6.2
 // gauge for podID to count: the number of slots on the pod whose cleanup
 // timed out and remain counted in active_slots until the pod terminates.
 // Called by the concurrent-workspace slot path when a slot is leaked (and
-// to zero a pod's series when it terminates). spec: §6.2 line 179.
+// to zero a pod's series when it terminates). spec: §6.2.
 func (m *Metrics) SetAdapterLeakedSlots(podID, pool string, count float64) {
 	if m == nil {
 		return
@@ -1264,7 +1257,7 @@ func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
 	m.podRetirement.WithLabelValues(reason, pool, runtimeClass).Inc()
 }
 
-// IncCheckpointPartial increments the §16.1 line 195
+// IncCheckpointPartial increments the §16.1
 // `lenny_checkpoint_partial_total` counter labeled by pool, recovered,
 // manifest_reason, and trigger. The write path calls it once per
 // partial-manifest row finalised on a terminal abort arm (recovered =
@@ -1273,7 +1266,7 @@ func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
 // above-threshold reassembly (recovered = true). trigger is a
 // checkpoint.Trigger so no value outside the closed §4.4 enum can be
 // stamped onto the series.
-// spec: §16.1 line 195.
+// spec: §16.1.
 func (m *Metrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
 	if m == nil {
 		return
@@ -1293,13 +1286,13 @@ func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string)
 	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
 }
 
-// IncPreStopBarrierTargetSource increments the §10.1 line 165
+// IncPreStopBarrierTargetSource increments the §10.1
 // `lenny_prestop_barrier_target_source_total` counter for one preStop
 // barrier target-set read. The source label is `postgres` on the
 // steady-state healthy path or `cache_fallback` when the
 // coordination-lease read failed or exceeded its 2s deadline and the
 // replica fell back to its in-memory lease cache.
-// spec: §10.1 line 165.
+// spec: §10.1.
 func (m *Metrics) IncPreStopBarrierTargetSource(source string) {
 	if m == nil {
 		return
@@ -1307,12 +1300,12 @@ func (m *Metrics) IncPreStopBarrierTargetSource(source string) {
 	m.barrierTargetSource.WithLabelValues(source).Inc()
 }
 
-// IncCoordinatorHandoffStale increments the §10.1 line 61
+// IncCoordinatorHandoffStale increments the §10.1
 // `lenny_coordinator_handoff_stale_total` counter for one generation-stale
 // coordinator-handoff rejection: a CoordinatorFence the gateway issued was
 // refused (FailedPrecondition) because the pod had already been fenced to
 // an equal-or-higher generation by another coordinator.
-// spec: §10.1 line 61.
+// spec: §10.1.
 func (m *Metrics) IncCoordinatorHandoffStale() {
 	if m == nil {
 		return
@@ -1320,10 +1313,10 @@ func (m *Metrics) IncCoordinatorHandoffStale() {
 	m.coordinatorHandoffStale.Inc()
 }
 
-// IncCoordinatorFenceRetry increments the §11.3 line 209
+// IncCoordinatorFenceRetry increments the §11.3
 // `lenny_coordinator_fence_retry_total` counter for one CoordinatorFence
 // retry after a stale rejection or a transient transport fault.
-// spec: §11.3 line 209.
+// spec: §11.3.
 func (m *Metrics) IncCoordinatorFenceRetry() {
 	if m == nil {
 		return
@@ -1331,11 +1324,11 @@ func (m *Metrics) IncCoordinatorFenceRetry() {
 	m.coordinatorFenceRetry.Inc()
 }
 
-// IncCoordinatorFenceRelinquished increments the §11.3 line 209
+// IncCoordinatorFenceRelinquished increments the §11.3
 // `lenny_coordinator_fence_relinquished_total` counter when the coordinator
 // gives up leadership of a session after exhausting its fence retries and
 // releases the coordination lease.
-// spec: §11.3 line 209.
+// spec: §11.3.
 func (m *Metrics) IncCoordinatorFenceRelinquished() {
 	if m == nil {
 		return
@@ -1343,12 +1336,12 @@ func (m *Metrics) IncCoordinatorFenceRelinquished() {
 	m.coordinatorFenceRelinquished.Inc()
 }
 
-// IncSigkillStreams increments the §10.1 line 161
+// IncSigkillStreams increments the §10.1
 // `lenny_gateway_sigkill_streams_total` counter for one in-flight
 // stream the kubelet SIGKILLs at the grace deadline because its
 // eviction checkpoint did not finish in budget. Called once per
 // deadline-exceeded session during the preStop staged drain.
-// spec: §10.1 line 161 — SIGKILL-deadline stream counter.
+// spec: §10.1 — SIGKILL-deadline stream counter.
 func (m *Metrics) IncSigkillStreams(pool, serviceInstanceID string) {
 	if m == nil {
 		return
@@ -1362,7 +1355,7 @@ func (m *Metrics) IncSigkillStreams(pool, serviceInstanceID string) {
 // `last_successful_checkpoint_at` is older than
 // `periodicCheckpointIntervalSeconds`. The §16.5 `CheckpointStale`
 // alert keys on the per-label value.
-// spec: §4.4 line 256.
+// spec: §4.4.
 func (m *Metrics) SetCheckpointStaleSessions(pool, level string, count int) {
 	if m == nil {
 		return
@@ -1370,7 +1363,7 @@ func (m *Metrics) SetCheckpointStaleSessions(pool, level string, count int) {
 	m.checkpointStaleSessions.WithLabelValues(pool, level).Set(float64(count))
 }
 
-// RecordKMSSigningError increments the §10.2 line 225
+// RecordKMSSigningError increments the §10.2
 // `lenny_gateway_kms_signing_errors_total{reason}` counter. The
 // `reason` label distinguishes a downstream KMS failure (`inner`) from
 // a breaker short-circuit (`rejected`). F-10.2.6.
@@ -1381,7 +1374,7 @@ func (m *Metrics) RecordKMSSigningError(reason string) {
 	m.kmsSigningErrors.WithLabelValues(reason).Inc()
 }
 
-// SetKMSSigningCircuitState publishes the §10.2 line 225 JWTSigner
+// SetKMSSigningCircuitState publishes the §10.2 JWTSigner
 // breaker state to `lenny_gateway_kms_signing_circuit_state`. The
 // §16.5 KMSSigningUnavailable alert fires on the error-rate counter
 // rather than the gauge, but the gauge is useful for dashboards.
@@ -1396,7 +1389,7 @@ func (m *Metrics) SetKMSSigningCircuitState(value int) {
 // SetTokenServiceCircuitState updates the §4.3 / §4.1
 // lenny_token_service_circuit_state gauge. The §16.5
 // TokenServiceUnavailable alert fires when the value equals 2 (open).
-// spec: §4.3 line 211.
+// spec: §4.3.
 func (m *Metrics) SetTokenServiceCircuitState(value int) {
 	if m == nil {
 		return
@@ -1404,8 +1397,7 @@ func (m *Metrics) SetTokenServiceCircuitState(value int) {
 	m.tokenServiceCircuitState.Set(float64(value))
 }
 
-// SetMaxOrphanTasksPerTenant publishes the deployer-configured §8.10
-// line 1103 orphan-cap as the `lenny_max_orphan_tasks_per_tenant`
+// SetMaxOrphanTasksPerTenant publishes the deployer-configured §8.10 orphan-cap as the `lenny_max_orphan_tasks_per_tenant`
 // scalar gauge so the §16.5 OrphanTasksPerTenantHigh alert
 // (`lenny_orphan_tasks_active_per_tenant > 0.80 *
 // scalar(lenny_max_orphan_tasks_per_tenant)`) reads the live value.
@@ -1418,9 +1410,9 @@ func (m *Metrics) SetMaxOrphanTasksPerTenant(value int) {
 	m.maxOrphanTasksPerTenant.Set(float64(value))
 }
 
-// IncOrphanCleanupRun increments the §8.10 line 1091 / §16.1 line 146
+// IncOrphanCleanupRun increments the §8.10 / §16.1
 // `lenny_orphan_cleanup_runs_total` counter — one tick per sweep
-// invocation regardless of outcome. spec: §8.10 line 1091; F-8.10.7.
+// invocation regardless of outcome. spec: §8.10; F-8.10.7.
 func (m *Metrics) IncOrphanCleanupRun() {
 	if m == nil {
 		return
@@ -1431,7 +1423,7 @@ func (m *Metrics) IncOrphanCleanupRun() {
 // IncOrphanSessionReconciliation increments
 // `lenny_orphan_session_reconciliations_total` once per session the
 // §10.1 reconciler forces to `failed` after its bound pod terminated
-// without a terminal event. spec: §10.1 line 51; F-10.1.5.
+// without a terminal event. spec: §10.1; F-10.1.5.
 func (m *Metrics) IncOrphanSessionReconciliation() {
 	if m == nil {
 		return
@@ -1443,7 +1435,7 @@ func (m *Metrics) IncOrphanSessionReconciliation() {
 // `lenny_agent_pod_state_mirror_lag_seconds` gauge — the staleness of
 // the agent_pod_state mirror for poolID. The §10.1 reconciler emits it
 // once per pool per pass; the §16.5 PodStateMirrorStale alert fires when
-// it exceeds 60s. spec: §10.1 line 51; F-10.1.5.
+// it exceeds 60s. spec: §10.1; F-10.1.5.
 func (m *Metrics) SetAgentPodStateMirrorLag(poolID string, seconds float64) {
 	if m == nil {
 		return
@@ -1451,10 +1443,10 @@ func (m *Metrics) SetAgentPodStateMirrorLag(poolID string, seconds float64) {
 	m.agentPodStateMirrorLag.WithLabelValues(poolID).Set(seconds)
 }
 
-// AddOrphanTasksTerminated bumps the §8.10 / §16.1 line 147
+// AddOrphanTasksTerminated bumps the §8.10 / §16.1
 // `lenny_orphan_tasks_terminated` counter by the per-sweep terminated
 // count (the cleanup tick's return value). A zero-count sweep is a no-op.
-// spec: §8.10 / §16.1 line 147; F-8.10.7.
+// spec: §8.10 / §16.1; F-8.10.7.
 func (m *Metrics) AddOrphanTasksTerminated(n int) {
 	if m == nil || n <= 0 {
 		return
@@ -1463,9 +1455,9 @@ func (m *Metrics) AddOrphanTasksTerminated(n int) {
 }
 
 // SetOrphanTasksActive publishes the fleet-wide active orphan count as
-// `lenny_orphan_tasks_active` per §8.10 / §16.1 line 148. Operators
+// `lenny_orphan_tasks_active` per §8.10 / §16.1. Operators
 // alert when the gauge exceeds a deployment-specific threshold
-// (suggested 50 per §8.10 line 1101). spec: §16.1 line 148; F-8.10.7.
+// (suggested 50 per §8.10). spec: §16.1; F-8.10.7.
 func (m *Metrics) SetOrphanTasksActive(value int) {
 	if m == nil {
 		return
@@ -1478,8 +1470,8 @@ func (m *Metrics) SetOrphanTasksActive(value int) {
 // OrphanTasksPerTenantHigh alert reads `value > 0.80 *
 // scalar(lenny_max_orphan_tasks_per_tenant)`. The cleanup sweep calls
 // this for every tenant on every Tick so a tenant whose orphan count
-// drops to zero re-publishes a zero value. spec: §8.10 line 1103;
-// §16.1 line 149; F-8.10.7.
+// drops to zero re-publishes a zero value. spec: §8.10;
+// §16.1; F-8.10.7.
 func (m *Metrics) SetOrphanTasksActivePerTenant(tenantID string, value int) {
 	if m == nil {
 		return
@@ -1488,10 +1480,10 @@ func (m *Metrics) SetOrphanTasksActivePerTenant(tenantID string, value int) {
 }
 
 // ObserveTreeRecoveryDuration records one wall-clock duration on the
-// §8.10 / §16.1 line 144 `lenny_delegation_tree_recovery_duration_seconds`
+// §8.10 / §16.1
 // histogram. `pool` is the root session's pool; `outcome` is one of
 // `full_success`, `partial_failure`, or `total_timeout`. spec: §8.10 /
-// §16.1 line 144; F-8.10.7.
+// §16.1; F-8.10.7.
 func (m *Metrics) ObserveTreeRecoveryDuration(pool, outcome string, seconds float64) {
 	if m == nil {
 		return
@@ -1499,11 +1491,10 @@ func (m *Metrics) ObserveTreeRecoveryDuration(pool, outcome string, seconds floa
 	m.treeRecoveryDuration.WithLabelValues(pool, outcome).Observe(seconds)
 }
 
-// IncTreeRecoveryTimeout increments the §8.10 / §16.1 line 145
+// IncTreeRecoveryTimeout increments the §8.10 / §16.1
 // `lenny_delegation_tree_recovery_timeout_total{pool, timeout_type}`
 // counter. `timeout_type` is `level` (one tree-level budget exhausted)
-// or `tree` (the whole-tree budget exhausted). spec: §8.10 / §16.1 line
-// 145; F-8.10.7.
+// or `tree` (the whole-tree budget exhausted). spec: §8.10 / §16.1; F-8.10.7.
 func (m *Metrics) IncTreeRecoveryTimeout(pool, timeoutType string) {
 	if m == nil {
 		return
@@ -1526,26 +1517,25 @@ func (m *Metrics) RecordElicitationDrop(reason string) {
 // so the §16.5 ElicitationContentTamperDetected alert (which matches
 // enforcement_mode="enforce") fires only when a tamper caused a hard
 // drop; detect-only catches still bump the metric for visibility
-// without firing the critical alert. spec: §16.1 line 64; §9.2 line
-// 60. F-9.2.4.
+// without firing the critical alert. spec: §16.1; §9.2. F-9.2.4.
 func (m *Metrics) RecordElicitationContentTamperDetected(originPod, tamperingPod, enforcementMode string) {
 	m.elicitationTamperDetected.WithLabelValues(originPod, tamperingPod, enforcementMode).Inc()
 }
 
-// SetElicitationIntegrityWeakened publishes the §16.5 line 460
+// SetElicitationIntegrityWeakened publishes the §16.5
 // standing-alert gauge: the count of active tenants whose §9.2
 // effective elicitation content-integrity mode is weaker than
 // enforce. The gateway reconciliation loop calls this on every poll
 // so the ElicitationContentIntegrityWeakened alert fires while any
 // tenant is weakened and resolves once the count returns to zero.
-// spec: §16.5 line 460. F-9.2.5.
+// spec: §16.5. F-9.2.5.
 func (m *Metrics) SetElicitationIntegrityWeakened(weakenedTenants int) {
 	m.elicitationIntegrityWeakened.Set(float64(weakenedTenants))
 }
 
-// IncElicitationPending increments the §16.1 line 61
+// IncElicitationPending increments the §16.1
 // `lenny_elicitation_pending` in-flight gauge. The §16.5
-// ElicitationBacklogHigh alert reads `> 50 for 30s`. spec: §16.1 line 61.
+// ElicitationBacklogHigh alert reads `> 50 for 30s`. spec: §16.1.
 // F-9.2.14.
 func (m *Metrics) IncElicitationPending() {
 	if m == nil {
@@ -1554,9 +1544,8 @@ func (m *Metrics) IncElicitationPending() {
 	m.elicitationPending.Inc()
 }
 
-// DecElicitationPending decrements the §16.1 line 61 gauge on every
-// terminal phase (responded | dismissed | timeout). spec: §16.1
-// line 61. F-9.2.14.
+// DecElicitationPending decrements the §16.1 gauge on every
+// terminal phase (responded | dismissed | timeout). spec: §16.1. F-9.2.14.
 func (m *Metrics) DecElicitationPending() {
 	if m == nil {
 		return
@@ -1564,10 +1553,10 @@ func (m *Metrics) DecElicitationPending() {
 	m.elicitationPending.Dec()
 }
 
-// IncElicitationTimeout increments the §16.1 line 63
+// IncElicitationTimeout increments the §16.1
 // `lenny_elicitation_timeout_total` counter when the dispatcher
 // drops a pending elicitation on the §9.1 maxElicitationWait
-// deadline. spec: §16.1 line 63. F-9.2.14.
+// deadline. spec: §16.1. F-9.2.14.
 func (m *Metrics) IncElicitationTimeout() {
 	if m == nil {
 		return
@@ -1575,10 +1564,9 @@ func (m *Metrics) IncElicitationTimeout() {
 	m.elicitationTimeout.Inc()
 }
 
-// IncElicitationSuppressed increments the §16.1 line 62
+// IncElicitationSuppressed increments the §16.1
 // `lenny_elicitation_suppressed_total` counter for a §9.2 depth-policy
-// suppression or a §9.1 per-session budget rejection. spec: §16.1
-// line 62. F-9.2.14.
+// suppression or a §9.1 per-session budget rejection. spec: §16.1. F-9.2.14.
 func (m *Metrics) IncElicitationSuppressed() {
 	if m == nil {
 		return
@@ -1586,9 +1574,9 @@ func (m *Metrics) IncElicitationSuppressed() {
 	m.elicitationSuppressed.Inc()
 }
 
-// ObserveElicitationRoundtrip records the §16.1 line 60
+// ObserveElicitationRoundtrip records the §16.1
 // `lenny_elicitation_roundtrip_seconds` admit-to-terminal latency.
-// spec: §16.1 line 60. F-9.2.14.
+// spec: §16.1. F-9.2.14.
 func (m *Metrics) ObserveElicitationRoundtrip(d time.Duration) {
 	if m == nil {
 		return
@@ -1605,7 +1593,7 @@ func (m *Metrics) RecordExperimentIsolationRejection(tenantID, experimentID, var
 }
 
 // ObserveExperimentTargetingDuration records one §10.7 external
-// experiment targeting evaluation against the §16.1 line 156
+// experiment targeting evaluation against the §16.1
 // lenny_experiment_targeting_duration_seconds histogram. provider is the
 // OpenFeature provider name, or the OFREP endpoint hostname when
 // provider:ofrep.
@@ -1613,16 +1601,15 @@ func (m *Metrics) ObserveExperimentTargetingDuration(provider string, seconds fl
 	m.experimentTargetingDur.WithLabelValues(provider).Observe(seconds)
 }
 
-// RecordExperimentStickyCacheInvalidation increments the §16.1 line 159
-// lenny_experiment_sticky_cache_invalidations_total counter once per §10.7
-// line 1096 sticky-cache flush (an experiment transition to paused or
+// RecordExperimentStickyCacheInvalidation increments the §16.1
+// lenny_experiment_sticky_cache_invalidations_total counter once per §10.7 sticky-cache flush (an experiment transition to paused or
 // concluded that DELs the experiment's `…:sticky:*` keys). transition is the
 // target status ("paused" or "concluded").
 func (m *Metrics) RecordExperimentStickyCacheInvalidation(experimentID, transition string) {
 	m.experimentStickyInval.WithLabelValues(experimentID, transition).Inc()
 }
 
-// RecordExperimentTargetingError increments the §16.1 line 157
+// RecordExperimentTargetingError increments the §16.1
 // lenny_experiment_targeting_error_total counter on a §10.7
 // targeting_failed condition. errorType classifies the failure cause
 // (timeout, transport, or the OFREP errorCode).
@@ -1632,8 +1619,7 @@ func (m *Metrics) RecordExperimentTargetingError(provider, errorType string) {
 
 // SetExperimentTargetingCircuitOpen sets the §10.7 SCL-023 targeting
 // circuit-breaker gauge for (tenant, provider): true → 1 (open, the
-// gateway skips the OpenFeature call), false → 0 (closed). spec: §16.1
-// line 64, §10.7 line 838.
+// gateway skips the OpenFeature call), false → 0 (closed). spec: §16.1, §10.7.
 func (m *Metrics) SetExperimentTargetingCircuitOpen(tenantID, provider string, open bool) {
 	v := 0.0
 	if open {
@@ -1642,7 +1628,7 @@ func (m *Metrics) SetExperimentTargetingCircuitOpen(tenantID, provider string, o
 	m.experimentTargetingCircuit.WithLabelValues(tenantID, provider).Set(v)
 }
 
-// RecordSessionTerminal records the §16.1 lines 161-163 / §10.7
+// RecordSessionTerminal records the §16.1 / §10.7
 // rollback-trigger session metrics at a terminal session transition: it
 // increments lenny_session_total, increments lenny_session_error_total when
 // the terminal state is an error outcome, and observes the per-session
@@ -1660,7 +1646,7 @@ func (m *Metrics) RecordSessionTerminal(tenantID, sessionType, variantID string,
 	m.sessionDuration.WithLabelValues(tenantID, sessionType, variantID).Observe(seconds)
 }
 
-// ObserveEvalScore records one §16.1 line 164 lenny_eval_score observation
+// ObserveEvalScore records one §16.1 lenny_eval_score observation
 // per submitted eval run. variantID is the §10.7 enrollment ("" when the
 // scored session was not enrolled).
 func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score float64) {
@@ -1669,8 +1655,7 @@ func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score flo
 
 // IncSessionBudgetExceeded increments
 // lenny_gateway_session_budget_exceeded_total when the §11.2 mid-session
-// enforcer terminates a session for token-budget exhaustion. spec: §11.2
-// line 44.
+// enforcer terminates a session for token-budget exhaustion. spec: §11.2.
 func (m *Metrics) IncSessionBudgetExceeded(tenantID string) {
 	m.sessionBudgetExceeded.WithLabelValues(tenantID).Inc()
 }
@@ -1679,12 +1664,12 @@ func (m *Metrics) IncSessionBudgetExceeded(tenantID string) {
 // failed §12.8 user-level erasure job. failurePhase is the §12.8 CMP-026
 // phase label (store_delete, pseudonymization, verification, or
 // memory_store_preflight). The §16.5 ErasureJobFailed alert fires on any
-// increase. spec: §12.8 CMP-026 / §16.1 line 262.
+// increase. spec: §12.8 CMP-026 / §16.1.
 func (m *Metrics) IncErasureJobFailed(tenantID, failurePhase string) {
 	m.erasureJobFailed.WithLabelValues(tenantID, failurePhase).Inc()
 }
 
-// IncErasureJobsActive increments the §12.8 line 768 in-progress
+// IncErasureJobsActive increments the §12.8 in-progress
 // erasure-job gauge when a job begins execution.
 func (m *Metrics) IncErasureJobsActive() { m.erasureJobsActive.Inc() }
 
@@ -1693,12 +1678,12 @@ func (m *Metrics) IncErasureJobsActive() { m.erasureJobsActive.Inc() }
 func (m *Metrics) DecErasureJobsActive() { m.erasureJobsActive.Dec() }
 
 // ObserveErasureJobDuration records a completed (or failed) erasure
-// job's wall-clock duration in the §12.8 line 768 histogram.
+// job's wall-clock duration in the §12.8 histogram.
 func (m *Metrics) ObserveErasureJobDuration(seconds float64) {
 	m.erasureJobDuration.Observe(seconds)
 }
 
-// SetErasureJobDeadlineSeconds publishes the §12.8 line 768 erasure SLA
+// SetErasureJobDeadlineSeconds publishes the §12.8 erasure SLA
 // deadline the §16.5 ErasureJobOverdue alert compares against.
 func (m *Metrics) SetErasureJobDeadlineSeconds(seconds float64) {
 	m.erasureJobDeadlineSeconds.Set(seconds)
@@ -1706,7 +1691,7 @@ func (m *Metrics) SetErasureJobDeadlineSeconds(seconds float64) {
 
 // SetErasureJobAge publishes the age of an in-progress erasure job so
 // the §16.5 ErasureJobOverdue alert can detect a stalled job before the
-// SLA breaches. spec: §12.8 line 768.
+// SLA breaches. spec: §12.8.
 func (m *Metrics) SetErasureJobAge(tenantID, jobID string, ageSeconds float64) {
 	m.erasureJobAgeSeconds.WithLabelValues(tenantID, jobID).Set(ageSeconds)
 }
@@ -1734,7 +1719,7 @@ func (m *Metrics) SetCircuitBreakerOpen(name string, open bool) {
 	m.circuitBreakerOpen.WithLabelValues(name).Set(v)
 }
 
-// SetPoolDrainingSessions updates the §15.1 line 797
+// SetPoolDrainingSessions updates the §15.1
 // lenny_pool_draining_sessions_total gauge for a draining pool with the
 // current in-flight (non-terminal) session count. A count of 0 means
 // the drain has converged.
@@ -1742,13 +1727,13 @@ func (m *Metrics) SetPoolDrainingSessions(pool string, count int) {
 	m.poolDrainingSessions.WithLabelValues(pool).Set(float64(count))
 }
 
-// runtimeUpgradePhases is the §10.5 / §16.1 line 184 state vocabulary.
+// runtimeUpgradePhases is the §10.5 / §16.1 state vocabulary.
 // SetRuntimeUpgradeState publishes one series per state so exactly one
 // reads 1 (the current phase) and the rest read 0, keeping the
 // RuntimeUpgradeStuck alert's equality predicate well defined.
 var runtimeUpgradePhases = []string{"pending", "expanding", "draining", "contracting", "complete", "paused"}
 
-// SetRuntimeUpgradeState publishes the §16.1 line 184
+// SetRuntimeUpgradeState publishes the §16.1
 // lenny_runtime_upgrade_state gauge for pool: the series matching phase
 // reads 1 and every other state series reads 0.
 func (m *Metrics) SetRuntimeUpgradeState(pool, phase string) {
@@ -1761,20 +1746,20 @@ func (m *Metrics) SetRuntimeUpgradeState(pool, phase string) {
 	}
 }
 
-// SetRuntimeUpgradePhaseDuration updates the §16.1 line 185
+// SetRuntimeUpgradePhaseDuration updates the §16.1
 // lenny_runtime_upgrade_phase_duration_seconds gauge for pool with the
 // wall-clock seconds spent in the current phase.
 func (m *Metrics) SetRuntimeUpgradePhaseDuration(pool, phase string, seconds float64) {
 	m.runtimeUpgradePhaseDuration.WithLabelValues(pool, phase).Set(seconds)
 }
 
-// SetRuntimeUpgradeDrainingSessions updates the §16.1 line 186
+// SetRuntimeUpgradeDrainingSessions updates the §16.1
 // lenny_runtime_upgrade_draining_sessions gauge for pool.
 func (m *Metrics) SetRuntimeUpgradeDrainingSessions(pool string, n int) {
 	m.runtimeUpgradeDrainingSessions.WithLabelValues(pool).Set(float64(n))
 }
 
-// SetAuditPartitionDropBlocked updates the §16.4 line 378
+// SetAuditPartitionDropBlocked updates the §16.4
 // lenny_audit_partition_drop_blocked gauge for a partition (audit
 // chain): 1 when the SIEM delivery guard is holding past-TTL rows the
 // retention GC could otherwise drop, 0 once the forwarder catches up.
@@ -1803,7 +1788,7 @@ func (m *Metrics) RecordCircuitBreakerRejectionSuppressed(tenantID, circuitName,
 	m.cbRejectionsSuppressed.WithLabelValues(tenantID, circuitName, limitTier).Inc()
 }
 
-// RecordCircuitBreakerCacheStaleServe increments the §16.1 line 218
+// RecordCircuitBreakerCacheStaleServe increments the §16.1
 // lenny_circuit_breaker_cache_stale_serves_total counter for one
 // admission decision served against a breaker cache that had not
 // refreshed within the 5s poll interval. outcome is "rejected" when an
@@ -1851,7 +1836,7 @@ func (m *Metrics) Registerer() prometheus.Registerer {
 // gatherer. The §25.3 capacity-recommendation sampler reads gauge and
 // counter values directly from the same in-process registry Prometheus
 // scrapes, so it can feed the recommendation ring buffers without a
-// Prometheus query (spec: §25.3 line 439 — "In-process metric registry
+// Prometheus query (spec: §25.3 — "In-process metric registry
 // ... works even when Prometheus is down").
 func (m *Metrics) Gatherer() prometheus.Gatherer {
 	return m.reg
@@ -1941,7 +1926,7 @@ func (m *Metrics) SetBillingCorrectionRateThreshold(value float64) {
 	m.billingCorrectionRateThreshold.Set(value)
 }
 
-// SetEventBusDropAlertThreshold emits the §12.6 line 683 / §16.5
+// SetEventBusDropAlertThreshold emits the §12.6 / §16.5
 // lenny_event_bus_drop_alert_threshold gauge. The value is the
 // deployer-configurable per-minute dropped-publish ceiling (default 10)
 // above which `EventBusPublishDropped` fires; the alert reads it via
@@ -1988,7 +1973,7 @@ func boolGauge(b bool) float64 {
 	return 0
 }
 
-// SetGatewayQueueDepthThreshold emits the §25.13 line 4737 / §16.5
+// SetGatewayQueueDepthThreshold emits the §25.13 / §16.5
 // GatewayQueueDepthHigh ceiling. The alert reads it via
 // scalar(lenny_gateway_queue_depth_threshold); tier-2/3 presets tighten
 // the value via monitoring.alertThresholds.gatewayQueueDepthHigh.value.
@@ -1997,14 +1982,14 @@ func (m *Metrics) SetGatewayQueueDepthThreshold(value float64) {
 	m.gatewayQueueDepthThreshold.Set(value)
 }
 
-// SetGatewayLatencyThresholdSeconds emits the §25.13 line 4737 / §16.5
+// SetGatewayLatencyThresholdSeconds emits the §25.13 / §16.5
 // GatewayLatencyHigh p95 ceiling, in seconds. The alert reads it via
 // scalar(lenny_gateway_latency_threshold_seconds). F-25.13.2.
 func (m *Metrics) SetGatewayLatencyThresholdSeconds(value float64) {
 	m.gatewayLatencyThresholdSeconds.Set(value)
 }
 
-// SetSLOBurnRateMultipliers emits the §16.5 line 640 operator-configurable
+// SetSLOBurnRateMultipliers emits the §16.5 operator-configurable
 // burn-rate window multipliers. Every burn-rate alert compares its
 // budget-normalised ratio against
 // scalar(lenny_slo_burn_rate_{fast,slow}_multiplier or vector(default)),
@@ -2024,14 +2009,14 @@ func (m *Metrics) SetSessionUnavailabilityRatio(ratio float64) {
 	m.sessionUnavailabilityRatio.Set(ratio)
 }
 
-// SetCredentialPoolLowThreshold emits the §25.13 line 4737 / §16.5
+// SetCredentialPoolLowThreshold emits the §25.13 / §16.5
 // CredentialPoolLow utilisation fraction. The alert reads it via
 // scalar(lenny_credential_pool_low_threshold). F-25.13.2.
 func (m *Metrics) SetCredentialPoolLowThreshold(value float64) {
 	m.credentialPoolLowThreshold.Set(value)
 }
 
-// IncBillingFlushPressure advances the §12.3 line 76
+// IncBillingFlushPressure advances the §12.3
 // billing_flush_pressure counter. The failover Pipeline invokes it
 // (via its OnFlushPressure callback) each time an Append leaves the
 // Tier 2 write-ahead buffer over billingFlushMaxPending. F-12.3.13.
@@ -2042,7 +2027,7 @@ func (m *Metrics) IncBillingFlushPressure() {
 	m.billingFlushPressure.Inc()
 }
 
-// IncAuditBatchingNoSIEM advances the §12.3 line 99 AuditBatchingNoSIEM
+// IncAuditBatchingNoSIEM advances the §12.3 AuditBatchingNoSIEM
 // counter. The gateway calls it once at startup when production has
 // audit.batchingEnabled set but no SIEM endpoint, so buffered T2 audit
 // events would be lost on a crash with no external durable copy.
@@ -2054,7 +2039,7 @@ func (m *Metrics) IncAuditBatchingNoSIEM() {
 	m.auditBatchingNoSIEM.Inc()
 }
 
-// SetPostgresWriteIops sets the §12.3 lines 115-125 sustained Postgres
+// SetPostgresWriteIops sets the §12.3 sustained Postgres
 // write-IOPS gauge. The periodic sampler computes the rate from
 // pg_stat_database row-write deltas and pushes it here so the §16.5
 // PostgresWriteSaturation alert can evaluate. F-12.3.7.
@@ -2065,7 +2050,7 @@ func (m *Metrics) SetPostgresWriteIops(iops float64) {
 	m.postgresWriteIops.Set(iops)
 }
 
-// SetPostgresWriteCeilingIops emits the §12.3 line 123 configured
+// SetPostgresWriteCeilingIops emits the §12.3 configured
 // postgres.writeCeilingIops ceiling so the PostgresWriteSaturation
 // alert resolves scalar(lenny_postgres_write_ceiling_iops) to an
 // operator-tunable denominator. F-12.3.8.
@@ -2076,7 +2061,7 @@ func (m *Metrics) SetPostgresWriteCeilingIops(iops float64) {
 	m.postgresWriteCeilingIops.Set(iops)
 }
 
-// SetSIEMDeliveryLagSeconds emits the §16.1 line 228
+// SetSIEMDeliveryLagSeconds emits the §16.1
 // lenny_audit_siem_delivery_lag_seconds gauge. The §12.3 outbox
 // forwarder calls it after each delivery checkpoint so the §16.5
 // AuditSIEMDeliveryLag alert can evaluate the lag against the
@@ -2089,7 +2074,7 @@ func (m *Metrics) SetSIEMDeliveryLagSeconds(seconds float64) {
 	m.siemDeliveryLag.Set(seconds)
 }
 
-// SetSIEMMaxDeliveryLagSeconds emits the §12.3 line 97 configured
+// SetSIEMMaxDeliveryLagSeconds emits the §12.3 configured
 // audit.siem.maxDeliveryLagSeconds threshold so the AuditSIEMDeliveryLag
 // alert resolves scalar(lenny_audit_siem_max_delivery_lag_seconds) to an
 // operator-tunable threshold. F-12.3.17.
@@ -2102,7 +2087,7 @@ func (m *Metrics) SetSIEMMaxDeliveryLagSeconds(seconds float64) {
 
 // IncAuditChainIntegrity advances the §16.1
 // lenny_audit_chain_integrity_total counter for one tenant's §11.7
-// chain state. The §12.3 line 101 startup chain-continuity check calls
+// chain state. The §12.3 startup chain-continuity check calls
 // it once per tenant; state="broken" drives the §16.5 AuditChainGap
 // alert. F-12.3.9.
 func (m *Metrics) IncAuditChainIntegrity(state string) {
@@ -2238,7 +2223,7 @@ func (m *Metrics) IncDataResidencyViolation(operation string) {
 	m.dataResidencyViolation.WithLabelValues(operation).Inc()
 }
 
-// IncPlatformAuditRegionUnresolvable records one §11.7 line 433 CMP-058
+// IncPlatformAuditRegionUnresolvable records one §11.7 CMP-058
 // platform-tenant audit residency resolution failure: a platform-tenant
 // audit write referencing a regulated target tenant could not resolve
 // that tenant's regional platform-Postgres. region is the target
@@ -2288,7 +2273,7 @@ func (m *Metrics) SetGCPauseP99Ms(value float64) {
 // SetReplayBufferUtilization updates the §16 catalog
 // lenny_event_bus_replay_buffer_utilization gauge. The caller samples
 // the worst per-session ratio across the session SSE replay buffer
-// periodically; ratio is in [0,1]. spec: §10.4 line 389. F-10.4.11.
+// periodically; ratio is in [0,1]. spec: §10.4. F-10.4.11.
 func (m *Metrics) SetReplayBufferUtilization(ratio float64) {
 	if m == nil {
 		return
@@ -2308,7 +2293,7 @@ func (m *Metrics) IncPDBBlockedEvictions(pdb, controller string) {
 }
 
 // ObserveMemoryStoreOperation records one observation on the §9.4 /
-// §16.1 line 151 lenny_memory_store_operation_duration_seconds
+// §16.1 lenny_memory_store_operation_duration_seconds
 // histogram. The operation label is one of write, query, delete, list,
 // delete_by_user, delete_by_tenant; backend is the implementation tag.
 // F-9.4.1.
@@ -2319,7 +2304,7 @@ func (m *Metrics) ObserveMemoryStoreOperation(operation, backend string, seconds
 	m.memoryStoreOperationDuration.WithLabelValues(operation, backend).Observe(seconds)
 }
 
-// IncMemoryStoreError advances the §9.4 / §16.1 line 152
+// IncMemoryStoreError advances the §9.4 / §16.1
 // lenny_memory_store_errors_total counter. error_type is the caller's
 // error classification. F-9.4.1.
 func (m *Metrics) IncMemoryStoreError(operation, backend, errorType string) {
@@ -2329,7 +2314,7 @@ func (m *Metrics) IncMemoryStoreError(operation, backend, errorType string) {
 	m.memoryStoreErrors.WithLabelValues(operation, backend, errorType).Inc()
 }
 
-// SetMemoryStoreRecordCount updates the §9.4 / §16.1 line 153
+// SetMemoryStoreRecordCount updates the §9.4 / §16.1
 // lenny_memory_store_record_count gauge for tenantID. The caller is the
 // periodic sampler. F-9.4.1.
 func (m *Metrics) SetMemoryStoreRecordCount(tenantID string, count int) {
@@ -2339,7 +2324,7 @@ func (m *Metrics) SetMemoryStoreRecordCount(tenantID string, count int) {
 	m.memoryStoreRecordCount.WithLabelValues(tenantID).Set(float64(count))
 }
 
-// IncMemoryStoreUserOverThreshold advances the §9.4 / §16.1 line 154
+// IncMemoryStoreUserOverThreshold advances the §9.4 / §16.1
 // lenny_memory_store_user_count_over_threshold_total counter. The
 // MemoryStore.Write path increments it once per commit that leaves the
 // writing user at >= 80% of memory.maxMemoriesPerUser. F-9.4.6.
@@ -2350,7 +2335,7 @@ func (m *Metrics) IncMemoryStoreUserOverThreshold(tenantID, backend string) {
 	m.memoryStoreUserOverThreshold.WithLabelValues(tenantID, backend).Inc()
 }
 
-// SetTimeDrift publishes the §13.3 line 595 lenny_time_drift_seconds
+// SetTimeDrift publishes the §13.3 lenny_time_drift_seconds
 // gauge. Driven by the pkg/driftmonitor sampler. Value is the signed
 // offset in seconds (positive = ahead of NTP reference, negative =
 // behind). The §16.5 GatewayClockDrift alert keys on
@@ -2460,7 +2445,7 @@ func (s *statusRecorder) Flush() {
 // nhooyr.io/websocket performs a direct http.Hijacker type assertion on
 // the handed ResponseWriter, so without this forwarder the metrics
 // wrapper hides the Hijacker and the upgrade fails. spec: §27.5 /
-// §27.3.1 line 142.
+// §27.3.1.
 func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// §11.7 item 2 lines 357-358 — the periodic background integrity check
+// §11.7 item 2 — the periodic background integrity check
 // cadence. The default and maximum both depend on whether any tenant
 // carries a regulated complianceProfile (soc2, fedramp, hipaa):
 //
@@ -29,7 +29,7 @@ const (
 // against the active compliance posture and returns the effective cadence.
 // A non-positive configured value selects the profile default. A value
 // exceeding the profile maximum returns an error so the caller can fail
-// startup. spec: §11.7 item 2 lines 357-358. F-11.7.3.
+// startup. spec: §11.7 item 2. F-11.7.3.
 func ResolveGrantCheckInterval(configured time.Duration, regulated bool) (time.Duration, error) {
 	def, max := UnregulatedGrantCheckDefault, UnregulatedGrantCheckMax
 	profile := "unregulated"
@@ -59,7 +59,7 @@ type PeriodicConfig struct {
 
 	// ChainSampleN bounds the recent-window chain-continuity sample run
 	// each cycle. A non-positive value walks each tenant chain in full.
-	// spec: §11.7 line 370 — the periodic check "also samples random
+	// spec: §11.7 — the periodic check "also samples random
 	// chain segments and verifies hash continuity".
 	ChainSampleN int
 }
@@ -90,7 +90,7 @@ type PeriodicCheck struct {
 	// §12.3 split billing/audit-pool topology tenants state stays on the
 	// primary while audit_log routes to the separate ledger instance. In
 	// the co-located topology the wiring site passes the same pool for
-	// both DB and CtrlDB. spec: §12.3 line 103, §12.8.
+	// both DB and CtrlDB. spec: §12.3, §12.8.
 	CtrlDB Querier
 
 	Cfg PeriodicConfig
@@ -135,14 +135,14 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 			p.OnGrantDrift()
 		}
 	}
-	// §11.7 line 370 — sample recent chain segments; a broken chain
+	// §11.7 — sample recent chain segments; a broken chain
 	// triggers the same critical alert path. The recent-chain check
 	// enumerates audit_log from the ledger pool (p.DB) and resolves the
 	// §12.8 tenant-deletion skip-set from the control-plane pool
 	// (p.CtrlDB), so the retained gdpr.*-only remnant of a tenant in
 	// state='deleting' or state='deleted' does not raise a false §16.5
 	// AuditChainGap alert. In the co-located topology the wiring site
-	// passes the same pool for both. spec: §12.3 line 103, §12.8.
+	// passes the same pool for both. spec: §12.3, §12.8.
 	results, err := CheckChainContinuityRecent(ctx, p.DB, p.CtrlDB, p.Cfg.ChainSampleN)
 	if err != nil {
 		p.logf("WARNING: §11.7 item 2 periodic chain-continuity sample could not run: %v", err)
@@ -158,7 +158,7 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 				r.TenantID, r.Result.BreakSeq, r.Result.Detail)
 		}
 	}
-	// §12.8 lines 810-827 — detect audit rows rewritten by the in-place
+	// §12.8 — detect audit rows rewritten by the in-place
 	// GDPR redaction but lacking a signature-verifying RedactionReceipt.
 	// This is the §16.5 AuditRedactionReceiptMissing compliance signal
 	// (page on-call), distinct from the chain-tamper hard-fail path: an

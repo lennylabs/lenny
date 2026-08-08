@@ -13,14 +13,14 @@
 // slot so the multi-key reserve/return scripts execute atomically.
 // Tenant isolation is enforced one layer up: the caller validates that
 // root_session_id belongs to the calling tenant before invoking either
-// script (§12.4 line 193).
+// script (§12.4).
 //
-// Failure posture (§12.4 line 213): a Redis error fails closed for new
+// Failure posture (§12.4): a Redis error fails closed for new
 // delegations. Reserve returns ErrBudgetUnavailable, which the §8.5
 // handler surfaces as the retryable DELEGATION_BUDGET_UNAVAILABLE. A
 // cap breach returns *BudgetExhaustedError, surfaced as BUDGET_EXHAUSTED.
 //
-// spec: §8.2 lines 57, 114-130; §12.4 lines 193, 213.
+// spec: §8.2; §12.4.
 package treebudget
 
 import (
@@ -37,7 +37,7 @@ import (
 
 // DefaultTTL is the GC safety expiry refreshed on every reserve. The
 // counters are reconstructed from the Postgres checkpoint on Redis
-// recovery (§12.4 line 218), so the TTL only reclaims keys for trees
+// recovery (§12.4), so the TTL only reclaims keys for trees
 // that vanished without a terminal offload. A long window keeps a
 // long-lived tree's counters alive between delegation hops.
 const DefaultTTL = 24 * time.Hour
@@ -47,7 +47,7 @@ const DefaultTTL = 24 * time.Hour
 // it by default so the tree's footprint is bounded even when no
 // explicit maxTreeMemoryBytes is declared.
 //
-// spec: §8.2 line 127 ("default: 2097152 / 2 MB").
+// spec: §8.2.
 const DefaultMaxTreeMemoryBytes int64 = 2097152
 
 // PerNodeMemoryBytes is the §8.2 per-node in-memory footprint estimate
@@ -55,7 +55,7 @@ const DefaultMaxTreeMemoryBytes int64 = 2097152
 // state, task metadata). Each admitted delegation reserves this much
 // of the tree's maxTreeMemoryBytes.
 //
-// spec: §8.2 line 124 ("Total per node ~12 KB").
+// spec: §8.2.
 const PerNodeMemoryBytes int64 = 12 * 1024
 
 // Reservation is the budget a single delegation admission consumes.
@@ -65,7 +65,7 @@ const PerNodeMemoryBytes int64 = 12 * 1024
 // per-parent axes (ParallelChildren, ChildrenTotal) are scoped to the
 // delegating parent so each node enforces its own fan-out.
 //
-// spec: §8.2 line 44-48; §12.4 line 193.
+// spec: §8.2; §12.4.
 type Reservation struct {
 	RootSessionID   string
 	ParentSessionID string
@@ -104,7 +104,7 @@ var axisName = []string{"maxTreeSize", "maxTreeMemoryBytes", "maxParallelChildre
 // would push an axis over its cap. No counter is mutated. The §8.5
 // handler maps this to BUDGET_EXHAUSTED.
 //
-// spec: §8.2 line 127.
+// spec: §8.2.
 type BudgetExhaustedError struct {
 	// Axis is the canonical lease field name that overflowed.
 	Axis string
@@ -121,7 +121,7 @@ func (e *BudgetExhaustedError) Error() string {
 }
 
 // ErrBudgetUnavailable is returned when the Redis-backed counters
-// cannot be consulted (outage, script error). Per §12.4 line 213 the
+// cannot be consulted (outage, script error). Per §12.4 the
 // admission path fails closed: new delegations are rejected with the
 // retryable DELEGATION_BUDGET_UNAVAILABLE rather than admitted
 // unbudgeted.
@@ -156,7 +156,7 @@ local cur = {}
 for i = 1, 5 do
   cur[i] = tonumber(redis.call('GET', KEYS[i]) or '0')
 end
--- §8.6 line 643: the cumulative per-tree token-cap extension grant raises
+-- §8.6: the cumulative per-tree token-cap extension grant raises
 -- the tokens-axis ceiling so a granted lease extension admits subsequent
 -- delegations. KEYS[7] holds the granted token delta. A zero base token
 -- cap means "unlimited" and the grant never narrows it to a finite cap.
@@ -182,7 +182,7 @@ for i = 1, 5 do
   end
   out[i+1] = v
 end
--- §8.3 line 379: track the per-tree parallel-children high-watermark so
+-- §8.3: track the per-tree parallel-children high-watermark so
 -- the gateway can observe the maximum simultaneous in-flight children
 -- onto lenny_delegation_parallel_children_high_watermark at tree
 -- completion. out[4] is the parallel_children counter post-increment for
@@ -227,7 +227,7 @@ func (r Reservation) keys() []string {
 	}
 }
 
-// hwmKey returns the §8.3 line 379 tree-wide parallel-children
+// hwmKey returns the §8.3 tree-wide parallel-children
 // high-watermark key for r's root. It shares the `{root_session_id}`
 // hash tag so it co-locates on the same Redis Cluster slot as the
 // per-tree counters and can be updated atomically inside the reserve
@@ -236,7 +236,7 @@ func hwmKey(rootSessionID string) string {
 	return "{" + rootSessionID + "}:dlg:parallel_children_hwm"
 }
 
-// tokenGrantKey returns the §8.6 line 643 cumulative token-cap extension
+// tokenGrantKey returns the §8.6 cumulative token-cap extension
 // grant key for the tree. A lease extension that raises the token budget
 // increments it; the reserve script (KEYS[7]) adds it to the tokens-axis
 // ceiling so post-grant admissions observe the expanded pool. It shares
@@ -260,12 +260,12 @@ func (r Reservation) reserveKeys() []string {
 // mutated) and ErrBudgetUnavailable when Redis cannot be consulted
 // (fail closed).
 //
-// spec: §8.2 lines 57, 127; §12.4 line 213.
+// spec: §8.2; §12.4.
 func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals, retErr error) {
 	if r.RootSessionID == "" {
 		return Totals{}, fmt.Errorf("treebudget: empty root session id")
 	}
-	// spec: §16.3 line 347 — the Redis-Lua budget reserve runs under a
+	// spec: §16.3 — the Redis-Lua budget reserve runs under a
 	// `delegation.budget_reserve` span carrying the mandated outcome,
 	// tenant_id, root_session_id, and lua_queue_wait_ms attributes. The
 	// tracer resolves the process-global provider tracing.InitProvider
@@ -291,7 +291,7 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals
 	}
 	// The Lua script executes atomically under the per-root serialization
 	// the `{root_session_id}` hash tag enforces, so the round-trip latency
-	// is the closest cheaply-available measurement of the §16.3 line 347
+	// is the closest cheaply-available measurement of the §16.3
 	// lua_queue_wait_ms (the time the reserve spent in the Lua path,
 	// including any per-slot serialization). It is emitted as a real
 	// measured value rather than an invented queue-wait estimate.
@@ -300,7 +300,7 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals
 	span.SetAttributes(attribute.Int64(tracing.AttrLuaQueueWaitMs, time.Since(luaStart).Milliseconds()))
 	if err != nil {
 		// Fail closed: a Redis outage or script error must not admit an
-		// unbudgeted delegation (§12.4 line 213).
+		// unbudgeted delegation (§12.4).
 		return Totals{}, fmt.Errorf("%w: %v", ErrBudgetUnavailable, err)
 	}
 	if len(res) == 0 {
@@ -342,12 +342,12 @@ func (s *Reserver) Reserve(ctx context.Context, r Reservation) (retTotals Totals
 // failed return leaks budget conservatively rather than over-admitting,
 // so it is not fatal to correctness.
 //
-// spec: §8.2 line 130 (decrement on offload).
+// spec: §8.2.
 func (s *Reserver) Return(ctx context.Context, r Reservation) (retErr error) {
 	if r.RootSessionID == "" {
 		return fmt.Errorf("treebudget: empty root session id")
 	}
-	// spec: §16.3 line 348 — the Redis-Lua budget return runs under a
+	// spec: §16.3 — the Redis-Lua budget return runs under a
 	// `delegation.budget_return` span carrying the mandated outcome,
 	// tenant_id, root_session_id, and lua_queue_wait_ms attributes,
 	// mirroring Reserve. tenant_id is projected from the correlation
@@ -369,7 +369,7 @@ func (s *Reserver) Return(ctx context.Context, r Reservation) (retErr error) {
 		r.TokenDelta,
 	}
 	// The return Lua script executes atomically per the per-root slot
-	// serialization, so its round-trip latency is the §16.3 line 348
+	// serialization, so its round-trip latency is the §16.3
 	// lua_queue_wait_ms measurement (emitted as a real measured value).
 	luaStart := time.Now()
 	err := returnScript.Run(ctx, s.client, r.keys(), argv...).Err()
@@ -401,7 +401,7 @@ func axisDelta(r Reservation, idx int) int64 {
 	}
 }
 
-// ObserveHighWatermark reads and clears the §8.3 line 379 per-tree
+// ObserveHighWatermark reads and clears the §8.3 per-tree
 // parallel-children high-watermark for rootSessionID, returning the
 // maximum simultaneous in-flight children the reserve script recorded
 // over the tree's lifetime. The gateway calls it once when the tree
@@ -412,7 +412,7 @@ func axisDelta(r Reservation, idx int) int64 {
 // than waiting for the TTL. A tree that admitted no delegation has no
 // key and returns 0 with found=false, which the caller skips.
 //
-// spec: §8.3 line 379; §16.1.
+// spec: §8.3; §16.1.
 func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error) {
 	if rootSessionID == "" {
 		return 0, false, fmt.Errorf("treebudget: empty root session id")
@@ -428,7 +428,7 @@ func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID strin
 }
 
 // GrantTokenBudget raises the tree's tokens-axis ceiling by delta,
-// recording a §8.6 line 643 lease-extension grant so every subsequent
+// recording a §8.6 lease-extension grant so every subsequent
 // `lenny/delegate_task` admission in the tree is gated against the
 // expanded token pool rather than the parent lease's pre-extension
 // MaxTokenBudget. Without this bridge an ExtendLease GRANTED response
@@ -439,7 +439,7 @@ func (s *Reserver) ObserveHighWatermark(ctx context.Context, rootSessionID strin
 // (unlimited) is unaffected: the reserve script only folds the grant into
 // a finite cap.
 //
-// spec: §8.6 line 643; §8.2 line 57.
+// spec: §8.6; §8.2.
 func (s *Reserver) GrantTokenBudget(ctx context.Context, rootSessionID string, delta int64) error {
 	if rootSessionID == "" {
 		return fmt.Errorf("treebudget: empty root session id")
@@ -470,8 +470,7 @@ func (s *Reserver) GrantTokenBudget(ctx context.Context, rootSessionID string, d
 // SCAN covers the whole tree. Returns the number of keys removed; a
 // non-root session id matches no keys and returns 0.
 //
-// spec: §12.8 line 831 (step 16 — "delete tree-wide keys ... and scan
-// for per-parent keys ... using slot-local SCAN").
+// spec: §12.8.
 func (s *Reserver) PurgeRoot(ctx context.Context, rootSessionID string) (int, error) {
 	if rootSessionID == "" {
 		return 0, fmt.Errorf("treebudget: empty root session id")

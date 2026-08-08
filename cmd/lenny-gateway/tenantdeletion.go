@@ -33,7 +33,7 @@ import (
 // phase is idempotent (§12.8 "Idempotency and resumption"), a job rebuilt
 // from `disabling` after a restart re-runs the early phases harmlessly.
 //
-// spec: §12.8 line 865, lines 872-889. F-12.8.1, F-24.10.3.
+// spec: §12.8. F-12.8.1, F-24.10.3.
 
 // tenantStateDisabler is the §12.8 Phase 1 SoftDisabler: it flips the
 // tenant into `disabling`, which tenantstore.Tenant.AcceptsNewWork reads
@@ -85,8 +85,7 @@ func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map
 
 // auditReceiptSink is the §12.8 Phase 6 ReceiptSink. It writes the
 // erasure receipt as a gdpr.* audit event (retained under
-// audit.gdprRetentionDays and exempt from later erasure, per §12.8 line
-// 775) so the receipt survives the tenant tombstone.
+// audit.gdprRetentionDays and exempt from later erasure, per §12.8) so the receipt survives the tenant tombstone.
 type auditReceiptSink struct {
 	appender policy.AuditAppender
 	clock    func() time.Time
@@ -120,10 +119,9 @@ type artifactHoldChecker interface {
 // tenantHoldEnumerator is the §12.8 Phase 3.5 LegalHoldEnumerator. It
 // reports the tenant's active session-level holds (sessions.legal_hold)
 // and artifact-level holds (any artifact under one of the tenant's
-// sessions). The audit_range / workspace_snapshot ledger holds (§12.8
-// line 878(c)) are not yet enumerated here.
+// sessions). The audit_range / workspace_snapshot ledger holds (§12.8) are not yet enumerated here.
 //
-// spec: §12.8 line 878(a)(b).
+// spec: §12.8(b).
 type tenantHoldEnumerator struct {
 	sessions  sessionstore.Store
 	artifacts artifactHoldChecker
@@ -156,7 +154,7 @@ func (e tenantHoldEnumerator) ActiveTenantHolds(ctx context.Context, tenantID st
 // It writes the admin.tenant.deletion_blocked audit event listing the
 // held resource IDs when a deletion pauses on an active hold.
 //
-// spec: §12.8 line 878.
+// spec: §12.8.
 type tenantDeletionBlockedSink struct {
 	appender policy.AuditAppender
 	clock    func() time.Time

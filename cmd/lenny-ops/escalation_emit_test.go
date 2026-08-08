@@ -24,7 +24,7 @@ func (c *captureEmitter) Emit(_ context.Context, e events.OperationalEvent) erro
 	return c.err
 }
 
-// spec: §25.17 lines 5266-5285 — escalation_created is emitted to the
+// spec: §25.17 — escalation_created is emitted to the
 // event stream so a webhook subscriber can route it to PagerDuty. The
 // stream emitter publishes the escalation_created CloudEvent and reports
 // the publish as delivered so the escalation's emitted flag flips.

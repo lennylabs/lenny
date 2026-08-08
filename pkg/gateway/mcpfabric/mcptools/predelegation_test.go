@@ -126,7 +126,7 @@ func TestDelegateTaskPreDelegationRejects(t *testing.T) {
 }
 
 // TestDelegateTaskPreDelegationRejectUsesSharedErrorTaxonomy pins
-// §15.2.1 line 1386: the manual MCP-only lenny/delegate_task tool
+// §15.2.1: the manual MCP-only lenny/delegate_task tool
 // must use the shared error taxonomy. A deliberate PreDelegation
 // REJECT surfaces as the canonical INTERCEPTOR_REJECTED envelope on
 // the MCP wire (CategoryPolicy, retryable:false) instead of a bare
@@ -149,8 +149,8 @@ func TestDelegateTaskPreDelegationRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386
 }
 
 // TestDelegateTaskPreRouteRejectUsesSharedErrorTaxonomy mirrors the
-// PreDelegation test for the §8.2 line 90 PreRoute hop. Same
-// §15.2.1 line 1386 contract. F-15.2.11.
+// PreDelegation test for the §8.2 PreRoute hop. Same
+// §15.2.1 contract. F-15.2.11.
 func TestDelegateTaskPreRouteRejectUsesSharedErrorTaxonomy_spec_15_2_1_1386(t *testing.T) {
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreRoute, staticInterceptor{
@@ -195,7 +195,7 @@ func (a *capturePolicyAppender) Append(_ context.Context, _, _ string, payload j
 	return audit.Row{}, nil
 }
 
-// spec: §4.8 line 981, §11.7 — a PreDelegation chain REJECT writes an
+// spec: §4.8, §11.7 — a PreDelegation chain REJECT writes an
 // interceptor.rejected audit row naming the rejecting interceptor.
 func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 	chain := interceptor.NewChain()

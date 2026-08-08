@@ -81,7 +81,7 @@ func advanceTo(t *testing.T, svc *upgradeservice.Service, target upgrade.Phase) 
 	t.Fatalf("never reached %s", target)
 }
 
-// spec: §25.8 line 3509 — OpsRoll past the timeout with no heartbeat
+// spec: §25.8 — OpsRoll past the timeout with no heartbeat
 // auto-rolls-back with OPS_ROLL_TIMEOUT.
 func TestWatchdog_OpsRollTimeout_RollsBack_spec_25_8(t *testing.T) {
 	t0 := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
@@ -104,7 +104,7 @@ func TestWatchdog_OpsRollTimeout_RollsBack_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3511 — a fresh ops_healthy heartbeat suppresses the
+// spec: §25.8 — a fresh ops_healthy heartbeat suppresses the
 // OpsRoll timeout rollback (the new pod is alive).
 func TestWatchdog_FreshHeartbeat_SuppressesRollback_spec_25_8(t *testing.T) {
 	t0 := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
@@ -134,7 +134,7 @@ func TestWatchdog_FreshHeartbeat_SuppressesRollback_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3510 — a stuck new pod emits
+// spec: §25.8 — a stuck new pod emits
 // platform_upgrade_image_pull_failed once per operation+phase, and the
 // image-pull-check latency is recorded.
 func TestWatchdog_ImagePullFailed_EmitsOnce_spec_25_8(t *testing.T) {
@@ -188,7 +188,7 @@ func TestWatchdog_NoOpOutsideRollPhase_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 lines 3487, 3549 — a post-SchemaMigration roll phase
+// spec: §25.8 — a post-SchemaMigration roll phase
 // (GatewayRoll) is past the point of no return; a timeout there does not
 // auto-rollback (it surfaces the stuck event and leaves rollback to the
 // operator).
@@ -213,7 +213,7 @@ func TestWatchdog_PostMigrationNoAutoRollback_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3511 — RecordOpsHeartbeat is a no-op outside OpsRoll.
+// spec: §25.8 — RecordOpsHeartbeat is a no-op outside OpsRoll.
 func TestRecordOpsHeartbeat_OnlyOpsRoll_spec_25_8(t *testing.T) {
 	svc := upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()})
 	advanceTo(t, svc, upgrade.CRDUpdate)

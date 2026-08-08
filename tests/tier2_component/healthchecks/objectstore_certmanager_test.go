@@ -35,7 +35,7 @@ import (
 )
 
 // probeTimeoutBounds brackets the deadline a §25.3 checker must stamp on
-// its probe. spec: §25.3 line 441 — "Each probe has a hard timeout of 2
+// its probe. spec: §25.3 — "Each probe has a hard timeout of 2
 // seconds." The lower bound tolerates the microseconds spent between the
 // checker's WithTimeout call and the probe reading its deadline; the
 // upper bound is the exact 2s the spec mandates.
@@ -217,7 +217,7 @@ func TestAPIServerCheckerAgainstStubHealthz(t *testing.T) {
 // reachability check, report unhealthy with the
 // INVESTIGATE_CONNECTOR_REGISTRY inline hint when the registry query
 // fails, and bound the probe at the hard 2-second timeout.
-// spec: §25.3 line 440 ("registered connectors"), line 441.
+// spec: §25.3.
 func TestConnectorsCheckerAgainstStubRegistry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

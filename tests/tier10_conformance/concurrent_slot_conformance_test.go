@@ -221,7 +221,7 @@ func TestConcurrentSlotDispatchConformance(t *testing.T) {
 		t.Errorf("whole-pod response = %q, want an independent seq=1 echo of solo", got)
 	}
 
-	// Per-slot cwd derivation (§6.4 line 384): the runtime derives each
+	// Per-slot cwd derivation (§6.4): the runtime derives each
 	// active slot's cwd as /workspace/slots/{slotId}/current/ rather than
 	// the global /workspace/current. The echo runtime performs no file
 	// operations, so it surfaces the derived cwd on stderr; the diagnostic

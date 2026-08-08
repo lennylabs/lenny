@@ -29,7 +29,7 @@ import (
 // content. Like the rest of the staging sequence it runs before the
 // session is claimed, so it does not touch pod-assignment state.
 func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServer) error {
-	// spec: §16.3 line 338 — `session.upload` is a Gateway + Pod span. This
+	// spec: §16.3 — `session.upload` is a Gateway + Pod span. This
 	// is the Pod half: the adapter streams uploaded files into the staging
 	// area. The gateway half (the client→gateway upload) is emitted there.
 	// F-16.3.6 / pod half of F-16.3.1.
@@ -40,7 +40,7 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		span.End()
 	}()
 
-	// spec: §6.4 lines 401-405 — a slot-qualified upload stages into the
+	// spec: §6.4 — a slot-qualified upload stages into the
 	// slot's /workspace/slots/{slotId}/staging area. The staging directory
 	// is resolved from the first frame (every frame carries the same slot
 	// id); the single-session layout uses the pod-global StagingDir.
@@ -153,9 +153,9 @@ func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
 // filesystem-native plan sources via workspace.Materialize, which builds
 // the resolved tree in /workspace/staging and atomically promotes it onto
 // /workspace/current so the runtime never observes a partial workspace.
-// spec: §7.4 line 433 — F-7.4.12.
+// spec: §7.4 — F-7.4.12.
 func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
-	// spec: §16.3 line 339 — `session.finalize_workspace` is emitted by the
+	// spec: §16.3 — `session.finalize_workspace` is emitted by the
 	// Pod. The span covers the workspace-plan materialization the adapter
 	// runs before the session is claimed. F-16.3.6.
 	_, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionFinalizeWorkspace)
@@ -172,7 +172,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
-	// spec: §6.4 lines 401-405 — a slot-qualified finalize materializes
+	// spec: §6.4 — a slot-qualified finalize materializes
 	// into the slot's per-slot tree (/workspace/slots/{slotId}/staging
 	// promoted to /current) and creates that tree on first reference.
 	// The single-session layout uses the pod-global WorkspaceRoot/StagingDir.
@@ -193,7 +193,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	// spec: §14.1 line 326 — the adapter is a live consumer at
+	// spec: §14.1 — the adapter is a live consumer at
 	// materialization time and MUST reject a plan whose schemaVersion it
 	// does not understand before touching the filesystem; a stale adapter
 	// could otherwise misinterpret fields a newer gateway wrote during a
@@ -216,7 +216,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		}
 		return nil, st.Err()
 	}
-	// spec: §7.4 lines 458, 462 — F-7.4.4. The gateway delivers the
+	// spec: §7.4 — F-7.4.4. The gateway delivers the
 	// per-Runtime allowSymlinks opt-in plus the absolute workspace root
 	// (slot-scoped paths in §6.4 concurrent runtimes) on FinalizeWorkspace.
 	// An unset workspace_root falls back to the adapter's configured root
@@ -231,7 +231,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	}
 	sources := req.GetWorkspacePlan().GetSources()
 	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
-	// spec: §7.4 line 433 — a mid-session upload overlays the sources onto
+	// spec: §7.4 — a mid-session upload overlays the sources onto
 	// the running session's existing /workspace/current rather than
 	// replacing the whole tree, then signals the runtime once promotion
 	// completes. The pre-start path (mid_session false) keeps the §4.7
@@ -255,7 +255,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
-	// spec: §7.4 line 433 — "The runtime adapter receives a FilesUpdated
+	// spec: §7.4 — "The runtime adapter receives a FilesUpdated
 	// notification only after promotion, so the agent never sees
 	// partially-written files." The overlay above is already promoted, so
 	// the signal is safe to emit now. It is best-effort: a not-connected
@@ -269,10 +269,10 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto
 	// the FinalizeWorkspaceResponse so the gateway can republish the
-	// §7.4 line 459 `workspace_plan_strip_components_skip` per-entry
+	// §7.4 per-entry
 	// warning event without redoing the archive walk in two places. The
 	// per-warning structured fields (`entryPath`, `segmentCount`,
-	// `stripComponents`) ride per §14 line 100.
+	// `stripComponents`) ride per §14.
 	resp := &adapterv1.FinalizeWorkspaceResponse{}
 	for _, w := range warnings {
 		pw := &adapterv1.WorkspacePlanWarning{
@@ -283,7 +283,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			StripComponents: int32(w.StripComponents),
 			Message:         w.Message,
 		}
-		// spec: §14 line 334 — the unknown-source-type warning carries
+		// spec: §14 — the unknown-source-type warning carries
 		// `unknownType` and the plan's `schemaVersion`. The materializer
 		// fills UnknownType; the plan version is stamped here, where the
 		// request (and thus the plan) is in scope. F-14.1.2.
@@ -291,7 +291,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			pw.UnknownType = w.UnknownType
 			pw.SchemaVersion = int32(schemaVersion)
 		}
-		// spec: §14 line 338 — the path-collision warning carries `path`,
+		// spec: §14 — the path-collision warning carries `path`,
 		// `winningSourceIndex`, and `losingSourceIndex` so a consumer can
 		// audit which source overwrote which. F-14.1.9.
 		if w.Code == "workspace_plan_path_collision" {
@@ -311,11 +311,11 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 // WorkspaceRoot by the time RunSetup runs, so this RPC neither claims
 // the session nor touches pod assignment state. The §5.1 setupPolicy in
 // the request bounds the aggregate setup phase. The response carries
-// the per-command setup output the §7.5 line 475 "Fully logged" contract
+// the per-command setup output the §7.5 contract
 // requires; the gateway persists this on the session row so a client can
 // see it via §15.1 GET /v1/sessions/{id}. F-7.5.4.
 func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
-	// spec: §16.3 line 340 — `session.run_setup` is emitted by the Pod. The
+	// spec: §16.3 — `session.run_setup` is emitted by the Pod. The
 	// span covers the §14 setup-command execution phase. F-16.3.6.
 	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionRunSetup)
 	var spanErr error
@@ -331,7 +331,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
-	// spec: §6.4 line 404 — a slot-qualified setup runs against the slot's
+	// spec: §6.4 — a slot-qualified setup runs against the slot's
 	// own /workspace/slots/{slotId}/current cwd. The single-session layout
 	// uses the pod-global WorkspaceRoot.
 	workspaceRoot := s.WorkspaceRoot
@@ -356,7 +356,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		setupOptionsFromProto(req.GetSetupPolicy(), workspaceRoot))
 	resp := &adapterv1.RunSetupResponse{Outputs: setupOutputsToProto(outputs)}
 	if err != nil {
-		// spec: §5.1 lines 89-91 — setupPolicy.onTimeout = warn proceeds
+		// spec: §5.1 — setupPolicy.onTimeout = warn proceeds
 		// to runtime start past the aggregate cap. workspace.RunSetup
 		// returns ErrSetupAggregateTimeoutWarn (wrapped with cap +
 		// command-index) so the warn case is operationally observable
@@ -389,7 +389,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 
 // setupOutputsToProto converts the workspace-layer SetupCommandOutput
 // slice to the wire form the §15.1 session-envelope plumbing consumes.
-// spec: §7.5 line 475 — F-7.5.4.
+// spec: §7.5 — F-7.5.4.
 func setupOutputsToProto(outs []workspace.SetupCommandOutput) []*adapterv1.SetupCommandOutput {
 	if len(outs) == 0 {
 		return nil

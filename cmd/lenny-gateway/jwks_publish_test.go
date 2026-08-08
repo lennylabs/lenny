@@ -13,7 +13,7 @@ import (
 // --jwks-publish is set. The published JWKS for the v1 HMAC signer
 // carries `kty: oct` only; asymmetric backends (RSA, EC) light the
 // publication path up as load-bearing.
-// spec: §10.2 line 195. F-10.2.14.
+// spec: §10.2. F-10.2.14.
 func TestJWKSAdvertisesAsymmetric(t *testing.T) {
 	cases := []struct {
 		name string

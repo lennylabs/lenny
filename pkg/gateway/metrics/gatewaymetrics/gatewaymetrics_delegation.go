@@ -32,9 +32,9 @@ type delegationMetrics struct {
 	// platform tool and lenny/await_children tree walks). Emission
 	// implies a corrupt ParentSessionID lineage that bypassed the §8.2
 	// pre-delegation cycle detector — typically a §8.10 recovery write
-	// that re-parented a node. spec: §8.9 line 1003; F-8.9.10.
+	// that re-parented a node. spec: §8.9; F-8.9.10.
 	delegationTreeCycleDetected *prometheus.CounterVec
-	// delegationDeadlockDetected counts §8.8 line 981 subtree-deadlock
+	// delegationDeadlockDetected counts §8.8 subtree-deadlock
 	// detections, labelled by tenant. The detector increments it once
 	// per newly-detected deadlocked subtree root (not per sweep tick).
 	// F-8.8.6.
@@ -48,20 +48,19 @@ type delegationMetrics struct {
 	// resolution (seconds), labelled by the same `resolution` outcome.
 	// F-8.8.6.
 	delegationDeadlockDuration *prometheus.HistogramVec
-	// delegationBudgetReconstruction counts §11.2 line 48 delegation tree
+	// delegationBudgetReconstruction counts §11.2 delegation tree
 	// budget reconstruction events on Redis recovery. Label `outcome` is
 	// one of `success` (counters restored via the MAX rule) or
 	// `irrecoverable` (checkpoint too stale and live state unenumerable,
-	// so the tree root was moved to awaiting_client_action). spec: §11.2
-	// line 48; §12.4 line 218; F-11.2.5.
+	// so the tree root was moved to awaiting_client_action). spec: §11.2; §12.4; F-11.2.5.
 	delegationBudgetReconstruction *prometheus.CounterVec
-	// quotaCheckpointReconcile counts §11.2 line 48 / §24.6 token-usage
+	// quotaCheckpointReconcile counts §11.2 / §24.6 token-usage
 	// counter reconcile events. Label `outcome` is one of `restored` (the
 	// MAX rule was applied to a still-current window) or `skipped` (the
-	// checkpoint's window had already rolled over). spec: §11.2 line 48;
-	// §24.6 line 99; F-11.2.4 / F-24.6.3.
+	// checkpoint's window had already rolled over). spec: §11.2;
+	// §24.6; F-11.2.4 / F-24.6.3.
 	quotaCheckpointReconcile *prometheus.CounterVec
-	// delegationParallelChildrenHWM observes the §8.3 line 379 maximum
+	// delegationParallelChildrenHWM observes the §8.3 maximum
 	// simultaneous in-flight children per delegation tree, sampled once
 	// when the tree root reaches a terminal state. Labels `pool` and
 	// `tenant_id` per §16.1; `root_session_id` is deliberately not a
@@ -107,14 +106,14 @@ func newDelegationMetrics(reg *prometheus.Registry) (delegationMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §8.8 line 981 — the subtree deadlock detector counters.
+	// §16.1 / §8.8 — the subtree deadlock detector counters.
 	// `detected_total` bumps once per newly-detected deadlocked subtree;
 	// `resolution_total` and `duration_seconds` close out each tracked
 	// deadlock when the root resolves it or the detector times it out.
 	// F-8.8.6.
 	delegationDeadlockDetected, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_delegation_deadlock_detected_total",
-		Help: "Subtree deadlock detections (§8.8 line 981 heuristic), by tenant.",
+		Help: "Subtree deadlock detections (§8.8 heuristic), by tenant.",
 	}, []string{"tenant_id"})
 	if err != nil {
 		return m, err
@@ -134,7 +133,7 @@ func newDelegationMetrics(reg *prometheus.Registry) (delegationMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §11.2 line 48 — `lenny_delegation_budget_reconstruction_total`
+	// §16.1 / §11.2 — `lenny_delegation_budget_reconstruction_total`
 	// counts delegation tree budget reconstruction events on Redis
 	// recovery, labelled by outcome (`success` | `irrecoverable`) so
 	// operators monitor reconstruction volume and detect trees that could
@@ -146,7 +145,7 @@ func newDelegationMetrics(reg *prometheus.Registry) (delegationMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §11.2 line 48 — `lenny_quota_checkpoint_reconcile_total`
+	// §16.1 / §11.2 — `lenny_quota_checkpoint_reconcile_total`
 	// counts token-usage counter reconcile events on Redis recovery and on
 	// the §24.6 operator-driven reconcile, labelled by outcome
 	// (`restored` | `skipped`) so operators see how many counters the MAX
@@ -158,7 +157,7 @@ func newDelegationMetrics(reg *prometheus.Registry) (delegationMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 / §8.3 line 379 — `lenny_delegation_parallel_children_high_watermark`
+	// §16.1 / §8.3 — `lenny_delegation_parallel_children_high_watermark`
 	// records the maximum simultaneous in-flight children observed for
 	// each delegation tree at tree completion, labelled by `pool` and
 	// `tenant_id`. Buckets cover the typical maxParallelChildren range

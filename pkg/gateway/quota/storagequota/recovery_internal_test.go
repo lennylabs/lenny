@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §12.4 line 210 — on a Redis down-to-up edge the reconciler writes
+// spec: §12.4 — on a Redis down-to-up edge the reconciler writes
 // each tenant's storage_bytes_used back to Redis from the Postgres sum.
 func TestRecoveryReconcilerRehydratesOnRecoveryEdge_spec_12_4_210(t *testing.T) {
 	mem := NewMemory()

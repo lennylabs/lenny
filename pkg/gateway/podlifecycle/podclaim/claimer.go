@@ -90,7 +90,7 @@ type ClaimRequest struct {
 // §4.6.1 (pod claim mechanism, occupancy projection), §4.6.3 (ownership
 // decomposition), §5.2 (slot assignment atomicity).
 func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.SandboxClaim, retErr error) {
-	// spec: §16.3 line 337 — the session.claim_pod span. The spec marks
+	// spec: §16.3 — the session.claim_pod span. The spec marks
 	// the span "Controller"; in this implementation the idle-pod claim is
 	// performed gateway-side (this package), so the span is emitted here.
 	// The deferred RecordError captures every claim-failure return path.

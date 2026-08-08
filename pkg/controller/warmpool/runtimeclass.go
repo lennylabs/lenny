@@ -28,7 +28,7 @@ const conditionPoolDegraded = "Degraded"
 // gVisor) surfaces a Degraded condition with an actionable message
 // instead of an opaque tight-loop of API-server-rejected pod creates.
 //
-// spec: §5.3 line 675 — "The warm pool controller validates that the
+// spec: §5.3 — "The warm pool controller validates that the
 // required RuntimeClass objects exist in the cluster at startup. If a
 // pool references a RuntimeClass that doesn't exist ... the controller
 // logs an error and sets the pool's status to Degraded".
@@ -68,14 +68,14 @@ func (c readerRuntimeClassChecker) RuntimeClassExists(ctx context.Context, name 
 	return true, nil
 }
 
-// runtimeClassMissingMessage formats the §5.3 line 675 Degraded message
+// runtimeClassMissingMessage formats the §5.3 Degraded message
 // for a pool whose isolation profile maps to an uninstalled
 // RuntimeClass. The phrasing matches the spec verbatim for the chart
 // defaults (runc, gvisor, kata) and substitutes the operator-supplied
-// override (§17.5 line 3) when the chart's `isolation.runtimeClassNames`
+// override (§17.5) when the chart's `isolation.runtimeClassNames`
 // values remap the profile to a non-default name.
 //
-// spec: §5.3 line 675; §17.5 line 3.
+// spec: §5.3; §17.5.
 func runtimeClassMissingMessage(profile isolation.Profile, rcName string) string {
 	switch profile {
 	case isolation.ProfileSandboxed:
@@ -92,7 +92,7 @@ func runtimeClassMissingMessage(profile isolation.Profile, rcName string) string
 // runtimeClassMissingCondition is the Degraded=True condition for a pool
 // whose RuntimeClass is absent.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func runtimeClassMissingCondition(msg string) metav1.Condition {
 	return metav1.Condition{
 		Type:    conditionPoolDegraded,
@@ -107,7 +107,7 @@ func runtimeClassMissingCondition(msg string) metav1.Condition {
 // from a prior Degraded state when the operator installs the missing
 // RuntimeClass.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func runtimeClassPresentCondition(rcName string) metav1.Condition {
 	return metav1.Condition{
 		Type:    conditionPoolDegraded,

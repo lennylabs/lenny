@@ -48,7 +48,7 @@ func meServer() (*opsserver.Server, *captureAudit) {
 	return srv, audit
 }
 
-// spec §25.4 lines 1577-1623: GET /v1/admin/me returns the identity,
+// spec §25.4: GET /v1/admin/me returns the identity,
 // authorization (with authorizedLockScopes + subjectToGuards), platform
 // context, capabilities, and discovery links for a platform-admin.
 func TestMePlatformAdmin(t *testing.T) {
@@ -173,7 +173,7 @@ func TestMeLinksRelativeFallbackWithoutGatewayURL(t *testing.T) {
 	}
 }
 
-// spec §25.4 lines 1606-1611: through the real auth gate the rateLimits
+// spec §25.4: through the real auth gate the rateLimits
 // block surfaces the caller's token-bucket balance so an agent can
 // self-pace.
 func TestMeRateLimitsSurface(t *testing.T) {
@@ -215,7 +215,7 @@ func TestMeRateLimitsSurface(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1647: a tenant-admin gets tenant-scoped values rather
+// spec §25.4: a tenant-admin gets tenant-scoped values rather
 // than the platform wildcards.
 func TestMeTenantAdminScoped(t *testing.T) {
 	srv, _ := meServer()
@@ -233,7 +233,7 @@ func TestMeTenantAdminScoped(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1641: identity.discovered is emitted at most once per
+// spec §25.4: identity.discovered is emitted at most once per
 // caller subject.
 func TestMeIdentityDiscoveredDeduplicated(t *testing.T) {
 	srv, audit := meServer()
@@ -251,7 +251,7 @@ func TestMeIdentityDiscoveredDeduplicated(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1575: /v1/admin/me/authorized-tools returns the MCP
+// spec §25.4: /v1/admin/me/authorized-tools returns the MCP
 // tool inventory pre-filtered to the caller; a scope-narrowed caller sees
 // only tools their scope authorizes.
 func TestAuthorizedTools(t *testing.T) {
@@ -327,7 +327,7 @@ func TestAuthorizedToolsTenantAdminEventSubscriptions(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1575: /v1/admin/me/operations is the actor=me alias and
+// spec §25.4: /v1/admin/me/operations is the actor=me alias and
 // returns only the caller's own operations.
 func TestMeOperationsAlias(t *testing.T) {
 	audit := &captureAudit{}
@@ -357,7 +357,7 @@ func TestMeOperationsAlias(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1668: when no inventory is wired the /me/operations
+// spec §25.4: when no inventory is wired the /me/operations
 // alias returns an empty page rather than a 404.
 func TestMeOperationsAliasEmptyWithoutInventory(t *testing.T) {
 	srv, _ := meServer()

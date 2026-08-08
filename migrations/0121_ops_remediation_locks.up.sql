@@ -11,10 +11,10 @@
 -- alongside lenny_ops_lock_split_brain_detected_total.
 --
 -- All three tables are platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists them among the
+-- multi-tenanted at this boundary; §25.4 lists them among the
 -- PlatformPostgres() tables), so no tenant column or RLS policy applies.
 --
--- spec: §25.4 lines 2160-2253.
+-- spec: §25.4.
 
 CREATE TABLE ops_remediation_locks (
     id           TEXT PRIMARY KEY,

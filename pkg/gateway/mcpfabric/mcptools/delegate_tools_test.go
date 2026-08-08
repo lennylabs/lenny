@@ -132,7 +132,7 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 }
 
 // TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238 verifies the
-// §11.3 line 238 timeout error envelope details include the ISO 8601
+// §11.3 timeout error envelope details include the ISO 8601
 // `expiredAt` timestamp plus `requestId` and `timeoutSeconds`. F-11.3.23.
 func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
@@ -176,7 +176,7 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 17 — `lenny/delegate_task` returns a TaskHandle. v1
+// spec: §8.2 — `lenny/delegate_task` returns a TaskHandle. v1
 // ships the typed envelope (childSessionId, state, runtimeRef, depth)
 // so callers can decode against a stable shape rather than a
 // hand-rolled JSON string.
@@ -215,7 +215,7 @@ func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 58 — Delegate rejects a userless parent with
+// spec: §8.2 — Delegate rejects a userless parent with
 // ErrParentNoUser; the MCP shim surfaces DELEGATION_PARENT_NO_USER
 // so callers can distinguish it from the generic error path.
 func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {

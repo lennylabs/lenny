@@ -39,7 +39,7 @@ func endedSpanNamed(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnl
 	return nil
 }
 
-// TestFinalizeWorkspaceEmitsSpan_spec_16_3 asserts the §16.3 line 339
+// TestFinalizeWorkspaceEmitsSpan_spec_16_3 asserts the §16.3
 // Pod-emitted `session.finalize_workspace` span fires on a clean
 // materialization. F-16.3.6.
 func TestFinalizeWorkspaceEmitsSpan_spec_16_3(t *testing.T) {
@@ -85,7 +85,7 @@ func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 	}
 }
 
-// TestRunSetupEmitsSpan_spec_16_3 asserts the §16.3 line 340 Pod-emitted
+// TestRunSetupEmitsSpan_spec_16_3 asserts the §16.3 Pod-emitted
 // `session.run_setup` span fires on a clean setup run. F-16.3.6.
 func TestRunSetupEmitsSpan_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)

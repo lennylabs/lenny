@@ -4,7 +4,7 @@ package replication
 
 import "testing"
 
-// TestDeriveLagSeconds covers the §25.11 line 4085 lag estimate: empty
+// TestDeriveLagSeconds covers the §25.11 lag estimate: empty
 // queue is zero lag, a queue draining at a known rate is queue/rate, and a
 // non-empty queue with no throughput floors the rate so the lag reads as a
 // large positive value rather than zero.

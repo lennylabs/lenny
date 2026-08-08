@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package ctlcli implements the unified Lenny CLI dispatcher. The §24
-// preamble (line 17) requires both invocation names, `lenny` (short
+// Package ctlcli implements the unified Lenny CLI dispatcher. The §24 preamble requires both invocation names, `lenny` (short
 // name, Embedded Mode ergonomics) and `lenny-ctl` (long name, operator
 // context), to support every subcommand. Both `cmd/lenny` and
 // `cmd/lenny-ctl` are thin shims over Run here, so the two names share
@@ -76,13 +75,12 @@ import (
 // package var. Source builds without the ldflag report "dev". The §17.6
 // krew CI invariant asserts that `kubectl lenny --version` reports the
 // release tag.
-// spec: §24.0 line 23, §17.6 line 360.
+// spec: §24.0, §17.6.
 var version = "dev"
 
 // Run is the unified CLI entry point both binary names invoke. ver is the
 // build version each thin shim stamps via its -X main.version ldflag.
-// Run honors every subcommand under either invocation name per the §24
-// preamble line 17 contract that "both names support every subcommand".
+// Run honors every subcommand under either invocation name per the §24 preamble contract that "both names support every subcommand".
 func Run(args []string, stdout, stderr io.Writer, ver string) int {
 	version = ver
 	return run(args, stdout, stderr)
@@ -93,7 +91,7 @@ func Run(args []string, stdout, stderr io.Writer, ver string) int {
 // (standalone, Homebrew), and kubectl-lenny (krew); the version string
 // names whichever was run. Under `go test` the binary name does not match
 // any known prefix and falls through to lenny-ctl.
-// spec: §24 preamble line 17, §17.6 line 358 (one build, multiple names).
+// spec: §24 preamble, §17.6.
 func progName() string {
 	base := filepath.Base(os.Args[0])
 	switch {
@@ -109,7 +107,7 @@ func progName() string {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	// §24.19 line 256 / §17.4: the embedded control plane runs as in-cluster
+	// §24.19 / §17.4: the embedded control plane runs as in-cluster
 	// pods that outlive the CLI, so `lenny up` brings the stack up in-process
 	// and returns; there is no detached host supervisor to re-exec into under
 	// either binary name.
@@ -119,7 +117,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	ctx := context.Background()
-	// §24.15 line 192: `lenny-ctl logs pods <namespace> <name>` proxies a
+	// §24.15: `lenny-ctl logs pods <namespace> <name>` proxies a
 	// pod's container logs from lenny-ops (GET /v1/admin/logs/pods/...).
 	// This clustered operability command is distinct from the §24.19
 	// embedded `logs <component>` stack-log tailer that localcli claims
@@ -145,7 +143,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if rest[0] == "runtime" && len(rest) > 1 && rest[1] == "apply" {
 		return localcli.Run(ctx, "runtime", rest[1:], stdout, stderr, version)
 	}
-	// §24.19 line 266 / §24.9 line 120: `lenny-ctl <local-command>`
+	// §24.19 / §24.9: `lenny-ctl <local-command>`
 	// behaves identically to `lenny <local-command>` against the
 	// Embedded Mode stack. The gateway-targeting global flags do not
 	// apply to local commands, so delegate the raw arguments after the
@@ -156,7 +154,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if localcli.Local(rest[0]) && rest[0] != "runtime" {
 		return localcli.Run(ctx, rest[0], rest[1:], stdout, stderr, version)
 	}
-	// §24.16 line 205: only the "json" output format is supported.
+	// §24.16: only the "json" output format is supported.
 	if flags.output != "" && flags.output != "json" {
 		fmt.Fprintf(stderr, "lenny-ctl: unsupported --output %q (only \"json\" is supported)\n", flags.output)
 		return 2
@@ -171,7 +169,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// routed to the gateway: §25.14's routing table covers health and
 		// recommendations, not version, and the §17.6 krew check requires
 		// `kubectl lenny --version` to succeed before any gateway exists.
-		// spec: §24.0 line 23, §17.6 line 360.
+		// spec: §24.0, §17.6.
 		return cmdVersion(stdout)
 	case "bootstrap":
 		return cmdBootstrap(ctx, client, rest[1:], stdout, stderr, flags.quiet)
@@ -199,45 +197,43 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// §24.14 policy group: `audit-isolation` reports DelegationPolicy
 		// rule × pool combinations that fail the §8.3 isolation
 		// monotonicity check. Read-only, platform-admin, gateway admin
-		// API (client-side join). spec: §24.14 line 172.
+		// API (client-side join). spec: §24.14.
 		return cmdPolicy(ctx, client, rest[1:], stdout, stderr)
 	case "operations":
 		// §24.15 operations group: list active long-running operations and
 		// fetch one by id. The operations inventory is hosted by lenny-ops
-		// (§15.1 line 909), so the group resolves the ops endpoint via the
-		// §24.16 --ops-server auto-discovery. spec: §24.15 line 181.
+		// (§15.1), so the group resolves the ops endpoint via the
+		// §24.16 --ops-server auto-discovery. spec: §24.15.
 		return cmdOperations(ctx, flags, client, rest[1:], stdout, stderr)
 	case "me":
 		// §24.15 me group: caller identity and authorized tools target the
 		// gateway admin API, while `me operations` targets the lenny-ops
-		// inventory (§15.1 line 909). cmdMe routes each. spec: §24.15
-		// line 180.
+		// inventory (§15.1). cmdMe routes each. spec: §24.15.
 		return cmdMe(ctx, flags, client, rest[1:], stdout, stderr)
 	case "audit":
 		// §24.15 audit group: query/summary and the OCSF/EventBus/
-		// partition remediation verbs. Gateway admin API. spec: §24.15
-		// line 186; §25.9.
+		// partition remediation verbs. Gateway admin API. spec: §24.15; §25.9.
 		return cmdAudit(ctx, client, rest[1:], stdout, stderr)
 	case "events":
 		// §24.15 events group: the poll, SSE tail, and webhook
 		// subscriptions target lenny-ops; the buffer subcommand targets
 		// the gateway. cmdEvents routes each subcommand itself. spec:
-		// §24.15 line 182; §25.5.
+		// §24.15; §25.5.
 		return cmdEvents(ctx, flags, client, rest[1:], stdout, stderr)
 	case "upgrade":
 		// §24.15 upgrade group: the platform-upgrade state machine on
 		// lenny-ops, plus the §24.20 `upgrade --answers` chart replay.
-		// cmdUpgrade routes both. spec: §24.15 line 185; §24.20 line 304.
+		// cmdUpgrade routes both. spec: §24.15; §24.20.
 		return cmdUpgrade(ctx, flags, client, rest[1:], stdout, stderr)
 	case "slo":
 		// slo export renders the §16.10 OpenSLO documents from the
 		// embedded §16.5 SLO catalog and runs offline; it reaches no
-		// gateway. spec: §16.10 lines 732-736.
+		// gateway. spec: §16.10.
 		return cmdSLO(rest[1:], stdout, stderr)
 	case "values":
 		// values validate checks a values.yaml against the chart's
 		// generated values.schema.json (§17.6). Runs offline; reaches no
-		// gateway. spec: §24.20 line 303, §17.6 line 666.
+		// gateway. spec: §24.20, §17.6.
 		return cmdValues(rest[1:], stdout, stderr)
 	// §25.14 operability command groups — these target lenny-ops, not
 	// the gateway. opsClient resolves the ops URL (the --ops-server flag
@@ -261,7 +257,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "doctor":
 		// §24.2 rows 2-3: doctor runs the §25.6 diagnostic suite via
 		// POST /v1/admin/diagnostics/run on lenny-ops; --fix applies the
-		// auto-remediations. spec: §24.2 lines 44-45; §25.6 lines 2941-2982.
+		// auto-remediations. spec: §24.2; §25.6.
 		return withOps(ctx, flags, client, stderr, func(ops *ctl.Client) int {
 			return cmdDoctor(ctx, ops, rest[1:], stdout, stderr)
 		})
@@ -448,7 +444,7 @@ type globalFlags struct {
 	devTenant string
 	devRoles  string
 
-	// §24.16 line 205 cross-command flags.
+	// §24.16 cross-command flags.
 	timeout  time.Duration // --timeout <secs>; default 30s.
 	insecure bool          // --insecure-skip-verify (dev only).
 	output   string        // --output <format>; only "json" is supported.
@@ -471,7 +467,7 @@ func envOr(key, def string) string {
 // from the environment when the corresponding flag is absent: LENNY_API_URL
 // for --api-url, LENNY_OPS_URL for --ops-server, and LENNY_API_TOKEN for
 // --token/--bearer. An explicit flag always overrides the environment.
-// spec: §24.0 line 26, §24.16 lines 197 and 199, §24 preamble line 8.
+// spec: §24.0, §24.16, §24 preamble.
 func parseGlobalFlags(args []string) (globalFlags, []string) {
 	f := globalFlags{
 		apiURL:    envOr("LENNY_API_URL", "http://localhost:8080"),
@@ -484,7 +480,7 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 	for i < len(args) {
 		switch args[i] {
 		case "--timeout":
-			// §24.16 line 205: per-request timeout in seconds.
+			// §24.16: per-request timeout in seconds.
 			if i+1 < len(args) {
 				if secs, err := strconv.Atoi(args[i+1]); err == nil && secs > 0 {
 					f.timeout = time.Duration(secs) * time.Second
@@ -493,19 +489,19 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 				continue
 			}
 		case "--insecure-skip-verify":
-			// §24.16 line 205: dev-only TLS-verification bypass. Valueless.
+			// §24.16: dev-only TLS-verification bypass. Valueless.
 			f.insecure = true
 			i++
 			continue
 		case "--output":
-			// §24.16 line 205: machine-readable output selector.
+			// §24.16: machine-readable output selector.
 			if i+1 < len(args) {
 				f.output = args[i+1]
 				i += 2
 				continue
 			}
 		case "--quiet":
-			// §24.16 line 205: suppress informational messages. Valueless.
+			// §24.16: suppress informational messages. Valueless.
 			f.quiet = true
 			i++
 			continue
@@ -522,7 +518,7 @@ func parseGlobalFlags(args []string) (globalFlags, []string) {
 				continue
 			}
 		case "--bearer", "--token":
-			// --token is the spec-facing name (§24 preamble line 8);
+			// --token is the spec-facing name (§24 preamble);
 			// --bearer is kept as an equivalent alias.
 			if i+1 < len(args) {
 				f.bearer = args[i+1]
@@ -590,7 +586,7 @@ func cmdHealth(ctx context.Context, c *ctl.Client, stdout, stderr io.Writer) int
 // `kubectl lenny --version`), so it makes no network call. The gateway's
 // own platform version is a separate concern surfaced by the ops
 // auto-discovery path (§25.14), not by this command.
-// spec: §24.0 line 23, §17.6 line 360.
+// spec: §24.0, §17.6.
 func cmdVersion(stdout io.Writer) int {
 	fmt.Fprintf(stdout, "%s %s\n", progName(), version)
 	return 0
@@ -599,7 +595,7 @@ func cmdVersion(stdout io.Writer) int {
 // cmdAdmin dispatches the §24 `admin` resource-management group. The quiet
 // flag carries the parsed --quiet so the mutating tenants and
 // external-adapters groups can suppress their informational advisory lines
-// (§24.16 line 205, F-CTL-4).
+// (§24.16, F-CTL-4).
 func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: admin requires a resource (tenants|runtimes|pools|credential-pools|sessions|users|quota|circuit-breakers|ca-rotation|erasure-jobs|external-adapters)")
@@ -642,7 +638,7 @@ func cmdAdmin(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 // to POST /v1/admin/deployment/config-change so the gateway emits the
 // gateway.*/platform.*/deployment.* transition audit events under the
 // operator's identity. It is invoked by the chart's post-upgrade hook.
-// spec: §16.7 lines 672, 676, 677, 682. F-8.2.5, F-9.2.10, F-17.2.8.
+// spec: §16.7. F-8.2.5, F-9.2.10, F-17.2.8.
 func cmdDeployment(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: deployment requires a subcommand (sync-config)")
@@ -653,7 +649,7 @@ func cmdDeployment(ctx context.Context, c *ctl.Client, args []string, stdout, st
 		var fromFile string
 		// The post-upgrade hook runs from a distroless image with no shell,
 		// so --wait-timeout polls the gateway health endpoint before posting,
-		// mirroring the bootstrap readiness poll. spec: §17.6 line 421.
+		// mirroring the bootstrap readiness poll. spec: §17.6.
 		waitSeconds := 120
 		rest := args[1:]
 		for i := 0; i < len(rest); i++ {
@@ -711,7 +707,7 @@ func cmdDeployment(ctx context.Context, c *ctl.Client, args []string, stdout, st
 // cmdMigrate implements the §24.13 migration-management group:
 // `migrate status` (GET /v1/admin/schema/migrations/status) and
 // `migrate down --version <N> --confirm` (POST
-// /v1/admin/schema/migrations/{version}/down). spec: §24.13 lines 150-151.
+// /v1/admin/schema/migrations/{version}/down). spec: §24.13.
 func cmdMigrate(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: migrate requires a subcommand (status|down)")
@@ -764,7 +760,7 @@ func cmdMigrate(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 // `erasure-jobs retry <job-id>` (POST .../retry), and
 // `erasure-jobs clear-restriction <job-id> --justification <text>`
 // (POST .../clear-processing-restriction). All require platform-admin.
-// spec: §24.12 lines 140-144.
+// spec: §24.12.
 func cmdErasureJobs(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: erasure-jobs requires a subcommand (get|retry|clear-restriction)")
@@ -827,7 +823,7 @@ func cmdErasureJobs(ctx context.Context, c *ctl.Client, args []string, stdout, s
 // `sessions get <id>` (GET /v1/admin/sessions/{id}) and
 // `sessions force-terminate <id> [--reason <text>]` (POST
 // .../force-terminate). Both require platform-admin.
-// spec: §24.11 lines 135-136.
+// spec: §24.11.
 func cmdSessions(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: sessions requires a subcommand (get|force-terminate)")
@@ -879,10 +875,10 @@ func cmdSessions(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 // (GET /v1/admin/operations, the §25.4 Inventory scatter-gather with a
 // Progress Envelope per record) and `operations get <id>` (GET
 // /v1/admin/operations/{id}). The operations inventory is hosted by
-// lenny-ops (§15.1 line 909), so both subcommands resolve the ops
+// lenny-ops (§15.1), so both subcommands resolve the ops
 // endpoint via the §24.16 --ops-server auto-discovery (rules 1-3) and
-// target lenny-ops rather than the gateway. spec: §24.15 line 181;
-// §15.1 line 909 (operations inventory assigned to lenny-ops).
+// target lenny-ops rather than the gateway. spec: §24.15;
+// §15.1.
 func cmdOperations(ctx context.Context, flags globalFlags, gateway *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: operations requires a subcommand (list|get)")
@@ -970,7 +966,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		}
 		printJSON(stdout, out)
 	case "delete":
-		// spec: §24.10 line 128 — DELETE /v1/admin/tenants/{id} initiates
+		// spec: §24.10 — DELETE /v1/admin/tenants/{id} initiates
 		// the §12.8 deletion lifecycle (active → disabling → deleting →
 		// deleted). The multi-phase controller runs asynchronously; the
 		// operator monitors progress with `tenants get <id>`, which surfaces
@@ -983,7 +979,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		// spec: §24.16 line 205 — --output json keeps stdout to the result
+		// spec: §24.16 — --output json keeps stdout to the result
 		// document, and --quiet suppresses informational messages. This
 		// advisory is informational, so it goes to stderr and is gated on
 		// --quiet, leaving the DELETE body-less stdout empty for a strict
@@ -1001,7 +997,7 @@ func cmdTenants(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		// TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD.
 		return cmdTenantsForceDelete(ctx, c, args[1:], stdout, stderr, quiet)
 	case "rotate-erasure-salt":
-		// spec: §12.8 line 857 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
+		// spec: §12.8 — POST /v1/admin/tenants/{id}/rotate-erasure-salt
 		// rotates a compromised per-tenant billing-pseudonymization salt: the
 		// old salt is deleted immediately and a security audit event fires.
 		if len(args) < 2 {
@@ -1063,7 +1059,7 @@ func cmdTenantsForceDelete(ctx context.Context, c *ctl.Client, args []string, st
 		return 1
 	}
 	printJSON(stdout, out)
-	// spec: §24.16 line 205 — keep stdout to the JSON result document under
+	// spec: §24.16 — keep stdout to the JSON result document under
 	// --output json, and suppress this informational advisory under --quiet,
 	// so a strict `| jq` pipeline parses stdout as one document (F-CTL-4).
 	if !quiet {
@@ -1099,7 +1095,7 @@ func cmdRuntimes(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 	case "grant-access", "list-access", "revoke-access":
 		// spec: §24.3 — runtime tenant-access management. grant-access
 		// and revoke-access take --runtime + --tenant; list-access takes
-		// --runtime only. They map to the §15.1:778-780 tenant-access
+		// --runtime only. They map to the §15.1 tenant-access
 		// endpoints under /v1/admin/runtimes/{name}/tenant-access.
 		return cmdRuntimesAccess(ctx, c, args[0], args[1:], stdout, stderr)
 	default:
@@ -1145,7 +1141,7 @@ func cmdRuntimesAccess(ctx context.Context, c *ctl.Client, verb string, args []s
 // against a resource's /tenant-access subresource. base is the full
 // .../tenant-access path; resource names the parent group for error
 // messages (for example "runtimes" or "pools"); verb is one of
-// grant-access, list-access, or revoke-access. spec: §15.1 lines 778-780
+// grant-access, list-access, or revoke-access. spec: §15.1
 // (runtimes), 802-804 (pools).
 func tenantAccessVerb(ctx context.Context, c *ctl.Client, resource, base, verb, tenant string, stdout, stderr io.Writer) int {
 	switch verb {
@@ -1225,10 +1221,10 @@ func cmdRuntimesRegister(ctx context.Context, c *ctl.Client, args []string, stdo
 }
 
 // cmdPools implements the §24.4 `lenny-ctl admin pools` group. spec:
-// spec/24_lenny-ctl-command-reference.md lines 61-78. v1 covers the
+// §24.4. v1 covers the
 // CRUD primitives, drain, sync-status, and resume-reconciliation. Each
 // subcommand maps 1:1 to the §15.1 admin REST surface
-// (spec/15_external-api-surface.md lines 792-799).
+// (§15.1).
 func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: pools requires a subcommand (list|get|create|update|delete|drain|sync-status|resume-reconciliation|set-warm-count|exit-bootstrap|circuit-breaker|grant-access|list-access|revoke-access|upgrade)")
@@ -1236,7 +1232,7 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	}
 	switch args[0] {
 	case "upgrade":
-		// spec: §10.5 lines 466-540 — the RuntimeUpgrade state machine is
+		// spec: §10.5 — the RuntimeUpgrade state machine is
 		// managed by `lenny-ctl admin pools upgrade`.
 		return cmdPoolsUpgrade(ctx, c, args[1:], stdout, stderr)
 	case "list":
@@ -1262,9 +1258,9 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	case "circuit-breaker":
 		return cmdPoolsCircuitBreaker(ctx, c, args[1:], stdout, stderr)
 	case "grant-access", "list-access", "revoke-access":
-		// spec: §24.4 lines 76-78 — pool tenant-access management.
+		// spec: §24.4 — pool tenant-access management.
 		// grant-access and revoke-access take --pool + --tenant;
-		// list-access takes --pool only. They map to the §15.1:802-804
+		// list-access takes --pool only. They map to the §15.1
 		// endpoints under /v1/admin/pools/{name}/tenant-access.
 		return cmdPoolsAccess(ctx, c, args[0], args[1:], stdout, stderr)
 	default:
@@ -1273,8 +1269,7 @@ func cmdPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	}
 }
 
-// cmdPoolsGet implements `lenny-ctl admin pools get <name>`. spec: §15.1
-// line 793 — GET /v1/admin/pools/{name}. args excludes the "get" verb.
+// cmdPoolsGet implements `lenny-ctl admin pools get <name>`. spec: §15.1 — GET /v1/admin/pools/{name}. args excludes the "get" verb.
 func cmdPoolsGet(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
 		fmt.Fprintln(stderr, "lenny-ctl: pools get requires <name>")
@@ -1290,7 +1285,7 @@ func cmdPoolsGet(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 }
 
 // cmdPoolsCreate implements `lenny-ctl admin pools create --from-file
-// <pool.json>`. args excludes the "create" verb. spec: §15.1 line 792 —
+// <pool.json>`. args excludes the "create" verb. spec: §15.1 —
 // POST /v1/admin/pools accepts the pool definition as JSON. --from-file
 // reads the body from a local file so an operator can keep pool
 // definitions under source control.
@@ -1315,8 +1310,7 @@ func cmdPoolsCreate(ctx context.Context, c *ctl.Client, args []string, stdout, s
 }
 
 // cmdPoolsUpdate implements `lenny-ctl admin pools update <name>
-// --from-file <pool.json>`. args excludes the "update" verb. spec: §15.1
-// line 795 — PUT /v1/admin/pools/{name} requires the updated pool
+// --from-file <pool.json>`. args excludes the "update" verb. spec: §15.1 — PUT /v1/admin/pools/{name} requires the updated pool
 // definition in the body.
 func cmdPoolsUpdate(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -1334,7 +1328,7 @@ func cmdPoolsUpdate(ctx context.Context, c *ctl.Client, args []string, stdout, s
 		return 1
 	}
 	var out map[string]any
-	// spec: §15.1 lines 1207-1213 — the pool PUT enforces the If-Match
+	// spec: §15.1 — the pool PUT enforces the If-Match
 	// precondition; fetch the current ETag and forward it.
 	poolPath := "/v1/admin/pools/" + url.PathEscape(args[0])
 	if err := c.PutIfMatch(ctx, poolPath, poolPath, body, &out); err != nil {
@@ -1346,7 +1340,7 @@ func cmdPoolsUpdate(ctx context.Context, c *ctl.Client, args []string, stdout, s
 }
 
 // cmdPoolsDelete implements `lenny-ctl admin pools delete <name>`. args
-// excludes the "delete" verb. spec: §15.1 line 796 — DELETE
+// excludes the "delete" verb. spec: §15.1 — DELETE
 // /v1/admin/pools/{name}.
 func cmdPoolsDelete(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -1363,7 +1357,7 @@ func cmdPoolsDelete(ctx context.Context, c *ctl.Client, args []string, stdout, s
 }
 
 // cmdPoolsDrain implements `lenny-ctl admin pools drain <name>`. args
-// excludes the "drain" verb. spec: §15.1 line 797 — POST
+// excludes the "drain" verb. spec: §15.1 — POST
 // /v1/admin/pools/{name}/drain.
 func cmdPoolsDrain(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -1380,7 +1374,7 @@ func cmdPoolsDrain(ctx context.Context, c *ctl.Client, args []string, stdout, st
 }
 
 // cmdPoolsSyncStatus implements `lenny-ctl admin pools sync-status
-// <name>`. args excludes the "sync-status" verb. spec: §15.1 line 798 —
+// <name>`. args excludes the "sync-status" verb. spec: §15.1 —
 // GET /v1/admin/pools/{name}/sync-status.
 func cmdPoolsSyncStatus(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -1398,7 +1392,7 @@ func cmdPoolsSyncStatus(ctx context.Context, c *ctl.Client, args []string, stdou
 
 // cmdPoolsResumeReconciliation implements `lenny-ctl admin pools
 // resume-reconciliation <name>`. args excludes the
-// "resume-reconciliation" verb. spec: §15.1 line 799 — POST
+// "resume-reconciliation" verb. spec: §15.1 — POST
 // /v1/admin/pools/{name}/resume-reconciliation.
 func cmdPoolsResumeReconciliation(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
@@ -1416,9 +1410,8 @@ func cmdPoolsResumeReconciliation(ctx context.Context, c *ctl.Client, args []str
 
 // cmdPoolsSetWarmCount implements `lenny-ctl admin pools set-warm-count
 // --pool <name> --min <N>`. args excludes the "set-warm-count" verb.
-// spec: §24.4 line 63 — it maps to PUT /v1/admin/pools/{name}/warm-count
-// with the operability `{minWarm, confirm}` body (§25.17 lines
-// 5232-5239). The warm-pool-exhaustion / sdk-connect-timeout /
+// spec: §24.4 — it maps to PUT /v1/admin/pools/{name}/warm-count
+// with the operability `{minWarm, confirm}` body (§25.17). The warm-pool-exhaustion / sdk-connect-timeout /
 // pool-bootstrap-mode / coordinator-handoff-slow runbooks invoke this for
 // emergency scaling. The operator's explicit invocation confirms the
 // mutation; --dry-run returns the §25.2 preview instead.
@@ -1450,10 +1443,9 @@ func cmdPoolsSetWarmCount(ctx context.Context, c *ctl.Client, args []string, std
 }
 
 // cmdPoolsExitBootstrap implements `lenny-ctl admin pools exit-bootstrap
-// --pool <name>`. args excludes the "exit-bootstrap" verb. spec: §24.4
-// line 64 — it removes the bootstrap minWarm override and switches to
+// --pool <name>`. args excludes the "exit-bootstrap" verb. spec: §24.4 — it removes the bootstrap minWarm override and switches to
 // formula-driven scaling immediately. Maps to DELETE
-// /v1/admin/pools/{name}/bootstrap-override (§15.1 line 875).
+// /v1/admin/pools/{name}/bootstrap-override (§15.1).
 func cmdPoolsExitBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("pools exit-bootstrap", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1476,9 +1468,9 @@ func cmdPoolsExitBootstrap(ctx context.Context, c *ctl.Client, args []string, st
 
 // cmdPoolsCircuitBreaker implements `lenny-ctl admin pools
 // circuit-breaker --pool <name> --state <enabled|disabled|auto>`. args
-// excludes the "circuit-breaker" verb. spec: §24.4 line 75 — it overrides
+// excludes the "circuit-breaker" verb. spec: §24.4 — it overrides
 // the §6.1 SDK-warm circuit-breaker state. Maps to PUT
-// /v1/admin/pools/{name}/circuit-breaker (§15.1 line 801), which requires
+// /v1/admin/pools/{name}/circuit-breaker (§15.1), which requires
 // If-Match; the ETag is read from the pool resource it shares
 // pool_config_generation with.
 func cmdPoolsCircuitBreaker(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
@@ -1512,7 +1504,7 @@ func cmdPoolsCircuitBreaker(ctx context.Context, c *ctl.Client, args []string, s
 
 // cmdPoolsAccess implements the three §24.4 pool tenant-access
 // subcommands: grant-access, list-access, and revoke-access. The verb is
-// passed in so the three share one flag parser. spec: §24.4 lines 76-78.
+// passed in so the three share one flag parser. spec: §24.4.
 func cmdPoolsAccess(ctx context.Context, c *ctl.Client, verb string, args []string, stdout, stderr io.Writer) int {
 	var pool, tenant string
 	for i := 0; i < len(args); i++ {
@@ -1546,7 +1538,7 @@ func cmdPoolsAccess(ctx context.Context, c *ctl.Client, verb string, args []stri
 // start|proceed|pause|resume|rollback|status`, the operator surface for
 // the §10.5 RuntimeUpgrade state machine. Each subcommand is keyed by
 // --pool and maps to the /v1/admin/pools/{name}/upgrade* endpoints.
-// spec: §10.5 lines 466-540.
+// spec: §10.5.
 func cmdPoolsUpgrade(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: pools upgrade requires a subcommand (start|proceed|pause|resume|rollback|status)")
@@ -1561,7 +1553,7 @@ func cmdPoolsUpgrade(ctx context.Context, c *ctl.Client, args []string, stdout, 
 		pool := fs.String("pool", "", "pool name (required)")
 		newImage := fs.String("new-image", "", "digest-pinned runtime image to roll out (required)")
 		canary := fs.Int("canary-percent", 0, "percentage of new sessions routed to the new pool during Expanding")
-		schemaVersion := fs.String("schema-version", "", "schema version gated on upgrade completion (§10.5 line 502)")
+		schemaVersion := fs.String("schema-version", "", "schema version gated on upgrade completion (§10.5)")
 		drainFirst := fs.Bool("drain-first", false, "force Draining to complete before Contracting")
 		autoAdvance := fs.Bool("auto-advance", false, "auto-proceed through phases without an operator proceed")
 		stabWindow := fs.Int64("stabilization-window-seconds", 0, "dwell the new pool must hold before Expanding exits (default 120)")
@@ -1601,7 +1593,7 @@ func cmdPoolsUpgrade(ctx context.Context, c *ctl.Client, args []string, stdout, 
 		fs := flag.NewFlagSet("pools upgrade pause", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		pool := fs.String("pool", "", "pool name (required)")
-		reason := fs.String("reason", "", "free-text pause reason recorded on the upgrade record (§10.5 line 494)")
+		reason := fs.String("reason", "", "free-text pause reason recorded on the upgrade record (§10.5)")
 		if err := fs.Parse(rest); err != nil {
 			return 2
 		}
@@ -1673,7 +1665,7 @@ func doUpgradeCall(ctx context.Context, c *ctl.Client, method, path string, body
 // Redis after a Redis recovery, mapping to POST /v1/admin/quota/reconcile.
 // The redis-failure runbook uses the platform-wide `--all-tenants` form;
 // the redis-sentinel-failover runbook reloads one tenant via `--tenant
-// <id>`. spec: §24.6 line 99; §15.1 line 879.
+// <id>`. spec: §24.6; §15.1.
 func cmdQuota(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: quota requires a subcommand (reconcile)")
@@ -1760,7 +1752,7 @@ func cmdCircuitBreakers(ctx context.Context, c *ctl.Client, args []string, stdou
 	return 0
 }
 
-// cmdCARotation implements the §10.3 lines 344-350 CA-rotation group:
+// cmdCARotation implements the §10.3 CA-rotation group:
 // `status` reads the current stage, `begin <newCaId>` introduces the new
 // CA, `promote` swaps the issuer, and `retire` drops the old CA once the
 // overlap window closes. Each transition is platform-admin-only and is
@@ -1804,8 +1796,8 @@ func cmdCARotation(ctx context.Context, c *ctl.Client, args []string, stdout, st
 }
 
 // cmdExternalAdapters implements the §24.8 external-protocol adapter
-// group: the normative `validate` command (§24.8 line 113) plus the
-// §15.1 lines 850-855 CRUD subcommands. `validate` exits non-zero when
+// group: the normative `validate` command (§24.8) plus the
+// §15.1 CRUD subcommands. `validate` exits non-zero when
 // the adapter fails the conformance suite (status validation_failed) so
 // CI gates can branch on it.
 func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
@@ -1866,7 +1858,7 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 				fmt.Fprintln(stderr, "lenny-ctl: external-adapters update requires --name <name>")
 				return 2
 			}
-			// spec: §15.1 lines 1207-1213 — the external-adapter PUT enforces
+			// spec: §15.1 — the external-adapter PUT enforces
 			// the If-Match precondition; fetch the current ETag and forward it.
 			path := "/v1/admin/external-adapters/" + url.PathEscape(name)
 			if err := c.PutIfMatch(ctx, path, path, body, &out); err != nil {
@@ -1884,7 +1876,7 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		// spec: §24.16 line 205 — informational advisory goes to stderr and
+		// spec: §24.16 — informational advisory goes to stderr and
 		// is suppressed under --quiet, leaving the body-less DELETE stdout
 		// empty for a strict `| jq` pipeline (F-CTL-4).
 		if !quiet {
@@ -1899,11 +1891,10 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 
 // cmdCredentialPools implements the §24.5 credential-management group:
 // the eight `lenny-ctl admin credential-pools …` subcommands, each
-// mapping 1:1 to a §15.1 `/v1/admin/credential-pools` route (§24 preamble
-// line 5). All commands accept `--tenant <id>`, sent as the `?tenantId=`
+// mapping 1:1 to a §15.1 `/v1/admin/credential-pools` route (§24 preamble). All commands accept `--tenant <id>`, sent as the `?tenantId=`
 // query a platform-admin uses to target a tenant's pools.
 //
-// spec: §24.5 rows 1-8; §15.1 lines 805-812, 876-878.
+// spec: §24.5 rows 1-8; §15.1.
 func cmdCredentialPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: credential-pools requires a subcommand "+
@@ -2051,7 +2042,7 @@ func cmdCredentialPools(ctx context.Context, c *ctl.Client, args []string, stdou
 // revokeBody renders the optional §4.9 {reason, note} body for the
 // revoke / revoke-pool / re-enable commands. It returns nil when neither
 // flag is present so the request carries an empty body (the spec marks
-// both optional). spec: §24.5 rows 6-8; §4.9 lines 1632-1636.
+// both optional). spec: §24.5 rows 6-8; §4.9.
 func revokeBody(rest []string) map[string]any {
 	body := map[string]any{}
 	if v := flagValue(rest, "--reason"); v != "" {
@@ -2137,7 +2128,7 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 			return nil, fmt.Errorf("unknown flag %q", args[i])
 		}
 	}
-	// spec: §24.7 line 106 — `--reason`, `--scope`, and `--limit-tier`
+	// spec: §24.7 — `--reason`, `--scope`, and `--limit-tier`
 	// are all listed unbracketed (required) in the command syntax. The
 	// client enforces the contract up front so an operator sees a
 	// single deterministic error rather than reaching the gateway with
@@ -2158,11 +2149,11 @@ func parseOpenBreaker(args []string) (map[string]any, error) {
 
 func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer, quiet bool) int {
 	var fromValues string
-	// spec: §17.6 line 421 — --wait-timeout (default 120s) for the
+	// spec: §17.6 — --wait-timeout (default 120s) for the
 	// bootstrap readiness poll.
 	const defaultWaitTimeoutSeconds = 120
 	waitSeconds := defaultWaitTimeoutSeconds
-	// spec: §24.1 line 35 — --dry-run maps to ?dryRun=true; §17.6 line 450
+	// spec: §24.1 — --dry-run maps to ?dryRun=true; §17.6
 	// — --force-update maps to ?forceUpdate=true (overwrite differing
 	// fields on an existing resource instead of skipping).
 	var dryRun, forceUpdate bool
@@ -2193,7 +2184,7 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	// Deployment.
 	if waitSeconds > 0 {
 		deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
-		// §24.16 line 205: --quiet suppresses informational progress
+		// §24.16: --quiet suppresses informational progress
 		// messages; the readiness-failure line below is an error, not
 		// informational, so it always prints.
 		if !quiet {
@@ -2228,7 +2219,7 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 		fmt.Fprintf(stderr, "lenny-ctl: %s is not valid YAML or JSON: %v\n", fromValues, err)
 		return 1
 	}
-	// spec: §24.1 line 35; §15.1 line 1140 — dryRun/forceUpdate are query
+	// spec: §24.1; §15.1 — dryRun/forceUpdate are query
 	// parameters on POST /v1/admin/bootstrap.
 	path := "/v1/admin/bootstrap"
 	if q := bootstrapQuery(dryRun, forceUpdate); q != "" {
@@ -2237,25 +2228,25 @@ func cmdBootstrap(ctx context.Context, c *ctl.Client, args []string, stdout, std
 	var out bootstrapResult
 	if err := c.Do(ctx, "POST", path, body, &out); err != nil {
 		// A 4xx/5xx (whole-body validation, auth, transport) is a
-		// validation error per §17.6 line 420 exit-code 1.
+		// validation error per §17.6 exit-code 1.
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	printJSON(stdout, out)
-	// spec: §17.6 lines 449-450 — log INFO/WARN per skipped resource so
+	// spec: §17.6 — log INFO/WARN per skipped resource so
 	// operators see why a re-run left existing resources unchanged.
 	out.logSkips(stderr)
-	// spec: §17.6 line 473 — the first-use prompt. On a first run (the
+	// spec: §17.6 — the first-use prompt. On a first run (the
 	// gateway created the Secret) print where to retrieve the token; on a
 	// re-run print the no-change notice. Printed to stderr so a script
 	// parsing the JSON result on stdout is unaffected.
 	out.printAdminTokenPrompt(stderr, quiet)
-	// spec: §17.6 line 420 — exit 0 = all seeded, 1 = validation error,
+	// spec: §17.6 — exit 0 = all seeded, 1 = validation error,
 	// 2 = partial failure.
 	return out.exitCode()
 }
 
-// printAdminTokenPrompt prints the §17.6 line 473 first-use prompt. The
+// printAdminTokenPrompt prints the §17.6 first-use prompt. The
 // "Retrieve with" command is always printed on a fresh Secret (a
 // one-time onboarding pointer the operator must not miss); the "already
 // exists" notice is suppressed under --quiet as routine re-run noise.
@@ -2344,7 +2335,7 @@ func (b bootstrapResult) sections() map[string]bootstrapSection {
 	}
 }
 
-// logSkips prints the §17.6 line 450 WARN line for every resource that
+// logSkips prints the §17.6 WARN line for every resource that
 // was left unchanged because its seed fields differ and --force-update
 // was not supplied.
 func (b bootstrapResult) logSkips(stderr io.Writer) {
@@ -2393,12 +2384,12 @@ func printJSON(w io.Writer, v any) {
 }
 
 // listAllItems walks every page of a §15.1 cursor-paginated admin
-// collection (spec §15.1 lines 1228-1253) and accumulates the `items`
+// collection (spec §15.1) and accumulates the `items`
 // arrays into one slice. The CLI shows the full inventory rather than a
 // single 50-item page, so it follows `cursor` until `hasMore` is false,
 // requesting the 200-item maximum per page to minimise round trips.
 //
-// spec: §15.1 lines 1228-1253. F-15.1.6.
+// spec: §15.1. F-15.1.6.
 func listAllItems(ctx context.Context, c *ctl.Client, path string) ([]json.RawMessage, error) {
 	var all []json.RawMessage
 	cursor := ""

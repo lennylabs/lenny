@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// §27.3.1 line 142 — the MCP WebSocket bearer carrier. A browser cannot
+// §27.3.1 — the MCP WebSocket bearer carrier. A browser cannot
 // set an `Authorization` header on a WebSocket upgrade, so the playground
 // sends the bearer through the `Sec-WebSocket-Protocol` sub-protocol
 // header as `lenny.mcp.v1, lenny.bearer.<bearerToken>`. The gateway must
@@ -17,7 +17,7 @@ import (
 // no downstream middleware (access logging, correlation, audit) ever
 // observes the token in a header.
 
-// bearerSubprotocolPrefix is the §27.3.1 line 142 credential carrier
+// bearerSubprotocolPrefix is the §27.3.1 credential carrier
 // prefix inside the Sec-WebSocket-Protocol header.
 const bearerSubprotocolPrefix = "lenny.bearer."
 
@@ -31,7 +31,7 @@ const bearerSubprotocolPrefix = "lenny.bearer."
 // gateway-wide as the outermost wrapper. It must run before any access
 // log or audit middleware so the credential is never recorded, and
 // before the auth middleware so the promoted Authorization header is
-// validated on the standard bearer path (§27.3.1 line 142 states the
+// validated on the standard bearer path (§27.3.1 states the
 // gateway validates the bearer "exactly as it would for any non-playground
 // MCP client"). When the caller already presented an Authorization header
 // (the non-browser upgrade path), the carrier does not overwrite it.
@@ -44,7 +44,7 @@ func WebSocketBearerCarrier(next http.Handler) http.Handler {
 		}
 		token, sanitized := splitBearerCarrier(header)
 		// Strip the credential from the request header first so the
-		// §27.3.1 line 142 "not logged, redacted in audit traces"
+		// §27.3.1
 		// obligation holds regardless of what runs downstream.
 		if sanitized == "" {
 			r.Header.Del("Sec-WebSocket-Protocol")

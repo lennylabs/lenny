@@ -34,13 +34,13 @@ tests:
           path: metadata.namespace
           value: monitoring
 
-  # spec: §25.13 line 4822 — F-25.13.9. The catalog renders one rule
+  # spec: §25.13 — F-25.13.9. The catalog renders one rule
   # group per §16.5 severity (critical, warning, info) so Prometheus
   # evaluates each bucket in parallel rather than serialising the full
   # catalog through a single group. The "~40 rules at ~10ms p95" budget
   # in §25.13 applies per group; with the catalog now well past forty
   # alerts, the split protects the per-group evaluation budget.
-  - it: splits the rule set into per-severity groups per §25.13 line 4822
+  - it: splits the rule set into per-severity groups per §25.13
     documentIndex: 0
     asserts:
       - equal:
@@ -145,7 +145,7 @@ tests:
           path: metadata.namespace
           value: lenny-system
 
-  # spec: §25.13 line 4712 — configMap.namespace defaults to lenny-system
+  # spec: §25.13 — configMap.namespace defaults to lenny-system
   # literally, not the release namespace. Installing the chart into a
   # non-default release namespace must still emit the ConfigMap into
   # lenny-system unless configMap.namespace is set explicitly.
@@ -174,7 +174,7 @@ tests:
           path: metadata.namespace
           value: lenny-alerts
 
-  # spec: §25.13 line 4776 / F-25.13.1 — monitoring.alertOverrides
+  # spec: §25.13 / F-25.13.1 — monitoring.alertOverrides
   # merges per-rule replacements into the bundled manifest. Field-level
   # overrides leave the bundled annotations and other fields in place;
   # only the supplied fields are replaced.
@@ -201,7 +201,7 @@ tests:
       - exists:
           path: spec.groups[0].rules[0].annotations.runbook_url
 
-  # spec: §25.13 line 4827 / F-25.13.1 — `enabled: false` prunes the
+  # spec: §25.13 / F-25.13.1 — `enabled: false` prunes the
   # bundled rule from the rendered manifest entirely.
   - it: prunes a bundled rule when monitoring.alertOverrides sets enabled false
     set:

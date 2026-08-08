@@ -39,8 +39,7 @@ type Assigner interface {
 	// proxy-mode SPIFFE-binding; an empty value disables binding.
 	// tenantID is recorded on the lease so downstream code paths
 	// (proxy-mode usage accounting, audit) can attribute the lease to
-	// its owning tenant regardless of the lease source. spec: §4.9
-	// lines 1107-1141.
+	// its owning tenant regardless of the lease source. spec: §4.9.
 	Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error)
 	// AssignProto mints a lease and returns its adapter wire form for
 	// the §4.7 binder to push to a pod via AssignCredentials.
@@ -118,9 +117,9 @@ type poolState struct {
 	// least-loaded strategy.
 	active map[string]int
 	// revoked holds the credential IDs an emergency revocation
-	// (§4.9 emergency credential revocation, line 1645) has marked
+	// (§4.9 emergency credential revocation) has marked
 	// unselectable. A revoked credential is treated as unhealthy at
-	// selection time so a replacement mint — the §4.9 line 1649 step-5
+	// selection time so a replacement mint — the §4.9 step-5
 	// rotate — never re-selects the credential the operator just revoked.
 	revoked map[string]bool
 }
@@ -129,7 +128,7 @@ type poolState struct {
 // service. A nil Metrics disables emission. *gatewaymetrics.Metrics
 // satisfies it.
 //
-// spec: §16.1 lines 51, 53, 55.
+// spec: §16.1.
 type Metrics interface {
 	// IncCredentialLeaseAssignment counts a lease issued from pool for
 	// provider. source is `primary` | `fallback` | `cached`.
@@ -219,7 +218,7 @@ func (s *Service) RegisterPool(p Pool) {
 
 // RevokeCredential marks a credential unselectable in the named pool, so
 // every subsequent §4.9 lease mint from the pool skips it. It backs the
-// §4.9 emergency credential revocation rotate (line 1649, step 5): once
+// §4.9 emergency credential revocation rotate: once
 // the gateway revokes a pool credential, a replacement lease minted from
 // the same pool must come from a *different* credential, never the one
 // just revoked. RevokeCredential is the in-process selection's side of
@@ -228,7 +227,7 @@ func (s *Service) RegisterPool(p Pool) {
 // out. A revocation against an unknown pool or credential is a no-op
 // (the pool may not be registered on this replica). It is goroutine-safe.
 //
-// spec: spec/04_system-components.md lines 1645, 1649.
+// spec: §4.9.
 func (s *Service) RevokeCredential(poolName, credentialID string) {
 	if poolName == "" || credentialID == "" {
 		return
@@ -253,11 +252,11 @@ func (s *Service) RevokeCredential(poolName, credentialID string) {
 // credential.ErrPoolExhausted when the pool has no assignable
 // credential.
 func (s *Service) Assign(poolName, sessionID, spiffeURI, tenantID string) (credential.Lease, error) {
-	// spec: §16.3 line 351 — the credential.assign span (Gateway credential
+	// spec: §16.3 — the credential.assign span (Gateway credential
 	// service). The §4.9 assign surface carries no request context today, so
 	// the span roots at Background and projects tenant/session/pool from the
 	// call arguments rather than from correlation.From(ctx). No credential
-	// material is attached (§16.4 line 376).
+	// material is attached (§16.4).
 	_, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialAssign)
 	span.SetAttributes(
 		attribute.String("tenant_id", tenantID),
@@ -300,7 +299,7 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 			// A credential the §4.9 emergency revocation marked is never
 			// assignable, regardless of its declared health, so a step-5
 			// replacement mint never re-selects the revoked credential.
-			// spec: spec/04_system-components.md line 1649.
+			// spec: §4.9.
 			Healthy: c.Healthy && !ps.revoked[c.ID],
 		}
 	}
@@ -316,7 +315,7 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 		Source:       credential.SourcePool,
 		PoolID:       poolName,
 		CredentialID: selected.CredentialID,
-		// spec: §4.9 line 1468 — record the lease's owning tenant on the
+		// spec: §4.9 — record the lease's owning tenant on the
 		// lease record so the LLM proxy can attribute proxy-extracted
 		// usage to the right tenant without an out-of-band session
 		// lookup.
@@ -343,7 +342,7 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 	ps.selection = nextState
 	ps.active[selected.CredentialID]++
 
-	// spec: §16.1 lines 51, 53 — count the lease assignment and refresh
+	// spec: §16.1 — count the lease assignment and refresh
 	// the pool-utilization gauge. v1 has no §4.9 fallback chain, so every
 	// pool lease is sourced from the pool's primary selection.
 	if s.metrics != nil {
@@ -358,9 +357,7 @@ func (s *Service) assignLocked(poolName, sessionID, spiffeURI, tenantID string) 
 // one active lease, in [0,1]. An empty pool reports zero. The caller
 // holds s.mu.
 //
-// spec: §16.1 line 53 ("ratio of active leases to total pool
-// credentials, in the range [0, 1]"; the CredentialPoolLow alert reads
-// available credentials below 20% as utilization above 0.80).
+// spec: §16.1.
 func poolUtilizationLocked(ps *poolState) float64 {
 	total := len(ps.pool.Credentials)
 	if total == 0 {
@@ -396,7 +393,7 @@ func (s *Service) Release(leaseID string) {
 // unknown session, or one that needed no upstream credentials) is a
 // no-op.
 //
-// spec: §7.1 line 52 (step 23). Without this the credential's `active`
+// spec: §7.1. Without this the credential's `active`
 // counter stays incremented after every session ends, so under sustained
 // load `select.go` eventually reports `ErrPoolExhausted` for credentials
 // that are in fact idle.
@@ -425,7 +422,7 @@ func (s *Service) releaseLocked(leaseID string) {
 	}
 	s.leases.Remove(leaseID)
 
-	// spec: §16.1 lines 55, 53 — observe the lease's assignment-to-release
+	// spec: §16.1 — observe the lease's assignment-to-release
 	// wall-clock duration and refresh the pool-utilization gauge.
 	if s.metrics != nil {
 		s.metrics.ObserveCredentialLeaseDuration(string(lease.Provider), lease.PoolID, lease.Duration(s.now()).Seconds())
@@ -444,7 +441,7 @@ func (s *Service) releaseLocked(leaseID string) {
 // alias the pool's map. The mint path validates the result against the
 // provider's Required:yes field set.
 //
-// spec: §4.9 lines 1246-1298.
+// spec: §4.9.
 func directConfigFor(p Pool, credentialID string) credential.MaterializedConfig {
 	if p.DeliveryMode != credential.DeliveryDirect {
 		return nil

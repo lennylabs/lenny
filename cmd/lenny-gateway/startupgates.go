@@ -61,7 +61,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	claimHoldTTLSeconds := f.claimHoldTTLSeconds
 
-	// spec: §17.2 line 86 / §9.2 line 64 — the platform-wide elicitation
+	// spec: §17.2 / §9.2 — the platform-wide elicitation
 	// content-integrity floor is seeded from the
 	// --elicitation-content-integrity-floor flag and then kept live by the
 	// phase-stamp ConfigMap reconcile started below (when a cluster client
@@ -71,9 +71,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	// without a gateway restart. F-17.2.9.
 	w.elicitationFloorProvider = elicitationfloor.NewProvider(*elicitationFloor)
 
-	// spec: §17.4 line 268 — dev-mode hard startup assertion. The
+	// spec: §17.4 — dev-mode hard startup assertion. The
 	// gateway's own listener is plain HTTP; production terminates TLS at
-	// the ingress (the §17 line 7 Deployment+Service+Ingress topology)
+	// the ingress (the §17 Deployment+Service+Ingress topology)
 	// and acknowledges that posture with --tls-terminated-upstream. With
 	// neither dev mode nor that acknowledgment the gateway refuses to
 	// start so a misconfigured staging or production deployment cannot
@@ -82,12 +82,12 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: LENNY_TLS_REQUIRED: %v", err)
 	}
 
-	// spec: §5.3 line 677 — in dev mode the default isolation profile
+	// spec: §5.3 — in dev mode the default isolation profile
 	// falls back to runc. Log the mandated warning once at startup so an
 	// accidental production dev-mode install is visible in the logs.
 	if *devMode {
 		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
-		// spec: §17.4 line 269 — when dev mode relaxes TLS, log the
+		// spec: §17.4 — when dev mode relaxes TLS, log the
 		// warning at startup and re-broadcast it every minute while the
 		// process runs. F-17.4.6.
 		devmode.StartWarnTicker(context.Background(), devmode.WarnInterval, func(msg string) {
@@ -95,7 +95,7 @@ func (w *gatewayWiring) buildStartupGates() {
 		})
 	}
 
-	// spec: §16.3 line 359 — install the process-wide OpenTelemetry
+	// spec: §16.3 — install the process-wide OpenTelemetry
 	// TracerProvider and W3C trace-context propagator so the §16.3 span
 	// catalog has a real exporter behind it instead of the global no-op
 	// provider. The gateway emits 100% (head) and an OTLP/HTTP exporter
@@ -111,7 +111,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	}
 	w.traceShutdown = traceShutdown
 
-	// spec: §16.5 lines 609, 623 — surface the provisional-SLO startup
+	// spec: §16.5 — surface the provisional-SLO startup
 	// warning unless the Phase 14.5 benchmark gate has set slo.validated,
 	// so a deployment running the unvalidated defaults cannot silently
 	// treat them as customer SLA commitments.
@@ -141,7 +141,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	}
 	w.resolvedNoEnvPolicy = resolvedNoEnvPolicy
 
-	// spec: §10.3 lines 361-371 — startup configuration validation. Each
+	// spec: §10.3 — startup configuration validation. Each
 	// missing required platform key emits a structured LENNY_CONFIG_MISSING
 	// log entry (config_key/scope/remediation fields) and the gateway
 	// refuses to become ready by exiting non-zero so Kubernetes surfaces
@@ -149,7 +149,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	// undefined semantics. noEnvironmentPolicy is gated just above;
 	// playground.devTenantId by playground.Config.Validate; this covers the
 	// OIDC and session-duration keys. The OIDC keys are exempt in dev mode
-	// (§10.3 line 373 / §17.4). F-10.3.14.
+	// (§10.3 / §17.4). F-10.3.14.
 	if missing := validatePlatformConfig(*devMode, *oidcIssuerURL, *oidcClientID, *maxSessionAgeSeconds); len(missing) > 0 {
 		for _, m := range missing {
 			slog.Error("LENNY_CONFIG_MISSING", "config_key", m.configKey, "scope", m.scope, "remediation", m.remediation)
@@ -157,7 +157,7 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
 	}
 
-	// spec: §10.3 line 359 — gateway startup TLS probe. Before the replica
+	// spec: §10.3 — gateway startup TLS probe. Before the replica
 	// is marked ready, verify a TLS handshake to Redis and PgBouncer
 	// succeeds and that a plaintext connection is refused, so a
 	// misconfigured backend (wrong port, missing cert) fails startup
@@ -179,25 +179,25 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
 	}
 
-	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
+	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
 	// this check; failing at startup keeps a misconfigured deploy
 	// from running silently with the wrong assumed posture.
 	switch *poolerMode {
 	case "transactional", "external":
-		log.Printf("lenny-gateway: pooler-mode=%s (§4.2 line 165)", *poolerMode)
+		log.Printf("lenny-gateway: pooler-mode=%s (§4.2)", *poolerMode)
 	default:
-		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2 line 165)", *poolerMode)
+		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2)", *poolerMode)
 	}
 
-	// spec: §11.3 line 224 — surface the effective
+	// spec: §11.3 — surface the effective
 	// `delegation.usageQuiescenceTimeoutSeconds` at startup so operators
 	// see the value the §8.10 tree-recovery orchestrator will consume.
 	// The recovery package exposes the Config field; the gateway-side
 	// orchestrator threads `delegationQuiescenceCfg` to keep one source
 	// of truth. F-11.3.19.
 	//
-	// spec: §8.10 lines 1022-1023 / 1042 — extend the same Config to
+	// spec: §8.10 — extend the same Config to
 	// carry `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` so the
 	// recovery package consumes the live operator overrides. F-8.10.6.
 	delegationQuiescenceCfg := recovery.Config{
@@ -205,11 +205,11 @@ func (w *gatewayWiring) buildStartupGates() {
 		TreeTimeout:            time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
 		UsageQuiescenceTimeout: time.Duration(*delegationUsageQuiescenceTimeoutSeconds) * time.Second,
 	}
-	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3 line 224)",
+	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3)",
 		int(delegationQuiescenceCfg.QuiescenceDeadline(time.Time{}).Sub(time.Time{}).Seconds()))
-	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10 lines 1022-1023)",
+	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10)",
 		*delegationMaxLevelRecoverySeconds, *delegationMaxTreeRecoverySeconds)
-	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
+	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10)",
 		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
 	_ = delegationQuiescenceCfg
 

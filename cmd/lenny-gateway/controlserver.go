@@ -93,15 +93,15 @@ func (w *gatewayWiring) buildControlServer(
 	// leasecontrol.ExtendForBudget, wired below. gwMetrics satisfies
 	// leasecontrol.MetricEmitter so every grant drives the §16
 	// lenny_delegation_lease_extension_total counter. F-8.6.13.
-	// spec: §8.6 line 743 / §11.7 — the leasecontrol auditor adapts the
+	// spec: §8.6 / §11.7 — the leasecontrol auditor adapts the
 	// gateway audit appender so every extension decision (granted,
 	// capped, denied) lands as a `delegation.lease_extended` row on the
 	// hash-chained §11.7 audit log. The recorder pulls the requesting
 	// session's tenant and the live actor sub from the §10.6
-	// principal-bound context to satisfy §11.7 line 428 actor-tenant
+	// principal-bound context to satisfy §11.7 actor-tenant
 	// validation. F-8.6.10.
 	leaseExtensionAuditor := leaseExtensionAuditAdapter{appender: auditAppender}
-	// §8.6 line 718 — the production Elicitor presents the generic budget
+	// §8.6 — the production Elicitor presents the generic budget
 	// elicitation on the requesting session's client stream over the §9.2
 	// interaction store and blocks for the user's decision. Built only when
 	// the GatewayControl listener is enabled. F-8.6.2.
@@ -115,18 +115,18 @@ func (w *gatewayWiring) buildControlServer(
 			idgen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
 		}
 	}
-	// §9.1 lines 14-31 — the bridge forwards a type:agent runtime's
+	// §9.1 — the bridge forwards a type:agent runtime's
 	// intra-pod platform tool calls (over GatewayControl) to the same
 	// platform tool surface the gateway-edge /mcp endpoint serves,
 	// scoped to the calling session. F-9.1.1.
 	platformToolBridge := platformtools.New(mcpSrv, w.sessions)
-	// §9.3 lines 142-164 — the connector bridge resolves a session's
+	// §9.3 — the connector bridge resolves a session's
 	// policy-permitted connectors and forwards a type:agent runtime's
 	// intra-pod per-connector tool calls (over GatewayControl) to the
 	// connectorinvoke surface, which dials the external endpoint with the
 	// gateway-held credential. F-9.1.2.
 	connectorToolBridge := connectortools.New(w.sessions, w.connectors, connectorAuthorizer, connectorInvoker)
-	// §8.6 line 643 — bridge a GRANTED token-budget extension onto the §8.2
+	// §8.6 — bridge a GRANTED token-budget extension onto the §8.2
 	// per-tree delegation budget counter so the next delegate_task admission
 	// is gated against the raised pool (F-8.6.3). Only the concrete
 	// *treebudget.Reserver satisfies the granter; pass a nil interface (not a
@@ -163,9 +163,9 @@ func (w *gatewayWiring) buildControlServer(
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}
 
-	// spec: §8.6 line 629 — wire the in-process budget-exhaustion trigger.
+	// spec: §8.6 — wire the in-process budget-exhaustion trigger.
 	// buildSessionDeps builds the sessionbudget enforcer in an earlier step
-	// with a nil extension seam (the §11.2 line 44 terminate-immediately
+	// with a nil extension seam (the §11.2 terminate-immediately
 	// posture); this step, once leasecontrol.Service exists, closes the
 	// construction-order gap. The enforcer's seam calls svc.ExtendForBudget
 	// at the exhaustion boundary, threading both the request context and the
@@ -197,7 +197,7 @@ func (w *gatewayWiring) buildControlServer(
 	// Sweeps every 5 s; transitions stuck sessions to failed.
 	// Tenants list is sourced from the in-memory store so newly
 	// registered tenants are picked up on the next tick.
-	// §5.2 line 519 / §6.2: a session forced terminal by background sweep
+	// §5.2 / §6.2: a session forced terminal by background sweep
 	// must run the full gateway-side terminal pipeline — workspace seal,
 	// executor release (concurrent-mode slot release + pod drain), audit,
 	// SSE, billing, archive — so the watchdog-driven path emits the same
@@ -206,15 +206,14 @@ func (w *gatewayWiring) buildControlServer(
 	// F-7.4.7: thread the configured maxCreatedStateTimeoutSeconds into
 	// the watchdog so its `created`-state budget matches the
 	// uploadToken TTL and the createdsweeper deadline.
-	// spec: §7.1 line 58.
-	// F-6.2.14: thread the §6.2 line 249 resuming watchdog and §6.2 line
-	// 292 resume_pending wall-clock cap into the gateway watchdog. The
+	// spec: §7.1.
+	// F-6.2.14: thread the §6.2 resuming watchdog and §6.2 resume_pending wall-clock cap into the gateway watchdog. The
 	// resume_pending cap defaults to maxResumeWindowSeconds (which the
 	// per-session retryPolicy.maxResumeWindowSeconds tightens); resuming
 	// is the §6.2 fixed 300s budget. MaxRetries falls through to the
 	// same deployer flag the §4.8 RetryPolicyEvaluator uses so the
 	// resuming → resume_pending retry counts against the same budget.
-	// spec: §11.3 line 219-221 — every operator-tunable watchdog budget
+	// spec: §11.3 — every operator-tunable watchdog budget
 	// flows through `Config`. The flag surface above defaults each to the
 	// §11.3 spec value, so `Config{}` is now constructed with the
 	// effective value (after env/flag resolution) rather than the
@@ -236,13 +235,13 @@ func (w *gatewayWiring) buildControlServer(
 		WithBilling(w.billing).
 		WithTreeArchive(w.treeArchive).
 		WithTerminalHook(sessionSrv).
-		// spec: §11.3 line 198 — the maxSessionAge sweep honours a
+		// spec: §11.3 — the maxSessionAge sweep honours a
 		// deployer's per-runtime `limits.maxSessionAgeSeconds` / per-pool
 		// `maxSessionAgeSeconds` (most-restrictive-wins below the platform
 		// default) instead of expiring every session at the single baked
 		// default. F-11.3.3.
 		WithSessionAgeResolver(sessionage.New(w.runtimes, w.pools)).
-		// spec: §11.3 line 199 / §6.2 (maxClientIdleSeconds clock) — the
+		// spec: §11.3 / §6.2 (maxClientIdleSeconds clock) — the
 		// idle sweep expires a clock-running session idle longer than its
 		// effective `maxClientIdleSeconds`, honouring the per-runtime /
 		// per-pool `sessionPolicy.maxClientIdleSeconds` (default: the pool's
@@ -251,7 +250,7 @@ func (w *gatewayWiring) buildControlServer(
 		// `awaiting_client_action`; its pause table lives in the watchdog
 		// sweep, so no separate pause predicate is wired. F-11.3.7.
 		WithIdleResolver(sessionidle.NewResolver(w.runtimes, w.pools))
-	// spec: §7.2 lines 294, 341 — wire the DLQ TTL sweeper only when the
+	// spec: §7.2 — wire the DLQ TTL sweeper only when the
 	// messaging coordinator exists (Redis present). Passing a nil
 	// *Coordinator would create a typed-nil interface that defeats the
 	// watchdog's nil guard and force wasted List calls every tick.
@@ -279,7 +278,7 @@ func (w *gatewayWiring) buildControlServer(
 // the tree budget, so the seam ignores those parameters. A dispatch error
 // fails closed to Terminal: an unresolvable or errored extension denies
 // and terminates the session rather than silently granting tokens. spec:
-// §8.6 line 629; proposal 0023 S6.
+// §8.6; proposal 0023 S6.
 func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
 	return func(reqCtx, waitCtx context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
 		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, sessionID)

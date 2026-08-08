@@ -29,7 +29,7 @@ import (
 // counters; the audit emitter routes the lock lifecycle events onto the
 // operational-event stream.
 //
-// spec: §25.4 lines 2083-2271.
+// spec: §25.4.
 func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 	gate *coordination.CoordinationGate, reg prometheus.Registerer,
 	emitter events.EventEmitter, recorder *opsaudit.Recorder, replicaID string,
@@ -68,7 +68,7 @@ func buildLockService(pgPool *pgxpool.Pool, redisClient redis.UniversalClient,
 // registered and the gauge stays unproduced rather than reporting a
 // spurious skew against a missing clock.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring and >10s alert).
+// spec: §25.4.
 func buildClockSkewSampler(pgPool *pgxpool.Pool, redisClient redis.UniversalClient, lm *lockMetrics) *coordination.ClockSkewSampler {
 	if pgPool == nil || redisClient == nil {
 		return nil
@@ -83,7 +83,7 @@ func buildClockSkewSampler(pgPool *pgxpool.Pool, redisClient redis.UniversalClie
 // failure surfaces in the reconciler-error logging; a transient read
 // error leaves the last good gauge in place.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring).
+// spec: §25.4.
 func clockSkewSampleReconciler(sampler *coordination.ClockSkewSampler) opsservice.Reconciler {
 	if sampler == nil {
 		return nil
@@ -98,7 +98,7 @@ func clockSkewSampleReconciler(sampler *coordination.ClockSkewSampler) opsservic
 // remediation-lock signals. The gauges and counters are registered on the
 // process registry so the §16.9 /metrics exposition scrapes them.
 //
-// spec: §25.4 lines 2328-2336.
+// spec: §25.4.
 type lockMetrics struct {
 	active     *prometheus.GaugeVec
 	outage     prometheus.Gauge
@@ -168,8 +168,7 @@ func (m *lockMetrics) SetClockSkew(pair string, s float64) { m.clockSkew.WithLab
 // remediation.lock_extended, which has no operational-event counterpart in
 // the §25.5 catalog and so reaches only the durable chain.
 //
-// spec: §25.4 lines 2338-2340 (audit events); §11.7 line 435 (ops_event.*
-// route to the platform tenant).
+// spec: §25.4; §11.7.
 type lockAuditEmitter struct {
 	emitter  events.EventEmitter
 	recorder *opsaudit.Recorder

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 )
 
-// spec: §10.4 line 386 — the readiness probe precedence rules. F-10.4.6.
+// spec: §10.4 — the readiness probe precedence rules. F-10.4.6.
 func TestReadinessVerdict_spec_10_4_386(t *testing.T) {
 	healthy := func(context.Context) health.Status { return health.StatusHealthy }
 	unhealthy := func(context.Context) health.Status { return health.StatusUnhealthy }

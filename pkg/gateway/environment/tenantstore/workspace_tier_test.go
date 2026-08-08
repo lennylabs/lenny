@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §12.9 line 1043 — the per-tier retention default: T2 90 days, T4
+// spec: §12.9 — the per-tier retention default: T2 90 days, T4
 // 24 hours (fixed by the spec), T1 indefinite (zero, fixed), and T3 / the
 // empty default deployer-configured (not fixed). An unrecognized tier is
 // not fixed so the caller keeps its own configured window.
@@ -36,7 +36,7 @@ func TestTierRetentionDefault_spec_12_9_1043(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1048; §15.1 line 816 — workspaceTier is a closed
+// spec: §12.9; §15.1 — workspaceTier is a closed
 // tenant-settable enum: empty (the T3 default), T3, or T4. T1/T2 and any
 // other string are rejected.
 func TestValidWorkspaceTier(t *testing.T) {
@@ -60,7 +60,7 @@ func TestValidWorkspaceTier(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1033; §15.1 line 816 — workspaceTier is ratcheted
+// spec: §12.9; §15.1 — workspaceTier is ratcheted
 // stricter-only; T4→T3 is a downgrade, T3→T4 is not, and an off-ladder
 // tier never counts as a downgrade (the enum validator rejects it first).
 func TestIsWorkspaceTierDowngrade(t *testing.T) {

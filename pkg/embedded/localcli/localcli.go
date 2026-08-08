@@ -7,7 +7,7 @@
 // — invoked by both the short-name lenny binary and the operator
 // lenny-ctl binary — routes a local command through Local and Run here,
 // so `lenny <command>` and `lenny-ctl <command>` behave identically per
-// §24.19 line 266 and §24.9 line 120. Main is the standalone
+// §24.19 and §24.9. Main is the standalone
 // embedded-only entry point retained for direct use and testing.
 package localcli
 
@@ -58,7 +58,7 @@ const (
 
 // Local reports whether name is one of the §24.19 / §24.9 Embedded Mode
 // local commands. lenny-ctl uses it to decide whether to delegate an
-// invocation to the embedded stack (§24.19 line 266). The `runtime` token is
+// invocation to the embedded stack (§24.19). The `runtime` token is
 // shared with the lenny-ctl runtime-author group (init/validate/publish): only
 // `runtime apply` is an Embedded Mode command, so lenny-ctl dispatch routes the
 // subcommands before consulting Local (it claims `runtime` here so the
@@ -120,7 +120,7 @@ func Main(args []string, stdout, stderr io.Writer, version string) int {
 	case "version", "--version", "-v":
 		// Local CLI build version. Offline by design so it works before
 		// `lenny up` brings up the embedded stack.
-		// spec: §24.0 line 23, §17.6 line 360.
+		// spec: §24.0, §17.6.
 		fmt.Fprintf(stdout, "lenny %s\n", version)
 		return 0
 	case "help", "-h", "--help":
@@ -261,7 +261,7 @@ func cmdStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 }
 
 // cmdLogs implements `lenny logs [<component>] [--follow]`.
-// spec: §17.4 line 179, §24.19 line 263.
+// spec: §17.4, §24.19.
 func cmdLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	component := ""
 	follow := false

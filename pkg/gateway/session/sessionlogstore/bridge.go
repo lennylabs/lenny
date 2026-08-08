@@ -10,12 +10,12 @@ import (
 
 // CatalogBridge adapts a *artifactcatalog.PgStore to the
 // ArtifactCatalog interface so the gateway can wire the production
-// §12.5 catalog into the §4.4 line 226 session-log accounting path.
+// §12.5 catalog into the §4.4 session-log accounting path.
 // The bridge is a thin translation layer: it builds the catalog
 // Record with `artifact_type = session_log` and the URI / size
 // passed in from the writer.
 //
-// spec: §4.4 line 226 — session-log artifact_store row.
+// spec: §4.4 — session-log artifact_store row.
 type CatalogBridge struct {
 	// Catalog is the §12.5 artifact_store catalog. A nil Catalog
 	// makes RecordSessionLog a no-op so the gateway runs without

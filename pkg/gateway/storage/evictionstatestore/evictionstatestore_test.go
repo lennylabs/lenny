@@ -170,10 +170,7 @@ func TestIsMinIOKeyRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: §4.4 lines 268–273 (eviction-state record carries the
-// §4.2 generations, conversation cursor, evicted_at timestamp, and the
-// workspace_lost / context_truncated flags so the §7.2 resume path
-// can fence coordinator handoffs and surface workspaceLost: true).
+// spec: §4.4.
 // diagnosis: extending the Record without honoring the new fields in
 // the store would leave the §4.4 fallback writer silently dropping
 // generations and cursor data, breaking the §7.2 resume contract.

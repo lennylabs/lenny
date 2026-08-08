@@ -20,10 +20,9 @@ import (
 // implements the same blobstore.Store contract as MinIO/S3 so the §17.4
 // Embedded and Source modes persist uploaded files, workspace
 // snapshots, and checkpoints across a restart instead of losing them
-// with the in-memory store (the §17.4 line 186 "lenny down without
-// --purge preserves state" guarantee).
+// with the in-memory store (the §17.4 guarantee).
 //
-// On-disk layout mirrors the §12.5 line 295 object key
+// On-disk layout mirrors the §12.5 object key
 // `{tenant_id}/{object_type}/{session_id}/{part_id}`: each blob is a
 // directory `root/<tenant>/<object_type>/<session>/<part>/` holding a
 // `body` file and a `meta.json` sidecar. Mirroring the key hierarchy
@@ -36,15 +35,13 @@ import (
 // single-host embedded deployment, where the coarse lock is not a
 // throughput concern.
 //
-// spec: §17.4 line 165 (object storage: local filesystem, same
-// artifact-store interface as MinIO/S3); §12.5 line 295 (object key
-// format). F-17.4.8.
+// spec: §17.4; §12.5. F-17.4.8.
 type FilesystemStore struct {
 	root  string
 	mu    sync.RWMutex
 	clock func() time.Time
 
-	// tierGuard / onTierMismatch enforce the §12.9 line 1048
+	// tierGuard / onTierMismatch enforce the §12.9
 	// storage-boundary classification check: the local-filesystem store
 	// writes plaintext bytes, so a T4 tenant's write is rejected with
 	// CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch.
@@ -52,11 +49,11 @@ type FilesystemStore struct {
 	onTierMismatch func(tenantID string)
 }
 
-// SetTierGuard installs the §12.9 line 1048 storage-boundary tier check.
+// SetTierGuard installs the §12.9 storage-boundary tier check.
 // The §17.4 local-filesystem store persists plaintext, so a T4 tenant is
 // rejected at Put / Copy rather than written in the clear.
 //
-// spec: §12.9 line 1048.
+// spec: §12.9.
 func (s *FilesystemStore) SetTierGuard(g TierGuardFunc) { s.tierGuard = g }
 
 // SetOnTierStoreMismatch registers the per-rejection hook (wired by the
@@ -116,8 +113,7 @@ func escapeSegment(s string) (string, error) {
 }
 
 // blobDir returns the directory holding u's body + metadata. An empty
-// ObjectType is normalised to ObjectTypeUpload to match the §12.5 line
-// 295 key normalisation MemoryStore applies.
+// ObjectType is normalised to ObjectTypeUpload to match the §12.5 key normalisation MemoryStore applies.
 func (s *FilesystemStore) blobDir(u URI) (string, error) {
 	objType := u.ObjectType
 	if objType == "" {
@@ -191,7 +187,7 @@ func (m fsMeta) info() BlobInfo {
 // tombstoned) returns ErrConflict, matching the §4.5 immutability
 // guarantee MemoryStore enforces.
 func (s *FilesystemStore) Put(u URI, mimeType string, data io.Reader) (string, error) {
-	// spec: §12.9 line 1048 — the filesystem store cannot envelope-encrypt
+	// spec: §12.9 — the filesystem store cannot envelope-encrypt
 	// at rest; reject a T4 write before touching the body.
 	if err := checkTierStoreMismatch(s.tierGuard, "filesystem", u.TenantID, s.onTierMismatch); err != nil {
 		return "", err
@@ -387,7 +383,7 @@ func (s *FilesystemStore) Copy(src, dst URI) error {
 	if src.TenantID != dst.TenantID {
 		return ErrCrossTenant
 	}
-	// spec: §12.9 line 1048 — the derive byte-copy is a write to dst.
+	// spec: §12.9 — the derive byte-copy is a write to dst.
 	if err := checkTierStoreMismatch(s.tierGuard, "filesystem", dst.TenantID, s.onTierMismatch); err != nil {
 		return err
 	}

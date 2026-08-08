@@ -62,7 +62,7 @@ type ReferenceRuntime struct {
 	IntegrationLevel string
 	// Description is the catalog one-line summary.
 	Description string
-	// Labels are the §5.1 line 51 required runtime labels — the primary
+	// Labels are the §5.1 required runtime labels — the primary
 	// mechanism for environment runtimeSelector/connectorSelector matching
 	// (§10.6). Every reference runtime carries the chart's reference-runtime
 	// marker plus the §26.3 maintainer/upstream labels.
@@ -70,7 +70,7 @@ type ReferenceRuntime struct {
 
 	// The §26.1 / §26.2 declarations the registered Runtime record
 	// carries. Coding-agent entries populate all of them; chat carries
-	// the smaller-resource posture (§26.1 line 22); the framework
+	// the smaller-resource posture (§26.1); the framework
 	// runtimes carry the basic fields only. nil blocks are omitted from
 	// the bootstrap seed.
 	AllowedResourceClasses []string
@@ -107,7 +107,7 @@ const placeholderDigest = "@sha256:000000000000000000000000000000000000000000000
 // The values mirror the chart's referenceRuntimes.catalog entries in
 // charts/lenny/values.yaml verbatim.
 //
-// spec: §26.2 lines 38-92 — the shared coding-agent isolation, limits,
+// spec: §26.2 — the shared coding-agent isolation, limits,
 // setupCommandPolicy, setupPolicy, and defaultPoolConfig.
 func codingAgentShared() ReferenceRuntime {
 	return ReferenceRuntime{
@@ -189,7 +189,7 @@ var referenceRuntimes = []ReferenceRuntime{
 		"Cursor's agent CLI inside a Lenny-managed sandbox",
 		"cursor/cli"),
 	{
-		// spec: §26.1 line 22 / §26.7 — chat is the minimum useful runtime:
+		// spec: §26.1 / §26.7 — chat is the minimum useful runtime:
 		// Full level (hotRotation: true requires the Full-only lifecycle
 		// channel per §15.4.3), the small resource class only, multi_turn
 		// with immediate (no queued) injection.
@@ -253,8 +253,7 @@ const EchoRuntimeName = "echo"
 // time and overwrites echoRuntime.Image with
 // echoImageRepository + "@sha256:<resolved-digest>" before the bootstrap
 // seed and the Runtime-CRD apply read it (S5/S6); the static literal here
-// carries only the sentinel placeholder. spec: §26.2 line 38 (canonical
-// ghcr.io/lennylabs/runtime-<name> path).
+// carries only the sentinel placeholder. spec: §26.2.
 const echoImageRepository = "ghcr.io/lennylabs/runtime-echo-embedded"
 
 // echoImageSentinel is the image reference the static echo catalog entry
@@ -335,8 +334,8 @@ func hasPlaceholderDigest(image string) bool {
 // placeholderPinnedRuntimes returns the names of catalog entries whose
 // image is placeholder-pinned, in catalog order. The bootstrap output
 // warns the operator that these runtimes register but cannot start a
-// session until re-pinned. spec: §26.1 line 5 ("functioning agents");
-// §26.3 lines 215-223 (Bootstrap behavior).
+// session until re-pinned. spec: §26.1;
+// §26.3.
 func placeholderPinnedRuntimes() []string {
 	var names []string
 	for _, rt := range referenceRuntimes {

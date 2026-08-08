@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §24.11 line 136 — the production SessionAdmin adapter resolves a
+// spec: §24.11 — the production SessionAdmin adapter resolves a
 // session by global id, forces a non-terminal session to failed, releases
 // its pod via the terminal hook, and is idempotent on a terminal row.
 // F-24.11.2.

@@ -92,7 +92,7 @@ func TestAppendEmptyIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser on a session-scoped store is a
+// spec: §12.1 — DeleteByUser on a session-scoped store is a
 // no-op that returns 0 erased rows; the §12.8 orchestrator walks the
 // user's sessions and calls DeleteBySession per session.
 func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
@@ -108,7 +108,7 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // transcript belonging to the tenant; other tenants are unaffected.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := transcriptstore.NewMemory()
@@ -135,7 +135,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 // zero-value caller field is normalized to the v1 baseline, and an explicit
 // version is preserved verbatim.
 //
-// spec: §15.4.1 line 1694 — "Every MessageEnvelope persisted to the
+// spec: §15.4.1 — "Every MessageEnvelope persisted to the
 // session_messages table carries this field"; §15.5 item 7 — integer
 // "starting at 1".
 func TestAppendStampsSchemaVersion_spec_15_4_1_1694(t *testing.T) {

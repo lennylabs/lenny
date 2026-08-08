@@ -61,7 +61,7 @@ func leafSerial(t *testing.T, cert *tls.Certificate) int64 {
 	return leaf.SerialNumber.Int64()
 }
 
-// spec: §10.3 line 338 — a renewed keypair on disk is served on the next
+// spec: §10.3 — a renewed keypair on disk is served on the next
 // handshake without recreating the Reloader (no process restart).
 func TestReloaderPicksUpRenewedCert_spec_10_3_338(t *testing.T) {
 	dir := t.TempDir()
@@ -101,7 +101,7 @@ func TestReloaderPicksUpRenewedCert_spec_10_3_338(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 338 — an unchanged keypair is served from cache; the
+// spec: §10.3 — an unchanged keypair is served from cache; the
 // reloader does not re-parse on every handshake.
 func TestReloaderServesCacheWhenUnchanged_spec_10_3_338(t *testing.T) {
 	dir := t.TempDir()
@@ -121,7 +121,7 @@ func TestReloaderServesCacheWhenUnchanged_spec_10_3_338(t *testing.T) {
 }
 
 // A reload that fails to parse (mid-write keypair) keeps the last good
-// certificate rather than serving an error. spec: §10.3 line 338.
+// certificate rather than serving an error. spec: §10.3.
 func TestReloaderKeepsLastGoodOnReloadError_spec_10_3_338(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "tls.crt")

@@ -1,13 +1,13 @@
 {{- /*
-§12.5 lines 277-280 — MinIO bucket configuration Job.
+§12.5 — MinIO bucket configuration Job.
 
 Configures the MinIO artifact bucket the gateway writes to:
 
   - `mc mb` — create the bucket idempotently when it does not exist
   - `mc anonymous set none` — pin the bucket private
-  - `mc version enable` — enable bucket versioning (§12.5 line 277)
+  - `mc version enable` — enable bucket versioning (§12.5)
   - `mc ilm add` — install the bucket-wide delete-marker and
-    noncurrent-version lifecycle rules (§12.5 line 280)
+    noncurrent-version lifecycle rules (§12.5)
 
 Runs as a post-install/post-upgrade Helm hook so the bucket lifecycle
 is applied the first time the chart points at a fresh MinIO; the rule
@@ -114,8 +114,8 @@ spec:
             - -c
             - |
               set -eu
-              # §12.5 line 277 — versioning enable.
-              # §12.5 line 280 — bucket-wide delete-marker + noncurrent
+              # §12.5 — versioning enable.
+              # §12.5 — bucket-wide delete-marker + noncurrent
               # version expiration via `mc ilm add`.
               mc mb --ignore-existing lenny/{{ $minio.bucket }}
               mc anonymous set none lenny/{{ $minio.bucket }}

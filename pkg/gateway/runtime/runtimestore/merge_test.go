@@ -321,7 +321,7 @@ func TestMergeOverridesProvidersAndRecursion(t *testing.T) {
 	}
 }
 
-// spec: §5.1 merge table line 192 — credentialCapabilities is Override:
+// spec: §5.1 merge table — credentialCapabilities is Override:
 // the derived block replaces the base block when present, and the base
 // block applies (inherited) when the derived runtime omits it.
 func TestMergeOverridesCredentialCapabilities(t *testing.T) {

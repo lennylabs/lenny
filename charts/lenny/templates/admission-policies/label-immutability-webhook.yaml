@@ -7,7 +7,7 @@ the lenny.admissionWebhookWorkload helper) so the HA properties
 
 - lenny-label-immutability (§17.2 item 5) enforces the three immutable
   agent-pod labels (managed, delivery-mode, egress-profile).
-- lenny-tenant-label-immutability (§5.2 line 392 / §13.2 NET-003)
+- lenny-tenant-label-immutability (§5.2 / §13.2 NET-003)
   enforces the lenny.dev/tenant-id transition rules: only the gateway
   SA may set tenant-id on a fresh pod, only the WarmPoolController SA
   may reset it to "unassigned".

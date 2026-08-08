@@ -76,7 +76,7 @@ func mergeAnnotations(dst, src map[string]any) map[string]any {
 // warning so a gateway that pre-dates a newly registered type still
 // passes it through visibly. A missing schemaVersion defaults to 1.
 //
-// spec: §15.4.1 lines 1503, 1522.
+// spec: §15.4.1.
 func ingestPart(p wireMessagePart) MessagePart {
 	sv := p.SchemaVersion
 	if sv <= 0 {

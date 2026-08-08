@@ -44,7 +44,7 @@ func githubPool() credentialpoolstore.CredentialPool {
 	}
 }
 
-// spec: §14 line 95 — a public clone (no leaseScope) resolves to a zero
+// spec: §14 — a public clone (no leaseScope) resolves to a zero
 // credential without consulting the pool store.
 func TestResolvePublicSourceIsZeroCredential(t *testing.T) {
 	r := &StoreResolver{Pools: fakePools{err: errors.New("must not be called")}, Secrets: fakeSecrets{}}
@@ -57,7 +57,7 @@ func TestResolvePublicSourceIsZeroCredential(t *testing.T) {
 	}
 }
 
-// spec: §14 line 95 / §4.9 — an authenticated source binds the URL host
+// spec: §14 / §4.9 — an authenticated source binds the URL host
 // to the matching VCS pool and returns the token from the credential's
 // Secret, paired with the GitHub-compatible username.
 func TestResolveAuthenticatedReturnsToken(t *testing.T) {

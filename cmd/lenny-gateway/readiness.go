@@ -54,8 +54,8 @@ type hardDepProbe func(ctx context.Context) health.Status
 //     Postgres advisory-lock lease fallback that keeps a Redis-down
 //     replica functional in degraded mode.
 //
-// spec: §10.4 line 386; §4.9 startup deny-list rebuild; §10.1 dual-store
-// unavailability; §13.3 line 595; §12.4 advisory-lock lease fallback.
+// spec: §10.4; §4.9 startup deny-list rebuild; §10.1 dual-store
+// unavailability; §13.3; §12.4 advisory-lock lease fallback.
 // F-10.4.6.
 func readinessVerdict(ctx context.Context, draining, clockDrift, rebuildPending, dualStoreDown bool, probe hardDepProbe) readinessResult {
 	if draining {

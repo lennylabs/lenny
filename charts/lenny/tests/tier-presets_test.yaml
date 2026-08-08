@@ -200,7 +200,7 @@ tests:
           path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
           value: 100
 
-  # spec: §17.8.4 line 1319 / F-17.8.1 — each tier preset overrides the
+  # spec: §17.8.4 / F-17.8.1 — each tier preset overrides the
   # §25.4 ops self-health cadence and ops:events:stream MAXLEN. Tier 1
   # relaxes the self-monitor to 30s; Tier 2/3 keep it at 10s and raise the
   # stream MAXLEN to 50k / 100k.
@@ -218,7 +218,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=10000
-      # spec: §25.5 lines 2655-2659 — Tier 1 webhook retention of 1 day.
+      # spec: §25.5 — Tier 1 webhook retention of 1 day.
       - contains:
           path: spec.template.spec.containers[0].args
           content: --webhook-delivery-retention-days=1
@@ -237,7 +237,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=50000
-      # spec: §25.5 lines 2655-2659 — Tier 2 webhook retention of 7 days.
+      # spec: §25.5 — Tier 2 webhook retention of 7 days.
       - contains:
           path: spec.template.spec.containers[0].args
           content: --webhook-delivery-retention-days=7
@@ -256,7 +256,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --events-stream-max-len=100000
-      # spec: §25.5 lines 2655-2659 — Tier 3 webhook retention of 30 days.
+      # spec: §25.5 — Tier 3 webhook retention of 30 days.
       - contains:
           path: spec.template.spec.containers[0].args
           content: --webhook-delivery-retention-days=30
@@ -282,7 +282,7 @@ tests:
             name: LENNY_CAPACITY_TIER
             value: "tier3"
 
-  # spec: §25.13 lines 4735-4769 — the tier-dependent alert-threshold
+  # spec: §25.13 — the tier-dependent alert-threshold
   # defaults are set by the tier preset files, with tighter thresholds at
   # higher tiers. The §25.13 excerpts pin the tier-2 row (queue depth 10,
   # p99 latency 2.0s) and the tier-3 row (queue depth 5, p99 latency 1.0s).
@@ -329,7 +329,7 @@ tests:
             name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS
             value: "1"
 
-  # spec: §25.13 line 4727-4732 — Tier 1 carries the loosest defaults in
+  # spec: §25.13 — Tier 1 carries the loosest defaults in
   # the tier matrix (base values.yaml, no preset override). Pinning them
   # guards the ordering invariant that Tier 2 and Tier 3 are strictly
   # tighter than the Tier 1 base.

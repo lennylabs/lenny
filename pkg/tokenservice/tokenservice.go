@@ -55,14 +55,13 @@ type IssuedTokenStore interface {
 // Postgres-backed issuedtokenstore.Store does), the Token Service
 // drives the combined path; otherwise it falls back to the in-memory
 // Auditor.
-// spec: §13.3 line 589.
+// spec: §13.3.
 type IssuedTokenAuditStore interface {
 	IssuedTokenStore
 	RecordWithAudit(ctx context.Context, tok issuedtokenstore.IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error)
 }
 
-// IssuedTokenRotationStore extends IssuedTokenAuditStore with the §13.3
-// line 597 atomic token-rotation path: the new token's INSERT, its
+// IssuedTokenRotationStore extends IssuedTokenAuditStore with the §13.3 atomic token-rotation path: the new token's INSERT, its
 // `token.exchanged` audit row, and the revoked_at stamp on the previous
 // token all commit in one transaction. When the configured IssuedTokens
 // dependency satisfies it (the Postgres-backed issuedtokenstore.Store
@@ -81,7 +80,7 @@ type IssuedTokenRotationStore interface {
 // rotation write-before-issue surface ever drops off the store.
 var _ IssuedTokenRotationStore = (*issuedtokenstore.Store)(nil)
 
-// RevocationStore is the optional §13.3 line 603 / §8.3 recursive
+// RevocationStore is the optional §13.3 / §8.3 recursive
 // revocation surface. When the configured IssuedTokens dependency
 // satisfies it (the Postgres-backed issuedtokenstore.Store does), the
 // Token Service serves the `requested_token_type=...:access_token:revoked`
@@ -98,7 +97,7 @@ type RevocationStore interface {
 // rows even though the rows are lost on restart. The Postgres path
 // reaches the durable chain through IssuedTokenAuditStore so the audit
 // row and the issued-token INSERT share one COMMIT.
-// spec: §13.3 lines 587, 597, 609.
+// spec: §13.3.
 type Auditor interface {
 	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
 }
@@ -110,9 +109,7 @@ type Auditor interface {
 // production), and the jti primary key plus ErrAlreadyExists is the
 // duplicate-detection contract. There is no in-process jti cache, so
 // any replica can serve any request.
-// spec: §4.3 line 209 ("fully stateless — all persistent state lives
-// in Postgres ... so any replica can handle any request with no
-// affinity requirements").
+// spec: §4.3.
 type Server struct {
 	signer       jwt.Signer
 	verifier     jwt.Verifier
@@ -124,7 +121,7 @@ type Server struct {
 
 	rateLimiter *RateLimiter
 
-	// driftDegraded is the §13.3 line 595 self-check consulted on
+	// driftDegraded is the §13.3 self-check consulted on
 	// every exchange. A non-nil function returning true causes the
 	// exchange to fail with 503 token_validation_unavailable. F-13.3.5.
 	driftDegraded func() bool
@@ -159,7 +156,7 @@ type Options struct {
 	// issued-token record is kept. The Postgres-backed
 	// issuedtokenstore.Store satisfies IssuedTokenAuditStore so the
 	// handler binds the issued_tokens INSERT and the token.exchanged
-	// audit INSERT in a single COMMIT (§13.3 line 589).
+	// audit INSERT in a single COMMIT (§13.3).
 	IssuedTokens IssuedTokenStore
 
 	// Auditor, when set, receives the §13.3 token-exchange audit
@@ -185,7 +182,7 @@ type Options struct {
 	RateLimit RateLimitOptions
 
 	// DriftDegraded, when non-nil, is consulted on every exchange.
-	// When it reports true (the §13.3 line 595 5s NTP-drift ceiling
+	// When it reports true (the §13.3 5s NTP-drift ceiling
 	// is exceeded), the handler short-circuits the exchange with
 	// 503 token_validation_unavailable rather than issuing or
 	// validating a token whose `exp` it cannot trust. F-13.3.5.
@@ -271,7 +268,7 @@ const (
 	grantTypeExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
 	tokenTypeJWT      = "urn:ietf:params:oauth:token-type:jwt"
 
-	// revokedTokenType is the §13.3 line 603 requested_token_type that
+	// revokedTokenType is the §13.3 requested_token_type that
 	// turns a token-exchange into a recursive-revocation request.
 	revokedTokenType = "urn:ietf:params:oauth:token-type:access_token:revoked"
 )
@@ -286,10 +283,10 @@ const (
 	propagationModePostgresOnly = "postgres_only"
 )
 
-// §16.7 line 672 token.exchanged `exchange_type` enum. The Token
+// §16.7 token.exchanged `exchange_type` enum. The Token
 // Service's /v1/oauth/token exchange path emits every value except
 // `admin_rotation`'s gateway-direct bootstrap variant (the gateway
-// emits that on its in-process admin-Secret rotation, §13.3 line 599);
+// emits that on its in-process admin-Secret rotation, §13.3);
 // the general self/service-principal rotation grant on /v1/oauth/token
 // is classified `admin_rotation` here.
 const (
@@ -299,15 +296,13 @@ const (
 	exchangeTypeScopeNarrow    = "scope_narrow"
 )
 
-// classifyExchangeType maps one /v1/oauth/token exchange to its §16.7
-// line 672 `exchange_type`. The order is significant: a delegation mint
+// classifyExchangeType maps one /v1/oauth/token exchange to its §16.7. The order is significant: a delegation mint
 // (actor token present) takes precedence over a self-rotation because
 // an actor-bearing exchange always mints a delegation child; a
 // self-rotation (the general rotation grant presenting the current
 // token as subject) is `admin_rotation`; a credential-lease issuance
 // (the issued token is a session-capability lease) is `lease_issue`;
-// every other narrowing derivation is `scope_narrow`. spec: §16.7 line
-// 672. SEC-TS-1.
+// every other narrowing derivation is `scope_narrow`. spec: §16.7. SEC-TS-1.
 func classifyExchangeType(issued tokenexchange.Issued, isRotation bool, actorClaims *jwt.Claims) string {
 	switch {
 	case actorClaims != nil:
@@ -322,13 +317,12 @@ func classifyExchangeType(issued tokenexchange.Issued, isRotation bool, actorCla
 }
 
 // classifyRejectedExchangeType maps a *rejected* /v1/oauth/token
-// exchange to its §16.7 line 672 `exchange_type` from the request
+// exchange to its §16.7 from the request
 // inputs alone, since no token was issued and self-rotation cannot be
 // confirmed without the minted token. A rejected delegation-mint
 // attempt (actor token present) is `delegation_mint`; a rejected lease
 // issuance (requested a session-capability lease) is `lease_issue`;
-// every other rejected derivation is `scope_narrow`. spec: §16.7 line
-// 672. SEC-TS-1.
+// every other rejected derivation is `scope_narrow`. spec: §16.7. SEC-TS-1.
 func classifyRejectedExchangeType(req tokenexchange.Request) string {
 	switch {
 	case req.Actor != nil:
@@ -340,7 +334,7 @@ func classifyRejectedExchangeType(req tokenexchange.Request) string {
 	}
 }
 
-// revokedAuditPayload is the §16.7 line 666 `token.revoked` audit row
+// revokedAuditPayload is the §16.7 audit row
 // payload. It carries claim identifiers and revocation provenance only,
 // never the raw token bytes.
 type revokedAuditPayload struct {
@@ -383,7 +377,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §13.3 line 603 / §8.3 recursive revocation: a token-exchange
+	// §13.3 / §8.3 recursive revocation: a token-exchange
 	// carrying requested_token_type=...:access_token:revoked is a
 	// revocation request, not a mint. The subject_token is the root to
 	// revoke; the Token Service cascades to its delegation descendants
@@ -419,7 +413,7 @@ func (s *Server) newRequestFinisher() func(errClass string) {
 	}
 }
 
-// checkDrift is the §13.3 line 595 drift gate. It reports false (and
+// checkDrift is the §13.3 drift gate. It reports false (and
 // writes 503 token_validation_unavailable) when this replica's NTP drift
 // exceeds the 5s ceiling, so the handler refuses to issue or validate a
 // token whose `exp` it cannot trust. The replica's /healthz
@@ -504,7 +498,7 @@ func (s *Server) verifyExchangeTokens(w http.ResponseWriter, req Request, finish
 	return subjectClaims, actorClaims, true
 }
 
-// allowRateLimited applies the §13.3 line 607 / line 609 per-(tenant,
+// allowRateLimited applies the §13.3 per-(tenant,
 // sub) and global per-tenant rate limits. It returns true when the
 // request is allowed (or no limiter is configured); on a rejection it
 // emits the unconditional and sampled metrics, the sampled audit row,
@@ -597,7 +591,7 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 // matching cap. This closes the F-13.3.12 lookup bug where a multi-value
 // string was passed verbatim and never matched a single-key entry. The
 // returned value is recorded on the issued_tokens row for forensic
-// reconstruction. spec: §4.3 line 193, §13.3 line 564.
+// reconstruction. spec: §4.3, §13.3.
 func (s *Server) resolveDialectCap(requestedAudience []string, rawAudience string) time.Duration {
 	var applied time.Duration
 	for _, aud := range requestedAudience {
@@ -623,10 +617,10 @@ func (s *Server) resolveDialectCap(requestedAudience []string, rawAudience strin
 
 // validateExchange runs tokenexchange.Validate and renders the §13.3
 // rejection path. It returns the issued token and true on acceptance; on
-// a rejection it emits the §13.3 line 585 token.exchanged audit row,
+// a rejection it emits the §13.3 token.exchanged audit row,
 // writes the mapped error envelope, and returns false. A failed
 // rejection-audit write fails closed with 500 token_exchange_failed
-// (§13.3 line 589).
+// (§13.3).
 func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Request, callerClaims, subjectClaims jwt.Claims, exchangeReq tokenexchange.Request, now time.Time, finish func(string)) (tokenexchange.Issued, bool) {
 	issued, verr := tokenexchange.Validate(exchangeReq)
 	if verr == nil {
@@ -634,7 +628,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 	}
 	var ee *tokenexchange.ExchangeError
 	if errors.As(verr, &ee) {
-		// §13.3 line 585 / line 589: rejected exchanges still
+		// §13.3: rejected exchanges still
 		// emit a `token.exchanged` audit row with the
 		// policy_result reason so the SIEM has cross-tenant
 		// probe evidence.
@@ -648,7 +642,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 			Scope:        splitScope(req.Scope),
 			Now:          now,
 		}); auditErr != nil {
-			// §13.3 line 589: fail closed when the rejection-audit
+			// §13.3: fail closed when the rejection-audit
 			// write fails. Return 500 token_exchange_failed with the
 			// originally intended rejection reason in the error
 			// body's detail so operators can reconstruct the attempt,
@@ -672,9 +666,8 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 // freshly minted jti, the signed token, and true on success. The jti is
 // a crypto/rand-derived 128-bit identifier so two replicas minting at
 // the same wall-clock instant do not collide on the issued_tokens
-// primary key. spec: §4.3 line 209 (no affinity requirements / replicas
-// serve interchangeably). An open JWTSigner circuit breaker fails with
-// 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2 line 225,
+// primary key. spec: §4.3. An open JWTSigner circuit breaker fails with
+// 503 KMS_SIGNING_UNAVAILABLE and `retryable: true` (§10.2,
 // F-10.2.6).
 func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, now time.Time, finish func(string)) (string, string, bool) {
 	jti, err := newJTI()
@@ -696,7 +689,7 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 		CallerType:      string(issued.CallerType),
 		DelegationDepth: issued.DelegationDepth,
 		Scope:           strings.Join(issued.Scope, " "),
-		// §13.3 line 580: stamp the preserved/narrowed operability-tool
+		// §13.3: stamp the preserved/narrowed operability-tool
 		// allowlist onto the issued token so an operability-scope surface
 		// has the claim to enforce against. F-13.3.11.
 		AuthorizedTools: issued.AuthorizedTools,
@@ -704,7 +697,7 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 	}
 	signed, err := s.signer.Sign(out)
 	if err != nil {
-		// spec: §10.2 line 225 — when the JWTSigner circuit breaker is
+		// spec: §10.2 — when the JWTSigner circuit breaker is
 		// open (or otherwise reports the KMS-backed signing material is
 		// unreachable), the mint fails with 503 KMS_SIGNING_UNAVAILABLE
 		// and `retryable: true`. The §16.5 KMSSigningUnavailable alert
@@ -727,7 +720,7 @@ func (s *Server) mintToken(w http.ResponseWriter, issued tokenexchange.Issued, n
 // signed token is not handed to the caller until COMMIT succeeds. It
 // routes between the rotation, transactional-audit, in-memory dev, and
 // test-only store paths and returns true once the record is durable.
-// spec: §13.3 line 589.
+// spec: §13.3.
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	hash := sha256.Sum256([]byte(signed))
 	rec := issuedtokenstore.IssuedToken{
@@ -739,7 +732,7 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 		// Audience: legacy space-joined form for back-compat with
 		// pre-0058 readers. Audiences carries the list form so a
 		// forensic reverse lookup can match individual audiences.
-		// spec: §4.3 line 193, migration 0058.
+		// spec: §4.3, migration 0058.
 		Audience:                 strings.Join(issued.Audience, " "),
 		Audiences:                append([]string{}, issued.Audience...),
 		DialectCapAppliedSeconds: int(dialectCap.Seconds()),
@@ -766,7 +759,7 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 	case isRotation && rotationStore != nil:
 		// Postgres rotation path: the new issued-token INSERT, the
 		// token.exchanged audit row, and the revoked_at stamp on the
-		// previous token commit in one transaction (§13.3 line 597).
+		// previous token commit in one transaction (§13.3).
 		revokedSub, revoked, err := rotationStore.RecordWithRotationAudit(r.Context(), rec,
 			subjectClaims.JWTID, revocationReasonRotationReplaced,
 			string(obsaudit.EventTokenExchanged), auditPayload.JSON(), now)
@@ -798,7 +791,7 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 			return false
 		}
 		// The accepted-exchange write-before-issue fail-closed obligation
-		// (§13.3 line 589) is met by the production Postgres path above,
+		// (§13.3) is met by the production Postgres path above,
 		// which routes through auditStore.RecordWithAudit/writeIssueStoreError.
 		// This in-memory dev path is non-production, so the audit write is
 		// best-effort and the returned error is discarded.
@@ -812,7 +805,7 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 	return true
 }
 
-// isSelfRotation reports whether this exchange is a §13.3 line 597
+// isSelfRotation reports whether this exchange is a §13.3
 // self-rotation: the caller presents its own current token as the
 // subject and requests a privilege-equivalent replacement (same audience
 // set, same scope, no actor/delegation). On detection the previous token
@@ -833,15 +826,14 @@ func (s *Server) isSelfRotation(issued tokenexchange.Issued, callerClaims, subje
 // payload. The §13.3 record contains only claim identifiers and
 // metadata — never the raw token, the subject_token bytes, or the
 // actor_token bytes.
-// spec: §13.3 line 587 ("Token contents — access_token, subject_token,
-// actor_token — are NEVER written to audit payloads").
+// spec: §13.3.
 type exchangeAuditPayload struct {
-	// ExchangeType is the §16.7 line 672 mandatory classification of the
+	// ExchangeType is the §16.7 mandatory classification of the
 	// exchange: `admin_rotation` (the general self/service-principal
 	// rotation grant), `delegation_mint` (an actor-token delegation
 	// child mint), `lease_issue` (credential-lease issuance), or
 	// `scope_narrow` (an operability-scope narrowing derivation). Every
-	// `token.exchanged` row carries it. spec: §16.7 line 672. SEC-TS-1.
+	// `token.exchanged` row carries it. spec: §16.7. SEC-TS-1.
 	ExchangeType    string    `json:"exchange_type"`
 	CallerSub       string    `json:"caller_sub,omitempty"`
 	SubjectSub      string    `json:"subject_sub,omitempty"`
@@ -863,10 +855,10 @@ func (p exchangeAuditPayload) JSON() json.RawMessage {
 // recordExchangeAudit writes a token.exchanged audit row through the
 // configured Auditor (the in-memory dev path) and returns the
 // auditor.Append error so callers can fail closed on a rejection-audit
-// write failure (§13.3 line 589). When no Auditor is configured the call
+// write failure (§13.3). When no Auditor is configured the call
 // is a no-op returning nil; the durable Postgres write-before-issue path
 // covers the accepted-exchange success case via IssuedTokenAuditStore.
-// spec: §13.3 line 587, line 589.
+// spec: §13.3.
 func (s *Server) recordExchangeAudit(ctx context.Context, tenantID string, payload exchangeAuditPayload) error {
 	if s.auditor == nil || tenantID == "" {
 		return nil
@@ -877,7 +869,7 @@ func (s *Server) recordExchangeAudit(ctx context.Context, tenantID string, paylo
 
 // rateLimitAuditPayload is the §13.3 token.exchange_rate_limited audit
 // row body. Sampling guarantees one row per (tenant_id, sub,
-// limit_tier) per 10s window per replica (§13.3 line 611).
+// limit_tier) per 10s window per replica (§13.3).
 type rateLimitAuditPayload struct {
 	TenantID  string    `json:"tenant_id"`
 	Sub       string    `json:"sub,omitempty"`
@@ -893,8 +885,8 @@ func (p rateLimitAuditPayload) JSON() json.RawMessage {
 
 // emitRateLimitAudit writes a token.exchange_rate_limited audit row on
 // a sampled rate-limit rejection (one row per (tenant, sub, tier) per
-// 10s window per replica, per §13.3 line 609 sampling discipline).
-// spec: §13.3 line 609.
+// 10s window per replica, per §13.3 sampling discipline).
+// spec: §13.3.
 func (s *Server) emitRateLimitAudit(ctx context.Context, tenantID, sub, limitTier string, now time.Time) {
 	if s.auditor == nil || tenantID == "" {
 		return
@@ -910,7 +902,7 @@ func (s *Server) emitRateLimitAudit(ctx context.Context, tenantID, sub, limitTie
 
 // EmitRevocation writes a token.revoked audit row for a Token Service-
 // driven revocation (the GRPCServer.RevokeCredentials path). spec:
-// §13.3 line 597.
+// §13.3.
 func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason string, at time.Time) {
 	if s.auditor == nil || tenantID == "" {
 		return
@@ -924,7 +916,7 @@ func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason 
 	_, _ = s.auditor.Append(ctx, tenantID, string(obsaudit.EventTokenRevoked), json.RawMessage(body), at)
 }
 
-// handleRevocationRequest serves the §13.3 line 603 / §8.3 recursive
+// handleRevocationRequest serves the §13.3 / §8.3 recursive
 // revocation request (`requested_token_type=...:access_token:revoked`).
 // It revokes the subject token (the root) and every delegation
 // descendant reachable through parent_jti, then emits one §16.7
@@ -1005,7 +997,7 @@ func (s *Server) emitTokenRevoked(ctx context.Context, tenantID string, rt issue
 // rotation_replaced revocation and propagates the revoked jti
 // cluster-wide. The revoked token is the caller's previous token, which
 // was atomically revoked inside the write-before-issue transaction that
-// minted its replacement (§13.3 line 597). A rotation is not a cascade,
+// minted its replacement (§13.3). A rotation is not a cascade,
 // so the row carries no cascade_root_jti. F-16.7.5.
 func (s *Server) emitRotationRevoked(ctx context.Context, tenantID, revokedJTI, revokedSub string, at time.Time) {
 	mode := s.propagateRevocation(ctx, tenantID, revokedJTI)
@@ -1089,7 +1081,7 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		DelegationDepth: c.DelegationDepth,
 		Scope:           splitScope(c.Scope),
 		Audience:        append([]string{}, c.Audience...),
-		// §13.3 line 583(e): the subject's narrowed operability-tool
+		// §13.3: the subject's narrowed operability-tool
 		// allowlist is carried into the exchange so Validate can preserve
 		// or further narrow it rather than dropping it.
 		AuthorizedTools: append([]string{}, c.AuthorizedTools...),
@@ -1185,8 +1177,8 @@ func is5xxErrorClass(c string) bool {
 // fall back to issuing tokens without audit coverage. Any other failure
 // (a constraint violation, a logic bug) is a `500 token_exchange_failed`:
 // the write-before-issue invariant could not be satisfied so no token is
-// issued, matching the §13.3 line 589 code for a failed exchange write.
-// spec: §13.3 line 589, line 591. F-13.3.4.
+// issued, matching the §13.3 code for a failed exchange write.
+// spec: §13.3. F-13.3.4.
 func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error) {
 	if pgtenant.IsUnavailable(err) {
 		w.Header().Set("Retry-After", "5")
@@ -1200,7 +1192,7 @@ func writeIssueStoreError(w http.ResponseWriter, finish func(string), err error)
 	finish("token_exchange_failed")
 }
 
-// writeKMSUnavailable writes the §10.2 line 225 / §15.1 line 1102
+// writeKMSUnavailable writes the §10.2 / §15.1
 // KMS_SIGNING_UNAVAILABLE envelope: HTTP 503 with `retryable: true` so
 // the client retries the mint after the circuit-breaker cooldown
 // elapses. The body uses the Lenny error envelope (rather than the
@@ -1233,7 +1225,7 @@ var _ = auth.TokenUserBearer
 // newJTI returns a fresh RFC 7519 token identifier. The identifier is a
 // hex-encoded 128-bit value drawn from crypto/rand so two simultaneously
 // started Token Service replicas cannot collide on the
-// `issued_tokens.jti` primary key. spec: §4.3 line 209 — replicas serve
+// `issued_tokens.jti` primary key. spec: §4.3 — replicas serve
 // any request with no affinity requirements, which requires
 // collision-safe identifiers across processes.
 //

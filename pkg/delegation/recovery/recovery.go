@@ -26,22 +26,22 @@ const (
 	// DefaultTreeTimeout bounds the whole traversal
 	// (`maxTreeRecoverySeconds`). It overrides the per-level budgets.
 	DefaultTreeTimeout = 600 * time.Second
-	// DefaultUsageQuiescenceTimeout is the §11.3 line 224
+	// DefaultUsageQuiescenceTimeout is the §11.3
 	// `delegation.usageQuiescenceTimeoutSeconds` window the tree-recovery
 	// path waits after the most recent child usage report before
 	// declaring the delegation tree quiescent and starting the bottom-up
 	// reattach traversal. A node that reports usage during the
-	// quiescence window resets the timer. spec: §11.3 line 224; §8.10
+	// quiescence window resets the timer. spec: §11.3; §8.10
 	// tree recovery.
 	DefaultUsageQuiescenceTimeout = 5 * time.Second
 )
 
 // Node is one delegation-tree node to recover. Depth is the node's
 // distance from the tree root (root = 0). ResumeWindow, when positive,
-// is the §7.3 line 408 / §8.10 line 1027 per-node `maxResumeWindowSeconds`
+// is the §7.3 / §8.10 per-node `maxResumeWindowSeconds`
 // budget the recovery traversal must compose with the level- and
 // tree-wide caps. Zero leaves the node with no individual bound — the
-// level/tree budgets alone govern. spec: §8.10 line 1027.
+// level/tree budgets alone govern. spec: §8.10.
 type Node struct {
 	SessionID    string
 	Depth        int
@@ -79,7 +79,7 @@ type NodeResult struct {
 type Config struct {
 	LevelTimeout time.Duration
 	TreeTimeout  time.Duration
-	// UsageQuiescenceTimeout is the §11.3 line 224 wall-clock window the
+	// UsageQuiescenceTimeout is the §11.3 wall-clock window the
 	// caller observes between the last child usage report and the start
 	// of the bottom-up reattach traversal. Exposed on Config so the
 	// gateway can thread an operator-tuned value through to whatever
@@ -109,8 +109,7 @@ func (c Config) withDefaults() Config {
 // orchestrator must wait until before declaring the tree quiescent and
 // starting the reattach traversal. lastUsageReport is the timestamp of
 // the most recent child usage report; an orchestrator that resets on
-// every new report calls this helper after each report. spec: §11.3
-// line 224.
+// every new report calls this helper after each report. spec: §11.3.
 func (c Config) QuiescenceDeadline(lastUsageReport time.Time) time.Time {
 	cfg := c.withDefaults()
 	return lastUsageReport.Add(cfg.UsageQuiescenceTimeout)
@@ -145,12 +144,11 @@ func Levels(nodes []Node) [][]Node {
 // `maxResumeWindowSeconds` has elapsed (Node.ResumeWindow), when its
 // level has exceeded LevelTimeout, or when the traversal has exceeded
 // TreeTimeout — once the tree deadline passes every remaining node is
-// failed without a recovery attempt. Per §8.10 line 1027 the effective
+// failed without a recovery attempt. Per §8.10 the effective
 // recovery window for any node is
 // `min(maxResumeWindowSeconds, remaining maxTreeRecoverySeconds)`; this
 // implementation also clamps to the per-level budget. Returns one
-// NodeResult per node, in bottom-up traversal order. spec: §8.10 lines
-// 1020-1023, 1027.
+// NodeResult per node, in bottom-up traversal order. spec: §8.10.
 func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult {
 	cfg = cfg.withDefaults()
 	results := make([]NodeResult, 0, len(nodes))
@@ -165,7 +163,7 @@ func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult 
 		}
 		for _, node := range level {
 			now := cfg.Now()
-			// spec: §8.10 line 1027 — effective recovery window is
+			// spec: §8.10 — effective recovery window is
 			// min(node.ResumeWindow, remaining tree window). Composed with
 			// the per-level cap so a level still bounds a long-resume-window
 			// node when its level peers progress more slowly.
@@ -194,8 +192,7 @@ func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult 
 			case node.ResumeWindow > 0 && !now.Before(traversalStart.Add(node.ResumeWindow)):
 				// Per-node `maxResumeWindowSeconds` elapsed before the
 				// level/tree budgets — the §7.3 per-session resume window
-				// is the binding deadline for this node. spec: §8.10 line
-				// 1027 ("node transitions to `expired`").
+				// is the binding deadline for this node. spec: §8.10.
 				results = append(results, NodeResult{
 					Node: node, Outcome: OutcomeFailed,
 					Reason: "node resume window exceeded",

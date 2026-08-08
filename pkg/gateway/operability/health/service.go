@@ -23,7 +23,7 @@ import (
 // probeCacheTTL is the §25.3 per-replica probe-result cache window: a
 // component's last Check result is reused for this long so concurrent
 // health requests do not stampede the backing dependency.
-// spec: §25.3 line 526 — "Component probe results are cached in-memory
+// spec: §25.3 — "Component probe results are cached in-memory
 // for 5 seconds to avoid probe storms from concurrent health checks."
 const probeCacheTTL = 5 * time.Second
 
@@ -70,23 +70,23 @@ type Component struct {
 
 	// Issue is the §25.7 Path B health-API issue code (e.g.,
 	// `POSTGRES_UNREACHABLE`, `WARM_POOL_EXHAUSTED`,
-	// `CIRCUIT_BREAKER_OPEN`). The §17.7 line 741 issueRunbooks
+	// `CIRCUIT_BREAKER_OPEN`). The §17.7 issueRunbooks
 	// table resolves this to the runbook the agent should fetch.
-	// spec: §25.7 lines 3217-3234.
+	// spec: §25.7.
 	Issue string `json:"issue,omitempty"`
 
 	// SuggestedAction is the §25.3 singular machine-executable
 	// remediation hint, populated when one canonical response exists.
 	// Nil when the component is healthy, when no action is known, or
 	// when the issue presents ranked alternatives (SuggestedActions)
-	// instead. spec: §25.3 lines 459-501.
+	// instead. spec: §25.3.
 	SuggestedAction *conventions.SuggestedAction `json:"suggestedAction,omitempty"`
 
 	// SuggestedActions is the §25.3 ordered (descending confidence) set
 	// of remediation alternatives for the capacity/throttling issues
 	// that have more than one reasonable response (WARM_POOL_EXHAUSTED,
 	// WARM_POOL_LOW, CREDENTIAL_POOL_EXHAUSTED, CIRCUIT_BREAKER_OPEN).
-	// Empty for the singular form. spec: §25.3 lines 484-487.
+	// Empty for the singular form. spec: §25.3.
 	SuggestedActions []conventions.SuggestedAction `json:"suggestedActions,omitempty"`
 }
 
@@ -97,7 +97,7 @@ type Component struct {
 // reflects firing alerts even when Prometheus is unreachable. ok is false
 // when no firing alert maps to the component, in which case the dependency
 // probe's verdict stands. firing names the firing alerts for the Detail
-// line. spec: §25.3 lines 443-451.
+// line. spec: §25.3.
 type AlertStatusSource interface {
 	ComponentStatus(component string) (status Status, firing []string, ok bool)
 }
@@ -138,7 +138,7 @@ type Report struct {
 	// Degradation carries the §25.2 canonical envelope. The gateway's
 	// in-process alert tracker always evaluates the compiled-in
 	// thresholds, so a single-replica Report stamps
-	// `thresholdSource: "compiled-in-defaults"` per §25.13 line 4848.
+	// `thresholdSource: "compiled-in-defaults"` per §25.13.
 	// `lenny-ops` overrides the envelope when its aggregated view
 	// derives from the operator's Prometheus rules.
 	// spec: §25.2.
@@ -161,7 +161,7 @@ type Aggregator struct {
 	lastComponents []Component
 	onTransition   func(prev, curr Status, prevComponents, currComponents []Component)
 
-	// §25.3 line 526 per-replica probe-result cache. cacheTTL of 0
+	// §25.3 per-replica probe-result cache. cacheTTL of 0
 	// disables caching (every request runs the probes); the clock is
 	// injectable so tests can advance it deterministically.
 	cacheMu  sync.Mutex
@@ -169,12 +169,12 @@ type Aggregator struct {
 	cacheTTL time.Duration
 	now      func() time.Time
 
-	// §25.3 lines 538-542 health metrics. Nil until SetMetrics wires the
+	// §25.3 health metrics. Nil until SetMetrics wires the
 	// prom-backed emitter; the Aggregator records probe latency and the
 	// derived status on every real (cache-miss) probe.
 	metrics Metrics
 
-	// §25.3 lines 443-451 alert-derived status overlay. Nil until
+	// §25.3 alert-derived status overlay. Nil until
 	// SetAlertSource wires the in-process alert tracker; when set, the
 	// /v1/admin/health verdict (Report and the public Component) overlays
 	// the worst firing-alert severity onto each component's probe verdict.
@@ -183,8 +183,7 @@ type Aggregator struct {
 	alertSource AlertStatusSource
 }
 
-// NewAggregator returns an empty Aggregator with the §25.3 5-second
-// per-replica probe-result cache enabled (line 526).
+// NewAggregator returns an empty Aggregator with the §25.3 5-second per-replica probe-result cache enabled.
 func NewAggregator() *Aggregator {
 	return newAggregator(probeCacheTTL, time.Now)
 }
@@ -215,7 +214,7 @@ func newAggregator(ttl time.Duration, now func() time.Time) *Aggregator {
 // touching the backing dependency. It returns the raw probe verdict; the
 // §25.3 alert overlay is applied separately by componentWithAlerts so the
 // readiness path can read the dependency verdict without alert-driven
-// flapping. spec: §25.3 line 526.
+// flapping. spec: §25.3.
 func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	name := c.Name()
 	if a.cacheTTL > 0 {
@@ -234,13 +233,13 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 	if comp.Name == "" {
 		comp.Name = name
 	}
-	// spec: §25.3 lines 538-542 — record probe latency only on a real
+	// spec: §25.3 — record probe latency only on a real
 	// Check (a cache hit ran no probe). The derived-status gauge is set by
 	// componentWithAlerts so it reflects the alert overlay.
 	if m != nil {
 		m.ObserveCheckDuration(comp.Name, a.now().Sub(started).Seconds())
 	}
-	// spec: §25.3 lines 459-501 / §25.7 line 3234 — when the checker
+	// spec: §25.3 / §25.7 — when the checker
 	// stamps an Issue but leaves the remediation hint empty, the catalog
 	// resolves the structured suggestedAction (singular) or
 	// suggestedActions (ranked, for capacity issues) so the agent
@@ -267,7 +266,7 @@ func (a *Aggregator) probe(ctx context.Context, c Checker) Component {
 // would otherwise mask a just-fired alert. This is the verdict the
 // /v1/admin/health endpoint reports, and the only path that records the
 // derived status on lenny_health_status.
-// spec: §25.3 lines 443-451, 538-542.
+// spec: §25.3.
 func (a *Aggregator) componentWithAlerts(ctx context.Context, c Checker) Component {
 	comp := a.probe(ctx, c)
 	a.mu.RLock()
@@ -285,7 +284,7 @@ func (a *Aggregator) componentWithAlerts(ctx context.Context, c Checker) Compone
 // result. The overlay only ever worsens the status (a firing alert cannot
 // mark a probe-failed component healthy); on a worsening it appends the
 // firing alert names to the Detail line so the operator sees why.
-// spec: §25.3 lines 443-451.
+// spec: §25.3.
 func applyAlertStatus(src AlertStatusSource, comp Component) Component {
 	if src == nil {
 		return comp
@@ -317,7 +316,7 @@ func firingDetail(firing []string) string {
 
 // SetMetrics wires the §25.3 health metrics. The Aggregator records each
 // real probe's latency on lenny_health_check_duration_seconds and the
-// derived verdict on lenny_health_status. spec: §25.3 lines 538-542.
+// derived verdict on lenny_health_status. spec: §25.3.
 func (a *Aggregator) SetMetrics(m Metrics) {
 	a.mu.Lock()
 	a.metrics = m
@@ -327,7 +326,7 @@ func (a *Aggregator) SetMetrics(m Metrics) {
 // SetAlertSource wires the §25.3 alert-derived status overlay. Once set,
 // Report and the public Component overlay the worst firing-alert severity
 // onto each component so /v1/admin/health reflects the §16.5 alert
-// catalogue, not only the dependency probes. spec: §25.3 lines 443-451.
+// catalogue, not only the dependency probes. spec: §25.3.
 func (a *Aggregator) SetAlertSource(src AlertStatusSource) {
 	a.mu.Lock()
 	a.alertSource = src
@@ -365,7 +364,7 @@ func (a *Aggregator) Register(c Checker) {
 // bounded by the slowest probe rather than the sum of all probe
 // latencies; the 2-second per-probe timeout is enforced by the
 // individual Checker implementations against the supplied context.
-// spec: §25.3 line 441 — "Each probe has a hard timeout of 2 seconds.
+// spec: §25.3 — "Each probe has a hard timeout of 2 seconds.
 // Probes run in parallel."
 func (a *Aggregator) Report(ctx context.Context) Report {
 	a.mu.RLock()
@@ -409,7 +408,7 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 	if fn != nil && prev != "" && prev != worst {
 		fn(prev, worst, prevComponents, components)
 	}
-	// spec: §25.13 line 4848 — the gateway's in-process tracker
+	// spec: §25.13 — the gateway's in-process tracker
 	// evaluates the compiled-in thresholds. Surface the source on the
 	// envelope so callers (and `lenny-ops` re-aggregation) can decide
 	// whether the per-replica view aligns with the operator's
@@ -448,7 +447,7 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 	if !ok {
 		return Component{}, false
 	}
-	// Shares the §25.3 line 526 probe-result cache with Report so a
+	// Shares the §25.3 probe-result cache with Report so a
 	// single-component pull does not bypass the 5-second window, and
 	// applies the same alert-derived overlay so GET /v1/admin/health/{name}
 	// matches the aggregate Report's per-component verdict.
@@ -472,8 +471,7 @@ func (a *Aggregator) Component(ctx context.Context, name string) (Component, boo
 // overlay) so a transient firing alert cannot pull a replica out of the
 // Service; only an actual backend probe failure removes a replica.
 //
-// spec: §10.4 line 386 ("Readiness probes remove unhealthy replicas
-// from traffic"). F-10.4.6.
+// spec: §10.4. F-10.4.6.
 func (a *Aggregator) HardDependencyStatus(ctx context.Context, names ...string) Status {
 	worst := StatusHealthy
 	for _, name := range names {

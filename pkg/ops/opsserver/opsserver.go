@@ -205,7 +205,7 @@ type Options struct {
 	// shared-secret-derived token to force an immediate cache refresh.
 	// The route is exempt from the §25.4 OIDC gate (it carries no bearer)
 	// and authenticated by the token header instead, gated at the network
-	// layer by the intra-Service NetworkPolicy. spec: §25.5 line 2751.
+	// layer by the intra-Service NetworkPolicy. spec: §25.5.
 	CacheInvalidator     CacheInvalidator
 	CacheInvalidateToken string
 	// ReleaseChannel is the §25.8 release-channel manifest publisher.
@@ -267,9 +267,8 @@ type Options struct {
 	// diagnostic endpoints emitting no audit event (they still serve).
 	DiagnosticsAudit *DiagnosticsAuditConfig
 	// Auth, when non-nil, wraps every operability route (all paths except
-	// the Kubernetes probes /healthz and /readyz) in the §25.4 lines
-	// 1562-1564 OIDC authentication + platform-admin/tenant-admin role
-	// gate, and applies the §25.4 line 2001 per-service-account rate limit
+	// the Kubernetes probes /healthz and /readyz) in the §25.4 OIDC authentication + platform-admin/tenant-admin role
+	// gate, and applies the §25.4 per-service-account rate limit
 	// when a RateLimiter is set. A nil value leaves the surface
 	// unauthenticated (dev / embedded single-node only); the production
 	// binary always supplies it.
@@ -409,7 +408,7 @@ func New(opts Options) *Server {
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
-	// spec: §16.8 / §16.9 line 720 — the Prometheus scrape surface. §16.9
+	// spec: §16.8 / §16.9 — the Prometheus scrape surface. §16.9
 	// names lenny-ops (TCP 9090) a mandatory scrape target in every tier;
 	// the §16.8 self-monitoring, backup, drift, and rate-limit series are
 	// registered on the process default registry and exposed here. The
@@ -423,7 +422,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
-	// spec: §25.7 lines 3055-3057, §17.7 line 741 — the full markdown
+	// spec: §25.7, §17.7 — the full markdown
 	// hop for an agent that already holds the runbook name.
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}", s.handleRunbookMarkdown)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
@@ -475,7 +474,7 @@ func New(opts Options) *Server {
 	// overwrites this with the post-authentication chain when an
 	// AuthConfig is wired.
 	s.mcpReplay = inner
-	// §25.4 lines 1562-1564: when an AuthConfig is supplied, every
+	// §25.4: when an AuthConfig is supplied, every
 	// operability route runs through the OIDC authentication + role gate
 	// (the Kubernetes probes are exempt). The auth wrapper sits inside the
 	// correlation/access-log middleware so a rejected request is still
@@ -484,7 +483,7 @@ func New(opts Options) *Server {
 	if opts.Auth != nil {
 		routes = s.withOpsAuth(inner, opts.Auth)
 	}
-	// §25.4 lines 2499-2526: every request runs through the correlation
+	// §25.4: every request runs through the correlation
 	// middleware (stamps operation_id / agent_name / trace_id from inbound
 	// headers onto the request context) and the access-log middleware
 	// (one structured log line per request, projected through the §25.4
@@ -500,7 +499,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // strictHealthDeps are the dependencies the §25.4 strict readiness
 // gate requires reachable before a replica accepts traffic: the
-// Postgres connection and the Kubernetes API (spec: §25.4 line 1055 —
+// Postgres connection and the Kubernetes API (spec: §25.4 —
 // "200 only when both Postgres connection AND K8s API are reachable").
 var strictHealthDeps = []string{ProbePostgresName, ProbeK8sAPIName}
 
@@ -513,7 +512,7 @@ const (
 )
 
 // handleHealthz serves both §25.4 probe modes on the same path (spec:
-// §25.4 lines 1033-1057):
+// §25.4):
 //
 //   - permissive (the default, used by liveness and startup): it reports
 //     that the process is running. It does not fail on a downstream
@@ -528,7 +527,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	// spec: §25.4 line 1055 — strict gate. A required probe that is
+	// spec: §25.4 — strict gate. A required probe that is
 	// absent from the map (e.g. no Kubernetes client wired) cannot be
 	// confirmed reachable, so it counts as degraded.
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
@@ -606,7 +605,7 @@ func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
 			writeDiagnosticsError(w, err)
 			return
 		}
-		// spec: §25.9 line 3697 — connectivity is a platform-wide check,
+		// spec: §25.9 — connectivity is a platform-wide check,
 		// so its coalescing window keys on a fixed resource.
 		s.recordDiagnosticAudit(r, eventConnectivityChecked, "connectivity", "platform")
 		writeJSON(w, http.StatusOK, report)

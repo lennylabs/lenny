@@ -190,7 +190,7 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 		Origin:     PlaygroundOrigin,
 		Labels:     h.cfg.EffectiveLabels(),
 		IssuedAt:   h.now(),
-		// §27.6 line 201: seed the idle clock at creation so a record that
+		// §27.6: seed the idle clock at creation so a record that
 		// never mints a bearer is still reclaimable once the idle window
 		// elapses.
 		LastActivityAt: h.now(),
@@ -199,7 +199,7 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 	if err := h.sessions.PutSession(ctx, subject.TenantID, sessionID, rec, h.cfg.OIDCSessionTTL); err != nil {
 		return err
 	}
-	// §27.3.1 line 81: the cookie carries only the opaque session id. The
+	// §27.3.1: the cookie carries only the opaque session id. The
 	// tenant is recovered server-side from the fan-in index PutSession
 	// wrote, so the cookie value discloses no tenant id. F-27.3.8.
 	http.SetCookie(w, &http.Cookie{
@@ -233,7 +233,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	// §27.3.1 line 81: recover the tenant from the fan-in index since the
+	// §27.3.1: recover the tenant from the fan-in index since the
 	// cookie carries only the opaque id. A missing entry or store error
 	// leaves logout idempotent (the cookie is already cleared). F-27.3.8.
 	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
@@ -266,7 +266,7 @@ func (h *Handler) revokeSessionRecord(ctx context.Context, tenant, id string, re
 		return err
 	}
 	h.metrics.revocation(string(reason))
-	// spec: §27.8 line 241 — the propagation histogram measures latency
+	// spec: §27.8 — the propagation histogram measures latency
 	// "from when a revocation is written on the originating replica to
 	// when peer replicas observe it", so the sample is emitted by the
 	// subscribing (peer) replica in SubscribeAllRevocations, not here on
@@ -302,14 +302,14 @@ func (h *Handler) RevokeSession(ctx context.Context, tenant, id string, reason R
 // after it crosses the window.
 const defaultIdleSweepInterval = 60 * time.Second
 
-// idleReclaimWindow is the §27.6 line 201 idle window after which an
+// idleReclaimWindow is the §27.6 idle window after which an
 // abandoned playground session record is reclaimed. A bearer mint is the
 // session's activity heartbeat, so the window allows one full bearer
 // lifetime (the longest an actively-minting user goes between heartbeats)
 // plus the playground.maxIdleTimeSeconds idle grace. This guarantees the
 // sweep never reclaims a session a user is actively re-minting against,
 // while still bounding the reclamation of a session whose browser closed
-// without delivering the best-effort cancel (§27.6 line 202).
+// without delivering the best-effort cancel (§27.6).
 func (h *Handler) idleReclaimWindow() time.Duration {
 	grace := time.Duration(h.cfg.MaxIdleTimeSeconds) * time.Second
 	if grace <= 0 {
@@ -325,8 +325,7 @@ func (h *Handler) idleReclaimWindow() time.Duration {
 // bearer, PUBLISH the fan-out, emit the §27.8 metric). It returns the
 // number revoked. The pass is best-effort across records: a per-record
 // store error is collected and the remaining records are still attempted,
-// so one failure does not strand the sweep. spec: §27.3.1 line 94, §27.6
-// line 201/204.
+// so one failure does not strand the sweep. spec: §27.3.1, §27.6.
 func (h *Handler) SweepIdleSessions(ctx context.Context) (int, error) {
 	if h.sessions == nil {
 		return 0, nil
@@ -390,7 +389,7 @@ func (h *Handler) RunIdleSweeper(ctx context.Context, interval time.Duration) {
 // best-effort across the user's sessions: a per-session store error is
 // returned after the remaining sessions are attempted, so the §11.4
 // fan-out records a partial propagation rather than aborting. spec:
-// §27.3.1 line 148, §27.6 line 204.
+// §27.3.1, §27.6.
 func (h *Handler) RevokeSessionsForUser(ctx context.Context, tenant, userID string) (int, error) {
 	if h.sessions == nil {
 		return 0, nil
@@ -479,7 +478,7 @@ func (h *Handler) callbackURL(r *http.Request) string {
 }
 
 // parseSessionCookie reads the lenny_playground_session cookie and
-// returns its opaque session id. Per §27.3.1 line 81 the cookie value
+// returns its opaque session id. Per §27.3.1 the cookie value
 // is the opaque session id alone; the tenant is recovered server-side
 // via SessionStore.TenantForSession rather than embedded in the cookie.
 // The opaque id is base64url (newOpaqueID) and never contains a dot, so

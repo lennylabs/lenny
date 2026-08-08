@@ -71,7 +71,7 @@ func newReclaimer(t *testing.T, secrets reclaimer.SecretReader, revoker reclaime
 	return r
 }
 
-// spec: §13.3 line 603 — the sweep durably revokes the single named predecessor.
+// spec: §13.3 — the sweep durably revokes the single named predecessor.
 func TestSweepRevokesNamedPredecessor(t *testing.T) {
 	secrets := &fakeSecrets{exists: true, data: secretWithPrev("current", "orphan")}
 	rev := &fakeRevoker{revokeErr: map[string]error{}}
@@ -89,7 +89,7 @@ func TestSweepRevokesNamedPredecessor(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — no Secret means nothing to reclaim (clean no-op).
+// spec: §13.3 — no Secret means nothing to reclaim (clean no-op).
 func TestSweepNoSecretIsNoOp(t *testing.T) {
 	secrets := &fakeSecrets{exists: false}
 	rev := &fakeRevoker{revokeErr: map[string]error{}}
@@ -107,7 +107,7 @@ func TestSweepNoSecretIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — an empty prev_jti slot names no predecessor (no-op),
+// spec: §13.3 — an empty prev_jti slot names no predecessor (no-op),
 // so the sweep never revokes the current or an in-flight successor.
 func TestSweepEmptyPredecessorIsNoOp(t *testing.T) {
 	secrets := &fakeSecrets{exists: true, data: secretWithPrev("current", "")}
@@ -126,7 +126,7 @@ func TestSweepEmptyPredecessorIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — a durable-revoke failure surfaces so the leader-gated
+// spec: §13.3 — a durable-revoke failure surfaces so the leader-gated
 // loop logs it and retries on the next pass, rather than silently dropping the
 // orphan.
 func TestSweepSurfacesRevokeError(t *testing.T) {
@@ -143,7 +143,7 @@ func TestSweepSurfacesRevokeError(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — a Secret read failure surfaces rather than being
+// spec: §13.3 — a Secret read failure surfaces rather than being
 // swallowed as a no-op, so the loop does not report a clean sweep when it could
 // not read the predecessor.
 func TestSweepSurfacesSecretReadError(t *testing.T) {
@@ -156,7 +156,7 @@ func TestSweepSurfacesSecretReadError(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — the cadence is operator-tunable with a documented
+// spec: §13.3 — the cadence is operator-tunable with a documented
 // default; a non-positive Interval falls back to DefaultSweepInterval.
 func TestIntervalDefaultsWhenNonPositive(t *testing.T) {
 	r := newReclaimer(t, &fakeSecrets{}, &fakeRevoker{})
@@ -175,7 +175,7 @@ func TestIntervalDefaultsWhenNonPositive(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — New fails closed on a missing required dependency.
+// spec: §13.3 — New fails closed on a missing required dependency.
 func TestNewValidatesRequiredFields(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -198,7 +198,7 @@ func TestNewValidatesRequiredFields(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — Run drives Sweep on each tick and delivers the
+// spec: §13.3 — Run drives Sweep on each tick and delivers the
 // reclaimed flag and error to onTick until the context is cancelled.
 func TestRunTicksAndStopsOnContextCancel(t *testing.T) {
 	secrets := &fakeSecrets{exists: true, data: secretWithPrev("current", "orphan")}

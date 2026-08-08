@@ -114,7 +114,7 @@ func assertForgeryRejected(t *testing.T, ts *httptest.Server, store *memstore.St
 	}
 }
 
-// spec: §13.3 line 623 — "Lenny verifies the token's signature against
+// spec: §13.3 — "Lenny verifies the token's signature against
 // the IdP's JWKS" (and, symmetrically, the gateway's own Verifier
 // checks a presented bearer's signature on every request). A JWS
 // `alg: none` token carries the empty octet string as its signature
@@ -142,7 +142,7 @@ func TestAlgNoneForgeryRejected(t *testing.T) {
 	assertForgeryRejected(t, ts, store, tok)
 }
 
-// spec: §13.3 line 613 combined with the §10.3 key-rotation `kid`
+// spec: §13.3 combined with the §10.3 key-rotation `kid`
 // routing in 10_gateway-internals.md §10.2 — the verifier "tries the
 // current and previous key versions" identified by `kid`, so a token
 // is only ever checked against the specific keyed secret its `kid`
@@ -172,7 +172,7 @@ func TestKeySubstitutionForgedKIDRejected(t *testing.T) {
 	assertForgeryRejected(t, ts, store, tok)
 }
 
-// spec: §13.3 line 623 (JWKS-backed signature verification) — the
+// spec: §13.3 — the
 // classic RS-to-HS "algorithm confusion" attack rewrites an
 // asymmetric-key token's JOSE header to claim a symmetric algorithm
 // (or, as attempted here, the reverse: an HS256-verified token is

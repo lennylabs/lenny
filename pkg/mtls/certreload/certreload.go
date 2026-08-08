@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package certreload provides a filesystem-watching TLS certificate
-// source. The §10.3 line 338 mTLS posture requires both the gateway and
+// source. The §10.3 mTLS posture requires both the gateway and
 // the runtime adapter to use `tls.Config` with `GetCertificate` /
 // `GetClientCertificate` callbacks that re-read the keypair from the
 // cert-manager-managed projected volume, so a renewed leaf certificate
@@ -30,7 +30,7 @@ import (
 // Reloader holds a TLS keypair re-read from disk on modification. Its
 // GetCertificate / GetClientCertificate methods are installed on a
 // tls.Config so renewed certificates are served without a restart.
-// spec: §10.3 line 338.
+// spec: §10.3.
 type Reloader struct {
 	certFile string
 	keyFile  string

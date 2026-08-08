@@ -29,19 +29,19 @@ const opsDeployment = "lenny-ops"
 // opsSelector is the label the lenny-ops Deployment, its pods, and its
 // Service key on. lenny-ops carries app: lenny-ops rather than the
 // lenny.dev/component key the rest of the control plane uses, because it
-// is a separate operability plane (§13.2 line 201, ops-deployment.yaml).
+// is a separate operability plane (§13.2, ops-deployment.yaml).
 const opsSelector = "app=lenny-ops"
 
 // spec: 25.1
 // diagnosis: §25.1 independent-failure-domain guarantee did not hold in
-// the gateway→lenny-ops direction. §25.1 line 43: "Agents connect to
+// the gateway→lenny-ops direction. §25.1: "Agents connect to
 // lenny-ops (Section 25.4), which is a separate Deployment from the
 // gateway and survives gateway failures." The test scales the gateway
 // Deployment to zero (the gateway Service loses its endpoints — a total
-// gateway outage). §25.1 line 20 lists the gateway admin API as a
+// gateway outage). §25.1 lists the gateway admin API as a
 // graceful-degradation dependency of lenny-ops, so lenny-ops must stay
 // Ready and must not crash-loop while the gateway is down: its lifecycle
-// is independent of Lenny's (§25.1 line 41). The test asserts lenny-ops
+// is independent of Lenny's (§25.1). The test asserts lenny-ops
 // stays Ready with a stable restart count throughout the gateway outage,
 // then restores the gateway and asserts it returns to Ready.
 func TestOpsSurvivesGatewayOutage(t *testing.T) {
@@ -70,9 +70,7 @@ func TestOpsSurvivesGatewayOutage(t *testing.T) {
 	}
 	t.Logf("injected: %s scaled to zero; the gateway is unreachable", gatewayDeployment)
 
-	// Assert: lenny-ops stays Ready throughout the gateway outage. §25.1
-	// line 43 requires lenny-ops to survive a gateway failure; §25.1 line
-	// 20 makes the gateway admin API a graceful-degradation dependency, so
+	// Assert: lenny-ops stays Ready throughout the gateway outage. §25.1 requires lenny-ops to survive a gateway failure; §25.1 makes the gateway admin API a graceful-degradation dependency, so
 	// the outage must not flip lenny-ops NotReady or restart its pods.
 	for i := 0; i < 5; i++ {
 		if !deploymentReady(t, c, opsDeployment) {
@@ -108,7 +106,7 @@ func TestOpsSurvivesGatewayOutage(t *testing.T) {
 
 // spec: 25.1
 // diagnosis: §25.1 heartbeat fallback did not survive a lenny-ops outage.
-// §25.1 line 45: "If lenny-ops is unreachable, the agent falls back to
+// §25.1: "If lenny-ops is unreachable, the agent falls back to
 // the gateway's health summary endpoint (GET /v1/admin/health/summary)
 // as a heartbeat." The gateway health surface reads only in-process state
 // (§25.3 Data Sources) and does not depend on lenny-ops, so the heartbeat
@@ -157,7 +155,7 @@ func TestGatewayHealthSummarySurvivesOpsOutage(t *testing.T) {
 	t.Logf("injected: %s scaled to zero, Service has no endpoints; lenny-ops is unreachable", opsDeployment)
 
 	// Assert: the gateway heartbeat keeps answering 200 throughout the
-	// lenny-ops outage. §25.1 line 45 makes this endpoint the agent's
+	// lenny-ops outage. §25.1 makes this endpoint the agent's
 	// fallback heartbeat precisely because it does not depend on lenny-ops.
 	for i := 0; i < 5; i++ {
 		if p := curlGateway(t, c, probe, gatewayIP, "/v1/admin/health/summary"); !p.ok(200) {

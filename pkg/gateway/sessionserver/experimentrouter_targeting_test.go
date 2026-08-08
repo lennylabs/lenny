@@ -17,11 +17,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §10.7 line 833 / §16.1 lines 156-157 — external experiment
+// spec: §10.7 / §16.1 — external experiment
 // targeting observability. The OFREP evaluation path records the
 // lenny_experiment_targeting_duration_seconds histogram and the
 // lenny_experiment_targeting_error_total counter through the reporter,
-// and emits the §16.6 line 651 experiment.unknown_external_id event.
+// and emits the §16.6 experiment.unknown_external_id event.
 
 type targetingResult struct {
 	reporter *recordingRejectionReporter
@@ -63,7 +63,7 @@ func TestExperimentTargetingRecordsDurationWithHostnameProvider_spec_16_1_156(t 
 	if len(res.reporter.targetingDurs) != 1 {
 		t.Fatalf("targeting duration observations = %d, want 1", len(res.reporter.targetingDurs))
 	}
-	// §16.1 line 156: for provider:ofrep the metric provider label is the
+	// §16.1: for provider:ofrep the metric provider label is the
 	// OFREP endpoint hostname, not the literal "ofrep".
 	wantHost, _ := url.Parse(res.ofrepURL)
 	if got := res.reporter.targetingDurs[0].provider; got != wantHost.Hostname() {
@@ -88,7 +88,7 @@ func TestExperimentTargetingHTTPErrorClassifiedAsHTTPError_spec_16_1_157(t *test
 	if got := res.reporter.targetingErrors[0].errorType; got != "http_error" {
 		t.Errorf("error_type = %q, want http_error", got)
 	}
-	// §16.1 line 156: latency is recorded for the failed attempt too.
+	// §16.1: latency is recorded for the failed attempt too.
 	if len(res.reporter.targetingDurs) != 1 {
 		t.Errorf("targeting duration observations = %d, want 1 even on failure", len(res.reporter.targetingDurs))
 	}
@@ -136,7 +136,7 @@ func TestExperimentTargetingUnknownExternalIDEmittedAndIgnored_spec_10_7_829(t *
 	if data.Provider != "ofrep" {
 		t.Errorf("provider = %q, want ofrep", data.Provider)
 	}
-	// §10.7 line 829: an unregistered external experiment is ignored — no
+	// §10.7: an unregistered external experiment is ignored — no
 	// targeting error is recorded and the session is not enrolled.
 	if len(res.reporter.targetingErrors) != 0 {
 		t.Errorf("targeting errors = %d, want 0 — an unknown id is not a targeting failure", len(res.reporter.targetingErrors))

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §11.2 lines 87-88 — billing events auto-populate
+// spec: §11.2 — billing events auto-populate
 // experiment_id/variant_id from the session's experimentContext. The
 // accessor must be nil-safe so an unenrolled session yields empty
 // strings rather than a panic. F-11.2.13.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package sessionlogstore persists the §4.4 line 226 runtime-stderr
+// Package sessionlogstore persists the §4.4 runtime-stderr
 // session-log artifact. When a session reaches a terminal state, the
 // gateway hands the buffered stderr bytes to a Store. The MinIO-backed
 // Store uploads the bytes to
@@ -16,7 +16,7 @@
 // stderr collection is out of scope for this package; the store
 // surface takes a byte slice the caller has already buffered.
 //
-// spec: §4.4 line 226 — "Session logs and runtime stderr" among the
+// spec: §4.4 — "Session logs and runtime stderr" among the
 // Event/Checkpoint Store contents.
 package sessionlogstore
 
@@ -40,10 +40,10 @@ import (
 // to pre-truncate still produces a bounded object).
 const MaxLogBytes = 1 << 20
 
-// SessionLogObjectKey returns the §4.4 line 226 canonical MinIO
+// SessionLogObjectKey returns the §4.4 canonical MinIO
 // object key for the supplied (tenant, session).
 //
-// spec: §4.4 line 226 — session log path.
+// spec: §4.4 — session log path.
 func SessionLogObjectKey(tenantID, sessionID string) string {
 	return "/" + tenantID + "/sessions/" + sessionID + "/stderr.log"
 }
@@ -71,7 +71,7 @@ type Record struct {
 // production wiring lives in pkg/blobstore; this interface is
 // narrow so unit tests can stub it without pulling in a S3 client.
 //
-// spec: §4.4 line 226 — MinIO upload of the session-log object.
+// spec: §4.4 — MinIO upload of the session-log object.
 type ContextObjectUploader interface {
 	// Upload writes body to MinIO at the canonical session-log key
 	// for (tenant, session). Returns nil on success, an error on
@@ -86,7 +86,7 @@ type ContextObjectUploader interface {
 // bytes participate in the GC lifecycle. Nil is permitted (dev mode
 // without Postgres accounting); the upload still succeeds.
 //
-// spec: §4.4 line 226 / §12.5 artifact_store row insert.
+// spec: §4.4 / §12.5 artifact_store row insert.
 type ArtifactCatalog interface {
 	// RecordSessionLog inserts an artifact_store row for the
 	// uploaded session-log object at the supplied tenant, session,
@@ -115,13 +115,12 @@ type StorageQuotaSink interface {
 //     bumps the per-tenant byte counter. Best-effort: a failure is
 //     logged and discarded rather than propagated.
 //
-// spec: §4.4 line 226.
+// spec: §4.4.
 type Store interface {
 	// Put writes the supplied Record to durable storage. Returns
 	// nil on success; returns an error only when the Record itself
 	// is malformed (empty tenant / session). Storage failures are
-	// logged inside the implementation and dropped — the §4.4 line
-	// 226 contract is "session log retained when practical", not a
+	// logged inside the implementation and dropped — the §4.4 contract is "session log retained when practical", not a
 	// hard durability guarantee that would block the session
 	// terminal-state path.
 	Put(ctx context.Context, r Record) error
@@ -141,7 +140,7 @@ func (Noop) Put(_ context.Context, r Record) error {
 	return nil
 }
 
-// MinIOStore is the §4.4 line 226 MinIO-backed Store. It uploads the
+// MinIOStore is the §4.4 MinIO-backed Store. It uploads the
 // session-log bytes to MinIO at the canonical key, records an
 // artifact_store row with `artifact_type = session_log`, and bumps
 // the §11.2 per-tenant storage byte counter.
@@ -153,7 +152,7 @@ func (Noop) Put(_ context.Context, r Record) error {
 // data, not authoritative state, so the Store privileges progress
 // over strict transactional ordering.
 //
-// spec: §4.4 line 226.
+// spec: §4.4.
 type MinIOStore struct {
 	// Uploader is the MinIO surface the Store writes through. Nil
 	// disables the upload entirely (the Store becomes a no-op).
@@ -197,7 +196,7 @@ func (s *MinIOStore) Put(ctx context.Context, r Record) error {
 		newReader(body), len(body)); err != nil {
 		s.logf("sessionlogstore: upload failed tenant=%s session=%s err=%v",
 			r.TenantID, r.SessionID, err)
-		// §4.4 line 226: the session log is observability data, not
+		// §4.4: the session log is observability data, not
 		// authoritative state — dropping the artifact is preferable to
 		// failing the session terminal-state path.
 		return nil
@@ -256,9 +255,9 @@ func (r *sliceReader) Read(p []byte) (int, error) {
 // buffered stderr bytes and hands them to the Store. The wiring is a
 // single function call so tests can stub it directly.
 //
-// spec: §4.4 line 226.
+// spec: §4.4.
 type CloseHook struct {
-	// Store is the §4.4 line 226 session-log store. Required; the
+	// Store is the §4.4 session-log store. Required; the
 	// hook returns an error when Store is nil.
 	Store Store
 }

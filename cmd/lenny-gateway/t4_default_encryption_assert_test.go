@@ -37,7 +37,7 @@ func (s listFailingTenants) List(context.Context, tenantstore.ListFilter) ([]ten
 	return nil, s.err
 }
 
-// spec: §12.5 line 315, 321-325; §17.9.7 — assertT4DefaultEncryption is the
+// spec: §12.5; §17.9.7 — assertT4DefaultEncryption is the
 // gateway-startup wrapper that resolves the object-store provider and the set
 // of workspaceTier T4 tenants, then applies the fail-closed default-encryption
 // gate. It skips a SigV4 backend (which folds the SSE-KMS key into the
@@ -131,7 +131,7 @@ func TestAssertT4DefaultEncryptionResolvesProviderAndTenants(t *testing.T) {
 	})
 }
 
-// spec: §12.5 line 315; §17.9.7 — a gcs/azure backend whose T4-tenant
+// spec: §12.5; §17.9.7 — a gcs/azure backend whose T4-tenant
 // enumeration fails is itself fatal: the gateway cannot verify the T4
 // default-encryption posture and must not boot, so the wrapper surfaces the
 // wrapped enumeration error rather than proceeding on an empty tenant set.
@@ -156,7 +156,7 @@ func TestAssertT4DefaultEncryptionFailsClosedWhenTenantEnumerationFails(t *testi
 	}
 }
 
-// spec: §11.2 line 35; §12.4 storageQuotaBytes — tenantStorageQuotaResolver is
+// spec: §11.2; §12.4 storageQuotaBytes — tenantStorageQuotaResolver is
 // the checkpointer QuotaLimitFor seam. It returns a tenant's configured
 // storageQuotaBytes for the pre-checkpoint reservation, and fails closed with a
 // wrapped, tenant-named error when the lookup fails so a checkpoint does not

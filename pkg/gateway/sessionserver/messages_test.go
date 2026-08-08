@@ -84,13 +84,13 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// spec: §15.4 lines 1725-1737 — every send_message call returns a
+	// spec: §15.4 — every send_message call returns a
 	// `delivery_receipt` envelope (F-7.2.10).
 	if got, want := resp.DeliveryReceipt.Status, session.DeliveryStatusDelivered; got != want {
 		t.Errorf("delivery receipt status = %q, want %q", got, want)
 	}
 	if resp.DeliveryReceipt.MessageID == "" {
-		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id when the sender omits one")
+		t.Error("delivery receipt messageId is empty; §15.4 requires a gateway-assigned id when the sender omits one")
 	}
 	if resp.DeliveryReceipt.DeliveredAt.IsZero() {
 		t.Error("delivery receipt deliveredAt is zero for status=delivered")
@@ -231,10 +231,9 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	}
 }
 
-// transcriptEnvelopeJSON is the §15.1 canonical list envelope per spec
-// lines 1228-1253. Used by tests that assert the transcript handler
+// transcriptEnvelopeJSON is the §15.1 canonical list envelope per spec. Used by tests that assert the transcript handler
 // emits `{items, cursor, hasMore}` and not the legacy
-// `{sessionId, entries}` shape. spec: §15.1 line 1228.
+// `{sessionId, entries}` shape. spec: §15.1.
 type transcriptEnvelopeJSON struct {
 	Items   []transcriptstore.Entry `json:"items"`
 	Cursor  string                  `json:"cursor"`
@@ -272,7 +271,7 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 49 — a tenant capability override that disables
+// spec: §5.1 — a tenant capability override that disables
 // injection.supported on an injection-capable runtime narrows the
 // injection gate for that tenant's sessions, while a tenant with no
 // override keeps the runtime's declared (injection-on) default.
@@ -527,7 +526,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 // store blip must fail closed rather than admit injection against the
 // un-overlaid (injection-on) base runtime and must record the granular
 // cause in both logs and metrics.
-// spec: §5.1 line 49 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+// spec: §5.1, §15.1 (SERVICE_UNAVAILABLE).
 func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
 	store := memstore.New()
 	overrides := transientOverrideStore{
@@ -608,12 +607,12 @@ func TestTranscriptEmptyForFreshSession(t *testing.T) {
 }
 
 // TestMessagesRejectsPreRunningStatesPerSpec71Line339 covers the
-// §7.2 line 339 routing-by-target-state table: external-client REST
+// §7.2 routing-by-target-state table: external-client REST
 // calls against a pre-running session (created / finalizing / ready /
 // starting) MUST reject with `TARGET_NOT_READY` so the client retries
 // after starting the session. The DLQ-buffered behavior is reserved
 // for inter-session `lenny/send_message` callers.
-// spec: §7.2 line 339; F-7.2.15.
+// spec: §7.2; F-7.2.15.
 func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -649,7 +648,7 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 
 // TestMessagesAcceptsRunningSession reasserts the spec line 622
 // running-state happy path now that pre-running is rejected.
-// spec: §15.1 line 622; §7.2 paths 2/4.
+// spec: §15.1; §7.2 paths 2/4.
 func TestMessagesAcceptsRunningSession(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_run")
@@ -661,8 +660,8 @@ func TestMessagesAcceptsRunningSession(t *testing.T) {
 	}
 }
 
-// TestMessagesRejectsInvalidDeliveryValue covers §15.4 line 1723.
-// spec: §15.4 line 1715-1723; §15.1 INVALID_DELIVERY_VALUE; F-7.2.14.
+// TestMessagesRejectsInvalidDeliveryValue covers §15.4.
+// spec: §15.4; §15.1 INVALID_DELIVERY_VALUE; F-7.2.14.
 func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_d")
@@ -679,7 +678,7 @@ func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 
 // TestMessagesAcceptsCanonicalDeliveryValues covers the closed §15.4
 // enum (queued, immediate, absent).
-// spec: §15.4 line 1715-1719; F-7.2.14.
+// spec: §15.4; F-7.2.14.
 func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 	for _, v := range []string{"", "queued", "immediate"} {
 		t.Run("delivery="+v, func(t *testing.T) {
@@ -698,7 +697,7 @@ func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 // TestMessagesInReplyToResolvesPendingRequestInput covers §7.2 path 1:
 // a payload's inReplyTo resolves a pending lenny/request_input
 // without falling through to the executor.
-// spec: §7.2 line 317; §15.4 line 1786; F-7.2.14.
+// spec: §7.2; §15.4; F-7.2.14.
 func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
@@ -743,7 +742,7 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 // TestMessagesInReplyToFallsThroughOnNoMatch — a stale inReplyTo that
 // matches no pending request falls through to the executor per §7.2
 // path 1 ("no matching inReplyTo" → continue evaluating paths).
-// spec: §7.2 line 317; F-7.2.14.
+// spec: §7.2; F-7.2.14.
 func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
@@ -792,7 +791,7 @@ func TestMessagesClientSlotIDIsIgnored(t *testing.T) {
 }
 
 // TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228 pins the
-// §15.1 line 1228 canonical list envelope `{items, cursor, hasMore}`
+// §15.1 canonical list envelope `{items, cursor, hasMore}`
 // on the transcript endpoint. F-15.1.19.
 func TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	srv, store := newMessagesServer(t)
@@ -872,7 +871,7 @@ func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
 }
 
 // TestTranscriptRejectsOversizedLimit_spec_15_1_1236 confirms the
-// §15.1 line 1236 clamp [1, 200] is enforced — requests for limit=500
+// §15.1 clamp [1, 200] is enforced — requests for limit=500
 // see 200 items at most.
 func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	srv, store := newMessagesServer(t)
@@ -894,7 +893,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(env.Items) != 200 {
-		t.Errorf("limit=500: items=%d, want 200 (§15.1 line 1236 clamp)", len(env.Items))
+		t.Errorf("limit=500: items=%d, want 200 (§15.1 clamp)", len(env.Items))
 	}
 	if !env.HasMore {
 		t.Errorf("limit=500 against 500-entry transcript should report hasMore=true")
@@ -902,7 +901,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 }
 
 // TestTranscriptRejectsExpiredCursor_spec_15_1_1253 confirms the
-// §15.1 line 1253 "cursor_expired" rule fires after the 24-hour TTL.
+// §15.1 rule fires after the 24-hour TTL.
 // F-15.1.20.
 func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	// Build a server with a clock we can advance past the 24-hour TTL.
@@ -939,7 +938,7 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 818 — POST /v1/sessions/{id}/messages against a
+// spec: §15.1 — POST /v1/sessions/{id}/messages against a
 // suspended tenant is rejected with 403 TENANT_SUSPENDED before the
 // message reaches the executor. F-15.1.3.
 func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {

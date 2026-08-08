@@ -13,15 +13,15 @@ import (
 // (pkg/workspaceplan.SchemaVersion); a drift guard in the package test
 // asserts the two agree so a future bump cannot land on only one side.
 //
-// spec: §14.1 line 320 — `schemaVersion` is the wire-compat identifier;
+// spec: §14.1 — `schemaVersion` is the wire-compat identifier;
 // the only currently-valid value is 1.
 const MaxKnownSchemaVersion = 1
 
 // ErrSchemaVersionUnsupported reports a WorkspacePlan whose schemaVersion
-// is higher than this adapter understands. spec: §14.1 line 326.
+// is higher than this adapter understands. spec: §14.1.
 var ErrSchemaVersionUnsupported = errors.New("workspace plan schemaVersion is unsupported")
 
-// CheckSchemaVersion enforces the §14.1 line 326 live-consumer rule at
+// CheckSchemaVersion enforces the §14.1 live-consumer rule at
 // the adapter's materialization boundary: a plan whose schemaVersion
 // exceeds MaxKnownSchemaVersion MUST be rejected before any filesystem
 // write, because a stale adapter could misinterpret fields a newer
@@ -35,7 +35,7 @@ var ErrSchemaVersionUnsupported = errors.New("workspace plan schemaVersion is un
 // so a 0 reaching the adapter means an empty or pre-versioning plan, not a
 // future one. Only schemaVersion > known is a forward-incompatibility.
 //
-// spec: §14.1 line 326. F-14.1.3.
+// spec: §14.1. F-14.1.3.
 func CheckSchemaVersion(schemaVersion int) error {
 	if schemaVersion > MaxKnownSchemaVersion {
 		return fmt.Errorf("%w: plan declares schemaVersion %d, adapter knows %d",

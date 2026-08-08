@@ -30,8 +30,7 @@ import (
 // must leave the adapter in pending_validation rather than fail it)
 // from a genuine conformance failure.
 //
-// spec: §24.8 line 113; §15 line 1414 (the registration gate runs the
-// suite in a sandboxed environment).
+// spec: §24.8; §15.
 var ErrHarnessNotFound = errors.New("compliance: lenny-compliance harness not found")
 
 // Level is the §15.4 integration level the adapter declares.
@@ -118,10 +117,7 @@ type Summary struct {
 // located RunSuite returns ErrHarnessNotFound (wrapped) so callers can
 // distinguish "cannot validate here" from "validation failed".
 //
-// spec: §24.8 line 113 (the validate command runs the
-// RegisterAdapterUnderTest compliance suite); §15 line 1414 (the
-// registration gate runs the suite in a sandboxed environment and
-// transitions status on the result).
+// spec: §24.8; §15.
 func RunSuite(ctx context.Context, a Adapter, opts Options) (Report, error) {
 	if a == nil {
 		return Report{}, errors.New("compliance.RunSuite: adapter is nil")

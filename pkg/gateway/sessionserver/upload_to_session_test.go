@@ -104,7 +104,7 @@ func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) 
 
 // TestUploadToSessionHappyPath overlays a file into a running session's
 // workspace when both the runtime capability and the deployer policy admit
-// it. spec: §7.4 line 433 — F-7.4.6.
+// it. spec: §7.4 — F-7.4.6.
 func TestUploadToSessionHappyPath_spec_7_4_433(t *testing.T) {
 	h, root := midSessionFixture(t, true, true, true)
 	body := `{"files":[{"path":"docs/new.md","content":"` + b64("fresh") + `","mode":"644"}]}`
@@ -130,7 +130,7 @@ func TestUploadToSessionHappyPath_spec_7_4_433(t *testing.T) {
 // TestUploadToSessionRejectedWhenPolicyDisabled asserts the deployer policy
 // gates the surface: with the runtime declaring the capability but the
 // policy off, a running-session upload is rejected by the precondition.
-// spec: §7.4 line 433 — F-7.4.6.
+// spec: §7.4 — F-7.4.6.
 func TestUploadToSessionRejectedWhenPolicyDisabled_spec_7_4_433(t *testing.T) {
 	h, _ := midSessionFixture(t, true, false, true)
 	rr := uploadToSession(t, h, `{"files":[{"path":"a.txt","content":"`+b64("x")+`"}]}`)
@@ -143,8 +143,7 @@ func TestUploadToSessionRejectedWhenPolicyDisabled_spec_7_4_433(t *testing.T) {
 }
 
 // TestUploadToSessionRejectedWhenRuntimeLacksCapability asserts the runtime
-// capability is required even when the deployer policy is on. spec: §7.4
-// line 433 — F-7.4.6.
+// capability is required even when the deployer policy is on. spec: §7.4 — F-7.4.6.
 func TestUploadToSessionRejectedWhenRuntimeLacksCapability_spec_7_4_433(t *testing.T) {
 	h, _ := midSessionFixture(t, false, true, true)
 	rr := uploadToSession(t, h, `{"files":[{"path":"a.txt","content":"`+b64("x")+`"}]}`)
@@ -158,7 +157,7 @@ func TestUploadToSessionRejectedWhenRuntimeLacksCapability_spec_7_4_433(t *testi
 
 // TestUploadToSessionNoLiveBinding asserts a session with no live pod
 // binding on this replica is rejected with TARGET_NOT_READY (the capability
-// and policy both admit it). spec: §7.4 line 433 — F-7.4.6.
+// and policy both admit it). spec: §7.4 — F-7.4.6.
 func TestUploadToSessionNoLiveBinding_spec_7_4_433(t *testing.T) {
 	h, _ := midSessionFixture(t, true, true, false)
 	rr := uploadToSession(t, h, `{"files":[{"path":"a.txt","content":"`+b64("x")+`"}]}`)
@@ -196,7 +195,7 @@ func TestUploadToSessionValidation_spec_7_4(t *testing.T) {
 	}
 }
 
-// TestRuntimeDiscoveryExposesMidSessionUpload asserts the §7.4 line 433
+// TestRuntimeDiscoveryExposesMidSessionUpload asserts the §7.4
 // footnote: clients discover the capability via GET /v1/runtimes. F-7.4.6.
 func TestRuntimeDiscoveryExposesMidSessionUpload_spec_7_4_433(t *testing.T) {
 	runtimes := runtimestore.NewMemory()

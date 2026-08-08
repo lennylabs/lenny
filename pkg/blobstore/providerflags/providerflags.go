@@ -125,7 +125,7 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 		mem.SetTierGuard(tierGuardFromSSE(opts.SSEKeyResolver))
 		return mem, nil
 	case ProviderFilesystem:
-		// §17.4 line 165: the local-filesystem backend persists artifacts
+		// §17.4: the local-filesystem backend persists artifacts
 		// across a restart. The directory is created on first use.
 		if opts.FilesystemRoot == "" {
 			return nil, errors.New("blobstore/providerflags: objectStorage.provider=filesystem requires objectStorage.filesystemRoot")
@@ -134,7 +134,7 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 		if err != nil {
 			return nil, err
 		}
-		// §12.9 line 1048: the filesystem store is not envelope-capable, so
+		// §12.9: the filesystem store is not envelope-capable, so
 		// a T4 tenant's write is rejected at the storage boundary.
 		fs.SetTierGuard(tierGuardFromSSE(opts.SSEKeyResolver))
 		return fs, nil
@@ -149,7 +149,7 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 	}
 }
 
-// tierGuardFromSSE derives the §12.9 line 1048 storage-boundary tier
+// tierGuardFromSSE derives the §12.9 storage-boundary tier
 // guard from the SSE-KMS resolver. The resolver already classifies the
 // writing tenant: it returns requireKey=true for a T4 tenant (the data
 // classification that mandates envelope encryption). The non-envelope
@@ -158,7 +158,7 @@ func Resolve(ctx context.Context, opts Options) (blobstore.Store, error) {
 // deployment with no tenant tier source) yields a nil guard, so the
 // dev/minimal path is unaffected.
 //
-// spec: §12.9 line 1048; §12.5 ll. 297-303.
+// spec: §12.9; §12.5 ll. 297-303.
 func tierGuardFromSSE(r TenantSSEResolver) blobstore.TierGuardFunc {
 	if r == nil {
 		return nil

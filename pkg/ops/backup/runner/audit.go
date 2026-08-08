@@ -18,7 +18,7 @@ import (
 // drops the event (dev / no-durable-store mode); the ops_backups status
 // update still lands.
 //
-// spec: §25.11 line 4343 (every backup transition is audited);
+// spec: §25.11;
 // §16.7 (backup.completed, backup.failed, backup.verified).
 func emitBackupAudit(sink backup.AuditSink, ev backup.AuditEvent) {
 	if sink == nil {
@@ -36,7 +36,7 @@ func emitBackupAudit(sink backup.AuditSink, ev backup.AuditEvent) {
 // the originating error — but the audit row is still emitted so the
 // failure is visible in the §11.7 trail.
 //
-// spec: §25.11 line 4343; §16.7 backup.failed.
+// spec: §25.11; §16.7 backup.failed.
 func recordBackupFailed(ctx context.Context, cfg Config, reason string) {
 	_ = cfg.Reporter.BackupFailed(ctx, cfg.BackupID, reason)
 	emitBackupAudit(cfg.Audit, backup.AuditEvent{
@@ -45,7 +45,7 @@ func recordBackupFailed(ctx context.Context, cfg Config, reason string) {
 		Outcome:  "failed",
 		Detail:   reason,
 	})
-	// spec: §25.3 line 694 / §16.6 backup_failed — the operational event
+	// spec: §25.3 / §16.6 backup_failed — the operational event
 	// paired with the §16.7 backup.failed audit row, so an ops agent
 	// subscribed to the buffer observes the failure without polling the
 	// admin API.

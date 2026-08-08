@@ -88,7 +88,7 @@ type DeriveResponse struct {
 	// the same parent bytes by comparing this hash with the
 	// parent session's published hash.
 	//
-	// spec: §4.5 line 311.
+	// spec: §4.5.
 	WorkspaceSnapshotContentHash string `json:"workspaceSnapshotContentHash,omitempty"`
 
 	// ParentSessionID echoes the source session id for client-side
@@ -122,7 +122,7 @@ type DeriveIsolationDowngradeEvent struct {
 
 // handleDerive implements POST /v1/sessions/{id}/derive per §7.1 and
 // §15.1. The handler runs the per-source-session advisory lock
-// acquisition (§7.1 line 92), the source-session lookup, the
+// acquisition (§7.1), the source-session lookup, the
 // precondition state check, the workspace-snapshot resolution, the
 // SEC-001 monotonicity check (with platform-admin override), the
 // snapshot copy, and the atomic INSERT of the derived session row.
@@ -149,7 +149,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceID := r.PathValue("id")
 
-	// §7.1 line 92 — acquire the per-source-session advisory lock
+	// §7.1 — acquire the per-source-session advisory lock
 	// before reading the workspace snapshot reference. Concurrent
 	// derives on the same source session serialize across replicas so
 	// no caller observes a torn read while a checkpoint is mid-update.
@@ -201,17 +201,17 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// §15.1 line 622-624 precondition table for /derive: terminal source
+	// §15.1 precondition table for /derive: terminal source
 	// admitted by default; non-terminal source admitted only when the
 	// caller passes `allowStale: true` AND the state is one of
 	// {running, suspended, resume_pending, awaiting_client_action}. The
 	// table-driven validator centralises that rule. When the rejection is
-	// specifically "non-terminal-without-allowStale", §15.1 line 1052
+	// specifically "non-terminal-without-allowStale", §15.1
 	// upgrades the wire code from the generic INVALID_STATE_TRANSITION to
 	// the dedicated DERIVE_ON_LIVE_SESSION so SDK clients can distinguish
 	// "retry with allowStale" from "the source state is not derivable at
 	// all" (e.g., created/finalizing/ready/starting/input_required).
-	// spec: §15.1 line 622-624; spec: §15.1 line 1052.
+	// spec: §15.1; spec: §15.1.
 	capabilities := map[session.Capability]bool{}
 	if req.AllowStale {
 		capabilities[session.CapabilityAllowStaleDerive] = true
@@ -319,7 +319,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	derivedID := s.idFn()
 	derivedRef := derivedSnapshotRef(tenantID, derivedID)
-	// spec: §10.1 line 155 / §7.1 derive — when the parent's checkpoint is a
+	// spec: §10.1 / §7.1 derive — when the parent's checkpoint is a
 	// chunked manifest, derive copies every chunk under the parent's
 	// chunk_object_key_prefix into the derived session's own prefix and
 	// writes a derived manifest row, so the derived session owns a resumable
@@ -372,7 +372,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// spec: §7.1 line 75 — resolve the derived session's pool-derived
+	// spec: §7.1 — resolve the derived session's pool-derived
 	// isolation level once so executionMode + scrubPolicy are persisted
 	// alongside isolationProfile (same path as the plain create flow).
 	// GET /v1/sessions/{id} on a derived row therefore returns the same
@@ -436,8 +436,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // complete via the intent-row model (Put → ConfirmChunk →
 // Finalise(partial=false)).
 //
-// spec: §10.1 line 155 (chunk layout); §7.1 derive copy semantics; §4.5
-// line 311 (content-addressed independence from the parent).
+// spec: §10.1; §7.1 derive copy semantics; §4.5.
 func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedRef string, handled bool, err error) {
 	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
 		return "", false, nil
@@ -508,7 +507,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 // /{tenant}/checkpoints/{session}/{checkpoint_id}. Its last segment is the
 // checkpoint_id the manifest row is keyed by, so a derived session's ref
 // round-trips through checkpointIDFromSnapshotRef on the next download or
-// re-derive. spec: §10.1 line 155; §4.5 line 312.
+// re-derive. spec: §10.1; §4.5.
 func checkpointSnapshotRef(tenantID, sessionID, checkpointID string) string {
 	return fmt.Sprintf("/%s/%s/%s/%s", tenantID, blobstore.ObjectTypeCheckpoint, sessionID, checkpointID)
 }
@@ -613,8 +612,7 @@ func derivedSnapshotPart(sourceSessionID string) string {
 // the handler already holds). If a replacement coordinator has
 // incremented it (replica crash or Postgres failover mid-copy), the
 // stale replica skips the write so no orphan `failed` row becomes
-// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1 lines
-// 647-663 (reachability). F-15.1.14.
+// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1. F-15.1.14.
 func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
 	if !s.persistDeriveFailureRows {
 		return

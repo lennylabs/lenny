@@ -34,30 +34,30 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.7 line 833 / §16.1 lines 156-157 — external experiment
+	// spec: §10.7 / §16.1 — external experiment
 	// targeting observability. The `provider` label carries the
 	// OpenFeature provider name; for provider:ofrep the OFREP endpoint
-	// hostname is used (§16.1 line 156). Buckets resolve the sub-second
+	// hostname is used (§16.1). Buckets resolve the sub-second
 	// range the §10.7 200ms targeting timeout is sized against.
 	experimentTargetingDur, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_experiment_targeting_duration_seconds",
-		Help:    "§10.7 external experiment targeting evaluation latency by provider (§16.1 line 156).",
+		Help:    "§10.7 external experiment targeting evaluation latency by provider (§16.1).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2, 5},
 	}, []string{"provider"})
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.7 line 833 / §16.1 line 157 — targeting_failed counter.
+	// spec: §10.7 / §16.1 — targeting_failed counter.
 	// error_type classifies the §10.7 failure cause (timeout, transport,
 	// or the OFREP errorCode).
 	experimentTargetingErr, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_experiment_targeting_error_total",
-		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1 line 157).",
+		Help: "§10.7 external experiment targeting evaluation failures by provider and error_type (§16.1).",
 	}, []string{"provider", "error_type"})
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.7 line 1096 / §16.1 line 159 — incremented once per
+	// spec: §10.7 / §16.1 — incremented once per
 	// sticky-cache flush, i.e. each time an experiment transitions to
 	// paused or concluded and the gateway DELs its
 	// `t:{tenant}:exp:{exp}:sticky:*` keys. Labeled by experiment_id and
@@ -69,7 +69,7 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.7 lines 835-844 (SCL-023) / §16.1 line 64 — the per-tenant
+	// spec: §10.7 / §16.1 — the per-tenant
 	// targeting circuit-breaker gauge: 1 while the breaker is open (the
 	// gateway is skipping the OpenFeature call), 0 when closed. The §16.5
 	// ExperimentTargetingCircuitOpen alert fires on a sustained 1.
@@ -88,36 +88,36 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	// lenny_session_error_total is its numerator.
 	sessionTotal, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_session_total",
-		Help: "§16.1 line 162 sessions total by variant; denominator for the §10.7 rollback-trigger error rate.",
+		Help: "§16.1 sessions total by variant; denominator for the §10.7 rollback-trigger error rate.",
 	}, []string{"tenant_id", "session_type", "variant_id"})
 	if err != nil {
 		return m, err
 	}
 	sessionError, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_session_error_total",
-		Help: "§16.1 line 161 session errors by variant; numerator for the §10.7 rollback-trigger error rate.",
+		Help: "§16.1 session errors by variant; numerator for the §10.7 rollback-trigger error rate.",
 	}, []string{"tenant_id", "session_type", "variant_id"})
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 line 163 — per-session wall-clock duration sampled at
+	// spec: §16.1 — per-session wall-clock duration sampled at
 	// completion. Buckets span the §10.7 / §6 session lifetime (1s to the
 	// 4-hour cert-expiry bound) so histogram_quantile(0.95, ...) resolves
 	// the variant-vs-control p95 comparison the rollback table cites.
 	sessionDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_session_duration_seconds",
-		Help:    "§16.1 line 163 per-session wall-clock duration by variant, sampled at completion.",
+		Help:    "§16.1 per-session wall-clock duration by variant, sampled at completion.",
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 14400},
 	}, []string{"tenant_id", "session_type", "variant_id"})
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 line 164 — one observation per submitted eval run. Scores
-	// are normalized 0.0-1.0; the 0.95 bucket resolves the §10.7 line 1128
+	// spec: §16.1 — one observation per submitted eval run. Scores
+	// are normalized 0.0-1.0; the 0.95 bucket resolves the §10.7
 	// safety-score-regression threshold.
 	evalScore, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_eval_score",
-		Help:    "§16.1 line 164 eval score by variant; one observation per submitted eval run.",
+		Help:    "§16.1 eval score by variant; one observation per submitted eval run.",
 		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0},
 	}, []string{"tenant_id", "scorer", "variant_id"})
 	if err != nil {
@@ -130,7 +130,7 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §11.2 line 44 — count sessions terminated mid-flight because
+	// spec: §11.2 — count sessions terminated mid-flight because
 	// their cumulative proxy-recorded LLM token usage exhausted the
 	// session's token budget (the §4.9 LLM-proxy enforcer fast path).
 	sessionBudgetExceeded, err := metrics.NewCounter(prometheus.CounterOpts{

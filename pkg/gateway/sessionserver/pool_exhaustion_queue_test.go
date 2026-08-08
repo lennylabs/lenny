@@ -228,7 +228,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 }
 
 // spec: §4.6.1 ("On queue-wait timeout the gateway returns WARM_POOL_EXHAUSTED
-// with a Retry-After header"), §5.2 (maxQueueWaitSeconds bound), §7.1 line 23
+// with a Retry-After header"), §5.2 (maxQueueWaitSeconds bound), §7.1
 // (a create-time pod-claim exhaustion is part of the atomic creation unit).
 // diagnosis: a failure means a create-time queue-wait timeout on an exhausted
 // pool does not surface the retryable exhaustion envelope. If the response is

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 )
 
-// spec: §4.9 lines 1246-1298 — direct-mode credential assignment: the
+// spec: §4.9 — direct-mode credential assignment: the
 // Token Service materializes a per-provider credential bundle and the
 // gateway delivers it to the pod through the adapter credential file.
 
@@ -82,7 +82,7 @@ func TestAssignProtoDirectBedrockDeliversMaterializedBundle(t *testing.T) {
 }
 
 func TestAssignDirectIncompleteBundleFailsMaterialization(t *testing.T) {
-	// spec: §4.9 line 1298 — an incomplete materializedConfig fails the
+	// spec: §4.9 — an incomplete materializedConfig fails the
 	// assign with a materialization error.
 	svc, _, _ := newService(t)
 	svc.RegisterPool(directPool("bedrock-broken", credential.ProviderAWSBedrock,

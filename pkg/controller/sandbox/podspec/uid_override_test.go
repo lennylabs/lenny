@@ -31,7 +31,7 @@ func supplementalGroupsContain(groups []int64, want int64) bool {
 	return false
 }
 
-// TestBuildAppliesDefaultUIDs_spec_13_1_7 pins the §13.1 line 7
+// TestBuildAppliesDefaultUIDs_spec_13_1_7 pins the §13.1
 // implementation-default non-root identities the controller stamps when
 // the deployer supplies no override: adapter 65532, runtime 65533, and
 // the lenny-cred-readers fsGroup 65534 (plus the matching --runtime-uid

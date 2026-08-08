@@ -5,7 +5,7 @@
 // evicts the erased tree's cached nodes so a post-erasure read cannot
 // serve a stale settled-child result from memory.
 //
-// spec: §12.8 line 826 (step 11).
+// spec: §12.8.
 package treearchive
 
 import (

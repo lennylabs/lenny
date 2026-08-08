@@ -43,7 +43,7 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 		}
 		out = append(out, batch...)
 	}
-	// §12.3 line 141: emit one cross_tenant_read per worker
+	// §12.3: emit one cross_tenant_read per worker
 	// invocation. The EventBus retranscribe worker category is
 	// `audit_event_retranscribe_worker`.
 	if err := s.emitCrossTenantRead(ctx, "audit_event_retranscribe_worker", len(out)); err != nil {

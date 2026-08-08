@@ -11,7 +11,7 @@ import (
 )
 
 // buildTaskRecord projects the §8.8 TaskRecord envelope for a session
-// from the session row plus its recorded transcript. The §4.2 line 157
+// from the session row plus its recorded transcript. The §4.2
 // "task records and parent/child lineage" responsibility is realised in
 // v1 as a projection over the session row and transcript rather than a
 // separate persisted table: the durable substrate (the session row and
@@ -24,7 +24,7 @@ import (
 // agent). The terminal task state lands on the final agent turn per the
 // §8.8 example. When a TaskUsage Builder is wired, usage carries the
 // task's own consumption (available at any state) and treeUsage the
-// subtree rollup (null until every descendant settles per §8.8 line 917).
+// subtree rollup (null until every descendant settles per §8.8).
 //
 // spec: §8.8 (TaskRecord and TaskResult); §4.2. F-8.8.3.
 func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) *sessionrecord.Record {
@@ -56,12 +56,12 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 			lastAgent = len(rec.Messages) - 1
 		}
 	}
-	// spec: §8.8 line 815 — the agent message carries the task state; the
+	// spec: §8.8 — the agent message carries the task state; the
 	// terminal state belongs on the final agent turn.
 	if session.IsTerminal(row.State) && lastAgent >= 0 {
 		rec.Messages[lastAgent].State = rec.State
 	}
-	// spec: §8.8 lines 897-917 — stamp the per-task usage and the subtree
+	// spec: §8.8 — stamp the per-task usage and the subtree
 	// rollup (null until every descendant settles) when the Builder is
 	// wired. F-8.8.3.
 	if s.taskUsage != nil {

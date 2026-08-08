@@ -14,11 +14,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// QueryType labels a scatter-gather invocation for the §12.6 line 560
+// QueryType labels a scatter-gather invocation for the §12.6
 // metrics. The set is closed; a caller passes the value that matches the
 // fan-out it is running.
 //
-// spec: §12.6 line 560 — query_type is one of list_sessions,
+// spec: §12.6 — query_type is one of list_sessions,
 // gdpr_erasure, tenant_deletion, delegation_budget_purge.
 type QueryType string
 
@@ -32,7 +32,7 @@ const (
 	QueryAuditEvents QueryType = "audit_events"
 )
 
-// ScatterConfig pins the §12.6 lines 556-558 scatter-gather execution
+// ScatterConfig pins the §12.6 scatter-gather execution
 // bounds. In v1 AllSessionShards / AllAuditShards return a single shard so
 // the bounds are trivially satisfied; they become load-bearing the first
 // time a multi-shard StoreRouter is deployed.
@@ -51,7 +51,7 @@ type ScatterConfig struct {
 	AggregateTimeout time.Duration
 }
 
-// scatter-gather defaults per §12.6 lines 556-558.
+// scatter-gather defaults per §12.6.
 const (
 	defaultScatterMaxConcurrency   = 16
 	defaultScatterPerShardTimeout  = 10 * time.Second
@@ -84,7 +84,7 @@ func (c ScatterConfig) withDefaults() ScatterConfig {
 	return c
 }
 
-// ScatterMetrics receives the two §12.6 line 560 scatter-gather metrics.
+// ScatterMetrics receives the two §12.6 scatter-gather metrics.
 // A nil ScatterMetrics disables emission. PromScatterMetrics is the
 // production implementation; tests may pass a fake.
 type ScatterMetrics interface {
@@ -104,19 +104,19 @@ type PromScatterMetrics struct {
 	shardCount *prometheus.GaugeVec
 }
 
-// NewScatterMetrics builds and registers the §12.6 line 560 scatter-gather
+// NewScatterMetrics builds and registers the §12.6 scatter-gather
 // collectors against reg. A nil reg uses the default registerer.
 func NewScatterMetrics(reg prometheus.Registerer) (*PromScatterMetrics, error) {
 	dur, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name: "lenny_store_router_scatter_gather_duration_seconds",
-		Help: "Scatter-gather operation duration by query type (§12.6 line 560).",
+		Help: "Scatter-gather operation duration by query type (§12.6).",
 	}, []string{"query_type"})
 	if err != nil {
 		return nil, err
 	}
 	sc, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_store_router_scatter_gather_shard_count",
-		Help: "Shards queried per scatter-gather invocation (§12.6 line 560).",
+		Help: "Shards queried per scatter-gather invocation (§12.6).",
 	}, []string{"query_type"})
 	if err != nil {
 		return nil, err
@@ -153,16 +153,16 @@ func isTimeout(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
-// ScatterRead runs fn against every shard under the §12.6 lines 556-558
+// ScatterRead runs fn against every shard under the §12.6
 // bounds and aggregates the per-shard results. It is the read-path helper
 // (GET /v1/sessions and other fan-out queries): a shard that exceeds
 // PerShardTimeout is logged as a scatter_gather_shard_timeout structured
 // event and dropped, and the call returns the shards that did complete
 // with partial=true. A shard that fails for a non-timeout reason fails the
-// whole read (a query error is not a slow shard). The two §12.6 line 560
+// whole read (a query error is not a slow shard). The two §12.6
 // metrics are emitted once per invocation via m.
 //
-// spec: §12.6 lines 554-560.
+// spec: §12.6.
 func ScatterRead[T any](
 	ctx context.Context,
 	cfg ScatterConfig,
@@ -225,13 +225,13 @@ func ScatterRead[T any](
 	return results, partial, nil
 }
 
-// ScatterWrite runs fn against every shard under the §12.6 lines 556-558
+// ScatterWrite runs fn against every shard under the §12.6
 // bounds. It is the write-path helper (GDPR erasure, tenant deletion): a
 // shard that exceeds PerShardTimeout is retried up to scatterWriteRetries
 // times before the whole operation fails, because a write cannot return a
 // partial result. A non-timeout error fails the operation immediately.
 //
-// spec: §12.6 line 557 — "retries the timed-out shard up to 2 times for
+// spec: §12.6 — "retries the timed-out shard up to 2 times for
 // write paths (GDPR erasure, tenant deletion) before failing the
 // operation."
 func ScatterWrite(
@@ -273,7 +273,7 @@ func ScatterWrite(
 	return errors.Join(errs...)
 }
 
-// scatterWriteRetries is the §12.6 line 557 write-path retry budget: a
+// scatterWriteRetries is the §12.6 write-path retry budget: a
 // timed-out shard is retried up to twice (three attempts total) before the
 // operation fails.
 const scatterWriteRetries = 2

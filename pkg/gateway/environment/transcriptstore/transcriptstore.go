@@ -24,7 +24,7 @@ import (
 // SchemaVersion is the §15.5 item 7 schema revision the gateway stamps on
 // every MessageEnvelope it persists to session_messages. v1 writers use 1.
 //
-// spec: §15.4.1 line 1694 — "Every MessageEnvelope persisted to the
+// spec: §15.4.1 — "Every MessageEnvelope persisted to the
 // session_messages table carries this field ... the gateway writes it at
 // inbox-enqueue time and it is immutable once written." §15.5 item 7 — the
 // field is an integer "starting at 1".
@@ -59,7 +59,7 @@ type Entry struct {
 	// SchemaVersion is the §15.4.1 MessageEnvelope schema revision the
 	// gateway stamps at persist time. Zero on input is normalized to
 	// SchemaVersion (1) by the store; callers do not set it (the gateway
-	// owns it per §15.4.1 line 1694, "Runtimes MUST NOT set it").
+	// owns it per §15.4.1, "Runtimes MUST NOT set it").
 	SchemaVersion int `json:"schemaVersion"`
 }
 
@@ -68,7 +68,7 @@ var ErrNotFound = errors.New("transcriptstore: no transcript for session")
 
 // Store is the transcript registry contract.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Transcripts are session-scoped; the §12.8
 // orchestrator walks the user's sessions and calls DeleteBySession.
@@ -107,7 +107,7 @@ type Memory struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{transcripts: map[string][]Entry{}} }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -133,7 +133,7 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		}
 		// Assign a stable message-node id so the §15.4.1 MessageDAG view
 		// has a durable identifier, mirroring the Postgres
-		// session_messages.id UUID column. spec: §15.4.1 line 1784.
+		// session_messages.id UUID column. spec: §15.4.1.
 		if e.ID == "" {
 			e.ID = uuid.NewString()
 		}

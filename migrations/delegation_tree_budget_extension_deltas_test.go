@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// spec: §8.6 lines 730-733; §8.6 line 643.
+// spec: §8.6; §8.6.
 // Migration 0130 adds the §8.6 lease-extension grant counters to
 // delegation_tree_budget so the Postgres-backed leasecontrol.DenialStore
 // has a durable budget counter to increment inside the same row-lock
-// transaction that re-checks the extension-denied flag (the §8.6 line 732
+// transaction that re-checks the extension-denied flag (the §8.6
 // in-flight atomic check). The down migration drops the columns. F-8.6.5.
 func TestDelegationTreeBudgetExtensionDeltasMigration_spec_8_6(t *testing.T) {
 	b, err := FS.ReadFile("0130_delegation_tree_budget_extension_deltas.up.sql")

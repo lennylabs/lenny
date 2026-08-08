@@ -17,8 +17,7 @@ import (
 // so a DeleteByUser job purges the user's cached LLM query/response
 // pairs while leaving another user's entries in the same tenant intact.
 //
-// spec: §12.8 step 2 line 794 (SemanticCache — delete cached
-// query/response pairs scoped to the user). F-12.2.16.
+// spec: §12.8 step 2. F-12.2.16.
 func TestSemanticCacheWiredAsStep2EraserPurgesUser(t *testing.T) {
 	ctx := context.Background()
 	clock := func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }

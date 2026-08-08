@@ -94,7 +94,7 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 			"LENNY_REDIS_URL.")
 	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
 		"Redis AUTH password. Override via LENNY_REDIS_PASSWORD.")
-	// §4.9 line 1212 admin-time RBAC live-probe namespace. The probe's
+	// §4.9 admin-time RBAC live-probe namespace. The probe's
 	// SelfSubjectAccessReview and Secret get target this namespace, where
 	// credentialPool secretRef Secrets are mounted. Defaults to the
 	// Token Service's own namespace (POD_NAMESPACE, set by the downward
@@ -103,24 +103,24 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 		"namespace the §4.9 RBAC live-probe checks for credentialPool secretRef Secrets.")
 }
 
-// registerRateLimitFlags registers the §13.3 line 607 /v1/oauth/token rate
-// limits. The defaults transcribe the §13.3 line 607 normative limits.
+// registerRateLimitFlags registers the §13.3 /v1/oauth/token rate
+// limits. The defaults transcribe the §13.3 normative limits.
 // spec: §13.3.
 func (f *tokenServiceFlags) registerRateLimitFlags() {
 	f.rlCallerPerSec = flag.Int("oauth-rate-limit-caller-per-second", envInt("LENNY_OAUTH_RL_CALLER_PER_SECOND", 10),
-		"§13.3 line 607 per-(tenant_id, sub) per-second cap on /v1/oauth/token. Zero disables the tier.")
+		"§13.3 per-(tenant_id, sub) per-second cap on /v1/oauth/token. Zero disables the tier.")
 	f.rlCallerPerMin = flag.Int("oauth-rate-limit-caller-per-minute", envInt("LENNY_OAUTH_RL_CALLER_PER_MINUTE", 300),
-		"§13.3 line 607 per-(tenant_id, sub) per-minute cap on /v1/oauth/token. Zero disables the tier.")
+		"§13.3 per-(tenant_id, sub) per-minute cap on /v1/oauth/token. Zero disables the tier.")
 	f.rlTenantPerSec = flag.Int("oauth-rate-limit-tenant-per-second", envInt("LENNY_OAUTH_RL_TENANT_PER_SECOND", 100),
-		"§13.3 line 607 per-tenant per-second cap on /v1/oauth/token. Zero disables the tier.")
+		"§13.3 per-tenant per-second cap on /v1/oauth/token. Zero disables the tier.")
 	f.rlSampleWindow = flag.Duration("oauth-rate-limit-sample-window", envDuration("LENNY_OAUTH_RL_SAMPLE_WINDOW", 10*time.Second),
-		"§13.3 line 611 rolling-window for sampled audit emission on rate-limited requests (one audit row per (tenant_id, sub, limit_tier) per window per replica).")
+		"§13.3 rolling-window for sampled audit emission on rate-limited requests (one audit row per (tenant_id, sub, limit_tier) per window per replica).")
 }
 
 // registerTLSFlags registers the §4.3 / §10.3 mTLS material for the gRPC
 // listener. The Token Service requires the gateway to present a client
 // certificate signed by the same CA the chart's mtls-pki.yaml mints.
-// spec: §4.3 line 195, §13.2 line 217.
+// spec: §4.3, §13.2.
 func (f *tokenServiceFlags) registerTLSFlags() {
 	f.tlsCert = flag.String("tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),
 		"path to the Token Service's server certificate for the §4.3 / §10.3 mTLS gRPC listener. Empty serves the gRPC surface in plaintext (dev mode only).")

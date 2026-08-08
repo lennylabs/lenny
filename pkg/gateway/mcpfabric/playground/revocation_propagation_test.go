@@ -12,7 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// spec: §27.8 line 241 — the propagation pub/sub payload carries the
+// spec: §27.8 — the propagation pub/sub payload carries the
 // origin replica id and the publish instant so a peer can compute the
 // end-to-end latency. encode/parse must round-trip. F-27.6.6.
 func TestEncodeParseRevocationMsgRoundTrip_spec_27_8_241(t *testing.T) {
@@ -64,7 +64,7 @@ func TestParseRevocationMsgJTIKeepsTail(t *testing.T) {
 	}
 }
 
-// spec: §27.6 line 204 / §10.2 tenant format — the pattern-subscription
+// spec: §27.6 / §10.2 tenant format — the pattern-subscription
 // consume loop extracts the tenant from a concrete channel name. Only a
 // well-formed t:{tenant}:pg:revocations channel yields a tenant.
 // F-27.6.7.
@@ -93,7 +93,7 @@ func TestTenantFromRevocationChannel_spec_27_6_204(t *testing.T) {
 // A peer-published message warms the per-tenant negative cache and
 // records exactly one §27.8 pubsub_delivered propagation sample. The
 // recovered jti is then visible to IsBearerRevoked through the cache
-// without a Redis round-trip. spec: §27.8 line 241. F-27.6.6.
+// without a Redis round-trip. spec: §27.8. F-27.6.6.
 func TestHandleRevocationMessagePeerWarmsCacheAndSamples_spec_27_8_241(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	store := &RedisSessionStore{
@@ -202,7 +202,7 @@ func TestHandleRevocationMessageNegativeLatencyClamped(t *testing.T) {
 	}
 }
 
-// spec: §27.6 line 204 / §27.3.1 line 96 — a single PSUBSCRIBE warms the
+// spec: §27.6 / §27.3.1 — a single PSUBSCRIBE warms the
 // negative cache for a tenant that did not exist at subscribe time. A
 // RevokeSession on the (sole, self-publishing) replica must become
 // visible to IsBearerRevoked through the pub/sub-warmed cache for an

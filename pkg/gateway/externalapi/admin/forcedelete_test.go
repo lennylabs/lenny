@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §12.8 lines 880-889; §24.10 row 4 —
+// spec: §12.8; §24.10 row 4 —
 // POST /v1/admin/tenants/{id}/force-delete. F-12.8.2, F-24.10.2, F-24.10.5.
 
 func newForceDeleteAdmin(t *testing.T) (*admin.Router, *tenantstore.Memory, sessionstore.Store, *recordingAudit) {
@@ -60,7 +60,7 @@ func TestForceDeleteUnheldTenant_spec_24_10(t *testing.T) {
 	}
 }
 
-// §12.8 line 889: force-delete without acknowledgeHoldOverride while
+// §12.8: force-delete without acknowledgeHoldOverride while
 // active holds exist is rejected, not silently overridden.
 func TestForceDeleteHeldTenantWithoutOverrideBlocked_spec_12_8_889(t *testing.T) {
 	router, tenants, sessions, audit := newForceDeleteAdmin(t)
@@ -83,7 +83,7 @@ func TestForceDeleteHeldTenantWithoutOverrideBlocked_spec_12_8_889(t *testing.T)
 	}
 }
 
-// §12.8 line 880: a valid override stamps the durable override fields and
+// §12.8: a valid override stamps the durable override fields and
 // initiates the lifecycle so the controller escrows at Phase 3.5.
 func TestForceDeleteHeldTenantWithOverride_spec_12_8_880(t *testing.T) {
 	router, tenants, sessions, audit := newForceDeleteAdmin(t)
@@ -116,7 +116,7 @@ func TestForceDeleteHeldTenantWithOverride_spec_12_8_880(t *testing.T) {
 	}
 }
 
-// §12.8 line 880: the override requires a non-empty justification.
+// §12.8: the override requires a non-empty justification.
 func TestForceDeleteOverrideRequiresJustification_spec_12_8_880(t *testing.T) {
 	router, tenants, sessions, _ := newForceDeleteAdmin(t)
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
@@ -136,7 +136,7 @@ func TestForceDeleteOverrideRequiresJustification_spec_12_8_880(t *testing.T) {
 	}
 }
 
-// §12.8 line 880: a tenant-admin cannot self-override.
+// §12.8: a tenant-admin cannot self-override.
 func TestForceDeleteTenantAdminForbidden_spec_12_8_880(t *testing.T) {
 	router, tenants, _, _ := newForceDeleteAdmin(t)
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"})

@@ -131,18 +131,18 @@ type SessionPage struct {
 	// HasMore reports whether more pages follow this one.
 	HasMore bool `json:"-"`
 
-	// Total is the §15.1 line 1252 total match count across all pages.
+	// Total is the §15.1 total match count across all pages.
 	// It is nil when the gateway omits it (the count would require a
 	// full table scan); callers must not rely on its presence.
 	Total *int64 `json:"-"`
 }
 
-// DeliveryReceipt mirrors the §15.4 lines 1725-1737 delivery_receipt
+// DeliveryReceipt mirrors the §15.4 delivery_receipt
 // envelope returned by POST /v1/sessions/{id}/messages. The closed
 // `status` enum lets the SDK consumer branch on delivered vs queued vs
 // dropped vs expired vs rate_limited vs error.
 //
-// spec: §15.4 lines 1725-1737; §7.2 line 345.
+// spec: §15.4; §7.2.
 type DeliveryReceipt struct {
 	// MessageID is the gateway-stamped message id. The sender may
 	// supply one; when absent the gateway assigns `msg_<random>`.
@@ -163,7 +163,7 @@ type DeliveryReceipt struct {
 
 // MessagePayload is one §15.4 inbound message envelope on the
 // POST /v1/sessions/{id}/messages request batch. The wire field names
-// mirror the spec verbatim. spec: §15.4 lines 1672-1721.
+// mirror the spec verbatim. spec: §15.4.
 type MessagePayload struct {
 	// ID is an optional client-supplied message id. When absent the
 	// gateway stamps one of the form `msg_<random>`.
@@ -207,7 +207,7 @@ type MessagePart struct {
 }
 
 // SendMessagesResponse is the POST /v1/sessions/{id}/messages response.
-// spec: §15.1; §15.4 delivery_receipt; §7.2 line 345.
+// spec: §15.1; §15.4 delivery_receipt; §7.2.
 type SendMessagesResponse struct {
 	// DeliveryReceipt is the §15.4 receipt envelope.
 	DeliveryReceipt DeliveryReceipt `json:"deliveryReceipt"`
@@ -243,7 +243,7 @@ type TranscriptOptions struct {
 	Limit int
 }
 
-// LogEntry is one entry of the §15.1 line 673 GET /v1/sessions/{id}/logs
+// LogEntry is one entry of the §15.1 GET /v1/sessions/{id}/logs
 // page. It mirrors the event-store envelope items the gateway returns:
 // Data is the already-marshalled log payload kept as a RawMessage.
 type LogEntry struct {
@@ -254,8 +254,7 @@ type LogEntry struct {
 	Timestamp string          `json:"timestamp"`
 }
 
-// LogsPage is one page of GET /v1/sessions/{id}/logs in the §15.1 line
-// 1228 canonical `{items, cursor, hasMore}` envelope.
+// LogsPage is one page of GET /v1/sessions/{id}/logs in the §15.1 canonical `{items, cursor, hasMore}` envelope.
 type LogsPage struct {
 	Items   []LogEntry `json:"items"`
 	Cursor  string     `json:"cursor"`
@@ -278,7 +277,7 @@ type LogsOptions struct {
 
 // InteractionResolution is the response returned by the four §15.1
 // interaction-resolution endpoints (tool-use approve/deny, elicitation
-// respond/dismiss). spec: §7.2 lines 124-127; §15.1.
+// respond/dismiss). spec: §7.2; §15.1.
 type InteractionResolution struct {
 	// ID is the interaction id (tool_call_id or elicitation_id).
 	ID string `json:"id"`

@@ -35,7 +35,7 @@ type ServiceOptions struct {
 // split-brain a Postgres recovery can expose. Service implements
 // RemediationLockService and is safe for concurrent use.
 //
-// spec: §25.4 lines 2083-2271.
+// spec: §25.4.
 type Service struct {
 	durable []Store // [Postgres, Redis], reachable-configured only, in priority order
 	pgRecon reconcilingStore
@@ -113,7 +113,7 @@ func (s *Service) setActive(tier string) {
 	s.mu.Unlock()
 }
 
-// onPostgresUnavailable handles the §25.4 line 2220 Postgres→Tier-2
+// onPostgresUnavailable handles the §25.4 Postgres→Tier-2
 // transition: the first time a Postgres outage is observed in a cycle, the
 // Redis-side outage epoch is incremented and stamped as the new tracked
 // epoch so Tier 2 (and Tier 3) acquisitions carry it for later split-brain
@@ -150,7 +150,7 @@ func (s *Service) ActiveTier() string {
 	return s.activeTier
 }
 
-// MemoryTierWarning returns the §25.4 line 2215 replica-local degradation
+// MemoryTierWarning returns the §25.4 replica-local degradation
 // warning when the configured ops.locks.memoryTier is "always", or the
 // empty string otherwise. The HTTP layer attaches it to a granted lock
 // whose lockStore is memory.
@@ -375,7 +375,7 @@ func (s *Service) Reap(ctx context.Context) int {
 // lock_split_brain_detected audit event. It is a no-op without a Postgres
 // tier (nothing to reconcile to).
 //
-// spec: §25.4 lines 2226-2267.
+// spec: §25.4.
 func (s *Service) Reconcile(ctx context.Context) error {
 	if s.pgRecon == nil {
 		return nil
@@ -395,7 +395,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return err
 	}
 	// On recovery the Postgres epoch becomes the reconciled MAX; mirror it
-	// back to Redis so both stores hold the same value (§25.4 line 2221).
+	// back to Redis so both stores hold the same value (§25.4).
 	if s.redis != nil {
 		_ = s.redis.SetEpoch(ctx, out.Epoch)
 	}
@@ -409,7 +409,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	s.metrics.SetOutageEpoch(epoch)
 	remover, _ := s.redis.(redisLockRemover)
 	for _, c := range out.Conflicts {
-		// §25.4 line 2267: when the pre-outage Postgres holder wins over a
+		// §25.4: when the pre-outage Postgres holder wins over a
 		// still-active post-outage Redis lock, the losing Redis lock is
 		// removed so a later Postgres outage cannot resurface it. The losing
 		// holder is separately notified with the split-brain 409 (recorded in

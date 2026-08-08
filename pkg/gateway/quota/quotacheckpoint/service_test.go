@@ -155,7 +155,7 @@ func label(t *testing.T, period quota.ResetPeriod) string {
 	return l
 }
 
-// spec: §11.2 line 44 — Checkpoint persists each active (tenant, user)
+// spec: §11.2 — Checkpoint persists each active (tenant, user)
 // window total and a single deduped per-tenant rollup row; a zero window
 // and a rolling-period tenant contribute no rows.
 func TestCheckpoint_spec_11_2_line44(t *testing.T) {
@@ -206,7 +206,7 @@ func TestCheckpoint_spec_11_2_line44(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 44 — CheckpointSubject writes the final reconciliation
+// spec: §11.2 — CheckpointSubject writes the final reconciliation
 // for one (tenant, user) on session completion.
 func TestCheckpointSubject_spec_11_2_line44(t *testing.T) {
 	t.Parallel()
@@ -226,7 +226,7 @@ func TestCheckpointSubject_spec_11_2_line44(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 / §24.6 line 99 — Reconcile applies the MAX rule to
+// spec: §11.2 / §24.6 — Reconcile applies the MAX rule to
 // every still-current checkpoint, lifting a counter Redis lost while
 // leaving a higher live value intact, and records per-counter MAX inputs.
 func TestReconcileMaxRule_spec_11_2_line48(t *testing.T) {
@@ -277,7 +277,7 @@ func TestReconcileMaxRule_spec_11_2_line48(t *testing.T) {
 	}
 }
 
-// spec: §24.6 line 99 — a per-tenant reconcile naming an unknown tenant
+// spec: §24.6 — a per-tenant reconcile naming an unknown tenant
 // returns ErrTenantNotFound; a known tenant scopes the pass to its rows.
 func TestReconcilePerTenant_spec_24_6(t *testing.T) {
 	t.Parallel()

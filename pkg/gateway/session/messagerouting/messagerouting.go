@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package messagerouting implements the §7.2 message-delivery routing
-// precedence (the seven paths, lines 313-331). It is the single
+// Package messagerouting implements the §7.2 message-delivery routing precedence. It is the single
 // path-selection function shared by the REST `POST /v1/sessions/{id}/messages`
 // handler and the MCP `lenny/send_message` tool so the two surfaces
 // route a message to the same destination for the same target state.
@@ -12,15 +11,13 @@
 // §15.4 delivery-receipt status. The caller performs the action
 // (resolve / deliver / buffer / reject) against its own machinery.
 //
-// spec: §7.2 lines 313-331 (path precedence, the seven paths, the
-// dead-letter-handling target-state table).
+// spec: §7.2.
 package messagerouting
 
 import "github.com/lennylabs/lenny/pkg/api/v1/session"
 
 // Source distinguishes an external client `POST /v1/sessions/{id}/messages`
-// call from an inter-session `lenny/send_message`. The §7.2 pre-running
-// row (line 339) branches on it: an external client is rejected with
+// call from an inter-session `lenny/send_message`. The §7.2 pre-running row branches on it: an external client is rejected with
 // TARGET_NOT_READY while a parent→child inter-session message is
 // buffered in the DLQ until the child reaches `running`.
 type Source int
@@ -66,7 +63,7 @@ const (
 	ActionRejectTerminal
 
 	// ActionRejectNotReady rejects an external-client message against a
-	// pre-running target (§7.2 line 339 pre-running row, external
+	// pre-running target (§7.2 pre-running row, external
 	// client): the gateway returns TARGET_NOT_READY so the client
 	// retries after the session starts.
 	ActionRejectNotReady
@@ -77,7 +74,7 @@ const (
 	// delivers the message to the runtime, returning `delivered`. The caller
 	// (the coordinating replica) performs the resume and the delivery and fails
 	// closed to inbox buffering (`queued`) when it cannot, per line 330.
-	// spec: §7.2 path 6 (lines 326-330).
+	// spec: §7.2 path 6.
 	ActionResumeAndDeliver
 )
 
@@ -102,8 +99,7 @@ func isRecovering(s session.State) bool {
 	return false
 }
 
-// isPreRunning reports whether s is one of the four §7.2 pre-running
-// states (line 339).
+// isPreRunning reports whether s is one of the four §7.2 pre-running states.
 func isPreRunning(s session.State) bool {
 	switch s {
 	case session.StateCreated, session.StateFinalizing, session.StateReady, session.StateStarting:
@@ -149,7 +145,7 @@ func isPreRunning(s session.State) bool {
 // in-flight-tool signal, and otherwise does not change the destination
 // for the conditions a synchronous executor exposes.
 //
-// spec: §7.2 path 6 (lines 326-330).
+// spec: §7.2 path 6.
 func Classify(state session.State, inputRequired, immediate bool, src Source) Decision {
 	switch {
 	case session.IsTerminal(state):

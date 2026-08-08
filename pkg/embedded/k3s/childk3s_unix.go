@@ -166,11 +166,11 @@ func (s *childSupervisor) Start(ctx context.Context) error {
 
 // serverArgs builds the argv k3s server is invoked with. asRoot=false
 // adds --rootless so a non-root supervisor uses k3s' rootless mode on
-// hosts that support it (spec §17.4 line 160: "rootless where
+// hosts that support it (spec §17.4: "rootless where
 // supported"). On a host without rootless prerequisites k3s itself
 // reports the error in the log file.
 //
-// spec: §17.4 line 160 ("rootless where supported")
+// spec: §17.4
 func (s *childSupervisor) serverArgs(asRoot bool) []string {
 	args := []string{
 		"server",

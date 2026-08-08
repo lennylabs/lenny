@@ -6,7 +6,7 @@ import "testing"
 
 // TestSessionResumeRetryEventsCatalogued asserts the §7.3 retry/resume
 // lifecycle audit events surfaced through F-7.3.25 are present in the
-// catalog. spec: §7.3 lines 397-427; §11.7 hash-chained audit log.
+// catalog. spec: §7.3; §11.7 hash-chained audit log.
 func TestSessionResumeRetryEventsCatalogued(t *testing.T) {
 	want := []EventType{
 		EventSessionResumed,

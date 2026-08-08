@@ -29,19 +29,19 @@ import (
 // SandboxWarmPool, and the rest of the lenny.dev group); it does not dump
 // unrelated third-party CRDs installed in the same cluster.
 //
-// spec: §25.11 (Exports CRD manifests from the K8s API, line 3989).
+// spec: §25.11.
 const lennyGroup = "lenny.dev"
 
 // bootstrapConfigMapName is the §17.6 Day-1 seed ConfigMap the config
 // export snapshots so a restore can re-seed the platform from the same
 // values. It lives in the release namespace and the lenny-backup-sa holds
-// get on ConfigMaps there (§25.11 line 3982).
+// get on ConfigMaps there (§25.11).
 const bootstrapConfigMapName = "lenny-bootstrap-values"
 
 // Querier is the read surface the §25.11 config export needs against the
 // shard Postgres for the tenants table (which carries the quota columns). The
 // lenny-backup Job connects through the read-only lenny-backup role (SELECT on
-// shard tables, no write, §25.11 line 3980), so the export never mutates.
+// shard tables, no write, §25.11), so the export never mutates.
 // *pgxpool.Pool satisfies it. Runtimes and pools are read from the K8s API
 // (CRDReader), not Postgres.
 type Querier interface {
@@ -63,7 +63,7 @@ type CRDLister interface {
 
 // CRDExporter implements the §25.11 step-3 CRD-manifest export. It lists
 // the lenny.dev-group CustomResourceDefinitions through the apiextensions
-// API (using the §25.11 line 3982 get/list-on-CRDs grant) and serializes
+// API (using the §25.11 get/list-on-CRDs grant) and serializes
 // them as a deterministic JSON array a restore can re-apply.
 type CRDExporter struct {
 	// Lister lists CRDs. Required.
@@ -83,8 +83,7 @@ func NewCRDExporter(cs apiextensionsclientset.Interface) func(ctx context.Contex
 // empty array rather than an error, so a config backup taken before the
 // CRDs are installed still records an explicit (empty) CRD component.
 //
-// spec: §25.11 (Exports CRD manifests from the K8s API, line 3989; the
-// lenny-backup-sa get/list on CRDs, line 3982).
+// spec: §25.11.
 func (e *CRDExporter) Export(ctx context.Context) ([]byte, error) {
 	list, err := e.Lister.List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -140,8 +139,7 @@ type tenantConfig struct {
 // Runtime CRD is the declarative source of a registered runtime (§5.1); the
 // export snapshots the resource name and the spec fields a restore re-applies
 // so the platform's registered runtimes are recoverable from the config
-// archive. spec: §25.11 (Exports platform configuration (runtimes, ...), line
-// 3988; Exports CRD manifests from the K8s API, line 3989).
+// archive. spec: §25.11.
 type runtimeConfig struct {
 	Name             string `json:"name"`
 	Type             string `json:"type"`
@@ -170,9 +168,7 @@ type poolConfig struct {
 // CRDReader lists lenny.dev custom resources by object list. The
 // controller-runtime client (and its fake) satisfies it. It is a
 // consumer-side interface so a test injects a fake reader with pre-set
-// Runtime and SandboxWarmPool objects. spec: §25.11 (the K8s API for the
-// runtime and pool CRDs, via the lenny-backup-sa get/list on CRDs, line
-// 3982).
+// Runtime and SandboxWarmPool objects. spec: §25.11.
 type CRDReader interface {
 	List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error
 }
@@ -184,10 +180,9 @@ type CRDReader interface {
 // lenny-backup role for the tenants table with its quota columns (tenants and
 // quotas). The runtime and pool registries are lenny.dev CRDs, whose custom
 // resources are the declarative source (§5.1, §4.6.3), so they are read from
-// the K8s API here through the lenny-backup-sa get/list-on-CRDs grant (§25.11
-// line 3982), reserving Postgres for tenants and quotas. The Job has no
+// the K8s API here through the lenny-backup-sa get/list-on-CRDs grant (§25.11), reserving Postgres for tenants and quotas. The Job has no
 // egress to the gateway (its NetworkPolicy permits egress to Postgres, MinIO,
-// and the K8s API only, §25.11 line 3984), so the gateway admin API is not a
+// and the K8s API only, §25.11), so the gateway admin API is not a
 // source.
 type ConfigExporter struct {
 	// DB is the read-only shard Postgres surface for tenants and quotas.
@@ -221,9 +216,8 @@ var lennyScheme = func() *runtime.Scheme {
 // NewCRDReader builds the CRDReader the config export lists the Runtime and
 // SandboxWarmPool custom resources through, from the in-cluster REST config.
 // It uses a read-only controller-runtime client scoped to the lenny.dev
-// scheme; the lenny-backup-sa holds get/list on CRDs (§25.11 line 3982), and
-// the Job has no write access. spec: §25.11 (the K8s API for the runtime and
-// pool CRDs, line 3989).
+// scheme; the lenny-backup-sa holds get/list on CRDs (§25.11), and
+// the Job has no write access. spec: §25.11.
 func NewCRDReader(cfg *rest.Config) (CRDReader, error) {
 	cl, err := client.New(cfg, client.Options{Scheme: lennyScheme})
 	if err != nil {
@@ -237,11 +231,7 @@ func NewCRDReader(cfg *rest.Config) (CRDReader, error) {
 // (the SandboxWarmPool CRDs) from the K8s API, and tenants plus the quota
 // columns on the tenants rows from Postgres.
 //
-// spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
-// quotas) as JSON, line 3988; the runtime and pool CRDs from the K8s API via
-// the lenny-backup-sa get/list on CRDs, line 3982; get on ConfigMaps in
-// lenny-system, line 3982; egress to Postgres and the K8s API only, line
-// 3984).
+// spec: §25.11.
 func (e *ConfigExporter) Export(ctx context.Context) ([]byte, error) {
 	tenants, err := e.exportTenants(ctx)
 	if err != nil {
@@ -303,10 +293,9 @@ func (e *ConfigExporter) exportTenants(ctx context.Context) ([]tenantConfig, err
 // deterministic. Runtimes are cluster-scoped lenny.dev CRDs (§5.1); reading
 // them here (rather than from Postgres) uses the lenny-backup-sa
 // get/list-on-CRDs grant the C4 design assigns to the runtime and pool export
-// (§25.11 line 3982).
+// (§25.11).
 //
-// spec: §25.11 (Exports platform configuration (runtimes, ...), line 3988;
-// the runtime CRD from the K8s API, line 3989).
+// spec: §25.11.
 func (e *ConfigExporter) exportRuntimes(ctx context.Context) ([]runtimeConfig, error) {
 	var list lennyv1alpha1.RuntimeList
 	if err := e.CRDs.List(ctx, &list); err != nil {
@@ -332,11 +321,9 @@ func (e *ConfigExporter) exportRuntimes(ctx context.Context) ([]runtimeConfig, e
 // exportPools lists the §5.2 SandboxWarmPool custom resources from the K8s
 // API and snapshots each one's spec sizing fields, sorted by name. Pools are
 // platform-global lenny.dev CRDs (§4.6.3); reading them from the K8s API here
-// uses the same lenny-backup-sa get/list-on-CRDs grant as runtimes (§25.11
-// line 3982), so a restore re-seeds only the operator-configured pool sizing.
+// uses the same lenny-backup-sa get/list-on-CRDs grant as runtimes (§25.11), so a restore re-seeds only the operator-configured pool sizing.
 //
-// spec: §25.11 (Exports platform configuration (runtimes, pools, ...), line
-// 3988; the pool CRD from the K8s API, line 3989).
+// spec: §25.11.
 func (e *ConfigExporter) exportPools(ctx context.Context) ([]poolConfig, error) {
 	var list lennyv1alpha1.SandboxWarmPoolList
 	if err := e.CRDs.List(ctx, &list); err != nil {

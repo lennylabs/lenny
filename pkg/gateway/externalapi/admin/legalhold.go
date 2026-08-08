@@ -32,7 +32,7 @@ type ArtifactLegalHolder interface {
 	// before flipping the hold.
 	Get(ctx context.Context, uri string) (artifactcatalog.Record, error)
 	// SetLegalHold flips the artifact's legal_hold flag. When hold is
-	// true, setBy/setAt/note record the §15.1 line 865 provenance the
+	// true, setBy/setAt/note record the §15.1 provenance the
 	// GET /v1/admin/legal-holds list reports.
 	SetLegalHold(ctx context.Context, uri string, hold bool, setBy string, setAt time.Time, note string) error
 	// IsLegalHeldAt reports whether any artifact scoped to
@@ -40,7 +40,7 @@ type ArtifactLegalHolder interface {
 	IsLegalHeldAt(ctx context.Context, tenantID, sessionID string) (bool, error)
 	// ListLegalHeld returns the tenant's artifact rows that carry an
 	// active legal hold, with provenance, backing the artifact half of
-	// the §15.1 line 865 list. spec: §15.1 lines 864-865.
+	// the §15.1 list. spec: §15.1.
 	ListLegalHeld(ctx context.Context, tenantID string) ([]artifactcatalog.Record, error)
 }
 
@@ -56,13 +56,13 @@ func (r *Router) WithSessions(s sessionstore.Store) *Router {
 // emits legal_hold.escrow_released. *legalholdescrow.Releaser satisfies it.
 // The release is invoked when a hold is cleared via POST /v1/admin/legal-hold
 // (hold: false), which the endpoint accepts on a tombstoned tenant for this
-// purpose (§12.8 line 884).
+// purpose (§12.8).
 type EscrowReleaser interface {
 	ReleaseForSession(ctx context.Context, tenantID, sessionID, clearedBy string) (int, error)
 	ReleaseForArtifact(ctx context.Context, tenantID, artifactURI, clearedBy string) (int, error)
 }
 
-// WithEscrowReleaser wires the §12.8 line 884 escrow-GC release onto the
+// WithEscrowReleaser wires the §12.8 escrow-GC release onto the
 // Router. With it set, clearing a legal hold (hold: false) releases the
 // escrow objects the hold protected. A nil releaser leaves the clear path
 // releasing nothing.
@@ -89,7 +89,7 @@ func (r *Router) WithArtifactLegalHold(h ArtifactLegalHolder) *Router {
 // either the session or the artifact to hold or release and the desired
 // hold state. Exactly one of SessionID and ArtifactID must be set.
 //
-// spec: §12.8 line 735 — "accepts a session ID or artifact ID".
+// spec: §12.8 — "accepts a session ID or artifact ID".
 type LegalHoldRequest struct {
 	TenantID string `json:"tenantId"`
 	// SessionID holds or releases a whole session (and transitively its
@@ -99,7 +99,7 @@ type LegalHoldRequest struct {
 	// exclusive with SessionID.
 	ArtifactID string `json:"artifactId,omitempty"`
 	Hold       bool   `json:"hold"`
-	// Note is the §15.1 line 864 justification for the hold. Required
+	// Note is the §15.1 justification for the hold. Required
 	// when Hold is true; ignored on a clear. Recorded as the hold's
 	// provenance and surfaced by GET /v1/admin/legal-holds.
 	Note string `json:"note,omitempty"`
@@ -114,8 +114,7 @@ type LegalHoldRequest struct {
 // clear a hold on its own tenant, but the body-tenant binding rejects a
 // cross-tenant write so a tenant-admin cannot touch another tenant's holds.
 //
-// spec: §12.8 line 735; §15.1 (legal-hold requires platform-admin or
-// tenant-admin, line 865); §10.2 (tenant-admin own-tenant legal hold, line 280).
+// spec: §12.8; §15.1; §10.2.
 func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 	var body LegalHoldRequest
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -127,7 +126,7 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "tenantId"})
 		return
 	}
-	// §10.2 line 280: a tenant-admin sets or clears holds only on its own
+	// §10.2: a tenant-admin sets or clears holds only on its own
 	// tenant. The role gate (requireTenantResourceAdmin) admits any
 	// tenant-admin, so confine the write to the caller's tenant here,
 	// reusing the authorizeTenantPath confinement over the body tenant. A
@@ -144,7 +143,7 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"fields": []string{"sessionId", "artifactId"}})
 		return
 	}
-	// spec: §15.1 line 864 — `note` is required when setting a hold so the
+	// spec: §15.1 — `note` is required when setting a hold so the
 	// preservation order has a recorded justification. It is ignored on a
 	// clear.
 	if body.Hold && strings.TrimSpace(body.Note) == "" {
@@ -161,7 +160,7 @@ func (r *Router) handleSetLegalHold(w http.ResponseWriter, req *http.Request) {
 }
 
 // setSessionLegalHold flips the §12.8 session-level legal hold. Setting a
-// hold records the §15.1 line 865 provenance (operator, instant, note);
+// hold records the §15.1 provenance (operator, instant, note);
 // clearing blanks it so a released session reports no stale provenance.
 func (r *Router) setSessionLegalHold(w http.ResponseWriter, req *http.Request, body LegalHoldRequest) {
 	principal, _ := authmw.FromContext(req.Context())
@@ -182,7 +181,7 @@ func (r *Router) setSessionLegalHold(w http.ResponseWriter, req *http.Request, b
 		})
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
-			// §12.8 line 884: the legal-hold API accepts a clear on a
+			// §12.8: the legal-hold API accepts a clear on a
 			// tombstoned tenant for the express purpose of releasing escrow.
 			// The session row is gone (Phase 4 deleted it) but its escrowed
 			// evidence may still sit in the escrow bucket under a
@@ -268,7 +267,7 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 	principal, _ := authmw.FromContext(req.Context())
 	rec, err := r.artifactHolds.Get(req.Context(), body.ArtifactID)
 	if err != nil || rec.TenantID != body.TenantID {
-		// §12.8 line 884: a clear on a tombstoned tenant releases the
+		// §12.8: a clear on a tombstoned tenant releases the
 		// artifact's escrow even though the catalog row is gone (Phase 4
 		// deleted it).
 		if !body.Hold && r.escrowReleaser != nil {
@@ -322,13 +321,13 @@ func (r *Router) setArtifactLegalHold(w http.ResponseWriter, req *http.Request, 
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// legalHoldEntry is one row of the §15.1 line 865
+// legalHoldEntry is one row of the §15.1
 // GET /v1/admin/legal-holds list. The wire fields match the spec
 // projection (resourceType, resourceId, setBy, setAt, note); tenantId is
 // carried so a platform-admin listing across tenants can attribute each
 // hold.
 //
-// spec: §15.1 line 865.
+// spec: §15.1.
 type legalHoldEntry struct {
 	ResourceType string `json:"resourceType"`
 	ResourceID   string `json:"resourceId"`
@@ -338,15 +337,14 @@ type legalHoldEntry struct {
 	Note         string `json:"note"`
 }
 
-// handleListLegalHolds implements GET /v1/admin/legal-holds — the §15.1
-// line 865 active-hold listing. It enumerates session-level and
+// handleListLegalHolds implements GET /v1/admin/legal-holds — the §15.1 active-hold listing. It enumerates session-level and
 // artifact-level holds from the resource rows' provenance, honouring the
 // `?tenant_id`, `?resource_type`, and `?resource_id` filters and the
 // canonical §15.1 cursor-paginated envelope. A tenant-admin caller is
 // scoped to its own tenant regardless of the `tenant_id` param; a
 // platform-admin omitting `tenant_id` lists across every tenant.
 //
-// spec: §15.1 line 865.
+// spec: §15.1.
 func (r *Router) handleListLegalHolds(w http.ResponseWriter, req *http.Request) {
 	p, _ := authmw.FromContext(req.Context())
 	q := req.URL.Query()
@@ -359,7 +357,7 @@ func (r *Router) handleListLegalHolds(w http.ResponseWriter, req *http.Request) 
 	}
 	resourceID := q.Get("resource_id")
 
-	// spec: §15.1 line 865 — a tenant-admin is automatically scoped to its
+	// spec: §15.1 — a tenant-admin is automatically scoped to its
 	// own tenant; the tenant_id param cannot widen that. A platform-admin
 	// honours the param, and omitting it lists across every tenant.
 	tenantFilter := q.Get("tenant_id")
@@ -420,7 +418,7 @@ func (r *Router) handleListLegalHolds(w http.ResponseWriter, req *http.Request) 
 		}
 	}
 
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// spec: §15.1 — canonical cursor-paginated envelope.
 	// resourceId is the name sort field and the timestamp tiebreaker.
 	writePaginatedList(w, req, r.clock(), entries, adminTimestampSortFields, adminListDefaultSort,
 		func(e legalHoldEntry, s pagination.Sort) (string, string) {
@@ -455,7 +453,7 @@ func (r *Router) legalHoldTenantScope(ctx context.Context, tenantFilter string) 
 
 // emitLegalHold writes the §12.8 ledger event for a hold set or clear,
 // stamping the resourceType so the erasure preflight ledger covers
-// session and artifact scopes. spec: §12.8 line 794.
+// session and artifact scopes. spec: §12.8.
 func (r *Router) emitLegalHold(req *http.Request, hold bool, resourceType, resourceID string, detail map[string]any) {
 	principal, _ := authmw.FromContext(req.Context())
 	event := "legal_hold.cleared"
@@ -467,7 +465,7 @@ func (r *Router) emitLegalHold(req *http.Request, hold bool, resourceType, resou
 }
 
 // heldResource describes a single §12.8 legal-hold blocking the erasure
-// of a user. spec: §12.8 line 794 — the blocked event carries
+// of a user. spec: §12.8 — the blocked event carries
 // {resourceType, resourceId} tuples for each hold.
 type heldResource struct {
 	ResourceType string `json:"resourceType"`
@@ -500,7 +498,7 @@ func (r *Router) heldSessions(ctx context.Context, tenantID, userID string) ([]s
 // and artifact-level holds on any artifact owned by one of the user's
 // sessions (resourceType artifact). The returned holds back the
 // gdpr.erasure_blocked_by_hold event's resource tuples and the override
-// receipt. spec: §12.8 line 794(a)(b).
+// receipt. spec: §12.8(b).
 func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID string) ([]heldResource, error) {
 	if r.sessions == nil {
 		return nil, nil
@@ -517,7 +515,7 @@ func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID stri
 		if s.LegalHold {
 			holds = append(holds, heldResource{ResourceType: "session", ResourceID: s.ID})
 		}
-		// §12.8 line 794(b): an artifact under one of the user's sessions
+		// §12.8: an artifact under one of the user's sessions
 		// that carries its own hold blocks the erasure even when the
 		// session itself is not held.
 		if r.artifactHolds != nil {

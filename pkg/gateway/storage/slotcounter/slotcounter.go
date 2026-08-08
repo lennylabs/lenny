@@ -70,7 +70,7 @@ var ErrRehydrationStalled = errors.New("slotcounter: slot-counter rehydration di
 // counter is seeded to zero on first access, which matches the
 // pre-rehydration behaviour (a fresh counter starts at zero) and is
 // only correct for deployments that never restart Redis under load.
-// spec: §5.2 line 521.
+// spec: §5.2.
 type SlotSource interface {
 	GetActiveSlotsByPod(ctx context.Context, podID string) (int, error)
 }
@@ -278,7 +278,7 @@ func (c *Counter) Reserve(ctx context.Context, podID string, maxConcurrent int32
 		res, runErr := reserveScript.Run(ctx, c.client, keys, maxConcurrent).Int64()
 		if runErr != nil {
 			if isRedisUnavailable(runErr) {
-				// spec: §12.4 line 208 — Redis is unreachable. Gate capacity
+				// spec: §12.4 — Redis is unreachable. Gate capacity
 				// on the Postgres fallback under a per-pod advisory lock,
 				// failing closed only after the bounded outage window.
 				return c.fallbackReserve(ctx, podID, maxConcurrent, rehydrated)

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// spec: §4.2 line 163 / §12.3 line 53 — tenant ID format.
+// spec: §4.2 / §12.3 — tenant ID format.
 // The InTx / InAllTenants helpers now interpolate the value into a
 // SET LOCAL statement (SET LOCAL has no parameter binding), so the
 // regex is the load-bearing guard against SQL injection.
@@ -33,7 +33,7 @@ func TestTenantIDPatternAccepts(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 163 / §12.3 line 53 — adversarial tenant IDs.
+// spec: §4.2 / §12.3 — adversarial tenant IDs.
 // Every classic SQL-injection vector must be rejected client-side
 // before any SET LOCAL statement runs.
 func TestTenantIDPatternRejectsInjection(t *testing.T) {
@@ -58,7 +58,7 @@ func TestTenantIDPatternRejectsInjection(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 163 — the sentinel values __unset__ and __all__
+// spec: §4.2 — the sentinel values __unset__ and __all__
 // satisfy the regex format (only [A-Za-z0-9_-]) but InTx rejects
 // them anyway because the helper is for concrete tenant IDs. The
 // __all__ sentinel must reach the DB only via InAllTenants, which
@@ -76,7 +76,7 @@ func TestInTxRejectsSentinelTenantIDs(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 163 — quoteTenantID renders the validated tenant
+// spec: §4.2 — quoteTenantID renders the validated tenant
 // ID as a SQL string literal. The regex already rejects single
 // quotes; this verifies the double-escape is in place as
 // defense-in-depth.
@@ -94,7 +94,7 @@ func TestQuoteTenantID(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 163 — adversarial tenant IDs must fail closed
+// spec: §4.2 — adversarial tenant IDs must fail closed
 // with ErrInvalidTenantID before any pool interaction. The helper
 // returns the sentinel even with a nil pool to confirm the regex
 // short-circuits before reaching Begin().
@@ -144,7 +144,7 @@ func TestNullStringRoundtrip(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — MonotonicNext returns prev+1µs when now has
+// spec: §4.2 — MonotonicNext returns prev+1µs when now has
 // not advanced past prev, so updated_at strictly advances even when
 // two writes land within the same microsecond.
 func TestMonotonicNext(t *testing.T) {

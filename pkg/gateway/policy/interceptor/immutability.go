@@ -10,9 +10,8 @@ import (
 
 // phaseImmutableFields returns the dot-separated JSON paths into a
 // phase's content payload that an external interceptor MODIFY must not
-// alter, per the §4.8 phase payload table (spec: §4.8 lines 1042-1060)
-// and the "Immutable field enforcement on MODIFY" paragraph (spec: §4.8
-// line 1060). A phase whose entire content payload is mutable (the
+// alter, per the §4.8 phase payload table (spec: §4.8)
+// and the "Immutable field enforcement on MODIFY" paragraph (spec: §4.8). A phase whose entire content payload is mutable (the
 // delegation/message/agent-output/LLM phases) returns nil, which
 // disables structural enforcement for that phase.
 //
@@ -26,11 +25,10 @@ func phaseImmutableFields(phase Phase) []string {
 	switch phase {
 	case PhasePostAuth:
 		// Serialized request envelope; authenticated identity sits in the
-		// metadata object (spec: §4.8 line 1047 PostAuth row).
+		// metadata object (spec: §4.8 PostAuth row).
 		return []string{"metadata.user_id", "metadata.tenant_id"}
 	case PhasePreRoute:
-		// Serialized TaskSpec; identity fields are top-level (spec: §4.8
-		// line 1048 PreRoute row).
+		// Serialized TaskSpec; identity fields are top-level (spec: §4.8 PreRoute row).
 		return []string{"tenant_id", "user_id"}
 	case PhasePostRoute:
 		// Resolved runtime and credential assignment (spec: §4.8 — the
@@ -38,10 +36,10 @@ func phaseImmutableFields(phase Phase) []string {
 		// enforcement paragraph on MODIFY).
 		return []string{"resolved_runtime_name", "credential_pool_id"}
 	case PhasePreToolResult:
-		// Tool-result correlation id (spec: §4.8 line 1053 PreToolResult row).
+		// Tool-result correlation id (spec: §4.8 PreToolResult row).
 		return []string{"id"}
 	case PhasePreConnectorRequest, PhasePostConnectorResponse:
-		// Connector routing identity (spec: §4.8 lines 1057-1058).
+		// Connector routing identity (spec: §4.8).
 		return []string{"tool_name", "connector_id"}
 	default:
 		return nil
@@ -54,7 +52,7 @@ func phaseImmutableFields(phase Phase) []string {
 // paths when the MODIFY changed, removed, or introduced an immutable
 // field; the chain then rejects the MODIFY with
 // CodeInterceptorImmutableFieldViolation and preserves the original
-// payload (spec: §4.8 line 1060).
+// payload (spec: §4.8).
 //
 // Enforcement applies only when the phase declares immutable fields and
 // the pre-modification payload is a JSON object. A phase whose content

@@ -42,7 +42,7 @@ func createAndStartRequest(t *testing.T, h http.Handler, body sessionserver.Crea
 }
 
 // createAndStartRequestAs drives POST /v1/sessions/start with an authenticated
-// principal on the context, the §10.2 path the §11.1 line 13 / §10.6 gate
+// principal on the context, the §10.2 path the §11.1 / §10.6 gate
 // resolves environment membership against.
 func createAndStartRequestAs(t *testing.T, h http.Handler, body sessionserver.CreateAndStartRequest, principal authmw.Principal) *httptest.ResponseRecorder {
 	t.Helper()
@@ -56,10 +56,10 @@ func createAndStartRequestAs(t *testing.T, h http.Handler, body sessionserver.Cr
 }
 
 // TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1 pins that the
-// §11.1 line 8 per-runtime concurrent-session cap now rejects a create-and-start
+// §11.1 per-runtime concurrent-session cap now rejects a create-and-start
 // at the limit. The pre-fix create-and-start path never ran requireConcurrencyLimits,
 // so this create returned 201 running; the gate now returns 429 QUOTA_EXCEEDED.
-// spec: §11.1 line 8; §15.2.1 rule 1.
+// spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
 		sessionserver.Options{MaxConcurrentSessionsPerRuntime: 2},
@@ -76,7 +76,7 @@ func TestSessionStartRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T
 
 // TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1 pins the §11.1
 // per-user concurrent-session cap on the create-and-start path, keyed off the
-// authenticated principal's subject. spec: §11.1 line 8; §15.2.1 rule 1.
+// authenticated principal's subject. spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
 		sessionserver.Options{MaxConcurrentSessionsPerUser: 2},
@@ -92,11 +92,10 @@ func TestSessionStartRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 	}
 }
 
-// TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1 pins that the §11.1
-// line 7 per-runtime requests-per-minute admission limit now rejects on the
+// TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1 pins that the §11.1 per-runtime requests-per-minute admission limit now rejects on the
 // create-and-start path. The pre-fix path never ran requireAdmissionRateLimit,
 // so a caller could create-and-start past the per-minute cap unthrottled.
-// spec: §11.1 line 7; §15.2.1 rule 1.
+// spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1(t *testing.T) {
 	srv := admissionServer(sessionserver.Options{
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
@@ -121,13 +120,12 @@ func TestSessionStartRejectedAtAdmissionRateLimit_spec_11_1(t *testing.T) {
 	}
 }
 
-// TestSessionStartRejectedByEnvironmentAdmission_spec_10_6 pins that the §11.1
-// line 13 / §10.6 environment-admission gate now rejects a create-and-start
+// TestSessionStartRejectedByEnvironmentAdmission_spec_10_6 pins that the §11.1 / §10.6 environment-admission gate now rejects a create-and-start
 // that names no environment when the caller holds no environment membership
 // and the tenant's noEnvironmentPolicy resolves to deny-all. The pre-fix
 // create-and-start path never ran requireEnvironmentAdmission, so this create
 // returned 201; the gate now returns 403 FORBIDDEN.
-// spec: §11.1 line 13; §10.6; §15.2.1 rule 1.
+// spec: §11.1; §10.6; §15.2.1 rule 1.
 func TestSessionStartRejectedByEnvironmentAdmission_spec_10_6(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_start_deny",
 		tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
@@ -160,7 +158,7 @@ func (c *countingRLCounter) Incr(ctx context.Context, key string, now time.Time)
 // create rejected by the concurrency cap reserves no rate budget, so the
 // admission-rate counter is never incremented. A regression that placed the
 // rate gate before the concurrency gate would bump the counter here.
-// spec: §11.1 line 8 (over-limit reserves no rate budget); §15.2.1 rule 1.
+// spec: §11.1; §15.2.1 rule 1.
 func TestSessionStartConcurrencyGateRunsBeforeRateGate_spec_11_1(t *testing.T) {
 	spy := &countingRLCounter{inner: rlcounter.NewMemory()}
 	store := memstore.New()

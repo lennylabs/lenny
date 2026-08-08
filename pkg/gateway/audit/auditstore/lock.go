@@ -21,7 +21,7 @@ import (
 // 5000, audit.lock.maxRetries 3, audit.lock.retryBaseMs 20); a zero or
 // negative field falls back to the spec default via withDefaults so an
 // operator overrides only the knobs it cares about.
-// spec: §11.7 item 3 line 368.
+// spec: §11.7 item 3.
 type LockConfig struct {
 	// AcquireTimeoutMs is set as statement_timeout on the
 	// pg_advisory_xact_lock call (audit.lock.acquireTimeoutMs).
@@ -66,7 +66,7 @@ type LockMetrics struct {
 // against reg: the lenny_audit_lock_acquire_seconds histogram (P99 SLO
 // 50ms per item 3) and the lenny_audit_concurrency_timeout_total
 // counter. Pass nil reg to register against the default registerer.
-// spec: §11.7 item 3 line 368.
+// spec: §11.7 item 3.
 func NewLockMetrics(reg prometheus.Registerer) (*LockMetrics, error) {
 	const acquireName = "lenny_audit_lock_acquire_seconds"
 	const timeoutName = "lenny_audit_concurrency_timeout_total"
@@ -108,7 +108,7 @@ func (m *LockMetrics) incTimeout() {
 // acquire the per-tenant advisory lock within AcquireTimeoutMs. Code()
 // is the §11.7 AUDIT_CONCURRENCY_TIMEOUT error code the caller surfaces;
 // the gateway retries on the same replica before giving up.
-// spec: §11.7 item 3 line 368.
+// spec: §11.7 item 3.
 type ConcurrencyTimeoutError struct {
 	TenantID string
 	Err      error
@@ -126,7 +126,7 @@ func (e *ConcurrencyTimeoutError) Unwrap() error { return e.Err }
 // AuditUnavailableError is returned by Store.Append after exhausting the
 // configured MaxRetries. The top-level request maps it to HTTP 503
 // audit_unavailable and the AuditLockContention alert fires.
-// spec: §11.7 item 3 line 368.
+// spec: §11.7 item 3.
 type AuditUnavailableError struct {
 	TenantID string
 	Attempts int
@@ -170,7 +170,7 @@ func isLockTimeout(err error) bool {
 // that reads prev_hash and sequence_number. A timeout returns a
 // *ConcurrencyTimeoutError; the lock budget is lifted once the lock is
 // held so the seal+insert run under the connection's default timeout.
-// spec: §11.7 item 3 lines 367-368.
+// spec: §11.7 item 3.
 func acquireAuditLock(ctx context.Context, tx pgx.Tx, tenantID string, cfg LockConfig, m *LockMetrics) error {
 	cfg = cfg.withDefaults()
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", cfg.AcquireTimeoutMs)); err != nil {

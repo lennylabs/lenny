@@ -64,7 +64,7 @@ func TestSessionUsageMeterDeltaAccounting_spec_4_7(t *testing.T) {
 // A cumulative read returns the session running total and advances the
 // watermark to that total, so a reconnected gateway replica that seeds
 // its counter from the cumulative total then reads a zero first delta and
-// does not double-count the recovered tokens (the §11.2:46 crash-recovery
+// does not double-count the recovered tokens (the §11.2 crash-recovery
 // MAX rule). This is the corrected recovery behavior; a delta-only meter
 // or a meter that did not advance the watermark on the cumulative read
 // would re-add the recovered tokens on the next poll.

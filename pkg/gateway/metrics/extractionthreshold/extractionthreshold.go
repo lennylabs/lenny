@@ -41,7 +41,7 @@ type Threshold struct {
 // gateway uses these when no LENNY_EXTRACTION_THRESHOLD_* env vars
 // are set so a stock binary still emits a useful audit gauge.
 //
-// spec: §4.1 lines 121-128
+// spec: §4.1
 func Defaults() Threshold {
 	return Threshold{
 		StreamProxyQueueDepth:               500,

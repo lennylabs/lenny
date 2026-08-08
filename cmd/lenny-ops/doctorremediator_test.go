@@ -47,7 +47,7 @@ func endpointsObj(readyAddrs int) *corev1.Endpoints {
 	}
 }
 
-// spec: §25.6 line 2962 — coreDnsStuckEndpoint fires when Ready pods
+// spec: §25.6 — coreDnsStuckEndpoint fires when Ready pods
 // outnumber the endpoint addresses; the fix rolls the Deployment.
 func TestRemediator_CoreDNS_DetectAndApply_spec_25_6_2962(t *testing.T) {
 	cs := fake.NewSimpleClientset(
@@ -99,7 +99,7 @@ func TestRemediator_CoreDNS_InSync_NotDetected(t *testing.T) {
 	}
 }
 
-// spec: §25.6 line 2974 — a CoreDNS Deployment carrying the opt-out
+// spec: §25.6 — a CoreDNS Deployment carrying the opt-out
 // annotation is detected with OptOut set so the orchestrator skips it.
 func TestRemediator_CoreDNS_OptOut_spec_25_6_2974(t *testing.T) {
 	cs := fake.NewSimpleClientset(
@@ -163,7 +163,7 @@ func certDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 		}, objs...)
 }
 
-// spec: §25.6 line 2964 — certManagerExpiring fires for a Ready
+// spec: §25.6 — certManagerExpiring fires for a Ready
 // certificate within 7 days of expiry; the fix annotates it and deletes
 // the backing Secret to force re-issuance.
 func TestRemediator_CertManager_DetectAndApply_spec_25_6_2964(t *testing.T) {

@@ -58,7 +58,7 @@ type presignAPI interface {
 // SSEKeyResolver returns the per-tenant SSE-KMS key id for an object.
 //
 // Return semantics mirror the §4.5 MinIO backend so every artifact
-// store fails closed identically for a T4 tenant (§12.5 line 303):
+// store fails closed identically for a T4 tenant (§12.5):
 //   - (kmsID, requireKey=false, nil) — use kmsID when non-empty,
 //     otherwise fall through to the bucket default (the T3 path).
 //   - (kmsID, requireKey=true, nil) — T4 tenant. The Put MUST wrap
@@ -67,7 +67,7 @@ type presignAPI interface {
 //     resolver level. The Put fails closed with
 //     blobstore.ErrClassificationControlViolation.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 type SSEKeyResolver func(u blobstore.URI) (kmsID string, requireKey bool, err error)
 
 // Config configures a Store.
@@ -113,13 +113,13 @@ func (s *Store) SetOnArtifactUploadError(fn func(tenantID, errorType string)) {
 	s.onArtifactUploadError = fn
 }
 
-// SetOnKMSUnavailable registers the §12.5 line 303 fail-closed write
+// SetOnKMSUnavailable registers the §12.5 fail-closed write
 // callback the gateway uses to drive
 // lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
 // whenever a Put or Copy rejects a T4 tenant whose per-tenant SSE-KMS
 // key is unavailable.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
 	s.onKMSUnavailable = fn
 }
@@ -127,7 +127,7 @@ func (s *Store) SetOnKMSUnavailable(fn func(tenantID string)) {
 // fireKMSUnavailable invokes the gateway-registered hook on a
 // fail-closed T4 write rejection. It is a no-op when no hook is wired.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func (s *Store) fireKMSUnavailable(tenantID string) {
 	if s.onKMSUnavailable != nil {
 		s.onKMSUnavailable(tenantID)
@@ -136,10 +136,10 @@ func (s *Store) fireKMSUnavailable(tenantID string) {
 
 // applySSE resolves the per-tenant SSE-KMS key for u and stamps it onto
 // the supplied setter, failing closed for a T4 tenant whose key is
-// unavailable. It centralizes the §12.5 line 303 / §12.9 line 1046
+// unavailable. It centralizes the §12.5 / §12.9
 // fail-closed contract for both Put and Copy.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func (s *Store) applySSE(u blobstore.URI, set func(kmsID string)) error {
 	if s.resolver == nil {
 		return nil
@@ -166,7 +166,7 @@ func (s *Store) applySSE(u blobstore.URI, set func(kmsID string)) error {
 // fires on S3-backed deployments under the same outage semantics
 // as the self-managed MinIO backend.
 //
-// spec: §16.5 ArtifactUploadError; §12.5 line 282.
+// spec: §16.5 ArtifactUploadError; §12.5.
 func classifyS3PutError(err error) string {
 	s := err.Error()
 	switch {
@@ -575,7 +575,7 @@ func (s *Store) HardPrune(now time.Time, retention time.Duration) int {
 // the single object named by u; a missing object is a no-op (S3
 // DeleteObject is idempotent and NoSuchKey is treated as success).
 //
-// spec: §12.5 line 320 — catalog-driven targeted prune.
+// spec: §12.5 — catalog-driven targeted prune.
 func (s *Store) HardDeleteObject(u blobstore.URI) error {
 	ctx := context.Background()
 	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{

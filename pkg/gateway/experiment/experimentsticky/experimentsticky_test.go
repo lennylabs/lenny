@@ -34,7 +34,7 @@ func TestKeyFormat_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 831 — a cached assignment is read back so the provider is
+// spec: §10.7 — a cached assignment is read back so the provider is
 // not re-evaluated.
 func TestPutGetRoundTrip_spec_10_7(t *testing.T) {
 	c, _ := newCacheT(t)
@@ -70,7 +70,7 @@ func TestGetIsScoped(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1096 — flush DELs all keys matching
+// spec: §10.7 — flush DELs all keys matching
 // `t:{tenant}:exp:{exp}:sticky:*` and only that experiment's keys.
 func TestFlushDeletesOnlyExperimentKeys_spec_10_7(t *testing.T) {
 	rec := &countingRecorder{}
@@ -102,7 +102,7 @@ func TestFlushDeletesOnlyExperimentKeys_spec_10_7(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1096 — the invalidation counter is incremented on each
+// spec: §10.7 — the invalidation counter is incremented on each
 // flush, even when the experiment has no cached users.
 func TestFlushRecordsInvalidationEvenWhenEmpty_spec_10_7(t *testing.T) {
 	rec := &countingRecorder{}

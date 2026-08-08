@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package introspection implements the §10.6 line 661 real-time group
+// Package introspection implements the §10.6 real-time group
 // check: when a tenant sets identityProvider.introspectionEnabled, the
 // gateway calls the OIDC provider's RFC 7662 token-introspection
 // endpoint on the auth hot path and uses the group set the provider
@@ -15,7 +15,7 @@
 // configuration is itself cached for a fixed window so a tenant that has
 // not enabled introspection does not pay a config read on every request.
 //
-// spec: §10.6 line 661.
+// spec: §10.6.
 package introspection
 
 import (
@@ -164,7 +164,7 @@ func New(source ConfigSource, opts ...Option) *Verifier {
 //     rather than honoring the JWT groups, because the operator opted
 //     into real-time checks for a security reason.
 //
-// spec: §10.6 line 661.
+// spec: §10.6.
 func (v *Verifier) IntrospectGroups(ctx context.Context, tenantID, token string) (enabled, active bool, groups []string, err error) {
 	cfg, cerr := v.config(ctx, tenantID)
 	if cerr != nil {

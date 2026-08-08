@@ -27,7 +27,7 @@ func postBootstrap(t *testing.T, router *admin.Router, body admin.BootstrapReque
 	return rec, resp
 }
 
-// spec: §12.9 line 1048 — a seed entry with an out-of-enum workspaceTier
+// spec: §12.9 — a seed entry with an out-of-enum workspaceTier
 // is rejected per-entry (SEED_VALIDATION) without persisting the tenant.
 func TestBootstrapRejectsInvalidWorkspaceTier(t *testing.T) {
 	router, tenants, _, _, _ := newBootstrapRouter(t)
@@ -45,7 +45,7 @@ func TestBootstrapRejectsInvalidWorkspaceTier(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1033 — a bootstrap re-run that names a looser tier on a
+// spec: §12.9 — a bootstrap re-run that names a looser tier on a
 // currently-stricter tenant is rejected even under forceUpdate; the tier
 // is not downgraded.
 func TestBootstrapRejectsWorkspaceTierDowngrade(t *testing.T) {
@@ -67,7 +67,7 @@ func TestBootstrapRejectsWorkspaceTierDowngrade(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 301 — a seed that creates a T4 tenant runs the
+// spec: §12.5 — a seed that creates a T4 tenant runs the
 // admin-time KMS probe; a probe failure rejects the entry per-entry and
 // does not persist the tenant.
 func TestBootstrapT4CreateProbeFailure(t *testing.T) {

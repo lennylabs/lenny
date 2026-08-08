@@ -8,7 +8,7 @@
 // pkg/gateway/delegation/export; this package keeps the infra coupling out
 // of that package so the orchestrator stays unit-testable.
 //
-// spec: §8.7 (file export model); §8.2 lines 91-95 (steps 3, 4);
+// spec: §8.7 (file export model); §8.2;
 // §4.5 (blob store); §6.3 (pod binder reads the persisted blobs).
 package exportwire
 

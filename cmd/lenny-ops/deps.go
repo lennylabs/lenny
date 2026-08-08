@@ -231,7 +231,7 @@ func (emptySubscriptionSource) Subscriptions() []opsservice.WebhookSubscription 
 // subscriptionAuditFunc adapts a plain function to the
 // eventsubscription.AuditSink interface so the §25.5 subscription audit
 // events (created/updated/deleted/secret_rotated) reach the lenny-ops
-// audit logger. spec: §25.5 lines 2731, 2804-2806.
+// audit logger. spec: §25.5.
 type subscriptionAuditFunc func(eventsubscription.AuditEvent)
 
 func (f subscriptionAuditFunc) Emit(ev eventsubscription.AuditEvent) { f(ev) }
@@ -290,8 +290,7 @@ type webhookDelivery struct {
 // delivery-recording + failure-emission worker, the delivery metrics,
 // and the cross-replica subscription_cache_invalidate RPC. The leader
 // runs the returned Worker; the opsserver registers the returned
-// Subscriptions service and Cache invalidator. spec: §25.5 lines
-// 2701-2756.
+// Subscriptions service and Cache invalidator. spec: §25.5.
 func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhookDelivery {
 	var store eventsubscription.Store
 	if deps.Pool != nil {
@@ -303,14 +302,14 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 	if deps.Audit != nil {
 		svc.SetAuditSink(deps.Audit)
 	}
-	// §25.5 lines 2735-2745: the ops.webhooks SSRF policy validates the
+	// §25.5: the ops.webhooks SSRF policy validates the
 	// callback URL at create/update. A nil validator leaves the Service on
 	// its strict default. F-25.4.9.
 	if deps.SSRF != nil {
 		svc.SSRF = deps.SSRF
 	}
 
-	// §25.5 lines 2715-2733: the worker recovers each subscription's
+	// §25.5: the worker recovers each subscription's
 	// plaintext signing secret from this in-memory reveal cache, populated
 	// when the secret is generated and pruned when the subscription is
 	// deleted.
@@ -324,7 +323,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 		OnAvailabilityChange: deps.OnAvailabilityChange,
 	})
 
-	// §25.5 line 2751: the cross-replica subscription_cache_invalidate RPC.
+	// §25.5: the cross-replica subscription_cache_invalidate RPC.
 	// The token derives from the shared HMAC key both replicas mount; an
 	// empty key (dev) leaves the broadcaster nil and the cache on
 	// periodic-refresh-only.
@@ -342,7 +341,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 			Token: token,
 		})
 	}
-	// §25.5 lines 2751, 2756: on every CRUD, refresh the local cache
+	// §25.5: on every CRUD, refresh the local cache
 	// synchronously, then fan the invalidate RPC out to peers off the
 	// request path so one slow peer never blocks the response.
 	svc.OnChange = func(reqCtx context.Context, _ string) {
@@ -356,7 +355,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 		}
 	}
 
-	// §25.5 lines 2701-2713: record each delivery outcome unless the
+	// §25.5: record each delivery outcome unless the
 	// deployment opted into metric-only tracking.
 	var recorder opsservice.DeliveryRecorder
 	if deps.TrackingMode != webhookdelivery.TrackingMetricOnly {
@@ -371,7 +370,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 		HTTPTimeout:   10 * time.Second,
 		Metrics:       deliveryMetricsObserver{},
 		EmitFailure: func(subID, eventID string) {
-			// §25.5 line 2713: emit event_delivery_failed but do not deliver
+			// §25.5: emit event_delivery_failed but do not deliver
 			// it to the subscription, to avoid loops.
 			payload, _ := json.Marshal(map[string]any{
 				"subscriptionId": subID,
@@ -388,7 +387,7 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 			}
 		},
 	}
-	// §25.5 lines 2735-2745: re-run the SSRF/DNS-rebinding guard on every
+	// §25.5: re-run the SSRF/DNS-rebinding guard on every
 	// delivery attempt (not only at subscription create), so a DNS rebind
 	// after registration cannot reach a blocked target. Set the transport
 	// only when a validator is configured so the nil case still falls back
@@ -401,11 +400,11 @@ func buildWebhookDelivery(ctx context.Context, deps webhookDeliveryDeps) webhook
 	return webhookDelivery{Worker: worker, Subscriptions: svc, Cache: cache, Store: store, InvalidateToken: token}
 }
 
-// deliveryRetentionJob is the §25.5 lines 2649-2664 leader-only cron that
+// deliveryRetentionJob is the §25.5 leader-only cron that
 // purges expired ops_event_deliveries rows daily at 03:45 UTC. expires_at
 // is stamped at record time from the retention policy, so the sweep just
 // deletes rows whose expires_at has passed, batched at LIMIT 10000 to
-// avoid a long lock. spec: §25.5 line 2661.
+// avoid a long lock. spec: §25.5.
 func deliveryRetentionJob(store eventsubscription.Store) opsservice.ScheduledJob {
 	return opsservice.ScheduledJob{
 		Name:       "delivery-retention",
@@ -465,8 +464,7 @@ type backupDeps struct {
 	Locks coordination.RemediationLockService
 
 	// Recorder is the durable §11.7 platform-audit recorder every
-	// backup/restore/retention transition is committed to (§25.11 line
-	// 4343). Never nil — main builds the degraded log-only recorder when
+	// backup/restore/retention transition is committed to (§25.11). Never nil — main builds the degraded log-only recorder when
 	// no Postgres is wired.
 	Recorder *opsaudit.Recorder
 
@@ -487,7 +485,7 @@ type backupDeps struct {
 	// Regions is the §12.8 backups.regions.<region> per-region backup
 	// endpoint map. When non-empty, buildBackupService enables per-region
 	// dispatch and pairs it with ShardRegions; an empty map keeps the
-	// single-region global dump path. spec: §12.8 lines 932-936.
+	// single-region global dump path. spec: §12.8.
 	Regions map[string]backup.RegionBackupConfig
 	// ShardRegions resolves each Postgres shard to its data-residency
 	// region for per-region dispatch. Required when Regions is non-empty.
@@ -505,20 +503,20 @@ type backupDeps struct {
 // scheduled-backup loop runs only on the leader replica.
 func buildBackupService(production bool, deps backupDeps) (*backup.Service, []opsservice.ScheduledJob) {
 	cfg := backup.Config{
-		// §25.11 line 4343: every backup/restore/retention transition is
+		// §25.11: every backup/restore/retention transition is
 		// audited. The orchestrator emits to this sink, which commits the
 		// durable §11.7 platform-audit row through deps.Recorder (logged
 		// only in the degraded no-Postgres mode).
 		Audit: backupAuditSink(deps.Recorder),
-		// §12.8 line 936: the lenny_data_residency_violation_total counter
+		// §12.8: the lenny_data_residency_violation_total counter
 		// the fail-closed BACKUP_REGION_UNRESOLVABLE abort increments.
 		Residency: backupResidencyMetrics{},
-		// §25.11 line 4320: the lenny_backup_reconcile_blocked_total counter
+		// §25.11: the lenny_backup_reconcile_blocked_total counter
 		// the post-restore erasure-reconcile ledger-stale block increments.
 		Reconcile: backupReconcileMetrics{},
 	}
 
-	// §12.8 lines 932-936: when per-region backup endpoints are configured,
+	// §12.8: when per-region backup endpoints are configured,
 	// enable per-region pg_dump dispatch with the shard→region resolver.
 	if len(deps.Regions) > 0 && deps.ShardRegions != nil {
 		cfg.Regions = deps.Regions
@@ -595,7 +593,7 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 		{
 			Name:       "backup-full",
 			Expression: "0 2 * * *",
-			// §25.11 line 4106: the firing cadence follows the stored
+			// §25.11: the firing cadence follows the stored
 			// schedule's `full` cron, so an operator who edits it via PUT
 			// /v1/admin/backups/schedule changes the schedule without a
 			// restart. F-25.11.5.
@@ -631,7 +629,7 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			},
 		},
 		{
-			// spec: §25.11 lines 4108-4111 — the daily 03:30 UTC retention
+			// spec: §25.11 — the daily 03:30 UTC retention
 			// sweep deletes expired backups from both MinIO and Postgres. When
 			// a real Kubernetes launcher is wired, lenny-ops orchestrates a
 			// lenny-backup --mode=retention Job (the Job mounts the MinIO
@@ -657,7 +655,7 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			},
 		},
 		{
-			// spec: §25.11 lines 3976-3978 — the reconciler runs every 60s,
+			// spec: §25.11 — the reconciler runs every 60s,
 			// failing ops_backups rows still pending after 2 minutes
 			// (JOB_CREATE_FAILED) and deleting orphaned Kubernetes Jobs. It
 			// is leader-gated like the other cron jobs.
@@ -682,7 +680,7 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			},
 		},
 		{
-			// spec: §25.11 lines 4146-4149 — the restore-completion driver
+			// spec: §25.11 — the restore-completion driver
 			// polls every running restore's Job to completion and runs steps
 			// 5-8 (per-shard events, the post-restore GDPR erasure reconciler,
 			// the gateway rolling restart, and the restore:platform lock
@@ -719,7 +717,7 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			},
 		},
 		{
-			// spec: §25.11 lines 4098, 4254-4256 — publish the restore-test
+			// spec: §25.11 — publish the restore-test
 			// gauges (lenny_restore_test_success / _duration_seconds /
 			// _artifact_success_rate) and the cumulative
 			// _artifact_missing_total counter from the ops_restore_test_results
@@ -738,10 +736,9 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 	return svc, jobs
 }
 
-// backupLastSuccessfulTimestamp is the §25.11 line 4309
+// backupLastSuccessfulTimestamp is the §25.11
 // lenny_backup_last_successful_timestamp{type} gauge: the Unix time of
-// the last successful backup per type, evaluated by the §25.11
-// BackupOverdue alert (line 4317: a full backup older than 48h). It is
+// the last successful backup per type, evaluated by the §25.11 BackupOverdue alert. It is
 // registered on the default registry so the sampler publishes a real
 // gauge; the §16.9 lenny-ops /metrics exposition scrapes it (F-16.8.1).
 var backupLastSuccessfulTimestamp = func() *prometheus.GaugeVec {
@@ -787,7 +784,7 @@ var restoreTestDuration = func() *prometheus.GaugeVec {
 	return g
 }()
 
-// restoreTestArtifactRate is the §25.11 line 4098
+// restoreTestArtifactRate is the §25.11
 // lenny_restore_test_artifact_success_rate gauge: the sampled-HEAD
 // ArtifactStore success rate of the latest test restore. It is published
 // only when the latest run actually ran the sampled-HEAD check.
@@ -803,7 +800,7 @@ var restoreTestArtifactRate = func() *prometheus.GaugeVec {
 	return g
 }()
 
-// restoreTestArtifactMissing is the §25.11 line 4098
+// restoreTestArtifactMissing is the §25.11
 // lenny_restore_test_artifact_missing_total counter: the cumulative
 // count of sampled ArtifactStore objects absent at the replication
 // target across every recorded test restore. The sampler advances it by
@@ -827,7 +824,7 @@ var restoreTestArtifactMissing = func() *prometheus.CounterVec {
 // (leader-gated cron), so no synchronization is required.
 var lastRestoreTestArtifactMissing int64
 
-// dataResidencyViolationTotal is the §12.8 line 936
+// dataResidencyViolationTotal is the §12.8
 // lenny_data_residency_violation_total{operation} counter incremented on
 // every fail-closed region-resolution abort the ops backup pipeline
 // raises (operation="backup" on a BACKUP_REGION_UNRESOLVABLE). It is the
@@ -856,7 +853,7 @@ func (backupResidencyMetrics) DataResidencyViolation(operation string) {
 	}
 }
 
-// backupReconcileBlockedTotal is the §25.11 line 4320
+// backupReconcileBlockedTotal is the §25.11
 // lenny_backup_reconcile_blocked_total{reason} counter the
 // BackupReconcileBlocked alert evaluates. The post-restore erasure
 // reconciler increments it (reason="legal_hold_ledger_stale") when the
@@ -883,7 +880,7 @@ func (backupReconcileMetrics) ReconcileBlocked(reason string) {
 	}
 }
 
-// staticShardRegions is the §12.8 line 935 shard→region resolver driven
+// staticShardRegions is the §12.8 shard→region resolver driven
 // by configuration (LENNY_OPS_BACKUP_SHARD_REGIONS) rather than a live
 // StoreRouter region map. In v1 the residency region of each Postgres
 // shard is declared by the operator; a StoreRouter-backed resolver
@@ -901,7 +898,7 @@ func (s staticShardRegions) ShardRegions(context.Context) ([]backup.ShardRegion,
 // non-empty regions map with no shardRegions is a misconfiguration that
 // would leave every shard unresolvable; it is returned as an error so
 // lenny-ops fails fast at startup rather than failing every backup.
-// spec: §12.8 lines 932-936.
+// spec: §12.8.
 func parseBackupRegions(regionsJSON, shardRegionsJSON string) (map[string]backup.RegionBackupConfig, backup.ShardRegionResolver, error) {
 	regionsJSON = strings.TrimSpace(regionsJSON)
 	if regionsJSON == "" || regionsJSON == "{}" {
@@ -950,7 +947,7 @@ func parseBackupRegions(regionsJSON, shardRegionsJSON string) (map[string]backup
 // reporting a 1970 epoch that would read as a stale backup and trip
 // BackupOverdue spuriously before the first backup completes.
 //
-// spec: §25.11 line 4309.
+// spec: §25.11.
 func sampleBackupMetrics(ctx context.Context, svc *backup.Service) error {
 	if backupLastSuccessfulTimestamp == nil {
 		return nil
@@ -969,7 +966,7 @@ func sampleBackupMetrics(ctx context.Context, svc *backup.Service) error {
 // from store and publishes the restore-test gauges plus the cumulative
 // artifact-missing counter. A store with no recorded run leaves the
 // gauges unset rather than reporting a zero that reads as a failed
-// restore before the first run. spec: §25.11 lines 4098, 4254-4256.
+// restore before the first run. spec: §25.11.
 func sampleRestoreTestMetrics(ctx context.Context, store restoretest.Store) error {
 	if store == nil {
 		return nil
@@ -1009,7 +1006,7 @@ func sampleRestoreTestMetrics(ctx context.Context, store restoretest.Store) erro
 	return nil
 }
 
-// opsSelfHealthStatus is the §16.8 / §25.4 line 2507
+// opsSelfHealthStatus is the §16.8 / §25.4
 // lenny_ops_self_health_status{check} gauge: each self-health check's
 // status encoded as 0=healthy, 1=degraded, 2=unhealthy. The
 // OpsSelfHealthDegraded alert (§16.5) reads it. Registered on the
@@ -1030,10 +1027,10 @@ var opsSelfHealthStatus = func() *prometheus.GaugeVec {
 // lenny_ops_self_health_status{check} gauge, one series per check. It is
 // wired to opsservice.Config.OnSelfHealthSample so the gauge is refreshed
 // on every self-monitor evaluation. The HealthStatus enum already encodes
-// 0=healthy, 1=degraded, 2=unhealthy, matching the §25.4 line 2507 gauge
+// 0=healthy, 1=degraded, 2=unhealthy, matching the §25.4 gauge
 // semantics.
 //
-// spec: §16.8 / §25.4 line 2507.
+// spec: §16.8 / §25.4.
 func publishSelfHealthMetric(report opsservice.SelfHealthReport) {
 	if opsSelfHealthStatus == nil {
 		return
@@ -1086,8 +1083,8 @@ func buildDiagnosticsAudit(ratePerMinute int, recorder *opsaudit.Recorder) *opss
 	}
 }
 
-// bundleRulesReconciler returns the §25.4 line 1339 leader-only
-// bundleRules reconciler. §25.13 line 4816 makes the bundled alerting
+// bundleRulesReconciler returns the §25.4 leader-only
+// bundleRules reconciler. §25.13 makes the bundled alerting
 // rules static manifests rendered at Helm install/upgrade time with no
 // runtime mutation, so the reconciler does not re-render rules; it
 // re-asserts the §25.13 bundled-rules observability gauges
@@ -1104,8 +1101,7 @@ func bundleRulesReconciler(mx *alertingmetrics.Metrics, formats []string, overri
 }
 
 // backupAuditSink is the §25.11 backup/restore AuditSink. The orchestrator
-// emits an audit event on every state transition it owns (§25.11 line
-// 4343); the sink commits the durable §11.7 platform-audit row through the
+// emits an audit event on every state transition it owns (§25.11); the sink commits the durable §11.7 platform-audit row through the
 // recorder (logged only in the degraded no-Postgres mode). F-25.4.22.
 func backupAuditSink(recorder *opsaudit.Recorder) func(backup.AuditEvent) {
 	return func(ev backup.AuditEvent) {
@@ -1142,7 +1138,7 @@ func scheduledBackupsDisabled(ctx context.Context, svc *backup.Service) (bool, e
 // backup type so the cron evaluator fires on the runtime-modifiable
 // schedule rather than the compiled-in default. An empty string (a
 // store failure or a cleared field) tells the evaluator to fall back to
-// the static Expression. spec: §25.11 line 4106; F-25.11.5.
+// the static Expression. spec: §25.11; F-25.11.5.
 func scheduledBackupCron(svc *backup.Service, typ backup.Type) string {
 	sched, err := svc.GetSchedule(context.Background())
 	if err != nil || sched == nil {
@@ -1166,8 +1162,7 @@ func scheduledBackupCron(svc *backup.Service, typ backup.Type) string {
 // routing escalation_created to PagerDuty — depends on the event
 // reaching the stream the webhook delivery worker fans out from.
 //
-// spec: §25.17 lines 5266-5285 ("The escalation_created event is emitted
-// to the event stream. A webhook subscriber routes it to PagerDuty.").
+// spec: §25.17.
 type streamEscalationEmitter struct {
 	emitter events.EventEmitter
 	source  string
@@ -1213,9 +1208,9 @@ func (e streamEscalationEmitter) EmitEscalationCreated(esc escalation.Escalation
 // lenny-ops binary exposes via flags / env.
 type escalationConfig struct {
 	// RequireDurable rejects a create with ESCALATION_NO_DURABLE_STORE when
-	// no durable tier accepts it (§25.4 line 2396 ops.escalation.requireDurable).
+	// no durable tier accepts it (§25.4 ops.escalation.requireDurable).
 	RequireDurable bool
-	// ReconciliationWritesPerSecond paces the §25.4 line 2414 flush.
+	// ReconciliationWritesPerSecond paces the §25.4 flush.
 	ReconciliationWritesPerSecond int
 }
 
@@ -1232,7 +1227,7 @@ type escalationConfig struct {
 // (wired in main) promotes buffered records upward as a durable tier
 // recovers.
 //
-// spec: §25.4 lines 2376-2455.
+// spec: §25.4.
 func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, redisClient redis.UniversalClient, recorder *opsaudit.Recorder, cfg escalationConfig) *escalation.Service {
 	var durable []escalation.Store
 	if pgPool != nil {
@@ -1250,7 +1245,7 @@ func buildEscalationService(emitter escalation.Emitter, pgPool *pgxpool.Pool, re
 	})
 }
 
-// escalationAuditSink is the §25.4 line 2415 escalation-flush audit sink.
+// escalationAuditSink is the §25.4 escalation-flush audit sink.
 // Each successful tier flush commits a durable remediation.escalation_-
 // persisted row to the §11.7 platform chain through the recorder (logged
 // only in the degraded no-Postgres mode). F-25.4.22.
@@ -1273,7 +1268,7 @@ func (s escalationAuditSink) EscalationPersisted(_ context.Context, id, sourceTi
 // in-process MemoryStore (single-process degraded mode / dev), which
 // never reports an outage.
 //
-// spec: §25.4 lines 2011-2130.
+// spec: §25.4.
 func buildIdempotencyStore(pgPool *pgxpool.Pool) opsidem.Store {
 	if pgPool != nil {
 		return idempgstore.New(pgPool)
@@ -1281,16 +1276,15 @@ func buildIdempotencyStore(pgPool *pgxpool.Pool) opsidem.Store {
 	return opsidem.NewMemoryStore()
 }
 
-// driftServiceConfig carries the §25.10 lines 3809 / 3824 operator-
+// driftServiceConfig carries the §25.10 operator-
 // tunable knobs the lenny-ops binary exposes via flags / env. The
 // Postgres-backed store and the gateway-client reader are documented
 // seams; the knobs apply unchanged once those land. F-25.10.7, F-25.10.9.
 type driftServiceConfig struct {
-	// StaleWarningDays is ops.drift.snapshotStaleWarningDays (§25.10 line
-	// 3809). Default 7; 0 disables the snapshot-staleness warning.
+	// StaleWarningDays is ops.drift.snapshotStaleWarningDays (§25.10). Default 7; 0 disables the snapshot-staleness warning.
 	StaleWarningDays int
 	// RunningStateCacheTTLSec is ops.drift.runningStateCacheTTLSeconds
-	// (§25.10 line 3824). Default 60; 0 disables the running-state cache.
+	// (§25.10). Default 60; 0 disables the running-state cache.
 	RunningStateCacheTTLSec int
 }
 
@@ -1300,7 +1294,7 @@ type driftServiceConfig struct {
 // target rows survive a lenny-ops restart; without it the service falls
 // back to the in-memory snapshot store (single-process degraded mode /
 // dev). When a gateway admin client is configured the running state is
-// read from the gateway admin API (§25.10 line 3770) via the
+// read from the gateway admin API (§25.10) via the
 // gatewayreader collector; without one (no --gateway-url) the service
 // falls back to the empty running state so a drift report still
 // assembles. The reconcile resource applier remains a documented seam:
@@ -1308,21 +1302,21 @@ type driftServiceConfig struct {
 // until that applier lands (F-25.10.1).
 //
 // The §25.10 drift metrics, audit events, and operation_progressed
-// emission are wired here: the two §25.10 line 3858-3859 counters, the
+// emission are wired here: the two §25.10 counters, the
 // audit sink (logged until the lenny-ops audit-store client lands,
 // matching the backup/escalation posture), and the operation_progressed
 // emitter over the shared §4.0 EventEmitter.
 //
-// The §25.10 line 3822 running-state cache is wired over the in-memory
+// The §25.10 running-state cache is wired over the in-memory
 // MemRunningStateCache. A non-positive TTL disables caching, matching
-// the §25.10 line 3824 "0 disables" posture. F-25.10.2, F-25.10.3,
+// the §25.10 posture. F-25.10.2, F-25.10.3,
 // F-25.10.4, F-25.10.5, F-25.10.7, F-25.10.9.
 func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, gwClient *gateway.Client, emitter events.EventEmitter, recorder *opsaudit.Recorder) *driftservice.Service {
 	var store driftservice.SnapshotStore = driftservice.NewMemSnapshotStore()
 	if pgPool != nil {
 		store = driftpgstore.New(pgPool)
 	}
-	// §25.10 line 3770: the running state is read from the gateway admin
+	// §25.10: the running state is read from the gateway admin
 	// API. The gatewayreader collector normalizes the admin LIST responses
 	// into the snapshot's resource-keyed structure; without a gateway
 	// client the service degrades to the empty running state. F-25.10.4.
@@ -1345,8 +1339,7 @@ func buildDriftService(cfg driftServiceConfig, pgPool *pgxpool.Pool, gwClient *g
 	return svc
 }
 
-// driftDetectedTotal and driftReconciledTotal are the §25.10 lines
-// 3858-3859 drift counters. They are registered on the default registry
+// driftDetectedTotal and driftReconciledTotal are the §25.10 drift counters. They are registered on the default registry
 // so the service increments real series; the lenny-ops /metrics
 // exposition that scrapes them is the same documented gap F-16.8.1
 // tracks (mirroring lenny_backup_last_successful_timestamp). F-25.10.3.
@@ -1390,7 +1383,7 @@ func (driftPromMetrics) Reconciled(resourceType, outcome string) {
 	}
 }
 
-// driftAuditSink is the §25.10 line 3871 drift audit sink. Each event is
+// driftAuditSink is the §25.10 drift audit sink. Each event is
 // committed to the §11.7 platform chain through the recorder (logged only
 // in the degraded no-Postgres mode). F-25.10.2, F-25.4.22.
 type driftAuditSink struct{ recorder *opsaudit.Recorder }
@@ -1403,7 +1396,7 @@ func (s driftAuditSink) Emit(ev driftservice.AuditEvent) {
 	s.recorder.Record(ev.Type, fields, time.Now())
 }
 
-// driftProgressEmitter emits the §25.10 line 3844 operation_progressed
+// driftProgressEmitter emits the §25.10 operation_progressed
 // event onto the shared §4.0 EventEmitter so the §25.4 watchdog and any
 // webhook subscriber observe a reconcile advancing resource-by-resource.
 // F-25.10.1.
@@ -1525,8 +1518,7 @@ type doctorDeps struct {
 // buildDoctorService constructs the §25.6 doctor orchestrator over the
 // production Kubernetes remediator. A nil Clientset (no cluster
 // connection in single-process dev) leaves the orchestrator nil, so the
-// run endpoint reports 503 DOCTOR_UNAVAILABLE. spec: §25.6 lines
-// 2941-2982. F-25.6.2, F-24.2.3.
+// run endpoint reports 503 DOCTOR_UNAVAILABLE. spec: §25.6. F-25.6.2, F-24.2.3.
 func buildDoctorService(deps doctorDeps) doctor.Service {
 	if deps.Clientset == nil {
 		return nil
@@ -1686,7 +1678,7 @@ func loadEd25519PublicKey(path, keyID string) (releasechannel.Key, error) {
 // platformUpgradeAvailable is the §16.5 lenny_platform_upgrade_available
 // gauge: 1 when the configured release channel advertises a newer
 // version than the running lenny-ops, 0 otherwise. The
-// PlatformUpgradeAvailable alert (§16.5 line 1569) reads it. It is
+// PlatformUpgradeAvailable alert (§16.5) reads it. It is
 // registered on the process default registry so the §16.9 /metrics
 // exposition scrapes it (F-16.8.1).
 //
@@ -1703,7 +1695,7 @@ var platformUpgradeAvailable = func() *prometheus.GaugeVec {
 	return g
 }()
 
-// operationsStalled is the §25.2 line 399 lenny_ops_operations_stalled
+// operationsStalled is the §25.2 lenny_ops_operations_stalled
 // gauge: the count of in-flight operations whose progress exceeded their
 // expected inter-step cadence (stalledForSeconds > 0). The
 // OperationStalled alert (§16.5) reads it. It is registered on the
@@ -1711,7 +1703,7 @@ var platformUpgradeAvailable = func() *prometheus.GaugeVec {
 // exposition always carries the series, and the §25.2 operations-observe
 // loop updates it on each leader tick.
 //
-// spec: §25.2 lines 399, §16.5 OperationStalled.
+// spec: §25.2, §16.5 OperationStalled.
 var operationsStalled = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_ops_operations_stalled",
@@ -1741,7 +1733,7 @@ func setOperationsStalled(n float64) {
 // in-memory store, which accumulates baselines within a single process
 // lifetime.
 //
-// spec: §25.2 lines 393-394.
+// spec: §25.2.
 func buildBaselineStore(pool *pgxpool.Pool) operations.BaselineStore {
 	if pool != nil {
 		return baselinestore.New(pool)
@@ -1753,7 +1745,7 @@ func buildBaselineStore(pool *pgxpool.Pool) operations.BaselineStore {
 // upgradeservice.BaselineRecorder and upgradeservice.BaselineReader seams
 // (string kind) so the upgrade orchestrator records the platform_upgrade
 // completion duration, and looks up the current baseline for the
-// GET /upgrade/status historical_p50 ETA (§25.2 line 393-394), without
+// GET /upgrade/status historical_p50 ETA (§25.2), without
 // importing the operations.Kind enum.
 type opsBaselineRecorder struct{ store operations.BaselineStore }
 
@@ -1809,12 +1801,12 @@ func upgradeAuditSink(recorder *opsaudit.Recorder) func(upgradeservice.AuditEven
 // the §16.7 platform-upgrade lifecycle audit events plus the §16.6
 // upgrade_progressed operational events through the shared lenny-ops
 // EventEmitter. When a Postgres pool is available the upgrade state is
-// persisted to the platform_upgrade_state singleton (§25.4 line 1492) so
-// a paused upgrade survives a leader-election handoff (§25.8 line 3560);
+// persisted to the platform_upgrade_state singleton (§25.4) so
+// a paused upgrade survives a leader-election handoff (§25.8);
 // in single-process degraded mode (no pool) it falls back to the
 // in-memory store, which survives within a single leader term. The
 // drift cleaner deletes the §25.10 target snapshot when a rollback
-// reaches RolledBack (§25.8 line 3551).
+// reaches RolledBack (§25.8).
 //
 // spec: §25.8, §10.5 (F-10.5.5 audit emission, F-10.5.7 orchestrator
 // consumer).
@@ -1835,7 +1827,7 @@ func buildUpgradeService(store upgradeservice.Store, drift *driftservice.Service
 		Store:   store,
 		Emitter: emitter,
 		Audit:   upgradeAuditSink(recorder),
-		// §25.2 line 393: fold the upgrade's completion duration into the
+		// §25.2: fold the upgrade's completion duration into the
 		// historical baseline table so a later upgrade gets a historical_p50
 		// ETA, and read it back for the GET /upgrade/status progress envelope.
 		Baselines:      opsBaselineRecorder{store: baselines},
@@ -1913,8 +1905,7 @@ func buildRegistryService(pool *pgxpool.Pool, base registryservice.EffectiveConf
 	})
 }
 
-// pgConnChecker is the §25.8 preflight Postgres-connection gate (spec line
-// 3501): it reports whether the pool has headroom for the migration phase.
+// pgConnChecker is the §25.8 preflight Postgres-connection gate: it reports whether the pool has headroom for the migration phase.
 // A nil pool reports healthy (the single-process degraded path runs no
 // migration phase).
 type pgConnChecker struct{ pool *pgxpool.Pool }
@@ -1942,7 +1933,7 @@ func (c pgConnChecker) HasFreeConnections(context.Context) (bool, string, error)
 // degrades that gate to skipped and still returns the resolved image plan
 // as a preview.
 //
-// spec: §25.8 Phase 1 (lines 3496-3503).
+// spec: §25.8 Phase 1.
 func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool, pullCheckTimeout time.Duration) *upgradeservice.Preflighter {
 	return upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
 		Store:         store,
@@ -1952,13 +1943,13 @@ func buildPreflighter(store upgradeservice.Store, pool *pgxpool.Pool, pullCheckT
 	})
 }
 
-// imagePullCheckDuration is the §25.8 line 3619
+// imagePullCheckDuration is the §25.8
 // lenny_platform_image_pull_check_duration_seconds histogram: the latency
 // of one preflight/watchdog image-pullability observation, labelled by
 // component. It is registered on the process default registry so the §16.9
 // /metrics exposition scrapes it.
 //
-// spec: §25.8 Metrics (line 3619).
+// spec: §25.8 Metrics.
 var imagePullCheckDuration = func() *prometheus.HistogramVec {
 	h, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_platform_image_pull_check_duration_seconds",
@@ -1988,7 +1979,7 @@ func recordImagePullCheck(component string, d time.Duration) {
 // remains dormant until a PodObserver is wired. The histogram is recorded
 // on every observation pass.
 //
-// spec: §25.8 lines 3509-3511, 3619.
+// spec: §25.8.
 func buildWatchdog(svc *upgradeservice.Service, cfg upgradeservice.WatchdogConfig, emitter events.EventEmitter) *upgradeservice.Watchdog {
 	return upgradeservice.NewWatchdog(upgradeservice.WatchdogOptions{
 		Service: svc,
@@ -2002,7 +1993,7 @@ func buildWatchdog(svc *upgradeservice.Service, cfg upgradeservice.WatchdogConfi
 // watchdog every minute while an upgrade is in a roll phase. It is a no-op
 // outside a roll phase, so it costs one store read per minute at idle.
 //
-// spec: §25.8 lines 3509-3511 (OpsRoll watchdog goroutine).
+// spec: §25.8.
 func upgradeWatchdogJob(wd *upgradeservice.Watchdog) opsservice.ScheduledJob {
 	return opsservice.ScheduledJob{
 		Name:       "platform-upgrade-watchdog",
@@ -2140,10 +2131,10 @@ func buildReleaseChannelVerifier(publicKeyPath, publicKeyID string) (*releasecha
 // CertExpiryImminent alert reads (min(lenny_cert_expiry_seconds) < 3600).
 // The §25.8 cert-manager health source sets it per certificate on each
 // self-health probe, so the alert fires on the same signal the certManager
-// health component reports (§25.8 line 3461). A negative value (an expired
+// health component reports (§25.8). A negative value (an expired
 // certificate) clamps to 0 so the alert reads "expiring now".
 //
-// spec: §25.8 line 3461, §16.5 CertExpiryImminent.
+// spec: §25.8, §16.5 CertExpiryImminent.
 var certExpirySeconds = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_cert_expiry_seconds",
@@ -2174,10 +2165,10 @@ func setCertExpiry(certificate string, seconds float64) {
 // cluster / dev mode) yields a nil service so the config routes stay
 // unmapped. The v1 service ships without a schema validator: the
 // generated pkg/chart/values validator is the documented follow-on
-// (§17 line 655); until then any well-formed config is accepted, and the
+// (§17); until then any well-formed config is accepted, and the
 // gateway remains the authoritative validator on apply.
 //
-// spec: §25.8 Config Diff and Config Apply (lines 3566-3574).
+// spec: §25.8 Config Diff and Config Apply.
 func buildPlatformConfigService(gw *gateway.Client, recorder *opsaudit.Recorder) *configservice.Service {
 	cfgClient := newGatewayConfigClient(gw)
 	if cfgClient == nil {
@@ -2191,11 +2182,10 @@ func buildPlatformConfigService(gw *gateway.Client, recorder *opsaudit.Recorder)
 
 // platformVersionDrift is the §25.8 lenny_platform_version_drift gauge:
 // the count of platform components whose version differs from the
-// running lenny-ops build, read by the PlatformVersionDrift alert (§16.5
-// line 1587). It is registered on the process default registry so the
+// running lenny-ops build, read by the PlatformVersionDrift alert (§16.5). It is registered on the process default registry so the
 // §16.9 /metrics exposition scrapes it (F-16.8.1).
 //
-// spec: §25.8 Metrics (line 3618), §16.5 PlatformVersionDrift.
+// spec: §25.8 Metrics, §16.5 PlatformVersionDrift.
 var platformVersionDrift = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_platform_version_drift",
@@ -2230,7 +2220,7 @@ func setPlatformVersionDrift(count int) {
 // report rather than failing the whole aggregation (the §25.8
 // partial-data degradation model).
 //
-// spec: §25.8 Version Aggregation (line 3364).
+// spec: §25.8 Version Aggregation.
 func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, pool *pgxpool.Pool,
 	clientset *kubernetes.Clientset, apiextClient apiextensionsclientset.Interface,
 	namespace, helmReleaseName string,
@@ -2262,8 +2252,7 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	}
 	if apiextClient != nil {
 		// The installed CRDs' lenny.dev/schema-version annotation is
-		// compared against the same CurrentCRDSchemaVersion the §10 line
-		// 443 preflight check and the controllers' own startup self-check
+		// compared against the same CurrentCRDSchemaVersion the §10 preflight check and the controllers' own startup self-check
 		// require, so a stale CRD after a `helm upgrade` (Helm does not
 		// update CRDs on upgrade) surfaces as drift here too.
 		sources = append(sources, upgradeservice.NewFuncVersionSource(
@@ -2286,13 +2275,13 @@ func buildVersionAggregator(buildVersion, gatewayURL string, gw *http.Client, po
 	})
 }
 
-// upgradeCheckJob is the §25.8 / §25.4 line 1338 platform_upgrade_check
+// upgradeCheckJob is the §25.8 / §25.4 platform_upgrade_check
 // cron: the leader-only job that queries the release channel hourly and
 // raises the lenny_platform_upgrade_available gauge plus the
 // platform_upgrade_available operational event when a newer release is
 // advertised. A disabled channel makes the job a no-op.
 //
-// spec: §25.4 line 1338 (platform_upgrade_check cron), §25.8.
+// spec: §25.4, §25.8.
 func upgradeCheckJob(chk *upgradeservice.Checker) opsservice.ScheduledJob {
 	return opsservice.ScheduledJob{
 		Name:       "platform-upgrade-check",

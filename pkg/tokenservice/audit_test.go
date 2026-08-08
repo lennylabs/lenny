@@ -224,7 +224,7 @@ func mintToken(t *testing.T, signer *jwt.HMACSigner, c jwt.Claims) string {
 	return tok
 }
 
-// spec: §13.3 line 587 — every accepted exchange emits one
+// spec: §13.3 — every accepted exchange emits one
 // token.exchanged audit row with policy_result=accepted and the jti.
 func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
@@ -271,13 +271,13 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	if payload.JTI == "" {
 		t.Errorf("payload missing jti")
 	}
-	// §13.3 line 587 — no raw tokens in audit body.
+	// §13.3 — no raw tokens in audit body.
 	if bytes.Contains(r.Payload, []byte(subjectTok)) {
 		t.Errorf("audit payload leaked raw subject_token")
 	}
 }
 
-// spec: §13.3 line 589 — when the IssuedTokenStore is also an
+// spec: §13.3 — when the IssuedTokenStore is also an
 // IssuedTokenAuditStore the handler binds the issued_tokens INSERT
 // and the audit_log INSERT in one transactional call. The audit row
 // from the in-memory Auditor must NOT be additionally produced (the
@@ -320,7 +320,7 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 589 — write-before-issue fail-closed: when the
+// spec: §13.3 — write-before-issue fail-closed: when the
 // tx-store INSERT fails, the handler returns 500 and does NOT return
 // the signed token to the caller.
 func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
@@ -354,7 +354,7 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 585 — rejected exchanges emit a token.exchanged
+// spec: §13.3 — rejected exchanges emit a token.exchanged
 // audit row with policy_result=rejected:<reason>.
 func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
@@ -387,7 +387,7 @@ func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — rate limit returns 429 with Retry-After and
+// spec: §13.3 — rate limit returns 429 with Retry-After and
 // emits both the unconditional counter and the sampled audit row.
 func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))

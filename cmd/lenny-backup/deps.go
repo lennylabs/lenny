@@ -144,8 +144,7 @@ func resolveDeps(ctx context.Context, in depsInput) (*deps, error) {
 	// §25.11 step-2/3 config and CRD export. The exporters read only from
 	// the sources the backup Job can reach: the shard Postgres via the
 	// read-only lenny-backup role for tenants and quotas, and the K8s API
-	// for the runtime/pool CRDs and the bootstrap ConfigMap (§25.11 line
-	// 3982/3984; no gateway egress). Off-cluster (local dev, a run with no
+	// for the runtime/pool CRDs and the bootstrap ConfigMap (§25.11; no gateway egress). Off-cluster (local dev, a run with no
 	// shard) the exporters stay nil and the run produces explicit empty
 	// config/CRD components, the correct behavior for a Postgres-only Job.
 	configExport, crdExport, exportClose := buildExporters(ctx, in)
@@ -182,7 +181,7 @@ func buildExporters(ctx context.Context, in depsInput) (
 	restCfg, err := rest.InClusterConfig()
 	if err != nil {
 		// Not running in a cluster (local dev or a unit test). The exports
-		// fall back to empty components. spec: §25.11 line 3984.
+		// fall back to empty components. spec: §25.11.
 		return nil, nil, closeExport
 	}
 

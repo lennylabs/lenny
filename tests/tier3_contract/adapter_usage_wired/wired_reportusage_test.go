@@ -340,7 +340,7 @@ func TestWiredReportUsageCumulativeReturnsRunningTotal_spec_11_2(t *testing.T) {
 
 	// After a cumulative read advances the watermark to the running total,
 	// the next steady-state delta returns zero rather than re-adding the
-	// already-recovered tokens (the §11.2:46 no-double-count invariant).
+	// already-recovered tokens (the §11.2 no-double-count invariant).
 	after := reportUsage(t, client, false)
 	if after.GetInputTokens() != 0 || after.GetOutputTokens() != 0 {
 		t.Errorf("delta after cumulative = (%d,%d), want (0,0): a cumulative read must advance the watermark",

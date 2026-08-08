@@ -22,7 +22,7 @@ func (f fakeRevChecker) IsBearerRevoked(_ context.Context, _, _ string) (bool, e
 	return f.revoked, nil
 }
 
-// spec: §27.3.1 line 142 — a client that offers `lenny.mcp.v1` (the
+// spec: §27.3.1 — a client that offers `lenny.mcp.v1` (the
 // sub-protocol the carrier path uses) receives `lenny.mcp.v1` echoed
 // back; without the echo a browser's WebSocket negotiation fails.
 func TestWebSocketEchoesSubprotocol(t *testing.T) {
@@ -44,7 +44,7 @@ func TestWebSocketEchoesSubprotocol(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 line 167 / §27.5.4 — when an origin=playground bearer is
+// spec: §27.3.1 / §27.5.4 — when an origin=playground bearer is
 // revoked mid-stream the gateway closes the WebSocket with code 4401 so
 // the in-flight connection is disconnected rather than honored to token
 // expiry.

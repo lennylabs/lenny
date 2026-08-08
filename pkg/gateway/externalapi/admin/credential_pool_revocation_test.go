@@ -25,7 +25,7 @@ func decodeJSON(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
-// spec: §4.9 lines 1626-1659, 1742-1743 — Emergency Credential
+// spec: §4.9 — Emergency Credential
 // Revocation admin endpoints and the credential.revoked /
 // credential.re_enabled audit events.
 

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 )
 
-// spec: §7.3 lines 377-393 — every enumerated retry mode is valid;
+// spec: §7.3 — every enumerated retry mode is valid;
 // unknown values fail the closed-enum check.
 func TestRetryModeIsValid(t *testing.T) {
 	cases := []struct {
@@ -30,7 +30,7 @@ func TestRetryModeIsValid(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 382 — RetryMode.Resolve folds unset / unknown values
+// spec: §7.3 — RetryMode.Resolve folds unset / unknown values
 // to the auto_then_client default.
 func TestRetryModeResolveDefaultsAutoThenClient(t *testing.T) {
 	if got := session.RetryMode("").Resolve(); got != session.RetryModeAutoThenClient {
@@ -44,7 +44,7 @@ func TestRetryModeResolveDefaultsAutoThenClient(t *testing.T) {
 	}
 }
 
-// spec: §7.3 lines 377-393 — ValidateRetryPolicy rejects unknown modes
+// spec: §7.3 — ValidateRetryPolicy rejects unknown modes
 // and negative numeric fields with a structured error citing the field.
 func TestValidateRetryPolicyRejectsBadInputs(t *testing.T) {
 	cases := []struct {
@@ -104,7 +104,7 @@ func TestValidateRetryPolicyAdmitsNilAndEmpty(t *testing.T) {
 	}
 }
 
-// spec: §7.3 lines 377-393 — ClampRetryPolicy clamps populated values
+// spec: §7.3 — ClampRetryPolicy clamps populated values
 // down to the deployer caps, fills unset values with the cap, and folds
 // an unknown mode to auto_then_client.
 func TestClampRetryPolicyAppliesCaps(t *testing.T) {
@@ -219,7 +219,7 @@ func TestClampRetryPolicyClonesFailureLists(t *testing.T) {
 	}
 }
 
-// spec: §7.3 lines 384-388 — ClassifyFailure recognises the three
+// spec: §7.3 — ClassifyFailure recognises the three
 // platform-default retryable causes and the two non-retryable causes
 // when retryPolicy supplies no overrides.
 func TestClassifyFailureUsesPlatformDefaults(t *testing.T) {
@@ -242,7 +242,7 @@ func TestClassifyFailureUsesPlatformDefaults(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 382 — client_only forces every classifiable cause
+// spec: §7.3 — client_only forces every classifiable cause
 // to NonRetryable so the gateway surfaces the failure to the client
 // immediately as awaiting_client_action.
 func TestClassifyFailureClientOnlyModeForcesNonRetryable(t *testing.T) {
@@ -258,7 +258,7 @@ func TestClassifyFailureClientOnlyModeForcesNonRetryable(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 384-385 — per-session lists override the platform
+// spec: §7.3 — per-session lists override the platform
 // defaults, not augment them. A retryPolicy that names only
 // retryableFailures keeps the platform-default nonRetryableFailures.
 func TestClassifyFailurePerSessionOverrides(t *testing.T) {
@@ -277,7 +277,7 @@ func TestClassifyFailurePerSessionOverrides(t *testing.T) {
 	}
 }
 
-// spec: §7.3 lines 384/385 — DefaultRetryableFailures /
+// spec: §7.3 — DefaultRetryableFailures /
 // DefaultNonRetryableFailures expose the worked-example platform
 // defaults so callers can echo them on the response without depending
 // on the classifier internals.

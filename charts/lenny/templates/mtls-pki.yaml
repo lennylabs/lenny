@@ -101,7 +101,7 @@ the §10.3 24h TTL, and the CA issuerRef.
 {{- $leaf = dict "root" $ "name" "lenny-token-service" "component" "token-service" }}
 {{ include "lenny.mtlsLeafCertificate" $leaf }}
 {{- /*
-§10.3 NET-063 (spec line 327): emit one in-cluster interceptor
+§10.3 NET-063: emit one in-cluster interceptor
 Certificate per declared interceptor namespace, alongside the
 allow-gateway-egress-interceptor-<ns> NetworkPolicy. Gated on the
 interceptor-certificate toggle and a non-empty interceptorNamespaces

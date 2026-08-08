@@ -22,7 +22,7 @@ import (
 // whose `payload` carries the target user as actor or subject" — the
 // audit_log table has no `user_id` column).
 //
-// spec: §12.8 line 810.
+// spec: §12.8.
 var userMatchKeys = []string{
 	"user_id", "userId", "sub", "actor", "actor_sub",
 	"subject", "subject_user_id", "target_user_id", "targetUserId",
@@ -53,7 +53,7 @@ func deadLetteredUserPredicate() string {
 // content hash, which the redaction service captures as the receipt's
 // pre-redaction original_hash.
 //
-// spec: §12.8 line 810.
+// spec: §12.8.
 func (s *Store) DeadLetteredForUser(ctx context.Context, tenantID, userID string) ([]audit.Row, error) {
 	if tenantID == "" || userID == "" {
 		return nil, ErrEmptyScope
@@ -90,7 +90,7 @@ func (s *Store) DeadLetteredForUser(ctx context.Context, tenantID, userID string
 	return out, nil
 }
 
-// RedactionReceiptRecord is one row of the §12.8 lines 812-827
+// RedactionReceiptRecord is one row of the §12.8
 // audit_redaction_receipts table. The redaction service computes the
 // hashes and the detached signature; RedactDeadLettered persists it in the
 // same transaction as the in-place payload rewrite so the row and its
@@ -122,7 +122,7 @@ type RedactionReceiptRecord struct {
 // lenny_erasure role (migration 0165 grants it UPDATE on the two payload
 // columns).
 //
-// spec: §12.8 lines 810-827; §11.7 item 7 (erasure_mode escape).
+// spec: §12.8; §11.7 item 7 (erasure_mode escape).
 func (s *Store) RedactDeadLettered(ctx context.Context, tenantID string, seq uint64, newPayload json.RawMessage, rec RedactionReceiptRecord) error {
 	if tenantID == "" {
 		return ErrEmptyScope
@@ -173,7 +173,7 @@ func (s *Store) RedactDeadLettered(ctx context.Context, tenantID string, seq uin
 // receipt is reported `broken` by the verifier (the missing-receipt
 // incident the §16.5 AuditRedactionReceiptMissing alert pages on).
 //
-// spec: §12.8 lines 812-827; §11.7 line 370.
+// spec: §12.8; §11.7.
 func (s *Store) Receipts(ctx context.Context, tenantID string) (map[uint64]audit.RedactionReceipt, error) {
 	if tenantID == "" {
 		return nil, ErrEmptyScope

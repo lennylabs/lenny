@@ -16,8 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// modelsAdapterCapabilities resolves the §9.1 line 35 "capabilities of
-// the adapter serving the request" rule on the dual-mounted /v1/models
+// modelsAdapterCapabilities resolves the §9.1 rule on the dual-mounted /v1/models
 // endpoint: both the OpenAI Chat Completions and Open Responses
 // adapters share the path, so the consumer selects via the optional
 // `?adapter=` query parameter:
@@ -28,7 +27,7 @@ import (
 //
 // An unrecognised value falls through to the default so a stale or
 // forward-compatible consumer still gets a well-formed capability
-// block. spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+// block. spec: §9.1; §15.1. F-9.1.6 / F-9.1.8.
 func modelsAdapterCapabilities(adapterID string) adapter.Capabilities {
 	switch adapterID {
 	case "open-responses":
@@ -70,7 +69,7 @@ type RuntimeDiscoveryEntry struct {
 	Labels            map[string]string                   `json:"labels,omitempty"`
 	AgentInterface    *runtimestore.AgentInterface        `json:"agentInterface,omitempty"`
 	PublishedMetadata []runtimestore.PublishedMetadataRef `json:"publishedMetadata,omitempty"`
-	// McpEndpoint is the §9.1 line 38 / §15.1 line 698 discovery
+	// McpEndpoint is the §9.1 / §15.1 discovery
 	// pointer to the per-runtime intra-pod MCP server. Populated as
 	// `/mcp/runtimes/{name}` for type:mcp runtimes; empty (and so
 	// omitted from the JSON envelope) for type:agent runtimes. F-9.1.4.
@@ -80,39 +79,36 @@ type RuntimeDiscoveryEntry struct {
 	// against. The §27.4 playground session-config screen renders a
 	// schema-driven form from it (§27.4 item 2); a client that omits it
 	// falls back to a free-form options editor. Empty (and so omitted)
-	// when the runtime declares no schema. spec: §5.1 line 167; §27.4
-	// line 177. F-27.4.2.
+	// when the runtime declares no schema. spec: §5.1; §27.4. F-27.4.2.
 	RuntimeOptionsSchema json.RawMessage `json:"runtimeOptionsSchema,omitempty"`
 	// MinPlatformVersion is the §5.1 minPlatformVersion: the lowest
 	// Lenny gateway version the runtime supports. It is the only
 	// version-bearing field §5.1 defines on a Runtime, so the §27.4 item
 	// 1 runtime-picker version line surfaces it. Empty (and so omitted)
-	// when the runtime declares no minimum. spec: §5.1 line 197; §27.4
-	// line 176. F-27.4.6.
+	// when the runtime declares no minimum. spec: §5.1; §27.4. F-27.4.6.
 	MinPlatformVersion string `json:"minPlatformVersion,omitempty"`
 	// Capabilities surfaces the client-relevant subset of the §5.1
-	// runtime capabilities block. §7.4 line 433 directs clients to check
+	// runtime capabilities block. §7.4 directs clients to check
 	// the `midSessionUpload` capability here before attempting a
 	// mid-session upload. Omitted when the runtime declares no
-	// client-relevant capability. spec: §7.4 line 433 — F-7.4.6.
+	// client-relevant capability. spec: §7.4 — F-7.4.6.
 	Capabilities *RuntimeDiscoveryCapabilities `json:"capabilities,omitempty"`
 }
 
 // RuntimeDiscoveryCapabilities is the client-facing subset of the §5.1
 // capabilities block surfaced on GET /v1/runtimes. It carries only the
 // flags a client acts on before session interaction; warm-pool-internal
-// flags (preConnect) are not advertised. spec: §7.4 line 433 — F-7.4.6.
+// flags (preConnect) are not advertised. spec: §7.4 — F-7.4.6.
 type RuntimeDiscoveryCapabilities struct {
 	// MidSessionUpload mirrors §5.1 capabilities.midSessionUpload: the
 	// runtime accepts file uploads into an already-running session's
-	// workspace. spec: §7.4 line 433.
+	// workspace. spec: §7.4.
 	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
 }
 
 // discoveryCapabilities projects a runtime's §5.1 capabilities block onto
 // the client-facing discovery subset, returning nil when no client-relevant
-// capability is set so the JSON envelope omits an empty object. spec: §7.4
-// line 433 — F-7.4.6.
+// capability is set so the JSON envelope omits an empty object. spec: §7.4 — F-7.4.6.
 func discoveryCapabilities(rt runtimestore.Runtime) *RuntimeDiscoveryCapabilities {
 	if rt.Capabilities == nil || !rt.Capabilities.MidSessionUpload {
 		return nil
@@ -136,7 +132,7 @@ func mcpEndpointFor(rt runtimestore.Runtime) string {
 // membership authorizes. A not-authorized runtime is simply absent
 // from the list, so the response does not enable enumeration.
 //
-// spec: §10.6 line 672 — accept the optional `?environmentId=` stub.
+// spec: §10.6 — accept the optional `?environmentId=` stub.
 // When non-empty, the result is further narrowed to runtimes that
 // belong to the named environment; the caller still has to be a
 // member, so a runtime not in the named environment is dropped from
@@ -161,7 +157,7 @@ func (s *Server) handleListRuntimes(w http.ResponseWriter, r *http.Request) {
 	if envID := r.URL.Query().Get("environmentId"); envID != "" {
 		rows = s.narrowRuntimesToEnvironment(r, rows, envID)
 	}
-	// spec: §27.5 line 190 — an origin=playground caller's discovery list is
+	// spec: §27.5 — an origin=playground caller's discovery list is
 	// additionally filtered by playground.allowedRuntimes so the §27.4 runtime
 	// picker never surfaces a runtime the operator excluded. A non-playground
 	// caller is untouched. F-27.4.1.
@@ -410,7 +406,7 @@ func (s *Server) filterRuntimesByEnvironment(r *http.Request, runtimes []runtime
 // a single named environment. A nil environment registry or an unknown
 // environmentName collapses the list to empty — an unknown environment
 // is treated as a not-allowed scope so a typo never broadens visibility.
-// spec: §10.6 line 672. F-10.6.10.
+// spec: §10.6. F-10.6.10.
 func (s *Server) narrowRuntimesToEnvironment(r *http.Request, runtimes []runtimestore.Runtime, environmentName string) []runtimestore.Runtime {
 	if s.environments == nil || environmentName == "" {
 		return runtimes
@@ -464,7 +460,7 @@ func (s *Server) resolveEnvironmentForRequest(r *http.Request) (environmentmw.Re
 	return resolved, true, nil
 }
 
-// requireEnvironmentAdmission enforces the §11.1 line 13 / §10.6
+// requireEnvironmentAdmission enforces the §11.1 / §10.6
 // admission gate at session create. It governs the two §10.6 access
 // paths:
 //
@@ -481,7 +477,7 @@ func (s *Server) resolveEnvironmentForRequest(r *http.Request) (environmentmw.Re
 // A nil environment registry leaves admission open — the gateway runs in
 // a posture where §10.6 RBAC is disabled. An unauthenticated /
 // unconfigured request also passes through (the dev-header / single-tenant
-// posture). spec: §11.1 line 13; §10.6 lines 557, 605, 629, 643; §15.1
+// posture). spec: §11.1; §10.6; §15.1
 // FORBIDDEN. F-10.6.1 / F-10.6.5.
 func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Request, requestedEnvironment, runtimeRef string) bool {
 	if s.environments == nil || s.tenants == nil {
@@ -497,7 +493,7 @@ func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Requ
 	if !hasPrincipal || !res.Configured {
 		return true
 	}
-	// spec: §10.6 lines 557, 605, 629 — the explicit-environment endpoint
+	// spec: §10.6 — the explicit-environment endpoint
 	// is opt-in RBAC and must enforce membership, the session-creating
 	// role, and runtime scope; otherwise it is a confused-deputy bypass of
 	// the transparent filter's boundary. F-10.6.1 / F-10.6.5.
@@ -547,7 +543,7 @@ func (s *Server) requireExplicitEnvironmentAdmission(w http.ResponseWriter, r *h
 				map[string]any{"reason": "not_environment_member", "environment": envName})
 			return false
 		}
-		// spec: §10.6 line 605 — a `viewer` reads; creating a session
+		// spec: §10.6 — a `viewer` reads; creating a session
 		// requires at least `creator`.
 		if !role.AtLeast(environment.RoleCreator) {
 			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
@@ -555,7 +551,7 @@ func (s *Server) requireExplicitEnvironmentAdmission(w http.ResponseWriter, r *h
 				map[string]any{"reason": "insufficient_environment_role", "environment": envName, "role": string(role)})
 			return false
 		}
-		// spec: §10.6 line 629 — the session's own runtime must be inside
+		// spec: §10.6 — the session's own runtime must be inside
 		// the environment definition (its runtimeSelector). A runtime the
 		// registry cannot resolve is left to the downstream runtime checks;
 		// only an in-registry runtime the selector rejects is blocked here.

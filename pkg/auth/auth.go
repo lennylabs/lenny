@@ -130,7 +130,7 @@ const (
 	PermManagePlatformSettings Permission = "manage_platform_settings"
 	// PermAccessCrossTenantData — §10.2 "Access other tenants' data".
 	PermAccessCrossTenantData Permission = "access_cross_tenant_data"
-	// PermSessionEvalWrite — §10.7 line 936 "session:eval:write". This
+	// PermSessionEvalWrite — §10.7. This
 	// is a capability permission the eval-submission contract introduces
 	// beyond the §10.2 operation matrix: the gateway gates
 	// POST /v1/sessions/{id}/eval on it so an external scorer pipeline
@@ -138,7 +138,7 @@ const (
 	// authority. The session-owning built-in roles (user, tenant-admin,
 	// platform-admin) carry it so existing owners keep submitting; a
 	// tenant may grant it to a custom scorer role because it is within
-	// the tenant-admin ceiling. spec: §10.7 line 936.
+	// the tenant-admin ceiling. spec: §10.7.
 	PermSessionEvalWrite Permission = "session:eval:write"
 )
 

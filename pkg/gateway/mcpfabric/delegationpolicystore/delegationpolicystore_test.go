@@ -13,7 +13,7 @@ import (
 
 // spec: §8.3 DelegationPolicy as a first-class resource.
 
-// spec: §4.2 line 172 — delegation policies are tenant-scoped. Tests
+// spec: §4.2 — delegation policies are tenant-scoped. Tests
 // use the built-in `acme` tenant; multi-tenant isolation is exercised
 // at the bottom of this file.
 const testTenantID = "acme"
@@ -245,7 +245,7 @@ func TestStoredPolicyIsIsolatedFromCallerMutation(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 172 — two tenants may register a policy with the
+// spec: §4.2 — two tenants may register a policy with the
 // same logical name without colliding, and one tenant cannot read
 // another tenant's policies through the per-tenant Get/List path.
 func TestTenantIsolationAndAllSentinel(t *testing.T) {
@@ -280,7 +280,7 @@ func TestTenantIsolationAndAllSentinel(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 172 — Create rejects an empty TenantID.
+// spec: §4.2 — Create rejects an empty TenantID.
 func TestCreateRejectsEmptyTenant(t *testing.T) {
 	store := delegationpolicystore.NewMemory()
 	p := samplePolicy("orchestrator")
@@ -290,7 +290,7 @@ func TestCreateRejectsEmptyTenant(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 172 — writes reject the AllTenantsSentinel value
+// spec: §4.2 — writes reject the AllTenantsSentinel value
 // (the sentinel is reads-only).
 func TestWritesRejectSentinel(t *testing.T) {
 	ctx := context.Background()

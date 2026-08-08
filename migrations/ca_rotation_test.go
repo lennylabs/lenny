@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §10.3 lines 344-350. Migration 0143 creates the ca_rotation
+// spec: §10.3. Migration 0143 creates the ca_rotation
 // singleton table that durably records the CA-rotation stage so an
 // operator who interrupts the procedure resumes from the recorded stage.
 // The row is platform-global (one cluster CA), pinned by a constant id;

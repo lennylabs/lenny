@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §11.1 lines 10-11 — concurrent-upload and per-session
+// spec: §11.1 — concurrent-upload and per-session
 // cumulative upload-size admission, enforced in the upload handler.
 // F-11.1.5, F-11.1.6.
 
@@ -74,7 +74,7 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 
 // A second upload against a session already at its per-session
 // concurrency cap is rejected with 429 RATE_LIMITED while the first is
-// in-flight, then admitted once the first finishes. spec: §11.1 line 10.
+// in-flight, then admitted once the first finishes. spec: §11.1.
 func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 1, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
@@ -116,7 +116,7 @@ func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 }
 
 // With no upload caps configured the handler admits without bookkeeping.
-// spec: §11.1 lines 10-11.
+// spec: §11.1.
 func TestUploadNoLimitsConfigured(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
@@ -128,7 +128,7 @@ func TestUploadNoLimitsConfigured(t *testing.T) {
 
 // The per-session cumulative-size cap rejects the upload that would push
 // a session past its total once the declared Content-Length is known.
-// spec: §11.1 line 11.
+// spec: §11.1.
 func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)
@@ -148,7 +148,7 @@ func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 }
 
 // The cumulative cap admits uploads up to exactly the limit and rejects
-// the first byte past it. spec: §11.1 line 11.
+// the first byte past it. spec: §11.1.
 func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 22)
 	tok, _ := issuer.Issue("sess_upload", 0)
@@ -168,7 +168,7 @@ func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 // A client that under-declares Content-Length cannot bypass the cap: the
 // authoritative check runs against the bytes actually streamed, rejects
 // the over-cap upload, and does not consume the session's headroom.
-// spec: §11.1 line 11.
+// spec: §11.1.
 func TestUploadPerSessionSizeCapPostHocOnActualBytes(t *testing.T) {
 	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)

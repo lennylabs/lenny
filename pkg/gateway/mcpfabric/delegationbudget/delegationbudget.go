@@ -6,12 +6,12 @@
 // keys; those counters are volatile, so this package adds the two
 // obligations the spec attaches to them:
 //
-//   - the periodic Postgres checkpoint (§11.2 line 44): every
+//   - the periodic Postgres checkpoint (§11.2): every
 //     quotaSyncIntervalSeconds the gateway persists each active tree's
 //     tree_size, token_budget_consumed, and tree_memory_bytes to the
 //     delegation_tree_budget table, and
-//   - the two-source reconstruction on Redis recovery (§11.2 line 48,
-//     §12.4 line 218): the gateway restores each tree's counters to
+//   - the two-source reconstruction on Redis recovery (§11.2,
+//     §12.4): the gateway restores each tree's counters to
 //     max(postgres_checkpoint, live_estimate) before resuming delegation
 //     operations, moving a tree whose state cannot be reconstructed with
 //     confidence to awaiting_client_action with reason
@@ -19,13 +19,12 @@
 //
 // The Reconciler ties the seams together; production wires the adapters
 // in adapters.go over the SessionStore and *treebudget.Reserver. The
-// in-flight reconciliation window (§12.4 line 218 "new delegate_task
-// requests are rejected during the reconciliation window") is covered at
+// in-flight reconciliation window (§12.4) is covered at
 // the coarse level by treebudget's fail-closed posture during the Redis
 // outage that precedes recovery; reconstruction completes within one
 // probe tick.
 //
-// spec: §11.2 lines 29, 44, 48; §12.4 lines 193, 218.
+// spec: §11.2; §12.4.
 package delegationbudget
 
 import (
@@ -33,26 +32,26 @@ import (
 	"time"
 )
 
-// BudgetStateUnrecoverableReason is the §11.2 line 48 reason code stamped
+// BudgetStateUnrecoverableReason is the §11.2 reason code stamped
 // on a tree root that is moved to awaiting_client_action because its
 // budget state could not be reconstructed. It is already classified
 // retryable in pkg/gateway/errorclassify.
 //
-// spec: §11.2 line 48; §15.1 line 1027.
+// spec: §11.2; §15.1.
 const BudgetStateUnrecoverableReason = "BUDGET_STATE_UNRECOVERABLE"
 
-// DefaultNodeMemoryFootprintBytes is the §11.2 line 48 per-node in-memory
+// DefaultNodeMemoryFootprintBytes is the §11.2 per-node in-memory
 // footprint estimate (`nodeMemoryFootprintBytes`, default 12288 / 12 KB)
 // used to derive liveMemoryBytes during reconstruction. It matches
 // treebudget.PerNodeMemoryBytes; the gateway Helm value
 // delegationNodeMemoryFootprintBytes overrides it.
 //
-// spec: §11.2 line 48.
+// spec: §11.2.
 const DefaultNodeMemoryFootprintBytes int64 = 12 * 1024
 
 // Reconstruction outcome labels for lenny_delegation_budget_reconstruction_total.
 //
-// spec: §11.2 line 48; §16.1.
+// spec: §11.2; §16.1.
 const (
 	OutcomeSuccess       = "success"
 	OutcomeIrrecoverable = "irrecoverable"
@@ -62,9 +61,9 @@ const (
 // budget for a single delegation tree, identified tree-wide by its root
 // session. CheckpointAt is populated on read from the server-side
 // clock_timestamp() so the reconstruction can measure the checkpoint's
-// age against the §11.2 line 48 staleness threshold.
+// age against the §11.2 staleness threshold.
 //
-// spec: §11.2 line 29.
+// spec: §11.2.
 type Checkpoint struct {
 	TenantID            string
 	RootSessionID       string
@@ -105,13 +104,13 @@ type TreeLister interface {
 	ListActiveTrees(ctx context.Context) ([]TreeRef, error)
 }
 
-// LiveTree is the §11.2 line 48 reconstruction's live-side estimate for
+// LiveTree is the §11.2 reconstruction's live-side estimate for
 // one tree, derived from the SessionStore (which survives a replica
 // loss).
 type LiveTree struct {
 	// RootExists reports whether the tree's sessions could be enumerated
 	// from the SessionStore. False means live pod enumeration is not
-	// possible (the §11.2 line 48 "coordinating replica lost" half of the
+	// possible (the §11.2 half of the
 	// irrecoverability test).
 	RootExists bool
 	// NodeCount is the number of currently-alive (non-terminal) nodes in

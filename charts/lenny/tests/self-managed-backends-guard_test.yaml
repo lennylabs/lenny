@@ -67,7 +67,7 @@ tests:
       - failedTemplate:
           errorMessage: "§17.9.5: backends=self-managed requires a Postgres backend: set postgres.deploy=true to render a CloudNativePG cluster (§17.3 RPO=0 sync replication) or point postgres.dsn at an out-of-band self-managed Postgres."
 
-  # spec: §17.3 line 116 — a chart-managed Postgres must be synchronous.
+  # spec: §17.3 — a chart-managed Postgres must be synchronous.
   - it: fails when chart-managed Postgres disables synchronous replication
     set:
       backends: self-managed
@@ -81,7 +81,7 @@ tests:
       - failedTemplate:
           errorMessage: "§17.3: a chart-managed self-managed Postgres must use synchronous replication to meet the RPO=0 target; set postgres.selfManaged.synchronous: true."
 
-  # spec: §17.3 line 117 — self-managed Redis must have a failover path.
+  # spec: §17.3 — self-managed Redis must have a failover path.
   - it: fails when self-managed Redis has no Sentinel or Cluster topology
     set:
       backends: self-managed

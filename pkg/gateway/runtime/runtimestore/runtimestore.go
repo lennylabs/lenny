@@ -54,7 +54,7 @@ type Runtime struct {
 
 	// WorkspaceTier is the §12.9 / §5.2 data-classification tier this
 	// runtime processes (`T3` default, `T4` Restricted). A T4 runtime
-	// cannot back a cross-tenant-reuse pool (§5.2 line 396). Empty is
+	// cannot back a cross-tenant-reuse pool (§5.2). Empty is
 	// treated as T3.
 	WorkspaceTier WorkspaceTier
 
@@ -94,7 +94,7 @@ type Runtime struct {
 	// the runtime declares no credentialCapabilities block.
 	CredentialCapabilities *CredentialCapabilities
 
-	// AllowSelfRecursion is the §5.1 line 69 runtime-layer opt-in for the
+	// AllowSelfRecursion is the §5.1 runtime-layer opt-in for the
 	// §8.2 cycle-detection three-layer AND gate (LayerRuntime). When
 	// false this runtime rejects every self-recursive delegation hop. The
 	// §5.1 merge table classifies it Override (restrict-only): a derived
@@ -157,8 +157,7 @@ type Runtime struct {
 	// block: the AllowSymlinks toggle the gateway delivers to the adapter
 	// on FinalizeWorkspace so uploadArchive symlink entries are admitted
 	// (and target-validated) only for runtimes that explicitly opt in. A
-	// nil block means platform defaults (symlinks rejected). spec: §7.4
-	// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+	// nil block means platform defaults (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
 	ArchivePolicy *ArchivePolicy
 
 	// DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
@@ -236,7 +235,7 @@ type Runtime struct {
 	// starts at 1 and increments on every successful write (Update and
 	// SoftDelete). The quoted decimal version is the runtime's strong
 	// entity tag, enforced on PUT via the If-Match precondition and
-	// exposed on GET/list. spec: §15.1 lines 1207-1213.
+	// exposed on GET/list. spec: §15.1.
 	Version int64
 }
 
@@ -379,16 +378,16 @@ type RuntimeCapabilities struct {
 	// the warm phase so every pod in the pool is SDK-warm, and the
 	// runtime's adapter must implement DemoteSDK. Default false. The
 	// companion runtime-level SDKWarmBlockingPaths governs the demotion
-	// decision (§5.1 lines 22-24).
+	// decision (§5.1).
 	PreConnect bool `json:"preConnect,omitempty"`
 
-	// MidSessionUpload is the §7.4 line 433 capabilities.midSessionUpload
+	// MidSessionUpload is the §7.4 capabilities.midSessionUpload
 	// flag. When true (and the deployer policy permits it) clients may
 	// upload files into the workspace of an already-running session via
 	// the mid-session upload surface; the adapter overlays the files onto
 	// /workspace/current and signals the runtime once promotion completes.
 	// Clients discover the flag through the GET /v1/runtimes capabilities
-	// block. Default false. spec: §7.4 line 433 — F-7.4.6.
+	// block. Default false. spec: §7.4 — F-7.4.6.
 	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
 }
 
@@ -605,8 +604,7 @@ func (d SetupTimeoutDisposition) IsValid() bool {
 type SetupPolicy struct {
 	// TimeoutSeconds is the aggregate cap on the setup phase in seconds.
 	// Zero means the runtime declares no aggregate cap and the setup
-	// phase waits indefinitely (§5.1 line 260). In the §5.1 derived
-	// Maximum merge (line 195) zero is the largest possible bound: it
+	// phase waits indefinitely (§5.1). In the §5.1 derived Maximum merge zero is the largest possible bound: it
 	// wins max() over any finite value, so a base's "no cap" floor cannot
 	// be shortened by a derived runtime. The registration validator
 	// enforces the line-195 note "neither can be zero if the other is
@@ -646,16 +644,16 @@ type Limits struct {
 	// default.
 	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
 
-	// MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+	// MaxElicitationWaitSeconds is the §11.3 human-facing
 	// lenny/request_elicitation wait timeout in seconds, configurable per
 	// pool in the `limits:` block of the RuntimeDefinition (same placement
 	// as maxRequestInputWaitSeconds). Zero selects the platform default
-	// (600s). spec: §11.3 line 202.
+	// (600s). spec: §11.3.
 	MaxElicitationWaitSeconds int `json:"maxElicitationWaitSeconds,omitempty"`
 
-	// MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+	// MaxElicitationsPerSession is the §11.3 per-session lifetime
 	// elicitation budget, configurable per pool in the `limits:` block.
-	// Zero selects the platform default (50). spec: §11.3 line 203.
+	// Zero selects the platform default (50). spec: §11.3.
 	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
 }
 
@@ -670,8 +668,7 @@ func (l *Limits) Clone() *Limits {
 
 // SetupCommandMode is the §5.1 / §7.5 setupCommandPolicy.mode enum: whether
 // the runtime restricts setup commands to an explicit allowlist (deny-by-
-// default) or to an explicit blocklist (allow-by-default). spec: §7.5 lines
-// 483-486 — F-7.5.1.
+// default) or to an explicit blocklist (allow-by-default). spec: §7.5 — F-7.5.1.
 type SetupCommandMode string
 
 const (
@@ -701,8 +698,8 @@ func (m SetupCommandMode) IsValid() bool {
 // SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block on a
 // runtime: the command allow/block list, the shell-execution flag, and the
 // per-session command cap the gateway enforces against the client-supplied
-// workspace plan at create-time (§7.5 line 488). The §5.1 merge table
-// classifies it Override. spec: §7.5 lines 481-490 — F-7.5.1.
+// workspace plan at create-time (§7.5). The §5.1 merge table
+// classifies it Override. spec: §7.5 — F-7.5.1.
 type SetupCommandPolicy struct {
 	// Mode selects allowlist (deny-by-default) or blocklist (allow-by-
 	// default) prefix matching.
@@ -710,7 +707,7 @@ type SetupCommandPolicy struct {
 
 	// Shell selects shell-vs-argv execution: true wraps commands in
 	// `/bin/sh -c`; false splits on whitespace and execs the argv directly,
-	// neutering shell metacharacters per §7.5 line 490. F-7.5.2.
+	// neutering shell metacharacters per §7.5. F-7.5.2.
 	Shell bool `json:"shell,omitempty"`
 
 	// Allowlist is the set of permitted §7.5 command prefixes when Mode is
@@ -744,7 +741,7 @@ func (p *SetupCommandPolicy) Clone() *SetupCommandPolicy {
 // command, preserving the pre-F-7.5.1 behaviour. An empty Mode also admits
 // (the policy declares no mode, so neither list is consulted). When Mode is
 // allowlist the empty Allowlist denies everything; when Mode is blocklist
-// the empty Blocklist allows everything. spec: §7.5 line 488 — F-7.5.1.
+// the empty Blocklist allows everything. spec: §7.5 — F-7.5.1.
 func (p *SetupCommandPolicy) PermitsCommand(cmd string) bool {
 	if p == nil || p.Mode == "" {
 		return true
@@ -787,11 +784,11 @@ func hasCommandPrefix(cmd, prefix string) bool {
 }
 
 // ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
-// block. AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+// block. AllowSymlinks lifts the §7.4 default-deny on symlink
 // entries; even when true, the adapter still resolves the target through
 // pkg/upload.ValidateSymlinkTarget (target must canonicalize under the
 // runtime's workspace root and must not traverse /proc, /sys, /dev, or
-// /run/lenny). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+// /run/lenny). spec: §7.4; §13.4 — F-7.4.4.
 type ArchivePolicy struct {
 	AllowSymlinks bool `json:"allowSymlinks,omitempty"`
 }
@@ -846,7 +843,7 @@ type WorkspaceFile struct {
 }
 
 // WorkspaceSetupCommand is one §5.1 workspaceDefaults.setupCommands
-// entry. Per §5.1 line 198 the per-command TimeoutSeconds is preserved
+// entry. Per §5.1 the per-command TimeoutSeconds is preserved
 // from each source through the merge. The §5.1 YAML accepts a bare
 // command string or a {cmd, timeoutSeconds} object; UnmarshalJSON
 // admits both forms.
@@ -1251,7 +1248,7 @@ func (l IntegrationLevel) IsValid() bool {
 // WorkspaceTier is the §12.9 / §5.2 data-classification tier a runtime
 // is configured for. Workspace data defaults to T3 (Confidential);
 // runtimes that process Restricted data (PHI, credentials) are
-// configured with T4. §5.2 line 396 forbids cross-tenant pod reuse on a
+// configured with T4. §5.2 forbids cross-tenant pod reuse on a
 // pool whose runtime is T4 because T4 requires dedicated node pools for
 // per-tenant key isolation (§6.4). The empty value is treated as T3.
 type WorkspaceTier string
@@ -1261,12 +1258,12 @@ const (
 	// (Confidential).
 	WorkspaceTierT3 WorkspaceTier = "T3"
 	// WorkspaceTierT4 is the §12.9 Restricted classification. A T4
-	// runtime cannot back a cross-tenant-reuse pool (§5.2 line 396).
+	// runtime cannot back a cross-tenant-reuse pool (§5.2).
 	WorkspaceTierT4 WorkspaceTier = "T4"
 )
 
 // AllWorkspaceTiers returns the closed set of workspace tiers a runtime
-// may declare. §12.9 line 1025 scopes workspace classification to T3
+// may declare. §12.9 scopes workspace classification to T3
 // (default) and T4; lower tiers describe non-workspace data.
 func AllWorkspaceTiers() []WorkspaceTier {
 	return []WorkspaceTier{WorkspaceTierT3, WorkspaceTierT4}
@@ -1332,7 +1329,7 @@ func ValidateName(name string) error {
 // ApplyDefaults fills in the §5.1 default values for unset Runtime
 // fields: type defaults to agent, execution mode to session, and
 // isolation profile to the platform default. The isolation default
-// honors the §5.3 line 677 dev-mode fallback: when devMode is true an
+// honors the §5.3 dev-mode fallback: when devMode is true an
 // unset profile defaults to `standard` (runc) rather than `sandboxed`.
 // Integration level defaults to basic for agent runtimes only — §5.1
 // specifies that integrationLevel is meaningful solely on type: agent
@@ -1364,7 +1361,7 @@ func ApplyDefaults(r *Runtime, devMode bool) {
 		t := true
 		r.RequireSoPeercred = &t
 	}
-	// §5.1 line 24: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
+	// §5.1: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
 	// ".claude/*"] when capabilities.preConnect is true and the runtime
 	// declares no list. The field is ignored when preConnect is false, so
 	// no default is seeded there.
@@ -1446,7 +1443,7 @@ func (m *Memory) Create(_ context.Context, r Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if r.Version == 0 {
 		r.Version = 1
 	}
@@ -1483,7 +1480,7 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Runtime) er
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	row.Version++
 	m.runtimes[name] = cloneRuntime(row)
 	return cloneRuntime(row), nil
@@ -1520,7 +1517,7 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
 	row.Version++
 	m.runtimes[name] = row
 	return nil

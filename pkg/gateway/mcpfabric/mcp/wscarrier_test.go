@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 )
 
-// spec: §27.3.1 line 142 — the sub-protocol carrier ferries the bearer as
+// spec: §27.3.1 — the sub-protocol carrier ferries the bearer as
 // `lenny.mcp.v1, lenny.bearer.<token>`. WebSocketBearerCarrier promotes the
 // token to `Authorization: Bearer` and strips the credential entry,
 // leaving only the negotiable sub-protocol so the upgrader can echo it.
@@ -33,14 +33,14 @@ func TestWebSocketBearerCarrierPromotesAndRedacts(t *testing.T) {
 	if gotProto != "lenny.mcp.v1" {
 		t.Errorf("sanitized Sec-WebSocket-Protocol = %q, want lenny.mcp.v1", gotProto)
 	}
-	// §27.3.1 line 142 credential treatment: the token must not survive
+	// §27.3.1 credential treatment: the token must not survive
 	// anywhere in the forwarded request headers.
 	if strings.Contains(gotProto, "lenny.bearer.") || strings.Contains(gotProto, "eyJabc") {
 		t.Errorf("credential leaked into sub-protocol header: %q", gotProto)
 	}
 }
 
-// spec: §27.3.1 line 142 — a request without the bearer carrier (the
+// spec: §27.3.1 — a request without the bearer carrier (the
 // Authorization-header upgrade path, or any non-WebSocket request) is
 // passed through untouched.
 func TestWebSocketBearerCarrierNoOpWithoutCarrier(t *testing.T) {
@@ -64,7 +64,7 @@ func TestWebSocketBearerCarrierNoOpWithoutCarrier(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 line 142 — when the caller already presented an
+// spec: §27.3.1 — when the caller already presented an
 // Authorization header (the non-browser upgrade path that also happens to
 // send the carrier), the carrier does not overwrite the existing
 // credential but still strips the sub-protocol bearer entry.
@@ -89,7 +89,7 @@ func TestWebSocketBearerCarrierDoesNotOverwriteAuthorization(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 line 142 — when the only offered sub-protocol is the
+// spec: §27.3.1 — when the only offered sub-protocol is the
 // bearer carrier (a degenerate client), stripping it leaves no
 // sub-protocol header so the upgrader negotiates none.
 func TestWebSocketBearerCarrierOnlyBearerEntry(t *testing.T) {

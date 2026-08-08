@@ -131,7 +131,7 @@ type AdapterClient interface {
 	// guard when the Token Service circuit breaker is open and the lease
 	// has not yet expired. Requires no Token Service call: the gateway
 	// supplies the new deadline from the lease record it already holds.
-	// spec: §4.9 line 1470.
+	// spec: §4.9.
 	ExtendCredentialLease(ctx context.Context, in *ExtendCredentialLeaseRequest, opts ...grpc.CallOption) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
@@ -155,17 +155,17 @@ type AdapterClient interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// sends in CheckpointStart is authoritative (§10.1). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error)
 	// SignalDeadline warns the running session's runtime that the session is
-	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// approaching its §11.3 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
 	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
 	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
-	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// notice (§15) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.
 	SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error)
@@ -175,7 +175,7 @@ type AdapterClient interface {
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+	// on coordinator handoff (§4.7, §10.1). The pod records the new
 	// generation and from this point rejects any RPC carrying an older one.
 	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
 	// received generation skips one or more values relative to the last
@@ -186,12 +186,12 @@ type AdapterClient interface {
 	// is never treated as a gap regardless of value.
 	CoordinatorFence(ctx context.Context, in *CoordinatorFenceRequest, opts ...grpc.CallOption) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
-	// drain (§4.7 line 631, §10.1). The adapter validates the request's
+	// drain (§4.7, §10.1). The adapter validates the request's
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, and holds the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
-	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
 	// caller has the same information; the control-stream emit is the
@@ -207,7 +207,7 @@ type AdapterClient interface {
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The
 	// gateway applies the lease's fileExportLimits and optional content
-	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	// scanning to the returned set. Spec: §4.7, §8.7.
 	ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
@@ -576,7 +576,7 @@ type AdapterServer interface {
 	// guard when the Token Service circuit breaker is open and the lease
 	// has not yet expired. Requires no Token Service call: the gateway
 	// supplies the new deadline from the lease record it already holds.
-	// spec: §4.9 line 1470.
+	// spec: §4.9.
 	ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
@@ -600,17 +600,17 @@ type AdapterServer interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// sends in CheckpointStart is authoritative (§10.1). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error
 	// SignalDeadline warns the running session's runtime that the session is
-	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// approaching its §11.3 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
 	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
 	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
-	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// notice (§15) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.
 	SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error)
@@ -620,7 +620,7 @@ type AdapterServer interface {
 	// the runtime — the replacement-pod counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
+	// on coordinator handoff (§4.7, §10.1). The pod records the new
 	// generation and from this point rejects any RPC carrying an older one.
 	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
 	// received generation skips one or more values relative to the last
@@ -631,12 +631,12 @@ type AdapterServer interface {
 	// is never treated as a gap regardless of value.
 	CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
-	// drain (§4.7 line 631, §10.1). The adapter validates the request's
+	// drain (§4.7, §10.1). The adapter validates the request's
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, and holds the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
-	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
 	// caller has the same information; the control-stream emit is the
@@ -652,7 +652,7 @@ type AdapterServer interface {
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The
 	// gateway applies the lease's fileExportLimits and optional content
-	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	// scanning to the returned set. Spec: §4.7, §8.7.
 	ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
@@ -1326,12 +1326,11 @@ const (
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 type GatewayControlClient interface {
-	// ListPlatformTools returns the §9.1 platform tool catalog (lines
-	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// ListPlatformTools returns the §9.1 platform tool catalog the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
 	// tools/list. The catalog is sourced from the gateway's platform tool
 	// surface so the intra-pod server never duplicates the tool schemas.
-	// spec: §9.1 lines 14-31.
+	// spec: §9.1.
 	ListPlatformTools(ctx context.Context, in *ListPlatformToolsRequest, opts ...grpc.CallOption) (*ListPlatformToolsResponse, error)
 	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
 	// runtime made against the adapter's intra-pod platform MCP server
@@ -1340,7 +1339,7 @@ type GatewayControlClient interface {
 	// handler the gateway-edge /mcp surface runs, so the intra-pod and
 	// edge surfaces stay in lockstep. The response carries the JSON-encoded
 	// MCP tool result; a tool-level failure is an is_error result rather
-	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	// than a gRPC error. spec: §9.1; §4.7.
 	CallPlatformTool(ctx context.Context, in *CallPlatformToolRequest, opts ...grpc.CallOption) (*CallPlatformToolResponse, error)
 	// ListSessionConnectors returns the §9.3 connectors a session's
 	// effective delegation policy permits. The adapter opens one intra-pod
@@ -1349,7 +1348,7 @@ type GatewayControlClient interface {
 	// type:agent runtime can reach every external tool its policy admits.
 	// The gateway filters the tenant's connector registry by the calling
 	// session's delegation policy, so a connector the policy denies is
-	// never advertised to the pod. spec: §9.3 line 142.
+	// never advertised to the pod. spec: §9.3.
 	ListSessionConnectors(ctx context.Context, in *ListSessionConnectorsRequest, opts ...grpc.CallOption) (*ListSessionConnectorsResponse, error)
 	// ListConnectorTools returns the tool catalog a single §9.3 connector
 	// exposes, for the adapter's intra-pod per-connector MCP server to
@@ -1357,7 +1356,7 @@ type GatewayControlClient interface {
 	// external endpoint (the connector's mcpServerUrl), using the
 	// gateway-held OAuth credential — the credential never transits the
 	// pod. A connector the calling session's policy denies is rejected.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	ListConnectorTools(ctx context.Context, in *ListConnectorToolsRequest, opts ...grpc.CallOption) (*ListConnectorToolsResponse, error)
 	// CallConnectorTool forwards one §9.3 external tool call a type:agent
 	// runtime made against the adapter's intra-pod @lenny-connector-<id>
@@ -1366,7 +1365,7 @@ type GatewayControlClient interface {
 	// tools/call to the external MCP endpoint with the gateway-held
 	// credential. The response carries the JSON-encoded MCP tool result; a
 	// tool-level failure is an is_error result rather than a gRPC error.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
 	// ReportSessionScrub reports the outcome of the per-slot cleanup the
 	// adapter runs on every session release (§5.2), across the
@@ -1496,12 +1495,11 @@ func (c *gatewayControlClient) ReportPodScrub(ctx context.Context, in *ReportPod
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 type GatewayControlServer interface {
-	// ListPlatformTools returns the §9.1 platform tool catalog (lines
-	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// ListPlatformTools returns the §9.1 platform tool catalog the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
 	// tools/list. The catalog is sourced from the gateway's platform tool
 	// surface so the intra-pod server never duplicates the tool schemas.
-	// spec: §9.1 lines 14-31.
+	// spec: §9.1.
 	ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error)
 	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
 	// runtime made against the adapter's intra-pod platform MCP server
@@ -1510,7 +1508,7 @@ type GatewayControlServer interface {
 	// handler the gateway-edge /mcp surface runs, so the intra-pod and
 	// edge surfaces stay in lockstep. The response carries the JSON-encoded
 	// MCP tool result; a tool-level failure is an is_error result rather
-	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	// than a gRPC error. spec: §9.1; §4.7.
 	CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error)
 	// ListSessionConnectors returns the §9.3 connectors a session's
 	// effective delegation policy permits. The adapter opens one intra-pod
@@ -1519,7 +1517,7 @@ type GatewayControlServer interface {
 	// type:agent runtime can reach every external tool its policy admits.
 	// The gateway filters the tenant's connector registry by the calling
 	// session's delegation policy, so a connector the policy denies is
-	// never advertised to the pod. spec: §9.3 line 142.
+	// never advertised to the pod. spec: §9.3.
 	ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error)
 	// ListConnectorTools returns the tool catalog a single §9.3 connector
 	// exposes, for the adapter's intra-pod per-connector MCP server to
@@ -1527,7 +1525,7 @@ type GatewayControlServer interface {
 	// external endpoint (the connector's mcpServerUrl), using the
 	// gateway-held OAuth credential — the credential never transits the
 	// pod. A connector the calling session's policy denies is rejected.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error)
 	// CallConnectorTool forwards one §9.3 external tool call a type:agent
 	// runtime made against the adapter's intra-pod @lenny-connector-<id>
@@ -1536,7 +1534,7 @@ type GatewayControlServer interface {
 	// tools/call to the external MCP endpoint with the gateway-held
 	// credential. The response carries the JSON-encoded MCP tool result; a
 	// tool-level failure is an is_error result rather than a gRPC error.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
 	// ReportSessionScrub reports the outcome of the per-slot cleanup the
 	// adapter runs on every session release (§5.2), across the

@@ -5,7 +5,7 @@
 // variant assignment in Redis keyed by (user_id, experiment_id) so the
 // gateway does not re-evaluate the assignment on every session creation.
 //
-// The cache matters most for `mode: external` experiments: §10.7 line 831
+// The cache matters most for `mode: external` experiments: §10.7
 // states the OpenFeature provider "is not called again for subsequent
 // sessions if a cached assignment exists", so without the cache every
 // session pays a synchronous provider round-trip. Percentage-mode
@@ -38,7 +38,7 @@ const DefaultTTL = 7 * 24 * time.Hour
 
 // InvalidationRecorder receives one observation per §10.7 sticky-cache
 // flush for the `lenny_experiment_sticky_cache_invalidations_total`
-// counter, labeled by experiment_id and transition (§16.1 line 159).
+// counter, labeled by experiment_id and transition (§16.1).
 // *gatewaymetrics.Metrics satisfies it. A nil recorder disables the metric;
 // the flush still runs.
 type InvalidationRecorder interface {
@@ -86,7 +86,7 @@ func assignmentKey(tenantID, experimentID, userID string) string {
 	return fmt.Sprintf("t:%s:exp:%s:sticky:%s", tenantID, experimentID, userID)
 }
 
-// flushPattern is the §10.7 line 1096 flush glob
+// flushPattern is the §10.7 flush glob
 // `t:{tenant_id}:exp:{experiment_id}:sticky:*`.
 func flushPattern(tenantID, experimentID string) string {
 	return fmt.Sprintf("t:%s:exp:%s:sticky:*", tenantID, experimentID)
@@ -139,12 +139,11 @@ func (c *RedisCache) Put(ctx context.Context, tenantID, experimentID, userID, va
 	return c.client.Set(ctx, assignmentKey(tenantID, experimentID, userID), variantID, c.ttl).Err()
 }
 
-// Flush deletes every cached assignment for an experiment (§10.7 line 1096:
+// Flush deletes every cached assignment for an experiment (§10.7:
 // `DEL` on all keys matching `t:{tenant_id}:exp:{experiment_id}:sticky:*`)
 // and records one §16.1 invalidation observation. It is invoked when an
 // experiment transitions to `paused` or `concluded`; `paused → active`
-// requires no flush. transition is the target status, carried as the §16.1
-// line 159 metric label. Returns the number of keys removed. SCAN is cursor-
+// requires no flush. transition is the target status, carried as the §16.1 metric label. Returns the number of keys removed. SCAN is cursor-
 // based so a large keyspace does not stall Redis.
 func (c *RedisCache) Flush(ctx context.Context, tenantID, experimentID, transition string) (int, error) {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(experimentID) == "" {
@@ -168,7 +167,7 @@ func (c *RedisCache) Flush(ctx context.Context, tenantID, experimentID, transiti
 // `t:{tenant_id}:exp:*:sticky:{user_id}` via the same cursor-based sweep
 // Flush uses. Returns the number of keys removed.
 //
-// spec: §12.8 line 786 (Experiment sticky assignment cache), step 4
+// spec: §12.8, step 4
 // ("delete all experiment sticky assignments for the user").
 func (c *RedisCache) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if strings.TrimSpace(tenantID) == "" || strings.TrimSpace(userID) == "" {

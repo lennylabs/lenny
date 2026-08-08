@@ -9,9 +9,7 @@
 // as the lower bound of every tenant's effective enforcement mode
 // (effective = max(floor, tenant_stored)) without a pod restart.
 //
-// spec: §17.2 line 86 ("The gateway reads this key at startup and on
-// ConfigMap change events and applies it as the lower bound of every
-// tenant's effective enforcement mode"); §9.2 line 64.
+// spec: §17.2; §9.2.
 package elicitationfloor
 
 import (
@@ -22,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 )
 
-// ConfigMapDataKey is the §17.2 line 86 data key on the
+// ConfigMapDataKey is the §17.2 data key on the
 // lenny-deployment-phase-stamp ConfigMap that carries the scalar floor
 // string ("enforce" | "detect-only" | "off").
 const ConfigMapDataKey = "security.elicitationContentIntegrity.floor"
@@ -44,7 +42,7 @@ const DefaultReconcileInterval = 30 * time.Second
 // read concurrently by the per-request elicitation mode resolver, the
 // admin PUT below-floor guard, and the §16.5 weakened-mode gauge export.
 // The zero value reads as "" which the elicitation resolver treats as the
-// §9.2 line 64 platform-floor default of off.
+// §9.2 platform-floor default of off.
 type Provider struct {
 	mu    sync.RWMutex
 	floor string
@@ -121,7 +119,7 @@ type Reconciler struct {
 	// (platform.elicitation_content_integrity_floor_changed and the
 	// per-tenant tenant.elicitation_content_integrity_floor_clamp fanout)
 	// carry the operator OIDC sub from the helm-upgrade render path
-	// (§16.7 line 676 changed_by_sub) and are emitted by the chart, not by
+	// (§16.7 changed_by_sub) and are emitted by the chart, not by
 	// this runtime observation point. OnChange is a logging/metrics hook
 	// only; it must not attempt to synthesize those events.
 	OnChange func(previous, current string)

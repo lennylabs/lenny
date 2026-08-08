@@ -53,7 +53,7 @@ func Text(s string) MessagePart {
 // adapter populates From, and the gateway populates SchemaVersion and ID
 // when omitted. Basic-level handlers typically read only Input.
 //
-// Annotations carries the §15.5 line 2461 degradation-annotation
+// Annotations carries the §15.5 degradation-annotation
 // catalog (`schema_version_ahead`, `durable_schema_version_ahead`,
 // `mcp_protocol_version_retired`). Producers stamp them via the
 // pkg/degradation helpers when forward-read or retirement defects

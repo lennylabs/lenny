@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.1 lines 75, 77 (retention, isolation), §7.2 lines 137, 141
+// spec: §7.1, §7.2
 // (status_change, session_complete), §11.7 / §16.6 (lifecycle audit).
 
 // captureLifecycleAudit records every §7.1/§16.6 session lifecycle
@@ -47,7 +47,7 @@ type capturedTerminalMetric struct {
 	seconds                          float64
 }
 
-// spec: §10.7 lines 1120-1132 / §16.1 lines 161-163 — every terminal
+// spec: §10.7 / §16.1 — every terminal
 // transition records the variant-labelled session metric family. The
 // variant comes from the §10.7 experiment context, session_type from the
 // §5.2 ExecutionMode, the error flag from the failed state, and the
@@ -387,7 +387,7 @@ func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
 	}
 }
 
-// retentionForTier resolves the §12.9 line 1043 tier-keyed retention
+// retentionForTier resolves the §12.9 tier-keyed retention
 // default: T4 24h, T2 90d, and the deployer-configured window for T3 / the
 // empty default, with a stricter environment override tightening the
 // tenant tier so a T3 tenant's session in a T4 environment retains for 24h.

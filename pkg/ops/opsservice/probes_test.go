@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §25.2 line 169 — lenny-ops connects to MinIO; the §25.6
+// spec: §25.2 — lenny-ops connects to MinIO; the §25.6
 // connectivity report names it. The MinIO probe GETs the liveness
 // endpoint and treats a non-5xx response as reachable. F-25.2.10.
 func TestMinIOProbe_spec_25_2_169(t *testing.T) {
@@ -41,7 +41,7 @@ func TestMinIOProbe_spec_25_2_169(t *testing.T) {
 	}
 }
 
-// spec: §25.2 line 169, §25.16 — lenny-ops connects to Prometheus; the
+// spec: §25.2, §25.16 — lenny-ops connects to Prometheus; the
 // probe GETs /-/healthy. A 5xx counts as a failure; an empty URL
 // reports not-configured. F-25.2.10.
 func TestPrometheusProbe_spec_25_2_169(t *testing.T) {

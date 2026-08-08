@@ -130,7 +130,7 @@ func TestRequestsAreKeyedBySessionAndID(t *testing.T) {
 // TestPendingForSessionListsRegistrations covers the lookup used by
 // the §7.2 children_reattached emitter to surface a child's pending
 // request id back to the resumed parent.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestPendingForSessionListsRegistrations(t *testing.T) {
 	r := inputwait.NewRegistry()
 	if got := r.PendingForSession("sess-empty"); len(got) != 0 {
@@ -158,9 +158,8 @@ func TestPendingForSessionListsRegistrations(t *testing.T) {
 	}
 }
 
-// TestConsumedTracksRegisterAcrossResolveAndCancel exercises the §8.8
-// line 869 per-session lifetime counter. Register bumps it; Resolve
-// and Cancel do not decrement it. spec: §8.8 line 869. F-8.8.10.
+// TestConsumedTracksRegisterAcrossResolveAndCancel exercises the §8.8 per-session lifetime counter. Register bumps it; Resolve
+// and Cancel do not decrement it. spec: §8.8. F-8.8.10.
 func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
 	if got := r.Consumed("sess-1"); got != 0 {
@@ -192,7 +191,7 @@ func TestConsumedTracksRegisterAcrossResolveAndCancel_spec_8_8_869(t *testing.T)
 
 // TestConsumedIsPerSession verifies the §8.8 counter is partitioned by
 // session id — one session's request_input rounds do not bleed into
-// another's count. spec: §8.8 line 869. F-8.8.10.
+// another's count. spec: §8.8. F-8.8.10.
 func TestConsumedIsPerSession_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
 	_, _ = r.Register("sess-a", "req-1", nil)
@@ -209,8 +208,8 @@ func TestConsumedIsPerSession_spec_8_8_869(t *testing.T) {
 	}
 }
 
-// TestForgetSessionClearsCounter is the §8.8 line 869 reclaim path the
-// gateway calls on terminal transition. spec: §8.8 line 869. F-8.8.10.
+// TestForgetSessionClearsCounter is the §8.8 reclaim path the
+// gateway calls on terminal transition. spec: §8.8. F-8.8.10.
 func TestForgetSessionClearsCounter_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
 	_, _ = r.Register("sess-1", "req-1", nil)
@@ -224,7 +223,7 @@ func TestForgetSessionClearsCounter_spec_8_8_869(t *testing.T) {
 
 // TestRegisterDuplicateDoesNotBumpConsumed verifies that a duplicate
 // Register (rejected with ErrDuplicate) does not double-count against
-// the §8.8 lifetime counter. spec: §8.8 line 869. F-8.8.10.
+// the §8.8 lifetime counter. spec: §8.8. F-8.8.10.
 func TestRegisterDuplicateDoesNotBumpConsumed_spec_8_8_869(t *testing.T) {
 	r := inputwait.NewRegistry()
 	if _, err := r.Register("sess-1", "req-1", nil); err != nil {
@@ -257,10 +256,10 @@ func TestResolveNeverBlocksWhenWaiterLeft(t *testing.T) {
 	}
 }
 
-// TestPendingDetailsForSession verifies the §8.8 line 951
+// TestPendingDetailsForSession verifies the §8.8
 // lenny/await_children input_required surface: pending requests are
 // returned with their question parts, sorted by request id, scoped to
-// the session, and pruned on Resolve/Cancel. spec: §8.8 line 951.
+// the session, and pruned on Resolve/Cancel. spec: §8.8.
 // F-8.8.5.
 func TestPendingDetailsForSession_spec_8_8_951(t *testing.T) {
 	r := inputwait.NewRegistry()
@@ -303,7 +302,7 @@ func TestPendingDetailsForSession_spec_8_8_951(t *testing.T) {
 }
 
 // TestPendingDetailsCarriesBlockedSince_spec_8_8_990 confirms the
-// §8.8 line 990 `blockedSince` witness is stamped from the registry clock
+// §8.8 witness is stamped from the registry clock
 // at Register time and surfaced on the await partial, so the subtree
 // deadlock detector reports an accurate blocked-since per request.
 func TestPendingDetailsCarriesBlockedSince_spec_8_8_990(t *testing.T) {

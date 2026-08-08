@@ -85,7 +85,7 @@ func TestCatalogRulesAllValidate(t *testing.T) {
 	}
 }
 
-// spec: §17.8.2 lines 1103-1104 — the first-week monitoring workflow
+// spec: §17.8.2 — the first-week monitoring workflow
 // names two tuning heuristics that the recommendations catalog must
 // cover.
 func TestCatalogIncludesFirstWeekTuningRules_spec_17_8_2(t *testing.T) {

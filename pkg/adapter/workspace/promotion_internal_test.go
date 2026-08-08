@@ -41,7 +41,7 @@ func TestRevalidatePromotedSymlinks_spec_7_4(t *testing.T) {
 	}
 }
 
-// TestPromoteStagingCommit_spec_7_4_433 covers the §7.4 line 433 atomic
+// TestPromoteStagingCommit_spec_7_4_433 covers the §7.4 atomic
 // promotion happy path: the build tree replaces the workspace root, the
 // prior root content does not survive a committed promotion, and commit
 // drops the backup. F-7.4.12.

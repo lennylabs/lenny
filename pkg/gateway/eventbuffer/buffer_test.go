@@ -149,7 +149,7 @@ func TestOperationalEventCarriesSubject_spec_25_3_19(t *testing.T) {
 }
 
 func TestEventFilterMatchesCSV_spec_25_3_15(t *testing.T) {
-	// spec: §25.2 lines 210-211 — eventType and severity accept the CSV
+	// spec: §25.2 — eventType and severity accept the CSV
 	// form; a query matches the union of the comma-separated tokens.
 	b := NewEventBuffer(16)
 	b.Append(ev("alert_fired", "critical"))
@@ -184,7 +184,7 @@ func TestEventFilterMatchesCSV_spec_25_3_15(t *testing.T) {
 }
 
 func TestQueryPaginationEnvelope_spec_25_3_17(t *testing.T) {
-	// spec: §25.2 lines 245-275 / §25.3 line 750 — buffer queries carry
+	// spec: §25.2 / §25.3 — buffer queries carry
 	// the canonical pagination envelope: a buffer-seq cursorKind, the
 	// head cursor, and on eviction the gapReason + resync suggestedAction.
 	b := NewEventBuffer(4)
@@ -228,7 +228,7 @@ func TestQueryPaginationEnvelope_spec_25_3_17(t *testing.T) {
 }
 
 func TestBufferedEventPageJSONShape_spec_25_3_17(t *testing.T) {
-	// spec: §25.3 line 750 — the gap fields ride under the canonical
+	// spec: §25.3 — the gap fields ride under the canonical
 	// pagination envelope, not at the response root.
 	b := NewEventBuffer(4)
 	for i := 0; i < 10; i++ {

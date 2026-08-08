@@ -249,7 +249,7 @@ func TestCredLeaseStoreContract(t *testing.T) {
 	})
 }
 
-// spec: §12.9 line 1048 — a credential lease is T4 — Restricted. The
+// spec: §12.9 — a credential lease is T4 — Restricted. The
 // persisted lease body carries the §4.9 proxy-mode bearer token, the
 // capability a runtime presents to the LLM reverse proxy; a database
 // dump must not expose it. This reads the raw stored bytes and asserts
@@ -338,7 +338,7 @@ func TestCredLeaseCiphertextAtRest(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1640-1652 — emergency credential revocation looks up
+// spec: §4.9 — emergency credential revocation looks up
 // every active lease backed by the revoked credential. With the lease
 // body encrypted (§12.9), the lookup matches the dedicated source-aware
 // credential-key columns rather than the JSONB body.
@@ -399,7 +399,7 @@ func credleaseExpiring(leaseID, token string, expiresAt time.Time) credential.Le
 	return l
 }
 
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses, so the store projects the lease's ExpiresAt
 // into the plain expires_at column (migration 0175) and the bounded
 // sweep deletes rows past that expiry without decrypting the body.
@@ -475,7 +475,7 @@ func TestCredLeaseStoreExpiresAtProjectionAndSweep(t *testing.T) {
 	})
 }
 
-// spec: §4.9 lines 1694-1695 — the startup rebuild and the deny-list
+// spec: §4.9 — the startup rebuild and the deny-list
 // sweep seed or drop a deny entry only after a fail-closed active-lease
 // existence check, so the count query must distinguish a definitive zero
 // from an unanswerable query and count an active or unknown-expiry row.
@@ -568,7 +568,7 @@ func TestCredLeaseStoreByCredentialCount(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1671, 1694-1695 — the sweep, the rebuild filter, and the
+// spec: §4.9 — the sweep, the rebuild filter, and the
 // backfill are fail-closed security paths, so a store or KMS fault must
 // surface as an error (or leave an undecryptable row untouched) rather than
 // masquerade as an empty result that would drop a live deny entry.
@@ -629,7 +629,7 @@ func TestCredLeaseStoreExistenceQueriesFailClosed(t *testing.T) {
 	})
 }
 
-// spec: §4.9 line 1671 — a row written before migration 0175 carries a
+// spec: §4.9 — a row written before migration 0175 carries a
 // NULL expires_at that the sweep cannot treat as expired; the one-time
 // startup backfill decrypts each such row and either fills expires_at
 // from the lease body or deletes the row when it is already past expiry.

@@ -9,8 +9,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// TestCallerTenantIDPrefersPrincipal pins §9.2 / §16.1 / §15.2 line
-// 1335: when the request carries an authenticated principal, the
+// TestCallerTenantIDPrefersPrincipal pins §9.2 / §16.1 / §15.2: when the request carries an authenticated principal, the
 // MCP tool surface scopes its store lookups, audit emissions, and
 // metric labels to the principal's tenant — not the Register-time
 // fallback. A multi-tenant deployment must not commingle these.

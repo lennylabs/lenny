@@ -42,7 +42,7 @@ func slotStartReq(sessionID, slotID string) *adapterv1.StartSessionRequest {
 	}
 }
 
-// spec: §6.4 lines 385-405; spec/05:509 — a slot-qualified StartSession
+// spec: §6.4; spec/05:509 — a slot-qualified StartSession
 // creates the per-slot directory tree and starts the slot's session on
 // the single pod-global runtime.
 func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
@@ -141,7 +141,7 @@ func TestStartSessionSlotRejectsDuplicateSlot_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 404 — a slot-qualified finalize materializes into the
+// spec: §6.4 — a slot-qualified finalize materializes into the
 // slot's /workspace/slots/{slotId}/current cwd.
 func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
@@ -172,7 +172,7 @@ func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 28 — a slot-qualified assignment writes the slot's own
+// spec: §6.1 — a slot-qualified assignment writes the slot's own
 // /run/lenny/slots/{slotId}/credentials.json, not the global file.
 func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 	s, _ := concurrentServer(t)
@@ -196,7 +196,7 @@ func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 28 — a rotation on one slot leaves a sibling slot's
+// spec: §6.1 — a rotation on one slot leaves a sibling slot's
 // credential file untouched.
 func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 	s, _ := concurrentServer(t)
@@ -236,7 +236,7 @@ func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.4 lines 401-405; spec/05:509 — a slot-qualified SendMessage
+// spec: §6.4; spec/05:509 — a slot-qualified SendMessage
 // validates the slot's bound session and delivers the envelope to the
 // single pod-global runtime, which multiplexes slots on slotId over the
 // one connection. A message naming a session that is not bound to the
@@ -276,7 +276,7 @@ func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 	}
 }
 
-// spec: §6.4 lines 401-405; spec/05:509 — Shutdown closes the slot's
+// spec: §6.4; spec/05:509 — Shutdown closes the slot's
 // session on the single pod-global runtime and removes its per-slot tree;
 // a sibling slot, and the shared runtime, are unaffected.
 func TestShutdownSlotRemovesTree_spec_6_4(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 // replica enters fail-open mode. The gateway adapts its §11.7 audit
 // appender to this seam.
 //
-// spec: §12.4 line 224; §16.7 (quota_failopen_started).
+// spec: §12.4; §16.7 (quota_failopen_started).
 type AuditEmitter interface {
 	EmitQuotaFailOpenStarted(ctx context.Context, serviceInstanceID string, at time.Time)
 }
@@ -21,7 +21,7 @@ type AuditEmitter interface {
 // and consults Evaluate for every request admitted while the shared Redis
 // counter is unreachable.
 //
-// spec: §12.4 lines 220-224.
+// spec: §12.4.
 type Controller struct {
 	timer    *CumulativeTimer
 	backstop *Backstop
@@ -80,7 +80,7 @@ func NewController(cfg ControllerConfig) *Controller {
 // Enter is called on the healthy→fail-open edge. It starts the cumulative
 // episode and, exactly once per episode, emits the §16.7
 // quota_failopen_started audit event asynchronously (the edge is rare and
-// the emit must not block the admission hot path). spec: §12.4 line 224.
+// the emit must not block the admission hot path). spec: §12.4.
 func (c *Controller) Enter() {
 	if c == nil || c.timer == nil {
 		return
@@ -98,7 +98,7 @@ func (c *Controller) Enter() {
 
 // Exit is called on the fail-open→healthy (Redis recovery) edge. It closes
 // the cumulative episode and resets the per-replica backstop counters so a
-// recovered window starts clean. spec: §12.4 lines 222, 224.
+// recovered window starts clean. spec: §12.4.
 func (c *Controller) Exit() {
 	if c == nil {
 		return
@@ -126,7 +126,7 @@ type FailOpenRequest struct {
 	// ceiling applies).
 	TenantLimit int64
 	// PerReplicaHardCap overrides the global hard cap for this tenant. A
-	// non-positive value defaults to TenantLimit / 2 per §12.4 line 224.
+	// non-positive value defaults to TenantLimit / 2 per §12.4.
 	PerReplicaHardCap int64
 }
 
@@ -138,13 +138,13 @@ const (
 	ReasonAdmit Reason = ""
 	// ReasonCumulativeExceeded — the replica has spent more than
 	// quotaFailOpenCumulativeMaxSeconds in fail-open mode within the
-	// rolling window and is now fail-closed for quota. spec: §12.4 line 224.
+	// rolling window and is now fail-closed for quota. spec: §12.4.
 	ReasonCumulativeExceeded Reason = "cumulative_exceeded"
 	// ReasonUserCeiling — the per-user fail-open ceiling was reached.
-	// spec: §12.4 line 222.
+	// spec: §12.4.
 	ReasonUserCeiling Reason = "user_ceiling"
 	// ReasonTenantCeiling — the per-tenant effective ceiling was reached.
-	// spec: §12.4 line 224.
+	// spec: §12.4.
 	ReasonTenantCeiling Reason = "tenant_ceiling"
 )
 
@@ -164,9 +164,9 @@ type Decision struct {
 // passes every control is admitted. The cached replica count and the
 // configured fraction / hard cap drive the ceiling arithmetic.
 //
-// spec: §12.4 lines 220-224.
+// spec: §12.4.
 func (c *Controller) Evaluate(req FailOpenRequest, now time.Time) Decision {
-	// spec: §12.4 line 224 — once cumulative fail-open time exceeds the
+	// spec: §12.4 — once cumulative fail-open time exceeds the
 	// configured maximum, the replica is fail-closed for quota: block all
 	// new token-consuming requests until Redis recovers.
 	if c.timer != nil && c.timer.Exceeded() {
@@ -183,7 +183,7 @@ func (c *Controller) Evaluate(req FailOpenRequest, now time.Time) Decision {
 	}
 	ceil := ComputeCeilings(req.TenantLimit, c.replicas.Get(), hardCap, c.userFraction)
 
-	// spec: §12.4 line 222 — the per-user ceiling binds even when the
+	// spec: §12.4 — the per-user ceiling binds even when the
 	// per-tenant counter still has headroom, so a single user cannot
 	// monopolize the tenant's per-replica allocation.
 	if req.UserKey != "" && ceil.User > 0 {

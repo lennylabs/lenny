@@ -33,7 +33,7 @@ func sample(id, sev, status string, created time.Time) escalation.Escalation {
 // TestRedisStoreRoundTrip exercises the §25.4 Tier 2 put/get/list/update
 // lifecycle against a miniredis backend, including the 24h TTL on the
 // ops:escalations:{id} key.
-// spec: §25.4 lines 2383, 2419-2422.
+// spec: §25.4.
 func TestRedisStoreRoundTrip_spec_25_4(t *testing.T) {
 	s, mr := newStore(t)
 	ctx := context.Background()
@@ -45,7 +45,7 @@ func TestRedisStoreRoundTrip_spec_25_4(t *testing.T) {
 	if err := s.Put(ctx, sample("esc-a", escalation.SeverityCritical, escalation.StatusOpen, base)); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	// §25.4 line 2383: the key carries a 24h TTL.
+	// §25.4: the key carries a 24h TTL.
 	ttl := mr.TTL("ops:escalations:esc-a")
 	if ttl <= 0 || ttl > 24*time.Hour {
 		t.Errorf("ttl = %v, want a positive value within 24h", ttl)
@@ -77,7 +77,7 @@ func TestRedisStoreRoundTrip_spec_25_4(t *testing.T) {
 
 // TestRedisStoreListFilterAndPending covers the §25.4 list filters,
 // newest-first ordering, and the emission-retry projection.
-// spec: §25.4 lines 2400-2404, 2419-2422.
+// spec: §25.4.
 func TestRedisStoreListFilterAndPending_spec_25_4(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
@@ -102,7 +102,7 @@ func TestRedisStoreListFilterAndPending_spec_25_4(t *testing.T) {
 		t.Errorf("severity filter = %v, want [esc-new]", ids(crit))
 	}
 	// A page limit below the match count reports HasMore but no cursor: the
-	// Redis path paginates by limit only (§25.4 line 2428).
+	// Redis path paginates by limit only (§25.4).
 	limited, _ := s.List(ctx, escalation.Filter{}, "", 1)
 	if len(limited.Items) != 1 {
 		t.Errorf("limit=1 returned %d, want 1", len(limited.Items))
@@ -128,7 +128,7 @@ func TestRedisStoreListFilterAndPending_spec_25_4(t *testing.T) {
 
 // TestRedisStoreUnavailableOnOutage asserts a Redis outage surfaces as
 // escalation.ErrStoreUnavailable so the tiered Service falls back.
-// spec: §25.4 lines 2376-2384.
+// spec: §25.4.
 func TestRedisStoreUnavailableOnOutage_spec_25_4(t *testing.T) {
 	s, mr := newStore(t)
 	ctx := context.Background()

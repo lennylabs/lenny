@@ -41,7 +41,7 @@
 //     DEMAND_EXCEEDS_SUPPLY with zero in-flight claims for over 5
 //     minutes, which does not fit a bounded e2e run.
 //
-// spec: §25.6 lines 2941-2982 (auto-remediation `fix=true` mode); the
+// spec: §25.6; the
 // certManagerExpiring row of the fixable-finding table ("Certificate
 // within 7 days of expiry and cert-manager healthy" / "Annotates
 // Certificate with cert-manager.io/issue-temporary-certificate: \"true\"
@@ -251,12 +251,7 @@ func diagFixFindingFor(t *testing.T, report diagFixReportWire, code string) diag
 	return diagFixFindingWire{}
 }
 
-// spec: §25.6 lines 2941-2982 ("POST /v1/admin/diagnostics/run?fix=true
-// ... Response is a long-running operation envelope"; certManagerExpiring
-// row: detection "Certificate within 7 days of expiry and cert-manager
-// healthy", remediation "Annotates Certificate with
-// cert-manager.io/issue-temporary-certificate: \"true\" and deletes the
-// Secret to force re-issuance", "Idempotent? Yes").
+// spec: §25.6.
 //
 // diagnosis: a failure here means the §25.6 auto-remediation path is
 // broken somewhere between the deployed lenny-ops HTTP listener and the

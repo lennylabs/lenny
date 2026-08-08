@@ -85,12 +85,10 @@ type StreamEmitterOptions struct {
 	// Now overrides time.Now; tests use it to anchor timestamps.
 	Now func() time.Time
 	// NonceCheckpoint, when non-nil, enables the §25.3 on-disk nonce
-	// checkpoint so the eventKey nonce survives a restart. spec: §25.3
-	// line 748.
+	// checkpoint so the eventKey nonce survives a restart. spec: §25.3.
 	NonceCheckpoint *events.NonceCheckpoint
 	// Metrics, when non-nil, receives the §25.3 emission counters
-	// (lenny_ops_events_emitted_total / _emit_failed_total). spec: §25.3
-	// lines 705-710.
+	// (lenny_ops_events_emitted_total / _emit_failed_total). spec: §25.3.
 	Metrics *events.Metrics
 	// OnError receives non-fatal emit-path errors (a failed nonce
 	// checkpoint persist). The Redis-write error is returned from Emit
@@ -170,7 +168,7 @@ func (e *StreamEmitter) Emit(ctx context.Context, event events.OperationalEvent)
 		Values: map[string]any{"event": payload},
 	}
 	if _, err := e.client.XAdd(ctx, args).Result(); err != nil {
-		// spec: §25.3 line 703 — a Redis-unreachable emit still lands in
+		// spec: §25.3 — a Redis-unreachable emit still lands in
 		// the local buffer (already appended above); count the failed
 		// remote write and return the error for the caller to log.
 		e.metrics.IncEmitFailed(event.Type)

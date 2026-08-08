@@ -408,7 +408,7 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 // alert did not exist, so the gauge a producer now publishes had no rule
 // to read it.
 //
-// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4 line 2280
+// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4
 // (Postgres-Redis skew >10s alert).
 func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
 	var got Rule
@@ -431,7 +431,7 @@ func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
 		t.Errorf("expr %q must select the postgres-redis pair label", got.Expr)
 	}
 	if !strings.Contains(got.Expr, "> 10") {
-		t.Errorf("expr %q must fire above the 10s tolerance per §25.4 line 2280", got.Expr)
+		t.Errorf("expr %q must fire above the 10s tolerance per §25.4", got.Expr)
 	}
 	if got.RunbookSlug() != "ops-clock-skew" {
 		t.Errorf("runbook slug = %q, want ops-clock-skew", got.RunbookSlug())
@@ -514,7 +514,7 @@ func TestPoolSecurityDegradedRule(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 47 / §16.5 line 510 — PgBouncerPoolSaturated must
+// spec: §12.3 / §16.5 — PgBouncerPoolSaturated must
 // evaluate the pgbouncer_exporter sidecar's native client-wait stat
 // (pgbouncer_pools_client_maxwait_seconds). The earlier
 // lenny_pgbouncer_client_waiting_seconds metric was never emitted by any
@@ -538,7 +538,7 @@ func TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11(t *testing
 	}
 }
 
-// spec: §16.5 line 471, §12.3 line 101, §11.7 audit sequencing — the
+// spec: §16.5, §12.3, §11.7 audit sequencing — the
 // AuditChainGap catalog Description must classify state="broken" as a
 // committed-row tamper or removal (a non-linking prev_hash), must not
 // equate a benign intact-link sequence gap with the broken-chain
@@ -648,7 +648,7 @@ func TestAuditRedactionReceiptMissingDescriptionUsesReceiptModel_spec_16_5_F_12_
 	}
 }
 
-// spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
+// spec: §6.3, §16.5 — TTFTBurnRate must reference
 // the lenny_session_time_to_first_token_seconds histogram directly
 // via the le="10" bucket (the 10s TTFT SLO). The earlier
 // lenny_session_time_to_first_token_slow_ratio recording rule was
@@ -669,7 +669,7 @@ func TestTTFTBurnRateUsesInlineHistogramExpression_spec_6_3_F_6_3_3(t *testing.T
 		`le="10"`,
 		"lenny_session_time_to_first_token_seconds_count",
 		"/ 0.05",
-		// §16.5 line 640 — the fast-window page threshold is the
+		// §16.5 — the fast-window page threshold is the
 		// operator-tunable multiplier scalar (default 14). F-16.5.3.
 		"> scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))",
 	}
@@ -714,8 +714,7 @@ func TestBurnRateRulesAreDualWindow(t *testing.T) {
 // TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline asserts the
 // alert compares P95 startup against 2× the per-pool
 // lenny_pool_warmup_seconds_baseline gauge the PoolScalingController
-// mirrors, rather than the prior fixed 60s threshold. spec: §16.5 line
-// 488.
+// mirrors, rather than the prior fixed 60s threshold. spec: §16.5.
 func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *testing.T) {
 	var got Rule
 	for _, r := range Catalog() {

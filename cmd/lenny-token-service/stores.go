@@ -28,7 +28,7 @@ func (w *tokenServiceWiring) buildMetrics() {
 	w.metricsEmitter = metricsEmitter
 }
 
-// buildStores wires the §13.3 line 589 durable write-before-issue state. With
+// buildStores wires the §13.3 durable write-before-issue state. With
 // Postgres, every minted token is recorded in issued_tokens and every
 // accepted/rejected exchange writes a token.exchanged audit row in the same
 // transaction under the §11.7 advisory lock. With no Postgres, the Token
@@ -37,7 +37,7 @@ func (w *tokenServiceWiring) buildMetrics() {
 // rows (lost on restart). The Postgres pool is recorded on the accumulator so
 // runTokenService can defer its close.
 //
-// spec: §13.3 line 589, §12.3 R-03 / F-12.3.4.
+// spec: §13.3, §12.3 R-03 / F-12.3.4.
 func (w *tokenServiceWiring) buildStores() {
 	if *w.f.postgresDSN == "" {
 		// Dev path: keep an in-memory chain so the rate-limit /

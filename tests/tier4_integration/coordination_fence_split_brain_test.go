@@ -42,8 +42,7 @@ import (
 
 // spec: §10.1 (coordination_generation split-brain fence; coordinator handoff
 // re-adopts the still-running pod; a stale coordinator's RPC is rejected),
-// §4.2 line 156 (coordination_generation incremented on coordinator handoff
-// across gateway replicas), §4.6.1 (coordinating replica holds the lease).
+// §4.2, §4.6.1 (coordinating replica holds the lease).
 //
 // diagnosis: a failure means the two-replica coordinator handoff did not fence
 // the still-running pod to the post-handoff generation over shared Redis, so a

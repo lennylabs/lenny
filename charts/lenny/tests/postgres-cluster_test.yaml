@@ -41,7 +41,7 @@ tests:
           path: spec.primaryUpdateStrategy
           value: unsupervised
 
-  # spec: §17.3 line 116 — RPO=0 synchronous replication. The default
+  # spec: §17.3 — RPO=0 synchronous replication. The default
   # render commits synchronously to one standby.
   - it: enables synchronous replication for the RPO=0 target by default
     set:

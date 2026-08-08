@@ -31,7 +31,7 @@ type (
 	PoolID = store.PoolID
 
 	// ClusterID identifies a Kubernetes cluster in a multi-cluster
-	// topology. spec: §12.6 line 373. It is always nil on ClaimOpts in
+	// topology. spec: §12.6. It is always nil on ClaimOpts in
 	// v1 (single cluster); the §12.6 ClusterRegistry populates it when
 	// routing a claim to a remote cluster.
 	ClusterID = store.ClusterID
@@ -67,7 +67,7 @@ type StateTransition struct {
 
 // ClaimOpts describes a §4.6.1 ClaimPod request: the pool to claim
 // from, the tenant to pin the pod to (recycling or concurrent-workspace pods), and
-// the session id that will run on the pod. spec: §12.6 line 424.
+// the session id that will run on the pod. spec: §12.6.
 type ClaimOpts struct {
 	PoolID    PoolID
 	TenantID  string
@@ -80,7 +80,7 @@ type ClaimOpts struct {
 	RequiresDemotion bool
 
 	// Priority is the admission-control claim priority. nil means
-	// unset, the §12.6 line 424 default; a future priority-aware
+	// unset, the §12.6 default; a future priority-aware
 	// admission path branches on a non-nil value.
 	Priority *int32
 
@@ -115,7 +115,7 @@ type StateCounts map[string]int
 
 // PodSpec is the input to CreatePod: the pool the new pod belongs
 // to and the per-pod fields the §4.6.1 lifecycle manager sets on
-// the new Sandbox. spec: §12.6 line 422 — the key fields are
+// the new Sandbox. spec: §12.6 — the key fields are
 // RuntimeDefinitionRef, WorkspacePlan, IsolationProfile, ExecutionMode,
 // and resource limits (modeled here as ResourceClass, per §5.1/§5.2).
 type PodSpec struct {
@@ -156,7 +156,7 @@ const (
 	EventCreated = "created"
 	EventUpdated = "updated"
 	EventDeleted = "deleted"
-	// EventResync is the §12.6 line 482 synthetic backpressure signal:
+	// EventResync is the §12.6 synthetic backpressure signal:
 	// when WatchPods detects the channel has fallen behind, it emits a
 	// resync frame carrying no PodRecord so the consumer re-reads its
 	// authoritative state via ListPodsByPool.

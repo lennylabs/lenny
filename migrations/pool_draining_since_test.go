@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 line 797 — POST /v1/admin/pools/{name}/drain transitions a
+// spec: §15.1 — POST /v1/admin/pools/{name}/drain transitions a
 // pool into the `draining` phase. Migration 0120 adds the draining_since
 // timestamp column on sandbox_warm_pools so the phase persists; the down
 // migration drops it.

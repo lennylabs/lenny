@@ -99,7 +99,7 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 			"the playground session store is not configured", nil)
 		return
 	}
-	// §27.3.1 line 81: recover the tenant from the fan-in index since the
+	// §27.3.1: recover the tenant from the fan-in index since the
 	// cookie carries only the opaque id. A store error fails closed (503);
 	// a missing entry is an expired session (401). F-27.3.8.
 	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
@@ -164,7 +164,7 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	// §10.2 tenant-claim extraction. In multi-tenant mode the tenant
 	// claim is required and must name a provisioned tenant. Each
-	// rejection emits the §10.2 line 243
+	// rejection emits the §10.2
 	// `playground.bearer_mint_rejected` audit event + metric.
 	if h.cfg.MultiTenant {
 		if claims.TenantID == "" {
@@ -197,7 +197,7 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 	// MUST be user_bearer. A session_capability, a2a_delegation, or
 	// service_token is rejected so a narrowly-scoped capability JWT
 	// cannot be re-minted into a broader playground JWT.
-	// spec: §10.2 lines 235-243 (invariant 1 + reject-audit contract).
+	// spec: §10.2.
 	if claims.Typ != auth.TokenUserBearer {
 		h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "subject_typ_invalid")
 		writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
@@ -297,7 +297,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		updated := ref.rec
 		updated.BearerJTIs = appendBoundedJTI(updated.BearerJTIs, jti, h.maxTrackedJTIs())
 		updated.CurrentExp = exp.Unix()
-		// §27.6 line 201: a bearer mint is the playground session's
+		// §27.6: a bearer mint is the playground session's
 		// activity heartbeat; refresh the idle clock so the sweep does not
 		// reclaim a session the user is actively re-minting against.
 		updated.LastActivityAt = h.now()
@@ -386,7 +386,7 @@ func intersectScope(subjectScope string, allowed []string) string {
 		return ""
 	}
 	narrowed := subjectSet.Intersect(allowedSet)
-	// spec: §10.2 line 250 — "If the intersection is empty, the mint
+	// spec: §10.2 — "If the intersection is empty, the mint
 	// proceeds with an empty scope claim." Intersect carries a sentinel
 	// Raw for the both-present-but-disjoint case to keep Matches
 	// fail-closed for its other callers; the playground mint translates

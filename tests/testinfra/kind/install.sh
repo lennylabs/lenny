@@ -502,7 +502,7 @@ kc -n ingress-nginx wait --for=condition=Available deploy/ingress-nginx-controll
 log "applying the in-cluster data-store manifests"
 kc apply -f "${DATASTORES_MANIFEST}"
 
-# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
 # exception to backends: embedded only; the e2e MinIO is a non-embedded
 # backend, so datastores.yaml has cert-manager issue a serving cert for the
 # lenny-minio Service DNS name and MinIO serves https on :9000. The chart
@@ -573,7 +573,7 @@ if [ -z "${MINIO_POD_IP}" ]; then
   exit 1
 fi
 kc -n lenny-system delete pod lenny-e2e-minio-mb --ignore-not-found --wait=true
-# MinIO serves https on :9000 (§12.5 line 280; datastores.yaml issues the
+# MinIO serves https on :9000 (§12.5; datastores.yaml issues the
 # cert-manager serving cert). This one-shot pod dials the MinIO pod IP, which
 # never matches the cert's DNS SAN, so mc runs with --insecure (skip TLS
 # verification). The gateway and the chart's bucket-lifecycle Job verify the
@@ -873,7 +873,7 @@ bootstrap:
         cleanupTimeoutSeconds: 30
 EOF
 
-# §25.4 line 1567 — "No anonymous access except /healthz." lenny-ops only
+# §25.4 — "No anonymous access except /healthz." lenny-ops only
 # wires its authentication gate when a bearer-trust key is configured;
 # without it cmd/lenny-ops/main.go buildAuthConfig returns a nil
 # AuthConfig outside production and the operability surface admits
@@ -897,7 +897,7 @@ kc -n lenny-system create secret generic lenny-e2e-bearer-trust-key \
 # --server-side=false forces client-side apply. Helm 4 defaults to
 # server-side apply, whose strict (containerPort, protocol) list-map key
 # rejects the chart's named http+metrics ports sharing one containerPort
-# (§16.9 line 723); helm 3 used client-side apply and tolerated it. The
+# (§16.9); helm 3 used client-side apply and tolerated it. The
 # Kind e2e pins client-side apply so it installs identically under helm 3
 # and helm 4 without depending on the chart's server-side-apply posture.
 # The generated bootstrap overlay is passed last so its bootstrap.runtimes

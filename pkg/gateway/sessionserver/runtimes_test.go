@@ -70,7 +70,7 @@ func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
 }
 
 // TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190 pins the
-// §27.5 line 190 rule: an origin=playground caller's GET /v1/runtimes is
+// §27.5 rule: an origin=playground caller's GET /v1/runtimes is
 // additionally filtered by playground.allowedRuntimes (modeled by the fake's
 // hidden runtime), while a non-playground caller on the same shared §9.1
 // surface sees every runtime. F-27.4.1.
@@ -220,7 +220,7 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 	})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
 
-	// §9.1 line 35: every discovery response embeds a top-level
+	// §9.1: every discovery response embeds a top-level
 	// adapterCapabilities block describing the adapter serving the
 	// request. /v1/runtimes is the REST native discovery surface and
 	// reports the REST adapter capabilities.
@@ -249,12 +249,11 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 	}
 }
 
-// TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat pins §9.1
-// line 35 — /v1/models is shared by both the OpenAI Chat Completions
+// TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat pins §9.1 — /v1/models is shared by both the OpenAI Chat Completions
 // and Open Responses adapters, so the response reflects the adapter
 // the consumer requests via `?adapter=`. The default (no query param)
 // is the OpenAI Chat surface, the historic /v1/models consumer.
-// spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+// spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -283,7 +282,7 @@ func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testin
 // `?adapter=open-responses` discriminator: a consumer of the Open
 // Responses adapter that fetches /v1/models receives the
 // open-responses capability block (PathPrefix /v1/responses, session
-// continuity true). spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+// continuity true). spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=open-responses", nil)
@@ -315,7 +314,7 @@ func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testin
 // unknown ?adapter= value falls through to the default (openai-completions)
 // rather than emitting an empty / malformed capability block. A stale
 // or forward-compatible consumer still receives a well-formed response.
-// spec: §9.1 line 35; F-9.1.6 / F-9.1.8.
+// spec: §9.1; F-9.1.6 / F-9.1.8.
 func TestListModelsAdapterCapabilitiesUnknownDefaults_spec_9_1_35(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=does-not-exist", nil)
@@ -683,7 +682,7 @@ func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 672 — `GET /v1/runtimes` accepts the optional
+// spec: §10.6 — `GET /v1/runtimes` accepts the optional
 // `?environmentId=` stub. When the named environment is known, the
 // response narrows to runtimes that environment's runtimeSelector
 // admits. F-10.6.10.
@@ -736,7 +735,7 @@ func TestListRuntimesEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 672 — an unknown `environmentId` collapses the
+// spec: §10.6 — an unknown `environmentId` collapses the
 // response to empty so a typo never broadens visibility. F-10.6.10.
 func TestListRuntimesEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
@@ -766,7 +765,7 @@ func TestListRuntimesEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing
 	}
 }
 
-// spec: §10.6 line 672 — empty `?environmentId=` (the v1 default)
+// spec: §10.6 — empty `?environmentId=` (the v1 default)
 // must behave exactly like an absent param so existing clients are
 // unaffected. F-10.6.10.
 func TestListRuntimesEmptyEnvironmentIDStubIsNoOp_spec_10_6_672(t *testing.T) {
@@ -794,7 +793,7 @@ func TestListRuntimesEmptyEnvironmentIDStubIsNoOp_spec_10_6_672(t *testing.T) {
 }
 
 // TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38 pins the
-// §9.1 line 38 / §15.1 line 698 discovery contract: every type:mcp
+// §9.1 / §15.1 discovery contract: every type:mcp
 // runtime carries `mcpEndpoint: /mcp/runtimes/{name}` in REST
 // `GET /v1/runtimes`, and type:agent runtimes carry it as empty (and
 // so the JSON envelope omits the field). F-9.1.4.

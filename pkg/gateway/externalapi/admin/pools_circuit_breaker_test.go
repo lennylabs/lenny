@@ -56,7 +56,7 @@ func putCircuitBreaker(t *testing.T, router *admin.Router, name, etag string, bo
 	return rr
 }
 
-// TestCircuitBreakerOverrideEnabled covers the §15.1 line 801 happy path:
+// TestCircuitBreakerOverrideEnabled covers the §15.1 happy path:
 // an `enabled` override on an SDK-warm pool persists and emits the
 // pool.sdk_warm_circuit_breaker_override audit event with previous and new
 // values.
@@ -92,8 +92,7 @@ func TestCircuitBreakerOverrideEnabled_spec_15_1(t *testing.T) {
 	}
 }
 
-// TestCircuitBreakerOverrideRejectsNonSDKWarmPool covers the §15.1 line
-// 801 rule: the override has no effect on a pool whose runtime is not
+// TestCircuitBreakerOverrideRejectsNonSDKWarmPool covers the §15.1 rule: the override has no effect on a pool whose runtime is not
 // SDK-warm, returning 409 INVALID_STATE_TRANSITION.
 func TestCircuitBreakerOverrideRejectsNonSDKWarmPool_spec_15_1(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
@@ -107,7 +106,7 @@ func TestCircuitBreakerOverrideRejectsNonSDKWarmPool_spec_15_1(t *testing.T) {
 	}
 }
 
-// TestCircuitBreakerOverrideRejectsBadValue covers the §15.1 line 801
+// TestCircuitBreakerOverrideRejectsBadValue covers the §15.1
 // closed vocabulary: a value outside enabled|disabled|auto is rejected 422.
 func TestCircuitBreakerOverrideRejectsBadValue_spec_15_1(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
@@ -133,8 +132,7 @@ func TestCircuitBreakerOverrideRequiresField_spec_15_1(t *testing.T) {
 	}
 }
 
-// TestCircuitBreakerOverrideEnforcesIfMatch covers the §15.1 lines
-// 1207-1211 optimistic-concurrency precondition.
+// TestCircuitBreakerOverrideEnforcesIfMatch covers the §15.1 optimistic-concurrency precondition.
 func TestCircuitBreakerOverrideEnforcesIfMatch_spec_15_1(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)
 	_ = seedSDKWarmPool(t, router, runtimes, pools, "sdk-pool", true)
@@ -148,7 +146,7 @@ func TestCircuitBreakerOverrideEnforcesIfMatch_spec_15_1(t *testing.T) {
 	}
 }
 
-// TestMainPutSetsAcknowledgeHighDemotionRate covers the §6.1 line 48
+// TestMainPutSetsAcknowledgeHighDemotionRate covers the §6.1
 // acknowledgeHighDemotionRate flag set through the main pool PUT.
 func TestMainPutSetsAcknowledgeHighDemotionRate_spec_6_1(t *testing.T) {
 	router, pools, runtimes, _ := newPoolAdmin(t)

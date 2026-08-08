@@ -48,13 +48,12 @@ const (
 
 // The §16.6 §14 WorkspacePlan warning event short name. The
 // CloudEvents type is `dev.lenny.workspace_plan_warning`; the payload
-// carries the per-warning structured fields per §14 lines 100, 334,
-// 338. spec: §14 line 100; §14 line 334; §14 line 338. F-14.1.17.
+// carries the per-warning structured fields per §14. spec: §14; §14; §14. F-14.1.17.
 const EventWorkspacePlanWarning EventType = "workspace_plan_warning"
 
 // gatewayEventCatalog is the §16.6 closed enumeration of the
 // operational-event types the gateway emits. EventWorkspacePlanWarning
-// is deliberately omitted: §14 lines 100/334/338 describe per-session
+// is deliberately omitted: §14 describe per-session
 // warnings, not §16.6 catalogue events, and `TestGatewayCatalogIsCompleteAgainstSpec166`
 // asserts the catalogue transcribes §16.6 exactly. The constant is
 // exported for the §25.3 OpsEmitter Type field; subscribers that
@@ -153,7 +152,7 @@ func inCatalog(t EventType, catalog []EventType) bool {
 // operational event carries. The §25.5 ?severity= filter is validated
 // against it so an unrecognized token returns INVALID_EVENT_FILTER
 // rather than silently matching nothing. spec: §16.6 catalogue severity
-// column (Critical | Warning | Info); §25.5 line 2796.
+// column (Critical | Warning | Info); §25.5.
 var knownSeverities = map[string]bool{
 	"critical": true,
 	"warning":  true,
@@ -175,7 +174,7 @@ func normalizeEventTypeToken(tok string) EventType {
 // in the §16.6 catalogue. Empty values impose no constraint and pass.
 // It backs the §25.5 INVALID_EVENT_FILTER (400) error: an agent that
 // mistypes an event type or severity gets a precise rejection instead
-// of an empty page. spec: §25.5 lines 2795-2796.
+// of an empty page. spec: §25.5.
 func ValidateFilterTokens(eventType, severity string) error {
 	for _, tok := range splitCSV(eventType) {
 		if !IsKnownEventType(normalizeEventTypeToken(tok)) {

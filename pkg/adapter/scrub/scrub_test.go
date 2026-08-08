@@ -94,7 +94,7 @@ func stepErr(rep *Report, step StepName) error {
 	return errors.New("step not present")
 }
 
-// spec: §5.2 lines 422-437 — a clean scrub with no cleanup commands runs
+// spec: §5.2 — a clean scrub with no cleanup commands runs
 // every step and verifies clean, reporting Succeeded.
 func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	ops := newFakeOps()
@@ -118,7 +118,7 @@ func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — step 0 (credential purge) MUST precede cleanupCommands,
+// spec: §5.2 — step 0 (credential purge) MUST precede cleanupCommands,
 // which MUST precede the post-cleanup scrub steps 1-6.
 func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	ops := newFakeOps()
@@ -160,7 +160,7 @@ func TestRun_IPCAfterKill_spec_5_2_step1b(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 436 — step 6 fails the scrub when the workspace is left
+// spec: §5.2 — step 6 fails the scrub when the workspace is left
 // non-empty.
 func TestRun_DirtyWorkspaceFailsVerify_spec_5_2_436(t *testing.T) {
 	ops := newFakeOps()
@@ -177,7 +177,7 @@ func TestRun_DirtyWorkspaceFailsVerify_spec_5_2_436(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 436 — if /run/lenny/credentials.json still exists despite
+// spec: §5.2 — if /run/lenny/credentials.json still exists despite
 // step 0, the scrub is marked failed.
 func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
 	ops := newFakeOps()
@@ -202,7 +202,7 @@ func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
 	}
 }
 
-// spec: §5.2 lines 426-437 — a cleanup-command failure marks the scrub
+// spec: §5.2 — a cleanup-command failure marks the scrub
 // failed but does not abort steps 1-6 (the workspace is still scrubbed).
 func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 	ops := newFakeOps()
@@ -417,7 +417,7 @@ func TestRun_NilOps(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — cleanupCommands run with the sanitized
+// spec: §5.2 — cleanupCommands run with the sanitized
 // LENNY_PREV_CREDENTIAL_PROVIDER / LENNY_PREV_LEASE_ID metadata and the
 // minimal §7.5 whitelist, never the credential file.
 func TestCleanupEnv_spec_5_2_424(t *testing.T) {
@@ -442,7 +442,7 @@ func TestCleanupEnv_spec_5_2_424(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — the credential purge runs before cleanupCommands, so
+// spec: §5.2 — the credential purge runs before cleanupCommands, so
 // a cleanup command cannot read the just-purged credential file. This drives
 // the real DefaultOps.RemoveAll and the real bounded cleanup executor.
 func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T) {

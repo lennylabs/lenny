@@ -76,7 +76,7 @@ func upgErrCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 	return env.Error.Code
 }
 
-// spec: §10.5 lines 466-540 / §15.1 lines 869-874 — the operator drives a
+// spec: §10.5 / §15.1 — the operator drives a
 // full rollout through the admin API: start -> proceed* -> status, with
 // every route platform-admin only.
 func TestUpgradeAPI_fullLifecycle_spec_10_5(t *testing.T) {
@@ -128,7 +128,7 @@ func TestUpgradeAPI_startErrors_spec_10_5(t *testing.T) {
 
 // An out-of-order proceed (past Complete) maps to 409
 // INVALID_STATE_TRANSITION; a second start while active is 409
-// INVALID_STATE_TRANSITION (the ErrUpgradeActive state conflict; spec: §15.1 line 981).
+// INVALID_STATE_TRANSITION (the ErrUpgradeActive state conflict; spec: §15.1).
 func TestUpgradeAPI_conflictMapping_spec_10_5(t *testing.T) {
 	h := newUpgradeAdmin(t).Handler()
 	base := "/v1/admin/pools/claude-worker/upgrade"
@@ -161,7 +161,7 @@ func TestUpgradeAPI_notFound_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: §10.5 line 494 — pause records the reason; resume restores the
+// spec: §10.5 — pause records the reason; resume restores the
 // prior phase. The HTTP round-trip preserves both.
 func TestUpgradeAPI_pauseResume_spec_10_5(t *testing.T) {
 	h := newUpgradeAdmin(t).Handler()

@@ -26,13 +26,12 @@ type ScheduledJob struct {
 	Run func(ctx context.Context) error
 	// ExpressionFunc, when non-nil, supplies the job's current cron
 	// expression at evaluation time so a schedule edited at runtime takes
-	// effect without a process restart. §25.11 line 4106 makes the backup
+	// effect without a process restart. §25.11 makes the backup
 	// schedule "modifiable at runtime via PUT /v1/admin/backups/schedule";
 	// the evaluator resolves this on each tick and uses it in place of the
 	// static Expression. An empty return (an absent or cleared stored
 	// schedule) or an unparseable expression falls back to Expression, so
-	// the job still fires on its compiled-in cadence. spec: §25.11 line
-	// 4106; F-25.11.5.
+	// the job still fires on its compiled-in cadence. spec: §25.11; F-25.11.5.
 	ExpressionFunc func() string
 }
 
@@ -89,7 +88,7 @@ func (e *CronEvaluator) Tick(ctx context.Context) error {
 	var firstErr error
 	for _, entry := range entries {
 		schedule := entry.schedule
-		// §25.11 line 4106: a job whose schedule is runtime-modifiable
+		// §25.11: a job whose schedule is runtime-modifiable
 		// resolves its current cron expression here so an edit applied via
 		// PUT /v1/admin/backups/schedule changes the firing cadence on the
 		// next tick rather than waiting for a lenny-ops restart. A blank or

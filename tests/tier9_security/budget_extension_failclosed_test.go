@@ -137,7 +137,7 @@ func (tier9AutoElicitor) Elicit(context.Context, string, string) (bool, error) {
 // explicit user rejection of the in-flight request. This drives the
 // fresh in-episode REJECTED deny path (the coordinator marks the subtree
 // extension-denied and ExtendLease resolves StatusRejected), distinct
-// from the pre-persisted cool-off state MarkDenied models. §8.6 line 727.
+// from the pre-persisted cool-off state MarkDenied models. §8.6.
 type tier9RejectElicitor struct{}
 
 func (tier9RejectElicitor) Elicit(context.Context, string, string) (bool, error) {
@@ -234,7 +234,7 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 				// request enters the elicitation path fresh and the user
 				// rejects it in flight. The coordinator marks the subtree
 				// extension-denied and ExtendLease resolves StatusRejected, the
-				// distinct §8.6 line 727 REJECTED terminal path — separate from
+				// distinct §8.6 REJECTED terminal path — separate from
 				// the cool-off-active auto-reject below. A deny here is the
 				// live user rejection, not the ceiling (headroom exists) and
 				// not a persisted cool-off (none set).
@@ -258,7 +258,7 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 				})
 				// A prior user rejection persisted the extension-denied flag;
 				// the request is auto-rejected during the cool-off before the
-				// elicitor is ever consulted. §8.6 line 729/734. The tree HAS
+				// elicitor is ever consulted. §8.6. The tree HAS
 				// headroom, so a deny here is the active cool-off, not the
 				// ceiling. The auto-approving elicitor would grant if reached,
 				// so a deny proves the cool-off short-circuits it.

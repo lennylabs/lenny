@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §24.13 line 150 — `migrate status` maps to
+// spec: §24.13 — `migrate status` maps to
 // GET /v1/admin/schema/migrations/status.
 func TestMigrateStatusMapsToEndpoint(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"currentVersion":3,"dirty":false}`,
@@ -21,7 +21,7 @@ func TestMigrateStatusMapsToEndpoint(t *testing.T) {
 	}
 }
 
-// spec: §24.13 line 151 — `migrate down --version N --confirm` maps to
+// spec: §24.13 — `migrate down --version N --confirm` maps to
 // POST /v1/admin/schema/migrations/{N}/down with {confirm:true}.
 func TestMigrateDownMapsToEndpoint(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"version":3,"dirtyFlagCleared":true}`,
@@ -41,7 +41,7 @@ func TestMigrateDownMapsToEndpoint(t *testing.T) {
 }
 
 // `migrate down` without --confirm fails before any request (the
-// operation is destructive). spec: §24.13 line 151.
+// operation is destructive). spec: §24.13.
 func TestMigrateDownRequiresConfirm(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"migrate", "down", "--version", "3"}, &stdout, &stderr)

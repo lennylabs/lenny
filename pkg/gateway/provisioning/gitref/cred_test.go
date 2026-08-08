@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §14 line 95 — a zero credential adds no Authorization header and
+// spec: §14 — a zero credential adds no Authorization header and
 // only disables interactive prompts.
 func TestAuthEnvPublicHasNoHeader(t *testing.T) {
 	env := authEnv("https://github.com/acme/repo.git", Credential{})
@@ -23,7 +23,7 @@ func TestAuthEnvPublicHasNoHeader(t *testing.T) {
 	}
 }
 
-// spec: §14 line 95 — a token is injected as a host-scoped HTTP Basic
+// spec: §14 — a token is injected as a host-scoped HTTP Basic
 // Authorization header through the process environment, so it never
 // appears in argv or in on-disk git config.
 func TestAuthEnvInjectsScopedBasicHeader(t *testing.T) {

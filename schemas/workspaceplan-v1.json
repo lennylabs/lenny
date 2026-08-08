@@ -10,7 +10,7 @@
     "$schema": {
       "type": "string",
       "format": "uri",
-      "description": "Optional self-reference per §14.1 line 313: clients MAY embed `$schema` on their workspacePlan object so local 2020-12 validators recognize the canonical example. The gateway ignores the field for routing decisions; it is preserved by round-trip."
+      "description": "Optional self-reference per §14.1: clients MAY embed `$schema` on their workspacePlan object so local 2020-12 validators recognize the canonical example. The gateway ignores the field for routing decisions; it is preserved by round-trip."
     },
     "schemaVersion": {
       "type": "integer",
@@ -34,7 +34,7 @@
       "type": "object",
       "required": ["type"],
       "properties": { "type": { "type": "string" } },
-      "description": "§14 line 336: known types are validated strictly; an unknown `type` matches no `if` branch and passes (the consumer skips it per the open-string discriminator). `allOf` + per-variant `if`/`then` expresses this; `oneOf` cannot, because it requires exactly-one-match and would reject an unknown type.",
+      "description": "§14: known types are validated strictly; an unknown `type` matches no `if` branch and passes (the consumer skips it per the open-string discriminator). `allOf` + per-variant `if`/`then` expresses this; `oneOf` cannot, because it requires exactly-one-match and would reject an unknown type.",
       "allOf": [
         { "if": { "required": ["type"], "properties": { "type": { "const": "inlineFile" } } }, "then": { "$ref": "#/$defs/inlineFile" } },
         { "if": { "required": ["type"], "properties": { "type": { "const": "uploadFile" } } }, "then": { "$ref": "#/$defs/uploadFile" } },

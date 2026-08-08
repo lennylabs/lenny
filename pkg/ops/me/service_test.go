@@ -89,10 +89,10 @@ func TestService_Authorized_ZeroPrincipal(t *testing.T) {
 	}
 }
 
-// spec: §25.1 line 96 — "`/v1/admin/me/authorized-tools` — pre-filters
+// spec: §25.1 — "`/v1/admin/me/authorized-tools` — pre-filters
 // the tool list to what the caller's scopes permit." A caller whose
 // role grants every tool in the catalog but whose scope claim narrows
-// the tool surface (§25.1 lines 77-90) must only see the tools its
+// the tool surface (§25.1) must only see the tools its
 // scopes match, not the full role-eligible set.
 func TestService_Authorized_ScopeFilter(t *testing.T) {
 	catalog := []me.AuthorizedTool{

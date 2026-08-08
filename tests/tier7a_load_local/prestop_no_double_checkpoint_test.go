@@ -2,18 +2,17 @@
 
 //go:build load_local
 
-// Tier-7a load_local coverage for the §10.1 line 169 quiesce-and-hold
+// Tier-7a load_local coverage for the §10.1 quiesce-and-hold
 // drain: across a whole preStop drain no coordinated session is
 // checkpointed twice. Under quiesce-and-hold the barrier drives a full
 // gateway-side Checkpoint for every session it acks, so the post-barrier
 // per-session loop must skip every barrier-acked session and cover only
-// the barrier-unreachable ones (the §10.1 lines 169-172 partial-capture
+// the barrier-unreachable ones (the §10.1 partial-capture
 // cases). The invariant is exercised under the race detector with many
 // concurrent sessions so the barrier fan-out and the loop race on the
 // shared checkpoint counter.
 //
-// spec: §10.1 lines 163-172 (CheckpointBarrier protocol, quiesce-and-hold,
-// BarrierAck-timeout partial-capture), §4.4 line 259 (eviction trigger).
+// spec: §10.1, §4.4.
 
 package tier7a_load_local_test
 
@@ -108,8 +107,8 @@ func (d drainBarrierDispatch) Dispatch(ctx context.Context) ([]barrier.Outcome, 
 // rows) for one (session, coordination_generation), which neither the
 // resume cleanup nor the §12.5 backstop reclaims. It also fails if the
 // drain stamps a non-eviction trigger on either drain path.
-// spec: §10.1 lines 163-172 (quiesce-and-hold, no-double-checkpoint),
-// §4.4 line 259 (eviction trigger).
+// spec: §10.1,
+// §4.4.
 func TestDrainCheckpointsEachSessionOnce(t *testing.T) {
 	const reachable = 15
 	const unreachable = 5

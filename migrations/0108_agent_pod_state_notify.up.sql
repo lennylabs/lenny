@@ -1,4 +1,4 @@
--- §12.6 line 484 PostgresPodRegistry watch trigger. A future Tier-4
+-- §12.6 PostgresPodRegistry watch trigger. A future Tier-4
 -- PostgresPodRegistry.WatchPods uses Postgres LISTEN/NOTIFY on a
 -- per-pool channel (pod_state_change_{pool_id}) so a consumer learns of
 -- a pod state change without polling. This migration provisions the
@@ -18,7 +18,7 @@
 --
 -- The v1 PostgresPodRegistry.WatchPods falls back to polling
 -- agent_pod_state by updated_at when LISTEN/NOTIFY is unavailable (e.g.
--- PgBouncer in transaction mode), per §12.6 line 484; this trigger is
+-- PgBouncer in transaction mode), per §12.6; this trigger is
 -- the substrate the LISTEN path consumes when it is available.
 
 CREATE OR REPLACE FUNCTION agent_pod_state_notify() RETURNS trigger AS $$

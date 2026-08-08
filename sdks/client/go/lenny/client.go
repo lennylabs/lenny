@@ -162,7 +162,7 @@ func (c *Client) ListSessions(ctx context.Context, opt ListOptions, opts ...Requ
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	// spec: §15.1 lines 1228-1253 — the gateway returns the canonical
+	// spec: §15.1 — the gateway returns the canonical
 	// `{items, cursor, hasMore, total?}` cursor-paginated envelope.
 	var raw struct {
 		Items   []Session `json:"items"`
@@ -264,8 +264,8 @@ func (c *Client) transition(ctx context.Context, method, id, action string, opts
 // synchronous output. Each payload may carry `inReplyTo`, `delivery`,
 // and `slotId`; see MessagePayload.
 //
-// spec: §15.1 messages endpoint; §15.4 lines 1725-1737 delivery_receipt;
-// §7.2 line 345.
+// spec: §15.1 messages endpoint; §15.4 delivery_receipt;
+// §7.2.
 func (c *Client) SendMessages(ctx context.Context, id string, req SendMessagesRequest, opts ...RequestOption) (*SendMessagesResponse, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("lenny: SendMessages requires at least one message")
@@ -300,7 +300,7 @@ func (c *Client) GetTranscript(ctx context.Context, id string, opt TranscriptOpt
 }
 
 // SessionLogs calls GET /v1/sessions/{id}/logs and returns one page of
-// the §15.1 line 673 session-log envelope. It is the REST transport the
+// the §15.1 session-log envelope. It is the REST transport the
 // §24.17 `lenny session logs` command uses. The SDK requests the JSON
 // list view (the do helper sets Accept: application/json) rather than the
 // SSE tail. Pass LogsOptions.Since to apply the §24.17 `--since` filter.
@@ -329,7 +329,7 @@ func (c *Client) SessionLogs(ctx context.Context, id string, opt LogsOptions, op
 // ApproveToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/approve
 // to resolve a pending tool-use interaction the agent is blocked on.
 //
-// spec: §7.2 table line 124; §15.1.
+// spec: §7.2 table; §15.1.
 func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/approve"
 	var out InteractionResolution
@@ -342,7 +342,7 @@ func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts
 // DenyToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/deny
 // with an optional human-readable reason recorded in the audit row.
 //
-// spec: §7.2 table line 125; §15.1.
+// spec: §7.2 table; §15.1.
 func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/deny"
 	body := struct {
@@ -360,7 +360,7 @@ func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string,
 // supplied response value. The runtime receives the value and unblocks
 // the pending `lenny/request_elicitation` call.
 //
-// spec: §7.2 table line 126; §9.2; §15.1.
+// spec: §7.2 table; §9.2; §15.1.
 func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID string, response any, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/respond"
 	body := struct {
@@ -377,7 +377,7 @@ func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID strin
 // POST /v1/sessions/{id}/elicitations/{elicitationID}/dismiss to
 // cancel a pending elicitation request.
 //
-// spec: §7.2 table line 127; §9.2; §15.1.
+// spec: §7.2 table; §9.2; §15.1.
 func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/dismiss"
 	var out InteractionResolution

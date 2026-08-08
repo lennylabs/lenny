@@ -1,4 +1,4 @@
--- spec: §11.4 line 256
+-- spec: §11.4
 -- Add a per-user composite index over sessions so the §11.4 full_revoke
 -- step-1 SessionStore lookup ("Gateway looks up all active sessions for
 -- the user") is O(user's sessions) instead of O(tenant's sessions). The

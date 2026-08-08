@@ -12,7 +12,7 @@ import (
 // the per-file export-scan chain the gateway runs at the
 // PreExportMaterialization phase. It satisfies ExportScanChainResolver.
 //
-// Per §4.8 lines 1038, 1050 the export-scan phase is not independently
+// Per §4.8 the export-scan phase is not independently
 // registerable: it invokes the same named interceptor already in force on
 // the parent's DelegationPolicy at PreDelegation. The resolver therefore
 // looks the ref up among the gateway interceptor chain's registered
@@ -25,7 +25,7 @@ import (
 // with an unresolvable interceptor fails closed (§8.3 rule 1) rather than
 // materializing unscanned files.
 //
-// spec: §4.8 lines 1036-1050; §8.3 lines 160-181.
+// spec: §4.8; §8.3.
 type ChainExportScanResolver struct {
 	chain    *interceptor.Chain
 	observer interceptor.ExportScanObserver

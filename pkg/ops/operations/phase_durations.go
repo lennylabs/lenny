@@ -4,13 +4,12 @@ package operations
 
 import "time"
 
-// platformUpgradePhaseDurations are the §25.8 line 3496 compiled-in
+// platformUpgradePhaseDurations are the §25.8 compiled-in
 // per-phase expected durations for the platform_upgrade kind's
 // Preflight through Verification phases (the pkg/upgrade.Phase name
 // strings). They anchor the fixed_phase_durations ETA method the
 // platform-upgrade status surfaces report before ops_operation_baselines
-// has enough completed-upgrade samples for historical_p50 (§25.2 line
-// 394). Each value is a deployer-independent estimate, well under the
+// has enough completed-upgrade samples for historical_p50 (§25.2). Each value is a deployer-independent estimate, well under the
 // phase's own operator-tunable timeout budget (§25.8:
 // platform.upgrade.opsRollTimeoutSeconds default 600,
 // gatewayRollTimeoutSeconds default 1200, controllerRollTimeoutSeconds
@@ -30,12 +29,10 @@ var platformUpgradePhaseDurations = map[string]time.Duration{
 // kind k's current phase/step, or 0 when no fixed-duration table applies
 // to the kind or step (the caller then falls through to a
 // lower-confidence ETA method or "none"). Only platform_upgrade has
-// spec-defined per-phase durations (§25.8 line 3496); other kinds return
+// spec-defined per-phase durations (§25.8); other kinds return
 // 0.
 //
-// spec: §25.2 line 393 (etaMethod fixed_phase_durations — "from
-// compiled-in per-phase durations"), §25.8 line 3496 (platform_upgrade's
-// etaSeconds uses etaMethod fixed_phase_durations).
+// spec: §25.2, §25.8.
 func FixedPhaseDuration(k Kind, step string) time.Duration {
 	if k != KindPlatformUpgrade {
 		return 0

@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §12.4 line 206 — "Distributed session leases | Fall back to
+// spec: §12.4 — "Distributed session leases | Fall back to
 // Postgres advisory locks (higher latency)".
 // diagnosis: a failure means the Postgres advisory-lock lease fallback
 // does not provide mutual exclusion, so two holders could acquire the
@@ -184,7 +184,7 @@ func TestLeasePgstoreAdvisoryLockFallback_spec_12_4(t *testing.T) {
 	})
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — interactionstore.DeleteByTenant is
+// spec: §12.1 / §12.8 Phase 4 — interactionstore.DeleteByTenant is
 // mandatory on the production interface and erases one tenant's rows.
 // diagnosis: a failure means interactionstore.DeleteByTenant does not
 // erase a tenant's rows, breaching the §12.1 mandatory tenant-erasure

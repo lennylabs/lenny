@@ -2,7 +2,7 @@
 
 //go:build smoke
 
-// Source Mode smoke test (§17.4 line 276). `make test-smoke` runs this:
+// Source Mode smoke test (§17.4). `make test-smoke` runs this:
 // it boots the real cmd/lenny-gateway binary in dev mode with the
 // built-in echo runtime, creates a session, sends a prompt, verifies an
 // echo response, and terminates. This validates the gateway + session
@@ -59,10 +59,10 @@ func newReqFn(t *testing.T, base string) func(method, path, roles string, body a
 	}
 }
 
-// spec: §17.4 line 276 — "creates a session with the echo runtime,
+// spec: §17.4 — "creates a session with the echo runtime,
 // sends a prompt, verifies a response, and exits." The pipeline runs
 // against the in-process echo executor selected by --agent-runtime echo
-// (LENNY_AGENT_RUNTIME=echo), the §17.4 line 262 zero-credential mode.
+// (LENNY_AGENT_RUNTIME=echo), the §17.4 zero-credential mode.
 func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	// --agent-runtime echo pins the §17.4 zero-credential built-in echo
@@ -77,7 +77,7 @@ func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
 		"runtimes": []map[string]any{{
 			"name":   "echo",
 			"image":  "lenny/echo@sha256:abc",
-			"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
+			"labels": map[string]string{"tier": "test"}, // §5.1: labels required
 			"capabilities": map[string]any{
 				"injection": map[string]any{
 					"supported": true,
@@ -126,7 +126,7 @@ func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 199 — "Embedded SQLite replaces Postgres for session
+// spec: §17.4 — "Embedded SQLite replaces Postgres for session
 // and metadata storage." With --sqlite-path set, the gateway loads its
 // session and metadata stores from the SQLite file on startup and
 // flushes them on graceful shutdown, so a bootstrapped tenant + runtime

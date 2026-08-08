@@ -44,7 +44,7 @@ type eventEnvelopeItem struct {
 }
 
 // wantsJSONEvents returns true when the caller asked for a JSON list
-// envelope (per §15.1 line 1228) rather than the SSE stream. The SSE
+// envelope (per §15.1) rather than the SSE stream. The SSE
 // stream remains the default — only an explicit `Accept: application/
 // json` (and no `text/event-stream`) routes to the JSON path so
 // existing SSE clients are unaffected.
@@ -64,7 +64,7 @@ func wantsJSONEvents(r *http.Request) bool {
 // The endpoint is content-negotiated: `Accept: text/event-stream`
 // (the default for browsers and `curl -N`) returns the Server-Sent
 // Events stream of session activity. `Accept: application/json`
-// returns the §15.1 line 1228 canonical list envelope
+// returns the §15.1 canonical list envelope
 // `{items, cursor, hasMore}` over the retained replay buffer so a
 // polling client that cannot speak SSE still reaches the events
 // without sidecar parsing. The SSE branch carries Last-Event-ID
@@ -103,7 +103,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// JSON list view — §15.1 line 1228 canonical envelope over the
+	// JSON list view — §15.1 canonical envelope over the
 	// retained backlog; no SSE keep-alive, no live tail.
 	if wantsJSONEvents(r) {
 		s.serveEventsJSON(w, r, tenantID, id)
@@ -132,7 +132,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// spec: §10.4 lines 391-397 — coordinator-handoff reattach synthesis.
+	// spec: §10.4 — coordinator-handoff reattach synthesis.
 	// When this reconnect spans a coordinator handoff (the client resumes
 	// from a cursor it saw under a prior coordinator, the session has
 	// durably produced events, but this coordinator has no local replay
@@ -146,7 +146,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		s.synthesizeHandoffReattach(r.Context(), w, row, afterSeq)
 	}
 
-	// spec: §7.2 line 143 (gap_detected) / lines 349-361
+	// spec: §7.2
 	// (checkpoint_boundary). When the requested cursor falls below the
 	// oldest retained sequence, the client missed evicted events;
 	// surface both spec markers ahead of the backlog so the client can
@@ -212,7 +212,7 @@ func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
 // rewind risk) or duplicate a seq the client already holds. Writing them
 // without an `id:` keeps the client's reconnect cursor anchored at its
 // last real event, mirroring how the gap_detected / checkpoint_boundary
-// markers are framed. spec: §10.4 lines 391-397; §7.2 line 143.
+// markers are framed. spec: §10.4; §7.2.
 func writeSyntheticSSE(w http.ResponseWriter, eventType string, data []byte) {
 	if len(data) == 0 {
 		data = []byte("{}")
@@ -241,7 +241,7 @@ func writeSyntheticSSE(w http.ResponseWriter, eventType string, data []byte) {
 // afterSeq+1). In the Redis-relay topology a non-coordinator replica can
 // serve the full relayed backlog, so the client lost nothing and the
 // reconnect needs no recovery frames; emitting them would be spurious.
-// spec: §10.4 lines 391-397. F-7.2.13, F-10.4.2.
+// spec: §10.4. F-7.2.13, F-10.4.2.
 func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq uint64, backlog []sessionevents.Event) bool {
 	if s.events == nil || afterSeq == 0 || row.LastSeq <= 0 {
 		return false
@@ -255,7 +255,7 @@ func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq
 	return true
 }
 
-// synthesizeHandoffReattach writes the §10.4 lines 391-397 reattach
+// synthesizeHandoffReattach writes the §10.4 reattach
 // frames directly to the reconnecting client's SSE stream. The frames
 // are synthesized for this connection only (they are not republished to
 // the bus, so other subscribers and the durable log are untouched):
@@ -267,7 +267,7 @@ func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq
 //     record applies to the partial_workspace resume mode, a distinct
 //     path).
 //   - status_change: carrying the session's current authoritative state.
-//     §10.4 line 393 makes this optional "if the current state differs
+//     §10.4 makes this optional "if the current state differs
 //     from the client's last-known state". The standard SSE reconnect
 //     transmits only a cursor (Last-Event-ID), never the client's
 //     last-known state, so the gateway cannot compute the difference and
@@ -294,12 +294,12 @@ func (s *Server) synthesizeHandoffReattach(ctx context.Context, w http.ResponseW
 	}
 }
 
-// writeGapMarkers emits the §7.2 line 143 `gap_detected` frame and the
-// §7.2 lines 349-361 `checkpoint_boundary` frame on the SSE stream
+// writeGapMarkers emits the §7.2 frame and the
+// §7.2 frame on the SSE stream
 // when the requested cursor sits below the oldest retained sequence
 // (events between the cursor and the buffer head were evicted).
 //
-// Neither frame is a SessionEvent: per §7.2 line 143 the markers carry
+// Neither frame is a SessionEvent: per §7.2 the markers carry
 // no SeqNum, so no `id:` line is written. The two frames carry
 // different information by design:
 //
@@ -308,12 +308,12 @@ func (s *Server) synthesizeHandoffReattach(ctx context.Context, w http.ResponseW
 //     warning without parsing the structured payload.
 //   - checkpoint_boundary: the structured marker
 //     `{type, cursor, events_lost, reason, checkpoint_timestamp}` that
-//     §7.2 lines 349-361 require so the client can surface the precise
+//     §7.2 require so the client can surface the precise
 //     data-loss count to its user.
 //
 // The Bus currently implements count-based eviction only, so `reason`
 // is always `replay_window_exceeded`; the `event_store_unavailable`
-// branch (§7.2 line 361) lands when the durable EventStore is wired.
+// branch (§7.2) lands when the durable EventStore is wired.
 func writeGapMarkers(w http.ResponseWriter, afterSeq, oldestSeq uint64, now time.Time) {
 	if oldestSeq <= afterSeq+1 {
 		return
@@ -358,7 +358,7 @@ func writeGapMarkers(w http.ResponseWriter, afterSeq, oldestSeq uint64, now time
 // tenant-isolation predicate. A non-empty tenant id is the production
 // contract; tests may pass "" for the legacy untenanted code path.
 func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any) {
-	// spec: §6.2 lines 273-300 — the agent_output / tool_use events the
+	// spec: §6.2 — the agent_output / tool_use events the
 	// adapter surfaces (published here as `response`, `response_degraded`,
 	// and `tool_use*`) are qualifying activity that resets the §11.3
 	// `maxIdleTime` clock so a streaming session is not reaped as idle.
@@ -383,7 +383,7 @@ func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any
 }
 
 // isAgentActivityEvent reports whether a published session event type is a
-// §6.2 lines 273-274 qualifying agent activity (agent_output or tool_use
+// §6.2 qualifying agent activity (agent_output or tool_use
 // from the adapter). The gateway publishes agent output as `response` /
 // `response_degraded` and tool calls under the `tool_use` prefix. F-11.3.7.
 func isAgentActivityEvent(eventType string) bool {
@@ -394,12 +394,12 @@ func isAgentActivityEvent(eventType string) bool {
 	return strings.HasPrefix(eventType, "tool_use")
 }
 
-// recordTTFTOnce observes the §6.3 line 356 / §16.1 line 15 TTFT
+// recordTTFTOnce observes the §6.3 / §16.1 TTFT
 // histogram the first time row receives an agent-originated streaming
 // event (the gateway's `response` event type). T0 is the session's
 // `CreatedAt` (the POST /v1/sessions admission instant per §15.1).
 // Subsequent events for the same session are no-ops so the histogram
-// only counts each session once. spec: §6.3 line 356, §16.1 line 15.
+// only counts each session once. spec: §6.3, §16.1.
 func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
 	if s.observeTimeToFirstToken == nil {
 		return
@@ -423,7 +423,7 @@ func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
 	s.observeTimeToFirstToken(row.PoolRef, runtimeClass, string(row.IsolationProfile), seconds)
 }
 
-// serveEventsJSON renders the §15.1 line 1228 canonical envelope
+// serveEventsJSON renders the §15.1 canonical envelope
 // `{items, cursor, hasMore}` over the in-memory replay buffer. The
 // JSON path is the cursor-paginated alternative to the SSE stream;
 // `?cursor=` (canonical) or `?afterSeq=` (legacy) advance the

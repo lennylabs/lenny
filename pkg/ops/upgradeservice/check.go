@@ -45,7 +45,7 @@ type CheckResult struct {
 	Manifest releasechannel.Manifest `json:"manifest"`
 	// Cached reports that this result was served from
 	// platform_upgrade_check_cache because the channel was unreachable at
-	// check time (§25.8 line 3413 Unreachable behavior).
+	// check time (§25.8 Unreachable behavior).
 	Cached bool `json:"cached,omitempty"`
 	// CacheAge is the human-readable age of the cached response when
 	// Cached is true (for example "12m30s").
@@ -72,7 +72,7 @@ type CachedCheck struct {
 // in-memory cache. A nil cache disables caching: an unreachable channel
 // then returns 503 UPGRADE_CHANNEL_UNREACHABLE with no fallback.
 //
-// spec: §25.8 lines 3413-3414, 3598-3605.
+// spec: §25.8.
 type CheckCache interface {
 	// Load returns the cached check. ok is false when the cache is empty
 	// (the cold-start condition).
@@ -185,7 +185,7 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 	}
 	m, err := c.source.Latest(ctx, releasechannel.ChannelStable)
 	if err != nil {
-		// §25.8 line 3413 Unreachable behavior: serve the cached response
+		// §25.8 Unreachable behavior: serve the cached response
 		// with cached=true and a cacheAge when the channel is unreachable.
 		// A missing manifest and a transport error are both "unreachable"
 		// for the cache fallback; an empty cache returns the original error
@@ -208,7 +208,7 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 	if available {
 		c.emitAvailable(ctx, m)
 	}
-	// §25.8 line 3414 Caching: a successful check refreshes the durable
+	// §25.8 Caching: a successful check refreshes the durable
 	// cache so a later unreachable check can fall back to it. A cache
 	// write failure is non-fatal — the live result still returns.
 	if c.cache != nil {

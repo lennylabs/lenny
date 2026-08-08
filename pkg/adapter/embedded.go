@@ -161,10 +161,10 @@ func (r *InProcessRuntime) Interrupt(_ context.Context, sessionID string, _ bool
 // Unlike Close it does not block on the loop's completion: it closes both
 // pipe ends (unblocking a loop stalled on a read or a write) and drops the
 // session binding immediately, leaving the loop goroutine to exit on its
-// own as the process terminates. It backs the §6.1 line 67 force-terminate
+// own as the process terminates. It backs the §6.1 force-terminate
 // step the adapter runs when a bounded DemoteSDK overruns its timeout; a
 // real subprocess SDK substitutes a SIGKILL of the SDK process here.
-// spec: §6.1 line 67.
+// spec: §6.1.
 func (r *InProcessRuntime) ForceClose() {
 	r.mu.Lock()
 	w := r.inWriter

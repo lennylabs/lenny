@@ -68,8 +68,7 @@ func allowConnectors(ids ...string) delegationpolicystore.DelegationPolicy {
 //
 //	either could not list and invoke a real external MCP server's tools
 //	through the connectortools.Bridge → connectorinvoke.Invoker →
-//	outbound Streamable-HTTP client, or it failed to enforce the §9.3
-//	line 164 per-delegation connector boundary (a policy-scoped child
+//	outbound Streamable-HTTP client, or it failed to enforce the §9.3 per-delegation connector boundary (a policy-scoped child
 //	reached a connector its effective delegation policy denies, or a
 //	permitted parent was wrongly refused). The stub external server is
 //	in tests/testinfra/stubs/mcpserver.
@@ -107,7 +106,7 @@ func TestExternalMCPToolPerDelegationScoping(t *testing.T) {
 	// Two sessions under the same tenant and owner. The parent's
 	// effective delegation policy permits the connector; the scoped
 	// child's policy permits a different connector only, so it denies
-	// this one by default-deny. §9.3 line 164: connector access is
+	// this one by default-deny. §9.3: connector access is
 	// scoped per delegation level.
 	sessions := memstore.New()
 	seedSession(t, sessions, "acme", "alice", "parent-session", "prod")
@@ -161,7 +160,7 @@ func TestExternalMCPToolPerDelegationScoping(t *testing.T) {
 
 	// ---- child: denied the same connector ----
 
-	// §9.3 line 164: a connector outside the child's effective delegation
+	// §9.3: a connector outside the child's effective delegation
 	// policy is never advertised to the child.
 	childAdvertised, err := bridge.ListSessionConnectors(ctx, "child-session")
 	if err != nil {
@@ -173,7 +172,7 @@ func TestExternalMCPToolPerDelegationScoping(t *testing.T) {
 		}
 	}
 
-	// §9.3 line 164: even a direct tools/list or tools/call for the
+	// §9.3: even a direct tools/list or tools/call for the
 	// connector is rejected before any outbound dial, with the documented
 	// per-delegation-denial sentinel.
 	if _, err := bridge.ListConnectorTools(ctx, "child-session", connectorID); !errors.Is(err, leasecontrol.ErrConnectorNotPermitted) {
@@ -192,7 +191,7 @@ func TestExternalMCPToolPerDelegationScoping(t *testing.T) {
 }
 
 // spec: 9.3 (the gateway validates the connector_id in every external tool call ... a child cannot use connectors not permitted by its policy)
-// diagnosis: the §9.3 line 164 boundary is evaluated only at discovery,
+// diagnosis: the §9.3 boundary is evaluated only at discovery,
 //
 //	not at call time. A connector that was advertised while a policy was
 //	loose must still be refused once the policy tightens, because the

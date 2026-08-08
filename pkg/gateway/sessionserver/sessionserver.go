@@ -130,7 +130,7 @@ type Server struct {
 	// §15.2.1 rule-1 in-process service layer (ServiceCall) dispatches
 	// through, so the MCP tool surface reuses the exact REST routes and
 	// handlers rather than a parallel table that could drift. spec:
-	// §15.2.1 rule 1 line 1380. F-15.2.3.
+	// §15.2.1 rule 1. F-15.2.3.
 	serviceHandlerOnce sync.Once
 	serviceHandler     http.Handler
 	deriveAuditSink    DeriveAuditSink
@@ -143,10 +143,10 @@ type Server struct {
 	// materialization reads it (ListBySession) to populate the §8.8
 	// TaskResult.output.artifactRefs for a completed child. Nil when the
 	// catalog is not wired (in-memory / dev posture); the artifactRefs
-	// array then materializes empty. spec: §8.8 lines 888-896. F-8.8.2.
+	// array then materializes empty. spec: §8.8. F-8.8.2.
 	artifacts artifactcatalog.Store
 	events    *sessionevents.Bus
-	// activityStamper records §6.2 lines 273-300 qualifying agent
+	// activityStamper records §6.2 qualifying agent
 	// activity (agent_output / tool_use events) onto the session's
 	// last_agent_activity_at so the §11.3 idle watchdog does not reap an
 	// actively-streaming session. Nil is a no-op. F-11.3.7.
@@ -158,7 +158,7 @@ type Server struct {
 	// the inbox-to-DLQ migration on resume_pending and the inbox+DLQ
 	// drain on terminal transition. Nil when messaging durability is not
 	// wired (no Redis); every call site no-ops on a nil coordinator.
-	// spec: §7.2 lines 305-311 (migration), 343 (terminal drain).
+	// spec: §7.2.
 	messaging      *sessioninbox.Coordinator
 	interactions   interactionstore.Store
 	usage          usagestore.Store
@@ -173,7 +173,7 @@ type Server struct {
 	// principal that carries no roles (the matrix is unconditional in
 	// multi-tenant deployments). When false (single-tenant or no-OIDC
 	// dev), the gate retains the historical fall-through.
-	// spec: §10.2 lines 256–264, F-10.2.4.
+	// spec: §10.2, F-10.2.4.
 	multiTenant bool
 	// tenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
 	// wired from the --tenancy-mode flag (the same signal the layer-2
@@ -218,7 +218,7 @@ type Server struct {
 	coordLeaseTTL  time.Duration
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
-	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
+	// isolation profile) pair maps to, for the §15.1 pool-drain
 	// admission gate. The pinnedPool argument carries the §14.1
 	// CreateSessionRequest.pool selector so a client-pinned pool is the one
 	// the gate resolves. It defaults to resolvePoolName (CRD-backed); tests
@@ -228,14 +228,14 @@ type Server struct {
 	// §27.3 origin=playground session. Wired post-construction via
 	// SetPlaygroundCaps (the playground bootstrap runs after the session
 	// server is built). Nil leaves a playground session bounded only by
-	// the runtime/platform caps. spec: §27.6 lines 200-201. F-27.6.1 /
+	// the runtime/platform caps. spec: §27.6. F-27.6.1 /
 	// F-27.6.2.
 	playgroundCaps PlaygroundCapResolver
 	// incPlaygroundSessionCreated records the §27.8
 	// lenny_playground_sessions_created_total metric once the origin claim
 	// is read on the create path. Nil disables the metric. F-27.6.11.
 	incPlaygroundSessionCreated func(runtime string)
-	// admissionRL is the §11.1 line 7 per-minute counter used for the
+	// admissionRL is the §11.1 per-minute counter used for the
 	// per-runtime and per-pool admission scopes enforced at session
 	// creation (the global/per-user/per-tenant scopes run in the §11.1
 	// HTTP middleware). Nil disables the per-runtime/per-pool scopes.
@@ -245,7 +245,7 @@ type Server struct {
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
 	// maxConcSessGlobal / maxConcSessPerUser / maxConcSessPerRuntime are
-	// the §11.1 line 8 concurrent-session admission caps (live
+	// the §11.1 concurrent-session admission caps (live
 	// non-terminal session counts) for the global, per-user, and
 	// per-runtime scopes. The per-tenant scope is enforced separately by
 	// requireSessionQuota against the tenant record. A non-positive value
@@ -256,41 +256,41 @@ type Server struct {
 	// evalRL is the §10.7 eval-submission rate-limit counter (per-session
 	// and per-tenant). It shares the §11.1 Counter type with admissionRL;
 	// production wires the same Redis-backed instance. Nil disables eval
-	// rate limiting. spec: §10.7 line 938.
+	// rate limiting. spec: §10.7.
 	evalRL ratelimit.Counter
 	// evalPerSessionPerMin / evalPerTenantPerMin are the §10.7
 	// `evalRateLimit.perSessionPerMinute` / `perTenantPerMinute` limits.
-	// Non-positive disables the corresponding scope. spec: §10.7 line 938.
+	// Non-positive disables the corresponding scope. spec: §10.7.
 	evalPerSessionPerMin int
 	evalPerTenantPerMin  int
 	sealer               Sealer
 	// sealMaxDuration bounds the §7.1 seal-and-export retry window
 	// (maxWorkspaceSealDurationSeconds). A non-positive value falls
 	// through to DefaultWorkspaceSealMaxDuration (300s).
-	// spec: §7.1 line 112.
+	// spec: §7.1.
 	sealMaxDuration time.Duration
 	// sealSleep waits d before the next seal retry, returning false when
 	// ctx is cancelled first. Nil selects a context-aware time.Sleep; the
 	// seam lets tests drive the backoff loop without real delays.
 	sealSleep func(ctx context.Context, d time.Duration) bool
-	// observeSealDuration, when set, records the §7.1 line 112
+	// observeSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram. Nil
 	// disables the emission.
 	observeSealDuration func(pool, outcome string, seconds float64)
-	// recordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// recordSessionTerminal, when set, records the §16.1 /
 	// §10.7 rollback-trigger session metric family at terminal transition.
-	// Nil disables the emission. spec: §10.7 lines 1120-1132.
+	// Nil disables the emission. spec: §10.7.
 	recordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
-	// observeEvalScore, when set, records the §16.1 line 164 lenny_eval_score
+	// observeEvalScore, when set, records the §16.1 lenny_eval_score
 	// observation per submitted eval. Nil disables the emission.
-	// spec: §10.7 line 1128.
+	// spec: §10.7.
 	observeEvalScore func(tenantID, scorer, variantID string, score float64)
 	// targetingBreaker is the §10.7 SCL-023 per-tenant OpenFeature
 	// targeting circuit breaker. Never nil after New; it is consulted on
 	// the external-targeting hot path so sustained provider failures skip
-	// the OpenFeature call entirely. spec: §10.7 lines 835-844.
+	// the OpenFeature call entirely. spec: §10.7.
 	targetingBreaker *targetingBreaker
-	// partialManifestCleaner, when set, executes the §4.4 line 236
+	// partialManifestCleaner, when set, executes the §4.4
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
 	// the §12.5 backstop sweep).
@@ -298,20 +298,20 @@ type Server struct {
 	// evictionStateLookup, when set, classifies a resume as
 	// conversation-only (workspace lost during eviction) so the
 	// session.resumed event surfaces the correct ResumeMode per
-	// §4.4 line 263.
+	// §4.4.
 	evictionStateLookup EvictionStateLookup
 	// partialManifestLookup, when set, classifies a resume as
 	// partial-workspace (reassembled from chunk objects) so the
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	// resumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// resumeChunkResolver, when set, resolves the §10.1 reassembly
 	// chunk set the resume path hands the adapter on ResumeRequest.Chunks.
 	// Nil leaves the resume carrying no chunks (dev mode, or a checkpoint
 	// that predates the chunked-object model), so the adapter restores
 	// nothing beyond what a snapshotless rebuild recovers.
 	resumeChunkResolver ResumeChunkResolver
-	// checkpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// checkpointRecoveryMetrics, when set, receives the §16.1
 	// lenny_checkpoint_partial_total{recovered=true} emission once per
 	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
 	// satisfies it. Nil leaves the resume recovering without observability.
@@ -351,7 +351,7 @@ type Server struct {
 	// experiments evaluate. F-10.7.3.
 	externalProviders ExternalProviderResolver
 	runtimes          runtimestore.Store
-	// capOverrides applies the §5.1 line 49 per-tenant capability override
+	// capOverrides applies the §5.1 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
 	capOverrides       runtimecapoverride.Store
@@ -370,7 +370,7 @@ type Server struct {
 	// uploadMetrics, when set, receives the §16.1 upload-handler
 	// byte-count and queue-depth observations. Nil drops them. F-13.4.12.
 	uploadMetrics UploadHandlerMetrics
-	// resumeWindow is the §4.2 line 159 default resume-eligibility
+	// resumeWindow is the §4.2 default resume-eligibility
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
 	resumeWindow time.Duration
@@ -382,12 +382,12 @@ type Server struct {
 	// detached recoverDelegationTree goroutine finishes. Tests use it to
 	// await the async recovery deterministically; nil in production.
 	treeRecoveryHook func(rootID string)
-	// sessionLogHook, when set, receives the §4.4 line 226 session-log
+	// sessionLogHook, when set, receives the §4.4 session-log
 	// close-hook on every session transition to a terminal state.
 	// Best-effort: a failure logs and discards rather than abort the
 	// transition.
 	sessionLogHook SessionLogHook
-	// warmupEstimateSeconds is the §5.2 line 625 estimate used for the
+	// warmupEstimateSeconds is the §5.2 estimate used for the
 	// PoolWarmingUp 503's estimatedReadyIn and Retry-After. A zero value
 	// falls through to DefaultWarmupEstimateSeconds.
 	warmupEstimateSeconds int
@@ -395,7 +395,7 @@ type Server struct {
 	// to resolve a credential source and pool per provider. Never nil
 	// after New (defaults to credrouter.Default).
 	credRouter credrouter.Router
-	// preclaimMismatch, when set, increments the §4.9 line 1220
+	// preclaimMismatch, when set, increments the §4.9
 	// pre-claim mismatch metric.
 	preclaimMismatch func(pool, provider string)
 	// slotHealth tracks §5.2 concurrent-workspace slot failures and leaks
@@ -407,27 +407,27 @@ type Server struct {
 	// slotStates tracks each concurrent-workspace slot's §6.2 per-slot
 	// sub-state so the gateway can report the per-pod leaked-slot count when
 	// a slot's cleanup does not reclaim it. Never nil after New (defaults to
-	// a fresh Registry). spec: §6.2 lines 170-176, line 179.
+	// a fresh Registry). spec: §6.2.
 	slotStates *slotstate.Registry
 	// slotReplacement, when set, increments
 	// lenny_slot_pod_replacement_total{pool} when the slot retry policy
 	// drains an unhealthy concurrent-mode pod for replacement. Nil disables
 	// the emission. spec: §5.2 "whole-pod replacement trigger".
 	slotReplacement func(pool string)
-	// slotLeakGauge, when set, publishes the §6.2 line 179
+	// slotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
 	// the pod's slots whose cleanup timed out and remain counted in
 	// active_slots until the pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
-	// observeStartupDuration, when set, records the §6.3 line 348
+	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
 	observeStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
-	// observeStartupPhase, when set, records the §6.3 line 372 latency
+	// observeStartupPhase, when set, records the §6.3 latency
 	// of one hot-path startup phase. Nil disables the emission.
 	observeStartupPhase func(phase, runtimeClass string, seconds float64)
-	// observeTimeToFirstToken, when set, records the §6.3 line 356 /
-	// §16.1 line 15 end-to-end TTFT histogram on the first
+	// observeTimeToFirstToken, when set, records the §6.3 /
+	// §16.1 end-to-end TTFT histogram on the first
 	// agent-streamed response event of each session. Nil disables
 	// the emission.
 	observeTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
@@ -436,14 +436,14 @@ type Server struct {
 	// qualifying response event and cleared on the terminal lifecycle
 	// transition so the map size scales with concurrently-streaming
 	// sessions, not lifetime sessions. Keyed by session id, value is
-	// a sentinel struct{} placeholder. spec: §6.3 line 356.
+	// a sentinel struct{} placeholder. spec: §6.3.
 	firstTokenObserved sync.Map
 	// userCredChecker reports whether a usable user-scoped credential
 	// exists for (tenant, user, provider) and is deliverable. The §4.9
 	// router resolves user sources only when this reports true. Wired by
 	// SetUserCredChecker from the usercreds.Materializer; nil leaves the
 	// router unable to resolve a user source (it falls through to pool).
-	// spec: §4.9 lines 1347-1351, 1368-1372.
+	// spec: §4.9.
 	userCredChecker func(ctx context.Context, tenantID, userID, provider string) bool
 
 	// lifecycleAudit, when set, receives the §7.1 / §16.6 session
@@ -458,7 +458,7 @@ type Server struct {
 	// interaction-resolution audit events emitted by the §15.1
 	// tool-use approve/deny and elicitation respond/dismiss endpoints.
 	// Nil disables the emission; the resolution itself proceeds either
-	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+	// way. spec: §7.2 table; §11.7; §16.7. F-7.2.8.
 	interactionAudit InteractionAuditSink
 
 	// toolApprovalWaits, when set, is the §7.2 tool-use approval waiter
@@ -466,31 +466,29 @@ type Server struct {
 	// read (the pod runtime awaiting a tool-call verdict) unblocks. Nil
 	// leaves the resolution endpoints recording the interaction phase
 	// only — the dev / non-pod posture where nothing blocks on the
-	// verdict. spec: §7.2 lines 124-125. F-7.2.18.
+	// verdict. spec: §7.2. F-7.2.18.
 	toolApprovalWaits *toolapproval.Registry
 
 	// treeCycleObserver, when set, receives a §8.9 cycle observation
 	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
 	// in the ParentSessionID lineage. Nil disables the emission and
 	// the walker still truncates the cycle so the response remains
-	// well-formed. spec: §8.9 line 1003; F-8.9.10.
+	// well-formed. spec: §8.9; F-8.9.10.
 	treeCycleObserver TreeCycleObserver
 
 	// callbackValidator enforces the §14 callbackUrl SSRF mitigations at
 	// admission (HTTPS-only, IP-literal / private-range rejection, DNS
 	// pinning, optional deployer domain allowlist). Never nil after New
-	// (defaults to a validator with no domain allowlist). spec: §14 lines
-	// 108-112. F-14.1.11.
+	// (defaults to a validator with no domain allowlist). spec: §14. F-14.1.11.
 	callbackValidator *sessioncallback.Validator
 	// callbackSeal KMS-envelope-encrypts a client callbackSecret under the
 	// session tenant's KEK at admission. Nil disables callbackSecret
 	// acceptance (a callbackUrl without a secret still delivers, unsigned).
-	// spec: §14 line 139. F-14.1.11.
+	// spec: §14. F-14.1.11.
 	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
 	// callbackDispatcher delivers validated §14 callbacks from an isolated
 	// worker pool with the §14 retry budget. Nil leaves callbacks validated
-	// and persisted but undelivered (the dev/test posture). spec: §14 lines
-	// 111, 150. F-14.1.11.
+	// and persisted but undelivered (the dev/test posture). spec: §14. F-14.1.11.
 	callbackDispatcher *sessioncallback.Dispatcher
 
 	// inputWaits, when set, makes the REST POST /v1/sessions/{id}/messages
@@ -501,11 +499,11 @@ type Server struct {
 	// delivery), matching the pre-F-7.2.14 behaviour. The same
 	// registry is shared with the MCP `lenny/send_message` /
 	// `lenny/request_input` pair so the two transports route to the
-	// same blocked tool call. spec: §7.2 line 317.
+	// same blocked tool call. spec: §7.2.
 	inputWaits *inputwait.Registry
 
 	// deriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
-	// calls on the same source session per §7.1 line 92. The session-
+	// calls on the same source session per §7.1. The session-
 	// server holds the lock around the workspace-snapshot read; it is
 	// released as soon as the snapshot reference resolves, mirroring the
 	// spec's "release the lock before the copy is safe" guarantee.
@@ -514,7 +512,7 @@ type Server struct {
 	// derivelock.Memory (per-source sync.Mutex). When nil, the in-memory
 	// store mutex serializes within the running process and no cross-
 	// replica protection is in force — the legacy minimal-gateway
-	// posture. spec: §7.1 line 92.
+	// posture. spec: §7.1.
 	deriveLock derivelock.Lock
 
 	// persistDeriveFailureRows is the §7.1 derive rule 2 opt-in
@@ -524,7 +522,7 @@ type Server struct {
 	// `failureClass = derive_failure` for audit, reachable per the §15.1
 	// derive-failure reachability table. When false the gateway writes
 	// nothing on failure (the default roll-back-without-persist posture).
-	// spec: §7.1 derive rule 2; §15.1 lines 647-663. F-15.1.14.
+	// spec: §7.1 derive rule 2; §15.1. F-15.1.14.
 	persistDeriveFailureRows bool
 
 	// incDeriveFailureAudit, when set, increments the §16.1
@@ -535,11 +533,11 @@ type Server struct {
 	// emission. spec: §7.1 derive rule 2; §16.1. F-15.1.14.
 	incDeriveFailureAudit func(outcome string)
 
-	// defaultRetention is the §7.1 line 77 default artifact-retention
+	// defaultRetention is the §7.1 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
 	// DefaultArtifactRetention.
-	// spec: §7.1 line 77 — "configurable TTL (default: 7 days ...)".
+	// spec: §7.1 — "configurable TTL (default: 7 days ...)".
 	defaultRetention time.Duration
 
 	// retryPolicyCaps holds the §7.3 deployer caps applied to every
@@ -548,13 +546,12 @@ type Server struct {
 	// gateway wires these to the watchdog config so a session's clamped
 	// caps cannot exceed the platform-wide bounds the watchdog itself
 	// enforces. F-7.3.1 / F-7.3.24.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	retryPolicyCaps session.RetryPolicyCaps
 
 	// envBlocklist is the §14 deployer-configured env-var blocklist
 	// applied to a CreateSessionRequest's `env` field. Never nil after
-	// New (defaults to the platform default blocklist alone). spec: §14
-	// line 105. F-14.1.12.
+	// New (defaults to the platform default blocklist alone). spec: §14. F-14.1.12.
 	envBlocklist *envblock.Matcher
 
 	// incSessionResumeAttempt, when set, increments the §16.1
@@ -574,10 +571,9 @@ type Server struct {
 	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
 	incSessionExpiry func(pool, reason string)
 
-	// incWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// incWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
-	// warm-pool startup failure. Nil disables the emission. spec: §16.1
-	// line 124, §7.3 line 387 — F-7.5.9.
+	// warm-pool startup failure. Nil disables the emission. spec: §16.1, §7.3 — F-7.5.9.
 	incWarmpoolWarmupFailure func(errorType string)
 
 	// incInjectionGateFailClosed, when set, increments the
@@ -591,34 +587,33 @@ type Server struct {
 	// §15.1 (SERVICE_UNAVAILABLE) — F-5.1.20.
 	incInjectionGateFailClosed func(cause string)
 
-	// uploadTokenTTL is the §7.1 line 58 upload-token expiry stamped on
+	// uploadTokenTTL is the §7.1 upload-token expiry stamped on
 	// every minted token. The gateway sets this equal to
 	// `maxCreatedStateTimeoutSeconds` so the token deadline matches the
 	// `created` state deadline. A zero value falls through to
-	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	uploadTokenTTL time.Duration
 
-	// uploadAborts is the §7.4 line 463 upload-abort registry. The
+	// uploadAborts is the §7.4 upload-abort registry. The
 	// upload handler registers a per-session abort signal for the
 	// duration of its body-read + blob.Put; the finalize handler closes
 	// the signal after the row transitions out of the upload-admitting
 	// state so any in-flight stream surfaces UPLOAD_CHANNEL_CLOSED.
-	// Always non-nil after New. spec: §7.4 line 463. F-7.4.16.
+	// Always non-nil after New. spec: §7.4. F-7.4.16.
 	uploadAborts *uploadAbortRegistry
 
-	// uploadLimits enforces the §11.1 line 10-11 per-session and global
+	// uploadLimits enforces the §11.1 per-session and global
 	// concurrent-upload caps and the per-session cumulative upload-size
 	// cap. Nil when no §11.1 upload cap is configured (the pass-through
-	// posture); every call site tolerates a nil limiter. spec: §11.1
-	// lines 10-11. F-11.1.5, F-11.1.6.
+	// posture); every call site tolerates a nil limiter. spec: §11.1. F-11.1.5, F-11.1.6.
 	uploadLimits *uploadLimiter
 
-	// midSessionUploadEnabled is the §7.4 line 433 deployer policy that,
+	// midSessionUploadEnabled is the §7.4 deployer policy that,
 	// together with the bound runtime's capabilities.midSessionUpload flag,
 	// admits uploads into an already-running session via
 	// POST /v1/sessions/{id}/upload-to-session. False (the default) keeps
 	// mid-session uploads off platform-wide regardless of the runtime flag.
-	// spec: §7.4 line 433 — F-7.4.6.
+	// spec: §7.4 — F-7.4.6.
 	midSessionUploadEnabled bool
 }
 
@@ -633,7 +628,7 @@ const DefaultMaxOrphanTasksPerTenant = 100
 // keyed by session_id and 10000 per minute across a tenant's sessions.
 // Both are operator-tunable via the gateway flags
 // `--eval-rate-limit-per-session-per-min` / `-per-tenant-per-min`.
-// spec: §10.7 line 938. F-10.7.4.
+// spec: §10.7. F-10.7.4.
 const (
 	DefaultEvalPerSessionPerMin = 100
 	DefaultEvalPerTenantPerMin  = 10000
@@ -653,7 +648,7 @@ func resolveEvalLimit(v, def int) int {
 	return v
 }
 
-// DefaultResumeWindow is the §4.2 line 159 default resume-eligibility
+// DefaultResumeWindow is the §4.2 default resume-eligibility
 // window. A session created without an explicit override is eligible
 // for resume up to this duration after creation; once the deadline
 // passes, the watchdog forces the session to a terminal state.
@@ -662,7 +657,7 @@ func resolveEvalLimit(v, def int) int {
 // Operators tuning the watchdog's lifetime cap should also override
 // the resume window so the two budgets stay aligned; the option
 // hook below lets the gateway plumb the watchdog-configured value.
-// spec: §4.2 line 159 — "Resume eligibility and window".
+// spec: §4.2 — "Resume eligibility and window".
 const DefaultResumeWindow = 2 * time.Hour
 
 // DefaultCoordinationLeaseTTL is the TTL the at-bind coordination-lease
@@ -681,7 +676,7 @@ type Sealer interface {
 	Seal(ctx context.Context, tenantID, sessionID string) error
 }
 
-// PartialManifestCleaner executes the §4.4 line 236 partial-manifest
+// PartialManifestCleaner executes the §4.4 partial-manifest
 // cleanup after the resume path completes, regardless of whether the
 // reassembly succeeded or failed. An implementation walks the latest
 // active partial manifest for (tenant, session), deletes the chunks
@@ -702,7 +697,7 @@ type PartialManifestCleaner interface {
 // `session.resumed` event when the workspace was lost during
 // eviction.
 //
-// spec: §4.4 line 263 — "the client receives a session.resumed event
+// spec: §4.4 — "the client receives a session.resumed event
 // with resumeMode: \"conversation_only\" and workspaceLost: true".
 type EvictionStateLookup interface {
 	// HasEvictionState returns true when the session has a
@@ -732,7 +727,7 @@ type PartialManifestLookup interface {
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
-// ResumeChunkResolver resolves the §10.1 line 155 reassembly chunk set for
+// ResumeChunkResolver resolves the §10.1 reassembly chunk set for
 // a checkpoint the resume path restores. It lists the committed chunk
 // objects under the manifest row's chunk_object_key_prefix, verifies
 // contiguity of the prefix [0, chunk_count), and mints one presigned
@@ -741,10 +736,10 @@ type PartialManifestLookup interface {
 // capabilities and concatenates the bodies. resumechunks.Resolver
 // implements it.
 //
-// spec: §10.1 line 155.
+// spec: §10.1.
 type ResumeChunkResolver interface {
 	// Resolve returns one presigned GET capability per chunk of the named
-	// checkpoint in ascending index order together with the §16.1 line 195
+	// checkpoint in ascending index order together with the §16.1
 	// recovered signal, or resumechunks.ErrReassemblyContiguity when the
 	// committed objects do not form a contiguous [0, chunk_count) prefix.
 	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (resumechunks.ResolveResult, error)
@@ -758,7 +753,7 @@ type ResumeChunkResolver interface {
 // sessionserver → concrete-metrics import. trigger is a checkpoint.Trigger,
 // so the resume path can only stamp a value inside the closed §4.4 enum.
 //
-// spec: §16.1 line 195.
+// spec: §16.1.
 type CheckpointRecoveryMetrics interface {
 	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
 }
@@ -767,7 +762,7 @@ type CheckpointRecoveryMetrics interface {
 // resume and workspace-download paths: Get resolves one checkpoint by id
 // (for its chunk_count / chunk_encoding), LatestActiveAny resolves the
 // active row at MAX(coordination_generation) regardless of partial (the
-// §10.1 line 154 resume-reassembly selector), and LatestFull resolves the
+// §10.1 resume-reassembly selector), and LatestFull resolves the
 // last successful full checkpoint the resume path falls back to when
 // reassembly of the selected manifest fails its contiguity or recovery-
 // threshold check. The Postgres and in-memory checkpoint_manifest stores
@@ -793,7 +788,7 @@ type CheckpointManifestWriter interface {
 }
 
 // TreeBudgetReturner releases the §12.4 delegation tree budget a
-// settled child consumed. The §8.2 line 130 completed-subtree offload
+// settled child consumed. The §8.2 completed-subtree offload
 // decrements the tree's maxTreeMemoryBytes counter when a node is
 // archived and the per-parent parallel_children counter when the child
 // stops running, so a long-running tree's freed concurrency slot and
@@ -809,7 +804,7 @@ type TreeBudgetReturner interface {
 // its delegated descendants resolves the tree instead of failing
 // ErrSessionNotFound. *leasecontrol.MemoryBudgetSource satisfies it.
 // F-15.3.5.
-// spec: §8.6 line 660 (configuration layering)
+// spec: §8.6
 type LeaseTreeRegistrar interface {
 	RegisterTree(rootSessionID string, cfg leasecontrol.TreeConfig)
 }
@@ -819,9 +814,9 @@ type LeaseTreeRegistrar interface {
 // the gateway registers each root tree with. The token dimension's
 // effective ceiling is resolved from DeploymentBudget and
 // DeploymentMaxBudget through leaseextension.ResolveEffectiveMax; the
-// remaining §8.6 line 643 dimensions have no deployment-level config
+// remaining §8.6 dimensions have no deployment-level config
 // surface and are registered without extension headroom. F-15.3.5.
-// spec: §8.6 lines 660-678
+// spec: §8.6
 type LeaseExtensionDefaults struct {
 	// DeploymentBudget is the §8.6 deployment-default maxExtendableBudget
 	// (Helm leaseExtension.defaults.maxExtendableBudget). Zero registers a
@@ -833,13 +828,13 @@ type LeaseExtensionDefaults struct {
 	// ApprovalMode is the §8.6 deployment-default extensionApproval mode.
 	// Unspecified resolves to leasecontrol.DefaultApprovalMode.
 	ApprovalMode leasecontrol.ApprovalMode
-	// SuccessCoolOff is the §8.6 line 675 coolOffSeconds post-approval
+	// SuccessCoolOff is the §8.6 coolOffSeconds post-approval
 	// window. Zero applies leasecontrol.DefaultSuccessCoolOff.
 	SuccessCoolOff time.Duration
-	// RejectionCoolOff is the §8.6 line 734 rejectionCoolOffSeconds. Zero
+	// RejectionCoolOff is the §8.6 rejectionCoolOffSeconds. Zero
 	// applies leasecontrol.DefaultRejectionCoolOff.
 	RejectionCoolOff time.Duration
-	// AutoMaxPerMinute is the §8.6 line 712 autoModeRateLimit
+	// AutoMaxPerMinute is the §8.6 autoModeRateLimit
 	// maxAutoExtensionsPerMinute. Zero means no limit.
 	AutoMaxPerMinute int
 }
@@ -851,7 +846,7 @@ type LeaseExtensionDefaults struct {
 // dimension's current value is seeded from a granted DelegationLease
 // when the row carries one; the deployment-level ceiling comes from the
 // configured defaults. F-15.3.5.
-// spec: §8.6 lines 643-678
+// spec: §8.6
 func (s *Server) registerLeaseTree(row sessionstore.Session) {
 	if s.leaseRegistrar == nil || row.ParentSessionID != "" {
 		return
@@ -875,7 +870,7 @@ func (s *Server) registerLeaseTree(row sessionstore.Session) {
 	s.leaseRegistrar.RegisterTree(row.ID, cfg)
 }
 
-// DelegationHighWatermarkReader reads and clears the §8.3 line 379
+// DelegationHighWatermarkReader reads and clears the §8.3
 // per-tree parallel-children high-watermark when a delegation tree
 // completes. *treebudget.Reserver implements it. Nil on the Server
 // disables the §16.1 high-watermark observation (the in-process
@@ -884,7 +879,7 @@ type DelegationHighWatermarkReader interface {
 	ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error)
 }
 
-// DelegationHighWatermarkObserver records the §8.3 line 379 per-tree
+// DelegationHighWatermarkObserver records the §8.3 per-tree
 // parallel-children high-watermark onto the
 // `lenny_delegation_parallel_children_high_watermark` histogram.
 // *gatewaymetrics.Metrics implements it. Nil drops the observation.
@@ -893,13 +888,13 @@ type DelegationHighWatermarkObserver interface {
 	ObserveDelegationParallelChildrenHighWatermark(pool, tenantID string, value int64)
 }
 
-// SessionLogHook is the §4.4 line 226 close-hook the gateway invokes
+// SessionLogHook is the §4.4 close-hook the gateway invokes
 // on every transition to a terminal state. Implementations capture
 // the buffered runtime stderr bytes and persist them best-effort.
 // The default production wiring lives in pkg/gateway/sessionlogstore
 // (CloseHook.OnSessionTerminal).
 //
-// spec: §4.4 line 226 — "Session logs and runtime stderr".
+// spec: §4.4 — "Session logs and runtime stderr".
 type SessionLogHook interface {
 	// OnSessionTerminal records the session log for (tenant, session).
 	// Implementations are best-effort: a failure must not be
@@ -907,7 +902,7 @@ type SessionLogHook interface {
 	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
 }
 
-// ActivityStamper records §6.2 lines 273-300 qualifying agent activity for
+// ActivityStamper records §6.2 qualifying agent activity for
 // a session so the §11.3 idle watchdog does not reap it as idle. The
 // gateway wires *sessionidle.Stamper here. Implementations coalesce the
 // durable write (≤1/s per session) and are non-blocking. F-11.3.7.
@@ -915,7 +910,7 @@ type ActivityStamper interface {
 	Stamp(tenantID, sessionID string)
 }
 
-// QuotaFinalCheckpointer writes the §11.2 line 44 "final reconciliation"
+// QuotaFinalCheckpointer writes the §11.2
 // token-usage checkpoint for a (tenant, user) when a session reaches a
 // terminal state: the final cumulative window total is persisted to
 // Postgres as the authoritative value so a subsequent Redis-recovery
@@ -923,9 +918,7 @@ type ActivityStamper interface {
 // is quotacheckpoint.Service.CheckpointSubject. Best-effort: a failure
 // must not abort the terminal-state transition.
 //
-// spec: §11.2 line 44 ("on session completion as final reconciliation";
-// "the final cumulative token usage is always written to Postgres as an
-// authoritative value").
+// spec: §11.2.
 type QuotaFinalCheckpointer interface {
 	CheckpointSubject(ctx context.Context, tenantID, userID string) error
 }
@@ -938,7 +931,7 @@ type QuotaFinalCheckpointer interface {
 // released); the resume must then be aborted so another replica takes
 // over. *coordfence.Fencer satisfies it.
 //
-// spec: §10.1 lines 33-37, §11.3 line 209.
+// spec: §10.1, §11.3.
 type CoordinationFencer interface {
 	Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error)
 }
@@ -963,13 +956,13 @@ type Options struct {
 	DeriveAuditSink DeriveAuditSink
 
 	// DeriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
-	// calls on the same source session per §7.1 line 92. Production
+	// calls on the same source session per §7.1. Production
 	// wires derivelock.NewRedis against the shared Redis client; tests
 	// and the single-replica minimal gateway can wire derivelock.NewMemory
 	// or leave this nil (the in-memory store mutex serializes within the
 	// running process and is correct for a single replica). On
 	// contention the handler returns 429 DERIVE_LOCK_CONTENTION.
-	// spec: §7.1 line 92.
+	// spec: §7.1.
 	DeriveLock derivelock.Lock
 
 	// PersistDeriveFailureRows is the §7.1 derive rule 2 opt-in. When
@@ -979,7 +972,7 @@ type Options struct {
 	// derive-failure reachability table). Default false keeps the
 	// roll-back-without-persist posture. Wired from
 	// `gateway.persistDeriveFailureRows`. spec: §7.1 derive rule 2;
-	// §15.1 lines 647-663. F-15.1.14.
+	// §15.1. F-15.1.14.
 	PersistDeriveFailureRows bool
 
 	// IncDeriveFailureAudit, when set, increments the §16.1
@@ -999,14 +992,14 @@ type Options struct {
 	// audit events emitted by the §15.1 resolution endpoints.
 	// Production wires this to the audit appender; nil disables the
 	// emission and the resolution still proceeds.
-	// spec: §7.2 table lines 124-127. F-7.2.8.
+	// spec: §7.2 table. F-7.2.8.
 	InteractionAuditSink InteractionAuditSink
 
 	// ToolApprovalWaits, when set, is the §7.2 tool-use approval waiter
 	// registry shared with the ToolApprovalGate the pod executor calls.
 	// The approve/deny endpoints deliver the verdict onto it so the
 	// blocked runtime tool call unblocks. Nil leaves the endpoints
-	// recording the interaction phase only. spec: §7.2 lines 124-125.
+	// recording the interaction phase only. spec: §7.2.
 	// F-7.2.18.
 	ToolApprovalWaits *toolapproval.Registry
 
@@ -1016,21 +1009,21 @@ type Options struct {
 	// `delegation.tree_cycle_detected` audit event plus the §16.1
 	// `lenny_delegation_tree_cycle_detected_total` counter; nil
 	// disables the emission and the walker still truncates the cycle.
-	// spec: §8.9 line 1003; F-8.9.10.
+	// spec: §8.9; F-8.9.10.
 	TreeCycleObserver TreeCycleObserver
 
 	// CallbackValidator validates client callbackUrls against the §14 SSRF
 	// mitigations. Nil installs a default validator with no deployer
-	// domain allowlist. spec: §14 lines 108-112. F-14.1.11.
+	// domain allowlist. spec: §14. F-14.1.11.
 	CallbackValidator *sessioncallback.Validator
 	// CallbackSeal KMS-envelope-encrypts a client callbackSecret under the
 	// session tenant's KEK at admission. Nil disables callbackSecret
 	// acceptance (a callbackUrl with no secret still delivers, unsigned).
-	// spec: §14 line 139. F-14.1.11.
+	// spec: §14. F-14.1.11.
 	CallbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
 	// CallbackDispatcher delivers validated §14 callbacks. Nil leaves
 	// callbacks validated and persisted but undelivered (the dev/test
-	// posture); the cmd wires a real dispatcher. spec: §14 lines 111, 150.
+	// posture); the cmd wires a real dispatcher. spec: §14.
 	// F-14.1.11.
 	CallbackDispatcher *sessioncallback.Dispatcher
 
@@ -1040,10 +1033,10 @@ type Options struct {
 	// registry instead of routing through the executor. Production
 	// wires the same `*inputwait.Registry` instance into both the
 	// sessionserver and the MCP tools deps; tests can leave it nil for
-	// pre-F-7.2.14 behaviour. spec: §7.2 line 317. F-7.2.14.
+	// pre-F-7.2.14 behaviour. spec: §7.2. F-7.2.14.
 	InputWaits *inputwait.Registry
 
-	// DefaultRetention overrides the §7.1 line 77 default artifact-
+	// DefaultRetention overrides the §7.1 default artifact-
 	// retention window. A non-positive value selects
 	// DefaultArtifactRetention (7 days). Deployers tune it via the
 	// gateway --session-artifact-retention-seconds flag.
@@ -1064,12 +1057,12 @@ type Options struct {
 	UploadTokenVerifier *uploadtoken.Verifier
 
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
-	// minted token. Per §7.1 line 58 the token TTL equals
+	// minted token. Per §7.1 the token TTL equals
 	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
 	// configured timeout through this field, the watchdog's
 	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
 	// budgets never drift. A non-positive value falls through to
-	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	UploadTokenTTL time.Duration
 
 	// Blobs is the §4.5 blob store backing
@@ -1096,7 +1089,7 @@ type Options struct {
 	// archive materialization lists a settled child's catalogued
 	// `lenny-blob://` artifacts to populate the §8.8
 	// TaskResult.output.artifactRefs. Nil leaves artifactRefs empty.
-	// spec: §8.8 lines 888-896. F-8.8.2.
+	// spec: §8.8. F-8.8.2.
 	Artifacts artifactcatalog.Store
 
 	// Events is the §15.1 session event bus backing the SSE stream.
@@ -1105,7 +1098,7 @@ type Options struct {
 	// event publication.
 	Events *sessionevents.Bus
 
-	// ActivityStamper records §6.2 lines 273-300 qualifying agent
+	// ActivityStamper records §6.2 qualifying agent
 	// activity onto the session's last_agent_activity_at so the §11.3
 	// idle watchdog (sweepIdle) sees an actively-working session as
 	// non-idle. The gateway wires *sessionidle.Stamper here; nil is a
@@ -1124,8 +1117,7 @@ type Options struct {
 	// the gateway migrates a session's in-memory inbox to the DLQ on
 	// resume_pending and drains the inbox+DLQ (emitting
 	// message_expired) on terminal transition. Nil disables messaging
-	// durability (the dev / no-Redis posture). spec: §7.2 lines
-	// 305-311, 343.
+	// durability (the dev / no-Redis posture). spec: §7.2.
 	Messaging *sessioninbox.Coordinator
 
 	// Interactions is the §6/§9.2 pending tool-call + elicitation
@@ -1166,7 +1158,7 @@ type Options struct {
 	// StickyCache is the §10.7 `sticky: user` variant-assignment cache. When
 	// set, the ExperimentRouter reads a `mode: external` assignment from the
 	// cache before calling the OpenFeature provider and writes fresh results
-	// back (§10.7 line 831). Nil re-evaluates every experiment fresh, which is
+	// back (§10.7). Nil re-evaluates every experiment fresh, which is
 	// also the §12.4 Redis-outage fail-open path.
 	StickyCache StickyCache
 
@@ -1187,11 +1179,11 @@ type Options struct {
 	// a session whose pool resolution did not name one. When unset the
 	// server falls back to the dev-mode-aware default: `sandboxed`
 	// (gVisor) normally, or `standard` (runc) when DevMode is true per
-	// §5.3 line 677.
+	// §5.3.
 	DefaultIsolationProfile isolation.Profile
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). It
-	// selects the §5.3 line 677 dev-mode fallback (`standard`) when no
+	// selects the §5.3 dev-mode fallback (`standard`) when no
 	// DefaultIsolationProfile is configured.
 	DevMode bool
 
@@ -1203,7 +1195,7 @@ type Options struct {
 	// When false, the historical no-role fall-through is preserved so
 	// the single-tenant minimal gateway (no OIDC, dev-header path) and
 	// pre-RBAC service tokens still reach the handler.
-	// spec: §10.2 lines 256–264. F-10.2.4.
+	// spec: §10.2. F-10.2.4.
 	MultiTenant bool
 
 	// TenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
@@ -1251,8 +1243,8 @@ type Options struct {
 	// CoordinatorFence to a resumed session's pod after the resume
 	// re-bind, announcing the session's current coordination_generation
 	// so the pod rejects any straggler RPC from a prior coordinator. Nil
-	// disables fencing (dev / in-memory mode). spec: §10.1 lines 33-37,
-	// §11.3 line 209.
+	// disables fencing (dev / in-memory mode). spec: §10.1,
+	// §11.3.
 	CoordinationFencer CoordinationFencer
 
 	// CoordinationLeaseStore is the §12.2 LeaseStore the at-bind acquire
@@ -1278,36 +1270,36 @@ type Options struct {
 	// in. Required when PodBinder is set.
 	AgentNamespace string
 
-	// AdmissionRateLimitCounter is the §11.1 line 7 per-minute counter
+	// AdmissionRateLimitCounter is the §11.1 per-minute counter
 	// used for the per-runtime and per-pool admission scopes enforced at
 	// session creation. Nil disables both scopes (the global, per-user,
 	// and per-tenant scopes run in the §11.1 HTTP middleware regardless).
 	// Production wires the shared Redis-backed counter so the limit holds
-	// across replicas. spec: §11.1 line 7. F-11.1.2.
+	// across replicas. spec: §11.1. F-11.1.2.
 	AdmissionRateLimitCounter ratelimit.Counter
 
 	// PerRuntimePerMinute caps session-creation requests against a single
 	// runtime per minute. Zero or less leaves the per-runtime scope
-	// unlimited. spec: §11.1 line 7. F-11.1.2.
+	// unlimited. spec: §11.1. F-11.1.2.
 	PerRuntimePerMinute int
 
 	// PerPoolPerMinute caps session-creation requests against a single
 	// resolved warm pool per minute. The scope is skipped when no pool
 	// resolves (the Postgres-only posture). Zero or less leaves the
-	// per-pool scope unlimited. spec: §11.1 line 7. F-11.1.2.
+	// per-pool scope unlimited. spec: §11.1. F-11.1.2.
 	PerPoolPerMinute int
 
 	// RateLimitMetrics, when set, receives the §11.1 rejection counter
 	// and counter-failure bump for the per-runtime / per-pool gate.
 	// *gatewaymetrics.Metrics satisfies it. Nil leaves the gate
-	// enforcing without observability. spec: §11.1 line 7. F-11.1.2.
+	// enforcing without observability. spec: §11.1. F-11.1.2.
 	RateLimitMetrics AdmissionRateLimitMetrics
 
 	// MaxConcurrentSessionsGlobal caps the gateway-wide count of live
 	// (non-terminal) sessions across every tenant. Zero or less leaves
 	// the global concurrent-session scope unlimited. Operator-tunable via
 	// the gateway Helm value `gateway.maxConcurrentSessionsGlobal`.
-	// spec: §11.1 line 8 (Concurrency limits — global). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsGlobal int
 
 	// MaxConcurrentSessionsPerUser caps the count of live (non-terminal)
@@ -1315,7 +1307,7 @@ type Options struct {
 	// cannot monopolize the tenant's concurrent-session capacity. Zero or
 	// less leaves the per-user scope unlimited. Operator-tunable via
 	// `gateway.maxConcurrentSessionsPerUser`.
-	// spec: §11.1 line 8 (Concurrency limits — per-user). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsPerUser int
 
 	// MaxConcurrentSessionsPerRuntime caps the count of live
@@ -1323,7 +1315,7 @@ type Options struct {
 	// so one runtime cannot be flooded with concurrent sessions. Zero or
 	// less leaves the per-runtime scope unlimited. Operator-tunable via
 	// `gateway.maxConcurrentSessionsPerRuntime`.
-	// spec: §11.1 line 8 (Concurrency limits — per-runtime). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsPerRuntime int
 
 	// EvalRateLimitCounter is the §10.7 per-minute counter for the
@@ -1331,19 +1323,19 @@ type Options struct {
 	// POST /v1/sessions/{id}/eval). Nil disables eval rate limiting.
 	// Production wires the same Redis-backed counter as
 	// AdmissionRateLimitCounter so the limit holds across replicas.
-	// spec: §10.7 line 938. F-10.7.4.
+	// spec: §10.7. F-10.7.4.
 	EvalRateLimitCounter ratelimit.Counter
 
 	// EvalPerSessionPerMinute caps eval submissions against a single
 	// session per minute (§10.7 `evalRateLimit.perSessionPerMinute`).
 	// Zero selects DefaultEvalPerSessionPerMin (100); a negative value
-	// disables the per-session scope. spec: §10.7 line 938. F-10.7.4.
+	// disables the per-session scope. spec: §10.7. F-10.7.4.
 	EvalPerSessionPerMinute int
 
 	// EvalPerTenantPerMinute caps eval submissions across all of a
 	// tenant's sessions per minute (§10.7 `evalRateLimit.perTenantPerMinute`).
 	// Zero selects DefaultEvalPerTenantPerMin (10000); a negative value
-	// disables the per-tenant scope. spec: §10.7 line 938. F-10.7.4.
+	// disables the per-tenant scope. spec: §10.7. F-10.7.4.
 	EvalPerTenantPerMinute int
 
 	// Sealer, when set, takes the §7.1 final workspace snapshot when a
@@ -1355,32 +1347,32 @@ type Options struct {
 	// succeed within this window transitions the session to failed with
 	// reason workspace_seal_timeout. A non-positive value selects
 	// DefaultWorkspaceSealMaxDuration (300s, the spec default).
-	// spec: §7.1 line 112.
+	// spec: §7.1.
 	WorkspaceSealMaxDuration time.Duration
 
-	// ObserveWorkspaceSealDuration, when set, records the §7.1 line 112
+	// ObserveWorkspaceSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram.
 	// outcome is "success" or "timeout". Nil disables the emission.
 	ObserveWorkspaceSealDuration func(pool, outcome string, seconds float64)
 
-	// RecordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// RecordSessionTerminal, when set, records the §16.1 /
 	// §10.7 rollback-trigger metric family at every terminal session
 	// transition (lenny_session_total, lenny_session_error_total, and
 	// lenny_session_duration_seconds). sessionType is the §5.2
 	// ExecutionMode; variantID is the §10.7 enrollment. Nil disables the
-	// emission. spec: §10.7 lines 1120-1132, §16.1 lines 161-163.
+	// emission. spec: §10.7, §16.1.
 	RecordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
 
-	// ObserveEvalScore, when set, records one §16.1 line 164
+	// ObserveEvalScore, when set, records one §16.1
 	// lenny_eval_score observation per submitted eval run. Nil disables
-	// the emission. spec: §10.7 line 1128, §16.1 line 164.
+	// the emission. spec: §10.7, §16.1.
 	ObserveEvalScore func(tenantID, scorer, variantID string, score float64)
 
 	// SetExperimentTargetingCircuitOpen, when set, reports the §10.7
 	// SCL-023 targeting circuit-breaker open/closed transitions through
 	// the lenny_experiment_targeting_circuit_open gauge. Nil disables the
 	// gauge emission; the breaker still gates the OpenFeature call.
-	// spec: §10.7 line 838, §16.1 line 64.
+	// spec: §10.7, §16.1.
 	SetExperimentTargetingCircuitOpen func(tenantID, provider string, open bool)
 
 	// SealSleep overrides the seal-retry backoff wait. Production leaves
@@ -1388,7 +1380,7 @@ type Options struct {
 	// bounded-backoff loop runs without real delays.
 	SealSleep func(ctx context.Context, d time.Duration) bool
 
-	// PartialManifestCleaner, when set, executes the §4.4 line 236
+	// PartialManifestCleaner, when set, executes the §4.4
 	// partial-manifest cleanup after the resume path completes. Nil
 	// leaves the resume path unchanged; the §12.5 backstop sweep
 	// remains the only cleanup path.
@@ -1396,7 +1388,7 @@ type Options struct {
 
 	// EvictionStateLookup, when set, lets the resume path classify a
 	// resume as conversation-only (workspace lost during eviction)
-	// per §4.4 line 263, so the session.resumed event carries
+	// per §4.4, so the session.resumed event carries
 	// resumeMode: "conversation_only" and workspaceLost: true. Nil
 	// leaves the resume defaulting to the snapshot-source-derived
 	// ResumeMode (ResumeFull when a workspace snapshot is present).
@@ -1408,16 +1400,16 @@ type Options struct {
 	// defaulting to ResumeFull when a workspace snapshot is present.
 	PartialManifestLookup PartialManifestLookup
 
-	// ResumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// ResumeChunkResolver, when set, resolves the §10.1 reassembly
 	// chunk set the resume path hands the adapter. Nil leaves the resume
 	// carrying no chunks.
 	ResumeChunkResolver ResumeChunkResolver
 
-	// CheckpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// CheckpointRecoveryMetrics, when set, receives the §16.1
 	// lenny_checkpoint_partial_total{recovered=true} emission once per
 	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
 	// satisfies it. Nil leaves the resume recovering without observability.
-	// spec: §16.1 line 195.
+	// spec: §16.1.
 	CheckpointRecoveryMetrics CheckpointRecoveryMetrics
 
 	// CheckpointManifestReader, when set, reads §10.1 checkpoint_manifest
@@ -1441,11 +1433,11 @@ type Options struct {
 	// TaskUsage, when set, assembles the §8.8 TaskResult.usage and
 	// TaskResult.treeUsage rollups stamped on every materialized result.
 	// Nil leaves both absent (the pre-metering behaviour).
-	// spec: §8.8 lines 897-917.
+	// spec: §8.8.
 	TaskUsage *resultrollup.Builder
 
 	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
-	// budget a settled child consumed: the §8.2 line 130 maxTreeMemoryBytes
+	// budget a settled child consumed: the §8.2 maxTreeMemoryBytes
 	// offload decrement and the per-parent parallel_children decrement
 	// fire once per child as it reaches a terminal state. Nil disables
 	// the decrement (developer mode without Redis-backed counters).
@@ -1462,14 +1454,13 @@ type Options struct {
 	LeaseRegistrar         LeaseTreeRegistrar
 	LeaseExtensionDefaults LeaseExtensionDefaults
 
-	// QuotaCheckpointer, when set, persists the §11.2 line 44 final
+	// QuotaCheckpointer, when set, persists the §11.2 final
 	// token-usage checkpoint for the session's (tenant, user) when the
 	// session reaches a terminal state. Nil disables the final write
 	// (developer mode without the Postgres checkpoint store).
 	QuotaCheckpointer QuotaFinalCheckpointer
 
-	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 line
-	// 379 per-tree parallel-children high-watermark observation: when a
+	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 per-tree parallel-children high-watermark observation: when a
 	// delegation tree's root session settles, the gateway reads the
 	// recorded maximum simultaneous in-flight children and observes it
 	// onto the §16.1 histogram. Both nil disables the observation.
@@ -1481,24 +1472,24 @@ type Options struct {
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
 
-	// ResumeWindow is the §4.2 line 159 resume-eligibility duration
+	// ResumeWindow is the §4.2 resume-eligibility duration
 	// stamped onto each session at create. A non-positive value
 	// selects DefaultResumeWindow (2 hours, mirroring the watchdog's
 	// MaxSessionAgeSeconds default). Operators tuning the watchdog
 	// budget should pass the matching value here so the two budgets
 	// stay aligned.
-	// spec: §4.2 line 159 — "Resume eligibility and window".
+	// spec: §4.2 — "Resume eligibility and window".
 	ResumeWindow time.Duration
 
 	// TreeRecoveryLevelTimeout and TreeRecoveryTreeTimeout are the §8.10
 	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets the
 	// bottom-up delegation-tree recovery applies when a tree is resumed.
 	// A non-positive value selects the §8.10 recovery-package default
-	// (120s / 600s). spec: §8.10 lines 1022-1023.
+	// (120s / 600s). spec: §8.10.
 	TreeRecoveryLevelTimeout time.Duration
 	TreeRecoveryTreeTimeout  time.Duration
 
-	// TreeRecoveryMetrics records the §16.1 line 144-145 tree-recovery
+	// TreeRecoveryMetrics records the §16.1 tree-recovery
 	// telemetry. *gatewaymetrics.Metrics satisfies it. Nil drops the
 	// observations.
 	TreeRecoveryMetrics treerecovery.Metrics
@@ -1507,7 +1498,7 @@ type Options struct {
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
 
-	// CapabilityOverrides is the §5.1 line 49 per-tenant runtime
+	// CapabilityOverrides is the §5.1 per-tenant runtime
 	// capability override store. Optional — when set, the gateway overlays
 	// a tenant's override onto the resolved runtime at every §5.1
 	// capability consumer (injection gate, SDK-warm decision, mid-session
@@ -1593,48 +1584,48 @@ type Options struct {
 	// and the minimal gateway). spec: §16.1 — F-13.4.12.
 	UploadMetrics UploadHandlerMetrics
 
-	// MidSessionUploadEnabled is the §7.4 line 433 deployer policy that
+	// MidSessionUploadEnabled is the §7.4 deployer policy that
 	// admits mid-session uploads (POST /v1/sessions/{id}/upload-to-session)
 	// when the bound runtime also declares capabilities.midSessionUpload.
 	// False (the default) keeps the surface closed platform-wide. spec:
-	// §7.4 line 433 — F-7.4.6.
+	// §7.4 — F-7.4.6.
 	MidSessionUploadEnabled bool
 
-	// MaxConcurrentUploadsPerSession is the §11.1 line 10 per-session
+	// MaxConcurrentUploadsPerSession is the §11.1 per-session
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once a session already holds this many
 	// in-flight uploads on the replica. Zero leaves the per-session
-	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
 	MaxConcurrentUploadsPerSession int
 
-	// MaxConcurrentUploadsGlobal is the §11.1 line 10 global
+	// MaxConcurrentUploadsGlobal is the §11.1 global
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once the replica already holds this many
 	// in-flight uploads across all sessions. Zero leaves the global
-	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
 	MaxConcurrentUploadsGlobal int
 
-	// MaxUploadBytesPerSession is the §11.1 line 11 per-session
+	// MaxUploadBytesPerSession is the §11.1 per-session
 	// cumulative upload-size cap: the gateway rejects an upload with 429
 	// QUOTA_EXCEEDED once the sum of all uploads in a session would
 	// exceed this value. The per-file (per-blob) cap is the separate
 	// UploadMaxBodyBytes ceiling. Zero leaves the per-session size scope
-	// unlimited. spec: §11.1 line 11. F-11.1.6.
+	// unlimited. spec: §11.1. F-11.1.6.
 	MaxUploadBytesPerSession int64
 
-	// SessionLogHook, when set, receives the §4.4 line 226 close-hook
+	// SessionLogHook, when set, receives the §4.4 close-hook
 	// on every session transition to a terminal state. The production
 	// wiring lives in pkg/gateway/sessionlogstore (CloseHook). Nil
 	// disables the session-log persistence path; the transition still
 	// fires.
-	// spec: §4.4 line 226.
+	// spec: §4.4.
 	SessionLogHook SessionLogHook
 
-	// WarmupEstimateSeconds overrides the §5.2 line 625 PoolWarmingUp
+	// WarmupEstimateSeconds overrides the §5.2 PoolWarmingUp
 	// warm-up estimate (estimatedReadyIn and the Retry-After floor's
 	// input). Zero selects DefaultWarmupEstimateSeconds (120s), the
 	// spec's no-historical-data fallback.
-	// spec: §5.2 line 625.
+	// spec: §5.2.
 	WarmupEstimateSeconds int
 
 	// CredentialRouter is the §4.9 pluggable CredentialRouter used at
@@ -1642,14 +1633,14 @@ type Options struct {
 	// provider in the intersection of the runtime's supportedProviders
 	// and the tenant's credentialPolicy. Nil selects the built-in
 	// strategy-and-fallback-order router (credrouter.Default).
-	// spec: §4.9 lines 1558-1591.
+	// spec: §4.9.
 	CredentialRouter credrouter.Router
 
 	// PreclaimMismatch, when set, increments
 	// lenny_credential_preclaim_mismatch_total{pool,provider} on the
-	// §4.9 line 1220 race: the pre-claim availability check passed but
+	// §4.9 race: the pre-claim availability check passed but
 	// the lease assignment failed. Nil disables the emission.
-	// spec: §4.9 line 1220.
+	// spec: §4.9.
 	PreclaimMismatch func(pool, provider string)
 
 	// SlotHealth is the §5.2 per-pod fail/leak rolling-window tracker the
@@ -1671,11 +1662,11 @@ type Options struct {
 	// Nil disables the emission. spec: §5.2 "whole-pod replacement trigger".
 	SlotReplacement func(pool string)
 
-	// SlotLeakGauge, when set, publishes the §6.2 line 179
+	// SlotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
 	// a pod's concurrent-workspace slots whose cleanup timed out and remain
 	// counted in active_slots until the pod terminates. Nil disables the
-	// emission. spec: §6.2 line 179.
+	// emission. spec: §6.2.
 	SlotLeakGauge func(pod, pool string, leaked int)
 
 	// QueuePollInterval is the cadence at which a §4.6.1 onPoolExhausted:queue
@@ -1699,24 +1690,24 @@ type Options struct {
 	// §16.1.
 	IncPodClaimTimeout func(pool string)
 
-	// ObserveStartupDuration, when set, records the §6.3 line 348
+	// ObserveStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm session startup latency (pod claim through
 	// agent session ready, excluding upload and workspace
 	// materialization) for each successful start. Nil disables it.
-	// spec: §16.1 line 14, §6.3 line 348.
+	// spec: §16.1, §6.3.
 	ObserveStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
 
-	// ObserveStartupPhase, when set, records the §6.3 line 372 latency
+	// ObserveStartupPhase, when set, records the §6.3 latency
 	// of one hot-path startup phase (pod_claim,
 	// workspace_materialization, setup_commands, credential_assignment,
-	// agent_session_start). Nil disables it. spec: §6.3 line 372.
+	// agent_session_start). Nil disables it. spec: §6.3.
 	ObserveStartupPhase func(phase, runtimeClass string, seconds float64)
 
-	// ObserveTimeToFirstToken, when set, records the §6.3 line 356 /
-	// §16.1 line 15 TTFT histogram on the first agent-streamed
+	// ObserveTimeToFirstToken, when set, records the §6.3 /
+	// §16.1 TTFT histogram on the first agent-streamed
 	// response event of each session: session start request to first
 	// streaming event emitted to the client. Nil disables the
-	// emission. spec: §16.1 line 15, §6.3 line 356.
+	// emission. spec: §16.1, §6.3.
 	ObserveTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
 
 	// RetryPolicyCaps holds the §7.3 deployer caps applied to a
@@ -1726,14 +1717,14 @@ type Options struct {
 	// A zero field skips that clamp so deployer "unlimited" semantics
 	// survive. Production wires these to the watchdog config so the
 	// per-session cap can never exceed the platform-wide bound. F-7.3.1.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	RetryPolicyCaps session.RetryPolicyCaps
 
 	// EnvVarBlocklist extends the §14 platform default env-var blocklist
 	// with deployer-supplied entries (exact names or `*` globs). The
 	// platform default is always merged in first so an operator can
 	// extend but not reduce it. A nil slice leaves the platform default
-	// in force. spec: §14 line 105. F-14.1.12.
+	// in force. spec: §14. F-14.1.12.
 	EnvVarBlocklist []string
 
 	// IncSessionResumeAttempt, when set, increments the §16.1
@@ -1762,12 +1753,12 @@ type Options struct {
 	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
-	// IncWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// IncWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
-	// warm-pool startup failure. error_type is the §7.3 line 387
+	// warm-pool startup failure. error_type is the §7.3
 	// non-retryable failure category the gateway classified
 	// (`setup_command_failed`, etc.). Nil disables the emission.
-	// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+	// spec: §16.1, §7.3 — F-7.5.9.
 	IncWarmpoolWarmupFailure func(errorType string)
 
 	// IncInjectionGateFailClosed, when set, increments the
@@ -1917,18 +1908,18 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.slotHealth = slothealth.New()
 	}
 	if s.callbackValidator == nil {
-		// spec: §14 lines 108-112 — the SSRF validator needs no external
+		// spec: §14 — the SSRF validator needs no external
 		// config; default it so callbackUrl validation always runs even
 		// when a deployer configured no domain allowlist.
 		s.callbackValidator = sessioncallback.NewValidator(nil, nil)
 	}
 	if s.defaultRetention <= 0 {
-		// spec: §7.1 line 77 — default the artifact-retention window to
+		// spec: §7.1 — default the artifact-retention window to
 		// 7 days when the deployer leaves it unset.
 		s.defaultRetention = DefaultArtifactRetention
 	}
 	if s.sealMaxDuration <= 0 {
-		// spec: §7.1 line 112 — maxWorkspaceSealDurationSeconds default 300s.
+		// spec: §7.1 — maxWorkspaceSealDurationSeconds default 300s.
 		s.sealMaxDuration = DefaultWorkspaceSealMaxDuration
 	}
 	if s.sealSleep == nil {
@@ -1938,7 +1929,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
 	}
 	if s.credRouter == nil {
-		// spec: §4.9 lines 1583-1589 — the built-in strategy-and-
+		// spec: §4.9 — the built-in strategy-and-
 		// fallback-order CredentialRouter is the default.
 		s.credRouter = credrouter.NewDefault()
 	}
@@ -2000,11 +1991,11 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.uploadIssuer = uploadtoken.NewIssuer(ring, s.clock)
 	}
 	if !isolation.IsValid(s.defaultIsoProf) {
-		// spec: §5.3 line 677 — honor the dev-mode fallback to `standard`
+		// spec: §5.3 — honor the dev-mode fallback to `standard`
 		// (runc) when no explicit default isolation profile is configured.
 		s.defaultIsoProf = isolation.DefaultForMode(s.devMode)
 	}
-	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+	// spec: §10.7 — the per-tenant targeting
 	// circuit breaker shares the server clock so tests drive the open /
 	// half-open transitions deterministically.
 	s.targetingBreaker = newTargetingBreaker(s.clock, opts.SetExperimentTargetingCircuitOpen)
@@ -2026,7 +2017,7 @@ func (s *Server) Handler() http.Handler {
 	manage := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
 	}
-	// §10.7 line 936 — eval submission is gated on the dedicated
+	// §10.7 — eval submission is gated on the dedicated
 	// session:eval:write capability so an external scorer pipeline holds
 	// it without the broader manage_own_sessions authority. F-10.7.4.
 	evalWrite := func(next http.HandlerFunc) http.HandlerFunc {
@@ -2037,7 +2028,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
-	// §15.1 line 703 — session-facing pool discovery. Mounted bare like
+	// §15.1 — session-facing pool discovery. Mounted bare like
 	// GET /v1/runtimes: the handler scopes the list to pools backing a
 	// runtime the caller can already discover (§10.6 transparent filter).
 	mux.HandleFunc("GET /v1/pools", s.handleListPools)
@@ -2051,7 +2042,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/sessions/{id}", manage(s.handleDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manage(s.handleFinalize))
 	mux.HandleFunc("POST /v1/sessions/{id}/start", manage(s.handleStart))
-	// spec: §7.2 lines 168-169 — the interrupt path signals the runtime
+	// spec: §7.2 — the interrupt path signals the runtime
 	// through the pod's adapter and waits for `interrupt_acknowledged`
 	// within deadlineMs, rather than collapsing the transition to a
 	// row-only flip.
@@ -2070,7 +2061,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
 	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manage(s.handleUploadToSession))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
-	// spec: §15.1 line 692 — the §15.4.1 MessageDAG list over the durable
+	// spec: §15.1 — the §15.4.1 MessageDAG list over the durable
 	// session_messages store, the read side of the message endpoint. Shares
 	// the transcript backing; projects each row to a message node with its
 	// stable id, derived `from`, and delivery state. F-15.1.3.
@@ -2080,17 +2071,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
 	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
-	// spec: §15.1 line 673 / §24.17 line 220 — the `lenny session logs`
+	// spec: §15.1 / §24.17 — the `lenny session logs`
 	// target; session logs over the durable event store, content-
 	// negotiated SSE / JSON envelope with the `--since` filter.
 	mux.HandleFunc("GET /v1/sessions/{id}/logs", read(s.handleLogs))
-	// spec: §15.1 line 598 — per-session artifact listing (the §15.2
+	// spec: §15.1 — per-session artifact listing (the §15.2
 	// list_artifacts tool's REST equivalent) and reconciled per-session
 	// token usage (the §15.2 get_token_usage tool's REST equivalent). The
 	// usage route self-gates on view_usage like GET /v1/usage. F-15.2.3.
 	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", read(s.handleListArtifacts))
 	mux.HandleFunc("GET /v1/sessions/{id}/usage", s.handleSessionUsage)
-	// spec: §15.1 lines 671, 674 — workspace snapshot download (tar.gz)
+	// spec: §15.1 — workspace snapshot download (tar.gz)
 	// and the §7.5 captured setup-command output, the REST reads the SDK
 	// references for artifact recovery and setup debugging. F-15.1.3.
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
@@ -2125,22 +2116,22 @@ type CreateSessionRequest struct {
 	// from the body so SEC-001 monotonicity tests have a knob to drive.
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 
-	// Metadata is the §7.1 line 6 client-supplied
+	// Metadata is the §7.1 client-supplied
 	// CreateSession(..., metadata) payload — a flat string→string map
 	// of caller annotations preserved verbatim for the session
 	// lifetime. Non-string values rejected at decode with
 	// 400 VALIDATION_ERROR so the on-row shape stays bounded. The §15.1
 	// GET envelope echoes this back so a client that lost the create
 	// response can retrieve its own annotations. F-7.3.20.
-	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
+	// spec: §7.1 — "CreateSession(runtime, pool, retryPolicy,
 	// metadata)".
 	Metadata map[string]string `json:"metadata,omitempty"`
 
-	// Labels is the §14 line 311 client-supplied session label set — a
+	// Labels is the §14 client-supplied session label set — a
 	// flat string→string map of caller tags the `GET /v1/sessions` list
-	// endpoint filters on (§15.1 line 598). Keys must be non-empty. The
+	// endpoint filters on (§15.1). Keys must be non-empty. The
 	// §15.1 GET envelope echoes them back. F-15.1.15.
-	// spec: §14 line 311; §15.1 line 598.
+	// spec: §14; §15.1.
 	Labels map[string]string `json:"labels,omitempty"`
 
 	// RetryPolicy is the §7.3 client-supplied retry policy. The gateway
@@ -2150,55 +2141,52 @@ type CreateSessionRequest struct {
 	// cap as the effective value. Negative values reject as
 	// 400 VALIDATION_ERROR. The §15.1 GET envelope echoes the clamped
 	// policy back. F-7.3.1.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
 
 	// Env is the §14 client-supplied environment-variable map injected
 	// into the agent session. Every key is validated against the deployer
 	// blocklist at admission; a blocked key rejects with
 	// 400 ENV_VAR_BLOCKLISTED. The §15.1 GET envelope echoes it back.
-	// spec: §14 lines 47-50, 105. F-14.1.12.
+	// spec: §14. F-14.1.12.
 	Env map[string]string `json:"env,omitempty"`
 
-	// Pool is the §14 / §14.1 line 311 client-requested target pool. The
+	// Pool is the §14 / §14.1 client-requested target pool. The
 	// minimal gateway records it for echo and admission pool-scope; the
 	// resolved pool the gateway schedules against is reported separately.
-	// spec: §14 example; §14.1 line 311. F-14.1.14.
+	// spec: §14 example; §14.1. F-14.1.14.
 	Pool string `json:"pool,omitempty"`
 
 	// Timeouts is the §14 per-session timeout override block. The gateway
 	// rejects a maxSessionAge that exceeds the runtime's
-	// limits.maxSessionAge. spec: §14 line 154. F-14.1.14.
+	// limits.maxSessionAge. spec: §14. F-14.1.14.
 	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
 
 	// CredentialPolicy is the §14 per-session credentialPolicy override.
 	// A per-session override can only restrict, never expand, the tenant
-	// policy. spec: §14 credentialPolicy; §4.9 lines 1310, 1336. F-14.1.14.
+	// policy. spec: §14 credentialPolicy; §4.9. F-14.1.14.
 	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
 
 	// DelegationLease is the §14 client-requested delegation lease bounds
-	// {maxDepth, maxChildrenTotal, delegationPolicyRef}. spec: §14 lines
-	// 75-79. F-14.1.14.
+	// {maxDepth, maxChildrenTotal, delegationPolicyRef}. spec: §14. F-14.1.14.
 	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
 
 	// RuntimeOptions is the §14 per-runtime discriminated-union options
 	// blob (≤64 KB). Validated against the target runtime's
 	// runtimeOptionsSchema when registered; when no schema is registered
-	// a RuntimeOptionsUnschematized warning is emitted. spec: §14 line
-	// 155. F-14.1.14 / F-14.1.15.
+	// a RuntimeOptionsUnschematized warning is emitted. spec: §14. F-14.1.14 / F-14.1.15.
 	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
 
 	// CallbackURL is the §14 optional session-terminal webhook. The
 	// gateway validates it against the §14 SSRF mitigations at admission
 	// (HTTPS-only, IP-literal/private-range rejection, DNS pinning, and
 	// the optional deployer domain allowlist) and rejects a failing URL
-	// with 400 INVALID_CALLBACK_URL. spec: §14 lines 73, 108-112. F-14.1.11.
+	// with 400 INVALID_CALLBACK_URL. spec: §14. F-14.1.11.
 	CallbackURL string `json:"callbackUrl,omitempty"`
 
 	// CallbackSecret is the §14 HMAC signing secret for callback
 	// deliveries. It is write-only: the gateway KMS-envelope-encrypts it
-	// at admission and never returns the plaintext on any API. spec: §14
-	// line 139. F-14.1.11.
+	// at admission and never returns the plaintext on any API. spec: §14. F-14.1.11.
 	CallbackSecret string `json:"callbackSecret,omitempty"`
 }
 
@@ -2222,41 +2210,41 @@ type SessionResponse struct {
 
 	// Cwd is the §4.2 session working directory. Empty until the
 	// runtime adapter materialises the workspace.
-	// spec: §4.2 line 156.
+	// spec: §4.2.
 	Cwd string `json:"cwd,omitempty"`
 
 	// PodAssignment is the §4.2 pod-to-session binding the session is
 	// currently bound to. Empty when the session has no live pod.
-	// spec: §4.2 line 160.
+	// spec: §4.2.
 	PodAssignment string `json:"podAssignment,omitempty"`
 
 	// RecoveryGeneration is the §4.2 pod-recovery counter, visible to
-	// clients per §4.2 line 156. Starts at zero and increments by one
+	// clients per §4.2. Starts at zero and increments by one
 	// on each pod recovery.
-	// spec: §4.2 line 156 — "incremented on each pod recovery (visible
+	// spec: §4.2 — "incremented on each pod recovery (visible
 	// to clients via the session API ...)".
 	RecoveryGeneration int64 `json:"recoveryGeneration"`
 
 	// SchemaVersion is the §4.2 session-row schema version. v1
 	// sessions report schema_version=1.
-	// spec: §4.2 line 156.
+	// spec: §4.2.
 	SchemaVersion int32 `json:"schemaVersion"`
 
-	// RetryCount is the §4.2 line 158 retry counter the Session
+	// RetryCount is the §4.2 retry counter the Session
 	// Manager tracks across this logical session's lifetime.
-	// spec: §4.2 line 158 — "Retry counters and policy enforcement".
+	// spec: §4.2 — "Retry counters and policy enforcement".
 	RetryCount int64 `json:"retryCount"`
 
-	// PolicyEnforcementState is the §4.2 line 158 schemaless
+	// PolicyEnforcementState is the §4.2 schemaless
 	// policy-enforcement payload. Omitted from the JSON envelope
 	// when empty.
-	// spec: §4.2 line 158.
+	// spec: §4.2.
 	PolicyEnforcementState json.RawMessage `json:"policyEnforcementState,omitempty"`
 
-	// ResumeEligibleUntil is the §4.2 line 159 resume-window
+	// ResumeEligibleUntil is the §4.2 resume-window
 	// deadline as RFC 3339 nanos. Empty when the session has no
 	// resume budget.
-	// spec: §4.2 line 159 — "Resume eligibility and window".
+	// spec: §4.2 — "Resume eligibility and window".
 	ResumeEligibleUntil string `json:"resumeEligibleUntil,omitempty"`
 
 	// SessionIsolationLevel echoes the §7.1 sessionIsolationLevel object
@@ -2265,46 +2253,46 @@ type SessionResponse struct {
 	// field is populated from the persisted §5.3 isolation profile and is
 	// stable for the lifetime of the session (the profile never changes
 	// after creation).
-	// spec: §7.1 line 75 — "GET /v1/sessions/{id} also returns
+	// spec: §7.1 — "GET /v1/sessions/{id} also returns
 	// sessionIsolationLevel in the session metadata ... does not change
 	// for the lifetime of the session".
 	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
 
-	// Metadata echoes the §7.1 line 6 client-supplied metadata payload
+	// Metadata echoes the §7.1 client-supplied metadata payload
 	// the session was created with. Omitted from the envelope when the
 	// client submitted no metadata. F-7.3.20.
-	// spec: §7.1 line 6.
+	// spec: §7.1.
 	Metadata map[string]string `json:"metadata,omitempty"`
 
-	// Labels echoes the §14 line 311 client-supplied session labels the
+	// Labels echoes the §14 client-supplied session labels the
 	// session was created with. Omitted when the client submitted none.
 	// These are the values the `GET /v1/sessions?label=k=v` filter matches
-	// against. spec: §14 line 311; §15.1 line 598. F-15.1.15.
+	// against. spec: §14; §15.1. F-15.1.15.
 	Labels map[string]string `json:"labels,omitempty"`
 
 	// RetryPolicy echoes the §7.3 effective retry policy resolved at
 	// session creation (the client-supplied object after clamp). Omitted
 	// when the session was created with no override. F-7.3.1.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
 
 	// Env echoes the §14 client-supplied env map (which passed the
 	// deployer blocklist at admission). Omitted when the client supplied
-	// none. spec: §14 lines 47-50. F-14.1.12.
+	// none. spec: §14. F-14.1.12.
 	Env map[string]string `json:"env,omitempty"`
 
 	// Pool echoes the §14 / §14.1 client-requested target pool. Omitted
-	// when the request named no pool. spec: §14.1 line 311. F-14.1.14.
+	// when the request named no pool. spec: §14.1. F-14.1.14.
 	Pool string `json:"pool,omitempty"`
 
 	// Origin echoes the §27.3 origin label recorded on the session row.
 	// It is "playground" for a /playground/*-originated session and
 	// omitted otherwise, so a §25.9 audit-log query and the §27.8
-	// dashboards can slice on origin. spec: §27.6 line 203. F-27.6.8.
+	// dashboards can slice on origin. spec: §27.6. F-27.6.8.
 	Origin string `json:"origin,omitempty"`
 
 	// Timeouts echoes the §14 per-session timeout overrides. Omitted when
-	// the client supplied none. spec: §14 line 154. F-14.1.14.
+	// the client supplied none. spec: §14. F-14.1.14.
 	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
 
 	// CredentialPolicy echoes the §14 per-session credentialPolicy
@@ -2313,21 +2301,19 @@ type SessionResponse struct {
 	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
 
 	// DelegationLease echoes the §14 client-requested delegation lease
-	// bounds. Omitted when the client supplied none. spec: §14 lines
-	// 75-79. F-14.1.14.
+	// bounds. Omitted when the client supplied none. spec: §14. F-14.1.14.
 	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
 
 	// RuntimeOptions echoes the §14 per-runtime options blob the session
-	// was created with. Omitted when the client supplied none. spec: §14
-	// line 155. F-14.1.14.
+	// was created with. Omitted when the client supplied none. spec: §14. F-14.1.14.
 	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
 
-	// SetupOutput is the §7.5 line 475 captured per-command output the
-	// adapter returned at setup time, plus any §7.5 line 488 synthetic
+	// SetupOutput is the §7.5 captured per-command output the
+	// adapter returned at setup time, plus any §7.5 synthetic
 	// rejection-reason entries the gateway recorded when it rejected a
 	// command at admission. Omitted when no setup commands ran and the
 	// gateway never rejected one. F-7.5.4 / F-7.5.11.
-	// spec: §7.5 lines 475, 488.
+	// spec: §7.5.
 	SetupOutput []SetupOutputEntry `json:"setupOutput,omitempty"`
 
 	// TaskRecord is the §8.8 TaskRecord envelope projected from the
@@ -2342,7 +2328,7 @@ type SessionResponse struct {
 }
 
 // SetupOutputEntry is one §7.5 setup-command record on the §15.1 session
-// envelope. spec: §7.5 lines 475, 488 — F-7.5.4 / F-7.5.11.
+// envelope. spec: §7.5 — F-7.5.4 / F-7.5.11.
 type SetupOutputEntry struct {
 	Cmd             string `json:"cmd"`
 	ExitCode        int32  `json:"exitCode"`
@@ -2379,24 +2365,24 @@ type SessionIsolationLevel struct {
 	PodReuse             bool   `json:"podReuse"`
 	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
 	ResidualStateWarning bool   `json:"residualStateWarning"`
-	// ConversationContinuity is the §7.1 line 74 contract field:
+	// ConversationContinuity is the §7.1 contract field:
 	// "platform" for session mode (the platform binds the session to a pod
 	// and preserves conversation context across messages for the session's
 	// lifetime) or "none" for service mode (the gateway routes each message
 	// to any ready replica and keeps no conversation context between
 	// messages, so clients of multi_turn runtimes re-inject context into
 	// each message's input). spec: §5.2 (service-mode session contract),
-	// §7.1 line 74.
+	// §7.1.
 	ConversationContinuity string `json:"conversationContinuity"`
 }
 
-// conversationContinuityFor maps a §5.2 execution mode to its §7.1 line 74
+// conversationContinuityFor maps a §5.2 execution mode to its §7.1
 // conversationContinuity contract value: "none" for service mode (no
 // cross-message continuity, each message routes to any ready replica) and
 // "platform" for session mode (the session is pinned to a pod that
 // preserves context for its lifetime). An empty mode resolves to the
 // session-mode default, mirroring the executionMode fallbacks elsewhere so
-// the field never understates continuity. spec: §5.2, §7.1 line 74.
+// the field never understates continuity. spec: §5.2, §7.1.
 func conversationContinuityFor(mode string) string {
 	if mode == string(runtimestore.ExecutionModeService) {
 		return continuityNone
@@ -2404,13 +2390,13 @@ func conversationContinuityFor(mode string) string {
 	return continuityPlatform
 }
 
-// persistedContinuity returns the §7.1 line 74 conversationContinuity for a
+// persistedContinuity returns the §7.1 conversationContinuity for a
 // read off the persisted row. The stored value (the S25a
 // conversation_continuity column) is authoritative when non-empty, so a
 // GET / List after a coordinator handoff returns the exact value the create
 // response carried. An empty column (a pre-migration row, or a row created
 // before the gateway resolved a pool) falls back to the mode-derived value
-// so the field never understates continuity. spec: §7.1 line 74.
+// so the field never understates continuity. spec: §7.1.
 func persistedContinuity(stored, mode string) string {
 	if stored != "" {
 		return stored
@@ -2419,10 +2405,10 @@ func persistedContinuity(stored, mode string) string {
 }
 
 const (
-	// continuityPlatform is the §7.1 line 74 conversationContinuity value
+	// continuityPlatform is the §7.1 conversationContinuity value
 	// for session mode.
 	continuityPlatform = "platform"
-	// continuityNone is the §7.1 line 74 conversationContinuity value for
+	// continuityNone is the §7.1 conversationContinuity value for
 	// service mode.
 	continuityNone = "none"
 )
@@ -2534,7 +2520,7 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
 	}
 	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
-	// spec: §10.1 line 131 / §5.2 — surface the per-pool
+	// spec: §10.1 / §5.2 — surface the per-pool
 	// checkpointGrantWindow override so the checkpoint driver's per-pool
 	// lookup reads the gateway-enforced value; nil leaves the driver on the
 	// deployment-wide default.
@@ -2572,7 +2558,7 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 }
 
 // effectiveRequestedProfile is the §5.3 profile to resolve a session's
-// pool against. spec: §7.1 line 18 / line 75 — a client-pinned pool
+// pool against. spec: §7.1 — a client-pinned pool
 // overrides the default pool selection and the resolved level is
 // populated from the assigned pool's configuration, so when the client
 // pins a pool and omits isolationProfile the pool's own profile governs.
@@ -2592,7 +2578,7 @@ func effectiveRequestedProfile(clientRequested, defaulted isolation.Profile, pin
 }
 
 // persistedRowProfile is the §5.3 profile to persist on the session row.
-// spec: §7.1 line 75 — the row.IsolationProfile is the source of truth the
+// spec: §7.1 — the row.IsolationProfile is the source of truth the
 // same-call and later claim re-resolve the pool against, so it must reflect
 // the assigned pool's profile. The resolved level carries the pool's
 // profile when a pool was resolved (including a pinned pool whose profile
@@ -2608,7 +2594,7 @@ func persistedRowProfile(level SessionIsolationLevel, defaulted isolation.Profil
 }
 
 // resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
-// session against its assigned pool. spec: §7.1 line 75 — the field is
+// session against its assigned pool. spec: §7.1 — the field is
 // populated from the assigned pool's configuration at session creation
 // time. When a pool resolver is wired, it resolves the pool from the
 // runtime and §5.3 profile and derives the fields from the pool's §5.2
@@ -2642,14 +2628,14 @@ func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
 		PodReuse:             false,
 		ScrubPolicy:          "",
 		ResidualStateWarning: false,
-		// spec: §7.1 line 74 — a session-mode pod binds the session to one
+		// spec: §7.1 — a session-mode pod binds the session to one
 		// pod for its lifetime and preserves conversation context across
 		// messages.
 		ConversationContinuity: continuityPlatform,
 	}
 }
 
-// persistedIsolationLevel returns the §7.1 line 75 sessionIsolationLevel
+// persistedIsolationLevel returns the §7.1 sessionIsolationLevel
 // derived from the persisted row. ExecutionMode + ScrubPolicy are
 // resolved against the assigned pool at create time and frozen for the
 // session lifetime; reading them off the row makes GET / List return
@@ -2666,7 +2652,7 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 	level := SessionIsolationLevel{
 		ExecutionMode:    mode,
 		IsolationProfile: string(row.IsolationProfile),
-		// spec: §7.1 line 74 — derive conversationContinuity from the frozen
+		// spec: §7.1 — derive conversationContinuity from the frozen
 		// execution mode so a GET / List after a coordinator handoff returns
 		// "none" for a service-mode row and "platform" otherwise, matching
 		// the create response. The stored ConversationContinuity column
@@ -2689,7 +2675,7 @@ func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
 }
 
 // isolationLevelForPool maps a resolved §5.2 pool to the §7.1
-// sessionIsolationLevel fields. spec: §5.2 / §7.1 lines 69-73 — a
+// sessionIsolationLevel fields. spec: §5.2 / §7.1 — a
 // service-mode pool and a session-mode pool that reuses a pod
 // (recycle.enabled or maxConcurrentSessions > 1) report podReuse and the
 // residual-state warning; the one-session-per-pod default does neither.
@@ -2705,7 +2691,7 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 	level := SessionIsolationLevel{
 		ExecutionMode:    mode,
 		IsolationProfile: profile,
-		// spec: §7.1 line 74 — a service-mode pool provides no cross-message
+		// spec: §7.1 — a service-mode pool provides no cross-message
 		// continuity (each message routes to any ready replica); every other
 		// mode binds the session to one pod that preserves context.
 		ConversationContinuity: conversationContinuityFor(mode),
@@ -2719,7 +2705,7 @@ func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profi
 	return level
 }
 
-// scrubPolicyForPool returns the §7.1 line 72 scrubPolicy string for a
+// scrubPolicyForPool returns the §7.1 scrubPolicy string for a
 // reuse pool. spec: §5.2 — a service-mode pod serves successive requests
 // with no scrub (`none`); a session-mode pod that recycles a pod across
 // sessions scrubs best-effort, with the cross-tenant microvm variants
@@ -2755,7 +2741,7 @@ func scrubPolicyForPool(match podsession.PoolMatch) string {
 
 // writeWorkspacePlanError translates a workspaceplan.ValidationError
 // into the §15.1 `400 WORKSPACE_PLAN_INVALID` envelope. The one
-// exception is an unsupported schemaVersion: per §14.1 line 326 the
+// exception is an unsupported schemaVersion: per §14.1 the
 // gateway is a live consumer that MUST reject a plan whose schemaVersion
 // it does not understand with `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`,
 // carrying `details.knownVersion` / `details.encounteredVersion` so a
@@ -2771,7 +2757,7 @@ func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
 		if ve.Field != "" {
 			details["field"] = ve.Field
 		}
-		// spec: §14.1 line 326 — `details.knownVersion` /
+		// spec: §14.1 — `details.knownVersion` /
 		// `details.encounteredVersion` are mandatory on this envelope.
 		if ve.KnownVersion != nil {
 			details["knownVersion"] = *ve.KnownVersion
@@ -2799,7 +2785,7 @@ func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
 				"message":     se.Message,
 			})
 		}
-		// spec: §15.1 line 979. F-14.1.19. The multi-violation report
+		// spec: §15.1. F-14.1.19. The multi-violation report
 		// rides under details.fields (plural) per the WORKSPACE_PLAN_INVALID
 		// error-catalog row; details.field (singular) carries the offending
 		// plan path of the first violation.
@@ -2844,7 +2830,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // and ?runtime= filters in their basic form.
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	// spec: §15.1 line 598 — a platform-admin may scope the listing to a
+	// spec: §15.1 — a platform-admin may scope the listing to a
 	// specific tenant via `?tenant=<id>`. A non-admin's `?tenant=` is
 	// ignored: their listing stays bound to their own tenant (and the
 	// Postgres RLS context enforces that regardless). F-15.1.15.
@@ -2862,14 +2848,14 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		FailureClass: session.FailureClass(q.Get("failureClass")),
 		Labels:       parseLabelFilter(q["label"]),
 	}
-	// spec: §15.1 lines 652, 661 — derive_failure audit rows are included
+	// spec: §15.1 — derive_failure audit rows are included
 	// by default; `?includeDeriveFailures=false` excludes them. Any other
 	// value (absent, "true") preserves the default audit visibility.
 	// F-15.1.14.
 	if q.Get("includeDeriveFailures") == "false" {
 		filter.ExcludeDeriveFailures = true
 	}
-	// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated list
+	// spec: §15.1 — the canonical cursor-paginated list
 	// envelope. `?cursor`/`?limit`/`?sort` are parsed and validated here;
 	// the default sort is created_at:desc (line 1236) and the supported
 	// fields are created_at and updated_at. F-15.1.6.
@@ -2901,7 +2887,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(env)
 }
 
-// sessionListSortFields / sessionListDefaultSort pin the §15.1 line 1236
+// sessionListSortFields / sessionListDefaultSort pin the §15.1
 // sort contract for GET /v1/sessions: created_at (default) and
 // updated_at, descending by default.
 var (
@@ -2912,7 +2898,7 @@ var (
 // parseLabelFilter turns the repeatable `?label=key=value` query values
 // into the AND-containment map the store List honours. A value with no
 // `=` is treated as a key match against an empty value; an empty key is
-// skipped. spec: §15.1 line 598 — "filterable by ... labels". F-15.1.15.
+// skipped. spec: §15.1 — "filterable by ... labels". F-15.1.15.
 func parseLabelFilter(raw []string) map[string]string {
 	if len(raw) == 0 {
 		return nil
@@ -2961,9 +2947,9 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §7.2 line 214 (a) — DELETE during the internal `resuming`
+	// spec: §7.2 — DELETE during the internal `resuming`
 	// transient is the canonical resuming → cancelled snapshot-close
-	// edge (§7.2 line 197). Bump coordination_generation in the same
+	// edge (§7.2). Bump coordination_generation in the same
 	// logical write so any stale coordinator's subsequent RPC fails
 	// the §4.2 CoordinatorFence check. F-7.1.14.
 	if fromState == session.StateResuming {
@@ -3007,13 +2993,13 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			return
 		}
 		if session.IsTerminal(updated.State) {
-			// spec: §7.2 line 214 (a) — when the terminal write
+			// spec: §7.2 — when the terminal write
 			// collapses an in-flight resume (resuming → cancelled /
 			// completed / failed), bump coordination_generation in the
 			// same logical write so any stale coordinator's subsequent
 			// RPC fails the CoordinatorFence check. The pre-attach
 			// counterparts (resume_pending → cancelled / completed,
-			// §7.2 lines 219-225) intentionally do NOT bump because no
+			// §7.2) intentionally do NOT bump because no
 			// pod is attached and no CoordinatorFence round-trip is
 			// pending. F-7.1.14.
 			if fromState == session.StateResuming {
@@ -3021,7 +3007,7 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			}
 			s.recordSessionCompleted(r.Context(), fromState, updated)
 		} else {
-			// spec: §7.2 line 137 — surface a non-terminal transition
+			// spec: §7.2 — surface a non-terminal transition
 			// (e.g. interrupt → suspended) on the SSE stream. Terminal
 			// transitions emit status_change from recordSessionCompleted
 			// so every terminal caller is covered uniformly.
@@ -3074,7 +3060,7 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // pod binder) finalizes by the plain created → finalizing → ready
 // transition with no pod work.
 //
-// spec: §7.1 steps 11-13; §7.4 lines 434, 450, 459, 461; §15.1 (finalize
+// spec: §7.1 steps 11-13; §7.4; §15.1 (finalize
 // precondition); §4.9 (finalize lease assignment); §4.3 (proposal).
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
@@ -3095,7 +3081,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		s.writePreconditionError(w, err)
 		return
 	}
-	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 lines 95-114 — the
+	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 — the
 	// §14 WorkspacePlan referencing this session's staged uploadArchive
 	// blob is bound here in the decomposed create → upload → finalize
 	// flow, because the create-time plan is immutable and cannot name an
@@ -3211,20 +3197,20 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// §7.4 line 463: close the upload channel — abort any in-flight
+	// §7.4: close the upload channel — abort any in-flight
 	// /upload stream for this session so it surfaces
 	// UPLOAD_CHANNEL_CLOSED and its staged blob is rolled back. A
 	// late /upload register that races finalize gets an
 	// already-closed abort signal on the next Read. F-7.4.16.
 	s.uploadAborts.closeSession(updated.ID)
-	// §11.1 line 11: the upload window has closed, so drop the
+	// §11.1: the upload window has closed, so drop the
 	// per-session cumulative upload-byte total. In-flight concurrency
 	// slots self-release; only the byte total is freed here. F-11.1.6.
 	s.uploadLimits.closeSession(updated.ID)
-	// spec: §7.2 line 137 — surface the finalizing → ready transition that
+	// spec: §7.2 — surface the finalizing → ready transition that
 	// closed the §4.3 preparation barrier.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-	// spec: §14 lines 100/334/338 — surface any consumer-advisory parse
+	// spec: §14 — surface any consumer-advisory parse
 	// warnings the finalize-bound plan raised on the same per-session SSE
 	// bus the create path uses. F-24.17.4 / F-26.2.4.
 	if hasPlan {
@@ -3236,7 +3222,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// upload-token consumption event to the session lifecycle. Detail
 	// carries the persisted digest so SOC analysts can correlate the
 	// audit row with the rejected /upload calls that follow it.
-	// spec: §16.6 line 339; §7.1 line 60 (single-use); §11.7. F-7.4.17.
+	// spec: §16.6; §7.1; §11.7. F-7.4.17.
 	if s.lifecycleAudit != nil {
 		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
 			EventType:  auditSessionWorkspaceFinalized,
@@ -3344,8 +3330,7 @@ func (s *Server) writePreconditionError(w http.ResponseWriter, err error) {
 }
 
 // toResponse converts a Session row into the §15.1 wire envelope.
-// spec: §4.2 line 156 (cwd, pod_assignment, recovery_generation,
-// schema_version).
+// spec: §4.2.
 func toResponse(row sessionstore.Session) SessionResponse {
 	schemaVersion := row.SchemaVersion
 	if schemaVersion == 0 {
@@ -3365,7 +3350,7 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		RecoveryGeneration: row.RecoveryGeneration,
 		SchemaVersion:      schemaVersion,
 		RetryCount:         row.RetryCount,
-		// spec: §7.1 line 75 — surface the isolation level on every read.
+		// spec: §7.1 — surface the isolation level on every read.
 		// The execution-mode + scrub-policy halves are persisted on the
 		// row at create time (migration 0084) so a client that lost the
 		// create response, or a GET issued against a coordinator-handed-
@@ -3382,29 +3367,29 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	if len(row.WorkspacePlan) > 0 {
 		out.WorkspacePlan = row.WorkspacePlan
 	}
-	// spec: §4.2 line 158 — only surface the policy enforcement
+	// spec: §4.2 — only surface the policy enforcement
 	// state when the gateway has written something other than the
 	// migration default `{}`. The omitempty json tag suppresses the
 	// payload when nil; an explicit `{}` is preserved as-is.
 	if len(row.PolicyEnforcementState) > 0 {
 		out.PolicyEnforcementState = row.PolicyEnforcementState
 	}
-	// spec: §4.2 line 159 — emit the resume window only when set.
+	// spec: §4.2 — emit the resume window only when set.
 	if !row.ResumeEligibleUntil.IsZero() {
 		out.ResumeEligibleUntil = row.ResumeEligibleUntil.UTC().Format(time.RFC3339Nano)
 	}
-	// spec: §7.1 line 6 — echo the client metadata so a client that
+	// spec: §7.1 — echo the client metadata so a client that
 	// lost the create response can recover its own annotations.
 	// F-7.3.20.
 	if len(row.Metadata) > 0 {
 		out.Metadata = cloneMetadata(row.Metadata)
 	}
-	// spec: §14 line 311 / §15.1 line 598 — echo the client labels so a
+	// spec: §14 / §15.1 — echo the client labels so a
 	// caller can confirm the filterable selector set on the row. F-15.1.15.
 	if len(row.Labels) > 0 {
 		out.Labels = cloneMetadata(row.Labels)
 	}
-	// spec: §7.3 lines 377-393 — echo the effective retry policy so a
+	// spec: §7.3 — echo the effective retry policy so a
 	// client can confirm what was clamped. F-7.3.1.
 	if row.RetryPolicy != nil {
 		out.RetryPolicy = cloneRetryPolicy(row.RetryPolicy)
@@ -3418,7 +3403,7 @@ func toResponse(row sessionstore.Session) SessionResponse {
 		out.Env = cloneMetadata(row.Env)
 	}
 	out.Pool = row.Pool
-	// spec: §27.6 line 203 — surface the origin=playground label on every
+	// spec: §27.6 — surface the origin=playground label on every
 	// read so §25.9 audit queries and §27.8 dashboards can slice on it.
 	// F-27.6.8.
 	out.Origin = row.Origin
@@ -3436,7 +3421,7 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	if len(row.RuntimeOptions) > 0 {
 		out.RuntimeOptions = append(json.RawMessage(nil), row.RuntimeOptions...)
 	}
-	// spec: §7.5 lines 475, 488 — echo the captured / rejected setup
+	// spec: §7.5 — echo the captured / rejected setup
 	// outputs. F-7.5.4 / F-7.5.11.
 	if len(row.SetupOutput) > 0 {
 		out.SetupOutput = make([]SetupOutputEntry, 0, len(row.SetupOutput))
@@ -3456,7 +3441,7 @@ func toResponse(row sessionstore.Session) SessionResponse {
 	return out
 }
 
-// cloneMetadata returns a defensive copy of the §7.1 line 6 metadata
+// cloneMetadata returns a defensive copy of the §7.1 metadata
 // payload so mutations in the request or row never leak across the
 // gateway/store boundary. A nil input maps to nil so the wire envelope
 // honours `omitempty`. F-7.3.20.

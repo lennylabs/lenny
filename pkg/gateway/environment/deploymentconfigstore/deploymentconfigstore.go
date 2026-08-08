@@ -18,7 +18,7 @@
 // This is platform-operational state with a single row; it is not
 // tenant-isolated. The per-tenant floor-clamp audit rows the reconciler
 // fans out land in the per-tenant audit chain, not here.
-// spec: §16.7 lines 672, 676, 677, 682; §17.2 line 86.
+// spec: §16.7; §17.2.
 package deploymentconfigstore
 
 import (

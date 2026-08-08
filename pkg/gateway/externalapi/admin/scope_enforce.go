@@ -57,7 +57,7 @@ func (g *scopeGate) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if !declared {
 		// The matched route declares no route-level scope (or no
 		// template matched); the role gate on the wrapped handler
-		// decides. spec: §25.1 line 94.
+		// decides. spec: §25.1.
 		g.mux.ServeHTTP(w, req)
 		return
 	}
@@ -85,24 +85,22 @@ func (g *scopeGate) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // scope, so the wrapped handler runs and the existing role gate
 // decides. A route the document declares no scope for (or that resolves
 // to no template) likewise defers to the role ceiling. The two
-// behaviours match the §25.1 line 90 absent-claim semantics.
+// behaviours match the §25.1 absent-claim semantics.
 //
 // The check uses the request method and path against the same
 // http.ServeMux pattern engine the live admin mux routes on (via
 // openapi.RouteScopes), so the resolved scope is the one the matched
 // route declares.
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920;
-// SCOPE_FORBIDDEN, line 1030), §25.1 (middleware checks scopes before
-// routing, line 94).
+// spec: §15.1, §25.1.
 func (r *Router) enforceScopes(mux *http.ServeMux) http.Handler {
 	return &scopeGate{mux: mux, routeScope: sharedRouteScopes()}
 }
 
-// writeScopeForbidden emits the §15.1 line 1030 SCOPE_FORBIDDEN envelope
+// writeScopeForbidden emits the §15.1 SCOPE_FORBIDDEN envelope
 // carrying details.requiredScope and details.activeScope so an agent can
 // see exactly which scope its token lacks and which scopes it does
-// carry. spec: §15.1 line 1030.
+// carry. spec: §15.1.
 func writeScopeForbidden(w http.ResponseWriter, requiredScope, activeScope string) {
 	writeError(w, http.StatusForbidden, "SCOPE_FORBIDDEN",
 		"caller's scope claim does not grant the scope required by this endpoint",

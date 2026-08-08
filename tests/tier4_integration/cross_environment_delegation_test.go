@@ -246,7 +246,7 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 	// CREDENTIAL_PROVIDER_MISMATCH before any warm pod is claimed and
 	// before a child row is committed.
 	//
-	// The §8.3 line 470 "before any pod allocation" invariant is observed
+	// The §8.3 invariant is observed
 	// here through the session store: delegation.Service.Delegate runs the
 	// admission gates (this credential-compatibility gate included) and
 	// commits the child row via insertChildSession, but it never claims a
@@ -312,7 +312,7 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 		if child.RuntimeRef != "shared-tool" {
 			t.Errorf("child runtime = %q, want shared-tool", child.RuntimeRef)
 		}
-		// §8.3 lines 472/488: the inherit hop threads the origin credential
+		// §8.3: the inherit hop threads the origin credential
 		// pool onto the child. The parent carries no origin id, so the
 		// child's origin is the parent itself (the env team-a origin pool).
 		if child.CredentialOriginSessionID != "sess_parent" {
@@ -377,7 +377,7 @@ func TestCrossEnvironmentDelegationCredentialCompatibility(t *testing.T) {
 	})
 
 	// Admit assignment: an admitted inherit child draws its finalize-time
-	// credential from the origin pool (spec/08 §8.3 line 470). Driven through the
+	// credential from the origin pool (spec/08 §8.3). Driven through the
 	// real sessionserver finalize barrier, its pod binder, and the real
 	// credential-pool minting path over an envtest-backed warm pool, the
 	// child's assigned credential provider is constrained to the
@@ -537,9 +537,7 @@ func (a *poolRecordingAssigner) assignedPools() []string {
 // wider eligible set. Before the origin-pool constraint applies, the child
 // would additionally draw openai-prod (its own openai_direct provider).
 //
-// spec: §8.3 line 470 (assign a credential from the parent's pool whose
-// provider appears in the intersection), line 440 (inherit draws from the
-// origin pool).
+// spec: §8.3.
 func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 	envtest.SkipUnlessAvailable(t)
 	ctx := context.Background()
@@ -639,7 +637,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 		t.Fatalf("create inherit child: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	// Thread the origin credential pool onto the child, as the §8.3 inherit
-	// hop (spec/08 §8.3 lines 472, 488) does when the delegation commits the row.
+	// hop (spec/08 §8.3) does when the delegation commits the row.
 	if _, err := store.Update(ctx, "acme", "sess-inherit-child", func(s *sessionstore.Session) error {
 		s.CredentialOriginSessionID = "sess-origin"
 		return nil

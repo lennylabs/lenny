@@ -13,7 +13,7 @@ import (
 
 // TestProbeConnectivity runs the named probes and projects their results
 // onto the §25.6 connectivity dependency list, ordered by name with the
-// failure detail preserved. spec: §25.6 line 2906. F-25.6.1.
+// failure detail preserved. spec: §25.6. F-25.6.1.
 func TestProbeConnectivity_spec_25_6_2906(t *testing.T) {
 	c := NewProbeConnectivity(map[string]probe.Func{
 		"redis":    func(context.Context) error { return errors.New("dial timeout") },

@@ -55,7 +55,7 @@ func (f *fakeStore) DeleteByTenant(ctx context.Context, tenantID string) error {
 	return f.InMemory.DeleteByTenant(ctx, tenantID)
 }
 
-// spec: §12.8 lines 743-758 — the startup/per-job preflight passes when
+// spec: §12.8 — the startup/per-job preflight passes when
 // the backend honors both erasure primitives.
 func TestValidateMemoryStoreErasure_InMemoryPasses(t *testing.T) {
 	if err := memorystore.ValidateMemoryStoreErasure(context.Background(), memorystore.NewInMemory(0, nil)); err != nil {
@@ -63,7 +63,7 @@ func TestValidateMemoryStoreErasure_InMemoryPasses(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 746 — a backend whose DeleteByUser satisfies the
+// spec: §12.8 — a backend whose DeleteByUser satisfies the
 // signature but silently no-ops must be caught (the seeded row survives).
 func TestValidateMemoryStoreErasure_DetectsNoOpDeleteByUser(t *testing.T) {
 	f := newFakeStore()
@@ -77,7 +77,7 @@ func TestValidateMemoryStoreErasure_DetectsNoOpDeleteByUser(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 746 — "The preflight also covers DeleteByTenant using
+// spec: §12.8 — "The preflight also covers DeleteByTenant using
 // the same seeded row."
 func TestValidateMemoryStoreErasure_DetectsNoOpDeleteByTenant(t *testing.T) {
 	f := newFakeStore()
@@ -134,9 +134,9 @@ func TestValidateMemoryStoreErasure_NilStore(t *testing.T) {
 // the reserved tenant and the gateway startup wiring both depend on them.
 func TestPreflightScopeConstants(t *testing.T) {
 	if memorystore.PreflightTenantID != "__preflight__" {
-		t.Errorf("PreflightTenantID = %q, want __preflight__ (§12.8 line 746)", memorystore.PreflightTenantID)
+		t.Errorf("PreflightTenantID = %q, want __preflight__ (§12.8)", memorystore.PreflightTenantID)
 	}
 	if memorystore.PreflightUserID != "__preflight_user__" {
-		t.Errorf("PreflightUserID = %q, want __preflight_user__ (§12.8 line 746)", memorystore.PreflightUserID)
+		t.Errorf("PreflightUserID = %q, want __preflight_user__ (§12.8)", memorystore.PreflightUserID)
 	}
 }

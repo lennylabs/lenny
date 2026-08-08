@@ -21,14 +21,13 @@ type CheckpointTrigger interface {
 // CheckpointFnFor adapts a CheckpointTrigger (typically
 // *checkpointer.Checkpointer) to the CheckpointFn signature the
 // Hook expects. The per-session drain checkpoint is stamped
-// checkpoint.TriggerEviction so the §10.1 line 172 finalisation and the
+// checkpoint.TriggerEviction so the §10.1 finalisation and the
 // §16.1 `lenny_checkpoint_partial_total{trigger="eviction"}` domain both
 // see the eviction trigger on the post-barrier loop, symmetric with the
 // barrier-window driver. The budget is wrapped around the inner call via
 // context.WithTimeout so a stuck adapter does not exceed the cap.
 //
-// spec: §10.1 line 172 (the preStop drain driver stamps the eviction
-// trigger on the Stage 2 tier-cap finalisations).
+// spec: §10.1.
 func CheckpointFnFor(trigger CheckpointTrigger) CheckpointFn {
 	return func(ctx context.Context, tenantID, sessionID string, budget time.Duration) error {
 		if trigger == nil {

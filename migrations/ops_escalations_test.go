@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.4 lines 2433-2455. Migration 0122 creates the Tier 1
+// spec: §25.4. Migration 0122 creates the Tier 1
 // (Postgres) ops_escalations durable store with the two §25.4 list
 // indexes. created_at is deliberately NOT defaulted so a buffer flush
 // preserves the authoring timestamp. Platform-scoped (no RLS, no tenant

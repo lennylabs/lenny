@@ -17,7 +17,7 @@ import (
 )
 
 // TestPodEndpointListerAgainstAPIServer_spec_5_2_500 exercises the
-// production §5.2 line 500 stateless EndpointLister against a real
+// production §5.2 stateless EndpointLister against a real
 // kube-apiserver: it must surface a pool's running, ready pods (with
 // their IPs) and exclude foreign-pool, not-ready, IP-less, and
 // terminating pods. The pod Ready condition is the readiness signal the
@@ -112,7 +112,7 @@ func TestPodEndpointListerAgainstAPIServer_spec_5_2_500(t *testing.T) {
 }
 
 // TestPodTenantLabelerAgainstAPIServer_spec_5_2_500 exercises the
-// production §5.2 line 500 tenant-pin labeler: stamping
+// production §5.2 tenant-pin labeler: stamping
 // lenny.dev/tenant-id on the pod at a given IP, and idempotency on a
 // re-pin.
 func TestPodTenantLabelerAgainstAPIServer_spec_5_2_500(t *testing.T) {

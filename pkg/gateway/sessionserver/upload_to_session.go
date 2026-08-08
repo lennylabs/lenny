@@ -18,11 +18,10 @@ import (
 )
 
 // UploadToSessionRequest is the body of POST /v1/sessions/{id}/upload-to-session,
-// the §7.4 line 433 mid-session upload surface (`upload_to_session`). It
+// the §7.4 mid-session upload surface (`upload_to_session`). It
 // carries the files to overlay onto the running session's workspace. The
 // request uses the caller's normal session-scoped bearer credential; per
-// §7.4 no uploadToken is reissued for the mid-session path. spec: §7.4 line
-// 433 — F-7.4.6.
+// §7.4 no uploadToken is reissued for the mid-session path. spec: §7.4 — F-7.4.6.
 type UploadToSessionRequest struct {
 	// Files are the files to write into /workspace/current. Each entry is
 	// overlaid onto the existing workspace, preserving the agent's other
@@ -59,7 +58,7 @@ type UploadToSessionResponse struct {
 const uploadToSessionMaxTotalBytes = UploadMaxBodyBytes
 
 // handleUploadToSession implements POST /v1/sessions/{id}/upload-to-session,
-// the §7.4 line 433 mid-session upload operation. It admits an upload into
+// the §7.4 mid-session upload operation. It admits an upload into
 // an already-running session only when the bound runtime declares
 // capabilities.midSessionUpload and the deployer policy
 // (MidSessionUploadEnabled) permits it, then pushes the files to the
@@ -67,7 +66,7 @@ const uploadToSessionMaxTotalBytes = UploadMaxBodyBytes
 // the bytes into /workspace/staging and FinalizeWorkspace(midSession)
 // overlays them onto /workspace/current and signals the runtime once
 // promotion completes, so the agent never sees partially-written files.
-// spec: §7.4 line 433 — F-7.4.6.
+// spec: §7.4 — F-7.4.6.
 func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenantID := s.resolveTenant(r)
@@ -83,7 +82,7 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §7.4 line 433: the precondition admits an upload from `running` only
+	// §7.4: the precondition admits an upload from `running` only
 	// when capabilities.midSessionUpload is set AND the deployer policy
 	// enables the mid-session surface. The capability is resolved from the
 	// bound runtime; an absent runtime registry or a runtime that does not
@@ -104,7 +103,7 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §7.4 line 433: the upload is pushed to the session's live pod over the
+	// §7.4: the upload is pushed to the session's live pod over the
 	// adapter binding the coordinating replica holds. A session with no live
 	// binding on this replica (single-replica without a pod, or a coordinator
 	// handoff that has not re-bound) cannot receive the overlay; surface
@@ -154,7 +153,7 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 // AND the runtime declares capabilities.midSessionUpload. Any other case
 // (policy off, registry unwired, runtime missing or without the flag)
 // returns an empty map, so the precondition table admits only the
-// pre-running `created` state. spec: §7.4 line 433 — F-7.4.6.
+// pre-running `created` state. spec: §7.4 — F-7.4.6.
 func (s *Server) midSessionUploadCapabilities(ctx context.Context, runtimeRef string) map[session.Capability]bool {
 	caps := map[session.Capability]bool{}
 	if !s.midSessionUploadEnabled || s.runtimes == nil || runtimeRef == "" {
@@ -174,7 +173,7 @@ func (s *Server) midSessionUploadCapabilities(ctx context.Context, runtimeRef st
 // of uploadFile sources and the matching staged-content map keyed by a
 // per-file upload ref. It writes the error response and returns ok=false on
 // any validation failure (empty body, bad base64, traversal path, oversize).
-// spec: §7.4 line 433 / "Enforcement rules" — F-7.4.6.
+// spec: §7.4 / "Enforcement rules" — F-7.4.6.
 func (s *Server) parseUploadToSession(w http.ResponseWriter, r *http.Request) (*adapterv1.WorkspacePlan, map[string][]byte, bool) {
 	var req UploadToSessionRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, uploadToSessionMaxTotalBytes+1024)).Decode(&req); err != nil {
@@ -249,7 +248,7 @@ func validRelWorkspacePath(p string) bool {
 // emitMidSessionUploadAudit writes a §16.6 session.upload audit row for a
 // mid-session upload, mirroring the pre-start /upload audit so SOC tooling
 // sees one event class for both surfaces. Best-effort and non-blocking.
-// spec: §16.6 line 338; §11.7 — F-7.4.6 / F-7.4.17.
+// spec: §16.6; §11.7 — F-7.4.6 / F-7.4.17.
 func (s *Server) emitMidSessionUploadAudit(ctx context.Context, row sessionstore.Session, outcome, reason, detail string) {
 	if s.lifecycleAudit == nil {
 		return

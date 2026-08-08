@@ -13,7 +13,7 @@ import (
 // checkpointBufferMemoryBytes is the largest chunk the adapter holds on
 // the heap. A chunk_size_bytes above this threshold spills the one-chunk
 // retry buffer to a file under StagingDir so the agent container's memory
-// limit bounds the checkpoint path (§4.4 line 255 workspace budget).
+// limit bounds the checkpoint path (§4.4 workspace budget).
 const checkpointBufferMemoryBytes = 8 << 20 // 8 MiB
 
 // defaultCheckpointChunkSize is the chunk size the adapter buffers when

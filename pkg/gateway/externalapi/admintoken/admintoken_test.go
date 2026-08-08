@@ -16,7 +16,7 @@ import (
 )
 
 // fakeSecrets is an in-memory SecretStore. It records create/update
-// calls so a test can assert idempotence and the §17.6 line 470 data
+// calls so a test can assert idempotence and the §17.6 data
 // shape.
 type fakeSecrets struct {
 	mu        sync.Mutex
@@ -165,7 +165,7 @@ func newProvisioner(t *testing.T, secrets admintoken.SecretStore, rev admintoken
 	return p, signer, users
 }
 
-// spec: §17.6 lines 455-471 — the first run mints a token, writes the
+// spec: §17.6 — the first run mints a token, writes the
 // Secret with the bootstrap label + data fields, and creates the
 // platform-admin user. F-17.6.3.
 func TestProvisionFirstRunCreatesSecretAndUser_spec_17_6_455(t *testing.T) {
@@ -182,11 +182,11 @@ func TestProvisionFirstRunCreatesSecretAndUser_spec_17_6_455(t *testing.T) {
 	if res.Token == "" {
 		t.Fatal("first run should return the minted token")
 	}
-	// §17.6 line 467 label.
+	// §17.6 label.
 	if got := secrets.labels[key("lenny-system", "lenny-admin-token")][admintoken.ManagedByLabel]; got != admintoken.ManagedByValue {
 		t.Errorf("managed-by label = %q, want %q", got, admintoken.ManagedByValue)
 	}
-	// §17.6 line 470 data fields.
+	// §17.6 data fields.
 	data := secrets.store[key("lenny-system", "lenny-admin-token")]
 	if string(data[admintoken.TokenKey]) != res.Token {
 		t.Error("Secret token field does not match returned token")
@@ -220,7 +220,7 @@ func TestProvisionFirstRunCreatesSecretAndUser_spec_17_6_455(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 459 — a re-run preserves the existing token and does
+// spec: §17.6 — a re-run preserves the existing token and does
 // not regenerate it. F-17.6.3.
 func TestProvisionIsIdempotent_spec_17_6_459(t *testing.T) {
 	secrets := newFakeSecrets()
@@ -251,8 +251,7 @@ func TestProvisionIsIdempotent_spec_17_6_459(t *testing.T) {
 	_ = first
 }
 
-// spec: §13.3 (gateway-mediated admin-credential rotation ordering, lines
-// 599/601), §16.7 (token.exchanged admin_rotation, token.revoked
+// spec: §13.3, §16.7 (token.exchanged admin_rotation, token.revoked
 // rotation_replaced) — rotation mints a new token through the AUDITED
 // record path, patches the Secret naming the read-time current jti as the
 // predecessor, then durably revokes the prior token. F-17.6.3.
@@ -317,7 +316,7 @@ func TestRotateMintsAndRevokesPrevious_spec_13_3(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 599 — the whole rotation read-modify-write runs under
+// spec: §13.3 — the whole rotation read-modify-write runs under
 // the per-subject advisory lock, and the durable revoke of the superseded
 // token happens AFTER the Secret patch (persist-Secret-before-revoke). The
 // event order pins both invariants against the pre-fix code, which held no
@@ -358,7 +357,7 @@ func TestRotateOrderingUnderLock_spec_13_3_599(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 601 (revoke-before-overwrite) — when the live Secret's
+// spec: §13.3 — when the live Secret's
 // prev_jti already names an orphaned predecessor (a prior crash between
 // patch and revoke), the next Rotate durably revokes that predecessor
 // BEFORE overwriting the prev_jti slot, so it is never named nowhere. This
@@ -402,7 +401,7 @@ func TestRotateRevokesOrphanedPredecessorBeforeOverwrite_spec_13_3_601(t *testin
 	}
 }
 
-// spec: §13.3 line 601 — Rotate aborts BEFORE patching the Secret when the
+// spec: §13.3 — Rotate aborts BEFORE patching the Secret when the
 // revoke of the orphaned predecessor fails, so the prev_jti slot keeps
 // naming the still-unrevoked predecessor for the next attempt or the
 // sweep, and the Secret is not overwritten to lose the predecessor's name.
@@ -432,7 +431,7 @@ func TestRotateAbortsWhenOrphanRevokeFails_spec_13_3_601(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 599 — a Secret-patch failure after the audited mint
+// spec: §13.3 — a Secret-patch failure after the audited mint
 // leaves the old token live and NOT durably revoked (a clean retry rather
 // than a dead-token lockout): the durable revoke of the read-time current
 // token runs only after a successful patch.
@@ -488,7 +487,7 @@ func TestRotateWithoutExistingSecretCreates(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 587, §17.6 — the bootstrap Provision() first mint is
+// spec: §13.3, §17.6 — the bootstrap Provision() first mint is
 // NOT a token exchange: it records through the non-audited Record path and
 // emits no token.exchanged audit row (no exchange_type: admin_rotation).
 // This pins the corrected scoping: the audited record path is reserved for
@@ -513,7 +512,7 @@ func TestProvisionUsesNonAuditedRecordPath_spec_13_3_587(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 599 — a durable-revoke failure AFTER the Secret patch
+// spec: §13.3 — a durable-revoke failure AFTER the Secret patch
 // surfaces to the caller so the operator retries; the Secret already holds
 // the new token (the operator is not locked out) and the predecessor stays
 // named in prev_jti so the reclaimer sweep can finish the revoke. This pins

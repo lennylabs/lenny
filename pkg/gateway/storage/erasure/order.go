@@ -7,8 +7,7 @@ import (
 	"sort"
 )
 
-// canonicalRank assigns each §12.8 erasure store a position in the
-// dependency-ordered DeleteByUser sequence (spec lines 792-836). The
+// canonicalRank assigns each §12.8 erasure store a position in the dependency-ordered DeleteByUser sequence. The
 // rank pins the intended order so ValidateOrder can reject a wiring that
 // would erase a parent store before its foreign-key children. The values
 // are spaced so a store added between two existing ones can be ranked
@@ -16,7 +15,7 @@ import (
 // listed here is rejected, which forces a new store to be ranked rather
 // than silently slotted in at an arbitrary position.
 //
-// spec: §12.8 lines 792-836 (DeleteByUser dependency-ordered sequence).
+// spec: §12.8.
 var canonicalRank = map[string]int{
 	"leases":               10,  // step 1
 	"semantic_cache":       20,  // step 2
@@ -48,8 +47,7 @@ var canonicalRank = map[string]int{
 // the remaining session-keyed child stores carry the same
 // `... → sessions.id` reference.
 //
-// spec: §12.8 lines 807-808 ("Must precede SessionStore deletion to
-// satisfy the FK dependency").
+// spec: §12.8.
 var fkMustPrecede = [][2]string{
 	{"eval_results", "sessions"},
 	{"session_tree_archive", "sessions"},
@@ -73,7 +71,7 @@ var fkMustPrecede = [][2]string{
 // canonicalRank, (b) a store wired into more than one slot, and (c) a
 // foreign-key child appearing after its parent in the effective order.
 //
-// spec: §12.8 lines 792-836.
+// spec: §12.8.
 func ValidateOrder(cfg Config) error {
 	// Effective order: session-scoped first (they run before any
 	// user-scoped store), then user-scoped, each in config order.

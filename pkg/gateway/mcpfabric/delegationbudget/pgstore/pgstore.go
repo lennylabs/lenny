@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres-backed delegationbudget.Store: the
-// §11.2 line 29 durable checkpoint of the §8.2 delegation tree budget
+// §11.2 durable checkpoint of the §8.2 delegation tree budget
 // counters. It persists the tree-wide counters to the
-// delegation_tree_budget table so the §11.2 line 48 reconstruction can
+// delegation_tree_budget table so the §11.2 reconstruction can
 // restore them via the MAX rule on Redis recovery.
 //
 // The checkpoint Write touches only the counter columns and
@@ -11,9 +11,9 @@
 // cool_off_expiry columns on the same row (a separate Postgres-backed
 // BudgetSource owns those). checkpoint_at is stamped server-side with
 // clock_timestamp() so the reconstruction's staleness test compares
-// against the database clock per §8.6 line 733.
+// against the database clock per §8.6.
 //
-// spec: §11.2 lines 29, 44, 48; §12.4 lines 193, 218.
+// spec: §11.2; §12.4.
 package pgstore
 
 import (

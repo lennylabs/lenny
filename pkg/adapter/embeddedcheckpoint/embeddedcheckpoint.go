@@ -24,7 +24,7 @@
 // package exports stubs that return ErrNotSupported. The build-tag
 // split mirrors the existing peercred_linux/other split in pkg/adapter.
 //
-// spec: §4.4 lines 242, 244, 246, 250 — embedded-adapter SIGSTOP path,
+// spec: §4.4 — embedded-adapter SIGSTOP path,
 // 60s watchdog, SIGCONT confirmation via /proc, /healthz integration.
 package embeddedcheckpoint
 
@@ -41,7 +41,7 @@ import (
 // Linux because it depends on `/proc/{pid}/stat`; macOS, Windows, and
 // every other non-Linux target return this from Pause/Resume/Checkpoint.
 //
-// spec: §4.4 line 246 — "On non-Linux hosts where /proc/{pid}/stat is
+// spec: §4.4 — "On non-Linux hosts where /proc/{pid}/stat is
 // unavailable, the adapter skips polling".
 var ErrNotSupported = errors.New("embeddedcheckpoint: not supported on this platform")
 
@@ -52,7 +52,7 @@ var ErrNotSupported = errors.New("embeddedcheckpoint: not supported on this plat
 // `checkpointStuck` atomic flag so `/healthz` returns 503 and
 // Kubernetes restarts the pod.
 //
-// spec: §4.4 line 250 — "When `checkpointStuck` is set, the /healthz
+// spec: §4.4 — "When `checkpointStuck` is set, the /healthz
 // endpoint returns HTTP 503".
 var ErrCheckpointStuck = errors.New("embeddedcheckpoint: checkpoint stuck")
 
@@ -62,7 +62,7 @@ var ErrCheckpointStuck = errors.New("embeddedcheckpoint: checkpoint stuck")
 // (`os.Process.Signal(syscall.SIGCONT)`), marks the checkpoint failed,
 // and raises `checkpointStuck`.
 //
-// spec: §4.4 line 244 — "a 60-second watchdog timer starts when
+// spec: §4.4 — "a 60-second watchdog timer starts when
 // SIGSTOP is sent; if the checkpoint does not complete within that
 // window, SIGCONT is sent unconditionally".
 const DefaultWatchdogTimeout = 60 * time.Second
@@ -80,15 +80,15 @@ const DefaultPauseProbeInterval = 50 * time.Millisecond
 // so a kernel-scheduling delay does not stall the watchdog.
 const DefaultPauseProbeBudget = 1 * time.Second
 
-// SIGCONTConfirmAttempts is the §4.4 line 246 SIGCONT confirmation
+// SIGCONTConfirmAttempts is the §4.4 SIGCONT confirmation
 // retry budget. After sending SIGCONT the helper polls
 // `/proc/{pid}/stat` up to 5 times before declaring the resume failed.
 //
-// spec: §4.4 line 246 — "The adapter polls /proc/{pid}/stat up to 5
+// spec: §4.4 — "The adapter polls /proc/{pid}/stat up to 5
 // times with 100 ms intervals".
 const SIGCONTConfirmAttempts = 5
 
-// SIGCONTConfirmInterval is the §4.4 line 246 SIGCONT confirmation
+// SIGCONTConfirmInterval is the §4.4 SIGCONT confirmation
 // polling interval (100 ms between retries).
 const SIGCONTConfirmInterval = 100 * time.Millisecond
 
@@ -110,7 +110,7 @@ type CheckpointWork func(ctx context.Context) error
 // embedded-checkpoint package directly — the adapter owns the
 // `*atomic.Bool` and passes it in.
 //
-// spec: §4.4 line 250 — "The adapter maintains a shared atomic flag
+// spec: §4.4 — "The adapter maintains a shared atomic flag
 // (`checkpointStuck`)".
 type StuckFlag = atomic.Bool
 
@@ -214,8 +214,7 @@ func (h *Helper) now() time.Time {
 	return time.Now().UTC()
 }
 
-// LivenessHandler returns an HTTP handler that implements the §4.4
-// line 250 `/healthz` integration: it returns HTTP 503 with
+// LivenessHandler returns an HTTP handler that implements the §4.4 integration: it returns HTTP 503 with
 // `{"status":"unhealthy","reason":"checkpoint_stuck"}` when the shared
 // `Stuck` flag is set and HTTP 200 with
 // `{"status":"healthy"}` otherwise. The adapter wires this handler
@@ -226,7 +225,7 @@ func (h *Helper) now() time.Time {
 // writes a fixed-size response body — and stateless, so the same
 // handler can be mounted under multiple HTTP servers.
 //
-// spec: §4.4 line 250 — "When `checkpointStuck` is set, the /healthz
+// spec: §4.4 — "When `checkpointStuck` is set, the /healthz
 // endpoint returns HTTP 503 with `{"status": "unhealthy", "reason":
 // "checkpoint_stuck"}`".
 func LivenessHandler(stuck *StuckFlag) http.Handler {

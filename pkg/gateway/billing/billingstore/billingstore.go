@@ -55,8 +55,7 @@ const (
 
 	// EventPoolIsolationWarning is emitted when a pool registered or
 	// updated via the admin API would cause an isolation monotonicity
-	// violation for an active DelegationPolicy rule (§11.2.1; §8.3 line
-	// 350 proactive pool-registration enforcement).
+	// violation for an active DelegationPolicy rule (§11.2.1; §8.3 proactive pool-registration enforcement).
 	EventPoolIsolationWarning EventType = "pool.isolation_warning"
 
 	// EventDeriveIsolationDowngrade is emitted when a derive/replay call
@@ -198,15 +197,15 @@ type Event struct {
 	// empty for sessions not scoped to an environment. Populated on
 	// every billing event for sessions created in an environment context
 	// so downstream rollups can aggregate by environment without joining
-	// the session row. spec: §10.6 line 663, §10.6 line 674. F-10.6.9.
+	// the session row. spec: §10.6, §10.6. F-10.6.9.
 	EnvironmentID string
 
-	// Labels is the §14 line 106 session-label set denormalized from the
+	// Labels is the §14 session-label set denormalized from the
 	// originating session row so the §11.2.1 billing stream is filterable
 	// by session label in GET /v1/metering/events without re-joining the
 	// (eventually-erased) session. Nil when the session carried no labels;
 	// a billing_correction inherits the labels of the event it corrects so
-	// it appears under the same label filter. spec: §14 line 106. F-14.1.13.
+	// it appears under the same label filter. spec: §14. F-14.1.13.
 	Labels map[string]string
 
 	// CorrectsSequence references the original event a billing_correction
@@ -352,7 +351,7 @@ type Store interface {
 	// An empty labelFilter is identical to Since. The label predicate is
 	// applied inside the store query so the §15.1 cursor/hasMore
 	// pagination contract is preserved (a post-hoc filter on a page would
-	// break it). spec: §14 line 106; §15.1 lines 1228-1253. F-14.1.13.
+	// break it). spec: §14; §15.1. F-14.1.13.
 	SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]Event, error)
 
 	// SessionTotals returns the reconciled token + compute usage for one
@@ -378,7 +377,7 @@ type Store interface {
 	// environment with no billing events returns the zero SessionUsage
 	// and a nil error.
 	//
-	// spec: §15.1 line 840 (environment billing rollup); §10.6 line 663
+	// spec: §15.1; §10.6
 	// (environment-stamped billing events); §11.2.1 (correction
 	// semantics). F-15.1.3.
 	EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (SessionUsage, error)
@@ -403,7 +402,7 @@ type Store interface {
 	// level so the §12.1 compile-time contract holds for every backend.
 	// The user-scoped erasure runs through PseudonymizeUser.
 	//
-	// spec: §12.1 line 5.
+	// spec: §12.1.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
@@ -411,7 +410,7 @@ type Store interface {
 	// §11.2.1 immutability constraint does not apply to a tenant being
 	// torn down. Returns the count removed.
 	//
-	// spec: §12.1 line 5, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// DeleteOlderThan prunes every billing event for tenantID whose
@@ -423,7 +422,7 @@ type Store interface {
 	// performs the DELETE under the §11.7 append-only immutability
 	// bypass. Returns the count removed; idempotent on an empty range.
 	//
-	// spec: §11.2.1 line 151. F-11.2.15.
+	// spec: §11.2.1. F-11.2.15.
 	DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error)
 }
 
@@ -561,7 +560,7 @@ func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error)
 
 // DeleteOlderThan implements Store. It drops every event for tenantID
 // whose CreatedAt precedes cutoff, preserving the relative order of the
-// surviving events. spec: §11.2.1 line 151. F-11.2.15.
+// surviving events. spec: §11.2.1. F-11.2.15.
 func (m *Memory) DeleteOlderThan(_ context.Context, tenantID string, cutoff time.Time) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -619,8 +618,7 @@ func SumSessionUsage(events []Event, sessionID string) SessionUsage {
 // SumEnvironmentUsage reconciles §11.2.1 corrections across the supplied
 // ledger and sums the token + compute usage for every event stamped with
 // environmentID. An empty environmentID matches nothing (a session not
-// scoped to an environment carries no environment id). spec: §15.1 line
-// 840; §10.6 line 663; §11.2.1. F-15.1.3.
+// scoped to an environment carries no environment id). spec: §15.1; §10.6; §11.2.1. F-15.1.3.
 func SumEnvironmentUsage(events []Event, environmentID string) SessionUsage {
 	var u SessionUsage
 	if environmentID == "" {
@@ -668,7 +666,7 @@ func (m *Memory) SinceFiltered(_ context.Context, tenantID string, since uint64,
 		if e.SequenceNumber <= since {
 			continue
 		}
-		// spec: §14 line 106 — narrow to events whose labels contain every
+		// spec: §14 — narrow to events whose labels contain every
 		// requested pair. The cap is applied after the label filter so a
 		// filtered page carries up to limit matching events.
 		if !labelsContain(e.Labels, labelFilter) {
@@ -685,9 +683,8 @@ func (m *Memory) SinceFiltered(_ context.Context, tenantID string, since uint64,
 
 // labelsContain reports whether have contains every key=value pair in
 // want (AND-containment). An empty want matches every event. It mirrors
-// the §15.1 line 598 session-list label semantics so the metering stream
-// and the session list agree on what a label filter means. spec: §14
-// line 106. F-14.1.13.
+// the §15.1 session-list label semantics so the metering stream
+// and the session list agree on what a label filter means. spec: §14. F-14.1.13.
 func labelsContain(have, want map[string]string) bool {
 	for k, v := range want {
 		if hv, ok := have[k]; !ok || hv != v {

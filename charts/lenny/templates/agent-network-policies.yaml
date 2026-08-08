@@ -21,7 +21,7 @@ keyed on the lenny.dev/egress-profile label the WarmPoolController stamps.
 The restricted profile (the default) needs no supplemental policy because
 allow-pod-egress-base already grants its gateway + DNS egress.
 
-The supplemental allow-pod-egress-kube-dns policy is the §13.2 line 488
+The supplemental allow-pod-egress-kube-dns policy is the §13.2
 kube-system DNS fallback for pools that opt out of the dedicated CoreDNS
 instance (lenny.dev/dns-policy: cluster-default); it is rendered only when
 coredns.allowClusterDefaultOptOut is set.
@@ -179,7 +179,7 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
 spec:
-  # §13.2 line 431 — the provider-direct egress profile. Pods the
+  # §13.2 — the provider-direct egress profile. Pods the
   # WarmPoolController stamps with lenny.dev/egress-profile: provider-direct
   # reach the LLM provider CIDRs (egressCIDRs.providers) directly on TCP
   # 443, on top of the gateway + DNS egress the base policy grants. The
@@ -217,7 +217,7 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
 spec:
-  # §13.2 line 432 (NET-002) — the internet egress profile. Pods stamped
+  # §13.2 — the internet egress profile. Pods stamped
   # lenny.dev/egress-profile: internet reach the broad public internet,
   # rendered as two parallel ipBlock peers (one per address family,
   # NET-062) whose except blocks remove cluster pod/service CIDRs, RFC1918
@@ -277,7 +277,7 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
 spec:
-  # §13.2 line 488 — the kube-system CoreDNS fallback for pools that opt
+  # §13.2 — the kube-system CoreDNS fallback for pools that opt
   # out of the dedicated instance via dnsPolicy: cluster-default. The
   # podSelector is scoped to lenny.dev/dns-policy: cluster-default (NOT the
   # broad managed label) so only opted-out pods gain the kube-system DNS

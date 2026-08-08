@@ -260,8 +260,7 @@ func TestPlatformUpgradeStartRequiresIdempotencyKey(t *testing.T) {
 // response's progress object is the full §25.2 canonical envelope, not
 // only the descriptive phase/step fields. The upgrade orchestrator is
 // operator-paced (§25.8): a freshly started upgrade is immediately
-// "awaiting the first proceed", the same paused-steady-state the §25.8
-// line 1733 canonical example depicts (a GatewayRoll upgrade with
+// "awaiting the first proceed", the same paused-steady-state the §25.8 canonical example depicts (a GatewayRoll upgrade with
 // currentStepDetail "Waiting for operator to call /upgrade/proceed").
 // In that state the envelope reports a numeric percent derived from the
 // step count and a lastProgressAt timestamp, while etaSeconds,

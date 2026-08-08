@@ -145,7 +145,7 @@ func TestInsecureSkipVerifyAcceptsSelfSignedTLS(t *testing.T) {
 // TestStreamCopiesSSEBody verifies the §25.14 SSE tail surface: Stream
 // opens a GET, sends the Accept: text/event-stream header, carries the
 // bearer, and copies the response body verbatim to the writer until the
-// server closes the stream. spec: §25.14 line 4920 (events tail).
+// server closes the stream. spec: §25.14.
 func TestStreamCopiesSSEBody(t *testing.T) {
 	const frames = "id: 1\ndata: {\"type\":\"ops.health_status_changed\"}\n\nid: 2\ndata: {\"type\":\"ops.escalation_created\"}\n\n"
 	var sawAccept, sawBearer string
@@ -196,7 +196,7 @@ func TestStreamSurfacesAPIError(t *testing.T) {
 
 // TestGetCopiesTextBody verifies the §24.15 pod-log proxy primitive: Get
 // opens a bounded GET, carries the bearer, and copies the text/plain
-// response body verbatim to the writer. spec: §24.15 line 192; §25.4.
+// response body verbatim to the writer. spec: §24.15; §25.4.
 func TestGetCopiesTextBody(t *testing.T) {
 	const logLines = "2026-06-04T00:00:00Z line one\n2026-06-04T00:00:01Z line two\n"
 	var sawBearer string
@@ -267,7 +267,7 @@ func TestStreamCancelledContextReturnsNil(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1207-1213 — PutIfMatch fetches the resource's ETag via a
+// spec: §15.1 — PutIfMatch fetches the resource's ETag via a
 // GET, then PUTs it back as If-Match (the documented read-modify-write).
 func TestPutIfMatchReadModifyWrite(t *testing.T) {
 	var gotIfMatch string

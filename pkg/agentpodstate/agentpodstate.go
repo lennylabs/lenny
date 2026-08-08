@@ -106,7 +106,7 @@ type Store interface {
 	// does not. This is the §10.1 orphan-session reconciler's read of
 	// the mirrored §6.2 phase for a session's bound pod, used to detect
 	// a pod that reached `terminated` without writing a terminal event
-	// back to Postgres. spec: §10.1 line 51.
+	// back to Postgres. spec: §10.1.
 	GetByPodID(ctx context.Context, podID string) (PodState, bool, error)
 
 	// ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one

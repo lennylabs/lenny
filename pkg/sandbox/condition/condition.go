@@ -6,7 +6,7 @@
 // (warmpool orphan-claim GC) depend on, so it lives under pkg/sandbox to
 // avoid a podclaim ↔ warmpool import cycle.
 //
-// spec: §6.2 line 305 (.status.conditions is authoritative); §4.6.1
+// spec: §6.2; §4.6.1
 // lifecycle-manager condition history (orphan claim, suspend, terminal
 // disposition).
 package condition

@@ -60,14 +60,7 @@ func registerLLMPhase(t *testing.T, h *llmproxy.Handler, phase interceptor.Phase
 	h.Interceptors = c
 }
 
-// spec: §4.8 line 1099 ("The PreLLMRequest and PostLLMResponse phases fire
-// exclusively in the LLM reverse proxy path ... On REJECT, PreLLMRequest
-// returns LLM_REQUEST_REJECTED to the pod; PostLLMResponse returns
-// LLM_RESPONSE_REJECTED"), §4.8 line 1080 (PostLLMResponse "For streaming
-// responses, fires once on the initial response metadata — individual stream
-// chunks are not intercepted ... individual stream chunks pass through
-// unmodified"), §4.8 line 1099 ("The default timeout for LLM interceptor
-// phases is 100ms"), §4.9 (LLM reverse proxy, proxy mode).
+// spec: §4.8, §4.8, §4.8, §4.9 (LLM reverse proxy, proxy mode).
 //
 // diagnosis: the §4.8 LLM interceptor phases, driven through the proxy
 // Handler against the real Postgres-backed lease store and the mock upstream
@@ -192,7 +185,7 @@ func TestLLMProxyInterceptorPhasesOnRealStore(t *testing.T) {
 			name: "metadata-rewriter",
 			fn: func(context.Context, interceptor.Request) (interceptor.Result, error) {
 				// A MODIFY on the initial stream metadata must not alter the
-				// relayed data chunks (§4.8 line 1080). The rewritten content
+				// relayed data chunks (§4.8). The rewritten content
 				// is a marker that must never surface in the SSE the pod sees.
 				return interceptor.Result{
 					Action:          interceptor.ActionModify,

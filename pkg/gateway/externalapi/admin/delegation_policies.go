@@ -36,7 +36,7 @@ type DelegationPolicyPayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -76,7 +76,7 @@ func fromDelegationPolicy(p delegationpolicystore.DelegationPolicy) DelegationPo
 		CreatedAt: rfc3339Nano(p.CreatedAt),
 		UpdatedAt: rfc3339Nano(p.UpdatedAt),
 		DeletedAt: rfc3339Nano(p.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(p.Version),
 	}
@@ -215,7 +215,7 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 	}
 	p.UpdatedAt = p.CreatedAt
 	delegationpolicystore.ApplyDefaults(&p)
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if err := delegationpolicystore.Validate(p); err != nil {
 			writeDelegationPolicyStoreError(w, err)
@@ -226,7 +226,7 @@ func (r *Router) handleCreateDelegationPolicy(w http.ResponseWriter, req *http.R
 	}
 	if err := r.delegationPolicies.Create(req.Context(), p); err != nil {
 		if errors.Is(err, delegationpolicystore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"delegation policy with this name already exists", nil)
 			return
@@ -265,7 +265,7 @@ func (r *Router) handleListDelegationPolicies(w http.ResponseWriter, req *http.R
 	for _, p := range rows {
 		out = append(out, fromDelegationPolicy(p))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x DelegationPolicyPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -297,7 +297,7 @@ func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -308,7 +308,7 @@ func (r *Router) handleGetDelegationPolicy(w http.ResponseWriter, req *http.Requ
 // policies. tenant-admins read their own tenant; platform-admins read
 // across tenants by default and may narrow with ?tenant_id=.
 //
-// spec: §4.2 line 172 / §10.6 — tenant-admins see only their own
+// spec: §4.2 / §10.6 — tenant-admins see only their own
 // tenant; platform-admins see all tenants with optional filter.
 func delegationPolicyListScope(p authmw.Principal, req *http.Request) string {
 	if !p.HasRole(auth.RolePlatformAdmin) {
@@ -333,7 +333,7 @@ func (r *Router) applyDelegationPolicyUpdate(p *delegationpolicystore.Delegation
 	p.ContentPolicy = toContentPolicy(body.ContentPolicy)
 	p.AllowSelfRecursion = body.AllowSelfRecursion
 	delegationpolicystore.ApplyDefaults(p)
-	// spec: §8.3 line 181 (F-8.7.12 / F-13.5.7) — server-mint the
+	// spec: §8.3 — server-mint the
 	// scanExportedFiles weakening transition timestamp so the
 	// gateway can enforce INTERCEPTOR_WEAKENING_COOLDOWN at
 	// `delegate_task` time. A `true → false` flip stamps the
@@ -381,7 +381,7 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// spec: §15.1 — every admin PUT requires If-Match. The
 	// policy's entity tag is its version; enforce the optimistic-
 	// concurrency precondition before applying the mutation. This runs
 	// before the dry-run branch so a dry-run with a stale If-Match still
@@ -389,7 +389,7 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		preview := current
 		r.applyDelegationPolicyUpdate(&preview, body)
@@ -420,7 +420,7 @@ func (r *Router) handleUpdateDelegationPolicy(w http.ResponseWriter, req *http.R
 	})
 	r.emitScanExportedFilesTransition(req.Context(), principal, name,
 		oldScan, updated.ContentPolicy.ScanExportedFiles, rfc3339Nano(updated.UpdatedAt))
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -495,7 +495,7 @@ func (r *Router) handleDeleteDelegationPolicy(w http.ResponseWriter, req *http.R
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds. This
 	// runs before the actual delete.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {

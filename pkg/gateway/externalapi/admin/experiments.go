@@ -27,7 +27,7 @@ func (r *Router) WithExperiments(s experimentstore.Store) *Router {
 
 // StickyFlusher clears the §10.7 `sticky: user` assignment cache for an
 // experiment. The PATCH status-transition handler invokes it when an
-// experiment moves to `paused` or `concluded` (§10.7 line 1096).
+// experiment moves to `paused` or `concluded` (§10.7).
 // *experimentsticky.RedisCache satisfies it. A nil flusher leaves the cache
 // untouched (the single-instance / in-memory posture has no Redis cache).
 type StickyFlusher interface {
@@ -76,7 +76,7 @@ type ExperimentPayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -105,7 +105,7 @@ func fromExperiment(e experimentstore.Experiment) ExperimentPayload {
 		Propagation: ExperimentPropagation{ChildSessions: string(e.Propagation)},
 		CreatedAt:   rfc3339Nano(e.CreatedAt),
 		UpdatedAt:   rfc3339Nano(e.UpdatedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(e.Version),
 	}
@@ -256,7 +256,7 @@ func (r *Router) checkTenantIsolationFloor(ctx context.Context, principal authmw
 // §10.7 PoolScalingController enforces the same aggregate at reconcile
 // time; catching it at admission keeps an over-budget configuration from
 // ever activating. A paused or concluded candidate contributes nothing
-// because it diverts no traffic. spec: §4.6.2 line 545 / §10.7 line 1102.
+// because it diverts no traffic. spec: §4.6.2 / §10.7.
 // F-10.7.8.
 func (r *Router) rejectIfCrossExperimentWeightsExceed(w http.ResponseWriter, ctx context.Context, candidate experimentstore.Experiment) bool {
 	if r.experiments == nil {
@@ -292,7 +292,7 @@ func (r *Router) rejectIfCrossExperimentWeightsExceed(w http.ResponseWriter, ctx
 	return true
 }
 
-// writeDryRun emits the §15.1 line 1140 dry-run success response: the
+// writeDryRun emits the §15.1 dry-run success response: the
 // computed resource representation plus the `X-Dry-Run: true` header,
 // with no persistence and no audit emission. The status code mirrors the
 // non-dry-run success (201 for create, 200 for update). F-10.7.15.
@@ -325,8 +325,8 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
-	// §15.1 line 1140 — `?dryRun=true` runs full validation but persists
-	// nothing and emits no audit event. The §10.7 line 854/856 isolation
+	// §15.1 — `?dryRun=true` runs full validation but persists
+	// nothing and emits no audit event. The §10.7 isolation
 	// and tenant-floor checks above already ran in this path; the
 	// remaining single-experiment definition validation (the check the
 	// store would run on Create) runs here so the dry run is exhaustive.
@@ -342,7 +342,7 @@ func (r *Router) handleCreateExperiment(w http.ResponseWriter, req *http.Request
 	}
 	if err := r.experiments.Create(req.Context(), exp); err != nil {
 		if errors.Is(err, experimentstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"experiment with this id already exists in tenant", nil)
 			return
@@ -376,7 +376,7 @@ func (r *Router) handleListExperiments(w http.ResponseWriter, req *http.Request)
 	for _, e := range rows {
 		out = append(out, fromExperiment(e))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x ExperimentPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -405,7 +405,7 @@ func (r *Router) handleGetExperiment(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -441,7 +441,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// spec: §15.1 — every admin PUT requires If-Match. The
 	// experiment's entity tag is its version; enforce the optimistic-
 	// concurrency precondition before applying the mutation. This runs
 	// before the dry-run branch so a dry-run with a stale If-Match still
@@ -463,9 +463,8 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
-	// §15.1 line 1140 — `?dryRun=true` validates and previews the merged
-	// definition without persisting or emitting an audit event; §10.7
-	// line 856 — the tenant-floor advisory still runs. F-10.7.15.
+	// §15.1 — `?dryRun=true` validates and previews the merged
+	// definition without persisting or emitting an audit event; §10.7 — the tenant-floor advisory still runs. F-10.7.15.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if err := desired.Validate(); err != nil {
 			writeExperimentValidationError(w, err)
@@ -480,7 +479,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 		desired.ID = e.ID
 		desired.CreatedAt = e.CreatedAt
 		desired.Status = status
-		// spec: §15.1 line 1207 — the §15.1 version is store-managed; carry
+		// spec: §15.1 — the §15.1 version is store-managed; carry
 		// the loaded value through the full-replacement so the store's
 		// Update bump lands on the current version rather than resetting it.
 		desired.Version = e.Version
@@ -497,7 +496,7 @@ func (r *Router) handleUpdateExperiment(w http.ResponseWriter, req *http.Request
 	}
 	r.emit(req.Context(), principal, "admin.experiment.updated", name, map[string]any{"tenantId": tenant})
 	r.checkTenantIsolationFloor(req.Context(), principal, updated)
-	// spec: §15.1 line 1211 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -559,7 +558,7 @@ func (r *Router) handlePatchExperiment(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §10.7 line 1096 — flush the `sticky: user` assignment cache when
+	// spec: §10.7 — flush the `sticky: user` assignment cache when
 	// the experiment transitions to paused or concluded so re-activated or
 	// re-pointed variants are re-evaluated. A `paused → active` transition
 	// requires no flush. The flush is best-effort: a Redis error leaves the
@@ -587,7 +586,7 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §10.7 line 1094 — concluded experiments are immutable; an
+	// spec: §10.7 — concluded experiments are immutable; an
 	// active or paused experiment owns a variant pool and may have
 	// in-flight enrolled sessions whose eval attribution would orphan
 	// on delete. Require the operator to PATCH to `concluded` first.
@@ -607,7 +606,7 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 			map[string]any{"currentStatus": string(existing.Status)})
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
 	if !enforceIfMatchIfPresent(w, req, existing.Version) {
 		return
@@ -626,9 +625,7 @@ func (r *Router) handleDeleteExperiment(w http.ResponseWriter, req *http.Request
 }
 
 // writeExperimentValidationError surfaces an experiment.ValidationError
-// using the §15.1-distinct error code attached to each violation.
-// RESERVED_IDENTIFIER (line 1005) and INVALID_VARIANT_WEIGHTS (§4.6.2
-// line 545) take precedence over the generic VALIDATION_ERROR so
+// using the §15.1 distinct error code attached to each violation. RESERVED_IDENTIFIER and INVALID_VARIANT_WEIGHTS (§4.6.2) take precedence over the generic VALIDATION_ERROR so
 // callers can programmatically distinguish them. spec: F-10.7.11.
 func writeExperimentValidationError(w http.ResponseWriter, err error) {
 	var ve *experiment.ValidationError

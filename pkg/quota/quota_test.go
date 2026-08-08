@@ -194,7 +194,7 @@ func TestReconcileMaxImplementsMaxRule(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 44 — quotaSyncIntervalSeconds defaults to 30s with a
+// spec: §11.2 — quotaSyncIntervalSeconds defaults to 30s with a
 // 10s minimum. A non-positive value selects the default; a positive
 // value below the floor is clamped up; anything at or above the floor
 // passes through. F-11.2.16.

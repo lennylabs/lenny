@@ -31,7 +31,7 @@ import (
 // the two-layer tenant-pinning enforcement; SlotClaimer is the
 // application-layer half.
 //
-// spec: §6.4 lines 416-419 / §5.1 — the gateway-stamps-on-claim pattern
+// spec: §6.4 / §5.1 — the gateway-stamps-on-claim pattern
 // established here is the working precedent for the missing
 // `lenny.dev/workspace-tier: t4` writer (tracked under F-6.4.4 / F-6.4.9).
 // A future T4 writer (in the pool controller or pod-spec builder) should
@@ -40,7 +40,7 @@ import (
 // has a stable predicate to match on.
 const LabelTenant = "lenny.dev/tenant-id"
 
-// stampPodTenant lands the §5.2 line 392 tenant pin on the agent *pod*
+// stampPodTenant lands the §5.2 tenant pin on the agent *pod*
 // (not only the Sandbox CR) at first assignment, so the pod-scoped
 // lenny-tenant-label-immutability ValidatingAdmissionWebhook (§17.2 item
 // 5) actually sees the `unset → {tenant_id}` transition it is meant to
@@ -59,7 +59,7 @@ const LabelTenant = "lenny.dev/tenant-id"
 // pod validation). The patch is keyed by the Sandbox name because the
 // §4.6.1 reconciler names the backing pod identically to its Sandbox.
 //
-// spec: §5.2 line 392 (Kubernetes-layer tenant pin) / §17.2 line 46
+// spec: §5.2 / §17.2
 // (immutable labels enforced on agent pods) / §13.2 NET-003. F-17.2.3.
 func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tenantID string) error {
 	if tenantID == "" {
@@ -222,7 +222,7 @@ type SlotRequest struct {
 	// simultaneously; the (MaxConcurrentSessions+1)-th slot request claims
 	// a fresh warm pod instead.
 	MaxConcurrentSessions int32
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-session
+	// MaxPodUptimeSeconds is the §6.2 concurrent-session
 	// pod-uptime retirement cap. Before a slot is placed on a candidate
 	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
 	// Sandbox's creation timestamp) against this value and skips a pod over
@@ -273,19 +273,19 @@ type SlotClaimer struct {
 	// makes ClaimSlot return an error rather than silently overrunning the
 	// per-pod bound.
 	Counter *slotcounter.Counter
-	// OnSlotConflict records a §5.2 line 519 atomic-reservation failure
+	// OnSlotConflict records a §5.2 atomic-reservation failure
 	// due to slot contention: a candidate pod was at its maxConcurrent
 	// bound when the reservation was attempted. It backs the
 	// lenny_slot_assignment_conflict_total counter (labeled by pool) so
 	// operators can detect pool under-sizing. Nil is a no-op.
 	OnSlotConflict func(pool string)
-	// OnRehydrate records a §5.2 line 521 post-recovery rehydration
+	// OnRehydrate records a §5.2 post-recovery rehydration
 	// event: the slot counter for a pod was seeded from Postgres after a
 	// Redis restart. It backs the lenny_slot_rehydration_total counter
 	// (labeled by pod and pool) and fires exactly once per pod per Redis
 	// restart (the replica that won the rehydration). Nil is a no-op.
 	OnRehydrate func(podID, pool string)
-	// Now supplies the wall clock for the §6.2 lines 166-167 pod-uptime
+	// Now supplies the wall clock for the §6.2 pod-uptime
 	// retirement check. Nil defaults to time.Now.
 	Now func() time.Time
 	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
@@ -309,8 +309,7 @@ type RecycleBoundaryArmer interface {
 	OnRecycling(podID string)
 }
 
-// now returns the claimer's clock, defaulting to time.Now. spec: §6.2
-// lines 166-167 — the pod-uptime retirement check needs a wall clock.
+// now returns the claimer's clock, defaulting to time.Now. spec: §6.2 — the pod-uptime retirement check needs a wall clock.
 func (c *SlotClaimer) now() time.Time {
 	if c.Now != nil {
 		return c.Now()
@@ -318,7 +317,7 @@ func (c *SlotClaimer) now() time.Time {
 	return time.Now()
 }
 
-// recordSlotConflict reports a §5.2 line 519 slot-contention reservation
+// recordSlotConflict reports a §5.2 slot-contention reservation
 // failure for pool. Nil-safe.
 func (c *SlotClaimer) recordSlotConflict(pool string) {
 	if c.OnSlotConflict != nil {
@@ -326,7 +325,7 @@ func (c *SlotClaimer) recordSlotConflict(pool string) {
 	}
 }
 
-// recordRehydration reports a §5.2 line 521 slot-counter rehydration
+// recordRehydration reports a §5.2 slot-counter rehydration
 // event for podID in pool. Nil-safe.
 func (c *SlotClaimer) recordRehydration(podID, pool string) {
 	if c.OnRehydrate != nil {
@@ -336,14 +335,14 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 
 // expiredByUptime reports whether sb has exceeded the pool's
 // maxConcurrentSessions pool maxPodUptimeSeconds and is therefore not a
-// valid slot-placement candidate (§6.2 lines 166-167). The pod's
+// valid slot-placement candidate (§6.2). The pod's
 // wall-clock uptime is measured from the Sandbox's creation timestamp,
 // which the WarmPoolController stamps when it provisions the warm pod; a
 // zero cap disables the check. It is a read-only predicate: ClaimSlot uses
 // it to skip the pod, and the WarmPoolController owns the resulting
 // draining transition, derived from the same CreationTimestamp (§4.6.1).
 //
-// spec: spec/06_warm-pod-model.md §6.2 lines 166-167; spec/04 §4.6.1
+// spec: spec/06_warm-pod-model.md §6.2; spec/04 §4.6.1
 // (uptime drains are WarmPoolController-written).
 func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
 	if req.MaxPodUptimeSeconds <= 0 {
@@ -432,7 +431,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			continue
 		}
 		if c.expiredByUptime(sb, req) {
-			// §6.2 line 166 / §4.6.1: maxPodUptimeSeconds exceeded — the pod
+			// §6.2 / §4.6.1: maxPodUptimeSeconds exceeded — the pod
 			// accepts no new slots and its existing slots drain. This is a
 			// read-only placement filter; the gateway skips the pod without
 			// writing Sandbox.status. The WarmPoolController owns the
@@ -490,7 +489,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			continue
 		}
 		if c.expiredByUptime(sb, req) {
-			// §6.2 line 167 / §4.6.1: maxPodUptimeSeconds exceeded while idle,
+			// §6.2 / §4.6.1: maxPodUptimeSeconds exceeded while idle,
 			// checked before next assignment. Read-only placement filter: the
 			// gateway skips the pod without writing Sandbox.status. The
 			// WarmPoolController owns the idle → draining uptime transition,
@@ -509,7 +508,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	}
 
 	// No claimed pod has free capacity for this tenant and no idle pod is
-	// left. §5.2 line 519 distinguishes the cause via details.reason: when
+	// left. §5.2 distinguishes the cause via details.reason: when
 	// the pool holds no pods at all the reason is "no_idle_pods"
 	// (ErrNoIdlePod); when pods exist but every slot is full the reason is
 	// "concurrent_slots_exhausted" (ErrNoConcurrentSlot). Tenant pinning is
@@ -603,13 +602,13 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// fails closed after a bounded outage window.
 	newCount, rehydrated, err := c.Counter.Reserve(ctx, sb.Name, req.MaxConcurrentSessions)
 	if rehydrated {
-		// §5.2 line 521: this reservation seeded the pod's slot counter from
+		// §5.2: this reservation seeded the pod's slot counter from
 		// Postgres after a Redis restart. Emit the rehydration event
 		// regardless of the reservation outcome.
 		c.recordRehydration(sb.Name, req.Pool)
 	}
 	if errors.Is(err, slotcounter.ErrSlotsExhausted) {
-		// §5.2 line 519: the pod is at its maxConcurrentSessions bound.
+		// §5.2: the pod is at its maxConcurrentSessions bound.
 		c.recordSlotConflict(req.Pool)
 		return nil, true, nil
 	}
@@ -647,7 +646,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 		tenantID = claim.Spec.TenantID
 	}
 
-	// §17.2 item 5 / §5.2 line 392: stamp the tenant pin on the agent pod so
+	// §17.2 item 5 / §5.2: stamp the tenant pin on the agent pod so
 	// the pod-scoped lenny-tenant-label-immutability webhook binds where the
 	// §13.2 NET-003 NetworkPolicies select. Best-effort: a missing pod is
 	// tolerated and the next assignment re-stamps it.

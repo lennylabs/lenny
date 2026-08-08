@@ -60,7 +60,7 @@ import (
 var version = "0.1.0"
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=echo-embedded).
 	// F-16.4.1.
 	logging.Setup(os.Stderr, "echo-embedded")
@@ -70,7 +70,7 @@ func main() {
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
-	// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+	// spec: §6.4 — session-mode pods (maxConcurrentSessions=1)
 	// use the single `/workspace/current` cwd; the concurrent-workspace per-slot
 	// tree (F-6.4.2) is unbuilt in v1, so the default here is correct
 	// across the v1 surface.
@@ -112,7 +112,7 @@ func main() {
 	adapterSrv.StagingDir = *stagingDir
 	adapterSrv.CredentialsDir = *credentialsDir
 	adapterSrv.ManifestDir = *credentialsDir
-	// §6.4 line 409: the embedded runtime is the adapter, so it populates
+	// §6.4: the embedded runtime is the adapter, so it populates
 	// /workspace/shared itself from the inline shared-asset set the
 	// controller renders onto --shared-assets.
 	adapterSrv.SharedAssetsDir = *sharedAssetsDir

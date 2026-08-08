@@ -58,7 +58,7 @@ func expectNoFrame(t *testing.T, fr *fakeRuntime, d time.Duration) {
 	_ = fr.conn.SetReadDeadline(time.Time{})
 }
 
-// TestRotationInflightGateBlocksUntilDrained covers §4.7 line 820: the
+// TestRotationInflightGateBlocksUntilDrained covers §4.7: the
 // adapter waits for in-flight LLM requests to complete before sending
 // credentials_rotated. proactive_renewal waits unbounded.
 func TestRotationInflightGateBlocksUntilDrained_spec_4_7(t *testing.T) {
@@ -96,7 +96,7 @@ func (r *recordingAudit) EmitRotationCeilingHit(_ context.Context, e RotationCei
 	r.hits = append(r.hits, e)
 }
 
-// TestRotationCeilingHit covers §4.7 line 822: a fault/revocation trigger
+// TestRotationCeilingHit covers §4.7: a fault/revocation trigger
 // caps the in-flight wait at the ceiling, sends credentials_rotated
 // regardless, and records the ceiling counter plus the durable audit
 // event.
@@ -141,7 +141,7 @@ func TestRotationCeilingHit_spec_4_7(t *testing.T) {
 	}
 }
 
-// TestRotationAckTimeoutFallsThrough covers §4.7 lines 824-826: a missing
+// TestRotationAckTimeoutFallsThrough covers §4.7: a missing
 // credentials_acknowledged within the timeout returns DeadlineExceeded so
 // the gateway takes the standard rotation path, and increments the
 // timeout counter.

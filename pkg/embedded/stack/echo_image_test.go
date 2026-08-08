@@ -224,7 +224,7 @@ func TestImportEchoRuntimeImageMissingTarballDegrades_spec_17_4(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE), §17.4, §4.7 —
+// spec: §24.19.1, §17.4, §4.7 —
 // CtrCommandForSubstrate resolves the host path from a live substrate
 // handle (empty container) without reading the recorded stack state, and
 // fails closed with K3S_UNAVAILABLE when the host k3s artifacts are absent,

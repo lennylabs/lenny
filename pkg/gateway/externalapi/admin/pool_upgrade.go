@@ -17,7 +17,7 @@ import (
 // RuntimeUpgradeManager drives the §10.5 RuntimeUpgrade state machine on a
 // durable store. *runtimeupgrade.Manager satisfies it; a nil manager
 // leaves the /v1/admin/pools/{name}/upgrade routes unregistered. spec:
-// §10.5 lines 466-540, §15.1 lines 869-874. F-10.5.1.
+// §10.5, §15.1. F-10.5.1.
 type RuntimeUpgradeManager interface {
 	Start(ctx context.Context, pool string, opts runtimeupgrade.StartOptions) (runtimeupgrade.Snapshot, error)
 	Proceed(ctx context.Context, pool string) (runtimeupgrade.Snapshot, error)
@@ -34,7 +34,7 @@ func (r *Router) WithRuntimeUpgrade(m RuntimeUpgradeManager) *Router {
 	return r
 }
 
-// UpgradeStatus is the §15.1 line 874 GET /upgrade-status wire payload and
+// UpgradeStatus is the §15.1 GET /upgrade-status wire payload and
 // the body returned by each transition. It mirrors
 // runtimeupgrade.Snapshot.
 type UpgradeStatus struct {
@@ -83,7 +83,7 @@ func upgradeStatusOf(s runtimeupgrade.Snapshot) UpgradeStatus {
 	}
 }
 
-// StartUpgradeRequest is the §15.1 line 869 POST /upgrade/start body. Only
+// StartUpgradeRequest is the §15.1 POST /upgrade/start body. Only
 // newImage is required; the remaining knobs default per §10.5.
 type StartUpgradeRequest struct {
 	NewImage                   string `json:"newImage"`
@@ -96,14 +96,14 @@ type StartUpgradeRequest struct {
 }
 
 // PauseUpgradeRequest is the optional POST /upgrade/pause body carrying the
-// §10.5 line 494 pause reason.
+// §10.5 pause reason.
 type PauseUpgradeRequest struct {
 	Reason string `json:"reason"`
 }
 
 // RollbackUpgradeRequest is the POST /upgrade/rollback body. restoreOldPool
 // recreates the old pool from previousPoolSpec when rolling back from
-// Draining or Contracting (§24 line 70 / §10.5 line 507).
+// Draining or Contracting (§24 / §10.5).
 type RollbackUpgradeRequest struct {
 	RestoreOldPool bool `json:"restoreOldPool"`
 }
@@ -220,7 +220,7 @@ func writeUpgradeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, runtimeupgrade.ErrInvalidImage):
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 	case errors.Is(err, runtimeupgrade.ErrUpgradeActive):
-		// spec: §15.1 line 981 — an upgrade-in-progress state conflict is INVALID_STATE_TRANSITION.
+		// spec: §15.1 — an upgrade-in-progress state conflict is INVALID_STATE_TRANSITION.
 		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION", err.Error(), nil)
 	case errors.Is(err, runtimeupgradestore.ErrConflict):
 		writeError(w, http.StatusConflict, "CONCURRENT_MODIFICATION",

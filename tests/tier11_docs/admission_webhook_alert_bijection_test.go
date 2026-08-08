@@ -296,7 +296,7 @@ func TestReplicas2EnumerationHasMatchingAlert(t *testing.T) {
 	for _, m := range names {
 		name := m[1]
 		// crd-conversion is a CRD conversion webhook, not a validating
-		// webhook, but §17.2 line 56 includes it in the enumeration and
+		// webhook, but §17.2 includes it in the enumeration and
 		// §16.5 defines CrdConversionWebhookUnavailable with
 		// up{job="lenny-crd-conversion"}, so it participates in the
 		// bijection like the validating webhooks.

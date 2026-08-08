@@ -19,7 +19,7 @@ const CloudEventsSpecVersion = "1.0"
 // satisfies it; the §25.5 Redis-stream emitter satisfies it; tests
 // substitute fakes through the same interface. ctx threads cancellation
 // through the emit path so a slow Redis write does not pin a shutdown.
-// spec: §25.3 lines 660-663 — `Emit(ctx context.Context, event
+// spec: §25.3 — `Emit(ctx context.Context, event
 // OperationalEvent) error`.
 type EventEmitter interface {
 	// Emit records an operational event. An emitter that wraps a remote

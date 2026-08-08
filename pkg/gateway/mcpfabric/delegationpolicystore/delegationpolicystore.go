@@ -6,7 +6,7 @@
 // `allowedRuntimes` / `allowedConnectors` / `allowedPools` runtime
 // fields with named, tag-matched allow/deny rule sets.
 //
-// spec: §4.2 line 172 — delegation policies are tenant-scoped. Each
+// spec: §4.2 — delegation policies are tenant-scoped. Each
 // row carries a `tenant_id` column under the standard
 // lenny_tenant_isolation RLS policy, and the §8.3 references from
 // runtimes (`delegationPolicyRef`) and leases (`maxDelegationPolicy`)
@@ -79,7 +79,7 @@ const AllTenantsSentinel = "__all__"
 // a named, tag-matched allow/deny rule set plus a content policy and
 // the `allowSelfRecursion` cycle-detection opt-in.
 type DelegationPolicy struct {
-	// TenantID is the §4.2 line 172 tenant-scoping column. Each
+	// TenantID is the §4.2 tenant-scoping column. Each
 	// policy belongs to exactly one tenant; (TenantID, Name) is the
 	// primary key.
 	TenantID string
@@ -100,7 +100,7 @@ type DelegationPolicy struct {
 	// narrow it (true to false) but never widen it.
 	AllowSelfRecursion bool
 
-	// ScanExportedFilesWeakenedAt is the §8.3 line 181 server-minted
+	// ScanExportedFilesWeakenedAt is the §8.3 server-minted
 	// transition timestamp of the most recent
 	// `contentPolicy.scanExportedFiles: true → false` flip. It backs the
 	// `INTERCEPTOR_WEAKENING_COOLDOWN` rejection the gateway raises at
@@ -121,7 +121,7 @@ type DelegationPolicy struct {
 	// Version is the §15.1 optimistic-concurrency counter: it starts at 1
 	// and increments by one on every successful Update. The admin surface
 	// renders it as the quoted-decimal ETag and enforces it as the
-	// If-Match precondition. spec: §15.1 line 1207.
+	// If-Match precondition. spec: §15.1.
 	Version int64
 }
 
@@ -152,7 +152,7 @@ func ApplyDefaults(p *DelegationPolicy) {
 }
 
 // Store is the §8.3 DelegationPolicy registry contract. Every method
-// takes the §4.2 line 172 tenant context: a concrete tenant id scopes
+// takes the §4.2 tenant context: a concrete tenant id scopes
 // the operation to that tenant; the AllTenantsSentinel sentinel
 // (`__all__`) lets a platform-admin code path span tenants on reads.
 type Store interface {
@@ -261,7 +261,7 @@ func (m *Memory) Create(_ context.Context, p DelegationPolicy) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if p.Version == 0 {
 		p.Version = 1
 	}
@@ -324,7 +324,7 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*D
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match precondition compares
 	// against the new value.
 	row.Version++

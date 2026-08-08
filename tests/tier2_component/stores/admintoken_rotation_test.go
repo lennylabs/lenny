@@ -138,7 +138,7 @@ func (a storeAdminIssued) RecordWithExchangeAudit(ctx context.Context, rec admin
 		"caller_sub":    rec.Subject,
 		"subject_sub":   rec.Subject,
 		"jti":           rec.JTI,
-		// spec: §16.7 line 672 — mirrors the Token Service emitter's
+		// spec: §16.7 — mirrors the Token Service emitter's
 		// policy_result="accepted" for a successful exchange.
 		"policy_result": "accepted",
 		"timestamp":     rec.IssuedAt,
@@ -201,9 +201,7 @@ func jtiOf(t *testing.T, signer *jwt.HMACSigner, token string) string {
 	return claims.JWTID
 }
 
-// spec: §13.3 line 599 (gateway-mediated admin-credential rotation
-// ordering), §16.7 line 672/673 (token.exchanged admin_rotation,
-// token.revoked rotation_replaced).
+// spec: §13.3, §16.7.
 // diagnosis: a rotation must emit exactly one token.exchanged row carrying
 // exchange_type=admin_rotation and policy_result=accepted for the new token
 // and one token.revoked row carrying revocation_reason=rotation_replaced for
@@ -258,7 +256,7 @@ func TestAdminRotationEmitsExchangeAndRevokeAudit(t *testing.T) {
 			if d.ExchangeType != "admin_rotation" {
 				t.Errorf("token.exchanged exchange_type=%q, want admin_rotation", d.ExchangeType)
 			}
-			// spec: §16.7 line 672 — policy_result is (accepted |
+			// spec: §16.7 — policy_result is (accepted |
 			// rejected:<reason>); a successful admin rotation mirrors the
 			// Token Service emitter and carries "accepted", never the
 			// out-of-enum "allow" the pre-fix adapter wrote.
@@ -292,8 +290,7 @@ func TestAdminRotationEmitsExchangeAndRevokeAudit(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 599, §17.6 line 507 ("immediately invalidated, not a
-// grace period").
+// spec: §13.3, §17.6.
 // diagnosis: after a rotation the superseded token must be durably revoked
 // in Postgres (revoked_at set), so a §12.2 rehydration keeps rejecting it
 // after any cache eviction, and the cross-replica cache is pushed only
@@ -336,7 +333,7 @@ func TestAdminRotationDurablyRevokesOldTokenAndGatesCache(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 599.
+// spec: §13.3.
 // diagnosis: a Secret-patch failure must leave the old token LIVE and NOT
 // durably revoked (a clean retry rather than a dead-token lockout): the
 // durable revoke runs only after a successful patch. A failure means a
@@ -379,7 +376,7 @@ func TestAdminRotationSecretPatchFailureLeavesOldTokenLive(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 605 (per-subject serialization).
+// spec: §13.3.
 // diagnosis: two concurrent rotations for the same subject must leave no
 // live admin token beyond the current one. The per-subject session-scoped
 // advisory lock serializes the non-atomic Secret read-modify-write so a
@@ -542,13 +539,13 @@ func newReclaimer(t *testing.T, secrets admintokenreclaimer.SecretReader, revoke
 	return r
 }
 
-// spec: §13.3 lines 601-603 (named predecessor and leader-gated reclaimer),
-// §16.7 line 673 (token.revoked rotation_replaced), §17.6.
+// spec: §13.3,
+// §16.7, §17.6.
 // diagnosis: a crash after the Secret patch but before the in-request durable
 // revoke leaves the prior admin token live and named in prev_jti. The
 // leader-gated reclaimer sweep MUST durably revoke that named predecessor on
 // its next pass, so the superseded credential stops validating within the
-// sweep interval rather than validating indefinitely (§13.3 line 601 crash
+// sweep interval rather than validating indefinitely (§13.3 crash
 // window). A failure means the crash-recovery surface does not close the
 // window and the orphaned admin token validates until its ~10-year TTL.
 func TestReclaimerRevokesOrphanedPredecessorAfterCrash(t *testing.T) {
@@ -629,7 +626,7 @@ func TestReclaimerRevokesOrphanedPredecessorAfterCrash(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 (the sweep targets only the single named predecessor).
+// spec: §13.3.
 // diagnosis: the reclaimer sweep must NOT revoke the about-to-be-installed
 // successor when it fires mid-rotation (the new token is recorded but the
 // Secret is not yet patched, so the Secret's prev_jti still names the prior
@@ -694,8 +691,7 @@ func TestReclaimerMidRotationDoesNotRevokeSuccessor(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 (the sweep never revokes a flow-2 self-rotated token
-// for the same platform-admin subject).
+// spec: §13.3.
 // diagnosis: the lenny-admin subject is a platform-admin eligible for the
 // general /v1/oauth/token self-rotation grant, which mints a live token for
 // the same subject WITHOUT patching the Secret. The reclaimer sweep, which
@@ -759,8 +755,7 @@ func TestReclaimerLeavesFlow2SelfRotatedTokenAlive(t *testing.T) {
 	}
 }
 
-// spec: §13.3 lines 603-604 (revoke-before-overwrite plus the sweep closing
-// the last-named predecessor).
+// spec: §13.3.
 // diagnosis: two crash-then-retry rotations straddling the sweep window must
 // leave NEITHER superseded token live. Rotation A crashes leaving predecessor
 // jti_A orphaned and named; the operator retries with rotation B, which

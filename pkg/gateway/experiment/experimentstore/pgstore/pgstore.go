@@ -72,7 +72,7 @@ func (s *Store) Create(ctx context.Context, e experimentstore.Experiment) error 
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if e.Version == 0 {
 		e.Version = 1
 	}
@@ -150,7 +150,7 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*ex
 			return err
 		}
 		e.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// spec: §15.1 — bump the optimistic-concurrency version on
 		// every successful Update so the next If-Match precondition compares
 		// against the new value.
 		e.Version++
@@ -207,8 +207,8 @@ func (s *Store) List(ctx context.Context, tenantID string) ([]experimentstore.Ex
 // so it reads the per-tenant experiment_definitions through the §4.2
 // platform-admin cross-tenant path (InAllTenants sets the `__all__`
 // sentinel that the RLS policy treats as an unfiltered SELECT). spec:
-// §10.7 line 1092 — variant pool lifecycle is managed across the whole
-// platform; spec: §4.2 line 165 — the cross-tenant read still flows
+// §10.7 — variant pool lifecycle is managed across the whole
+// platform; spec: §4.2 — the cross-tenant read still flows
 // through SET LOCAL so the pooler-mode guard holds.
 func (s *Store) ListAll(ctx context.Context) ([]experimentstore.Experiment, error) {
 	var out []experimentstore.Experiment
@@ -256,7 +256,7 @@ func (s *Store) Delete(ctx context.Context, tenantID, id string) error {
 // Experiment definitions are tenant-scoped and not user-owned, so the
 // method returns (0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -264,7 +264,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Removes every experiment_definitions row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("experimentstore: DeleteByTenant requires a concrete tenant_id")

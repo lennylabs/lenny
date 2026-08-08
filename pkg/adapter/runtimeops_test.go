@@ -437,7 +437,7 @@ func TestRuntimeOpsCloseFailsPendingRequest(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 836-842 — the startup sequence (runtime connects to
+// spec: §4.7 — the startup sequence (runtime connects to
 // the CH-RUNTIMEOPS) applies for both fresh sessions and resumes, so
 // after a runtime disconnects the channel must accept a fresh runtime's
 // connection and re-handshake. Closes F-4.7.14 / F-4.7.19.
@@ -501,7 +501,7 @@ func TestRuntimeOpsAcceptsReconnect_spec_4_7(t *testing.T) {
 	roundTrip(fr2, "int-2")
 }
 
-// spec: §15.5 line 2431 (item 3) — when the runtime advertises a
+// spec: §15.5 — when the runtime advertises a
 // matching `protocolVersion` in `lifecycle_support`, the handshake
 // completes and the channel exposes the runtime's capability set.
 // F-15.5.9.
@@ -523,7 +523,7 @@ func TestLifecycleVersionNegotiation_AcceptsCompatible_spec_15_5_2431(t *testing
 	}
 }
 
-// spec: §15.5 line 2431 (item 3) — an empty `protocolVersion` is
+// spec: §15.5 — an empty `protocolVersion` is
 // accepted for forward compatibility with runtimes that pre-date the
 // field. F-15.5.9.
 func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
@@ -543,7 +543,7 @@ func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2431 (item 3) — a runtime advertising a different
+// spec: §15.5 — a runtime advertising a different
 // major version is rejected; the handshake never marks the channel
 // ready. F-15.5.9.
 func TestLifecycleVersionNegotiation_RejectsIncompatibleMajor_spec_15_5_2431(t *testing.T) {
@@ -565,7 +565,7 @@ func TestLifecycleVersionNegotiation_RejectsIncompatibleMajor_spec_15_5_2431(t *
 	}
 }
 
-// spec: §15.5 line 2431 (item 3) — malformed `protocolVersion` strings
+// spec: §15.5 — malformed `protocolVersion` strings
 // (no dot, leading dot, non-numeric prefix) are rejected so a typo
 // surfaces at handshake. F-15.5.9.
 func TestLifecycleVersionsCompatible_MalformedRejected(t *testing.T) {

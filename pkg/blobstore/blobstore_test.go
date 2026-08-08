@@ -395,7 +395,7 @@ func TestMemoryStoreHardPrunePreservesLiveBlobs(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 320 — HardDeleteObject physically removes exactly
+// spec: §12.5 — HardDeleteObject physically removes exactly
 // the named object and is idempotent on an absent object. F-12.5.23.
 func TestMemoryStoreHardDeleteObject(t *testing.T) {
 	s := blobstore.NewMemoryStore(nil)
@@ -597,8 +597,7 @@ func TestMemoryStoreDeleteBySessionUnknownSessionIsNoOp(t *testing.T) {
 	}
 }
 
-// TestObjectTypeEnumIsClosed asserts every spec-defined §12.5 line
-// 295 object_type segment is recognised by the parser, and a
+// TestObjectTypeEnumIsClosed asserts every spec-defined §12.5 object_type segment is recognised by the parser, and a
 // typo is rejected.
 //
 // spec: §12.5 ll. 295, 315.

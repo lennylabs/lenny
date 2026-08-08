@@ -15,8 +15,7 @@
 // and confirms `errorclassify.ClassifyStatus` yields the same
 // (PERMANENT, not-retryable) verdict the catalog assigns both codes.
 //
-// spec: §15.1 (RESOURCE_ALREADY_EXISTS line 983, INVALID_STATE_TRANSITION
-// line 981), §25.2 (errorclassify category, 409 is PERMANENT not retryable).
+// spec: §15.1, §25.2 (errorclassify category, 409 is PERMANENT not retryable).
 package admin_conflict_codes_test
 
 import (

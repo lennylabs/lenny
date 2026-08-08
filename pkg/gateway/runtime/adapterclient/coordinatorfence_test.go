@@ -12,7 +12,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §10.1 lines 33-37 / §11.3 line 209 — the first CoordinatorFence
+// spec: §10.1 / §11.3 — the first CoordinatorFence
 // on a pod's lifetime is accepted and records the generation, so the
 // gateway-side wrapper maps the CoordinatorFenceResponse back to the
 // caller.
@@ -33,7 +33,7 @@ func TestCoordinatorFenceFirstFenceAccepted_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 / §11.3 line 209 — a fence whose generation is
+// spec: §10.1 / §11.3 — a fence whose generation is
 // not strictly greater than the pod's last fenced value is rejected with
 // FailedPrecondition so the coordinator records the generation-stale
 // handoff and drives the retry/relinquish decision.
@@ -54,7 +54,7 @@ func TestCoordinatorFenceStaleRejected_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 36 — a fence that skips one or more generations is
+// spec: §10.1 — a fence that skips one or more generations is
 // accepted but flags the gap so the pod resets transient tool-call
 // state; the wrapper surfaces GapDetected.
 func TestCoordinatorFenceGapDetected_spec_10_1(t *testing.T) {

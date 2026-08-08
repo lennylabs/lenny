@@ -30,7 +30,7 @@ import (
 // executor is a §6.2 Sandbox-backed pod executor (SessionReleaser), it records
 // the terminal disposition on the Sandbox before draining the pod; otherwise
 // it falls back to Close (echo, subprocess, and other executors with no
-// Sandbox phase). spec: §6.2 lines 105-117, 305.
+// Sandbox phase). spec: §6.2.
 func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID string, disp executor.Disposition) error {
 	return executor.ReleaseSession(ctx, exec, sessionID, disp)
 }
@@ -40,7 +40,7 @@ func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID stri
 // terminal (completed/cancelled/expired) recycles a recycling pod, while
 // `failed` always retires it. A non-terminal state (recordSessionCompleted is
 // only called on a terminal transition, so this is defensive) carries no
-// disposition and falls back to Close. spec: §3.4; §6.2 lines 24, 105-117, 157.
+// disposition and falls back to Close. spec: §3.4; §6.2.
 func dispositionForState(st session.State) executor.Disposition {
 	switch st {
 	case session.StateCompleted:
@@ -79,11 +79,10 @@ func terminatedReasonForState(st session.State) string {
 // fact (TerminatedAt + TerminatedReason) on the session row when the row has
 // reached a terminal state and the fact has not already been stamped. The
 // gateway writes no Sandbox.status field for the terminal disposition (§4.6.3);
-// the fact lives on the session row and is read through the session API (§7.2
-// line 230). The write is best-effort and idempotent: a row already carrying a
+// the fact lives on the session row and is read through the session API (§7.2). The write is best-effort and idempotent: a row already carrying a
 // TerminatedAt is returned unchanged so a re-entrant terminal funnel does not
 // churn the stamp, and a store error is logged but never rolls back the
-// terminal transition. spec: §7.2 line 230; §8.8.
+// terminal transition. spec: §7.2; §8.8.
 func (s *Server) stampTerminatedCondition(ctx context.Context, sess sessionstore.Session) sessionstore.Session {
 	reason := terminatedReasonForState(sess.State)
 	if reason == "" || !sess.TerminatedAt.IsZero() {
@@ -137,7 +136,7 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	// the minimal gateway does not yet distinguish — scope to the
 	// caller's tenant unconditionally).
 	tenant := s.resolveTenant(r)
-	// spec: §14 line 106 — the repeatable `?label=key=value` query scopes
+	// spec: §14 — the repeatable `?label=key=value` query scopes
 	// the usage report to sessions carrying every requested label.
 	// F-14.1.13.
 	labelFilter := parseLabelFilter(r.URL.Query()["label"])
@@ -160,15 +159,15 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 			TenantID: sess.TenantID,
 			Runtime:  sess.RuntimeRef,
 			Sessions: 1,
-			// spec: §14 line 106 — denormalize the session's labels so the
+			// spec: §14 — denormalize the session's labels so the
 			// usage report is filterable by session label. F-14.1.13.
 			Labels: cloneMetadata(sess.Labels),
 		})
 	}
 	if s.billing != nil {
-		// spec: §10.6 line 663 — stamp the session's environment on the
+		// spec: §10.6 — stamp the session's environment on the
 		// billing event so downstream rollups aggregate by environment.
-		// F-10.6.9. spec: §11.2 lines 87-88 — auto-populate
+		// F-10.6.9. spec: §11.2 — auto-populate
 		// experiment_id/variant_id from the session's experimentContext
 		// for per-experiment / per-variant cost attribution. F-11.2.13.
 		expID, varID := sess.ExperimentContext.Enrollment()
@@ -180,7 +179,7 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 			EnvironmentID: sess.Environment,
 			ExperimentID:  expID,
 			VariantID:     varID,
-			// spec: §14 line 106 — denormalize the session's labels so the
+			// spec: §14 — denormalize the session's labels so the
 			// metering stream is filterable by session label. F-14.1.13.
 			Labels: cloneMetadata(sess.Labels),
 		})
@@ -203,9 +202,9 @@ func (s *Server) recordSessionCreated(ctx context.Context, sess sessionstore.Ses
 
 // enqueueTerminalCallback schedules the §14 session-completion webhook
 // when the session carried a client callbackUrl. The CloudEvents type and
-// data are derived from the terminal state per the §14 line 142-146 data
+// data are derived from the terminal state per the §14 data
 // schemas. A session with no dispatcher, no callbackUrl, an unparseable
-// pinned IP, or a non-terminal state is a no-op. spec: §14 lines 108-150.
+// pinned IP, or a non-terminal state is a no-op. spec: §14.
 // F-14.1.11.
 func (s *Server) enqueueTerminalCallback(sess sessionstore.Session) {
 	if s.callbackDispatcher == nil || sess.CallbackURL == "" {
@@ -217,7 +216,7 @@ func (s *Server) enqueueTerminalCallback(sess sessionstore.Session) {
 	}
 	pinned, err := netip.ParseAddr(sess.CallbackPinnedIP)
 	if err != nil {
-		// spec: §14 line 110 — without a stored pin the gateway cannot
+		// spec: §14 — without a stored pin the gateway cannot
 		// dial the registration-time IP, so it does not deliver rather
 		// than re-resolve and risk a rebind to an internal address.
 		return
@@ -237,7 +236,7 @@ func (s *Server) enqueueTerminalCallback(sess sessionstore.Session) {
 
 // terminalCallbackEvent maps a terminal session state to its §14 webhook
 // CloudEvents short name and data payload. ok is false for a non-terminal
-// state. spec: §14 lines 142-146. F-14.1.11.
+// state. spec: §14. F-14.1.11.
 func terminalCallbackEvent(sess sessionstore.Session) (string, json.RawMessage, bool) {
 	info := sessioncallback.SessionInfo{SessionID: sess.ID}
 	switch sess.State {
@@ -258,10 +257,10 @@ func terminalCallbackEvent(sess sessionstore.Session) (string, json.RawMessage, 
 	}
 }
 
-// expiryReasonForState maps a §6.2 expiry to the §14 line 146
+// expiryReasonForState maps a §6.2 expiry to the §14
 // expiryReason enum (max_session_age|max_idle_time). The failure reason
 // carries the discriminator; an idle-timeout reason maps to max_idle_time
-// and everything else to max_session_age. spec: §14 line 146. F-14.1.11.
+// and everything else to max_session_age. spec: §14. F-14.1.11.
 func expiryReasonForState(sess sessionstore.Session) string {
 	if strings.Contains(strings.ToLower(sess.FailureReason), "idle") {
 		return "max_idle_time"
@@ -291,50 +290,48 @@ func terminalSessionEvent(st session.State) (et events.EventType, severity strin
 // OnSessionTerminal is the watchdog / orphancleanup TerminalHook that
 // runs the full terminal-side-effects pipeline (workspace seal, executor
 // release — which drains the pod and releases concurrent-mode slots per
-// §5.2 line 519 — audit, SSE, billing, archive). It adapts the private
+// §5.2 — audit, SSE, billing, archive). It adapts the private
 // recordSessionCompleted so background sweepers force-terminating a
 // session emit the same signals exactly once as a session terminated by
 // REST. fromState is the session's pre-terminal state, which the sweeper
 // captured before it forced the row terminal; the terminal pod-release path
 // keys off it so a maxSessionAge-expired running session is released through
 // the §6.2 executor recycle path rather than the by-name reclaim (§4.6).
-// spec: §5.2 line 519; §6.2 lines 105-117; §11.7; §7.2 lines 137,
-// 141. Closes F-5.2.26.
+// spec: §5.2; §6.2; §11.7; §7.2. Closes F-5.2.26.
 func (s *Server) OnSessionTerminal(ctx context.Context, fromState session.State, sess sessionstore.Session) {
 	s.recordSessionCompleted(ctx, fromState, sess)
 }
 
 // OnSessionExpiredFromAwaitingClientAction is the watchdog's
-// awaiting-action-specific audit hook (§7.3 line 423 entry path). The
+// awaiting-action-specific audit hook (§7.3 entry path). The
 // watchdog fires it before the generic OnSessionTerminal so the §11.7
 // session.expired_in_awaiting_action row precedes the generic
-// session.expired row in the hash-chained audit log. spec: §7.3 line
-// 423; §11.7 / §16.7. F-7.3.25.
+// session.expired row in the hash-chained audit log. spec: §7.3; §11.7 / §16.7. F-7.3.25.
 func (s *Server) OnSessionExpiredFromAwaitingClientAction(ctx context.Context, sess sessionstore.Session) {
 	s.emitAwaitingClientActionExpired(ctx, sess)
 }
 
 // OnSessionEnteredAwaitingClientAction is the watchdog's
-// awaiting-action ENTRY hook (§6.2 lines 249, 292 — resume_pending
+// awaiting-action ENTRY hook (§6.2 — resume_pending
 // wall-clock cap and resuming retries-exhausted branch). The hook
-// drives the §7.3 line 427 session.awaiting_action webhook, the §16.6
+// drives the §7.3 session.awaiting_action webhook, the §16.6
 // operational event, and the §11.7 / §16.7
 // session.awaiting_action_entered audit row through the existing
 // emitAwaitingClientActionEntered helper. Best-effort: a nil
 // collaborator never rolls back the watchdog's state transition.
-// spec: §6.2 line 249/292 (entry from resuming/resume_pending);
-// §7.3 line 427 (webhook); §11.7 / §16.7. F-6.2.14.
+// spec: §6.2;
+// §7.3; §11.7 / §16.7. F-6.2.14.
 func (s *Server) OnSessionEnteredAwaitingClientAction(ctx context.Context, sess sessionstore.Session) {
 	s.emitAwaitingClientActionEntered(ctx, sess)
 }
 
 // OnSessionRetryAttempt is the watchdog's resuming → resume_pending
-// retry hook (§6.2 line 249). The watchdog fires it after the row
+// retry hook (§6.2). The watchdog fires it after the row
 // update so the §16.1 lenny_session_retry_total counter and the §11.7
 // / §16.7 session.retry_attempted audit row see the watchdog-initiated
 // retry alongside the gateway-initiated retries the
 // bumpRecoveryGeneration path already covers.
-// spec: §6.2 line 249 (resuming → resume_pending retry path);
+// spec: §6.2;
 // §16.1 lenny_session_retry_total; §11.7 / §16.7 session.retry_attempted.
 // F-6.2.14.
 func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Session) {
@@ -350,8 +347,7 @@ func (s *Server) OnSessionRetryAttempt(ctx context.Context, sess sessionstore.Se
 // without rolling back the watchdog's state transition.
 //
 // spec: §16.1 (lenny_session_expiry_total{reason}); §16.1.1 (reason
-// vocabulary); §6.2 (maxClientIdleSeconds clock); §11.3 line 199 (max client
-// idle row). F-11.3.7.
+// vocabulary); §6.2 (maxClientIdleSeconds clock); §11.3. F-11.3.7.
 func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, reason string) {
 	if s.incSessionExpiry != nil {
 		s.incSessionExpiry(sess.PoolRef, reason)
@@ -371,7 +367,7 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // before termination never launched and holds only a §4.6 claim, so its pod
 // is reclaimed by name; a running/resuming session holds a live BindResult
 // and is released through the executor path so the §6.2 recycle disposition
-// is preserved (§4.6). spec: §15.1 line 620; §4.6.
+// is preserved (§4.6). spec: §15.1; §4.6.
 func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
 	// spec: §7.2 / §8.8 — record the Terminated session-condition fact on the
 	// Postgres session row (the gateway is not a Sandbox.status writer, §4.6.3,
@@ -384,7 +380,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	sess = s.stampTerminatedCondition(ctx, sess)
 	// §7.1 seal-and-export (steps 20-23): export the final workspace
 	// before the pod is released and before the client- and audit-visible
-	// terminal signals fire below. The seal runs with the §7.1 line 112
+	// terminal signals fire below. The seal runs with the §7.1
 	// bounded exponential backoff; when the retry window is exhausted the
 	// session is re-labeled failed/workspace_seal_timeout so the
 	// session_complete event and audit row report the true outcome rather
@@ -419,18 +415,18 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 			})
 		}
 	}
-	// spec: §14 lines 108-150 — POST the §14 CloudEvents callback to the
+	// spec: §14 — POST the §14 CloudEvents callback to the
 	// client-supplied callbackUrl when the session reaches a terminal
 	// state. Best-effort: the isolated dispatcher runs the retry budget
 	// off the transition path and clears the sealed secret when the
 	// delivery settles. F-14.1.11.
 	s.enqueueTerminalCallback(sess)
-	// §7.2 lines 137, 141 / §11.7 / §7.1 line 77: the client- and
+	// §7.2 / §11.7 / §7.1: the client- and
 	// audit-visible terminal signals (status_change, session_complete,
 	// the lifecycle audit event, and the retention-window roll). Shared
 	// with failSession so the start-path failure emits the same signals.
 	s.emitTerminalLifecycle(ctx, sess)
-	// spec: §15.1 line 620 (/terminate releases the pod), §4.6 (durable
+	// spec: §15.1, §4.6 (durable
 	// binding), §6.2 (pre-attached disposition), §7.1 step 23 (lease release)
 	// — a session terminated before it ever launched (created/finalizing/ready)
 	// holds a pod claimed at /create but registered no live BindResult, so the
@@ -462,31 +458,31 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	// §8.10: a child session reaching a terminal state is archived to
 	// the session_tree_archive so a resumed parent can replay it.
 	s.archiveSettledChild(ctx, sess)
-	// §8.10 lines 1080-1089: a delegated child reaching `failed` injects
+	// §8.10: a delegated child reaching `failed` injects
 	// a `child_failed` event into the parent's session stream so the
 	// parent agent can re-spawn, continue with partial results, or
 	// propagate the failure upward without polling. F-8.10.2.
 	s.emitChildFailed(ctx, sess)
-	// §8.3 line 379: when the tree root settles, the delegation tree is
+	// §8.3: when the tree root settles, the delegation tree is
 	// completing — observe the recorded parallel-children high-watermark
 	// onto the §16.1 histogram. F-8.9.6.
 	s.observeTreeHighWatermark(ctx, sess)
 	// §8.10: apply the cascadeOnFailure policy to this session's
 	// children now that it has reached a terminal state.
 	s.cascadeToChildren(ctx, sess)
-	// §4.4 line 226: best-effort session-log close-hook. The hook
+	// §4.4: best-effort session-log close-hook. The hook
 	// captures the buffered runtime stderr and persists it as the
 	// `/{tenant_id}/sessions/{session_id}/stderr.log` artifact. A
 	// failure (MinIO unavailable, catalog insert error) logs and
 	// drops rather than fail the terminal-state transition.
-	// spec: §4.4 line 226 — Session logs and runtime stderr.
+	// spec: §4.4 — Session logs and runtime stderr.
 	if s.sessionLogHook != nil {
 		if err := s.sessionLogHook.OnSessionTerminal(ctx, sess.TenantID, sess.ID, nil, false); err != nil {
 			log.Printf("lenny-gateway: session-log close-hook session=%s: %v", sess.ID, err)
 		}
 	}
-	// spec: §8.8 line 869 — drop the per-session input-rounds counter
-	// the inputwait Registry tracks for the §8.8 line 869 one_shot
+	// spec: §8.8 — drop the per-session input-rounds counter
+	// the inputwait Registry tracks for the §8.8 one_shot
 	// constraint. The counter is process-local and only needed while
 	// the session is non-terminal; reclaiming it here keeps a
 	// long-running gateway from accumulating entries for sessions
@@ -503,7 +499,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	if s.budgetForget != nil {
 		s.budgetForget(sess.ID)
 	}
-	// spec: §11.2 line 44 — on session completion the final cumulative
+	// spec: §11.2 — on session completion the final cumulative
 	// token usage is written to Postgres as the authoritative value so a
 	// subsequent Redis-recovery reconstruction has an accurate baseline.
 	// Best-effort: a checkpoint failure never unwinds the terminal-state
@@ -516,8 +512,8 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	if s.billing == nil {
 		return
 	}
-	// spec: §10.6 line 663 — environment stamp on terminal-state billing
-	// event. F-10.6.9. spec: §11.2 lines 87-88 — experiment/variant
+	// spec: §10.6 — environment stamp on terminal-state billing
+	// event. F-10.6.9. spec: §11.2 — experiment/variant
 	// auto-population. F-11.2.13.
 	expID, varID := sess.ExperimentContext.Enrollment()
 	_, _ = s.billing.Append(ctx, billingstore.Event{
@@ -528,7 +524,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 		EnvironmentID: sess.Environment,
 		ExperimentID:  expID,
 		VariantID:     varID,
-		// spec: §14 line 106 — denormalize the session's labels onto the
+		// spec: §14 — denormalize the session's labels onto the
 		// terminal billing event so the metering stream stays label-
 		// filterable across the session's full lifecycle. F-14.1.13.
 		Labels: cloneMetadata(sess.Labels),
@@ -578,7 +574,7 @@ func isPreRunningClaimState(st session.State) bool {
 // created session that never assigned one and mandatory for a finalizing/ready
 // session that always holds one (§7.1 step 23).
 //
-// spec: §15.1 line 620 (/terminate releases the pod); §4.6 (durable binding,
+// spec: §15.1; §4.6 (durable binding,
 // created/finalizing/ready scope); §6.2 (pre-attached disposition); §7.1 step
 // 23 (lease release); §4.5 (proposal, the claimless reclaim the created-expiry
 // sweeper shares).
@@ -616,7 +612,7 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	if s.treeArchive == nil || sess.ParentSessionID == "" {
 		return
 	}
-	// spec: §8.8 lines 825-827 — the envelope schemaVersion is immutable
+	// spec: §8.8 — the envelope schemaVersion is immutable
 	// once the first writer sets it. The archive is the durable carrier of
 	// the §8.8 body, so this read-modify-write site preserves any version
 	// a prior archive of the same node already recorded (a re-archive on
@@ -643,7 +639,7 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 		Result:          string(result),
 		SettledAt:       s.clock(),
 	})
-	// spec: §8.2 line 130 — completed-subtree offload returns the §12.4
+	// spec: §8.2 — completed-subtree offload returns the §12.4
 	// tree budget the node held: maxTreeMemoryBytes (the node's in-memory
 	// footprint moves to Postgres) and the parent's parallel_children
 	// slot (the child stopped running). Guarded on the first archive so a
@@ -659,7 +655,7 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 // footprint and the per-parent parallel_children counter by one. Best
 // effort: a return failure leaks budget conservatively (the §12.4 TTL
 // reclaims it) and never fails the transition that triggered it.
-// spec: §8.2 line 130; §12.4 line 193.
+// spec: §8.2; §12.4.
 func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session, rootSessionID string) {
 	if s.treeBudgetReturner == nil {
 		return
@@ -672,7 +668,7 @@ func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session
 	})
 }
 
-// observeTreeHighWatermark records the §8.3 line 379 per-tree
+// observeTreeHighWatermark records the §8.3 per-tree
 // parallel-children high-watermark onto the §16.1 histogram when the
 // tree root settles. It fires only for a true tree root — a session
 // whose RootSessionID is empty or equal to its own id and which has no
@@ -681,7 +677,7 @@ func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session
 // (GETDEL), so a re-settle of the same root never double-counts. A tree
 // that admitted no delegation has no recorded watermark and is skipped.
 // Best-effort: a Redis or read failure never fails the transition that
-// triggered it. spec: §8.3 line 379; §16.1 line 73. F-8.9.6.
+// triggered it. spec: §8.3; §16.1. F-8.9.6.
 func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore.Session) {
 	if s.hwmReader == nil || s.hwmObserver == nil {
 		return
@@ -721,8 +717,8 @@ func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore
 // child failure the parent decides on. Best-effort: a nil event sink or
 // marshal error never fails the transition that triggered it.
 //
-// spec: §8.10 lines 1080-1089 (child_failed notification);
-// §7.3 lines 285-326 (transient/permanent classification). F-8.10.2.
+// spec: §8.10;
+// §7.3. F-8.10.2.
 func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session) {
 	if s.events == nil || sess.ParentSessionID == "" || sess.State != session.StateFailed {
 		return
@@ -765,7 +761,7 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 	policy := originalPolicy
 	orphanCapFallback := false
 	if policy == session.CascadeDetach && s.detachExceedsOrphanCap(ctx, sess.TenantID) {
-		// spec: §8.10 line 1103 — maxOrphanTasksPerTenant fallback. Emit
+		// spec: §8.10 — maxOrphanTasksPerTenant fallback. Emit
 		// the §16.7 `session.cascade_applied` audit row, a structured log
 		// line, and a §7.2 status_change on the parent's SSE event stream
 		// so the orchestrator that configured `detach` sees the override
@@ -812,7 +808,7 @@ func (s *Server) cascadeToChildren(ctx context.Context, sess sessionstore.Sessio
 			continue
 		}
 		s.archiveSettledChild(ctx, updated)
-		// spec: §11.3 line 236 / §11.4 line 258 — a cascaded cancel must
+		// spec: §11.3 / §11.4 — a cascaded cancel must
 		// drain the descendant's pod, not merely flip its row. Releasing the
 		// executor records the §6.2 cancelled disposition and triggers the
 		// adapter's graceful shutdown so the descendant runtime stops holding
@@ -884,8 +880,7 @@ func (s *Server) treeRoot(ctx context.Context, sess sessionstore.Session) string
 // tree-aggregated usage total reflects the whole subtree rather than only
 // the sessions that happen to still be resident. The returned slice
 // always contains root.ID; a leaf session with no descendants returns a
-// single-element slice. spec: §15.1 line 676 (tree-aggregated usage
-// including all descendant tasks). F-15.1.31.
+// single-element slice. spec: §15.1. F-15.1.31.
 func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root sessionstore.Session) []string {
 	children := map[string][]string{}
 	addEdge := func(parent, child string) {
@@ -943,13 +938,13 @@ func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root se
 // child, and the error block (code, category, retriesExhausted) for a
 // terminal failure. When a §8.8 usage Builder is wired it also stamps
 // usage (this task's own consumption) and treeUsage (the subtree rollup,
-// null until every descendant settles per §8.8 line 917).
+// null until every descendant settles per §8.8).
 // existingSchemaVersion carries the version a prior archive of this node
 // already recorded (0 when none); the body preserves it per the §8.8
-// immutability rule. The `state` field uses the §8.8 line 857 MCP
+// immutability rule. The `state` field uses the §8.8 MCP
 // protocol spelling so a resumed parent replaying the archive sees the
 // same value a live row would yield.
-// spec: §8.8 lines 855-940. F-8.8.2 / F-8.8.3 / F-8.8.4 / F-8.8.7 / F-8.8.11.
+// spec: §8.8. F-8.8.2 / F-8.8.3 / F-8.8.4 / F-8.8.7 / F-8.8.11.
 func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Session, existingSchemaVersion int) sessionrecord.Result {
 	res := sessionrecord.Result{
 		SchemaVersion: sessionrecord.ReconcileSchemaVersion(existingSchemaVersion, sessionrecord.SchemaVersion),
@@ -970,18 +965,17 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 
 // buildTaskOutput projects the §8.8 TaskResult.output block for a
 // completed child: the child's final emitted part (the last non-caller
-// turn of its transcript, mirroring the §8.8 line 815 "terminal state on
-// the final agent turn" projection) plus every deliverable
+// turn of its transcript, mirroring the §8.8 projection) plus every deliverable
 // `lenny-blob://` artifact the child catalogued. Both arrays are always
 // present (possibly empty) when output is set, per the §8.8 / §15.4.1
 // contract.
-// spec: §8.8 lines 888-896; §15.4.1. F-8.8.2.
+// spec: §8.8; §15.4.1. F-8.8.2.
 func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *sessionrecord.Output {
 	out := &sessionrecord.Output{Parts: []sessionrecord.MessagePart{}, ArtifactRefs: []string{}}
 	if s.transcripts != nil {
 		if entries, err := s.transcripts.Get(ctx, sess.TenantID, sess.ID); err == nil {
 			for i := len(entries) - 1; i >= 0; i-- {
-				// spec: §8.8 lines 810-817 — the transcript's user role maps
+				// spec: §8.8 — the transcript's user role maps
 				// to caller; assistant/system map to agent. The child's
 				// emitted result is its final agent turn.
 				if entries[i].Role != "user" {
@@ -1009,7 +1003,7 @@ func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session)
 // eviction_context, session_log) are gateway bookkeeping rather than the
 // child's emitted output and are excluded from artifactRefs. The empty
 // ArtifactType defaults to workspace per the §12.5 catalog Insert.
-// spec: §8.8 lines 888-896; §12.5 lines 309-321. F-8.8.2.
+// spec: §8.8; §12.5. F-8.8.2.
 func isDeliverableArtifact(r artifactcatalog.Record) bool {
 	if r.State != artifactcatalog.StateLive {
 		return false
@@ -1031,7 +1025,7 @@ func isDeliverableArtifact(r artifactcatalog.Record) bool {
 // automatic-recovery budget. This mirrors the mcptools row-only fallback
 // so the await path sees identical error blocks whether it reads the
 // archived body or the live row.
-// spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
+// spec: §8.8; §15.2.1. F-8.8.4.
 func taskErrorForSession(sess sessionstore.Session) *sessionrecord.Error {
 	code := sess.FailureReason
 	if code == "" {
@@ -1058,7 +1052,7 @@ func taskErrorForSession(sess sessionstore.Session) *sessionrecord.Error {
 // annotations are discarded on this single-string path. The terminal
 // and input_required spellings are byte-identical to the former
 // task-level table. F-8.8.7.
-// spec: §8.8 lines 855-883, §7.2.
+// spec: §8.8, §7.2.
 func mcpStateForSession(s session.State) string {
 	proto, _ := sessionstate.MCPProtocolState(sessionstate.State(s))
 	return proto

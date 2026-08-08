@@ -60,7 +60,7 @@ spec:
           # container runs the binary directly. lenny-ctl bootstrap
           # --wait-timeout polls the gateway health endpoint before
           # applying the seed, which replaces the former shell wait
-          # loop. spec: §17.6 line 421.
+          # loop. spec: §17.6.
           args:
             - --api-url
             - "{{ $gateway }}"

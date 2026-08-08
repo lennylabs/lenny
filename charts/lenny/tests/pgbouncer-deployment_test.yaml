@@ -1,8 +1,8 @@
-suite: in-cluster PgBouncer topology (§12.3 lines 40-47)
+suite: in-cluster PgBouncer topology (§12.3)
 templates:
   - pgbouncer-deployment.yaml
 tests:
-  # spec: §12.3 line 38 — cloud-managed deployments front Postgres with
+  # spec: §12.3 — cloud-managed deployments front Postgres with
   # the provider's proxy, so the in-cluster Deployment is opt-in and the
   # stock render emits nothing. F-12.3.10.
   - it: renders nothing when pgbouncer.deploy is false (default)
@@ -17,7 +17,7 @@ tests:
       - hasDocuments:
           count: 3
 
-  # spec: §12.3 line 40 — minimum 2 replicas; pod carries the
+  # spec: §12.3 — minimum 2 replicas; pod carries the
   # lenny.dev/component: pgbouncer label the §13.2 NetworkPolicies select.
   - it: Deployment has 2 replicas and the pgbouncer component label
     set:
@@ -36,7 +36,7 @@ tests:
           path: spec.selector.matchLabels["lenny.dev/component"]
           value: pgbouncer
 
-  # spec: §12.3 line 41 — transaction mode pooling for RLS via SET LOCAL.
+  # spec: §12.3 — transaction mode pooling for RLS via SET LOCAL.
   - it: pgbouncer container runs transaction pool mode and mounts the connect_query ConfigMap
     set:
       pgbouncer.deploy: true
@@ -56,7 +56,7 @@ tests:
             configMap:
               name: lenny-pgbouncer-config
 
-  # spec: §12.3 line 45 — readiness verifies backend Postgres
+  # spec: §12.3 — readiness verifies backend Postgres
   # connectivity via SELECT 1 when a DATABASE_URL secret is supplied.
   - it: readiness probe runs SELECT 1 through DATABASE_URL when databaseURLSecret is set
     set:
@@ -76,7 +76,7 @@ tests:
           path: spec.template.spec.containers[0].readinessProbe.failureThreshold
           value: 2
 
-  # spec: §12.3 line 45 — without a DATABASE_URL secret the probe falls
+  # spec: §12.3 — without a DATABASE_URL secret the probe falls
   # back to a TCP check of the listen port.
   - it: readiness probe falls back to tcpSocket when no databaseURLSecret is set
     set:
@@ -91,7 +91,7 @@ tests:
       - isNull:
           path: spec.template.spec.containers[0].readinessProbe.exec
 
-  # spec: §12.3 line 47 — pgbouncer_exporter sidecar emits the metrics the
+  # spec: §12.3 — pgbouncer_exporter sidecar emits the metrics the
   # §16.5 PgBouncerPoolSaturated alert evaluates. F-12.3.11.
   - it: renders the pgbouncer_exporter sidecar with the metrics port and scrape annotations
     set:
@@ -125,7 +125,7 @@ tests:
           path: spec.template.spec.containers
           count: 1
 
-  # spec: §12.3 line 44 — PDB uses minAvailable: 1 at 2 replicas and
+  # spec: §12.3 — PDB uses minAvailable: 1 at 2 replicas and
   # maxUnavailable: 1 at 3+ replicas.
   - it: PDB uses minAvailable 1 at the default replica count
     set:
@@ -154,7 +154,7 @@ tests:
       - isNull:
           path: spec.minAvailable
 
-  # spec: §12.3 line 43 — ClusterIP Service fronts the replicas for
+  # spec: §12.3 — ClusterIP Service fronts the replicas for
   # transparent failover.
   - it: Service selects the pgbouncer pods and exposes the client and metrics ports
     set:

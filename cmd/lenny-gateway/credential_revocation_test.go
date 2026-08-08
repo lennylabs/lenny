@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §4.9 lines 1640-1652 — the gateway-side emergency-revocation
+// spec: §4.9 — the gateway-side emergency-revocation
 // lease terminator.
 
 // credLease returns a pool-backed proxy lease against credID.
@@ -159,7 +159,7 @@ func newSyncRotator(leases poolLeaseStore) (*directModeRevocationRotator, *[]rot
 	return r, &rotates, &marks
 }
 
-// TestDirectModeRotatorRotatesDirectLeasesOnly asserts the §4.9 line 1649
+// TestDirectModeRotatorRotatesDirectLeasesOnly asserts the §4.9
 // step-5 rotate fires for direct-delivery leases against a revoked
 // credential and skips proxy-mode leases (the deny list handles those).
 func TestDirectModeRotatorRotatesDirectLeasesOnly(t *testing.T) {
@@ -206,7 +206,7 @@ func TestDirectModeRotatorRotatesDirectLeasesOnly(t *testing.T) {
 
 // TestDirectModeRotatorMarksBeforeRotate asserts the credential is marked
 // unselectable before any rotate is dispatched, so a replacement mint
-// (§4.9 line 1649 "a different credential in the pool") never re-selects
+// (§4.9) never re-selects
 // the credential just revoked.
 func TestDirectModeRotatorMarksBeforeRotate(t *testing.T) {
 	leases := credleasestore.New()

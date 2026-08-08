@@ -1,4 +1,4 @@
--- §7.3 line 377-393 — CreateSession carries a client-supplied
+-- §7.3 — CreateSession carries a client-supplied
 -- retryPolicy bounded by deployer caps. The gateway persists the
 -- effective (post-clamp) policy on the sessions row so a coordinator
 -- handoff or replica restart picks up the same caps without re-running
@@ -11,9 +11,9 @@
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS retry_policy JSONB NULL;
 
--- §7.3 line 397 / §10.1 coordinator-handoff step 0 — the per-session
+-- §7.3 / §10.1 coordinator-handoff step 0 — the per-session
 -- last_checkpoint_workspace_bytes is the authoritative size of the
--- most recent successful workspace checkpoint. The §7.2 line 138
+-- most recent successful workspace checkpoint. The §7.2
 -- workspaceRecoveryFraction depends on it for the partial-workspace
 -- resume path, and the §10.1 preStop tiered-cap selection reads it to
 -- pick the right drain budget. The column is NULL until the first

@@ -3,7 +3,7 @@ templates:
   - deployment-config-sync-configmap.yaml
   - deployment-config-sync-job.yaml
 tests:
-  # spec: §16.7 lines 672, 676, 682 — the rendered request carries the
+  # spec: §16.7 — the rendered request carries the
   # deployment-scope config the gateway diffs to emit the transition events.
   - it: renders the deployment-config request JSON with the rendered floor and cycle mode
     template: deployment-config-sync-configmap.yaml
@@ -28,7 +28,7 @@ tests:
           path: data["deployment-config.json"]
           pattern: '"defaultMaxDepth":12'
 
-  # spec: §16.7 line 682 — features.compliance gates two webhooks, so an
+  # spec: §16.7 — features.compliance gates two webhooks, so an
   # acknowledged compliance downgrade expands to two acknowledgedDowngrades
   # entries (lenny-data-residency-validator and lenny-t4-node-isolation).
   - it: expands an acknowledged compliance downgrade to both gated webhooks

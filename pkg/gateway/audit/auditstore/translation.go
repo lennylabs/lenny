@@ -34,7 +34,7 @@ const translationTopic = eventbus.TopicSessionLifecycle
 // pgtenant.InAllTenants transaction so the §4.2 `__all__` sentinel
 // satisfies the §12.3 lenny_tenant_isolation RLS policy under the
 // non-superuser lenny_app role, and a cross_tenant_read audit event
-// is emitted (§12.3 line 141) recording the worker identity and the
+// is emitted (§12.3) recording the worker identity and the
 // query category (audit_ocsf_translation_worker).
 func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.TranslatableRow, error) {
 	if limit <= 0 {
@@ -52,7 +52,7 @@ func (s *Store) PendingTranslation(ctx context.Context, limit int) ([]ocsf.Trans
 		}
 		out = append(out, batch...)
 	}
-	// §12.3 line 141: every code path that sets app.current_tenant
+	// §12.3: every code path that sets app.current_tenant
 	// = '__all__' MUST emit one cross_tenant_read audit event per
 	// API/worker invocation. The OCSF translation worker uses the
 	// `audit_ocsf_translation_worker` category.
@@ -128,7 +128,7 @@ func (s *Store) pendingTranslationOnShard(ctx context.Context, pool *pgxpool.Poo
 	return out, nil
 }
 
-// emitCrossTenantRead writes the §12.3 line 141 cross_tenant_read
+// emitCrossTenantRead writes the §12.3 cross_tenant_read
 // audit event to the `platform` audit chain. category names the
 // background worker category that ran the cross-tenant SELECT;
 // rowCount records how many rows the worker observed (purely

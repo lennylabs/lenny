@@ -90,7 +90,7 @@ type Store interface {
 	// archive rows to be removed first. A non-root session id matches no
 	// archive row, so the call is a no-op in that case.
 	//
-	// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+	// spec: §12.8.
 	DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error)
 }
 

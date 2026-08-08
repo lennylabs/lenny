@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 423 — awaiting_client_action → expired entry path
+// spec: §7.3 — awaiting_client_action → expired entry path
 // fires the §11.7 session.expired_in_awaiting_action audit row BEFORE
 // the generic terminal hook so SIEM/SOC dashboards see the cause of
 // expiry. F-7.3.25.
@@ -99,7 +99,7 @@ func (t *terminalOnly) OnSessionTerminal(_ context.Context, _ session.State, ses
 }
 
 // TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867
-// verifies the §8.8 line 867 expiry-reason prefix lands on the
+// verifies the §8.8 expiry-reason prefix lands on the
 // failureReason column when the watchdog drives an
 // awaiting_client_action row to `expired`. The MCP boundary's
 // taskError.Code fallback then surfaces `expired:deadline` to clients.
@@ -121,12 +121,12 @@ func TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867(t *testing.
 		t.Fatalf("State = %q, want expired", got.State)
 	}
 	if got.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", got.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 
 // TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867 verifies the
-// §8.8 line 867 expiry prefix is stamped when the §11.3 maxSessionAge
+// §8.8 expiry prefix is stamped when the §11.3 maxSessionAge
 // cap fires. F-8.8.8.
 func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
 	store := memstore.New()
@@ -145,7 +145,7 @@ func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
 		t.Fatalf("State = %q, want expired", got.State)
 	}
 	if got.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", got.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 

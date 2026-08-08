@@ -1,7 +1,7 @@
--- §4.2 line 165 pooler-mode guard for the __all__ cross-tenant
+-- §4.2 pooler-mode guard for the __all__ cross-tenant
 -- sentinel.
 --
--- spec: §4.2 line 165 — "the __all__ sentinel is rejected by the
+-- spec: §4.2 — "the __all__ sentinel is rejected by the
 -- lenny_tenant_guard trigger when LENNY_POOLER_MODE = external and
 -- the trigger is configured to allow only concrete tenant IDs (i.e.,
 -- __all__ must be explicitly allowlisted in the trigger alongside
@@ -38,7 +38,7 @@ BEGIN
     END IF;
 
     IF ctx = '__all__' THEN
-        -- spec: §4.2 line 165 — platform-admin cross-tenant
+        -- spec: §4.2 — platform-admin cross-tenant
         -- sentinel requires explicit opt-in. The pgtenant.InAllTenants
         -- helper SETs lenny.allow_all_sentinel = 'true' via SET LOCAL;
         -- any other code path reaching the trigger with __all__ but
@@ -78,7 +78,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- spec: §4.2 line 165 — the __all__ sentinel in the RLS policies
+-- spec: §4.2 — the __all__ sentinel in the RLS policies
 -- must also require the lenny.allow_all_sentinel opt-in. Without
 -- this, a SELECT that smuggled __all__ into app.current_tenant
 -- (bypassing the trigger, which only fires on write) would still

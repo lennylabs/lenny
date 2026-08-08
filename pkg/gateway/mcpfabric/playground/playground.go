@@ -131,7 +131,7 @@ type Config struct {
 	// connect-src CSP directive.
 	GatewayHost string
 
-	// SessionLabels mirrors playground.sessionLabels (§27.2 line 41):
+	// SessionLabels mirrors playground.sessionLabels (§27.2):
 	// the operator-tunable label map stamped on every playground
 	// session record and every playground audit event for audit /
 	// accounting consumers. The map defaults to {"origin":
@@ -169,7 +169,7 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
-// EffectiveLabels returns the §27.2 line 41 sessionLabels map with the
+// EffectiveLabels returns the §27.2 sessionLabels map with the
 // §27.3 mode-agnostic origin=playground guarantee enforced. The
 // returned map is a copy: callers may mutate it without affecting the
 // stored Config. A nil or empty SessionLabels yields {"origin":
@@ -230,7 +230,7 @@ func (c Config) Validate() error {
 // The gateway applies this as an authorization boundary on the shared §9.1
 // GET /v1/runtimes discovery surface and at session create, but only for
 // origin=playground requests — a non-playground caller is never narrowed by
-// the playground value. spec: §27.4 line 176; §27.5 line 190; §27.9 line 250.
+// the playground value. spec: §27.4; §27.5; §27.9.
 // F-27.4.1.
 func (c Config) RuntimeVisible(name string) bool {
 	if len(c.AllowedRuntimes) == 0 {
@@ -249,7 +249,7 @@ func (c Config) RuntimeVisible(name string) bool {
 // pattern with no `*` is an exact, case-sensitive comparison. The semantics
 // mirror the §14 allowlist matcher (pkg/gateway/envblock) so the playground
 // allowedRuntimes globs behave the same as the env-block globs operators
-// already know. spec: §27.5 line 190.
+// already know. spec: §27.5.
 func runtimeGlobMatch(pattern, s string) bool {
 	if !strings.Contains(pattern, "*") {
 		return pattern == s
@@ -282,7 +282,7 @@ func runtimeGlobMatch(pattern, s string) bool {
 // (no idle bound resolved) yields the configured playground cap unchanged.
 // The gateway session server invokes this through its PlaygroundCapResolver
 // seam to stamp the cap onto a §27.3 origin=playground session at create time
-// (F-27.6.1). spec: §27.6 line 201.
+// (F-27.6.1). spec: §27.6.
 func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 	pg := c.MaxIdleTimeSeconds
 	if maxClientIdleSeconds > 0 && maxClientIdleSeconds < pg {
@@ -297,7 +297,7 @@ func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 // a zero runtimeMinutes yields the configured playground cap. The
 // gateway session server invokes this through its PlaygroundCapResolver
 // seam to stamp the cap onto a §27.3 origin=playground session at create
-// time (F-27.6.2). spec: §27.6 line 200.
+// time (F-27.6.2). spec: §27.6.
 func (c Config) EffectiveSessionMinutes(runtimeMinutes int) int {
 	pg := c.MaxSessionMinutes
 	if runtimeMinutes > 0 && runtimeMinutes < pg {

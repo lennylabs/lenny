@@ -32,7 +32,7 @@ func fixedClock() func() time.Time {
 	return func() time.Time { return time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC) }
 }
 
-// spec: §7.2 lines 305-311 — the in-memory inbox is drained to the DLQ on
+// spec: §7.2 — the in-memory inbox is drained to the DLQ on
 // resume_pending; the count is returned for messagesPreservedInDLQ.
 func TestCoordinator_MigrateInboxToDLQ_InMemory_spec_7_2_305(t *testing.T) {
 	c := NewCoordinator(Config{
@@ -57,7 +57,7 @@ func TestCoordinator_MigrateInboxToDLQ_InMemory_spec_7_2_305(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 305 — in durable mode the Redis inbox is left in place
+// spec: §7.2 — in durable mode the Redis inbox is left in place
 // with an EXPIRE rather than drained to the DLQ.
 func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	rc := newRedisT(t)
@@ -85,7 +85,7 @@ func TestCoordinator_MigrateInboxToDLQ_Durable_spec_7_2_305(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 343 / §7.3 line 425 — terminal drain emits one
+// spec: §7.2 / §7.3 — terminal drain emits one
 // message_expired(target_terminated) per buffered message that carries a
 // sender, drawing from both the inbox and the DLQ; the DLQ key is
 // deleted.
@@ -121,7 +121,7 @@ func TestCoordinator_DrainOnTerminal_spec_7_2_343(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 343 — a buffered message with no sender session (an
+// spec: §7.2 — a buffered message with no sender session (an
 // external-client source) is drained without a message_expired event,
 // since there is no sender stream to notify.
 func TestCoordinator_DrainOnTerminal_SkipsEmptySender_spec_7_2_343(t *testing.T) {
@@ -141,7 +141,7 @@ func TestCoordinator_DrainOnTerminal_SkipsEmptySender_spec_7_2_343(t *testing.T)
 	}
 }
 
-// spec: §7.2 line 341 / §15.4.1 — SweepExpired emits
+// spec: §7.2 / §15.4.1 — SweepExpired emits
 // message_expired(dlq_ttl_expired) for each expired DLQ entry.
 func TestCoordinator_SweepExpired_spec_7_2_341(t *testing.T) {
 	em := &recordingEmitter{}
@@ -166,7 +166,7 @@ func TestCoordinator_SweepExpired_spec_7_2_341(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 284 — when a coordinator re-acquires a recovering
+// spec: §7.2 — when a coordinator re-acquires a recovering
 // session (the resume path), the in-memory inbox is gone; inbox_cleared is
 // emitted on the target's own stream with messagesPreservedInDLQ set to the
 // count the DLQ still holds (drained there on resume_pending).
@@ -199,7 +199,7 @@ func TestCoordinator_ClearInboxOnAcquire_InMemory_spec_7_2_284(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 284 — in durable mode the Redis inbox survives the
+// spec: §7.2 — in durable mode the Redis inbox survives the
 // handoff, so the new coordinator recovers it and no inbox_cleared is
 // emitted (the inbox was not lost).
 func TestCoordinator_ClearInboxOnAcquire_Durable_NoEvent_spec_7_2_284(t *testing.T) {

@@ -12,8 +12,7 @@ func RuntimeClassName(p Profile) (string, bool) {
 
 // ResolveRuntimeClassName returns the Kubernetes RuntimeClass name for
 // the isolation profile, applying the per-profile operator override
-// when present. spec: §17.5 line 3 ("RuntimeClass works with any
-// conformant runtime") — operators running gVisor as `runsc` or Kata
+// when present. spec: §17.5 — operators running gVisor as `runsc` or Kata
 // as `kata-qemu` / `kata-fc` override the chart-default literal via
 // `isolation.runtimeClassNames` Helm values. An override mapped to an
 // empty string falls back to the default; a missing key falls back to

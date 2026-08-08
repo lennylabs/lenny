@@ -31,7 +31,7 @@ const globMeta = "*?["
 // gateway applies the lease's fileExportLimits and optional content
 // scanning to the returned set.
 //
-// spec: §4.7 line 633, §8.7
+// spec: §4.7, §8.7
 func (s *Server) ExportPaths(_ context.Context, req *adapterv1.ExportPathsRequest) (*adapterv1.ExportPathsResponse, error) {
 	if req.GetSessionId().GetValue() == "" {
 		return nil, status.Error(codes.InvalidArgument, "ExportPaths requires a session id")

@@ -4,7 +4,7 @@ package tenantstore
 
 import "testing"
 
-// spec: §12.5 line 317 — GCPriority is a closed enum (normal/high); the
+// spec: §12.5 — GCPriority is a closed enum (normal/high); the
 // empty value is valid and read as normal. F-12.5.18.
 func TestValidGCPriority_spec_12_5_317(t *testing.T) {
 	for _, s := range []string{"", GCPriorityNormal, GCPriorityHigh} {
@@ -19,7 +19,7 @@ func TestValidGCPriority_spec_12_5_317(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 317 — only `high` fires the immediate tenant-scoped
+// spec: §12.5 — only `high` fires the immediate tenant-scoped
 // sweep on erasure-job completion; `normal` and the empty default do not.
 // F-12.5.18.
 func TestTriggersImmediateGC_spec_12_5_317(t *testing.T) {

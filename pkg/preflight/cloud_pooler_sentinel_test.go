@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.6 line 488; §17.9.7 line 1541; §12.3 line 56 — when
+// spec: §17.6; §17.9.7; §12.3 — when
 // postgres.connectionPooler is external the cloud-managed proxy cannot
 // run the connect_query __unset__ sentinel, so the lenny_tenant_guard
 // per-transaction trigger is the load-bearing RLS isolation defense; the
@@ -52,7 +52,7 @@ func TestCloudPoolerSentinelCheck_spec_17_6_488(t *testing.T) {
 	}
 }
 
-// The fail message reproduces the §17.6 line 488 error-column text
+// The fail message reproduces the §17.6 error-column text
 // verbatim so operators can match it against the documented remediation.
 func TestCloudPoolerSentinelFailMessage_spec_17_6_488(t *testing.T) {
 	check := CloudPoolerSentinelCheck{

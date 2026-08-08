@@ -28,7 +28,7 @@ func seedBackup(t *testing.T, store *backup.MemStore, id, typ, status string, co
 	}
 }
 
-// spec: §25.11 line 4309 — with no successful backup the gauge source is
+// spec: §25.11 — with no successful backup the gauge source is
 // empty so the caller leaves the series unset.
 func TestLastSuccessfulBackupTimes_Empty_spec_25_11(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
@@ -41,7 +41,7 @@ func TestLastSuccessfulBackupTimes_Empty_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4309 — one completed backup per type reports that
+// spec: §25.11 — one completed backup per type reports that
 // type's completion time.
 func TestLastSuccessfulBackupTimes_PerType_spec_25_11(t *testing.T) {
 	svc, store, _, _ := newTestService(t)
@@ -62,7 +62,7 @@ func TestLastSuccessfulBackupTimes_PerType_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4309 — the gauge tracks the most recent successful
+// spec: §25.11 — the gauge tracks the most recent successful
 // completion when several backups of one type have completed.
 func TestLastSuccessfulBackupTimes_TakesMax_spec_25_11(t *testing.T) {
 	svc, store, _, _ := newTestService(t)

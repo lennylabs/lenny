@@ -55,7 +55,7 @@ func seedEtagPool(t *testing.T) (*admin.Router, *poolstore.Memory) {
 	return router, pools
 }
 
-// spec: §15.1 line 1209 — GET on an admin resource carries the ETag
+// spec: §15.1 — GET on an admin resource carries the ETag
 // header set to the resource's current version (the pool_config_generation).
 func TestPoolGetCarriesETag_spec_15_1_1209(t *testing.T) {
 	router, _ := seedEtagPool(t)
@@ -75,7 +75,7 @@ func TestPoolGetCarriesETag_spec_15_1_1209(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1209 — list responses include a per-item ETag.
+// spec: §15.1 — list responses include a per-item ETag.
 func TestPoolListCarriesPerItemETag_spec_15_1_1209(t *testing.T) {
 	router, _ := seedEtagPool(t)
 	g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/pools", nil))
@@ -98,7 +98,7 @@ func TestPoolListCarriesPerItemETag_spec_15_1_1209(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1210 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
+// spec: §15.1 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
 func TestPoolUpdateMissingIfMatch_spec_15_1_1210(t *testing.T) {
 	router, _ := seedEtagPool(t)
 	rr := putPoolRaw(t, router.Handler(), "p", "", admin.UpdatePoolRequest{})
@@ -108,7 +108,7 @@ func TestPoolUpdateMissingIfMatch_spec_15_1_1210(t *testing.T) {
 	assertErrorCode(t, rr, "ETAG_REQUIRED")
 }
 
-// spec: §15.1 line 1210 — a malformed If-Match (weak validator, unquoted,
+// spec: §15.1 — a malformed If-Match (weak validator, unquoted,
 // non-decimal, or `*`) is 400 VALIDATION_ERROR naming the header.
 func TestPoolUpdateMalformedIfMatch_spec_15_1_1210(t *testing.T) {
 	for _, bad := range []string{"1", "abc", "W/\"1\"", "*", `"1.5"`, `""`} {
@@ -122,7 +122,7 @@ func TestPoolUpdateMalformedIfMatch_spec_15_1_1210(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1210 — a stale If-Match is 412 ETAG_MISMATCH and
+// spec: §15.1 — a stale If-Match is 412 ETAG_MISMATCH and
 // carries details.currentEtag.
 func TestPoolUpdateStaleIfMatch_spec_15_1_1210(t *testing.T) {
 	router, _ := seedEtagPool(t)
@@ -145,7 +145,7 @@ func TestPoolUpdateStaleIfMatch_spec_15_1_1210(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1210 — a matching If-Match succeeds and the response
+// spec: §15.1 — a matching If-Match succeeds and the response
 // returns the new (incremented) ETag.
 func TestPoolUpdateMatchingIfMatchBumpsETag_spec_15_1_1210(t *testing.T) {
 	router, store := seedEtagPool(t)
@@ -167,7 +167,7 @@ func TestPoolUpdateMatchingIfMatchBumpsETag_spec_15_1_1210(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1210 — the not-found check precedes the precondition
+// spec: §15.1 — the not-found check precedes the precondition
 // so a stale-handle client cannot probe pool existence via the ETag path.
 func TestPoolUpdateMissingPoolIsNotFoundBeforeETag(t *testing.T) {
 	router, _ := seedEtagPool(t)

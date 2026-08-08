@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
-// spec: §16.3 line 372 — the §25.2 ops error taxonomy (TRANSIENT, PERMANENT,
+// spec: §16.3 — the §25.2 ops error taxonomy (TRANSIENT, PERMANENT,
 // POLICY, AUTH) maps onto the §16.3 span taxonomy (TRANSIENT, PERMANENT,
 // POLICY, UPSTREAM). AUTH folds into UPSTREAM ("external dependency failure
 // (MCP tool error, auth failure)"); the other three share names. A span's

@@ -17,7 +17,7 @@
 //
 // The breakers in this package are per-replica and in-memory; the
 // operator-managed §11.6 platform-wide circuit breakers (Redis-backed,
-// cross-replica) are a separate surface — see §4.1 line 115.
+// cross-replica) are a separate surface — see §4.1.
 package subsystem
 
 import (

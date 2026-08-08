@@ -36,7 +36,7 @@ func newQuotaAdmin(t *testing.T, qr admin.QuotaReconciler) *admin.Router {
 	return r
 }
 
-// spec: §15.1 line 879 / §12.4 line 216 — the endpoint reaches the
+// spec: §15.1 / §12.4 — the endpoint reaches the
 // reconciler seam and returns the per-tenant MAX-rule summary.
 func TestQuotaReconcileAllTenants(t *testing.T) {
 	fake := &fakeQuotaReconciler{result: admin.QuotaReconcileResult{
@@ -64,7 +64,7 @@ func TestQuotaReconcileAllTenants(t *testing.T) {
 	}
 }
 
-// spec: §24.6 line 99 — the per-tenant `--tenant <id>` scope reaches the
+// spec: §24.6 — the per-tenant `--tenant <id>` scope reaches the
 // reconciler with the named tenant.
 func TestQuotaReconcileSingleTenant(t *testing.T) {
 	fake := &fakeQuotaReconciler{result: admin.QuotaReconcileResult{TenantsReconciled: 1}}

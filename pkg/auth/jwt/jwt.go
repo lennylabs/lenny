@@ -72,7 +72,7 @@ type Claims struct {
 	// claim, the group claim is admission-time only.
 	Groups []string `json:"groups,omitempty"`
 
-	// AuthorizedTools carries the §13.3 line 580 narrowed tool allowlist
+	// AuthorizedTools carries the §13.3 narrowed tool allowlist
 	// for operability-scope tokens (§25.1). A token exchange preserves or
 	// further narrows it (broadening is rejected by the §13.3 validator),
 	// so the claim survives the exchange path rather than being dropped.
@@ -94,7 +94,7 @@ type Claims struct {
 	// from the raw JWT payload; Sign leaves it nil. Use ClaimString to
 	// resolve a string claim by name across the union of the typed
 	// fields above and Extras.
-	// spec: §10.2 line 212. F-10.2.9.
+	// spec: §10.2. F-10.2.9.
 	Extras map[string]json.RawMessage `json:"-"`
 }
 
@@ -102,7 +102,7 @@ type Claims struct {
 // name. Standard typed fields take precedence over the raw Extras map
 // so `tenant_id` resolves identically regardless of which path
 // populated the value. Returns "" when the claim is absent or non-
-// string. spec: §10.2 line 212. F-10.2.9.
+// string. spec: §10.2. F-10.2.9.
 func (c Claims) ClaimString(name string) string {
 	switch name {
 	case "tenant_id":
@@ -252,7 +252,7 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("payload not JSON: %v", err)}
 	}
-	// spec: §10.2 line 212. Capture every payload claim verbatim so the
+	// spec: §10.2. Capture every payload claim verbatim so the
 	// auth middleware can read tenant under a deployment-configurable
 	// claim name (the `auth.tenantIdClaim` Helm value defaults to
 	// `tenant_id`). The typed Claims fields above stay authoritative for
@@ -269,7 +269,7 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 			return Claims{}, &VerifyError{Reason: "expired"}
 		}
 	}
-	// spec: §10.2 line 237 — the standard auth chain validates nbf
+	// spec: §10.2 — the standard auth chain validates nbf
 	// alongside signature/exp. A token whose not-before lies in the
 	// future (beyond the ±skew window) is rejected as not-yet-valid.
 	if claims.NotBefore > 0 {

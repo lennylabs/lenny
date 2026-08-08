@@ -58,16 +58,16 @@ func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
 	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",origin_pod="pod-origin",tampering_pod="pod-middle"} 1`) {
 		t.Errorf("/metrics output missing detect-only count of 1 with origin_pod/tampering_pod labels:\n%s", body)
 	}
-	// §16.1 line 64 cardinality: tenant_id must NOT be a label on this
+	// §16.1 cardinality: tenant_id must NOT be a label on this
 	// metric — the bounded labels are origin_pod and tampering_pod only.
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, "lenny_elicitation_content_tamper_detected_total{") && strings.Contains(line, "tenant_id") {
-			t.Errorf("tamper counter must not carry a tenant_id label (§16.1 line 64): %s", line)
+			t.Errorf("tamper counter must not carry a tenant_id label (§16.1): %s", line)
 		}
 	}
 }
 
-// spec: §16.5 line 460 — the weakened-mode gauge is the standing
+// spec: §16.5 — the weakened-mode gauge is the standing
 // ElicitationContentIntegrityWeakened alert numerator. It is exposed
 // unlabelled and reports the count of active tenants whose effective
 // §9.2 mode is weaker than enforce. F-9.2.5.
@@ -90,12 +90,11 @@ func TestSetElicitationIntegrityWeakenedExposesGauge(t *testing.T) {
 	}
 }
 
-// TestElicitationLifecycleMetricsExposeCounters proves the §16.1
-// lines 60-63 elicitation lifecycle metrics are registered and
+// TestElicitationLifecycleMetricsExposeCounters proves the §16.1 elicitation lifecycle metrics are registered and
 // observable on /metrics: the in-flight gauge, the timeout counter,
 // the suppressed counter, and the round-trip histogram. F-9.2.14.
 //
-// spec: §16.1 lines 60–63; §16.5 line 458 ElicitationBacklogHigh
+// spec: §16.1; §16.5 ElicitationBacklogHigh
 // alert.
 func TestElicitationLifecycleMetricsExposeCounters_spec_16_1_F_9_2_14(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -254,7 +253,7 @@ func TestGCTombstonesPrunedCounter(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 321 — `lenny_gc_runs_total`,
+// spec: §12.5 — `lenny_gc_runs_total`,
 // `lenny_gc_artifacts_deleted`, `lenny_gc_errors_total`, and
 // `lenny_gc_duration_seconds` are emitted by the retention-GC sweep.
 func TestGCRetentionMetricsEmit(t *testing.T) {
@@ -288,7 +287,7 @@ func TestGCRetentionMetricsEmit(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 291 — `lenny_drain_readiness_checks_total` records
+// spec: §12.5 — `lenny_drain_readiness_checks_total` records
 // the webhook decision by outcome (allowed|blocked|forced).
 func TestDrainReadinessCheckCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -315,7 +314,7 @@ func TestDrainReadinessCheckCounter(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 739 — `lenny_legal_hold_checkpoint_gaps_total`
+// spec: §12.8 — `lenny_legal_hold_checkpoint_gaps_total`
 // counts held sessions where the reconciler detects a checkpoint gap.
 func TestLegalHoldCheckpointGapCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -340,7 +339,7 @@ func TestLegalHoldCheckpointGapCounter(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 883/887 — the Phase 3.5 force-delete override
+// spec: §12.8 — the Phase 3.5 force-delete override
 // counters. F-12.8.2, F-24.10.5.
 func TestLegalHoldOverrideCounters_spec_12_8(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -370,7 +369,7 @@ func TestLegalHoldOverrideCounters_spec_12_8(t *testing.T) {
 	nilM.IncLegalHoldOverriddenTenant("acme")
 }
 
-// spec: §12.5 line 282 — `lenny_artifact_upload_error_total` counts
+// spec: §12.5 — `lenny_artifact_upload_error_total` counts
 // retry-exhausted PUT failures, labelled by tenant_id and error_type.
 // The same call rolls into
 // `lenny_checkpoint_storage_failure_total{reason=...}` so the
@@ -405,7 +404,7 @@ func TestArtifactUploadErrorCounter(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519 — lenny_slot_assignment_conflict_total is a
+// spec: §5.2 — lenny_slot_assignment_conflict_total is a
 // per-pool counter of concurrent-mode slot-contention reservation
 // failures, exposed on /metrics for the pool-under-sizing signal.
 func TestSlotAssignmentConflictCounter(t *testing.T) {
@@ -431,7 +430,7 @@ func TestSlotAssignmentConflictCounter(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — lenny_slot_rehydration_total counts post-recovery
+// spec: §5.2 — lenny_slot_rehydration_total counts post-recovery
 // slot-counter rehydration events, labeled by pod and pool.
 func TestSlotRehydrationCounter(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -463,7 +462,7 @@ func TestSlotRehydrationCounterNilSafe(t *testing.T) {
 	m.IncSlotRehydration("sbx-1", "pool") // must not panic
 }
 
-// spec: §16 line 66 — lenny_delegation_lease_extension_total is the §8.6
+// spec: §16 — lenny_delegation_lease_extension_total is the §8.6
 // per-decision counter labelled by tenant_id and outcome
 // (approved/capped/denied). F-8.6.13.
 func TestDelegationLeaseExtensionCounter_spec_16_line_66(t *testing.T) {
@@ -498,7 +497,7 @@ func TestDelegationLeaseExtensionCounterNilSafe(t *testing.T) {
 	m.IncDelegationLeaseExtension("acme", "approved") // must not panic
 }
 
-// spec: §4.9 line 1220 — lenny_credential_preclaim_mismatch_total is a
+// spec: §4.9 — lenny_credential_preclaim_mismatch_total is a
 // per-(pool,provider) counter of races where the pre-claim availability
 // check passed but the lease assignment failed.
 func TestCredentialPreclaimMismatchCounter(t *testing.T) {
@@ -531,7 +530,7 @@ func TestCredentialPreclaimMismatchNilSafe(t *testing.T) {
 	m.IncCredentialPreclaimMismatch("p", "anthropic_direct") // must not panic
 }
 
-// spec: §16.1 lines 51, 53, 55, 97, 99, 100 and §5.2 line 12 — the
+// spec: §16.1 and §5.2 — the
 // credential, LLM-proxy, and slot-failure metrics register and emit
 // through the gateway registry.
 func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
@@ -588,7 +587,7 @@ func TestNewMetricsEmittersNilSafe(t *testing.T) {
 	m.ObserveSessionStartupPhase("pod_claim", "runc", 0.05)
 }
 
-// spec: §16.1 line 14 / §6.3 lines 348, 372 — the startup-latency
+// spec: §16.1 / §6.3 — the startup-latency
 // histograms register and expose their series, the end-to-end metric
 // carries the pool/runtime_class/isolation_profile labels, and the
 // per-phase metric carries phase/runtime_class.
@@ -615,7 +614,7 @@ func TestSessionStartupMetricsExposed_spec_6_3(t *testing.T) {
 	}
 }
 
-// spec: §16.5 lines 635-636 — the StartupLatency burn-rate alerts read
+// spec: §16.5 — the StartupLatency burn-rate alerts read
 // the histogram's le="2" (runc, 2s SLO) and le="5" (gVisor, 5s SLO)
 // bucket boundaries. The recorded buckets must carry exactly those le
 // labels or the alert PromQL silently selects no series.
@@ -642,7 +641,7 @@ func TestSessionStartupDurationBucketBoundaries_spec_16_5(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 15 / §6.3 line 356 — the TTFT histogram registers
+// spec: §16.1 / §6.3 — the TTFT histogram registers
 // and exposes its series under the
 // pool/runtime_class/isolation_profile label triple.
 func TestSessionTimeToFirstTokenExposed_spec_6_3_F_6_3_3(t *testing.T) {
@@ -664,7 +663,7 @@ func TestSessionTimeToFirstTokenExposed_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 }
 
-// spec: §16.5 line 637 / §6.3 line 356 — the TTFTBurnRate alert reads
+// spec: §16.5 / §6.3 — the TTFTBurnRate alert reads
 // the histogram's le="10" (10s TTFT SLO) bucket boundary. The recorded
 // buckets must carry exactly that le label or the alert PromQL silently
 // selects no series.
@@ -689,7 +688,7 @@ func TestSessionTimeToFirstTokenBucketBoundary_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 352, §16.1 line 122 — lenny_warmpool_claims_total is
+// spec: §6.3, §16.1 — lenny_warmpool_claims_total is
 // emitted per pool/runtime_class so deployers can compute the §6.3
 // SDK-warm demotion-rate ratio (denominator). The catalog declares the
 // metric labels; the test confirms the production counter exposes the
@@ -721,7 +720,7 @@ func TestIncWarmpoolClaimNilSafe_spec_6_3_F_6_3_6(t *testing.T) {
 	m.IncWarmpoolClaim("pool-a", "runc") // must not panic
 }
 
-// spec: §8.2 / §16.1 line 27 — lenny_delegation_depth histogram
+// spec: §8.2 / §16.1 — lenny_delegation_depth histogram
 // observation labelled by `pool`.
 func TestObserveDelegationDepth_spec_8_2(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -739,7 +738,7 @@ func TestObserveDelegationDepth_spec_8_2(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 70 / §16.1 line 79 —
+// spec: §8.2 / §16.1 —
 // lenny_delegation_would_have_blocked_total carries (pool, tenant_id,
 // layer, mode) labels.
 func TestIncDelegationWouldHaveBlocked_spec_8_2(t *testing.T) {
@@ -770,7 +769,7 @@ func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
 	m.IncDelegationTreeCycleDetected("acme", "rest")
 }
 
-// spec: §8.9 line 1003 / §16.1 — lenny_delegation_tree_cycle_detected_total
+// spec: §8.9 / §16.1 — lenny_delegation_tree_cycle_detected_total
 // carries (tenant_id, source) labels and increments once per repeated
 // node hit by the tree walker. F-8.9.10.
 func TestIncDelegationTreeCycleDetected_spec_8_9(t *testing.T) {
@@ -794,7 +793,7 @@ func TestIncDelegationTreeCycleDetected_spec_8_9(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — lenny_rate_limit_rejected_total{scope} carries
+// spec: §11.1 — lenny_rate_limit_rejected_total{scope} carries
 // the §11.1 admission scope and bumps once per 429 rejection.
 func TestIncRateLimitRejected_spec_11_1(t *testing.T) {
 	m, err := gatewaymetrics.New()
@@ -839,7 +838,7 @@ func TestSetRateLimitFailopenActive_spec_16_5(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — counter-failure counter is monotonic across
+// spec: §11.1 — counter-failure counter is monotonic across
 // the outage window so an operator can rate-aggregate even after the
 // gauge edge has fired.
 func TestIncRateLimitCounterFailure_spec_11_1(t *testing.T) {
@@ -863,10 +862,10 @@ func TestRateLimitMetricsNilSafe_spec_11_1(t *testing.T) {
 	m.IncRateLimitCounterFailure()
 }
 
-// TestStatelessMetricsRegistered_spec_5_2_573 covers the §5.2 line 573
+// TestStatelessMetricsRegistered_spec_5_2_573 covers the §5.2
 // concurrent-stateless demand metrics — counter increment + gauge set,
 // both labeled by pool, exposed on /metrics.
-// spec: §16.1 lines 80-81 — lenny_export_file_scans_total (labelled
+// spec: §16.1 — lenny_export_file_scans_total (labelled
 // pool, tenant_id, policy_name, interceptor_ref, outcome) and
 // lenny_export_file_scan_duration_seconds (pool, tenant_id,
 // interceptor_ref) are registered and emit. F-8.7.10.
@@ -918,7 +917,7 @@ func TestStatelessMetricsNilSafe_spec_5_2_573(t *testing.T) {
 	m.SetStatelessConcurrentActive("any", 7)
 }
 
-// spec: §6.2 line 179 — the lenny_adapter_leaked_slots gauge is per-pod
+// spec: §6.2 — the lenny_adapter_leaked_slots gauge is per-pod
 // (labeled pod_id, pool), set when a concurrent-workspace slot's cleanup
 // does not reclaim it, and zeroed when the pod is drained for replacement.
 func TestAdapterLeakedSlotsGauge_spec_6_2_179(t *testing.T) {
@@ -995,7 +994,7 @@ func TestSessionReuseNilSafe_spec_5_2_569(t *testing.T) {
 	}
 }
 
-// spec: §10.4 line 389 / §16 catalog — the gauge series exists at
+// spec: §10.4 / §16 catalog — the gauge series exists at
 // startup so /metrics never returns a missing series for the alert
 // query. F-10.4.11.
 func TestReplayBufferUtilizationExposedAtStartup_spec_10_4(t *testing.T) {

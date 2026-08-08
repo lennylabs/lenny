@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lenny.dev/schemas/runtime-ops-events.json",
   "title": "Lenny runtime lifecycle events",
-  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime CH-RUNTIMEOPS, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/runtimeops.go). See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
+  "description": "JSON envelopes exchanged on the adapter↔runtime CH-RUNTIMEOPS, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the CH-RUNTIMEOPS message-schema table and the adapter wire (pkg/adapter/runtimeops.go). See spec/28_communication-channels.md §28.5.3, the CH-RUNTIMEOPS card.",
   "oneOf": [
     { "$ref": "#/$defs/lifecycle_capabilities" },
     { "$ref": "#/$defs/lifecycle_support" },

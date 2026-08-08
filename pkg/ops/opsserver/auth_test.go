@@ -42,7 +42,7 @@ func mintOpsToken(t *testing.T, signer *jwt.HMACSigner, sub string, roles ...aut
 	return tok
 }
 
-// spec: §25.4 line 1562 — "No anonymous access except /healthz." A
+// spec: §25.4 — "No anonymous access except /healthz." A
 // request with no bearer is rejected with 401 UNAUTHORIZED.
 func TestOpsAuthRejectsUnauthenticated_spec_25_4_1562(t *testing.T) {
 	srv, _ := authedServer()
@@ -54,7 +54,7 @@ func TestOpsAuthRejectsUnauthenticated_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — a verified bearer that lacks platform-admin
+// spec: §25.4 — a verified bearer that lacks platform-admin
 // and tenant-admin is rejected with 403, even though authentication
 // succeeds.
 func TestOpsAuthRejectsNonAdminRole_spec_25_4_1562(t *testing.T) {
@@ -68,7 +68,7 @@ func TestOpsAuthRejectsNonAdminRole_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — a platform-admin bearer passes the gate (the
+// spec: §25.4 — a platform-admin bearer passes the gate (the
 // request is neither 401 nor 403).
 func TestOpsAuthAdmitsPlatformAdmin_spec_25_4_1562(t *testing.T) {
 	srv, signer := authedServer()
@@ -81,7 +81,7 @@ func TestOpsAuthAdmitsPlatformAdmin_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — tenant-admin is also admitted.
+// spec: §25.4 — tenant-admin is also admitted.
 func TestOpsAuthAdmitsTenantAdmin_spec_25_4_1562(t *testing.T) {
 	srv, signer := authedServer()
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/ops/health", nil)
@@ -93,7 +93,7 @@ func TestOpsAuthAdmitsTenantAdmin_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — the Kubernetes probe endpoints are exempt so
+// spec: §25.4 — the Kubernetes probe endpoints are exempt so
 // the kubelet (which carries no bearer) can probe liveness and
 // readiness.
 func TestOpsAuthExemptsProbes_spec_25_4_1562(t *testing.T) {
@@ -108,7 +108,7 @@ func TestOpsAuthExemptsProbes_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — a malformed/invalid bearer is rejected, not
+// spec: §25.4 — a malformed/invalid bearer is rejected, not
 // silently downgraded to anonymous access.
 func TestOpsAuthRejectsInvalidToken_spec_25_4_1562(t *testing.T) {
 	srv, _ := authedServer()
@@ -121,7 +121,7 @@ func TestOpsAuthRejectsInvalidToken_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — the started_by / acquired_by identity comes
+// spec: §25.4 — the started_by / acquired_by identity comes
 // from the verified principal's sub claim, not the client-controlled
 // X-Lenny-Caller header. A caller cannot spoof another identity by
 // setting the header alongside a valid bearer.
@@ -145,7 +145,7 @@ func TestOpsAuthIdentityFromPrincipalNotHeader_spec_25_4_1562(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1562 — when no AuthConfig is wired (dev / embedded),
+// spec: §25.4 — when no AuthConfig is wired (dev / embedded),
 // the surface stays open and the dev caller header is honoured. This
 // pins the documented fallback so the production wiring is the only
 // thing that closes the surface.

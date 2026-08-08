@@ -398,7 +398,7 @@ sites:
       function: TestGatewayAuthComponentNameMatchesOIDCLifecycleCitation_spec_25_4_1999
       site: 1
       call: Skip
-      reason: 'spec self-contradiction: §25.4 "OIDC Token Lifecycle" cites the gateway-auth component in kebab-case (lines 1999-2000) while the Self-Health Checks naming convention pinned by TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494 requires the same check name in snake_case (gateway_auth); which citation governs needs a spec decision, tracked separately in TEST-GAPS.md'
+      reason: 'spec self-contradiction: §25.4 "OIDC Token Lifecycle" cites the gateway-auth component in kebab-case while the Self-Health Checks naming convention pinned by TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494 requires the same check name in snake_case (gateway_auth); which citation governs needs a spec decision, tracked separately in TEST-GAPS.md'
     - path: pkg/ops/opsservice/webhookloop_emit_test.go
       function: TestWebhookWorkerDoesNotRedeliverDeliveryFailureToFailingSubscription
       site: 1

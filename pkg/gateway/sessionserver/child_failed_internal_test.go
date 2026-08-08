@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.10 lines 1080-1089 — when a child fails, the gateway injects a
+// spec: §8.10 — when a child fails, the gateway injects a
 // `child_failed` event into the parent's session stream with the child
 // task id, the transient/permanent failure classification, the error
 // details, and whether retries were exhausted. F-8.10.2.
@@ -114,8 +114,7 @@ func TestEmitChildFailedPermanentForNonRetryable_spec_8_10_1082(t *testing.T) {
 
 // A child reaching a non-failed terminal state (cancelled, completed,
 // expired) is a cascade / deadline / success outcome, not a failure the
-// parent decides on, so no child_failed event is injected. spec: §8.10
-// lines 1080-1089 (event fires "when a child fails").
+// parent decides on, so no child_failed event is injected. spec: §8.10.
 func TestEmitChildFailedSkipsNonFailedTerminals_spec_8_10_1082(t *testing.T) {
 	for _, st := range []session.State{session.StateCompleted, session.StateCancelled, session.StateExpired} {
 		store := memstore.New()

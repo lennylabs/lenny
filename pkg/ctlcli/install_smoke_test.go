@@ -30,7 +30,7 @@ func (s stubTester) run(_ context.Context, _ smokeTarget, _, _ io.Writer) error 
 }
 
 // TestRunSmokeTestSkipNoURL asserts a target with no gateway URL is a skip
-// (exit 0), not a failure. spec: §24.20 line 299. F-24.20.4.
+// (exit 0), not a failure. spec: §24.20. F-24.20.4.
 func TestRunSmokeTestSkipNoURL(t *testing.T) {
 	var called bool
 	var stdout, stderr bytes.Buffer
@@ -47,7 +47,7 @@ func TestRunSmokeTestSkipNoURL(t *testing.T) {
 }
 
 // TestRunSmokeTestPass asserts a passing tester yields exit 0 and a pass
-// line. spec: §24.20 line 299. F-24.20.4.
+// line. spec: §24.20. F-24.20.4.
 func TestRunSmokeTestPass(t *testing.T) {
 	var called bool
 	var stdout, stderr bytes.Buffer
@@ -65,7 +65,7 @@ func TestRunSmokeTestPass(t *testing.T) {
 }
 
 // TestRunSmokeTestFailPrintsRollback asserts a failing tester yields exit 1
-// and prints the rollback procedure (helm uninstall). spec: §24.20 line 299
+// and prints the rollback procedure (helm uninstall). spec: §24.20
 // ("on failure, print the rollback procedure"). F-24.20.4.
 func TestRunSmokeTestFailPrintsRollback(t *testing.T) {
 	var called bool
@@ -86,7 +86,7 @@ func TestRunSmokeTestFailPrintsRollback(t *testing.T) {
 
 // TestHTTPSmokeTesterHealthOnly asserts the tester stops after a successful
 // /healthz probe when no token is present, reporting the MCP round-trip as
-// skipped. spec: §24.20 line 299. F-24.20.4.
+// skipped. spec: §24.20. F-24.20.4.
 func TestHTTPSmokeTesterHealthOnly(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
@@ -112,7 +112,7 @@ func TestHTTPSmokeTesterHealthOnly(t *testing.T) {
 }
 
 // TestHTTPSmokeTesterHealthTimeout asserts a gateway that never reports
-// healthy makes the tester fail within the deadline. spec: §24.20 line 299.
+// healthy makes the tester fail within the deadline. spec: §24.20.
 // F-24.20.4.
 func TestHTTPSmokeTesterHealthTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -134,7 +134,7 @@ func TestHTTPSmokeTesterHealthTimeout(t *testing.T) {
 
 // TestHTTPSmokeTesterMCPRoundTrip asserts that with a token the tester runs
 // the injected session round-trip and surfaces its error wrapped with the
-// create_session context. spec: §24.20 line 299. F-24.20.4.
+// create_session context. spec: §24.20. F-24.20.4.
 func TestHTTPSmokeTesterMCPRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -178,7 +178,7 @@ func TestHTTPSmokeTesterMCPRoundTrip(t *testing.T) {
 }
 
 // TestSmokeTargetFromAnswers asserts URL/token resolution from the
-// environment and the domain fallback. spec: §24.20 line 299. F-24.20.4.
+// environment and the domain fallback. spec: §24.20. F-24.20.4.
 func TestSmokeTargetFromAnswers(t *testing.T) {
 	t.Run("env overrides domain", func(t *testing.T) {
 		t.Setenv("LENNY_API_URL", "http://127.0.0.1:8080")

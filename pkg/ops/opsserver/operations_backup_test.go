@@ -29,7 +29,7 @@ func backupOperationsServer(t *testing.T, store *backup.MemStore) *opsserver.Ser
 	})
 }
 
-// spec §25.4 lines 1707-1811: an ops_backups row in status 'running' is an
+// spec §25.4: an ops_backups row in status 'running' is an
 // operation of kind "backup" in status in_progress ("backup Job running",
 // line 1807) with a decodable "backup-"-prefixed operationId, a resources
 // block pointing at the backup's own endpoints, and a progress object
@@ -74,7 +74,7 @@ func TestOperationsInventoryListsRunningBackup(t *testing.T) {
 		t.Errorf("resources.status = %q, want the backup status endpoint", status)
 	}
 	if op["progress"] == nil {
-		t.Error("a backup must carry a progress object in the inventory (spec §25.4 line 358)")
+		t.Error("a backup must carry a progress object in the inventory (spec §25.4)")
 	}
 
 	// The operationId is decodable: GET /v1/admin/operations/{id} resolves it.
@@ -88,7 +88,7 @@ func TestOperationsInventoryListsRunningBackup(t *testing.T) {
 	}
 }
 
-// spec §25.4 lines 1711-1712: an ops_backups row in status 'verifying'
+// spec §25.4: an ops_backups row in status 'verifying'
 // satisfies both Operation Kinds — kind "backup" (status IN
 // ('running','verifying')) and kind "backup_verification" (status
 // ='verifying'). It must appear under each kind on GET

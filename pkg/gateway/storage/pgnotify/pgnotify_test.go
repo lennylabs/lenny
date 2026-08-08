@@ -12,7 +12,7 @@ import (
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
-// spec: §4.9 line 1647 — a nil Bus (no Postgres fallback configured) is a
+// spec: §4.9 — a nil Bus (no Postgres fallback configured) is a
 // safe no-op: Publish returns nil and Subscribe blocks until cancel.
 // F-13.3.8.
 func TestNilBusIsNoop_F1338(t *testing.T) {
@@ -40,7 +40,7 @@ func TestNilBusIsNoop_F1338(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1647 — a real Postgres LISTEN/NOTIFY round-trip: a
+// spec: §4.9 — a real Postgres LISTEN/NOTIFY round-trip: a
 // payload published via pg_notify reaches a LISTENing Subscribe loop.
 // This is the actual fallback transport the credential deny-list uses
 // when Redis is unavailable. F-13.3.8.

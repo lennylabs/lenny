@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
-// spec: §13.2 lines 470-490 (K8S-033) — when a dedicated CoreDNS ClusterIP
+// spec: §13.2 — when a dedicated CoreDNS ClusterIP
 // is configured the pod builder stamps dnsPolicy:None plus a dnsConfig
 // targeting it, because the agent-namespace NetworkPolicy blocks the
 // kube-system kube-dns the default ClusterFirst policy would resolve
@@ -46,7 +46,7 @@ func TestBuildSetsDedicatedDNSConfig(t *testing.T) {
 	}
 }
 
-// spec: §13.2 line 484 — a pool that opts out via the
+// spec: §13.2 — a pool that opts out via the
 // lenny.dev/dns-policy: cluster-default label keeps the Kubernetes default
 // ClusterFirst behavior even when a dedicated ClusterIP is configured.
 func TestBuildOmitsDNSConfigForClusterDefaultOptOut(t *testing.T) {

@@ -93,11 +93,11 @@ func TestPutElicitationIntegrityWeakeningRequiresJustification(t *testing.T) {
 	}
 }
 
-// spec: §9.2 line 66; §16.7 line 675. F-9.2.9.
+// spec: §9.2; §16.7. F-9.2.9.
 // Verify the weakening write emits the canonical
 // `tenant.elicitation_content_integrity_changed` audit event (NOT the
 // legacy `_mode_changed` typo) and that the Detail carries every
-// §16.7 line 675 spec-mandated payload field.
+// §16.7 spec-mandated payload field.
 func TestPutElicitationIntegrityWeakensWithJustification_spec_9_2_F_9_2_9(t *testing.T) {
 	store := tenantstore.NewMemory()
 	auditSink := &recordingAudit{}
@@ -120,7 +120,7 @@ func TestPutElicitationIntegrityWeakensWithJustification_spec_9_2_F_9_2_9(t *tes
 	if row.ElicitationContentIntegrity != "off" {
 		t.Errorf("stored mode = %q, want off", row.ElicitationContentIntegrity)
 	}
-	// spec: §16.7 line 675 — canonical event name and payload.
+	// spec: §16.7 — canonical event name and payload.
 	var found *admin.AuditEvent
 	for _, e := range auditSink.snapshot() {
 		if e.Type == "tenant.elicitation_content_integrity_changed" {
@@ -166,7 +166,7 @@ func TestPutElicitationIntegrityWeakensWithJustification_spec_9_2_F_9_2_9(t *tes
 	}
 }
 
-// spec: §9.2 line 66; §16.7 line 675. F-9.2.9.
+// spec: §9.2; §16.7. F-9.2.9.
 // A second write must carry the prior stored mode in previous_stored_mode,
 // and a write under a non-empty floor must record the floor value.
 func TestPutElicitationIntegrityRecordsPriorModeAndFloor_spec_9_2_F_9_2_9(t *testing.T) {
@@ -241,7 +241,7 @@ func TestPutElicitationIntegrityRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 823,824 (tenant-admin gate). ADM-3.
+// spec: §15.1. ADM-3.
 // diagnosis: the elicitation-content-integrity GET/PUT admit
 // platform-admin OR tenant-admin, with a tenant-admin confined to its
 // own {id}. A tenant-admin GET on its own tenant must succeed (not 403),
@@ -392,7 +392,7 @@ func TestPutElicitationIntegrityRejectsBelowPlatformFloor(t *testing.T) {
 	}
 }
 
-// spec: §17.2 line 86 / §9.2 line 64 — F-17.2.9. The platform floor is
+// spec: §17.2 / §9.2 — F-17.2.9. The platform floor is
 // sourced through a dynamic provider so a `helm upgrade` floor change
 // (sourced from the phase-stamp ConfigMap reconcile) is observed by the
 // admin GET effective-mode resolution and the PUT below-floor guard
@@ -457,7 +457,7 @@ func TestElicitationFloorProviderObservedLive_spec_17_2_9(t *testing.T) {
 	}
 }
 
-// integrityFullResp mirrors the §15.1 line 824 GET/PUT body so a test
+// integrityFullResp mirrors the §15.1 GET/PUT body so a test
 // can assert every provenance field is persisted and returned.
 type integrityFullResp struct {
 	TenantID      string `json:"tenantId"`
@@ -470,7 +470,7 @@ type integrityFullResp struct {
 	ChangedBy     string `json:"changedBy"`
 }
 
-// spec: §15.1 line 823,824 (tenant-admin gate; full GET body), §9.2
+// spec: §15.1, §9.2
 // (elicitation content integrity). ADM-3.
 // diagnosis: a tenant-admin PUTting a relaxed mode with a justification
 // on its OWN tenant must (a) succeed under the widened gate, (b) persist
@@ -550,7 +550,7 @@ func TestPutGetElicitationIntegrityTenantAdminPersistsProvenance_spec_15_1_824(t
 		t.Error("persisted changedAt is zero; the write must stamp the change instant on the row")
 	}
 
-	// The own-tenant tenant-admin GET returns the full §15.1 line 824
+	// The own-tenant tenant-admin GET returns the full §15.1
 	// body, including the provenance the pre-fix handler omitted.
 	get := withTenantAdminPrincipal(httptest.NewRequest(http.MethodGet,
 		"/v1/admin/tenants/acme/elicitation-content-integrity", nil))

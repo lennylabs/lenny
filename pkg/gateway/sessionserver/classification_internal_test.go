@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §12.9 line 1048 — requireTenantClassification rejects a session
+// spec: §12.9 — requireTenantClassification rejects a session
 // create for a tenant whose workspaceTier is not a recognized §12.9 tier
 // with 422 CLASSIFICATION_CONTROL_VIOLATION.
 func TestRequireTenantClassificationRejectsStaleTier(t *testing.T) {

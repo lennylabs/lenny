@@ -261,7 +261,7 @@ func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
 // A context with no deadline falls back to ShutdownGrace, then to
 // defaultMCPShutdownGrace, preserving the historical defaults for
-// callers that do not pin a deadline. spec: §11.4 line 258.
+// callers that do not pin a deadline. spec: §11.4.
 func (r *MCPRuntime) Close(ctx context.Context, _ string) error {
 	r.mu.Lock()
 	if r.closed {
@@ -307,8 +307,7 @@ func (r *MCPRuntime) Close(ctx context.Context, _ string) error {
 // resolveShutdownGrace picks the SIGTERM-to-SIGKILL pivot interval. It
 // prefers the deadline plumbed into ctx by Server.Shutdown (the §4.7
 // ShutdownRequest.deadline_ms the gateway pinned), falling back to the
-// runtime-configured grace, then to the package default. spec: §11.4
-// line 258.
+// runtime-configured grace, then to the package default. spec: §11.4.
 func resolveShutdownGrace(ctx context.Context, configured, fallback time.Duration) time.Duration {
 	if ctx != nil {
 		if dl, ok := ctx.Deadline(); ok {
@@ -375,7 +374,7 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 // consumer reading the persisted §8.8 TaskRecord still sees a value.
 // This honours the §15.5 item 7 forward-read contract: the producer's
 // declared revision crosses the MCP boundary without being silently
-// downgraded mid-flight. spec: §15.5 item 7; §15.4.1 line 1524. F-15.5.13.
+// downgraded mid-flight. spec: §15.5 item 7; §15.4.1. F-15.5.13.
 func mcpResultParts(result json.RawMessage) []map[string]any {
 	if len(result) == 0 {
 		return []map[string]any{}

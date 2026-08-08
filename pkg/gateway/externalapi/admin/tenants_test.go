@@ -169,7 +169,7 @@ func TestCreateTenantHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 865 — the admin API exposes the TenantState enum. A
+// spec: §12.8 — the admin API exposes the TenantState enum. A
 // freshly created tenant reports state=active in the create response and
 // on a subsequent GET; a soft-deleted tenant's GET reports the `deleted`
 // tombstone state. F-12.8.12.
@@ -201,7 +201,7 @@ func TestTenantStateExposedInAdminAPI_spec_12_8_865(t *testing.T) {
 	}
 
 	// A soft-deleted tenant becomes a deleted-state tombstone, and GET
-	// returns 410 Gone (spec §12.8 line 873) rather than the row.
+	// returns 410 Gone (spec §12.8) rather than the row.
 	if err := store.SoftDelete(greq.Context(), "acme", time.Now().UTC()); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestTenantStateExposedInAdminAPI_spec_12_8_865(t *testing.T) {
 	}
 }
 
-// spec: §24.10 line 127 — `tenants get` must surface the deletion state
+// spec: §24.10 — `tenants get` must surface the deletion state
 // so an operator can monitor progress through disabling → deleting →
 // deleted. A tenant mid-lifecycle (DeletedAt still zero) resolves 200
 // with the in-progress `state`, distinct from the `deleted` tombstone's
@@ -434,7 +434,7 @@ func TestCreateTenantRejectsNegativeStorageQuota(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 210 — bad-format tenant_id rejects with
+// spec: §10.2 — bad-format tenant_id rejects with
 // `400 INVALID_TENANT_ID` (not the generic `VALIDATION_ERROR`).
 func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	router, _ := newAdminServer(t)
@@ -462,7 +462,7 @@ func TestCreateTenantRejectsInvalidID(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 210 — a missing tenant_id violates the format regex
+// spec: §10.2 — a missing tenant_id violates the format regex
 // (which requires {1,128} characters) and so rejects with the same
 // `400 INVALID_TENANT_ID` code as a malformed one.
 func TestCreateTenantRejectsMissingID(t *testing.T) {
@@ -590,7 +590,7 @@ func TestUpdateTenantMissing(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 865; §24.10 row 3 — DELETE initiates the async
+// spec: §12.8; §24.10 row 3 — DELETE initiates the async
 // tenant-deletion lifecycle by transitioning the tenant into
 // `disabling`. The background controller (not this handler) advances it
 // to `deleting` → `deleted` and sets the tombstone. F-12.8.1, F-24.10.3.

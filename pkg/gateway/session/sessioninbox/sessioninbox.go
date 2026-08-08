@@ -25,8 +25,7 @@
 // sorted set keyed `t:{tenant_id}:session:{session_id}:dlq`, scored by
 // expiry timestamp.
 //
-// spec: §7.2 lines 274-311 (session inbox), 333-343 (dead-letter
-// handling); §12.4 (Redis key prefixes); §15.4.1 (delivery receipt /
+// spec: §7.2; §12.4 (Redis key prefixes); §15.4.1 (delivery receipt /
 // message_expired schemas).
 package sessioninbox
 
@@ -40,7 +39,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultMaxInboxSize is the §7.2 line 281 `maxInboxSize` default: the
+// DefaultMaxInboxSize is the §7.2 default: the
 // per-session inbox buffers at most this many messages before evicting
 // the oldest. The cap bounds memory growth during long `await_children`
 // blocks.
@@ -52,10 +51,10 @@ const DefaultMaxInboxSize = 500
 // gateway can route the §15.4.1 `message_expired` event back to the
 // sender's stream without decoding the payload.
 //
-// spec: §7.2 line 292 (`InboxMessage` fields); §15.4.1 message_expired
+// spec: §7.2; §15.4.1 message_expired
 // schema (messageId, sender routing).
 type Message struct {
-	// MessageID is the §15.4 line 1784 message id (sender-supplied or
+	// MessageID is the §15.4 message id (sender-supplied or
 	// gateway-assigned `msg_` prefix). It correlates the buffered
 	// message with the synchronous delivery receipt and any later
 	// `message_expired` event.
@@ -80,20 +79,20 @@ type Message struct {
 // Inbox is the per-session undelivered-message buffer. Implementations
 // are safe for concurrent use by the coordinating replica's goroutines.
 //
-// spec: §7.2 lines 274-303.
+// spec: §7.2.
 type Inbox interface {
 	// Enqueue appends msg to (tenantID, sessionID)'s inbox in FIFO
 	// order. When the inbox already holds `maxInboxSize` messages the
 	// oldest is evicted and returned as dropped so the caller emits the
 	// §15.4 `message_dropped` receipt (`reason: "inbox_overflow"`); a
 	// nil dropped means the message fit without eviction.
-	// spec: §7.2 lines 282, 293.
+	// spec: §7.2.
 	Enqueue(ctx context.Context, tenantID, sessionID string, msg Message) (dropped *Message, err error)
 
 	// Drain returns every buffered message in FIFO order and clears the
 	// inbox atomically. It backs the inbox-to-DLQ migration on
 	// `resume_pending` (in-memory mode) and the inbox drain on terminal.
-	// spec: §7.2 lines 305-311, 343.
+	// spec: §7.2.
 	Drain(ctx context.Context, tenantID, sessionID string) ([]Message, error)
 
 	// Len reports the buffered message count.
@@ -112,7 +111,7 @@ func inboxKey(tenantID, sessionID string) string {
 // coordinator crash; the §7.2 inbox-to-DLQ drain on `resume_pending`
 // narrows the loss window.
 //
-// spec: §7.2 lines 276-284.
+// spec: §7.2.
 type MemoryInbox struct {
 	mu    sync.Mutex
 	max   int
@@ -131,8 +130,7 @@ func NewMemoryInbox(maxSize int) *MemoryInbox {
 }
 
 // Enqueue implements Inbox. On overflow it drops the oldest (head)
-// message and returns a copy, matching §7.2 line 282 "the oldest
-// buffered message is dropped".
+// message and returns a copy, matching §7.2.
 func (m *MemoryInbox) Enqueue(_ context.Context, tenantID, sessionID string, msg Message) (*Message, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -165,7 +163,7 @@ func (m *MemoryInbox) Len(_ context.Context, tenantID, sessionID string) (int, e
 	return len(m.byKey[inboxKey(tenantID, sessionID)]), nil
 }
 
-// enqueueInboxScript enforces the §7.2 line 293 cap atomically: it
+// enqueueInboxScript enforces the §7.2 cap atomically: it
 // checks LLEN before RPUSH and, when the list is already at the cap,
 // LPOPs the oldest entry and returns it for the caller to surface as a
 // `message_dropped` receipt. KEYS[1] is the inbox key; ARGV[1] is the
@@ -185,7 +183,7 @@ return dropped
 // failover, so the new coordinator recovers undelivered messages on
 // lease acquisition.
 //
-// spec: §7.2 lines 286-303; §12.4 durable-inbox key.
+// spec: §7.2; §12.4 durable-inbox key.
 type RedisInbox struct {
 	client redis.UniversalClient
 	max    int
@@ -204,7 +202,7 @@ func NewRedisInbox(client redis.UniversalClient, maxSize int) *RedisInbox {
 }
 
 // Enqueue implements Inbox. A Redis error surfaces to the caller, which
-// maps it to the §7.2 line 299 `error` receipt (`reason:
+// maps it to the §7.2 receipt (`reason:
 // "inbox_unavailable"`).
 func (r *RedisInbox) Enqueue(ctx context.Context, tenantID, sessionID string, msg Message) (*Message, error) {
 	payload, err := json.Marshal(msg)
@@ -266,17 +264,17 @@ func (r *RedisInbox) Len(ctx context.Context, tenantID, sessionID string) (int, 
 	return int(n), err
 }
 
-// Expire sets the §7.2 line 305 recovery-window TTL on the durable
+// Expire sets the §7.2 recovery-window TTL on the durable
 // inbox key. On `resume_pending` the durable inbox is left in Redis
 // (rather than drained to the DLQ), so the gateway applies an EXPIRE to
 // clean up stale messages if the session never resumes.
 //
-// spec: §7.2 line 305 (durableInbox:true resume_pending handling).
+// spec: §7.2.
 func (r *RedisInbox) Expire(ctx context.Context, tenantID, sessionID string, ttl time.Duration) error {
 	return r.client.Expire(ctx, inboxKey(tenantID, sessionID), ttl).Err()
 }
 
 // ErrInboxUnavailable reports that a durable-inbox operation failed
-// because Redis was unreachable. The §7.2 line 299 contract returns an
+// because Redis was unreachable. The §7.2 contract returns an
 // `error` receipt with `reason: "inbox_unavailable"` to the sender.
 var ErrInboxUnavailable = errors.New("sessioninbox: durable inbox unavailable")

@@ -108,7 +108,7 @@ func startAttachStream(t *testing.T, serverURL, sessionID string, resumeFromSeq 
 	return frames, func() { cancel(); resp.Body.Close() }, resp
 }
 
-// TestAttachStreamsBacklogThenLive verifies the §15.2 line 1331 transport:
+// TestAttachStreamsBacklogThenLive verifies the §15.2 transport:
 // retained backlog replays first (each frame carrying its SeqNum on the
 // TestAttachProjectsElicitationCreateAndToolApproval verifies the
 // §15.2.1 per-kind projection over the real SSE attach transport: an
@@ -117,8 +117,7 @@ func startAttachStream(t *testing.T, serverURL, sessionID string, resumeFromSeq 
 // resolve the §9.2 elicitation natively), and an approval-required
 // tool_use_requested event likewise projects to elicitation/create —
 // the §15.2.1 carve-out that makes the REST-only tool-use approval
-// endpoints correct by design rather than by accident. spec: §15.2
-// lines 1362-1363, 1404. F-15.2.13, F-15.2.14.
+// endpoints correct by design rather than by accident. spec: §15.2. F-15.2.13, F-15.2.14.
 func TestAttachProjectsElicitationCreateAndToolApproval_spec_15_2_1362(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	bus.PublishForTenant("acme", "sess-1", "elicitation_request",
@@ -210,7 +209,7 @@ func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 }
 
 // TestAttachResumeFromSeqReplaysOnlyNewer verifies resumeFromSeq replays
-// only events with SeqNum greater than the cursor. spec: §15.2 line 1331.
+// only events with SeqNum greater than the cursor. spec: §15.2.
 func TestAttachResumeFromSeqReplaysOnlyNewer_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	for i := 0; i < 3; i++ {
@@ -231,7 +230,7 @@ func TestAttachResumeFromSeqReplaysOnlyNewer_spec_15_2(t *testing.T) {
 }
 
 // TestAttachLastEventIDResume verifies the SSE Last-Event-ID header acts
-// as an implicit resumeFromSeq on plain reconnects. spec: §15.2 line 1331.
+// as an implicit resumeFromSeq on plain reconnects. spec: §15.2.
 func TestAttachLastEventIDResume_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	for i := 0; i < 3; i++ {
@@ -261,7 +260,7 @@ func TestAttachLastEventIDResume_spec_15_2(t *testing.T) {
 	}
 }
 
-// TestAttachGapDetected verifies the §15.2 line 1331 gap_detected frame is
+// TestAttachGapDetected verifies the §15.2 gap_detected frame is
 // emitted (with no id: line) when the cursor sits below the oldest
 // retained sequence.
 func TestAttachGapDetected_spec_15_2(t *testing.T) {
@@ -294,7 +293,7 @@ func TestAttachGapDetected_spec_15_2(t *testing.T) {
 	}
 }
 
-// TestAttachKeepalive verifies the §15.2 line 1333 `:keepalive` comment
+// TestAttachKeepalive verifies the §15.2 comment
 // line is written after the idle interval with no SessionEvent frame.
 func TestAttachKeepalive_spec_15_2(t *testing.T) {
 	orig := attachKeepAliveInterval
@@ -462,7 +461,7 @@ func TestAttachAuthorizeRejection_spec_15_2(t *testing.T) {
 
 // TestAttachNonStreamFallsThroughToHandler verifies a tools/call without
 // Accept: text/event-stream runs the registered snapshot handler instead
-// of upgrading to SSE. spec: §15.2 line 1289.
+// of upgrading to SSE. spec: §15.2.
 func TestAttachNonStreamFallsThroughToHandler_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	called := false

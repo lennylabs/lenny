@@ -148,7 +148,7 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 		"adapter issued the `ExtendLease`",
 		"adapter must not retry",
 		"adapter knows exactly what was received",
-		// §18.23:431 previously named the removed "adapter↔gateway
+		// §18.23 previously named the removed "adapter↔gateway
 		// `ExtendLease` gRPC" build deliverable. Ban both the backtick-quoted
 		// and plain forms so a revert of that Phase-9 line to the
 		// adapter-as-trigger construction is caught here. The surviving

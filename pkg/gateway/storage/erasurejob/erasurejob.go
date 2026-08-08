@@ -50,7 +50,7 @@ func (p Phase) Terminal() bool {
 }
 
 // PhaseTransition is one entry in a Job's PhaseLog: the lifecycle phase
-// the job entered and the instant it entered it. spec: §12.8 line 762
+// the job entered and the instant it entered it. spec: §12.8
 // (each erasure job record persists its phase).
 type PhaseTransition struct {
 	Phase Phase
@@ -68,7 +68,7 @@ type Job struct {
 	Phase Phase
 	// StartedAt is the instant the job record was created.
 	StartedAt time.Time
-	// Deadline is the §12.8 line 768 tier-specific SLA window the job
+	// Deadline is the §12.8 tier-specific SLA window the job
 	// must complete within (T3 72h, T4 1h). Recorded at Start so the
 	// overdue sampler and the completion receipt can present it. Zero
 	// when no deadline resolver is wired into the Runner.
@@ -89,12 +89,12 @@ type Job struct {
 	// DeadLetterRedacted is the number of dead-lettered audit_log rows the
 	// §12.8 step-14 OCSF dead-letter PII redaction scrubbed for the target
 	// user. Zero when no dead-lettered rows named the user or no redaction
-	// hook is wired into the Runner. spec: §12.8 lines 810-829.
+	// hook is wired into the Runner. spec: §12.8.
 	DeadLetterRedacted int
 	// PhaseLog records every §12.8 lifecycle transition in order with
 	// its timestamp, so the completion receipt presents the per-phase
 	// timeline a compliance auditor uses to reconstruct the erasure
-	// sequence. spec: §12.8 line 762.
+	// sequence. spec: §12.8.
 	PhaseLog []PhaseTransition
 	// Failure carries the error reason when Phase is failed.
 	Failure string
@@ -125,7 +125,7 @@ type Store interface {
 	// List returns every recorded job. The §12.8 erasure-SLA sampler
 	// uses it to publish the age of each in-progress job so the §16.5
 	// ErasureJobOverdue alert can detect a stall before the deadline
-	// breaches. spec: §12.8 line 768.
+	// breaches. spec: §12.8.
 	List(ctx context.Context) ([]Job, error)
 }
 

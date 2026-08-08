@@ -20,7 +20,7 @@ import (
 // convention. It aliases the §12.6 shared platform/store definition so
 // a cloudevents.Event tenant id minted elsewhere is the same type.
 //
-// spec: §12.6 lines 369-373, 658-662, 705.
+// spec: §12.6.
 type TenantID = store.TenantID
 
 // PublishState is the §12.3.7 audit_log.eventbus_publish_state enum. It
@@ -82,7 +82,7 @@ const (
 // Kafka) can surface an unsubscribe failure without a caller-side
 // rewrite.
 //
-// spec: §12.6 lines 411-414.
+// spec: §12.6.
 type Subscription = store.Subscription
 
 // subscription is the v1 RedisEventBus Subscription. Unsubscribe cancels
@@ -106,14 +106,13 @@ func (s *subscription) Unsubscribe() error {
 	return nil
 }
 
-// BusMetrics is the §12.6 line 709 EventBus observability surface. Every
+// BusMetrics is the §12.6 EventBus observability surface. Every
 // implementation emits the publish counter and duration histogram, the
 // handler duration histogram and error counter, the §12.3.7 drop
 // counter, and the §12.6 replay-buffer utilization gauge. A nil
 // BusMetrics is a valid no-op.
 //
-// spec: §12.6 line 709 (observability contract), §12.6 line 683 (replay
-// buffer utilization), §12.3.7 (drop counter).
+// spec: §12.6, §12.6, §12.3.7 (drop counter).
 type BusMetrics interface {
 	// PublishTotal counts a publish attempt for the topic
 	// (lenny_event_bus_publish_total).
@@ -157,7 +156,7 @@ type PublishStateStore interface {
 		state PublishState, retryCount int) error
 }
 
-// defaultReplayBufferCap is the §12.6 line 683 default replay-buffer
+// defaultReplayBufferCap is the §12.6 default replay-buffer
 // depth: 10k events per replica with oldest-first eviction.
 const defaultReplayBufferCap = 10_000
 
@@ -167,7 +166,7 @@ const defaultReplayBufferCap = 10_000
 // change with no caller edits — callers depend on EventBus, never on the
 // concrete RedisEventBus.
 //
-// spec: §12.6 lines 639, 658-662.
+// spec: §12.6.
 type EventBus interface {
 	Publish(ctx context.Context, tenantID TenantID, topic EventTopic, event Event) error
 	Subscribe(ctx context.Context, tenantID TenantID, topic EventTopic,
@@ -178,7 +177,7 @@ type EventBus interface {
 // opportunistic re-publish when the backend recovers. The payload is the
 // byte-identical CloudEvents envelope, so the original id / time / source
 // survive the re-publish and downstream de-duplication by CloudEvents id
-// continues to work (§12.6 line 683).
+// continues to work (§12.6).
 type replayEntry struct {
 	channel string
 	payload []byte
@@ -188,7 +187,7 @@ type replayEntry struct {
 // v1.0.2 envelopes to tenant-prefixed Redis pub/sub channels over the
 // Wave-1 pubsub.Bus substrate. Delivery is at-most-once. When a publish
 // fails after the durable commit the envelope is buffered in a bounded
-// in-memory ring (§12.6 line 683) for opportunistic re-publish when the
+// in-memory ring (§12.6) for opportunistic re-publish when the
 // backend recovers; the retranscribe worker is the durable correctness
 // layer that covers a lost buffer.
 type RedisEventBus struct {
@@ -206,7 +205,7 @@ type RedisEventBus struct {
 	bufferCap int
 	draining  bool
 
-	// dupFactor is the §12.6 line 699 test-only eventBus.duplicateInjectionFactor:
+	// dupFactor is the §12.6 test-only eventBus.duplicateInjectionFactor:
 	// the total number of times a successful publish re-sends the
 	// byte-identical envelope so the staging duplicate-injection test can
 	// assert no doubled handler side effects. 1 (the default) is a no-op.
@@ -216,7 +215,7 @@ type RedisEventBus struct {
 // Option customizes a RedisEventBus at construction.
 type Option func(*RedisEventBus)
 
-// WithDuplicateInjectionFactor sets the §12.6 line 699 test-only
+// WithDuplicateInjectionFactor sets the §12.6 test-only
 // eventBus.duplicateInjectionFactor. A factor of n re-sends every
 // successful publish n times total (n-1 extra byte-identical copies);
 // values below 1 are clamped to 1 (the no-op default). The extra copies
@@ -268,7 +267,7 @@ func NewRedisEventBus(bus *pubsub.Bus, metrics BusMetrics, opts ...Option) *Redi
 // Publish classifies a failure into a §12.3.7 error_type and records the
 // drop metric. A serialization failure is not retryable and is not
 // buffered; a backend or timeout failure after the durable commit appends
-// the serialized envelope to the bounded replay buffer (§12.6 line 683).
+// the serialized envelope to the bounded replay buffer (§12.6).
 // On a successful send the backend is healthy, so any envelopes buffered
 // during a prior outage are drained in FIFO order. The caller (the
 // audit-write path) reacts to the returned error by marking the source
@@ -310,7 +309,7 @@ func (b *RedisEventBus) Publish(ctx context.Context, tenantID TenantID, topic Ev
 		b.bufferAppend(replayEntry{channel: channel, payload: payload})
 		return &PublishError{Type: errType, Err: sendErr}
 	}
-	// §12.6 line 699 duplicate-injection test: re-send the byte-identical
+	// §12.6 duplicate-injection test: re-send the byte-identical
 	// envelope (dupFactor-1) extra times so downstream dedup by CloudEvents
 	// id can be exercised in staging. The default factor 1 skips this loop.
 	// Extra-copy errors are intentionally ignored — the factor is a
@@ -371,7 +370,7 @@ func (b *RedisEventBus) Subscribe(ctx context.Context, tenantID TenantID, topic 
 }
 
 // bufferAppend appends e to the replay buffer, evicting the oldest entry
-// when the buffer is at capacity (§12.6 line 683 oldest-first eviction),
+// when the buffer is at capacity (§12.6 oldest-first eviction),
 // and reports the new utilization ratio.
 func (b *RedisEventBus) bufferAppend(e replayEntry) {
 	b.mu.Lock()
@@ -402,7 +401,7 @@ func (b *RedisEventBus) utilizationLocked() float64 {
 }
 
 // drainReplayBuffer re-publishes buffered envelopes in FIFO order after a
-// successful publish signals the backend has recovered (§12.6 line 683).
+// successful publish signals the backend has recovered (§12.6).
 // Only one drainer runs at a time; a drain that hits a still-failing
 // backend restores the in-flight envelope at the front and stops,
 // leaving the rest for the next successful publish.

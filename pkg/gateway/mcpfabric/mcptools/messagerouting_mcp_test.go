@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.2 paths 1-7 (lines 313-331) — lenny/send_message routing.
+// spec: §7.2 paths 1-7 — lenny/send_message routing.
 // F-7.2.5.
 
 // newMCPRouting builds an MCP server whose lenny/send_message handler is

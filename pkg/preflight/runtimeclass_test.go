@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
-// TestCheckRuntimeClasses_spec_5_3_676 covers the §5.3 line 676 required
+// TestCheckRuntimeClasses_spec_5_3_676 covers the §5.3 required
 // RuntimeClass presence decision: all present passes, any absent fails
 // fail-closed with the actionable message, and the failure list is
 // deduplicated.

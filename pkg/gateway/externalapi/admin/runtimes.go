@@ -84,8 +84,7 @@ type RuntimePayload struct {
 
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. A list consumer reads it per item to supply
-	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1
-	// line 1209.
+	// If-Match on a subsequent PUT without a per-item GET. spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -223,7 +222,7 @@ func (r *Router) validateDerivedRuntime(ctx context.Context, p RuntimePayload) e
 	} else if forbidden != "" {
 		return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
 	}
-	// §5.1 line 195 note: in the timeoutSeconds Maximum merge, neither
+	// §5.1 note: in the timeoutSeconds Maximum merge, neither
 	// side can be zero (no aggregate cap) while the other sets a finite
 	// value — max(no-cap, finite) is ambiguous.
 	if setupTimeoutPairingConflict(base.SetupPolicy, p.SetupPolicy) {
@@ -321,7 +320,7 @@ func validateDerivedRuntimeUpdate(current, base runtimestore.Runtime, body Updat
 			return fmt.Errorf("runtimeOptionsSchema declares forbidden property %q", forbidden)
 		}
 	}
-	// §5.1 line 195 note: a PUT that sets the derived runtime's
+	// §5.1 note: a PUT that sets the derived runtime's
 	// setupPolicy must not produce a zero/finite mismatch against the
 	// base's setupPolicy. An omitted setupPolicy leaves the prior
 	// (already-validated) pairing in place.
@@ -379,7 +378,7 @@ func derivedConflictsWithBase(d, base runtimestore.Runtime) bool {
 
 // derivedRuntimesInvalidatedBy returns the names of active derived
 // runtimes that reference baseName and would be invalidated by replacing
-// their base with newBase. §5.1 line 174 requires the gateway to reject a
+// their base with newBase. §5.1 requires the gateway to reject a
 // base-runtime mutation that would invalidate an existing derived runtime
 // and to name the affected runtimes.
 func (r *Router) derivedRuntimesInvalidatedBy(ctx context.Context, baseName string, newBase runtimestore.Runtime) ([]string, error) {
@@ -462,15 +461,14 @@ func (r *Router) validateMinPlatformVersion(minVersion string) error {
 // timeout and an onTimeout value within the fail / warn enum.
 //
 // When maxFinalizingTimeoutSeconds > 0 (the gateway-side outer bound
-// from §11.3 line 219), the validator also enforces the §6.2 line 260
+// from §11.3), the validator also enforces the §6.2
 // invariant `maxFinalizingTimeoutSeconds ≥ setupTimeoutSeconds`. A
 // runtime whose `setupPolicy.timeoutSeconds` exceeds the gateway cap
-// is rejected at admin time per §6.2 line 260 ("the gateway rejects
-// configurations that violate this constraint"), since the
+// is rejected at admin time per §6.2, since the
 // finalizing-state watchdog would otherwise terminate the session
 // before the setup phase could complete.
 //
-// spec: §5.1 setupPolicy; §6.2 line 260; §11.3 line 219.
+// spec: §5.1 setupPolicy; §6.2; §11.3.
 func validateSetupPolicy(p *runtimestore.SetupPolicy, maxFinalizingTimeoutSeconds int) error {
 	if p == nil {
 		return nil
@@ -492,7 +490,7 @@ func validateSetupPolicy(p *runtimestore.SetupPolicy, maxFinalizingTimeoutSecond
 
 // validateLimits checks a §5.1 limits block: non-negative session-age,
 // upload-size, request-input-wait, elicitation-wait, and
-// elicitations-per-session caps. spec: §11.3 lines 198-204.
+// elicitations-per-session caps. spec: §11.3.
 func validateLimits(l *runtimestore.Limits) error {
 	if l == nil {
 		return nil
@@ -511,7 +509,7 @@ func validateSetupCommandPolicy(p *runtimestore.SetupCommandPolicy) error {
 		return nil
 	}
 	if p.Mode != "" && !p.Mode.IsValid() {
-		// spec: §7.5 lines 483-486 — F-7.5.1.
+		// spec: §7.5 — F-7.5.1.
 		return errors.New("setupCommandPolicy.mode must be allowlist or blocklist")
 	}
 	if p.MaxCommands < 0 {
@@ -696,7 +694,7 @@ func fromRuntime(r runtimestore.Runtime) RuntimePayload {
 		BaseRuntime:             r.BaseRuntime,
 		CreatedAt:               rfc3339Nano(r.CreatedAt),
 		UpdatedAt:               rfc3339Nano(r.UpdatedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		// spec: §15.1 — the ETag is the quoted decimal version.
 		ETag: formatETag(r.Version),
 	}
 	if !r.DeletedAt.IsZero() {
@@ -744,7 +742,7 @@ func (p RuntimePayload) validatePayloadEnums() error {
 	return nil
 }
 
-// validateIntegrationLevelOnType enforces §5.1 line 36: integrationLevel
+// validateIntegrationLevelOnType enforces §5.1: integrationLevel
 // is only meaningful on type:agent runtimes and must not be set on
 // type:mcp. An empty Type defaults to agent (ApplyDefaults), so an empty
 // Type with a declared integrationLevel is allowed.
@@ -755,8 +753,7 @@ func (p RuntimePayload) validateIntegrationLevelOnType() error {
 	return nil
 }
 
-// validateLabelsRequired enforces §5.1 line 51 ("Labels are required from
-// v1"): a runtime must declare at least one label. Labels are the primary
+// validateLabelsRequired enforces §5.1: a runtime must declare at least one label. Labels are the primary
 // mechanism for environment runtimeSelector and connectorSelector matching
 // (§10.6); a runtime registered with no labels matches no environment
 // selector, leaving its environment membership undefined.
@@ -818,12 +815,12 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	// §5.1 line 36: integrationLevel is only valid on type:agent runtimes.
+	// §5.1: integrationLevel is only valid on type:agent runtimes.
 	if err := body.validateIntegrationLevelOnType(); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_RUNTIME", err.Error(), nil)
 		return
 	}
-	// §5.1 line 51: labels are required from v1.
+	// §5.1: labels are required from v1.
 	if err := body.validateLabelsRequired(); err != nil {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(),
 			map[string]any{"field": "labels"})
@@ -858,14 +855,14 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 	// §5.1: a runtime with an agentInterface gets a write-time
 	// auto-generated A2A agent card stored as a publishedMetadata entry.
 	r.applyGeneratedCard(&rt, rt.CreatedAt)
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		writeDryRun(w, http.StatusCreated, fromRuntime(rt))
 		return
 	}
 	if err := r.runtimes.Create(req.Context(), rt); err != nil {
 		if errors.Is(err, runtimestore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"runtime with this name already exists",
 				map[string]any{"name": body.Name})
@@ -886,7 +883,7 @@ func (r *Router) handleCreateRuntime(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 		"isolationProfile": string(stored.IsolationProfile),
 		"integrationLevel": string(stored.IntegrationLevel),
-		// spec: §5.1 line 41 — admission emits the declared integration
+		// spec: §5.1 — admission emits the declared integration
 		// level as a `runtime.integrationLevel.declared` audit field at
 		// registration so the value is recorded alongside the Runtime
 		// definition (ApplyDefaults has stamped the §5.1 default `basic`
@@ -925,7 +922,7 @@ func (r *Router) handleListRuntimes(w http.ResponseWriter, req *http.Request) {
 	for _, rt := range rows {
 		out = append(out, fromRuntime(rt))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
+	// spec: §15.1 — canonical cursor-paginated envelope.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(rt RuntimePayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -958,7 +955,7 @@ func (r *Router) handleGetRuntime(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	// spec: §15.1 line 1209 — GET carries the ETag header so the client can
+	// spec: §15.1 — GET carries the ETag header so the client can
 	// use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -1126,7 +1123,7 @@ func (r *Router) validateUpdateRuntimeBody(w http.ResponseWriter, body UpdateRun
 			"image must be digest-pinned (contain @sha256:...)", nil)
 		return false, nil, false
 	}
-	// §5.1 line 51: labels are required from v1. A PUT may replace the label
+	// §5.1: labels are required from v1. A PUT may replace the label
 	// set wholesale, but an explicit empty map would strip the runtime of
 	// the selectors §10.6 matching depends on, so it is rejected.
 	if body.Labels != nil && len(*body.Labels) == 0 {
@@ -1235,14 +1232,14 @@ func (r *Router) validateRuntimeUpdateAgainstCurrent(w http.ResponseWriter, req 
 		// resolve in mergeAndPersistRuntime, which 404s ahead of If-Match.
 		return true
 	}
-	// §5.1 line 36: integrationLevel is only valid on type:agent. Type
+	// §5.1: integrationLevel is only valid on type:agent. Type
 	// is immutable via PUT, so the current row's type is authoritative.
 	if body.IntegrationLevel != nil && *body.IntegrationLevel != "" && current.Type == runtimestore.TypeMCP {
 		writeError(w, http.StatusBadRequest, "INVALID_RUNTIME",
 			"integrationLevel is only valid on type: agent runtimes", nil)
 		return false
 	}
-	// §5.1 line 174: a base runtime's image is immutable via the admin
+	// §5.1: a base runtime's image is immutable via the admin
 	// API — the §10.5 RuntimeUpgrade orchestration is the only
 	// legitimate writer. (A derived runtime's image is rejected
 	// separately by validateDerivedRuntimeUpdate as prohibited.)
@@ -1261,7 +1258,7 @@ func (r *Router) validateRuntimeUpdateAgainstCurrent(w http.ResponseWriter, req 
 		writeError(w, http.StatusBadRequest, "INVALID_DERIVED_RUNTIME", derr.Error(), nil)
 		return false
 	}
-	// §5.1 line 174: a base runtime is mutable with impact validation —
+	// §5.1: a base runtime is mutable with impact validation —
 	// a change that would invalidate an existing derived runtime is
 	// rejected with the list of affected runtimes.
 	if !current.IsDerived() {
@@ -1286,7 +1283,7 @@ func (r *Router) validateRuntimeUpdateAgainstCurrent(w http.ResponseWriter, req 
 // and emits the §16.6 audit event. It is the execute-and-respond stage of
 // handleUpdateRuntime. spec: §15.1 (admin API, dryRun, If-Match), §16.6 (audit).
 func (r *Router) mergeAndPersistRuntime(w http.ResponseWriter, req *http.Request, name string, body UpdateRuntimeRequest, agentInterfaceSet bool, newAgentInterface *runtimestore.AgentInterface) {
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	// Resolve the current runtime so the entity tag (its version) is known
 	// before the dry-run branch and the persisted write; a missing runtime
 	// 404s ahead of the precondition. The dry-run branch reuses this record
@@ -1303,7 +1300,7 @@ func (r *Router) mergeAndPersistRuntime(w http.ResponseWriter, req *http.Request
 	if !enforceIfMatch(w, req, currentRuntime.Version) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	// The preview reflects applying the body onto the stored record.
 	if req.URL.Query().Get("dryRun") == "true" {
 		preview := currentRuntime
@@ -1340,7 +1337,7 @@ func (r *Router) mergeAndPersistRuntime(w http.ResponseWriter, req *http.Request
 	r.emit(req.Context(), principal, "admin.runtime.updated", name, map[string]any{
 		"changedFields": changedRuntimeFields(body),
 	})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -1349,7 +1346,7 @@ func (r *Router) mergeAndPersistRuntime(w http.ResponseWriter, req *http.Request
 
 func (r *Router) handleDeleteRuntime(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// spec: §15.1 — DELETE honours If-Match when present. Resolve
 	// the current runtime only when the caller supplies the precondition so
 	// the unconditional delete path stays a single store operation; a
 	// missing runtime 404s ahead of the precondition.

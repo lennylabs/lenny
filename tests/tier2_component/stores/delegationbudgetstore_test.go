@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §11.2 line 29 delegation tree budget checkpoint
+// Contract test for the §11.2 delegation tree budget checkpoint
 // store, exercising the Postgres-backed
 // pkg/gateway/delegationbudget/pgstore against a real container with the
 // production migrations applied. Covers the Write/ListActive
@@ -76,7 +76,7 @@ func findCheckpoint(rows []delegationbudget.Checkpoint, tenant, root string) (de
 	return delegationbudget.Checkpoint{}, false
 }
 
-// spec: §11.2 lines 29, 44, 48; §12.4 line 218.
+// spec: §11.2; §12.4.
 // diagnosis: a failure means the delegation-budget store mis-accounts a
 // tree's token/depth budget or mishandles the §12.4 erasure scope, so
 // delegation budget enforcement would admit or reject the wrong calls.

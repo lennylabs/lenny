@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
-// spec: §17.4 line 262 — LENNY_AGENT_RUNTIME=echo selects the built-in
+// spec: §17.4 — LENNY_AGENT_RUNTIME=echo selects the built-in
 // in-process echo runtime (zero-credential mode), and it wins over a
 // configured runtime binary.
 func TestResolveExecutorEchoSelectorWins_spec_17_4_262(t *testing.T) {
@@ -33,7 +33,7 @@ func TestResolveExecutorEchoSelectorWins_spec_17_4_262(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 323 — LENNY_AGENT_BINARY / --runtime-bin dispatches
+// spec: §17.4 — LENNY_AGENT_BINARY / --runtime-bin dispatches
 // to a child process speaking the §15.4.1 adapter protocol.
 func TestResolveExecutorRuntimeBinary_spec_17_4_323(t *testing.T) {
 	exec, desc, err := resolveExecutor("/path/to/agent", "")
@@ -48,7 +48,7 @@ func TestResolveExecutorRuntimeBinary_spec_17_4_323(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 262 — Source Mode's default runtime is the built-in
+// spec: §17.4 — Source Mode's default runtime is the built-in
 // echo executor when neither selector is set.
 func TestResolveExecutorDefaultEcho_spec_17_4_262(t *testing.T) {
 	exec, _, err := resolveExecutor("", "")
@@ -60,7 +60,7 @@ func TestResolveExecutorDefaultEcho_spec_17_4_262(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 262 — "echo" is the only built-in dev runtime name;
+// spec: §17.4 — "echo" is the only built-in dev runtime name;
 // a typo or an unsupported value fails closed at startup rather than
 // silently falling back.
 func TestResolveExecutorUnknownRuntimeFailsClosed_spec_17_4_262(t *testing.T) {

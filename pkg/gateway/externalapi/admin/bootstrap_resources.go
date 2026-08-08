@@ -14,16 +14,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// upsertPools applies the §17.6 line 408 bootstrap.pools seed list. It
+// upsertPools applies the §17.6 bootstrap.pools seed list. It
 // holds each seed entry to the same validation the POST /v1/admin/pools
 // handler runs (name, enum, runtimeRef resolution, §6.1 SDK-warm
-// execution-mode rule, §5.2 line 396 T4 cross-tenant-reuse rule) and
-// then applies the §17.6 line 444 upsert semantics keyed by pool name.
-// isolationProfile is treated as a §17.6 line 451 security-critical field
+// execution-mode rule, §5.2 T4 cross-tenant-reuse rule) and
+// then applies the §17.6 upsert semantics keyed by pool name.
+// isolationProfile is treated as a §17.6 security-critical field
 // (an isolation downgrade is blocked regardless of --force-update).
 //
-// spec: §17.6 lines 408, 429 (a Pool is required for any session-creating
-// deployment); §5.2; §5.3.
+// spec: §17.6; §5.2; §5.3.
 func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrapOptions) BootstrapSection {
 	out := BootstrapSection{}
 	for i, p := range in {
@@ -56,13 +55,13 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 			runtimeRequireSoPeercred = poolstore.RuntimeRequireSoPeercred(rt)
 		}
 		pl := r.poolFromPayload(p)
-		// spec: §5.2 line 430, §6.1 lines 77-78 — an SDK-warm runtime cannot
+		// spec: §5.2, §6.1 — an SDK-warm runtime cannot
 		// back a service-mode pool or a concurrent session-mode pool.
 		if err := poolstore.ValidatePreConnectExecutionMode(runtimePreConnect, pl.ExecutionMode, pl.SessionPolicy); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
-		// spec: §5.2 line 396 — cross-tenant reuse is rejected on a pool
+		// spec: §5.2 — cross-tenant reuse is rejected on a pool
 		// whose runtime is T4.
 		if err := poolstore.ValidateCrossTenantReuseTier(pl, runtimeTier); err != nil {
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
@@ -130,7 +129,7 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 }
 
 // applyPoolSeed overwrites the mutable fields of an existing pool with
-// the §17.6 line 450 force-update PUT (a full replace of the configurable
+// the §17.6 force-update PUT (a full replace of the configurable
 // scalars). Name and CreatedAt are preserved; UpdatedAt advances to the
 // desired record's stamp.
 func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
@@ -158,8 +157,8 @@ func applyPoolSeed(stored *poolstore.Pool, desired poolstore.Pool) {
 }
 
 // poolConflicts returns the seed-specified pool fields whose values
-// differ from the stored row (§17.6 line 450), and separately the subset
-// that is security-critical (§17.6 line 451 — isolationProfile). Only
+// differ from the stored row (§17.6), and separately the subset
+// that is security-critical (§17.6 — isolationProfile). Only
 // fields the seed sets (non-zero) are compared so an omitted field is not
 // treated as a conflict against a defaulted stored value. The stored row
 // already carries resolved defaults, so the comparison resolves the seed
@@ -209,7 +208,7 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 	return conflicts, securityCritical
 }
 
-// upsertDelegationPolicies applies the §17.6 line 410
+// upsertDelegationPolicies applies the §17.6
 // bootstrap.delegationPolicies seed list. Each entry is keyed by
 // (tenantId, name); the tenantId is read directly from the seed payload
 // (the bootstrap caller is platform-admin and seeds explicit tenant
@@ -217,7 +216,7 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 // any store mutation so a malformed policy is a per-entry validation
 // error rather than an operational failure.
 //
-// spec: §17.6 line 410; §8.3.
+// spec: §17.6; §8.3.
 func (r *Router) upsertDelegationPolicies(req *http.Request, in []DelegationPolicyPayload, opts bootstrapOptions) BootstrapSection {
 	out := BootstrapSection{}
 	for i, p := range in {
@@ -276,7 +275,7 @@ func (r *Router) upsertDelegationPolicies(req *http.Request, in []DelegationPoli
 }
 
 // delegationPolicyConflicts returns the seed-specified delegation-policy
-// fields whose values differ from the stored row (§17.6 line 450). The
+// fields whose values differ from the stored row (§17.6). The
 // force-update path replaces the full mutable body, so rules,
 // contentPolicy, and allowSelfRecursion are all compared.
 func delegationPolicyConflicts(existing, desired delegationpolicystore.DelegationPolicy) []string {
@@ -293,15 +292,15 @@ func delegationPolicyConflicts(existing, desired delegationpolicystore.Delegatio
 	return c
 }
 
-// upsertEnvironments applies the §17.6 line 411 bootstrap.environments
-// seed list (the §17.6 line 438 Option B access path). Each entry is
+// upsertEnvironments applies the §17.6 bootstrap.environments
+// seed list (the §17.6 Option B access path). Each entry is
 // keyed by (tenantId, name); tenantId is read directly from the seed
-// payload. The §11.7 line 449 SIEM-required gate and the §12.9 tier
+// payload. The §11.7 SIEM-required gate and the §12.9 tier
 // override invariant are enforced before any store mutation so a seed
 // under a regulated tenant with no SIEM endpoint, or a tier-loosening
 // override, is a per-entry error rather than a silent admission.
 //
-// spec: §17.6 line 411, 438; §10.6; §11.7 line 449; §12.9.
+// spec: §17.6; §10.6; §11.7; §12.9.
 func (r *Router) upsertEnvironments(req *http.Request, in []EnvironmentPayload, opts bootstrapOptions) BootstrapSection {
 	out := BootstrapSection{}
 	for i, p := range in {
@@ -310,7 +309,7 @@ func (r *Router) upsertEnvironments(req *http.Request, in []EnvironmentPayload, 
 			out.add(i, p.Name, actionError, seedValidationCode, "tenantId is required", nil)
 			continue
 		}
-		// spec: §11.7 line 449 — an environment under a regulated tenant
+		// spec: §11.7 — an environment under a regulated tenant
 		// requires a configured SIEM endpoint.
 		if r.tenants != nil {
 			if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requireSIEMForProfile(row.ComplianceProfile) {
@@ -318,7 +317,7 @@ func (r *Router) upsertEnvironments(req *http.Request, in []EnvironmentPayload, 
 					complianceSIEMRequiredMessage(row.ComplianceProfile), nil)
 				continue
 			}
-			// spec: §11.7 line 377 — and pgaudit DDL/ROLE capture configured.
+			// spec: §11.7 — and pgaudit DDL/ROLE capture configured.
 			if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requirePgauditForProfile(row.ComplianceProfile) {
 				out.add(i, p.Name, actionError, seedValidationCode,
 					compliancePgauditRequiredMessage(row.ComplianceProfile), nil)
@@ -371,7 +370,7 @@ func (r *Router) upsertEnvironments(req *http.Request, in []EnvironmentPayload, 
 }
 
 // environmentConflicts reports whether the seed environment differs from
-// the stored row in any mutable field (§17.6 line 450). Environments are
+// the stored row in any mutable field (§17.6). Environments are
 // a full-replace resource, so the comparison ignores only the immutable
 // identity (name, tenantId) and the audit timestamps.
 func environmentConflicts(existing, desired environmentstore.Environment) []string {

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
-// spec: §25.11 line 4343, §16.7 — with no durable audit store (a nil
+// spec: §25.11, §16.7 — with no durable audit store (a nil
 // pool) the Job degrades to the log-only sink rather than dropping the
 // terminal-state events silently or failing the run.
 func TestBuildBackupAuditSinkNilPoolDegradesToLog(t *testing.T) {

@@ -23,7 +23,7 @@ import (
 // k8sPodLogReader backs the §25.4 log-proxy endpoint with the Kubernetes
 // pod-log API. It satisfies opsserver.PodLogReader.
 //
-// spec: §25.4 lines 2528-2534.
+// spec: §25.4.
 type k8sPodLogReader struct {
 	pods corev1client.PodsGetter
 }
@@ -61,7 +61,7 @@ var certManagerGVR = schema.GroupVersionResource{
 // the cert-manager Certificate CRs in the lenny-system namespace. It
 // satisfies opsservice.CertStatusSource.
 //
-// spec: §25.8 lines 3456-3461.
+// spec: §25.8.
 type certManagerSource struct {
 	client    dynamic.Interface
 	namespace string

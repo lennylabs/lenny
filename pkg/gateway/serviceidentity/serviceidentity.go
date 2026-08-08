@@ -36,7 +36,7 @@ import (
 // authenticated it as. The production implementation submits a Kubernetes
 // TokenReview, so the apiserver checks the issuer signature, the expiry, and
 // the audience binding and a pod cannot forge or extend the token
-// (§10.2 line 227). It is a consumer-side interface: a test substitutes a
+// (§10.2). It is a consumer-side interface: a test substitutes a
 // recording double without a cluster.
 type SATokenAuthenticator interface {
 	VerifyUser(ctx context.Context, token, audience string) (username string, err error)
@@ -98,8 +98,7 @@ func New(cfg Config) *Resolver {
 // authenticated, never from a claim inside the presented token, so holding a
 // projected token for some other service account grants nothing.
 //
-// spec: §25.4 ("Calling the Gateway"), §10.2 line 227 (the gateway validates
-// the projected token's signature on every pod→gateway request).
+// spec: §25.4 ("Calling the Gateway"), §10.2.
 func (r *Resolver) ResolveService(ctx context.Context, token string) (authmw.ServiceIdentity, bool, error) {
 	if r.verifier == nil || r.audience == "" || len(r.roles) == 0 {
 		return authmw.ServiceIdentity{}, false, nil

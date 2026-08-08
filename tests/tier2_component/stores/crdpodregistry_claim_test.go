@@ -282,8 +282,7 @@ func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.
 	return r, base, ns
 }
 
-// spec: §12.6 line 424 (ClaimOpts carries RequiresDemotion, Priority,
-// ClusterID; v1 leaves them inert), §4.6.1 (first `bound` status patch),
+// spec: §12.6, §4.6.1 (first `bound` status patch),
 // §4.6.3 (gateway holds `get`/`patch` and no `update` on sandboxclaims/status).
 //
 // A claim with all the inert §12.6.424 opts set still succeeds via the per-pod

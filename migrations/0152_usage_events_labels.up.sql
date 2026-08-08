@@ -1,4 +1,4 @@
--- §14 line 106 — session labels are filterable in GET /v1/usage (usage
+-- §14 — session labels are filterable in GET /v1/usage (usage
 -- reports). The usage accumulator denormalizes the session's §14 `labels`
 -- map onto each usage event so a label-scoped usage report is computed in
 -- SQL without re-joining the (eventually-erased) session row. Stored as a

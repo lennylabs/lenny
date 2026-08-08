@@ -99,7 +99,7 @@ func newSvc(store Store, emit Emitter, signer Signer) *Service {
 	})
 }
 
-// spec: §12.8 lines 810-829 — each dead-lettered row is scrubbed under a
+// spec: §12.8 — each dead-lettered row is scrubbed under a
 // signed receipt and the paired redacted / downstream-notified events are
 // emitted, all sharing one erasure_job_id.
 func TestRedactForUser_emitsPairedEvents_spec_12_8(t *testing.T) {
@@ -181,7 +181,7 @@ func TestRedactForUser_emitsPairedEvents_spec_12_8(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 753 — empty scope is rejected before any work.
+// spec: §12.8 — empty scope is rejected before any work.
 func TestRedactForUser_emptyScope_spec_12_8_line753(t *testing.T) {
 	t.Parallel()
 	svc := newSvc(&fakeStore{}, &fakeEmitter{}, &fakeSigner{})
@@ -238,7 +238,7 @@ func TestRedactForUser_redactError(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 810 — the receipt is signed over a stable JCS tuple, so
+// spec: §12.8 — the receipt is signed over a stable JCS tuple, so
 // the signer is invoked once per row with deterministic bytes.
 func TestRedactForUser_signsOncePerRow(t *testing.T) {
 	t.Parallel()

@@ -116,7 +116,7 @@ func registerServerFlags(f *controllerFlags) {
 // §5.2/§6.4 resource-class overrides, and the §13.1 non-root pod UID/GID
 // defaults the chart wires through env.
 func registerPodIdentityFlags(f *controllerFlags) {
-	// spec: §17.5 line 3 — operators whose cluster ships the gVisor or
+	// spec: §17.5 — operators whose cluster ships the gVisor or
 	// Kata RuntimeClass under a non-default name (`runsc`, `kata-qemu`,
 	// `kata-fc`) override Lenny's literal defaults here so the chart's
 	// `isolation.runtimeClassNames` Helm values reach the controller
@@ -129,7 +129,7 @@ func registerPodIdentityFlags(f *controllerFlags) {
 		"override a §5.2 resource class as `name=requests.cpu:250m,requests.memory:512Mi,limits.cpu:1,limits.memory:1Gi` (repeatable; defaults small/medium/large)")
 	flag.StringVar(&f.runtimeClassMicrovm, "microvm-runtime-class", os.Getenv("LENNY_MICROVM_RUNTIME_CLASS"),
 		"§17.5 RuntimeClass name override for the §5.3 microvm profile. Empty uses the default 'kata'.")
-	// spec: §13.1 line 7 — the non-root pod UIDs are operator-tunable
+	// spec: §13.1 — the non-root pod UIDs are operator-tunable
 	// (default 65532/65533/65534). The lenny-webhook binary MUST be given
 	// the same values (the chart wires both from security.podUIDs) or a
 	// built pod fails the lenny-pod-security UID checks. F-13.1.16.
@@ -181,18 +181,18 @@ func registerLifecycleFlags(f *controllerFlags) {
 	flag.IntVar(&f.workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&f.devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
-		"§5.3 line 677 global.devMode. When true, a Sandbox that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
+		"§5.3 global.devMode. When true, a Sandbox that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
 }
 
 // registerCertFlags binds the §4.6.1 / §10.3 idle-pod certificate-expiry
 // replacement window knobs.
 func registerCertFlags(f *controllerFlags) {
 	flag.DurationVar(&f.certTTL, "cert-ttl", 4*time.Hour,
-		"§10.3 line 338 agent-pod mTLS certificate lifetime. The §4.6.1 cert-expiry replacement derives an idle pod's certificate expiry as pod-creation-time + this TTL when the pod carries no explicit lenny.dev/cert-not-after annotation.")
+		"§10.3 agent-pod mTLS certificate lifetime. The §4.6.1 cert-expiry replacement derives an idle pod's certificate expiry as pod-creation-time + this TTL when the pod carries no explicit lenny.dev/cert-not-after annotation.")
 	flag.DurationVar(&f.certExpiryThreshold, "cert-expiry-threshold", 30*time.Minute,
-		"§4.6.1 / §10.3 line 342 proactive cert-replacement window. An idle pod whose certificate will expire within this duration is drained and recreated so a claim never lands on a pod with insufficient remaining certificate validity.")
+		"§4.6.1 / §10.3 proactive cert-replacement window. An idle pod whose certificate will expire within this duration is drained and recreated so a claim never lands on a pod with insufficient remaining certificate validity.")
 	flag.DurationVar(&f.certIssuanceGrace, "cert-issuance-grace", 60*time.Second,
-		"§10.3 line 342 cert-issuance grace. A pre-idle pod that has not presented a valid lenny.dev/cert-not-after annotation within this window of its creation is treated as a cert-issuance failure and replaced. Active only with --require-cert-issuance.")
+		"§10.3 cert-issuance grace. A pre-idle pod that has not presented a valid lenny.dev/cert-not-after annotation within this window of its creation is treated as a cert-issuance failure and replaced. Active only with --require-cert-issuance.")
 	flag.BoolVar(&f.requireCertIssuance, "require-cert-issuance", false,
-		"§10.3 line 342 cert-issuance enforcement. When true, a pre-idle pod without a valid certificate after --cert-issuance-grace is drained for replacement. Default false because the check keys on the lenny.dev/cert-not-after annotation a per-pod cert producer stamps; enable it only when that producer is wired, otherwise every pre-idle pod is replaced.")
+		"§10.3 cert-issuance enforcement. When true, a pre-idle pod without a valid certificate after --cert-issuance-grace is drained for replacement. Default false because the check keys on the lenny.dev/cert-not-after annotation a per-pod cert producer stamps; enable it only when that producer is wired, otherwise every pre-idle pod is replaced.")
 }

@@ -131,7 +131,7 @@ type SDKWarmInputs struct {
 	// yet). spec: §6.1 (watchdog clock anchored at the entry into the
 	// SDK-connect work on the edge being measured), §3.3.
 	SDKConnectElapsed time.Duration
-	// SDKConnectTimeout is the §6.1 line 69 watchdog budget
+	// SDKConnectTimeout is the §6.1 watchdog budget
 	// (sdkConnectTimeoutSeconds). Zero disables the watchdog.
 	SDKConnectTimeout time.Duration
 	// Recycle marks the §6.2 recycle re-warm edge: a recycling claim
@@ -160,7 +160,7 @@ func (in SDKWarmInputs) TimedOut() bool {
 }
 
 // DecideSDKWarm maps an SDK-warm Sandbox's phase and observed Pod to the
-// next warm-path action (§6.1 lines 30-69, §6.2 lines 89-123). It routes
+// next warm-path action (§6.1, §6.2). It routes
 // the warm sequence through sdk_connecting: the pod warms to Running
 // (warming → sdk_connecting), pre-connects its SDK while the readiness
 // gate holds Pod.Ready False (sdk_connecting), and becomes claimable when
@@ -190,7 +190,7 @@ func DecideSDKWarm(in SDKWarmInputs) Decision {
 			// The pod is still scheduling; SDK pre-connect has not begun.
 			return Decision{}
 		default: // PodNotReady, PodReady — the pod is Running.
-			// §6.1 line 30 / §6.2 line 89: the container is up and the
+			// §6.1 / §6.2: the container is up and the
 			// adapter pre-connects its SDK. Enter sdk_connecting; the
 			// readiness gate keeps the pod un-claimable until the SDK is
 			// connected and the gate flips.
@@ -218,7 +218,7 @@ func DecideSDKWarm(in SDKWarmInputs) Decision {
 			return setPhase(state.Idle)
 		default: // PodPending, PodNotReady — the SDK is still connecting.
 			if in.TimedOut() {
-				// §6.1 line 69 watchdog: the SDK hung in sdk_connecting
+				// §6.1 watchdog: the SDK hung in sdk_connecting
 				// past sdkConnectTimeoutSeconds, measured from pod start on
 				// the warm-fill edge and from rewarmStartedAt on the recycle
 				// re-warm edge. Retire the pod to failed on either edge.

@@ -20,14 +20,14 @@
 #      drops the old column: during a rolling deploy an old-version replica
 #      that does not know the new column issues INSERTs that omit it, and a
 #      NOT NULL constraint without a default makes those INSERTs fail.
-#      spec: §10.5 line 415.
+#      spec: §10.5.
 #   5. Every Phase 3 contract migration (an .up.sql that DROPs a column)
-#      uses `DROP COLUMN IF EXISTS` (idempotency, §10.5 line 430) and begins
+#      uses `DROP COLUMN IF EXISTS` (idempotency, §10.5) and begins
 #      with a PL/pgSQL `DO $$` preflight gate block that aborts when
-#      un-migrated rows remain (§10.5 line 417). A missing gate or a
+#      un-migrated rows remain (§10.5). A missing gate or a
 #      non-idempotent DROP is a violation; a missing `-- gate-index:`
-#      declaration is a non-blocking warning (§10.5 line 417). The gate
-#      requirement is unconditional: §10.5 line 417 mandates the preflight
+#      declaration is a non-blocking warning (§10.5). The gate
+#      requirement is unconditional: §10.5 mandates the preflight
 #      DO block for every Phase 3 migration regardless of expected row count.
 #
 # Exit code:
@@ -137,14 +137,14 @@ while IFS= read -r up; do
     fi
     guarded_drops="$(grep -oE 'drop[[:space:]]+column[[:space:]]+if[[:space:]]+exists' <<<"${norm}" | wc -l | tr -d ' ')" || guarded_drops=0
     if (( total_drops > guarded_drops )); then
-        report "§10.5 line 430: ${up} drops a column without IF EXISTS (Phase 3 DROP COLUMN is not idempotent; a re-run fails). Use DROP COLUMN IF EXISTS."
+        report "§10.5: ${up} drops a column without IF EXISTS (Phase 3 DROP COLUMN is not idempotent; a re-run fails). Use DROP COLUMN IF EXISTS."
     fi
     if [[ "${norm}" != *'do $$'* ]]; then
-        report "§10.5 line 417: ${up} is a Phase 3 migration (DROP COLUMN) with no DO \$\$ preflight gate. Front the DDL with a DO block that RAISE EXCEPTIONs when un-migrated rows remain so the contract cannot run before the data migration completes."
+        report "§10.5: ${up} is a Phase 3 migration (DROP COLUMN) with no DO \$\$ preflight gate. Front the DDL with a DO block that RAISE EXCEPTIONs when un-migrated rows remain so the contract cannot run before the data migration completes."
     fi
     if [[ "${norm}" != *'gate-index:'* ]]; then
         # Non-blocking: the gate query should run against an indexed column.
-        echo "lint-migrations: WARNING ${up} declares no '-- gate-index:' comment; the Phase 3 gate COUNT(*) query may scan the full table (§10.5 line 417)." >&2
+        echo "lint-migrations: WARNING ${up} declares no '-- gate-index:' comment; the Phase 3 gate COUNT(*) query may scan the full table (§10.5)." >&2
     fi
 done < <(find "${MIGRATIONS_DIR}" -type f -name '*.up.sql' | sort)
 

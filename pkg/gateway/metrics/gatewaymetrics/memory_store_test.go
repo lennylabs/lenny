@@ -11,8 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 )
 
-// TestMemoryStoreMetricsExposed_spec_9_4_F_9_4_1 pins the §9.4 / §16.1
-// lines 151-154 contract: all four metric families register, accept
+// TestMemoryStoreMetricsExposed_spec_9_4_F_9_4_1 pins the §9.4 / §16.1 contract: all four metric families register, accept
 // the documented label sets, and surface on /metrics. The label
 // shapes here are the ones the catalog test in
 // pkg/observability/metrics enforces.

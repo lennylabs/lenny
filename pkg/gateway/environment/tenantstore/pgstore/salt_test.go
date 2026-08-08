@@ -14,7 +14,7 @@ import (
 // touch the pool, so a nil-pool Store exercises the §12.8 envelope path
 // without Postgres.
 
-// spec: §12.8 lines 845-846 — the erasure_salt is envelope-encrypted at
+// spec: §12.8 — the erasure_salt is envelope-encrypted at
 // rest and round-trips back to the original 256-bit value. F-12.8.5.
 func TestSaltSealOpenRoundTrip_spec_12_8_845(t *testing.T) {
 	prov, err := kms.NewLocalRandom()
@@ -33,7 +33,7 @@ func TestSaltSealOpenRoundTrip_spec_12_8_845(t *testing.T) {
 		t.Fatal("sealed blob is empty")
 	}
 	if bytes.Contains(blob, salt) {
-		t.Fatal("§12.8 line 845: sealed blob must not contain the plaintext salt")
+		t.Fatal("§12.8: sealed blob must not contain the plaintext salt")
 	}
 
 	got, err := s.openSalt(ctx, "acme", blob)
@@ -45,7 +45,7 @@ func TestSaltSealOpenRoundTrip_spec_12_8_845(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 850 — a destroyed (empty) salt seals to a NULL column
+// spec: §12.8 — a destroyed (empty) salt seals to a NULL column
 // and opens back to nil. F-12.8.5.
 func TestSaltEmptySealsToNull_spec_12_8_850(t *testing.T) {
 	prov, _ := kms.NewLocalRandom()
@@ -68,7 +68,7 @@ func TestSaltEmptySealsToNull_spec_12_8_850(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 845 — a non-empty salt write with no KMS provider is
+// spec: §12.8 — a non-empty salt write with no KMS provider is
 // rejected rather than persisted in plaintext. F-12.8.5.
 func TestSaltSealFailsClosedWithoutKMS_spec_12_8_845(t *testing.T) {
 	s := New(nil) // no WithKMS
@@ -83,7 +83,7 @@ func TestSaltSealFailsClosedWithoutKMS_spec_12_8_845(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 845-846 — the KEK alias binds the ciphertext to the
+// spec: §12.8 — the KEK alias binds the ciphertext to the
 // tenant, so a blob sealed for one tenant does not open under another's
 // alias. F-12.8.5.
 func TestSaltCrossTenantOpenRejected_spec_12_8_846(t *testing.T) {
@@ -97,6 +97,6 @@ func TestSaltCrossTenantOpenRejected_spec_12_8_846(t *testing.T) {
 		t.Fatalf("sealSalt: %v", err)
 	}
 	if _, err := s.openSalt(ctx, "globex", blob); err == nil {
-		t.Fatal("§12.8 line 846: salt sealed for acme must not open under globex's KEK alias")
+		t.Fatal("§12.8: salt sealed for acme must not open under globex's KEK alias")
 	}
 }

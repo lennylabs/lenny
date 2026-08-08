@@ -43,7 +43,7 @@ func newTestLauncher(t *testing.T, objs ...metav1.Object) (*Launcher, *fake.Clie
 // NetworkPolicy selects, and the lenny.dev/backup-id correlation
 // annotation.
 //
-// spec: §25.11 lines 3981-3994.
+// spec: §25.11.
 func TestLaunchRendersJobPodSpecification_spec_25_11(t *testing.T) {
 	l, cs := newTestLauncher(t)
 	launched, err := l.Launch(context.Background(), backup.JobSpec{
@@ -110,7 +110,7 @@ func TestLaunchRendersJobPodSpecification_spec_25_11(t *testing.T) {
 // credential env wiring: the secret-sourced Postgres/MinIO/report keys and
 // the run identifiers.
 //
-// spec: §25.11 lines 3990-3997.
+// spec: §25.11.
 func TestLaunchEnvAndArgsByKind_spec_25_11(t *testing.T) {
 	l, cs := newTestLauncher(t)
 	cases := []struct {
@@ -155,7 +155,7 @@ func TestLaunchEnvAndArgsByKind_spec_25_11(t *testing.T) {
 // MinIO. The region is recorded as a pod annotation and env, and the
 // covered shards are passed as env.
 //
-// spec: §12.8 lines 934-935.
+// spec: §12.8.
 func TestPerRegionJobScopedToRegionEndpoint_spec_12_8_934(t *testing.T) {
 	l, cs := newTestLauncher(t)
 	l.cfg.newSuffix = func() string { return "eu" }
@@ -223,7 +223,7 @@ func TestRetentionJobCarriesNoBackupIDAnnotation(t *testing.T) {
 // TestJobStatusProjection asserts the K8s Job status → backup.BackupJob
 // mapping the §25.11 restore-completion reconciler reads.
 //
-// spec: §25.11 line 4194.
+// spec: §25.11.
 func TestJobStatusProjection_spec_25_11(t *testing.T) {
 	l, cs := newTestLauncher(t)
 	// A completed Job.
@@ -272,7 +272,7 @@ func TestJobStatusProjection_spec_25_11(t *testing.T) {
 // the launcher lists only app: lenny-backup Jobs with their backup-id
 // annotation, and DeleteJob is idempotent against an already-swept Job.
 //
-// spec: §25.11 lines 3976-3978.
+// spec: §25.11.
 func TestListAndDeleteManagedJobs_spec_25_11(t *testing.T) {
 	l, _ := newTestLauncher(t)
 	if _, err := l.Launch(context.Background(), backup.JobSpec{Kind: backup.JobBackup, BackupID: "bkp-7"}); err != nil {

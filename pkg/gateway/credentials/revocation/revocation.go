@@ -30,7 +30,7 @@ type TenantLister interface {
 // defaultMaxStaleness bounds how long a replica trusts its in-memory
 // revocation set after the last successful rehydration. The rehydration
 // loop runs every 30s; three missed cycles (90s) means the replica
-// cannot reach Postgres, at which point §13.3 line 601 requires it to
+// cannot reach Postgres, at which point §13.3 requires it to
 // refuse validation rather than honor a possibly-revoked token from a
 // stale cache.
 const defaultMaxStaleness = 90 * time.Second
@@ -141,19 +141,19 @@ func (c *Cache) Rehydrate(ctx context.Context, tenants TenantLister, src Source)
 		fresh[jti] = struct{}{}
 	}
 	c.revoked = fresh
-	// Record the successful read so the §13.3 line 601 validation gate
+	// Record the successful read so the §13.3 validation gate
 	// knows the in-memory set reflects Postgres as of this instant.
 	c.lastSuccess = c.clock()
 	return nil
 }
 
 // Stale reports whether the in-memory revocation set is too old to
-// trust because the replica cannot reach Postgres. §13.3 line 601: a
+// trust because the replica cannot reach Postgres. §13.3: a
 // gateway replica that cannot reach Postgres refuses to validate tokens
 // and returns 503 token_validation_unavailable rather than honoring a
 // possibly-revoked token from a stale cache. The set is stale when no
 // rehydration has ever succeeded, or when the most recent success is
-// older than the freshness window. spec: §13.3 line 601. F-13.3.4.
+// older than the freshness window. spec: §13.3. F-13.3.4.
 func (c *Cache) Stale() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

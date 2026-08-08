@@ -12,7 +12,7 @@ ValidatingWebhookConfigurations cluster-wide and get ConfigMaps in the
 release namespace.
 */ -}}
 {{- /*
-preflight.enabled: false (§17.6 line 532) skips the whole admission-plane
+preflight.enabled: false (§17.6) skips the whole admission-plane
 preflight Job for air-gapped or constrained installs. The skip is surfaced
 in the install NOTES with the spec's verbatim warning. The post-upgrade
 CRD-validate Job renders independently so the stale-CRD catch-net stays.
@@ -51,9 +51,9 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["list"]
-  # §13.1 line 23 host-sharing audit covers Lenny-managed Deployments,
+  # §13.1 host-sharing audit covers Lenny-managed Deployments,
   # DaemonSets, and Jobs across the release and agent namespaces, and the
-  # §13.1 line 25 credential-fsGroup audit scans the agent Pods the
+  # §13.1 credential-fsGroup audit scans the agent Pods the
   # controller spawns in the agent namespaces — both list cluster-wide so
   # the scan is not pinned to the release namespace. F-13.1.7 / F-13.1.4.
   - apiGroups: ["apps"]
@@ -65,29 +65,29 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list"]
-  # §15.5 line 2438 / §17.9 conversion-webhook-availability check reads
+  # §15.5 / §17.9 conversion-webhook-availability check reads
   # the lenny-crd-conversion Service to confirm the CRD conversion webhook
   # is reachable; the matching Deployment is covered by the apps/list rule
   # above. F-15.5.3 / F-17.2.4.
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["list"]
-  # §10 line 443 crd-schema-version check reads each installed Lenny CRD's
-  # lenny.dev/schema-version annotation. F-15.5.12. The §10.3 line 304
+  # §10 crd-schema-version check reads each installed Lenny CRD's
+  # lenny.dev/schema-version annotation. F-15.5.12. The §10.3
   # cert-manager-version check reuses this grant to read the cluster-scoped
   # certificates.cert-manager.io CRD's version label. F-10.3.12.
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list"]
-  # §5.3 line 676 RuntimeClass presence check (cluster-scoped objects).
+  # §5.3 RuntimeClass presence check (cluster-scoped objects).
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]
     verbs: ["get", "list"]
-  # §5.2 line 516 node-drain-timeout warning lists pools cluster-wide.
+  # §5.2 node-drain-timeout warning lists pools cluster-wide.
   - apiGroups: ["lenny.dev"]
     resources: ["sandboxtemplates"]
     verbs: ["list"]
-  # §17.6 lines 501-502 namespace-resourcequota / namespace-limitrange
+  # §17.6 namespace-resourcequota / namespace-limitrange
   # checks read each agent namespace and its ResourceQuota / LimitRange
   # objects. The namespace `get` distinguishes a not-yet-created
   # namespace (fresh install) from an existing one missing governance.
@@ -101,12 +101,12 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas", "limitranges"]
     verbs: ["list"]
-  # §17.6 line 519 lenny-ops-sa RBAC audit runs a SubjectAccessReview for
+  # §17.6 lenny-ops-sa RBAC audit runs a SubjectAccessReview for
   # the lenny-ops SA against each canonical §25.4 rule. F-17.6.1.
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]
     verbs: ["create"]
-  # §17.6 line 520 ops.ingress ClusterIssuer advisory reads the
+  # §17.6 ops.ingress ClusterIssuer advisory reads the
   # cert-manager ClusterIssuer named by the ops.ingress annotation. The
   # rule is harmless when cert-manager is absent (the read 404s and the
   # advisory fires). F-17.6.1.
@@ -176,7 +176,7 @@ subjects:
 {{- range $flag, $on := .Values.acceptFeatureFlagDowngrade }}
 {{-   if $on }}{{ $accepted = append $accepted $flag }}{{ end }}
 {{- end }}
-{{- /* §17.9.2 line 1372 — preflight.skipNetworkProbes drops the
+{{- /* §17.9.2 — preflight.skipNetworkProbes drops the
    backend-reachability probes (MinIO SSE, BYO-Redis maxmemory, OTLP TLS,
    ops-admin internal-TLS, cloud-pooler sentinel) for air-gapped installs.
    The MinIO SSE probe is the only consumer of the lenny-datastore-conn
@@ -201,11 +201,11 @@ subjects:
    Proxy / Cloud SQL Auth Proxy / Azure PgBouncer in front of Postgres,
    which cannot enforce the connect_query sentinel — preflight then
    verifies the per-transaction lenny_tenant_guard trigger
-   (CloudPoolerSentinelDefense check, §17.6 line 488). Surfaced here so
+   (CloudPoolerSentinelDefense check, §17.6). Surfaced here so
    the preflight binary gets the value via --connection-pooler. */ -}}
 {{- $connectionPooler := include "lenny.connectionPooler" . -}}
 {{- /*
-§5.3 line 676 RuntimeClass requirements. The install requires the
+§5.3 RuntimeClass requirements. The install requires the
 RuntimeClasses backing the isolation profiles its pods will use. Source
 them from the chart's enabled runtimeClasses.profiles entries, skipping:
   - dev mode, where §5.3 falls back to standard (runc) and no gVisor/Kata
@@ -223,7 +223,7 @@ them from the chart's enabled runtimeClasses.profiles entries, skipping:
        F-12.4.15. */ -}}
 {{- $redis := .Values.redis | default dict -}}
 {{- $checkRedis := and .Values.preflight $.Values.preflight.checkRedisMaxmemoryPolicy $redis.url (ne ($redis.url | toString) "") (not $skipNetworkProbes) -}}
-{{- /* §17.6 line 488 — the cloud-pooler sentinel defense connects to
+{{- /* §17.6 — the cloud-pooler sentinel defense connects to
        Postgres to verify the lenny_tenant_guard trigger when the pooler
        is external. The DSN comes from the lenny-datastore-conn Secret,
        wired only when postgres.dsn is supplied. On a fresh install the
@@ -252,7 +252,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 0
-  # spec: §17.6 line 534 — the preflight Job runs to completion within
+  # spec: §17.6 — the preflight Job runs to completion within
   # activeDeadlineSeconds; a slow API server is bounded so a hung check
   # does not block the install indefinitely. Deployers raise the bound
   # via preflight.timeoutSeconds.
@@ -275,24 +275,24 @@ spec:
           imagePullPolicy: {{ .Values.preflight.image.pullPolicy }}
           args:
             - --namespace={{ .Release.Namespace }}
-            # §13.1 lines 23/25 — the host-sharing and credential-fsGroup
+            # §13.1 — the host-sharing and credential-fsGroup
             # audits cover the agent namespaces in addition to the release
             # namespace. F-13.1.7 / F-13.1.4.
             {{- $agentNS := list }}
             {{- range .Values.agentNamespaces }}{{ $agentNS = append $agentNS .name }}{{ end }}
             - --agent-namespaces={{ join "," $agentNS }}
-            {{- /* spec: §13.1 line 7 — keep the agent-pod fsGroup audit in
+            {{- /* spec: §13.1 — keep the agent-pod fsGroup audit in
                    lock-step with the operator-tunable lenny-cred-readers
                    GID the controller stamps. F-13.1.16. */}}
             - --cred-readers-gid={{ ((.Values.security | default dict).podUIDs | default dict).credReadersGID | default 65534 }}
             - --feature-llm-proxy={{ .Values.features.llmProxy }}
             - --feature-drain-readiness={{ .Values.features.drainReadiness }}
             - --feature-compliance={{ .Values.features.compliance }}
-            # §17.2 line 56 — lenny-registry-digest is fail-closed and
+            # §17.2 — lenny-registry-digest is fail-closed and
             # mandatory for air-gap installs (§25.8); track it in the
             # preflight expected set when digest pinning is required.
             - --feature-registry-digest={{ .Values.platform.registry.requireDigest }}
-            # §5.3 line 669 — image provenance verification is a
+            # §5.3 — image provenance verification is a
             # prerequisite for production and staging deployments. A
             # production-or-staging install with cosign disabled gets a
             # non-blocking WARNING (F-5.3.5).
@@ -303,7 +303,7 @@ spec:
             # Operator CRDs but they are absent (chart falls back to a
             # ConfigMap). F-16.9.4.
             - --monitoring-format={{ .Values.monitoring.format | default "prometheusrule" }}
-            # §25.4 lines 1462-1470 — the non-blocking prometheus-reachability
+            # §25.4 — the non-blocking prometheus-reachability
             # check probes ops.prometheus.url and emits a tier-specific
             # advisory (INFO at Tier 1, WARN at Tier 2/3). The Tier 2/3 WARN is
             # suppressed when monitoring.acknowledgeNoPrometheus is set.
@@ -313,19 +313,19 @@ spec:
             - --acknowledge-no-prometheus={{ .Values.monitoring.acknowledgeNoPrometheus | default false }}
             - --accept-downgrade={{ join "," $accepted }}
             - --compliance-profile={{ .Values.complianceProfile | default "" }}
-            # §10.3 lines 316, 334 (NET-064) uniqueness inputs. The
+            # §10.3 uniqueness inputs. The
             # collision check skips an empty value, so the unset
             # saTokenAudience case (chart default) passes preflight;
             # production deployments override both. F-10.3.5 / F-10.3.6.
             - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain | default "" }}
             - --sa-token-audience={{ .Values.global.saTokenAudience | default "" }}
-            # spec: §17.9.3 / §17.6 line 488 — when "external" the
+            # spec: §17.9.3 / §17.6 — when "external" the
             # cloud-pooler sentinel defense check verifies the
             # lenny_tenant_guard per-transaction trigger over the
             # --postgres-dsn connection below.
             - --connection-pooler={{ $connectionPooler }}
             {{- if $checkPoolerSentinel }}
-            # §17.6 line 488 — Kubernetes expands $(LENNY_POSTGRES_DSN) from
+            # §17.6 — Kubernetes expands $(LENNY_POSTGRES_DSN) from
             # the env below. An undefined optional secret leaves the token
             # unexpanded; the binary treats a "$(" value as unwired and
             # defers to the gateway runtime defense. F-17.9.2.
@@ -346,11 +346,11 @@ spec:
             - --object-storage-provider={{ .Values.objectStorage.provider | default "minio" }}
             - --object-storage-bucket={{ .Values.objectStorage.bucket | default "" }}
             - --object-storage-region={{ .Values.objectStorage.region | default "" }}
-            {{- /* §17.6 line 517 — a production install with no SIEM
+            {{- /* §17.6 — a production install with no SIEM
             endpoint configured gets a non-blocking audit-integrity
             warning. F-17.6.1. */}}
             - --siem-endpoint={{ .Values.audit.siem.endpoint | default "" }}
-            {{- /* §17.6 lines 519-521 — lenny-ops-sa RBAC audit, the
+            {{- /* §17.6 — lenny-ops-sa RBAC audit, the
             ops.ingress ClusterIssuer advisory, and the monitoring-namespace
             advisory. The monitoring pod label reuses the existing
             ops.networkPolicy.prometheusPodLabel (key=value). F-17.6.1. */}}
@@ -358,7 +358,7 @@ spec:
             - --ops-ingress-cluster-issuer={{ index (.Values.ops.ingress.annotations | default dict) "cert-manager.io/cluster-issuer" | default "" }}
             - --monitoring-namespace={{ .Values.monitoring.namespace | default "" }}
             - --monitoring-pod-label={{ .Values.ops.networkPolicy.prometheusPodLabel.key }}={{ .Values.ops.networkPolicy.prometheusPodLabel.value }}
-            {{- /* §13.2 line 292 NET-038 — validate that the
+            {{- /* §13.2 NET-038 — validate that the
             ingressControllerNamespace exists and runs a pod carrying the
             configured controllerPodLabel, so the allow-gateway-ingress
             NetworkPolicy actually admits external HTTPS to the gateway.
@@ -406,7 +406,7 @@ spec:
             - --ops-admin-tls-endpoint=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalTLSPort }}
             - --ops-admin-tls-san-host=lenny-gateway.{{ .Release.Namespace }}.svc
             {{- end }}
-            # §12.9 line 1050 — T2 storage-layer volume-encryption baseline.
+            # §12.9 — T2 storage-layer volume-encryption baseline.
             # global.devMode exempts the check; preflight.attestVolumeEncryption
             # carries the operator attestation for BYO Postgres/Redis volumes
             # the chart cannot probe in-cluster.
@@ -418,12 +418,12 @@ spec:
             # proxy + spiffeBinding: disabled, or proxy + provider-direct). It
             # enforces only when tenancy.mode is multi.
             - --tenancy-mode={{ .Values.tenancy.mode }}
-            # §10.3 line 304 / F-10.3.12: when the cert-manager-backed mTLS
+            # §10.3 / F-10.3.12: when the cert-manager-backed mTLS
             # PKI is enabled, the preflight requires cert-manager >= v1.12.0.
             # Set certmanager.enabled=false alongside mtls.enabled=false for
             # a mesh-managed install so the prerequisite is not enforced.
             - --certmanager-enabled={{ .Values.certmanager.enabled }}
-            # §17.9.2 line 1372 — the airgap answer file sets
+            # §17.9.2 — the airgap answer file sets
             # preflight.skipNetworkProbes so the backend-reachability probes
             # (MinIO SSE, BYO-Redis maxmemory, OTLP TLS handshake, ops-admin
             # internal-TLS handshake) are dropped while the cluster-API checks
@@ -444,7 +444,7 @@ spec:
                   key: minio-secret-key
             {{- end }}
             {{- if $checkPoolerSentinel }}
-            # §17.6 line 488 cloud-pooler sentinel defense Postgres DSN.
+            # §17.6 cloud-pooler sentinel defense Postgres DSN.
             # optional:true so a fresh install (Secret not yet created at
             # this pre-install hook) still starts; the binary defers the
             # unwired probe to the gateway runtime defense. F-17.9.2.

@@ -8,10 +8,7 @@
 // the spec names that integrate through a vendor OpenFeature provider
 // rather than OFREP.
 //
-// spec: §10.7 lines 779-782 ("the gateway ships built-in OpenFeature
-// SDK providers for LaunchDarkly, Statsig, and Unleash, linked into the
-// gateway binary") and line 825 (the gateway calls ObjectValue on the
-// configured OpenFeature client, reading Variant then Value).
+// spec: §10.7.
 //
 // A Cache constructs one OpenFeature client per distinct tenant
 // targeting config and reuses it across sessions, because the vendor
@@ -86,14 +83,14 @@ type Evaluator struct {
 }
 
 // Evaluate resolves flagKey against the configured OpenFeature provider
-// with evalContext as the targeting context, per §10.7 line 825. It
+// with evalContext as the targeting context, per §10.7. It
 // reads the EvaluationDetails Variant and Value the §10.7 caller maps
 // through experiment.ResolveExternalVariant. A provider error, a
 // not-ready provider, or a provider-returned ErrorResolutionDetails is
 // the §10.7 targeting_failed condition and returns a *EvalError.
 func (e *Evaluator) Evaluate(ctx context.Context, flagKey string, evalContext map[string]any) (Result, error) {
 	ofCtx := toEvaluationContext(evalContext)
-	// spec: §10.7 line 825 — ObjectValue(experimentId, defaultVariant,
+	// spec: §10.7 — ObjectValue(experimentId, defaultVariant,
 	// evaluationContext). The control variant is the default so a
 	// disabled flag or a provider that does not enroll the user yields
 	// control (no enrollment) rather than an error.
@@ -268,8 +265,7 @@ func fingerprint(cfg experiment.TargetingConfig) string {
 }
 
 // defaultProviderFactory builds the vendor OpenFeature provider named by
-// cfg. spec: §10.7 lines 779-782, 805-822 (the LaunchDarkly, Statsig,
-// and Unleash config sub-blocks).
+// cfg. spec: §10.7.
 func defaultProviderFactory(cfg experiment.TargetingConfig) (openfeature.FeatureProvider, error) {
 	switch cfg.Provider {
 	case experiment.TargetingProviderLaunchDarkly:
@@ -278,7 +274,7 @@ func defaultProviderFactory(cfg experiment.TargetingConfig) (openfeature.Feature
 		}
 		ldCfg := ld.Config{}
 		if cfg.LaunchDarkly.BaseURL != "" {
-			// spec: §10.7 line 811 launchdarkly.baseUrl, for a private
+			// spec: §10.7 launchdarkly.baseUrl, for a private
 			// instance or the LaunchDarkly Relay Proxy.
 			ldCfg.ServiceEndpoints = ldcomponents.RelayProxyEndpoints(cfg.LaunchDarkly.BaseURL)
 		}

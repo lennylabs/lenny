@@ -22,7 +22,7 @@ import (
 // is configured (single-process dev), in which case the durable audit
 // path degrades to log-only.
 //
-// spec: §25.4 lines 1490-1500 (lenny-ops uses StoreRouter:
+// spec: §25.4 (lenny-ops uses StoreRouter:
 // PlatformPostgres(), PlatformRedis(), AuditShard()). F-25.4.14.
 func buildStoreRouter(pgPool *pgxpool.Pool, redisClient redis.UniversalClient) *storerouter.SingleShardRouter {
 	if pgPool == nil {
@@ -45,7 +45,7 @@ func buildStoreRouter(pgPool *pgxpool.Pool, redisClient redis.UniversalClient) *
 // AuditShard(); otherwise it degrades to log-only so single-process dev
 // stays observable.
 //
-// spec: §11.7 line 435 (ops_event.* route to the platform tenant via
+// spec: §11.7 (ops_event.* route to the platform tenant via
 // PlatformPostgres()); §25.4 (lock / escalation / self-health audit
 // events). F-25.4.22.
 func buildPlatformAuditRecorder(router *storerouter.SingleShardRouter) *opsaudit.Recorder {

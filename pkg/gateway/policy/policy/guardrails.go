@@ -12,7 +12,7 @@ import (
 // GuardrailsInterceptorPriority is the §4.8 built-in priority for
 // GuardrailsInterceptor. The §4.8 built-in interceptor table fixes it
 // at 400: external interceptors at priority 101–399 run before
-// guardrails, those at 401–599 run after (spec: §4.8 line 1070).
+// guardrails, those at 401–599 run after (spec: §4.8).
 const GuardrailsInterceptorPriority int32 = 400
 
 // GuardrailsInterceptorName identifies GuardrailsInterceptor in audit
@@ -21,7 +21,7 @@ const GuardrailsInterceptorName = "GuardrailsInterceptor"
 
 // GuardrailsPhases are the phases GuardrailsInterceptor is active at
 // when enabled: the delegation input, the LLM proxy request and
-// response, and the agent output (spec: §4.8 line 1070). A phase fires
+// response, and the agent output (spec: §4.8). A phase fires
 // only when its chain is invoked; an unwired phase chain keeps the
 // registration dormant until that phase runs.
 func GuardrailsPhases() []interceptor.Phase {
@@ -43,7 +43,7 @@ func GuardrailsPhases() []interceptor.Phase {
 //
 // GuardrailsInterceptor is a built-in (Builtin() == true) registered at
 // the reserved priority 400 across the phases GuardrailsPhases reports
-// (spec: §4.8 line 1070). It is the gateway-side stable identity for
+// (spec: §4.8). It is the gateway-side stable identity for
 // the classifier: external interceptor priority ordering (101–399
 // before, 401–599 after) is defined relative to this fixed priority
 // regardless of the backing classifier's own registration.
@@ -98,7 +98,7 @@ func (g *GuardrailsInterceptor) Timeout() time.Duration {
 // Intercept implements interceptor.Interceptor. A disabled guardrail
 // (nil classifier) returns ActionAllow. An enabled guardrail delegates
 // the decision to the configured classifier, which sees the content as
-// it stands after any upstream MODIFY (spec: §4.8 line 1070).
+// it stands after any upstream MODIFY (spec: §4.8).
 func (g *GuardrailsInterceptor) Intercept(ctx context.Context, req interceptor.Request) (interceptor.Result, error) {
 	if g.classifier == nil {
 		return interceptor.Result{Action: interceptor.ActionAllow}, nil

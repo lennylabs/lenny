@@ -35,7 +35,7 @@ func (c envClient) do(method, path, tenant, user, roles, groups string, body any
 
 // doIfMatch is do() plus the §15.1 If-Match precondition header. The
 // environments resource enforces ETag optimistic concurrency, so an admin
-// PUT carries the current entity tag. spec: §15.1 lines 1207-1211.
+// PUT carries the current entity tag. spec: §15.1.
 func (c envClient) doIfMatch(method, path, tenant, user, roles, groups, ifMatch string, body any) (int, map[string]any) {
 	c.t.Helper()
 	var reader io.Reader
@@ -135,7 +135,7 @@ func TestEnvironmentResource(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("list environments: status %d", code)
 	}
-	// spec: §15.1 lines 1228-1253 — admin list endpoints return the
+	// spec: §15.1 — admin list endpoints return the
 	// canonical cursor-paginated envelope {items, cursor, hasMore}; the
 	// rows are under `items`, not a resource-named field.
 	if envs, _ := list["items"].([]any); len(envs) != 1 {
@@ -153,7 +153,7 @@ func TestEnvironmentResource(t *testing.T) {
 		}},
 		"runtimeSelector": map[string]any{"matchLabels": map[string]string{"team": "security"}},
 	}
-	// spec: §15.1 lines 1207-1211 — the PUT requires If-Match; the entity
+	// spec: §15.1 — the PUT requires If-Match; the entity
 	// tag rides the GET body's etag field (it is also on the ETag header).
 	ifMatch, _ := got["etag"].(string)
 	code, updated := c.doIfMatch(http.MethodPut, "/v1/admin/environments/security-team",

@@ -64,7 +64,7 @@ func TestParseInstallFlagsAnswers(t *testing.T) {
 
 // TestParseInstallFlagsRejectsAnswerFileAlias asserts the removed
 // --answer-file alias is no longer accepted; the spec uses --answers only.
-// spec: §24.20 lines 300, 304. F-24.20.7.
+// spec: §24.20. F-24.20.7.
 func TestParseInstallFlagsRejectsAnswerFileAlias(t *testing.T) {
 	if _, err := parseInstallFlags([]string{"--answer-file", "a.yaml"}); err == nil {
 		t.Error("--answer-file should be rejected as an unknown flag")
@@ -84,7 +84,7 @@ func TestParseInstallFlagsMissingValue(t *testing.T) {
 }
 
 // TestParseInstallFlagsOfflineAndSkipSmoke asserts the boolean phase-gating
-// flags parse. spec: §24.20 lines 299, 302. F-24.20.4 / F-24.20.6.
+// flags parse. spec: §24.20. F-24.20.4 / F-24.20.6.
 func TestParseInstallFlagsOfflineAndSkipSmoke(t *testing.T) {
 	cfg, err := parseInstallFlags([]string{"--offline", "--skip-smoke-test"})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestParseInstallFlagsOfflineAndSkipSmoke(t *testing.T) {
 // TestCmdInstallOfflineSkipsDetection asserts --offline skips the cluster
 // detection phase: the wizard prints the offline-skip summary instead of a
 // cluster-capability probe. The detection phase is the cluster-reachability
-// probe (§17.6), so skipping it satisfies §24.20 line 302. F-24.20.6.
+// probe (§17.6), so skipping it satisfies §24.20. F-24.20.6.
 func TestCmdInstallOfflineSkipsDetection(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	// Interactive path (no --answers) with all-default answers from stdin;
@@ -282,7 +282,7 @@ func TestValidateAnswersRejectsBadNamespace(t *testing.T) {
 	}
 }
 
-// spec: §17.9.3 line 1413 — the chart's MinIO/S3 wiring gates every
+// spec: §17.9.3 — the chart's MinIO/S3 wiring gates every
 // LENNY_MINIO_* env on `minio.endpoint` being set, so a bucket-only
 // wizard answer would silently disappear at render time. Validation
 // must surface the inconsistency.
@@ -309,7 +309,7 @@ func TestValidateAnswersRejectsBucketWithoutEndpoint_spec_17_9_3_1413(t *testing
 	}
 }
 
-// spec: §17.9.3 line 1413 — composeValues must not emit a `minio:`
+// spec: §17.9.3 — composeValues must not emit a `minio:`
 // block when only `bucket` is provided; the chart would drop it.
 func TestComposeValuesOmitsMinioWhenEndpointEmpty_spec_17_9_3_1413(t *testing.T) {
 	a := installAnswers{
@@ -533,7 +533,7 @@ func TestComposeValuesAlwaysSetsRequiredSpiffeTrustDomain_spec_10_3(t *testing.T
 
 // TestComposeValuesRendersOIDCAndExplicitSpiffe_spec_10_3 asserts the
 // wizard renders the collected OIDC registration into auth.oidc.* (the
-// §10.3 lines 365-366 required keys, F-10.3.14) and honors an explicit
+// §10.3 required keys, F-10.3.14) and honors an explicit
 // operator-supplied global.spiffeTrustDomain (F-10.3.4).
 func TestComposeValuesRendersOIDCAndExplicitSpiffe_spec_10_3(t *testing.T) {
 	a := installAnswers{
@@ -733,7 +733,7 @@ auth:
 
 // TestCmdInstallSaveAnswers asserts --save-answers composes with --dry-run:
 // the answer file is written and helm is not invoked (the dry-run gate
-// short-circuits before the preflight/helm phases). spec: §24.20 line 301
+// short-circuits before the preflight/helm phases). spec: §24.20
 // ("Does not run `helm install` when combined with --dry-run"). F-24.20.5.
 func TestCmdInstallSaveAnswers(t *testing.T) {
 	path := writeAnswerFile(t, "answers.yaml", "environment: local\ntier: tier1\nauth:\n  mode: dev\n")
@@ -867,9 +867,9 @@ func TestAnswerFileKeysSorted(t *testing.T) {
 	}
 }
 
-// --- §17.6 line 696 / §24.20 wizard preflight phase (F-24.2.5 / F-24.20.3) ---
+// --- §17.6 / §24.20 wizard preflight phase (F-24.2.5 / F-24.20.3) ---
 
-// spec: §17.6 line 696 — the wizard probes the resolved backends; an
+// spec: §17.6 — the wizard probes the resolved backends; an
 // unreachable Postgres is a hard failure that aborts before helm install.
 func TestRunInstallPreflight_HardFailureAborts(t *testing.T) {
 	var out, errb bytes.Buffer
@@ -905,7 +905,7 @@ func TestRunInstallPreflight_NoBackendsConfiguredPasses(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 47 — MinIO is probed only when both endpoint and
+// spec: §24.2 — MinIO is probed only when both endpoint and
 // credentials are available (credentials come from the environment, not
 // the answer file), otherwise it is skipped.
 func TestInstallPreflightConfig_MinIONeedsCredentials(t *testing.T) {
@@ -932,7 +932,7 @@ func TestInstallPreflightConfig_MinIONeedsCredentials(t *testing.T) {
 	}
 }
 
-// spec: §17.9.1 line 1350 — composeValues writes the environment answer
+// spec: §17.9.1 — composeValues writes the environment answer
 // into the rendered values so the lenny.gatewayLogLevel helper drives
 // gateway log verbosity from it; previously it was echoed only into the
 // header comment. F-17.9.9.
@@ -960,7 +960,7 @@ func TestComposeValuesWritesEnvironment_spec_17_9_1(t *testing.T) {
 	}
 }
 
-// spec: §17.9.2 line 1376 / §17.6 — composeValues maps the domain and
+// spec: §17.9.2 / §17.6 — composeValues maps the domain and
 // TLS answers onto gateway.ingress instead of discarding them. F-17.9.6.
 func TestComposeValuesWiresIngress_spec_17_9_6(t *testing.T) {
 	t.Run("domain enables the ingress and sets host", func(t *testing.T) {

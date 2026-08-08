@@ -16,7 +16,7 @@ import (
 // rows newer than the replication horizon; a Postgres-less deployment
 // leaves it nil and the preview reports zero lag and zero orphans.
 //
-// spec: §25.11 line 4094 — "the POST /v1/admin/restore/preview response
+// spec: §25.11 — "the POST /v1/admin/restore/preview response
 // includes artifactReplicationLagSeconds and estimatedOrphanArtifactRows
 // drawn from the current replication-lag gauge so the operator can make
 // an informed choice."
@@ -27,7 +27,7 @@ type ReplicationLagSource interface {
 	// EstimatedOrphanArtifactRows estimates how many artifact_store rows a
 	// restore to backupTakenAt would orphan: rows whose object was written
 	// after the replication-target horizon (now − lag) and so are not yet
-	// guaranteed to exist at the target. spec: §25.11 line 4094.
+	// guaranteed to exist at the target. spec: §25.11.
 	EstimatedOrphanArtifactRows(ctx context.Context, backupTakenAt time.Time) (int, error)
 }
 
@@ -38,7 +38,7 @@ type ReplicationLagSource interface {
 // written since the backup; a Postgres-less deployment leaves it nil
 // and the safety check reports a zero estimate.
 //
-// spec: §25.11 line 4225 — "mutationsSinceBackup is computed from
+// spec: §25.11 — "mutationsSinceBackup is computed from
 // Postgres's write transaction logs (via pg_stat_* views or pg_wal
 // position comparison …)."
 type DataLossEstimator interface {
@@ -47,10 +47,8 @@ type DataLossEstimator interface {
 	EstimateDataLoss(ctx context.Context, backupTakenAt, now time.Time) (DataLossEstimate, error)
 }
 
-// restoreDowntime constants model the §25.11 RestorePreview.-
-// estimatedDowntime as a function of backup size and component count
-// (line 3957). The base term covers the post-restore gateway restart
-// (the +1 step in the restore progress envelope, §25.11 line 4194); the
+// restoreDowntime constants model the §25.11 RestorePreview.- estimatedDowntime as a function of backup size and component count. The base term covers the post-restore gateway restart
+// (the +1 step in the restore progress envelope, §25.11); the
 // per-component term covers each restored unit's schema load and index
 // rebuild; the throughput term scales linearly with the archive size.
 const (
@@ -63,7 +61,7 @@ const (
 // from the backup's size and component count, returning an ISO-8601
 // duration string (e.g. "PT15M"). A backup with no recorded size still
 // yields the base plus per-component downtime so the estimate is never a
-// bare constant. spec: §25.11 line 3957.
+// bare constant. spec: §25.11.
 func estimateDowntime(b Backup, throughputBps int64) string {
 	d := restoreBaseDowntime + restorePerComponentDowntime*time.Duration(len(b.Components))
 	if throughputBps <= 0 {

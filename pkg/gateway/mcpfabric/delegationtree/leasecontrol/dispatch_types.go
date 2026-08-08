@@ -18,12 +18,12 @@ import adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 // adapterv1.Error type and its ERROR_CODE/CATEGORY enums, which stay on
 // the wire for the other GatewayControl RPCs; only the ExtendLease
 // request/response/file-export messages were trimmed.
-// spec: §8.6 line 629 (in-process proxy trigger); §15.1 line 1080.
+// spec: §8.6; §15.1.
 
 // ExtendStatus is the §8.6 extension-response status the in-process
 // dispatch reports. It replaces the deleted
 // adapterv1.ExtendLeaseResponse_Status proto enum.
-// spec: §8.6 line 743.
+// spec: §8.6.
 type ExtendStatus int
 
 const (
@@ -39,7 +39,7 @@ const (
 	StatusPartiallyGranted
 	// StatusCeilingReached — no requested dimension had headroom; the
 	// grant is zero. The gateway LLM Proxy MUST treat this as terminal
-	// and not re-request. spec: §8.6 line 712.
+	// and not re-request. spec: §8.6.
 	StatusCeilingReached
 	// StatusRejected — the subtree's extension-denied flag is set and the
 	// cool-off has not expired. The response carries the cool-off expiry.
@@ -63,14 +63,14 @@ func (s ExtendStatus) String() string {
 
 // ExtendRequest is the plain-Go §8.6 extension request the in-process
 // dispatch consumes. SessionID names the requesting session; Requested
-// carries the per-dimension amounts asked for (§8.6 line 643). It
+// carries the per-dimension amounts asked for (§8.6). It
 // replaces the deleted adapterv1.ExtendLeaseRequest proto message.
 // F-8.6.1.
 type ExtendRequest struct {
 	// SessionID is the requesting session; the dispatch resolves its tree
 	// and tenant from it. An empty SessionID is rejected.
 	SessionID string
-	// Requested carries every §8.6 line 643 extendable dimension the
+	// Requested carries every §8.6 extendable dimension the
 	// caller asks to raise. A zero on a dimension indicates the caller
 	// did not request it.
 	Requested Dimensions
@@ -80,25 +80,25 @@ type ExtendRequest struct {
 // dispatch returns. It replaces the deleted
 // adapterv1.ExtendLeaseResponse proto message and carries the same
 // fields: the outcome status, the per-dimension granted amounts, and
-// (on REJECTED) the §15.1 line 1080 cool-off details and typed error
+// (on REJECTED) the §15.1 cool-off details and typed error
 // envelope. F-8.6.1; F-8.6.9.
 type ExtendResponse struct {
-	// Status is the §8.6 line 743 outcome.
+	// Status is the §8.6 outcome.
 	Status ExtendStatus
 	// Granted carries every dimension's granted amount. A zero on a
 	// dimension means nothing was granted for it.
 	Granted Dimensions
-	// SubtreeID is the §15.1 line 1080 details.subtreeId — the requesting
+	// SubtreeID is the §15.1 details.subtreeId — the requesting
 	// session, set only on REJECTED.
 	SubtreeID string
 	// CoolOffExpiryUnixMs is the rejection cool-off expiry in Unix
 	// milliseconds, set only on REJECTED.
 	CoolOffExpiryUnixMs int64
-	// CoolOffExpiresAt is the §15.1 line 1080 details.coolOffExpiresAt —
+	// CoolOffExpiresAt is the §15.1 details.coolOffExpiresAt —
 	// the UTC RFC 3339 rendering of the cool-off expiry, set only on
 	// REJECTED.
 	CoolOffExpiresAt string
-	// Error is the §15.1 line 1080 typed error envelope, set only on
+	// Error is the §15.1 typed error envelope, set only on
 	// REJECTED (EXTENSION_COOL_OFF_ACTIVE). Non-REJECTED responses carry
 	// nil so operator tooling treats the code as authoritative. F-8.6.9.
 	Error *adapterv1.Error

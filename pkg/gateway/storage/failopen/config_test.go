@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.4 line 222 — 0 < quotaUserFailOpenFraction <= 1.0; out-of-range
+// spec: §12.4 — 0 < quotaUserFailOpenFraction <= 1.0; out-of-range
 // values are rejected at startup with the CONFIG_INVALID message.
 func TestValidateUserFraction_spec_12_4(t *testing.T) {
 	cases := []struct {
@@ -39,7 +39,7 @@ func TestValidateUserFraction_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — a fraction >= 0.5 is the weakened-posture warning
+// spec: §12.4 — a fraction >= 0.5 is the weakened-posture warning
 // threshold.
 func TestUserFractionWeakened_spec_12_4(t *testing.T) {
 	if UserFractionWeakened(0.25) {

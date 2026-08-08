@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/schemas"
 )
 
-// §24.8 line 113 requires the conformance suite to be schema-driven:
+// §24.8 requires the conformance suite to be schema-driven:
 // "assertions are generated from the published schemas/lenny-adapter.proto,
 // schemas/lenny-adapter-jsonl.schema.json, and schemas/messagepart.schema.json
 // artifacts ... rather than hand-coded against prose" and the validation
@@ -31,12 +31,11 @@ import (
 
 const (
 	// adapterProtoFile is the published artifact the error-code catalog
-	// assertion is generated from. spec: §24.8 line 113.
+	// assertion is generated from. spec: §24.8.
 	adapterProtoFile = "lenny-adapter.proto"
 
 	// errorCodeAssertionID is the stable identifier the validation report
-	// cites when a runtime emits an out-of-catalog error code. spec: §24.8
-	// line 113 ("validation report cites the specific schema assertion").
+	// cites when a runtime emits an out-of-catalog error code. spec: §24.8.
 	errorCodeAssertionID = "response_error_code_in_proto_catalog"
 
 	// errorCodeEnumPrefix is the proto enum value prefix the §15.1 error
@@ -63,7 +62,7 @@ var (
 // a response `error.code` field, and drops the zero-value ERROR_CODE_UNSPECIFIED
 // (proto's mandatory unset sentinel, never a real code). Compiled once.
 //
-// spec: §24.8 line 113 (schema-driven assertion generation); §15.1 (error
+// spec: §24.8; §15.1 (error
 // code catalog).
 func loadProtoErrorCatalog() (map[string]bool, error) {
 	errorCatalogOnce.Do(func() {
@@ -101,7 +100,7 @@ func loadProtoErrorCatalog() (map[string]bool, error) {
 // and passes. The returned error cites the specific schema assertion that
 // failed so it reaches the validation report verbatim.
 //
-// spec: §24.8 line 113; §15.1 error-code catalog.
+// spec: §24.8; §15.1 error-code catalog.
 func validateResponseErrorCode(raw []byte) error {
 	catalog, err := loadProtoErrorCatalog()
 	if err != nil {

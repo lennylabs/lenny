@@ -52,7 +52,7 @@ func baseParams() delegation.ChildTokenParams {
 	}
 }
 
-// spec: §8.2 lines 59-60 — a clean exchange narrows scope, builds the
+// spec: §8.2 — a clean exchange narrows scope, builds the
 // act chain naming the parent, fixes delegation_depth at parent + 1, and
 // caps exp at now + the per-dialect ceiling.
 func TestMintChildToken_HappyPath_Spec8_2(t *testing.T) {
@@ -90,7 +90,7 @@ func TestMintChildToken_HappyPath_Spec8_2(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 61 — the actor-token freshness check rejects when the
+// spec: §8.2 — the actor-token freshness check rejects when the
 // parent jti is revoked mid-flight, returning the typed ErrParentRevoked
 // the §8.5 handler maps to DELEGATION_PARENT_REVOKED.
 func TestMintChildToken_ParentRevoked_Spec8_2_61(t *testing.T) {
@@ -104,7 +104,7 @@ func TestMintChildToken_ParentRevoked_Spec8_2_61(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 61 — a parent whose jti is not in the revocation cache
+// spec: §8.2 — a parent whose jti is not in the revocation cache
 // is admitted (the common case).
 func TestMintChildToken_ParentNotRevoked_Admitted(t *testing.T) {
 	m := childtoken.NewMinter(childtoken.Options{
@@ -116,7 +116,7 @@ func TestMintChildToken_ParentNotRevoked_Admitted(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 63 — an audit advisory-lock timeout during the
+// spec: §8.2 — an audit advisory-lock timeout during the
 // exchange fails closed with the retryable ErrAuditContention before any
 // token is issued.
 func TestMintChildToken_AuditContention_Spec8_2_63(t *testing.T) {
@@ -131,7 +131,7 @@ func TestMintChildToken_AuditContention_Spec8_2_63(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 63 — the audit lock is released after a successful
+// spec: §8.2 — the audit lock is released after a successful
 // exchange (the release func runs).
 func TestMintChildToken_AuditLockReleased(t *testing.T) {
 	released := false
@@ -165,7 +165,7 @@ func TestMintChildToken_ScopeWiden_Rejected_Spec13_3(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 61 — an empty parent jti skips the freshness check (no
+// spec: §8.2 — an empty parent jti skips the freshness check (no
 // jti to resolve) and still mints a token.
 func TestMintChildToken_NoParentJTI_SkipsFreshness(t *testing.T) {
 	m := childtoken.NewMinter(childtoken.Options{

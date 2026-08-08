@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
 
-// spec: §25.5 lines 2677-2685 — the access-log middleware's
+// spec: §25.5 — the access-log middleware's
 // ResponseWriter wrapper forwards Flush() to the underlying writer so
 // the SSE handler can stream through it. A wrapper that drops Flusher
 // aborts the SSE stream with "streaming unsupported".
@@ -39,8 +39,7 @@ type flushSpy struct {
 
 func (f flushSpy) Flush() { *f.flushed = true }
 
-// TestWithCorrelationStampsRequestContext_spec_25_4_2499 covers §25.4
-// lines 2499-2509: the middleware reads the §25.2 correlation headers
+// TestWithCorrelationStampsRequestContext_spec_25_4_2499 covers §25.4: the middleware reads the §25.2 correlation headers
 // off the inbound request and stamps a correlation.Fields value onto the
 // request context for downstream handlers.
 func TestWithCorrelationStampsRequestContext_spec_25_4_2499(t *testing.T) {
@@ -97,8 +96,7 @@ func TestWithCorrelationEmptyHeadersStillStampsComponent_spec_25_4_2499(t *testi
 	}
 }
 
-// TestAccessLogEmitsStructuredLine_spec_25_4_2512 covers §25.4 lines
-// 2512-2526: each request produces a JSON log line carrying ts, level,
+// TestAccessLogEmitsStructuredLine_spec_25_4_2512 covers §25.4: each request produces a JSON log line carrying ts, level,
 // msg, component, operation_id, agent_name, and trace_id (when present).
 // The slog handler chain is the one configured by main; here we install
 // the same handler against a buffer and assert the projection.
@@ -131,7 +129,7 @@ func TestAccessLogEmitsStructuredLine_spec_25_4_2512(t *testing.T) {
 	}
 	for _, field := range []string{"ts", "level", "msg", "component", "operation_id", "agent_name", "trace_id"} {
 		if _, ok := got[field]; !ok {
-			t.Errorf("log line missing %q field (§25.4 lines 2512-2526)\nline: %s", field, line)
+			t.Errorf("log line missing %q field (§25.4)\nline: %s", field, line)
 		}
 	}
 	if got["component"] != "lenny-ops" {

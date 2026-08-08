@@ -52,7 +52,7 @@ type MCPRuntimeFilter struct {
 // what the selected connectors may do. The Selector chooses which
 // connectors are in scope; AllowedCapabilities and DeniedCapabilities
 // decide what those connectors may do, parallel to MCPRuntimeFilter for
-// `type: mcp` runtimes. spec: §10.6 lines 595-599. F-10.6.3.
+// `type: mcp` runtimes. spec: §10.6. F-10.6.3.
 type ConnectorSelector struct {
 	Selector            environment.Selector
 	AllowedCapabilities []string
@@ -75,13 +75,13 @@ type Environment struct {
 	TenantID string
 	// Description is the human-facing label.
 	Description string
-	// WorkspaceTier is the §12.9 line 1033 environment-level
+	// WorkspaceTier is the §12.9 environment-level
 	// data-classification override. Empty inherits the tenant's tier.
 	// A non-empty value must be a §12.9 tenant-settable tier (T3 or T4)
 	// and may only tighten the tenant's tier, never loosen it; the
 	// stricter-only relation is enforced at the admin handler, which has
 	// the parent tenant in scope. Validate rejects only an out-of-enum
-	// value here. spec: §12.9 line 1033.
+	// value here. spec: §12.9.
 	WorkspaceTier string
 	// Members is the §10.6 RBAC member list.
 	Members []Member
@@ -108,7 +108,7 @@ type Environment struct {
 	// starts at 1 and increments on every successful admin Update. The
 	// quoted decimal version is the resource's strong entity tag, enforced
 	// on PUT via the If-Match precondition and exposed on GET/list.
-	// spec: §15.1 lines 1207-1213.
+	// spec: §15.1.
 	Version int64
 }
 
@@ -128,13 +128,13 @@ func (e Environment) Validate() error {
 	if e.TenantID == "" {
 		v = append(v, "tenantId is required")
 	}
-	// spec: §10.6 lines 562-565 — description is a human-facing label;
+	// spec: §10.6 — description is a human-facing label;
 	// bound it so a misuse cannot deposit an unbounded blob into the
 	// registry. F-10.6.12.
 	if n := len(e.Description); n > MaxDescriptionLen {
 		v = append(v, fmt.Sprintf("description: %d bytes exceeds the §10.6 cap of %d", n, MaxDescriptionLen))
 	}
-	// spec: §12.9 line 1033 — an environment-level workspaceTier override
+	// spec: §12.9 — an environment-level workspaceTier override
 	// must be a tenant-settable §12.9 tier (T3 or T4); empty inherits the
 	// tenant tier. The stricter-only relation against the tenant tier is
 	// enforced at the admin handler, which resolves the parent tenant.
@@ -173,7 +173,7 @@ func (e Environment) Validate() error {
 		}
 	}
 	for i, r := range e.CrossEnvOutbound {
-		// spec: §10.6 lines 613-625 — the outbound declaration names a
+		// spec: §10.6 — the outbound declaration names a
 		// literal target environment. The "*" wildcard is described
 		// only for inbound rules; admitting it outbound would create a
 		// silent no-op (the envaccess outboundPermits matcher compares
@@ -193,7 +193,7 @@ func (e Environment) Validate() error {
 		}
 	}
 	for i, r := range e.CrossEnvInbound {
-		// spec: §10.6 line 619 — inbound rules accept "*" wildcard
+		// spec: §10.6 — inbound rules accept "*" wildcard
 		// for sourceEnvironment. Any other empty value is a
 		// malformed rule. F-10.6.13.
 		if strings.TrimSpace(r.Environment) == "" {
@@ -213,11 +213,11 @@ func (e Environment) Validate() error {
 // connectorSelector or mcpRuntimeFilter capability allow/deny pair: a
 // capability name must be non-empty, must not repeat within its list,
 // and must not appear in both the allowed and denied lists. Names are
-// validated loosely — the §10.6 line 665 capability taxonomy is
+// validated loosely — the §10.6 capability taxonomy is
 // extensible per tenant (platform defaults plus tenant-custom) and the
 // §10.6 connectorSelector example itself names `search`, which is not a
 // §5.3 tool capability — so membership in the closed §5.3 enum is not
-// required. spec: §10.6 lines 595-599, line 665. F-10.6.3.
+// required. spec: §10.6. F-10.6.3.
 func validateCapabilityLists(allowed, denied []string) []string {
 	var errs []string
 	seenAllowed := map[string]bool{}
@@ -265,7 +265,7 @@ func validateCapabilityLists(allowed, denied []string) []string {
 // an unknown tool to fail closed substitute the §5.1 conservative admin
 // default before calling. blockedBy names the first capability that
 // triggered the denial, for the rejection message; it is empty when
-// permitted. spec: §10.6 lines 588-607.
+// permitted. spec: §10.6.
 func PermitCapabilities(toolCaps, allowed, denied []string) (permitted bool, blockedBy string) {
 	deny := map[string]bool{}
 	for _, c := range denied {
@@ -293,7 +293,7 @@ func PermitCapabilities(toolCaps, allowed, denied []string) (permitted bool, blo
 
 // PermitTool reports whether a tool with the inferred capability set
 // toolCaps is permitted by this connectorSelector's capability filter.
-// spec: §10.6 lines 595-599.
+// spec: §10.6.
 func (cs ConnectorSelector) PermitTool(toolCaps []string) (bool, string) {
 	return PermitCapabilities(toolCaps, cs.AllowedCapabilities, cs.DeniedCapabilities)
 }
@@ -307,7 +307,7 @@ func (cs ConnectorSelector) Admits(id string, labels map[string]string) bool {
 
 // PermitTool reports whether a tool with the inferred capability set
 // toolCaps is permitted by this mcpRuntimeFilter's capability filter.
-// spec: §10.6 lines 588-593, line 607.
+// spec: §10.6.
 func (f MCPRuntimeFilter) PermitTool(toolCaps []string) (bool, string) {
 	return PermitCapabilities(toolCaps, f.AllowedCapabilities, f.DeniedCapabilities)
 }
@@ -321,7 +321,7 @@ func (f MCPRuntimeFilter) Admits(name, typ string, labels map[string]string) boo
 // MCPRuntimeFilterFor returns the first §10.6 mcpRuntimeFilter whose
 // runtimeSelector admits the runtime identified by name/typ/labels, and
 // whether such a filter exists. A runtime that no filter admits has no
-// capability restriction from this environment. spec: §10.6 line 607.
+// capability restriction from this environment. spec: §10.6.
 func (e Environment) MCPRuntimeFilterFor(name, typ string, labels map[string]string) (MCPRuntimeFilter, bool) {
 	for _, f := range e.MCPRuntimeFilters {
 		if f.Admits(name, typ, labels) {
@@ -386,7 +386,7 @@ func (m *Memory) Create(_ context.Context, e Environment) error {
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if e.Version == 0 {
 		e.Version = 1
 	}
@@ -422,7 +422,7 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*E
 		return Environment{}, err
 	}
 	e.UpdatedAt = time.Now().UTC()
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	e.Version++
 	m.environments[k] = clone(e)
 	return clone(e), nil

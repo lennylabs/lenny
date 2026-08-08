@@ -14,7 +14,7 @@ import (
 )
 
 // recordingSink captures the §25.11 audit events the Service emits so a
-// test can assert which transitions were audited. spec: §25.11 line 4343.
+// test can assert which transitions were audited. spec: §25.11.
 type recordingSink struct {
 	mu     sync.Mutex
 	events []backup.AuditEvent
@@ -43,7 +43,7 @@ func (r *recordingSink) byType(t string) []backup.AuditEvent {
 func (r *recordingSink) has(t string) bool { return len(r.byType(t)) > 0 }
 
 // fakeDeleter records the §25.11 retention MinIO-object deletions and
-// optionally fails them. spec: §25.11 lines 4108-4111.
+// optionally fails them. spec: §25.11.
 type fakeDeleter struct {
 	mu      sync.Mutex
 	deleted []string
@@ -93,8 +93,7 @@ func newAuditedService(t *testing.T, sink backup.AuditSink, deleter backup.Objec
 	return svc, store, launcher
 }
 
-// TestCreateBackupEmitsAuditEvent_spec_25_11_4343 covers the §25.11 line
-// 4343 requirement that backup creation is audited.
+// TestCreateBackupEmitsAuditEvent_spec_25_11_4343 covers the §25.11 requirement that backup creation is audited.
 func TestCreateBackupEmitsAuditEvent_spec_25_11_4343(t *testing.T) {
 	rec := &recordingSink{}
 	svc, _, _ := newAuditedService(t, rec.sink(), nil)
@@ -242,7 +241,7 @@ func TestRestoreFailureEmitsAudit_spec_25_11_4343(t *testing.T) {
 }
 
 // TestEnforceRetentionDeletesObjectAndEmitsAudit_spec_25_11_15 covers
-// the §25.11 lines 4108-4111 requirement that retention enforcement
+// the §25.11 requirement that retention enforcement
 // deletes the MinIO object and emits backup.deleted_by_retention.
 func TestEnforceRetentionDeletesObjectAndEmitsAudit_spec_25_11_15(t *testing.T) {
 	rec := &recordingSink{}
@@ -315,8 +314,7 @@ func TestEnforceRetentionWithoutDeleterStillEmitsAudit_spec_25_11_15(t *testing.
 	}
 }
 
-// TestReconcileOrphanedJobs_spec_25_11_3976 covers the §25.11 lines
-// 3976-3978 reconciler half that deletes Kubernetes Jobs whose
+// TestReconcileOrphanedJobs_spec_25_11_3976 covers the §25.11 reconciler half that deletes Kubernetes Jobs whose
 // lenny.dev/backup-id annotation has no matching ops_backups row.
 func TestReconcileOrphanedJobs_spec_25_11_3976(t *testing.T) {
 	rec := &recordingSink{}

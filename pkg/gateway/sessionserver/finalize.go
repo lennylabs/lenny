@@ -29,7 +29,7 @@ const finalizePlanMaxBytes int64 = 1 << 20 // 1 MiB
 
 // finalizeRequest is the optional body of POST /v1/sessions/{id}/finalize.
 // A no-body finalize (the pre-upload single-shot path) leaves WorkspacePlan
-// nil. The §26.2 line 114 CLI submits the plan here, after the create →
+// nil. The §26.2 CLI submits the plan here, after the create →
 // upload-archive steps have minted the session-scoped uploadRef the plan
 // references: the create-time plan cannot name an uploadRef that does not
 // exist yet, so the §7.1 decomposed flow binds the plan at finalize
@@ -50,7 +50,7 @@ type finalizeRequest struct {
 // only after the session exists, and the immutable create-time plan
 // cannot name it, so the CLI uploads first and binds the plan here.
 //
-// spec: §7.1 lines 35-37 (step 11 FinalizeWorkspace); §26.2 lines 95-114;
+// spec: §7.1; §26.2;
 // §14 workspace-plan schema.
 func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session) (
 	storedJSON json.RawMessage, warnings []workspaceplan.Warning, hasPlan bool, ok bool,
@@ -78,12 +78,12 @@ func (s *Server) resolveFinalizePlan(w http.ResponseWriter, r *http.Request, ten
 	if !planOK {
 		return nil, nil, false, false
 	}
-	// spec: §7.5 line 477 / §5.1 line 76 — the setup-command cap applies to
+	// spec: §7.5 / §5.1 — the setup-command cap applies to
 	// a finalize-bound plan exactly as it does at create.
 	if !s.enforceSetupCommandPolicy(w, r, row.RuntimeRef, parsed) {
 		return nil, nil, false, false
 	}
-	// spec: §12.5 line 295 / §13.4 — every uploadRef the finalize plan
+	// spec: §12.5 / §13.4 — every uploadRef the finalize plan
 	// references must be a blob staged against this very session. This
 	// keeps the binding safe by construction: a client cannot finalize its
 	// session against another tenant's or another session's staged blob.
@@ -125,7 +125,7 @@ func (s *Server) readFinalizePlanBody(w http.ResponseWriter, r *http.Request) (j
 // session. It writes the §15.1 error response and returns false on the
 // first foreign or malformed ref.
 //
-// spec: §12.5 line 295 (tenant-scoped blob namespace); §13.4 (upload
+// spec: §12.5; §13.4 (upload
 // security).
 func (s *Server) validateFinalizeUploadRefs(w http.ResponseWriter, tenantID, sessionID string, plan workspaceplan.Plan) bool {
 	for i, src := range plan.Sources {
@@ -146,7 +146,7 @@ func (s *Server) validateFinalizeUploadRefs(w http.ResponseWriter, tenantID, ses
 			return false
 		}
 		if uri.TenantID != tenantID || uri.SessionID != sessionID {
-			// spec: §12.5 line 295 — the staged blob lives under the
+			// spec: §12.5 — the staged blob lives under the
 			// session's own tenant+session prefix. A ref into another
 			// session's prefix is rejected so finalize cannot bind a plan
 			// to a blob the caller did not stage for this session.
@@ -184,7 +184,7 @@ func sourceUploadRefField(i int, _ string) string {
 // pre-check but gone by finalize) never engages the binder, so this function
 // reclaims the claimed pod itself before returning; no lease is assigned yet, so
 // the revoke is a no-op. A finalize-time credential availability miss is the
-// §4.9 line 1220 check-to-assignment mismatch (the source vanished across the
+// §4.9 check-to-assignment mismatch (the source vanished across the
 // upload window), so it is remapped to CREDENTIAL_POOL_EXHAUSTED rather than the
 // create-only USER_CREDENTIAL_NOT_FOUND (§7.6). The returned error is the
 // corresponding workspace-validation, setup-command, or credential error for
@@ -203,8 +203,8 @@ func sourceUploadRefField(i int, _ string) string {
 //   - a row that carries no live create-time binding (PodAssignment empty or a
 //     recovery-state row), so there is no claimed pod to prepare against.
 //
-// spec: §7.1 steps 11-13; §7.4 lines 434, 450, 459, 461; §4.9 (finalize lease
-// assignment); §4.3, §4.6 (proposal); §6.3 lines 358, 372.
+// spec: §7.1 steps 11-13; §7.4; §4.9 (finalize lease
+// assignment); §4.3, §4.6 (proposal); §6.3.
 func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*podsession.PrepareResult, error) {
 	if s.podBinder == nil {
 		return nil, nil
@@ -238,7 +238,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) || match.MaxConcurrentSessions > 1 {
 		return nil, nil
 	}
-	// spec: §4.9 lines 1216-1218 / §7.1 step 12 — the credential lease is
+	// spec: §4.9 / §7.1 step 12 — the credential lease is
 	// assigned at finalize (the proposal's deviation from the literal step-6
 	// ordering), so resolve the per-provider pool map here from the persisted
 	// row. The create-time pre-check already confirmed availability; this
@@ -249,7 +249,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 		// resolution ran before the binder engaged, so reclaim the create-time
 		// pod here (no lease is assigned yet, so the revoke is a no-op).
 		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
-		// spec: §7.6 line 153 (proposal) — a credential source that was
+		// spec: §7.6 — a credential source that was
 		// available at the create-time pre-check but is gone at finalize is the
 		// check-to-assignment mismatch the proposal requires to surface as
 		// CREDENTIAL_POOL_EXHAUSTED at /finalize, not the create-only
@@ -291,7 +291,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 }
 
 // mapFinalizeCredentialMismatch translates a finalize-time credential
-// availability miss into the §4.9 line 1220 check-to-assignment mismatch so
+// availability miss into the §4.9 check-to-assignment mismatch so
 // writePodClaimError surfaces it as CREDENTIAL_POOL_EXHAUSTED (assignment_race)
 // and increments lenny_credential_preclaim_mismatch_total, rather than the
 // create-only USER_CREDENTIAL_NOT_FOUND (404) or pre-claim CREDENTIAL_POOL_EXHAUSTED
@@ -306,7 +306,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 // mismatch; any other error (a store read failure, a proxy-dialect mismatch)
 // is returned unchanged so it keeps its own envelope.
 //
-// spec: §4.9 line 1220 (check-to-assignment race); §7.3 line 138, §7.6 line 153
+// spec: §4.9; §7.3, §7.6
 // (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; the mismatch
 // surfaces as CREDENTIAL_POOL_EXHAUSTED at /finalize).
 func mapFinalizeCredentialMismatch(err error) error {
@@ -341,14 +341,13 @@ func storedWorkspacePlanForFinalize(row sessionstore.Session, hasPlan bool, plan
 
 // applyFinalizePrepareResult persists the §7.5 setup-command trail and the
 // §7.3 negotiated workspace root the §4.3 prepare phase produced, and
-// republishes the §7.4 line 459 strip-skip advisories on the §7.2 SSE stream.
+// republishes the §7.4 strip-skip advisories on the §7.2 SSE stream.
 // The persists mirror the /start launch path (registerBinding), moved to
 // finalize because the prepare phase now runs there. They are best-effort: a
 // store failure leaves the in-memory state authoritative and does not block
 // the finalize from reaching ready.
 //
-// spec: §7.5 line 475 (setup output), §7.3 line 408 (workspace root), §7.4
-// line 459 (strip-skip advisories); §4.3 (proposal).
+// spec: §7.5, §7.3, §7.4; §4.3 (proposal).
 func (s *Server) applyFinalizePrepareResult(ctx context.Context, tenantID, id, resultTenantID, resultSessionID string, prep *podsession.PrepareResult) {
 	if len(prep.SetupOutputs) > 0 {
 		if _, err := s.store.Update(ctx, tenantID, id, func(r *sessionstore.Session) error {
@@ -359,10 +358,10 @@ func (s *Server) applyFinalizePrepareResult(ctx context.Context, tenantID, id, r
 			log.Printf("sessionserver: persist setup output for session %s: %v", id, err)
 		}
 	}
-	// spec: §7.3 line 408 — capture the adapter's negotiated workspace root so a
+	// spec: §7.3 — capture the adapter's negotiated workspace root so a
 	// later Resume can assert the replacement pod's WorkspaceRoot matches.
 	s.persistWorkspaceRoot(ctx, resultTenantID, resultSessionID, prep.WorkspaceRoot)
-	// spec: §7.4 line 459 — republish each strip-components-skip advisory the
+	// spec: §7.4 — republish each strip-components-skip advisory the
 	// gateway and adapter raised during materialization on the per-session SSE
 	// bus so a client can audit the skipped archive entries.
 	s.publishWorkspacePlanWarnings(resultTenantID, resultSessionID, prep.WorkspacePlanWarnings)

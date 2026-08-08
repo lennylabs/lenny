@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
-// spec: §25.4 line 1337 — the four leader-only reconciliation goroutines
+// spec: §25.4 — the four leader-only reconciliation goroutines
 // (escalation flush, idempotency cleanup, lock outage-epoch reconcile,
 // drift snapshot validation) each project to a leader-only loop when wired.
 func TestReconcilersWireFourLeaderLoops_spec_25_4(t *testing.T) {
@@ -46,7 +46,7 @@ func TestReconcilersWireFourLeaderLoops_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.2 lines 399-401 — wiring the OperationsObserve reconciler
+// spec: §25.2 — wiring the OperationsObserve reconciler
 // produces the leader-only operations-observe loop that maintains the
 // lenny_ops_operations_stalled gauge and emits operation_progressed.
 func TestOperationsObserveWiresLoop_spec_25_2(t *testing.T) {
@@ -70,7 +70,7 @@ func TestOperationsObserveWiresLoop_spec_25_2(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1337 — a nil reconciler contributes no loop, so a
+// spec: §25.4 — a nil reconciler contributes no loop, so a
 // deployment without a Postgres-backed durable tier skips the loops it
 // cannot run.
 func TestNilReconcilersContributeNoLoops_spec_25_4(t *testing.T) {
@@ -86,7 +86,7 @@ func TestNilReconcilersContributeNoLoops_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2404, 2429 — wiring the EscalationEmissionRetry
+// spec: §25.4 — wiring the EscalationEmissionRetry
 // reconciler registers an escalation-emission-retry loop, so the §25.4
 // 30s emission-retry that re-publishes records left unemitted by a
 // dual-destination outage has a production caller. This is the tier-7a

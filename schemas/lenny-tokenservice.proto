@@ -54,7 +54,7 @@ service TokenService {
   // DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
   // at the admin handler; a transport or non-deterministic failure maps
   // to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-  // (never fail open). spec: §4.9 line 1212.
+  // (never fail open). spec: §4.9.
   rpc ProbeSecretAccess(ProbeSecretAccessRequest) returns (ProbeSecretAccessResponse) {}
 }
 
@@ -201,7 +201,7 @@ message CredentialLease {
   // expires_at as issued_at + min(leaseTTLSeconds, providerMaxTTL); the
   // gateway records it so the lease's wall-clock duration is auditable
   // and feeds the §16.1 lenny_credential_lease_duration_seconds
-  // histogram. spec: §4.9 line 1145.
+  // histogram. spec: §4.9.
   google.protobuf.Timestamp issued_at = 19;
   // materialized_config is the §4.9 direct-mode materializedConfig: the
   // per-provider bundle of real upstream credential fields (apiKey,
@@ -214,6 +214,6 @@ message CredentialLease {
   // upstream_credential is. The gateway holds the bundle only
   // transiently in memory and forwards it to the pod through the adapter
   // credential file; it is never persisted in the gateway's durable
-  // lease store. spec: §4.9 lines 1246-1298.
+  // lease store. spec: §4.9.
   map<string, string> materialized_config = 20;
 }

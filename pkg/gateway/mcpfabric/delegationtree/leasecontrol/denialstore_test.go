@@ -12,8 +12,7 @@ import (
 )
 
 // fakeDenialStore is an in-memory leasecontrol.DenialStore double that
-// records the calls MemoryBudgetSource delegates to it, so the §8.6
-// lines 730-733 seam can be exercised without Postgres. F-8.6.5.
+// records the calls MemoryBudgetSource delegates to it, so the §8.6 seam can be exercised without Postgres. F-8.6.5.
 type fakeDenialStore struct {
 	denied     map[string]bool
 	expiry     map[string]time.Time
@@ -21,7 +20,7 @@ type fakeDenialStore struct {
 	grantCalls int
 	cleared    int
 	// grantErr, when set, makes the next Grant fail (e.g. to model the
-	// §8.6 line 732 in-flight denial caught inside the commit tx).
+	// §8.6 in-flight denial caught inside the commit tx).
 	grantErr error
 	// denyErr / clearErr force the storage-error propagation paths.
 	denyErr  error
@@ -78,7 +77,7 @@ func registerTree(b *leasecontrol.MemoryBudgetSource) {
 	})
 }
 
-// spec: §8.6 line 730 — Deny delegates to the durable store rather than
+// spec: §8.6 — Deny delegates to the durable store rather than
 // mutating in-memory state, with the tree's resolved rejectionCoolOff.
 func TestDenyDelegatesToStore_spec_8_6_line_730(t *testing.T) {
 	store := newFakeDenialStore()
@@ -108,7 +107,7 @@ func TestDenyUnknownTreeNoStoreCall_spec_8_6_line_730(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 731 — TreeBudget reads the denial flag from the store,
+// spec: §8.6 — TreeBudget reads the denial flag from the store,
 // not the in-memory cache.
 func TestTreeBudgetReadsDenialFromStore_spec_8_6_line_731(t *testing.T) {
 	store := newFakeDenialStore()
@@ -137,7 +136,7 @@ func TestTreeBudgetReadsDenialFromStore_spec_8_6_line_731(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 732 — ApplyGrant runs the store's in-transaction
+// spec: §8.6 — ApplyGrant runs the store's in-transaction
 // re-check and, on a not-denied tree, applies the per-session in-memory
 // delta afterwards.
 func TestApplyGrantDelegatesGateThenAppliesDelta_spec_8_6_line_732(t *testing.T) {
@@ -185,7 +184,7 @@ func TestApplyGrantStoreDeniedSkipsDelta_spec_8_6_line_732(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 735 / §15.1 line 868 — ClearSubtreeDenial delegates to
+// spec: §8.6 / §15.1 — ClearSubtreeDenial delegates to
 // the store for a known tree and reports found=true; an unknown tree
 // reports found=false without a store call.
 func TestClearSubtreeDenialDelegates_spec_8_6_line_735(t *testing.T) {

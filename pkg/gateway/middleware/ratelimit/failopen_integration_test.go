@@ -60,7 +60,7 @@ func fireUser(h http.Handler, subject string) int {
 	return rr.Code
 }
 
-// spec: §12.4 line 222 — during a Redis outage the per-replica per-user
+// spec: §12.4 — during a Redis outage the per-replica per-user
 // fail-open ceiling rejects a single user once it reaches the ceiling,
 // even though the shared counter is unreachable. F-12.4.9 / F-11.2.6.
 func TestFailOpenPerUserCeilingRejects_spec_12_4_222(t *testing.T) {
@@ -97,7 +97,7 @@ func TestFailOpenPerUserCeilingRejects_spec_12_4_222(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — once cumulative fail-open time exceeds the
+// spec: §12.4 — once cumulative fail-open time exceeds the
 // maximum, the replica fails closed for quota: every request is rejected
 // until Redis recovers. F-12.4.9 / F-11.2.6.
 func TestFailOpenCumulativeFailsClosed_spec_12_4_224(t *testing.T) {
@@ -126,7 +126,7 @@ func TestFailOpenCumulativeFailsClosed_spec_12_4_224(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — per-user fail-open counters reset on the Redis
+// spec: §12.4 — per-user fail-open counters reset on the Redis
 // recovery edge so a recovered window starts clean. F-12.4.9.
 func TestFailOpenCountersResetOnRecovery_spec_12_4_222(t *testing.T) {
 	clk := &movableClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}

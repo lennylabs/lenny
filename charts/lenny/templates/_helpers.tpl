@@ -299,7 +299,7 @@ cloud-managed install never silently runs without the lenny_tenant_guard
 trigger) and "pgbouncer" otherwise. The result is validated against the
 §17.9.3 allow-list, so a typo aborts the render rather than silently
 disabling the cloud-pooler defense.
-spec: §12.3 line 55 / §17.9.3.
+spec: §12.3 / §17.9.3.
 */}}
 {{- define "lenny.connectionPooler" -}}
 {{- $explicit := (.Values.postgres | default dict).connectionPooler | default "" -}}
@@ -315,11 +315,11 @@ lenny.poolerMode maps the effective connection-pooler posture to the
 gateway's LENNY_POOLER_MODE env. "external" (a managed out-of-process
 pooler that cannot run the connect_query __unset__ sentinel) stays
 "external"; the in-cluster pooler is "transactional". The gateway reads
-this to decide whether to enforce the §12.3 line 56 lenny_tenant_guard
+this to decide whether to enforce the §12.3 lenny_tenant_guard
 startup refusal, so deriving it from the same connectionPooler value the
 preflight check uses keeps the install-time and runtime defenses
 consistent.
-spec: §12.3 line 56 / §4.2 line 165.
+spec: §12.3 / §4.2.
 */}}
 {{- define "lenny.poolerMode" -}}
 {{- if eq (include "lenny.connectionPooler" .) "external" -}}
@@ -342,7 +342,7 @@ url-only and cluster-only values files resolve exactly as before. The
 external topology imposes no requirement: an empty url is the §17.4
 in-memory dev posture. Templates use this helper as the single source of
 truth for which connection env block to render.
-spec: §17.9.3 lines 1402-1409.
+spec: §17.9.3.
 */}}
 {{- define "lenny.redisProvider" -}}
 {{- $redis := .Values.redis | default dict -}}
@@ -389,7 +389,7 @@ never a single external endpoint with no failover path.
 The check is a no-op for `cloud-managed` (provider-native HA) and
 `embedded` (the developer `lenny up` mode). It emits no object; the
 self-managed-backends-guard template evaluates it at render time.
-spec: §17.3 lines 112-117 (RPO/RTO targets), §17.9.5 lines 1495-1530.
+spec: §17.3, §17.9.5.
 */}}
 {{- define "lenny.selfManagedBackendCheck" -}}
 {{- if eq (.Values.backends | default "") "self-managed" -}}
@@ -420,7 +420,7 @@ gateway's LENNY_LOG_LEVEL. The local and dev environments render
 "debug" verbosity; staging and prod render "info". An empty environment
 yields "info", matching the gateway's own LENNY_LOG_LEVEL default, so a
 stock render is unchanged.
-spec: §17.9.1 line 1350; §16.4 line 372.
+spec: §17.9.1; §16.4.
 */}}
 {{- define "lenny.gatewayLogLevel" -}}
 {{- $env := .Values.environment | default "" -}}
@@ -438,7 +438,7 @@ file's cluster=n/a case and passes through unchanged; a non-empty value
 must be one of the §17.9.1 cluster types so a typo in a curated answer
 file (e.g. cluster: eks-prod) fails the render rather than rendering an
 install that silently ignores the dimension.
-spec: §17.9.1 line 1351. F-17.9.1.
+spec: §17.9.1. F-17.9.1.
 */}}
 {{- define "lenny.clusterType" -}}
 {{- $c := .Values.cluster | default "" -}}
@@ -457,7 +457,7 @@ microvm (Kata). An empty dimension defaults to sandboxed, preserving the
 historical seeded-runtime posture. An unrecognized value fails the
 render so a typo cannot silently drop every seeded runtime onto the
 wrong RuntimeClass.
-spec: §17.9.1 line 1354; §5.3. F-17.9.10.
+spec: §17.9.1; §5.3. F-17.9.10.
 */}}
 {{- define "lenny.seededIsolationProfile" -}}
 {{- $p := .Values.isolationProfile | default "sandboxed" -}}
@@ -487,7 +487,7 @@ Per-region entries take precedence; when any exist the single-region block
 is ignored. The gateway runs the §25.11 startup CONFIG_INVALID validation
 on the decoded config, so an incomplete residency-region target is
 rejected fail-closed at process start.
-spec: §25.11 lines 4045-4071. F-25.11.9.
+spec: §25.11. F-25.11.9.
 */}}
 {{- define "lenny.artifactReplicationConfigJSON" -}}
 {{- $minio := .Values.minio | default dict -}}

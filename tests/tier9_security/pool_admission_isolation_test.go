@@ -336,7 +336,7 @@ func seedPoolAdmissionRuntimes(t *testing.T, c *kind.Cluster, probe, gatewayIP s
 		if rt.tier != "" {
 			tierField = fmt.Sprintf(`,"workspaceTier":%q`, rt.tier)
 		}
-		// §5.1 line 51: labels are required from v1. The seed runtime must
+		// §5.1: labels are required from v1. The seed runtime must
 		// declare at least one label or the gateway rejects the create with
 		// 400 VALIDATION_ERROR before the gate cases can bind a pool to it.
 		body := fmt.Sprintf(

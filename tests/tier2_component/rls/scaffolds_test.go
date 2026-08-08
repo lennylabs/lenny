@@ -18,7 +18,7 @@ package rls_test
 
 // TestRLSAllTenantsContext is implemented in all_tenants_test.go,
 // which exercises the §4.2 / §12.3 platform-admin __all__
-// cross-tenant bypass (trigger + RLS policy) and the §12.3 line 141
+// cross-tenant bypass (trigger + RLS policy) and the §12.3
 // cross_tenant_read audit emission tied to it.
 
 // TestRLSPoolerReuseDoesNotLeakContext is implemented in

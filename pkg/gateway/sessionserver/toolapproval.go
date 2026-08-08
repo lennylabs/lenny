@@ -37,7 +37,7 @@ const approvalPollInterval = 25 * time.Millisecond
 // shared interaction store (the cross-replica fallback for an approve POSTed
 // to a non-coordinator replica, which updates the store but not this
 // replica's in-memory registry). It implements executor.ApprovalGate.
-// spec: §7.2 lines 124-134. F-7.2.9, F-7.2.18, F-IA1.
+// spec: §7.2. F-7.2.9, F-7.2.18, F-IA1.
 type ToolApprovalGate struct {
 	store        sessionstore.Store
 	interactions interactionstore.Store
@@ -115,7 +115,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: record interaction %s: %w", call.ID, err)
 	}
 
-	// spec: §7.2 line 134 — tool_use_requested(tool_call_id, tool, args).
+	// spec: §7.2 — tool_use_requested(tool_call_id, tool, args).
 	g.publishRequested(tenantID, sessionID, call)
 
 	var timeoutC <-chan time.Time
@@ -203,7 +203,7 @@ func (g *ToolApprovalGate) pollResolution(ctx context.Context, tenantID, session
 	}
 }
 
-// publishRequested emits the §7.2 line 134 tool_use_requested SSE event
+// publishRequested emits the §7.2 tool_use_requested SSE event
 // on the session's stream. A nil bus is a no-op (the dev posture).
 func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call executor.PendingToolCall) {
 	if g.events == nil {

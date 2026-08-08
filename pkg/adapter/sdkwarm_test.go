@@ -243,7 +243,7 @@ func contains(s []string, v string) bool {
 	return false
 }
 
-// spec: §6.1 line 30 — PreConnect starts the SDK at warm time for a
+// spec: §6.1 — PreConnect starts the SDK at warm time for a
 // preConnect runtime and is idempotent; SDKWarmReady gates claimability.
 func TestPreConnect_spec_6_1(t *testing.T) {
 	t.Run("preConnect starts the SDK once and reports ready", func(t *testing.T) {

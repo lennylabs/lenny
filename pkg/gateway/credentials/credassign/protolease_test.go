@@ -103,7 +103,7 @@ func TestProtoLeasePayloadCarriesNoUpstreamSecret(t *testing.T) {
 }
 
 func TestProtoLeaseEncodesDirectMaterializedConfig(t *testing.T) {
-	// spec: §4.9 lines 1246-1298 — a direct-mode lease's per-provider
+	// spec: §4.9 — a direct-mode lease's per-provider
 	// materializedConfig is rendered into the credential-file payload the
 	// adapter writes; the pod reads the real upstream credential there.
 	now := time.Date(2026, 4, 7, 9, 0, 0, 0, time.UTC)

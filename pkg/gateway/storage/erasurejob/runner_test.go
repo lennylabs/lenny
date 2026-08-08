@@ -86,7 +86,7 @@ func TestRunnerRunCompletesJob(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 810-829 — after store deletion the runner drives the
+// spec: §12.8 — after store deletion the runner drives the
 // step-14 dead-letter redaction and records the per-row count on the job.
 func TestRunnerRunDeadLetterRedaction_recordsCount(t *testing.T) {
 	jobs := erasurejob.NewMemory()
@@ -113,7 +113,7 @@ func TestRunnerRunDeadLetterRedaction_recordsCount(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 810-829 — a redaction error aborts the job under the
+// spec: §12.8 — a redaction error aborts the job under the
 // deadletter_redaction failure phase, with store deletion already durable.
 func TestRunnerRunDeadLetterRedaction_failsJob(t *testing.T) {
 	jobs := erasurejob.NewMemory()
@@ -220,7 +220,7 @@ func TestRunnerRunEmptyOrchestratorCompletes(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 743-758 (layer 3) — when the per-job MemoryStore
+// spec: §12.8 — when the per-job MemoryStore
 // erasure preflight passes, the job proceeds through store deletion to
 // completion as normal.
 func TestRunnerRunMemoryPreflightPasses(t *testing.T) {
@@ -239,7 +239,7 @@ func TestRunnerRunMemoryPreflightPasses(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 743-758 (layer 3) — a failing per-job preflight aborts
+// spec: §12.8 — a failing per-job preflight aborts
 // the job as memory_store_preflight_failed before any store deletion runs,
 // and increments lenny_erasure_job_failed_total{failure_phase=
 // memory_store_preflight} via the failure observer.
@@ -455,7 +455,7 @@ func samePhases(a, b []erasurejob.Phase) bool {
 	return true
 }
 
-// spec: §12.8 line 762 — the job records its phase at each transition so
+// spec: §12.8 — the job records its phase at each transition so
 // the completion receipt can present the per-phase timeline. Without a
 // BillingEraser the sequence is initiated → store_deleting → completed.
 func TestRunnerRunRecordsPhaseLog(t *testing.T) {
@@ -484,7 +484,7 @@ func TestRunnerRunRecordsPhaseLog(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 762 — a pseudonymizing run logs every phase including
+// spec: §12.8 — a pseudonymizing run logs every phase including
 // pseudonymizing and verifying.
 func TestRunnerRunPhaseLogWithBilling(t *testing.T) {
 	ctx := context.Background()
@@ -513,7 +513,7 @@ func TestRunnerRunPhaseLogWithBilling(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 762 — an exempt tenant skips the verifying phase, so
+// spec: §12.8 — an exempt tenant skips the verifying phase, so
 // the log omits it.
 func TestRunnerRunPhaseLogExemptSkipsVerifying(t *testing.T) {
 	ctx := context.Background()
@@ -541,7 +541,7 @@ func TestRunnerRunPhaseLogExemptSkipsVerifying(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 762 — a failed job's phase log ends with the failed
+// spec: §12.8 — a failed job's phase log ends with the failed
 // transition so the timeline shows where the erasure stopped.
 func TestRunnerRunPhaseLogOnFailure(t *testing.T) {
 	jobs := erasurejob.NewMemory()
@@ -562,7 +562,7 @@ func TestRunnerRunPhaseLogOnFailure(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 851 — VerificationOutcome maps the billing outcome to
+// spec: §12.8 — VerificationOutcome maps the billing outcome to
 // the salt-removal verification result recorded in the erasure receipt.
 func TestBillingErasureOutcomeVerificationOutcome(t *testing.T) {
 	cases := []struct {

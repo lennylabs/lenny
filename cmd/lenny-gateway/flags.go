@@ -395,32 +395,32 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.tenancyMode = flag.String("tenancy-mode", envOr("LENNY_TENANCY_MODE", "single"),
 		"§4.9 platform tenancy.mode (\"multi\" or \"single\"). The gateway enforces the §4.9 direct/standard and proxy/spiffe cross-tenant credential-delivery rejections only in multi-tenant mode. Mirrors the tenancy.mode Helm value. Override via LENNY_TENANCY_MODE.")
 	f.tenantIDClaim = flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
-		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
+		"§10.2 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
 	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
-		"§10.3 line 365 auth.oidc.issuerUrl: the OIDC issuer the gateway's token validation trusts. A §10.3 required platform key — outside --dev-mode an empty or non-absolute-URL value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.issuerUrl). Override via LENNY_OIDC_ISSUER_URL. F-10.3.14.")
+		"§10.3 auth.oidc.issuerUrl: the OIDC issuer the gateway's token validation trusts. A §10.3 required platform key — outside --dev-mode an empty or non-absolute-URL value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.issuerUrl). Override via LENNY_OIDC_ISSUER_URL. F-10.3.14.")
 	f.oidcClientID = flag.String("oidc-client-id", os.Getenv("LENNY_OIDC_CLIENT_ID"),
-		"§10.3 line 366 auth.oidc.clientId: the OIDC client registration whose audience the gateway checks. A §10.3 required platform key — outside --dev-mode an empty value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.clientId). Override via LENNY_OIDC_CLIENT_ID. F-10.3.14.")
+		"§10.3 auth.oidc.clientId: the OIDC client registration whose audience the gateway checks. A §10.3 required platform key — outside --dev-mode an empty value is a fatal startup misconfiguration (LENNY_CONFIG_MISSING config_key=auth.oidc.clientId). Override via LENNY_OIDC_CLIENT_ID. F-10.3.14.")
 	f.devMode = flag.Bool("dev-mode", envFlag("LENNY_DEV_MODE"),
 		"enable dev-mode auth shortcuts (X-Lenny-Roles dev-header). Override via LENNY_DEV_MODE.")
 	f.tlsTerminatedUpstream = flag.Bool("tls-terminated-upstream", envFlag("LENNY_TLS_TERMINATED_UPSTREAM"),
-		"§17.4 line 268 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.")
+		"§17.4 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.")
 	f.sloValidated = flag.Bool("slo-validated", envFlag("LENNY_SLO_VALIDATED"),
-		"§16.5 line 623 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
+		"§16.5 — set true once the Phase 14.5 benchmark gate has validated the §16.5 SLO targets. When false (the default), the gateway logs the provisional-SLO startup warning so an operator running unvalidated defaults cannot silently treat them as SLA commitments. Mirrors the slo.validated Helm value. Override via LENNY_SLO_VALIDATED.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
 		"path to an additional HMAC-SHA256 signing key the §10.2 Bearer path trusts, on top of the Token Service signer. Unset in a production install; §17.4 Embedded Mode sets it so the gateway accepts the embedded OIDC provider's tokens. Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.bearerExpectedIssuer = flag.String("bearer-expected-issuer", os.Getenv("LENNY_BEARER_EXPECTED_ISSUER"),
-		"§10.2 line 237 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
+		"§10.2 expected iss claim on every Bearer JWT. When set, a token whose iss differs is rejected with TOKEN_INVALID (reason=issuer_mismatch). Empty (default) skips the check, matching the existing wiring. Override via LENNY_BEARER_EXPECTED_ISSUER.")
 	f.bearerExpectedAudiences = flag.String("bearer-expected-audiences", os.Getenv("LENNY_BEARER_EXPECTED_AUDIENCES"),
-		"§10.2 line 237 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
+		"§10.2 comma-separated set of acceptable aud claims on Bearer JWTs. A token whose aud intersects this set is admitted; a token whose aud is disjoint is rejected with TOKEN_INVALID (reason=audience_mismatch). Empty (default) skips the check. Override via LENNY_BEARER_EXPECTED_AUDIENCES.")
 	f.jwksPublish = flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
 		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
 	f.runtimeBin = flag.String("runtime-bin", os.Getenv("LENNY_AGENT_BINARY"),
-		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor. §17.4 line 323 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
+		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
 	f.agentRuntime = flag.String("agent-runtime", os.Getenv("LENNY_AGENT_RUNTIME"),
-		"§17.4 line 262 zero-credential runtime selector. \"echo\" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is \"echo\"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.")
+		"§17.4 zero-credential runtime selector. \"echo\" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is \"echo\"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.")
 	f.postgresDSN = flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, sessions, transcripts, tenants, and runtimes are persisted to Postgres (the migrations/ schema must already be applied). When empty, in-memory stores are used.")
-	// spec: §17.4 line 199 — Source Mode replaces Postgres with embedded
+	// spec: §17.4 — Source Mode replaces Postgres with embedded
 	// SQLite for session and metadata storage. When --postgres-dsn is
 	// empty and this is set, the in-memory session/metadata stores are
 	// snapshotted to the named SQLite file so their contents survive a
@@ -428,16 +428,16 @@ func (f *gatewayFlags) registerCoreFlags() {
 	// Ignored when --postgres-dsn is set (Postgres is authoritative).
 	// F-17.4.2.
 	f.sqlitePath = flag.String("sqlite-path", os.Getenv("LENNY_SQLITE_PATH"),
-		"§17.4 line 199 Source-Mode embedded-SQLite path. When set (and --postgres-dsn is empty), session and metadata stores are backed by this SQLite file so they survive a restart. Empty keeps the stores purely in-memory. Override via LENNY_SQLITE_PATH. F-17.4.2.")
-	// spec: §12.3 line 103 — optional dedicated Postgres instance for the
+		"§17.4 Source-Mode embedded-SQLite path. When set (and --postgres-dsn is empty), session and metadata stores are backed by this SQLite file so they survive a restart. Empty keeps the stores purely in-memory. Override via LENNY_SQLITE_PATH. F-17.4.2.")
+	// spec: §12.3 — optional dedicated Postgres instance for the
 	// billing-event and audit-log write paths (the Tier-3 instance-
-	// separation step at §12.3 line 130). When set, the §12.3 R-03
+	// separation step at §12.3). When set, the §12.3 R-03
 	// StoreRouter routes BillingShard/AuditShard/AllAuditShards to this
 	// pool while every other write stays on the primary. Requires
 	// --postgres-dsn; the schema (billing_events, audit_log) must already
 	// be applied on the separate instance. F-12.3.5.
 	f.billingAuditDSN = flag.String("postgres-billing-audit-dsn", os.Getenv("LENNY_PG_BILLING_AUDIT_DSN"),
-		"§12.3 line 103 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
+		"§12.3 separate Postgres instance for billing/audit writes. When set (requires --postgres-dsn), billing-event and audit-log inserts route to this instance while all other writes stay on the primary. Empty keeps both paths on the primary. Override via LENNY_PG_BILLING_AUDIT_DSN.")
 	// spec: §12.3 / §15.1 — CREATE-privileged DDL login DSN for the
 	// billing/audit instance. The per-tenant billing (billing_seq_<40hex>)
 	// and audit (audit_seq_<40hex>) sequences are provisioned at tenant
@@ -461,19 +461,19 @@ func (f *gatewayFlags) registerCoreFlags() {
 	// F-11.2.10.
 	f.primaryDDLDSN = flag.String("postgres-primary-ddl-dsn", os.Getenv("LENNY_PG_PRIMARY_DDL_DSN"),
 		"§12.3 / §15.1 CREATE-privileged DDL login DSN for the primary instance, used to provision the per-tenant audit_seq_ sequence the §13.3 issued-token write-before-issue path seals on the primary. Falls back to LENNY_PG_BILLING_AUDIT_DDL_DSN when LENNY_PG_BILLING_AUDIT_DSN is unset (single-instance topology). Override via LENNY_PG_PRIMARY_DDL_DSN.")
-	// spec: §12.3 line 146 — read-replica reader endpoint. When set, the
+	// spec: §12.3 — read-replica reader endpoint. When set, the
 	// read-heavy query classes the spec names (session status, task tree,
 	// audit reads, usage reports) route to this replica while every write
 	// stays on the primary. Requires --postgres-dsn; the replica serves the
 	// same migrations/ schema. Empty keeps reads on the primary. F-12.3.16 / F-17.9.13.
 	f.readDSN = flag.String("postgres-read-dsn", os.Getenv("LENNY_PG_READ_DSN"),
-		"§12.3 line 146 read-replica reader endpoint. When set (requires --postgres-dsn), read-heavy queries (session status, task tree, audit reads, usage reports) route to this replica while all writes stay on the primary. Empty keeps reads on the primary. Override via LENNY_PG_READ_DSN.")
+		"§12.3 read-replica reader endpoint. When set (requires --postgres-dsn), read-heavy queries (session status, task tree, audit reads, usage reports) route to this replica while all writes stay on the primary. Empty keeps reads on the primary. Override via LENNY_PG_READ_DSN.")
 	f.scatterMaxConcurrency = flag.Int("scatter-max-concurrency", envInt("LENNY_SCATTER_MAX_CONCURRENCY", 16),
-		"§12.6 line 556 storeRouter.maxScatterGatherConcurrency: at most this many shards are queried in parallel by a scatter-gather fan-out (list-sessions, GDPR erasure, tenant deletion). v1 is single-shard so the bound is inert; it becomes load-bearing under a multi-shard router. Override via LENNY_SCATTER_MAX_CONCURRENCY. F-12.6.18.")
+		"§12.6 storeRouter.maxScatterGatherConcurrency: at most this many shards are queried in parallel by a scatter-gather fan-out (list-sessions, GDPR erasure, tenant deletion). v1 is single-shard so the bound is inert; it becomes load-bearing under a multi-shard router. Override via LENNY_SCATTER_MAX_CONCURRENCY. F-12.6.18.")
 	f.scatterPerShardTimeoutSeconds = flag.Int("scatter-per-shard-timeout-seconds", envInt("LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS", 10),
-		"§12.6 line 557 storeRouter.scatterGatherPerShardTimeoutSeconds: per-shard query deadline. A timed-out shard is dropped (reads, partial result) or retried twice (writes). Override via LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS. F-12.6.18.")
+		"§12.6 storeRouter.scatterGatherPerShardTimeoutSeconds: per-shard query deadline. A timed-out shard is dropped (reads, partial result) or retried twice (writes). Override via LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS. F-12.6.18.")
 	f.scatterAggregateTimeoutSeconds = flag.Int("scatter-aggregate-timeout-seconds", envInt("LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS", 120),
-		"§12.6 line 558 storeRouter.scatterGatherAggregateTimeoutSeconds: total scatter-gather deadline, capping worst-case latency when many shards are slow. Override via LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS. F-12.6.18.")
+		"§12.6 storeRouter.scatterGatherAggregateTimeoutSeconds: total scatter-gather deadline, capping worst-case latency when many shards are slow. Override via LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS. F-12.6.18.")
 	f.redisURL = flag.String("redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used. Mutually exclusive with --redis-sentinel-addrs.")
 	f.redisSentinelAddrs = flag.String("redis-sentinel-addrs", os.Getenv("LENNY_REDIS_SENTINEL_ADDRS"),
@@ -491,10 +491,10 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
 		"§12.4 comma-separated Redis Cluster seed nodes (host:port). When set the base Redis client is a CLUSTER KEYSLOT-aware go-redis ClusterClient — the Tier 2→3 migration topology for the Quota/Rate Limiting instance. Takes precedence over --redis-url and --redis-sentinel-addrs. Override via LENNY_REDIS_CLUSTER_ADDRS.")
 	f.capacityTier = flag.String("capacity-tier", envOr("LENNY_CAPACITY_TIER", "tier1"),
-		"§17.8.2 capacityPlanning.tier (tier1, tier2, tier3) the deployment is sized for. Drives the billingRedisStreamMaxLen default and the §17.8.2 line 1164 RedisClusterRecommended startup warning. Override via LENNY_CAPACITY_TIER. F-17.8.5, F-17.8.7.")
+		"§17.8.2 capacityPlanning.tier (tier1, tier2, tier3) the deployment is sized for. Drives the billingRedisStreamMaxLen default and the §17.8.2 RedisClusterRecommended startup warning. Override via LENNY_CAPACITY_TIER. F-17.8.5, F-17.8.7.")
 	f.singleTenantRedisTopology = flag.String("single-tenant-redis-topology", os.Getenv("LENNY_SINGLE_TENANT_REDIS_TOPOLOGY"),
-		"§17.8.2 line 1164 capacityPlanning.singleTenantRedisTopology. Set to \"sentinel\" to document that a Tier 3 deployment intentionally runs a single-tenant Redis Sentinel topology; this suppresses the RedisClusterRecommended startup warning. Override via LENNY_SINGLE_TENANT_REDIS_TOPOLOGY. F-17.8.7.")
-	// spec: §12.4 lines 237-245 — "Logical separation of Redis concerns".
+		"§17.8.2 capacityPlanning.singleTenantRedisTopology. Set to \"sentinel\" to document that a Tier 3 deployment intentionally runs a single-tenant Redis Sentinel topology; this suppresses the RedisClusterRecommended startup warning. Override via LENNY_SINGLE_TENANT_REDIS_TOPOLOGY. F-17.8.7.")
+	// spec: §12.4 — "Logical separation of Redis concerns".
 	// Each per-concern URL routes one §12.4 store role to a dedicated
 	// Redis instance (separate connection string per role); an empty
 	// value keeps that concern on the base --redis-url / Sentinel /
@@ -509,27 +509,27 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§12.4 dedicated Redis URL for the Session-data concern (durable inbox, DLQ). Empty uses the base Redis client. Override via LENNY_REDIS_SESSION_DATA_URL.")
 	f.redisDelegationURL = flag.String("redis-delegation-url", os.Getenv("LENNY_REDIS_DELEGATION_URL"),
 		"§12.4 dedicated Redis URL for the Delegation concern (tree budget keys {root_session_id}:dlg:*). Empty uses the base Redis client. Override via LENNY_REDIS_DELEGATION_URL.")
-	// spec: §10.3 line 359 — gateway startup TLS probe. When an endpoint
+	// spec: §10.3 — gateway startup TLS probe. When an endpoint
 	// host:port is set the gateway verifies a TLS handshake succeeds and a
 	// plaintext connection is refused before it becomes ready, converting a
 	// misconfigured backend (wrong port, missing cert) into a startup
 	// failure. Empty disables the probe for that backend (dev / in-memory).
 	// F-10.3.15.
 	f.startupProbeRedisAddr = flag.String("startup-tls-probe-redis-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_REDIS_ADDR"),
-		"§10.3 line 359 host:port of the Redis TLS listener the startup probe checks (TLS handshake must succeed; plaintext must be refused). Empty disables the Redis leg. Override via LENNY_STARTUP_TLS_PROBE_REDIS_ADDR. F-10.3.15.")
+		"§10.3 host:port of the Redis TLS listener the startup probe checks (TLS handshake must succeed; plaintext must be refused). Empty disables the Redis leg. Override via LENNY_STARTUP_TLS_PROBE_REDIS_ADDR. F-10.3.15.")
 	f.startupProbePgBouncerAddr = flag.String("startup-tls-probe-pgbouncer-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR"),
-		"§10.3 line 359 host:port of the PgBouncer TLS listener the startup probe checks. Empty disables the PgBouncer leg. Override via LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR. F-10.3.15.")
+		"§10.3 host:port of the PgBouncer TLS listener the startup probe checks. Empty disables the PgBouncer leg. Override via LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR. F-10.3.15.")
 	f.startupProbeCA = flag.String("startup-tls-probe-ca", os.Getenv("LENNY_STARTUP_TLS_PROBE_CA"),
-		"§10.3 line 359 CA bundle that verifies the Redis/PgBouncer server certificates during the startup TLS probe. Empty uses the system trust store. Override via LENNY_STARTUP_TLS_PROBE_CA. F-10.3.15.")
+		"§10.3 CA bundle that verifies the Redis/PgBouncer server certificates during the startup TLS probe. Empty uses the system trust store. Override via LENNY_STARTUP_TLS_PROBE_CA. F-10.3.15.")
 	f.startupProbeCert = flag.String("startup-tls-probe-cert", os.Getenv("LENNY_STARTUP_TLS_PROBE_CERT"),
-		"§10.3 line 359 client certificate presented during the startup TLS probe (Redis tls-auth-clients requires one). Empty presents no client certificate. Override via LENNY_STARTUP_TLS_PROBE_CERT. F-10.3.15.")
+		"§10.3 client certificate presented during the startup TLS probe (Redis tls-auth-clients requires one). Empty presents no client certificate. Override via LENNY_STARTUP_TLS_PROBE_CERT. F-10.3.15.")
 	f.startupProbeKey = flag.String("startup-tls-probe-key", os.Getenv("LENNY_STARTUP_TLS_PROBE_KEY"),
-		"§10.3 line 359 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
+		"§10.3 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
 	f.coordInterval = flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	f.barrierAckTimeoutSeconds = flag.Int("checkpoint-barrier-ack-timeout-seconds",
 		envInt("LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS", prestop.DefaultBarrierAckTimeoutSeconds),
-		"§10.1 line 167 / §11.3 line 210 checkpointBarrierAckTimeoutSeconds: the single wall-clock deadline the preStop CheckpointBarrier fan-out runs under across all coordinated pods. Default 90. Override via LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS. F-11.3.15.")
+		"§10.1 / §11.3 checkpointBarrierAckTimeoutSeconds: the single wall-clock deadline the preStop CheckpointBarrier fan-out runs under across all coordinated pods. Default 90. Override via LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS. F-11.3.15.")
 	f.dualStoreMaxSeconds = flag.Int("dual-store-unavailable-max-seconds",
 		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
 		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
@@ -546,7 +546,7 @@ func (f *gatewayFlags) registerStorageFlags() {
 		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
 		"§12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
-	// spec: §15.5 item 1 + docs/api/index.md line 124 — when a REST URL
+	// spec: §15.5 item 1 + docs/api/index.md — when a REST URL
 	// version prefix enters its 6-month sunset window, the gateway adds
 	// the `X-Lenny-Deprecated-Version` response header to every response
 	// served under that prefix. The list defaults empty: v1 is current
@@ -557,8 +557,8 @@ func (f *gatewayFlags) registerStorageFlags() {
 	// without further code changes. F-15.5.11.
 	f.deprecatedAPIVersionsCSV = flag.String("deprecated-api-versions",
 		os.Getenv("LENNY_DEPRECATED_API_VERSIONS"),
-		"§15.5 item 1 / docs/api/index.md line 124 — comma-separated REST URL version prefixes currently in their 6-month sunset window. Each match stamps the `X-Lenny-Deprecated-Version` response header. Empty disables the header (v1 default). Override via LENNY_DEPRECATED_API_VERSIONS. F-15.5.11.")
-	// spec: §25.3 lines 596, 604, 625 — operator knobs for the capacity
+		"§15.5 item 1 / docs/api/index.md — comma-separated REST URL version prefixes currently in their 6-month sunset window. Each match stamps the `X-Lenny-Deprecated-Version` response header. Empty disables the header (v1 default). Override via LENNY_DEPRECATED_API_VERSIONS. F-15.5.11.")
+	// spec: §25.3 — operator knobs for the capacity
 	// recommendations service. disabled-rules skips noisy rules across
 	// every replica; window-overrides shrinks a rule's sliding window to
 	// cut ring-buffer memory; disable-on-prometheus-outage fails closed
@@ -566,65 +566,65 @@ func (f *gatewayFlags) registerStorageFlags() {
 	// fallback reader. F-25.3.12.
 	f.recommendationsDisabledRules = flag.String("recommendations-disabled-rules",
 		os.Getenv("LENNY_RECOMMENDATIONS_DISABLED_RULES"),
-		"§25.3 line 604 — comma-separated recommendation rule IDs to disable across all replicas. Override via LENNY_RECOMMENDATIONS_DISABLED_RULES. F-25.3.12.")
+		"§25.3 — comma-separated recommendation rule IDs to disable across all replicas. Override via LENNY_RECOMMENDATIONS_DISABLED_RULES. F-25.3.12.")
 	f.recommendationsWindowOverrides = flag.String("recommendations-window-overrides",
 		os.Getenv("LENNY_RECOMMENDATIONS_WINDOW_OVERRIDES"),
-		"§25.3 line 596 — comma-separated per-category sliding-window overrides as category=duration (e.g. warm_pool_sizing=12h,credential_pool_sizing=72h). Override via LENNY_RECOMMENDATIONS_WINDOW_OVERRIDES. F-25.3.12.")
+		"§25.3 — comma-separated per-category sliding-window overrides as category=duration (e.g. warm_pool_sizing=12h,credential_pool_sizing=72h). Override via LENNY_RECOMMENDATIONS_WINDOW_OVERRIDES. F-25.3.12.")
 	f.recommendationsDisableOnOutage = flag.Bool("recommendations-disable-on-prometheus-outage",
 		envFlag("LENNY_RECOMMENDATIONS_DISABLE_ON_PROMETHEUS_OUTAGE"),
-		"§25.3 line 625 — return 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from a fallback reader when the metric source is unreachable. Override via LENNY_RECOMMENDATIONS_DISABLE_ON_PROMETHEUS_OUTAGE. F-25.3.12.")
+		"§25.3 — return 503 RECOMMENDATIONS_UNAVAILABLE instead of computing from a fallback reader when the metric source is unreachable. Override via LENNY_RECOMMENDATIONS_DISABLE_ON_PROMETHEUS_OUTAGE. F-25.3.12.")
 	f.rlGlobalPerMin = flag.Int("rate-limit-global-per-min", 0,
 		"§11.1 global requests-per-minute admission limit. Zero disables the global rate limit.")
 	f.rlPerUserPerMin = flag.Int("rate-limit-per-user-per-min", 0,
 		"§11.1 per-user requests-per-minute admission limit. Zero disables the per-user rate limit.")
 	f.rlPerTenantPerMin = flag.Int("rate-limit-per-tenant-per-min", 0,
-		"§13.3 line 607 / §11.1 per-tenant requests-per-minute admission limit (fair-share brake across a tenant's users). Zero disables the per-tenant rate limit. F-11.1.8.")
+		"§13.3 / §11.1 per-tenant requests-per-minute admission limit (fair-share brake across a tenant's users). Zero disables the per-tenant rate limit. F-11.1.8.")
 	f.rlPerRuntimePerMin = flag.Int("rate-limit-per-runtime-per-min", 0,
-		"§11.1 line 7 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
+		"§11.1 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
 	f.rlPerPoolPerMin = flag.Int("rate-limit-per-pool-per-min", 0,
-		"§11.1 line 7 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
+		"§11.1 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
 	f.maxConcSessGlobal = flag.Int("max-concurrent-sessions-global",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL", 0),
-		"§11.1 line 8 global concurrent-session admission cap (live non-terminal sessions across every tenant). Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
+		"§11.1 global concurrent-session admission cap (live non-terminal sessions across every tenant). Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
 	f.maxConcSessPerUser = flag.Int("max-concurrent-sessions-per-user",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_USER", 0),
-		"§11.1 line 8 per-user concurrent-session admission cap (live non-terminal sessions a single user holds in their tenant). Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
+		"§11.1 per-user concurrent-session admission cap (live non-terminal sessions a single user holds in their tenant). Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
 	f.maxConcSessPerRuntime = flag.Int("max-concurrent-sessions-per-runtime",
 		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME", 0),
-		"§11.1 line 8 per-runtime concurrent-session admission cap (live non-terminal sessions targeting a single runtime in a tenant). Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
+		"§11.1 per-runtime concurrent-session admission cap (live non-terminal sessions targeting a single runtime in a tenant). Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
 	f.evalRLPerSessionPerMin = flag.Int("eval-rate-limit-per-session-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
-		"§10.7 line 938 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
+		"§10.7 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
 	f.evalRLPerTenantPerMin = flag.Int("eval-rate-limit-per-tenant-per-min",
 		envInt("LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN", sessionserver.DefaultEvalPerTenantPerMin),
-		"§10.7 line 938 evalRateLimit.perTenantPerMinute: per-tenant eval-submission requests-per-minute limit across all of a tenant's sessions. Default 10000. Negative disables the per-tenant scope. Override via LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN. F-10.7.4.")
+		"§10.7 evalRateLimit.perTenantPerMinute: per-tenant eval-submission requests-per-minute limit across all of a tenant's sessions. Default 10000. Negative disables the per-tenant scope. Override via LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN. F-10.7.4.")
 	f.evalAggregationRefreshSeconds = flag.Int("eval-aggregation-refresh-seconds",
 		envInt("LENNY_EVAL_AGGREGATION_REFRESH_SECONDS", 0),
-		"§10.7 line 1088 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
-	// spec: §11.1 lines 10-11 — concurrent-upload and per-session
+		"§10.7 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
+	// spec: §11.1 — concurrent-upload and per-session
 	// upload-size admission caps, distinct from the §4.1 upload-handler
 	// back-pressure semaphore. Zero leaves each scope unlimited; operators
 	// opt in. F-11.1.5, F-11.1.6.
 	f.uploadMaxConcurrentPerSession = flag.Int("upload-max-concurrent-per-session",
 		envInt("LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION", 0),
-		"§11.1 line 10 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
+		"§11.1 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
 	f.uploadMaxConcurrentGlobal = flag.Int("upload-max-concurrent-global",
 		envInt("LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL", 0),
-		"§11.1 line 10 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
+		"§11.1 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
 	f.uploadMaxBytesPerSession = flag.Int64("upload-max-bytes-per-session",
 		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
-		"§11.1 line 11 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
+		"§11.1 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
 	f.midSessionUploadEnabled = flag.Bool("mid-session-upload",
 		envFlag("LENNY_MID_SESSION_UPLOAD"),
-		"§7.4 line 433 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")
-	// spec: §11.3 line 222 — rateLimitFailOpenMaxSeconds, operator-tunable.
+		"§7.4 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")
+	// spec: §11.3 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests
 	// with 429 RATE_LIMITED until the counter recovers. F-11.3.22.
 	f.rlFailOpenMaxSeconds = flag.Int("rate-limit-failopen-max-seconds",
 		envInt("LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS", int(ratelimitmw.DefaultFailOpenMaxSeconds/time.Second)),
-		"§11.3 line 222 rateLimitFailOpenMaxSeconds: cap on a single fail-open episode in the §11.1 admission middleware. Negative disables the cap. Default 60s. Override via LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS.")
-	// spec: §12.4 lines 222-224 — the per-replica fail-open emergency
+		"§11.3 rateLimitFailOpenMaxSeconds: cap on a single fail-open episode in the §11.1 admission middleware. Negative disables the cap. Default 60s. Override via LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS.")
+	// spec: §12.4 — the per-replica fail-open emergency
 	// controls. quotaUserFailOpenFraction bounds a single user during the
 	// outage window; quotaPerReplicaHardCap caps the per-replica tenant
 	// ceiling; quotaFailOpenCumulativeMaxSeconds is the financial-security
@@ -633,16 +633,16 @@ func (f *gatewayFlags) registerStorageFlags() {
 	// F-12.4.9 / F-11.2.6.
 	f.quotaUserFailOpenFraction = flag.Float64("quota-user-failopen-fraction",
 		envFloat("LENNY_QUOTA_USER_FAILOPEN_FRACTION", failopen.DefaultUserFailOpenFraction),
-		"§12.4 line 222 quotaUserFailOpenFraction: a single user's fail-open ceiling as a fraction of the per-replica tenant ceiling. Must satisfy 0 < value <= 1.0; >= 0.5 weakens the monopolization control. Default 0.25. Override via LENNY_QUOTA_USER_FAILOPEN_FRACTION.")
+		"§12.4 quotaUserFailOpenFraction: a single user's fail-open ceiling as a fraction of the per-replica tenant ceiling. Must satisfy 0 < value <= 1.0; >= 0.5 weakens the monopolization control. Default 0.25. Override via LENNY_QUOTA_USER_FAILOPEN_FRACTION.")
 	f.quotaPerReplicaHardCap = flag.Int64("quota-per-replica-hard-cap",
 		envInt64("LENNY_QUOTA_PER_REPLICA_HARD_CAP", 0),
-		"§12.4 line 224 quotaPerReplicaHardCap: hard per-replica ceiling on a tenant's fail-open allocation regardless of replica count. Zero defaults to tenant_limit/2 per tenant. Override via LENNY_QUOTA_PER_REPLICA_HARD_CAP.")
+		"§12.4 quotaPerReplicaHardCap: hard per-replica ceiling on a tenant's fail-open allocation regardless of replica count. Zero defaults to tenant_limit/2 per tenant. Override via LENNY_QUOTA_PER_REPLICA_HARD_CAP.")
 	f.quotaFailOpenCumulativeMaxSeconds = flag.Int("quota-failopen-cumulative-max-seconds",
 		envInt("LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS", int(failopen.DefaultCumulativeMaxSeconds/time.Second)),
-		"§12.4 line 224 quotaFailOpenCumulativeMaxSeconds: cumulative fail-open seconds within the rolling 1h window past which the replica fails closed for quota. Financial-security control. Default 300s. Override via LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS.")
+		"§12.4 quotaFailOpenCumulativeMaxSeconds: cumulative fail-open seconds within the rolling 1h window past which the replica fails closed for quota. Financial-security control. Default 300s. Override via LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS.")
 	f.failOpenStatePath = flag.String("failopen-cumulative-state-path",
 		envOr("LENNY_FAILOPEN_CUMULATIVE_STATE_PATH", failopen.DefaultCumulativeStatePath),
-		"§12.4 line 224 local file the cumulative fail-open timer persists on every transition so a restart resumes rather than resetting the timer. Override via LENNY_FAILOPEN_CUMULATIVE_STATE_PATH.")
+		"§12.4 local file the cumulative fail-open timer persists on every transition so a restart resumes rather than resetting the timer. Override via LENNY_FAILOPEN_CUMULATIVE_STATE_PATH.")
 	f.auditLockAcquireTimeoutMs = flag.Int("audit-lock-acquire-timeout-ms",
 		envInt("LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS", auditstore.DefaultLockConfig().AcquireTimeoutMs),
 		"§11.7 item 3 audit.lock.acquireTimeoutMs: statement_timeout on the per-tenant audit advisory-lock acquisition. Default 5000ms. Override via LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS.")
@@ -661,17 +661,17 @@ func (f *gatewayFlags) registerStorageFlags() {
 		"§11.2 rolling-window length (seconds) applied when a tenant configures the `rolling` reset period. Default 3600 (1h). Override via LENNY_QUOTA_ROLLING_WINDOW_SECONDS.")
 	f.quotaSyncIntervalSeconds = flag.Int("quota-sync-interval-seconds",
 		envInt("LENNY_QUOTA_SYNC_INTERVAL_SECONDS", quota.DefaultSyncIntervalSeconds),
-		"§11.2 line 44 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
+		"§11.2 quotaSyncIntervalSeconds: cadence (seconds) at which the gateway checkpoints Redis quota and delegation-budget counters to Postgres. Lower it (toward the 10s minimum) for high-throughput tenants to reduce crash-recovery overshoot; a value below the minimum is clamped up. Default 30s. Override via LENNY_QUOTA_SYNC_INTERVAL_SECONDS.")
 	f.billingTokenCheckpointIntervalSeconds = flag.Int("billing-token-checkpoint-interval-seconds",
 		envInt("LENNY_BILLING_TOKEN_CHECKPOINT_INTERVAL_SECONDS", 300),
 		"§11.2.1 token_usage.checkpoint cadence (seconds): the interval at which the gateway snapshots each active session's proxy-recorded token delta into the per-tenant billing stream, so in-flight cost attribution is visible before session end. A value <= 0 disables the periodic checkpoint. Default 300s. Override via LENNY_BILLING_TOKEN_CHECKPOINT_INTERVAL_SECONDS.")
 	f.quotaEnforcementMode = flag.String("quota-enforcement-mode",
 		envOr("LENNY_QUOTA_ENFORCEMENT_MODE", string(quota.DefaultEnforcementMode)),
-		"§12.4 line 268 quotaEnforcementMode: `redis` (default) reads the Redis token counters on the admission path; `in_memory_reconciled` draws a per-replica budget slice from Postgres, decrements it locally, and reconciles every quotaSyncIntervalSeconds (or at 80% slice consumption), tolerating full Redis unavailability for quota enforcement with bounded overshoot. The in-memory mode requires Postgres. Override via LENNY_QUOTA_ENFORCEMENT_MODE.")
+		"§12.4 quotaEnforcementMode: `redis` (default) reads the Redis token counters on the admission path; `in_memory_reconciled` draws a per-replica budget slice from Postgres, decrements it locally, and reconciles every quotaSyncIntervalSeconds (or at 80% slice consumption), tolerating full Redis unavailability for quota enforcement with bounded overshoot. The in-memory mode requires Postgres. Override via LENNY_QUOTA_ENFORCEMENT_MODE.")
 	f.delegationNodeMemoryFootprintBytes = flag.Int64("delegation-node-memory-footprint-bytes",
 		int64(envInt("LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES", int(delegationbudget.DefaultNodeMemoryFootprintBytes))),
-		"§11.2 line 48 delegationNodeMemoryFootprintBytes: per-node in-memory footprint estimate the delegation-budget crash-recovery reconstruction multiplies by the live descendant count to derive liveMemoryBytes. Default 12288 (12 KB). Override via LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES.")
-	// §4.8 line 1019: deployer-supplied external interceptors. Each
+		"§11.2 delegationNodeMemoryFootprintBytes: per-node in-memory footprint estimate the delegation-budget crash-recovery reconstruction multiplies by the live descendant count to derive liveMemoryBytes. Default 12288 (12 KB). Override via LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES.")
+	// §4.8: deployer-supplied external interceptors. Each
 	// --external-interceptor value registers one §4 RequestInterceptor
 	// service on the policy chain. Repeatable. Form:
 	// name=<n>,endpoint=<host:port>,phase=<phase>[,priority=<n>]
@@ -692,10 +692,10 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.delegationMaxInputSize = flag.Int("delegation-max-input-size", envInt("LENNY_DELEGATION_MAX_INPUT_SIZE", delegationpolicystore.DefaultMaxInputSize),
 		"§8.3 default contentPolicy.maxInputSize: the hard byte cap on TaskSpec.input the §4.8 DelegationPolicyEvaluator (PreDelegation, priority 250) enforces. A delegation exceeding it is rejected with INPUT_TOO_LARGE before pod allocation. Defaults to the §8.3 128 KiB. Override via LENNY_DELEGATION_MAX_INPUT_SIZE.")
 	f.delegationDefaultMaxDepth = flag.Int("delegation-default-max-depth", envInt("LENNY_DELEGATION_DEFAULT_MAX_DEPTH", delegation.DefaultMaxDepth),
-		"§8.2.bis line 89 Helm fallback for delegationLease.maxDepth (gateway.delegation.defaultMaxDepth). Every effective delegation lease MUST carry a positive integer maxDepth; this value is consulted last in the precedence chain (client → preset → runtime default → policy ceiling → Helm fallback), so a delegation request that omits maxDepth still receives a bounded chain. Default 10. Override via LENNY_DELEGATION_DEFAULT_MAX_DEPTH.")
+		"§8.2 .bis Helm fallback for delegationLease.maxDepth (gateway.delegation.defaultMaxDepth). Every effective delegation lease MUST carry a positive integer maxDepth; this value is consulted last in the precedence chain (client → preset → runtime default → policy ceiling → Helm fallback), so a delegation request that omits maxDepth still receives a bounded chain. Default 10. Override via LENNY_DELEGATION_DEFAULT_MAX_DEPTH.")
 	f.delegationMaxActiveChildrenPerUser = flag.Int("delegation-max-active-children-per-user",
 		envInt("LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER", 0),
-		"§11.1 line 9 per-user active-delegated-children admission cap: the maximum count of live (non-terminal) delegated children a single user may hold across all their sessions and trees (the per-session breadth is bounded by the §8.2 lease/treebudget axes). Zero disables the per-user scope. Override via LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER. F-11.1.4.")
+		"§11.1 per-user active-delegated-children admission cap: the maximum count of live (non-terminal) delegated children a single user may hold across all their sessions and trees (the per-session breadth is bounded by the §8.2 lease/treebudget axes). Zero disables the per-user scope. Override via LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER. F-11.1.4.")
 }
 
 // registerPolicyFlags registers the §4.8 interceptor, delegation, alerting, SLO, and billing-failover flags.
@@ -706,55 +706,55 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§8.2 LayerPlatform input to the cycle-detection three-layer AND gate (Helm value gateway.allowSelfRecursion). A self-recursive delegation hop (same runtime+pool tuple appears earlier in the lineage) is admitted under mode=enforce iff this flag, the resolved Runtime.allowSelfRecursion, and the resolved DelegationPolicy.allowSelfRecursion are all true. Default false. Override via LENNY_GATEWAY_ALLOW_SELF_RECURSION.")
 	f.interceptorWeakeningCooldownSeconds = flag.Int("interceptor-weakening-cooldown-seconds",
 		envInt("LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS", int(delegation.DefaultInterceptorWeakeningCooldown/time.Second)),
-		"§8.3 line 181 Helm value gateway.interceptorWeakeningCooldownSeconds: the cluster-scoped window during which delegate_task rejects every call whose effective DelegationPolicy is inside a `scanExportedFiles: true → false` weakening transition with INTERCEPTOR_WEAKENING_COOLDOWN (TRANSIENT, HTTP 503). Default 60s. Override via LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS. F-8.7.12 / F-13.5.7.")
+		"§8.3 Helm value gateway.interceptorWeakeningCooldownSeconds: the cluster-scoped window during which delegate_task rejects every call whose effective DelegationPolicy is inside a `scanExportedFiles: true → false` weakening transition with INTERCEPTOR_WEAKENING_COOLDOWN (TRANSIENT, HTTP 503). Default 60s. Override via LENNY_INTERCEPTOR_WEAKENING_COOLDOWN_SECONDS. F-8.7.12 / F-13.5.7.")
 	f.healthTrackerUseCompiledRules = flag.Bool("health-tracker-use-compiled-rules",
 		envBool("LENNY_HEALTH_TRACKER_USE_COMPILED_RULES", true),
-		"§25.13 line 4798 Helm value gateway.healthTracker.useCompiledRules: when true (default), the gateway's in-process §16.5 alert evaluator drives the per-replica health view. When false, the gateway suppresses the in-process alert tracker entirely and /v1/admin/health falls back to dependency probes and circuit breaker state only. Operators set this to false for strict consistency with operator-customized Prometheus rules. Override via LENNY_HEALTH_TRACKER_USE_COMPILED_RULES. F-25.13.4.")
+		"§25.13 Helm value gateway.healthTracker.useCompiledRules: when true (default), the gateway's in-process §16.5 alert evaluator drives the per-replica health view. When false, the gateway suppresses the in-process alert tracker entirely and /v1/admin/health falls back to dependency probes and circuit breaker state only. Operators set this to false for strict consistency with operator-customized Prometheus rules. Override via LENNY_HEALTH_TRACKER_USE_COMPILED_RULES. F-25.13.4.")
 	f.opsNonceCheckpointPath = flag.String("ops-nonce-checkpoint-path",
 		envOr("LENNY_OPS_NONCE_CHECKPOINT_PATH", ""),
-		"§25.3 line 748: local-disk path the operational-event nonce counter is periodically checkpointed to so the eventKey stays unique across a restart when the replica id (LENNY_REPLICA_ID) is pinned to a stable value. Empty (the default) keeps the counter in-process; mount a writable volume (e.g. an emptyDir) and set this for a stable-replica-id deployment. Override via LENNY_OPS_NONCE_CHECKPOINT_PATH. F-25.3.8.")
+		"§25.3: local-disk path the operational-event nonce counter is periodically checkpointed to so the eventKey stays unique across a restart when the replica id (LENNY_REPLICA_ID) is pinned to a stable value. Empty (the default) keeps the counter in-process; mount a writable volume (e.g. an emptyDir) and set this for a stable-replica-id deployment. Override via LENNY_OPS_NONCE_CHECKPOINT_PATH. F-25.3.8.")
 	f.alertingBundleFormats = flag.String("alerting-bundle-formats",
 		envOr("LENNY_ALERTING_BUNDLE_FORMATS", "prometheusrule"),
-		"§25.13 line 4833 Helm value monitoring.format (closed-enum subset rendered by the chart): comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. Stamps `lenny_alerting_rules_bundled{format}` so an operator can verify the bundling configuration. Override via LENNY_ALERTING_BUNDLE_FORMATS. F-25.13.3.")
+		"§25.13 Helm value monitoring.format (closed-enum subset rendered by the chart): comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. Stamps `lenny_alerting_rules_bundled{format}` so an operator can verify the bundling configuration. Override via LENNY_ALERTING_BUNDLE_FORMATS. F-25.13.3.")
 	f.alertingOverrideCount = flag.Int("alerting-override-count",
 		envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
-		"§25.13 line 4834 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules the chart rendered. Stamps `lenny_alerting_rule_overrides` so the §25.13 metrics surface shows how many rules diverged from the bundled defaults. Override via LENNY_ALERTING_OVERRIDE_COUNT. F-25.13.3.")
+		"§25.13 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules the chart rendered. Stamps `lenny_alerting_rule_overrides` so the §25.13 metrics surface shows how many rules diverged from the bundled defaults. Override via LENNY_ALERTING_OVERRIDE_COUNT. F-25.13.3.")
 	f.gatewayQueueDepthThreshold = flag.Float64("gateway-queue-depth-threshold",
 		envFloat("LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD", 20),
-		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.gatewayQueueDepthHigh.value: the per-subsystem queue-depth ceiling the GatewayQueueDepthHigh alert reads via scalar(lenny_gateway_queue_depth_threshold). Tier presets tighten this (Tier 2: 10, Tier 3: 5). Override via LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD. F-25.13.2.")
+		"§25.13 / §16.5 monitoring.alertThresholds.gatewayQueueDepthHigh.value: the per-subsystem queue-depth ceiling the GatewayQueueDepthHigh alert reads via scalar(lenny_gateway_queue_depth_threshold). Tier presets tighten this (Tier 2: 10, Tier 3: 5). Override via LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD. F-25.13.2.")
 	f.gatewayLatencyThresholdSeconds = flag.Float64("gateway-latency-threshold-seconds",
 		envFloat("LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS", 3.0),
-		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.gatewayLatencyHigh.p99Seconds: the per-subsystem p95 latency ceiling (seconds) the GatewayLatencyHigh alert reads via scalar(lenny_gateway_latency_threshold_seconds). Tier presets tighten this (Tier 2: 2.0, Tier 3: 1.0). Override via LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS. F-25.13.2.")
+		"§25.13 / §16.5 monitoring.alertThresholds.gatewayLatencyHigh.p99Seconds: the per-subsystem p95 latency ceiling (seconds) the GatewayLatencyHigh alert reads via scalar(lenny_gateway_latency_threshold_seconds). Tier presets tighten this (Tier 2: 2.0, Tier 3: 1.0). Override via LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS. F-25.13.2.")
 	f.credentialPoolLowThreshold = flag.Float64("credential-pool-low-threshold",
 		envFloat("LENNY_CREDENTIAL_POOL_LOW_THRESHOLD", 0.80),
-		"§25.13 line 4737 / §16.5 monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: the per-pool utilisation fraction the CredentialPoolLow alert reads via scalar(lenny_credential_pool_low_threshold). Tier presets tighten this (Tier 2: 0.70, Tier 3: 0.60). Override via LENNY_CREDENTIAL_POOL_LOW_THRESHOLD. F-25.13.2.")
+		"§25.13 / §16.5 monitoring.alertThresholds.credentialPoolLow.utilizationThreshold: the per-pool utilisation fraction the CredentialPoolLow alert reads via scalar(lenny_credential_pool_low_threshold). Tier presets tighten this (Tier 2: 0.70, Tier 3: 0.60). Override via LENNY_CREDENTIAL_POOL_LOW_THRESHOLD. F-25.13.2.")
 	f.sloBurnRateFastMultiplier = flag.Float64("slo-burn-rate-fast-multiplier",
 		envFloat("LENNY_SLO_BURN_RATE_FAST_MULTIPLIER", 14),
-		"§16.5 line 640 slo.burnRate.fastMultiplier: the fast-window (1h) burn-rate multiplier every burn-rate alert pages at, read via scalar(lenny_slo_burn_rate_fast_multiplier). Default 14. Override via LENNY_SLO_BURN_RATE_FAST_MULTIPLIER. F-16.5.3.")
+		"§16.5 slo.burnRate.fastMultiplier: the fast-window (1h) burn-rate multiplier every burn-rate alert pages at, read via scalar(lenny_slo_burn_rate_fast_multiplier). Default 14. Override via LENNY_SLO_BURN_RATE_FAST_MULTIPLIER. F-16.5.3.")
 	f.sloBurnRateSlowMultiplier = flag.Float64("slo-burn-rate-slow-multiplier",
 		envFloat("LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER", 3),
-		"§16.5 line 640 slo.burnRate.slowMultiplier: the slow-window (6h) burn-rate multiplier every burn-rate alert warns at, read via scalar(lenny_slo_burn_rate_slow_multiplier). Default 3. Override via LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER. F-16.5.3.")
+		"§16.5 slo.burnRate.slowMultiplier: the slow-window (6h) burn-rate multiplier every burn-rate alert warns at, read via scalar(lenny_slo_burn_rate_slow_multiplier). Default 3. Override via LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER. F-16.5.3.")
 	f.billingFlushIntervalMs = flag.Int("billing-flush-interval-ms",
 		envInt("LENNY_BILLING_FLUSH_INTERVAL_MS", int(failover.DefaultFlushInterval/time.Millisecond)),
-		"§12.3 line 76 billingFlushIntervalMs: cadence (ms) at which the billing failover flusher drains the Tier 2 write-ahead buffer into Postgres in multi-row batches. Default 500. Override via LENNY_BILLING_FLUSH_INTERVAL_MS. F-12.3.13.")
+		"§12.3 billingFlushIntervalMs: cadence (ms) at which the billing failover flusher drains the Tier 2 write-ahead buffer into Postgres in multi-row batches. Default 500. Override via LENNY_BILLING_FLUSH_INTERVAL_MS. F-12.3.13.")
 	f.billingFlushBatchSize = flag.Int("billing-flush-batch-size",
 		envInt("LENNY_BILLING_FLUSH_BATCH_SIZE", failover.DefaultFlushBatchSize),
-		"§12.3 line 76 billingFlushBatchSize: maximum buffered billing events drained into Postgres per flush call (one multi-row INSERT batch). Default 50. Override via LENNY_BILLING_FLUSH_BATCH_SIZE. F-12.3.13.")
+		"§12.3 billingFlushBatchSize: maximum buffered billing events drained into Postgres per flush call (one multi-row INSERT batch). Default 50. Override via LENNY_BILLING_FLUSH_BATCH_SIZE. F-12.3.13.")
 	f.billingFlushMaxPending = flag.Int("billing-flush-max-pending",
 		envInt("LENNY_BILLING_FLUSH_MAX_PENDING", failover.DefaultFlushMaxPending),
-		"§12.3 line 76 billingFlushMaxPending: once the Tier 2 write-ahead buffer grows past this many events, the gateway flushes immediately and emits the billing_flush_pressure metric. Default 500. Override via LENNY_BILLING_FLUSH_MAX_PENDING. F-12.3.13.")
+		"§12.3 billingFlushMaxPending: once the Tier 2 write-ahead buffer grows past this many events, the gateway flushes immediately and emits the billing_flush_pressure metric. Default 500. Override via LENNY_BILLING_FLUSH_MAX_PENDING. F-12.3.13.")
 	f.billingRedisStreamMaxLen = flag.Int64("billing-redis-stream-max-len",
 		envInt64("LENNY_BILLING_REDIS_STREAM_MAX_LEN", 0),
-		"§17.8.2 line 1203 billingRedisStreamMaxLen: per-tenant MAXLEN of the §11.2.1 billing failover Redis stream. 0 (the default) resolves the per-tier default from --capacity-tier (72,000 at Tier 3, else 50,000); a positive value pins it. Override via LENNY_BILLING_REDIS_STREAM_MAX_LEN. F-17.8.5.")
+		"§17.8.2 billingRedisStreamMaxLen: per-tenant MAXLEN of the §11.2.1 billing failover Redis stream. 0 (the default) resolves the per-tier default from --capacity-tier (72,000 at Tier 3, else 50,000); a positive value pins it. Override via LENNY_BILLING_REDIS_STREAM_MAX_LEN. F-17.8.5.")
 	f.postgresWriteCeilingIops = flag.Float64("postgres-write-ceiling-iops",
 		envFloat("LENNY_POSTGRES_WRITE_CEILING_IOPS", 200),
-		"§12.3 line 123 postgres.writeCeilingIops: the measured sustained write-IOPS ceiling for the primary Postgres instance. Emitted unlabelled on lenny_postgres_write_ceiling_iops so the §16.5 PostgresWriteSaturation alert reads scalar(lenny_postgres_write_ceiling_iops). Tier presets set 200/600/1600. Override via LENNY_POSTGRES_WRITE_CEILING_IOPS. F-12.3.8.")
+		"§12.3 postgres.writeCeilingIops: the measured sustained write-IOPS ceiling for the primary Postgres instance. Emitted unlabelled on lenny_postgres_write_ceiling_iops so the §16.5 PostgresWriteSaturation alert reads scalar(lenny_postgres_write_ceiling_iops). Tier presets set 200/600/1600. Override via LENNY_POSTGRES_WRITE_CEILING_IOPS. F-12.3.8.")
 	f.postgresWriteIopsSampleSeconds = flag.Int("postgres-write-iops-sample-interval-seconds",
 		envInt("LENNY_POSTGRES_WRITE_IOPS_SAMPLE_INTERVAL_SECONDS", 15),
-		"§12.3 lines 115-125 cadence (seconds) at which the gateway samples pg_stat_database row-write deltas to publish the lenny_postgres_write_iops gauge feeding the §16.5 PostgresWriteSaturation alert. Default 15. Override via LENNY_POSTGRES_WRITE_IOPS_SAMPLE_INTERVAL_SECONDS. F-12.3.7.")
+		"§12.3 cadence (seconds) at which the gateway samples pg_stat_database row-write deltas to publish the lenny_postgres_write_iops gauge feeding the §16.5 PostgresWriteSaturation alert. Default 15. Override via LENNY_POSTGRES_WRITE_IOPS_SAMPLE_INTERVAL_SECONDS. F-12.3.7.")
 	f.auditStartupChainCheckEntries = flag.Int("audit-startup-chain-check-entries",
 		envInt("LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES", 1000),
-		"§12.3 line 101 audit.startupChainCheckEntries: the most-recent N audit rows per tenant the startup chain-continuity check re-verifies. A non-positive value walks each chain in full. Default 1000. Override via LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.")
+		"§12.3 audit.startupChainCheckEntries: the most-recent N audit rows per tenant the startup chain-continuity check re-verifies. A non-positive value walks each chain in full. Default 1000. Override via LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES. F-12.3.9.")
 	f.auditGrantCheckIntervalSeconds = flag.Int("audit-grant-check-interval-seconds",
 		envInt("LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS", 0),
 		"§11.7 item 2 audit.grantCheckInterval: cadence of the periodic background integrity check that re-verifies append-only ledger grants/triggers/erasure guard and samples recent chain segments. 0 selects the profile default (regulated 60s, unregulated 300s). A value above the profile maximum (regulated 120s, unregulated 900s) is a fatal startup error. Override via LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS. F-11.7.3.")
@@ -763,10 +763,10 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
 	f.auditScatterCacheEnabled = flag.Bool("audit-scatter-gather-cache-enabled",
 		envBool("LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED", true),
-		"§25.9 line 3709 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Backed by Redis (shared across replicas) when a Redis backend is configured, otherwise in-process (per-replica). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")
+		"§25.9 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Backed by Redis (shared across replicas) when a Redis backend is configured, otherwise in-process (per-replica). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")
 	f.externalAdapterHarnessPath = flag.String("external-adapter-harness-path",
 		os.Getenv("LENNY_EXTERNAL_ADAPTER_HARNESS_PATH"),
-		"§24.8 / §15 line 1414 — path to the lenny-compliance harness binary the external-adapter validate gate drives. When empty the gateway resolves `lenny-compliance` on $PATH; when the harness is absent, POST /v1/admin/external-adapters/{name}/validate returns 503 ADAPTER_VALIDATION_UNAVAILABLE and the adapter stays pending_validation. Override via LENNY_EXTERNAL_ADAPTER_HARNESS_PATH. F-24.8.2.")
+		"§24.8 / §15 — path to the lenny-compliance harness binary the external-adapter validate gate drives. When empty the gateway resolves `lenny-compliance` on $PATH; when the harness is absent, POST /v1/admin/external-adapters/{name}/validate returns 503 ADAPTER_VALIDATION_UNAVAILABLE and the adapter stays pending_validation. Override via LENNY_EXTERNAL_ADAPTER_HARNESS_PATH. F-24.8.2.")
 	f.auditSIEMEndpoint = flag.String("audit-siem-endpoint",
 		os.Getenv("LENNY_AUDIT_SIEM_ENDPOINT"),
 		"§11.7 audit.siem.endpoint: the external SIEM ingest endpoint. When empty, the §11.7 compliance gate rejects creating or updating a tenant to a regulated complianceProfile (soc2, fedramp, hipaa), and creating an environment under one, with COMPLIANCE_SIEM_REQUIRED; in production a regulated tenant with no endpoint is a fatal startup error. When set, the gateway validates SIEM connectivity at startup (a test event must be acknowledged or the gateway refuses to start) and runs the §11.7 OCSF translator → SIEM forwarder pipeline. Override via LENNY_AUDIT_SIEM_ENDPOINT. F-11.7.1 / F-11.7.2.")
@@ -784,10 +784,10 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§11.7 item 4 audit.siem.failureThresholdPercent: when the SIEM delivery failure rate exceeds this percentage, the §25.3 health API reports the siem component degraded (default 5%). Override via LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT. F-11.7.16.")
 	f.auditSIEMMaxDeliveryLagSeconds = flag.Int("audit-siem-max-delivery-lag-seconds",
 		envInt("LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS", 30),
-		"§12.3 line 97 audit.siem.maxDeliveryLagSeconds: the threshold above which the §16.5 AuditSIEMDeliveryLag alert fires. Emitted on lenny_audit_siem_max_delivery_lag_seconds so the alert compares against an operator-tunable scalar. Default 30s. Override via LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS. F-12.3.17.")
+		"§12.3 audit.siem.maxDeliveryLagSeconds: the threshold above which the §16.5 AuditSIEMDeliveryLag alert fires. Emitted on lenny_audit_siem_max_delivery_lag_seconds so the alert compares against an operator-tunable scalar. Default 30s. Override via LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS. F-12.3.17.")
 	f.auditSIEMPollIntervalSeconds = flag.Int("audit-siem-poll-interval-seconds",
 		envInt("LENNY_AUDIT_SIEM_POLL_INTERVAL_SECONDS", 10),
-		"§12.3 line 97 SIEM outbox forwarder poll interval: how often the forwarder tails the committed audit_log rows for newly committed events. Must stay well under audit.siem.maxDeliveryLagSeconds. Default 10s. Override via LENNY_AUDIT_SIEM_POLL_INTERVAL_SECONDS. F-12.3.6.")
+		"§12.3 SIEM outbox forwarder poll interval: how often the forwarder tails the committed audit_log rows for newly committed events. Must stay well under audit.siem.maxDeliveryLagSeconds. Default 10s. Override via LENNY_AUDIT_SIEM_POLL_INTERVAL_SECONDS. F-12.3.6.")
 	f.auditOCSFRetryIntervalSeconds = flag.Int("audit-ocsf-retry-interval-seconds",
 		envInt("LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS", 30),
 		"§11.7 audit.ocsf.retryInterval: cadence at which the OCSF translator re-drives pending / retry_pending audit rows toward succeeded | dead_lettered. Default 30s. Override via LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS. F-11.7.11.")
@@ -799,28 +799,28 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§11.7 OCSF translator per-cycle batch size: the maximum number of pending audit rows one translation cycle drains. Default 256. Override via LENNY_AUDIT_OCSF_BATCH_SIZE. F-11.7.1.")
 	f.auditSyncWritePoolSize = flag.Int("audit-sync-write-pool-size",
 		envInt("LENNY_AUDIT_SYNC_WRITE_POOL_SIZE", 4),
-		"§12.3 line 79 audit.syncWritePoolSize: the size of the dedicated audit sync write pool. Synchronous audit writes use this pool so they do not consume request-serving connections from the shared primary pool. Default 4. Override via LENNY_AUDIT_SYNC_WRITE_POOL_SIZE. F-12.3.14.")
+		"§12.3 audit.syncWritePoolSize: the size of the dedicated audit sync write pool. Synchronous audit writes use this pool so they do not consume request-serving connections from the shared primary pool. Default 4. Override via LENNY_AUDIT_SYNC_WRITE_POOL_SIZE. F-12.3.14.")
 	f.auditBatchingEnabled = flag.Bool("audit-batching-enabled",
 		envBool("LENNY_AUDIT_BATCHING_ENABLED", false),
-		"§12.3 line 81 audit.batchingEnabled: opt-in T2 (non-PII) audit-event batching. Disabled by default. When true, non-PII T2 operational audit events are buffered in memory and flushed in batches (accepting the documented data-loss risk on a crash); T3/T4 PII events always stay synchronous. Override via LENNY_AUDIT_BATCHING_ENABLED. F-12.3.14.")
+		"§12.3 audit.batchingEnabled: opt-in T2 (non-PII) audit-event batching. Disabled by default. When true, non-PII T2 operational audit events are buffered in memory and flushed in batches (accepting the documented data-loss risk on a crash); T3/T4 PII events always stay synchronous. Override via LENNY_AUDIT_BATCHING_ENABLED. F-12.3.14.")
 	f.auditFlushIntervalMs = flag.Int("audit-flush-interval-ms",
 		envInt("LENNY_AUDIT_FLUSH_INTERVAL_MS", 250),
-		"§12.3 line 81 audit.flushIntervalMs: the maximum age of a buffered T2 audit event before it is flushed when batching is enabled. Default 250ms. Override via LENNY_AUDIT_FLUSH_INTERVAL_MS. F-12.3.14.")
+		"§12.3 audit.flushIntervalMs: the maximum age of a buffered T2 audit event before it is flushed when batching is enabled. Default 250ms. Override via LENNY_AUDIT_FLUSH_INTERVAL_MS. F-12.3.14.")
 	f.auditFlushBatchSize = flag.Int("audit-flush-batch-size",
 		envInt("LENNY_AUDIT_FLUSH_BATCH_SIZE", 100),
-		"§12.3 line 81 audit.flushBatchSize: the buffered T2 audit-event count that triggers an immediate flush when batching is enabled. Default 100. Override via LENNY_AUDIT_FLUSH_BATCH_SIZE. F-12.3.14.")
+		"§12.3 audit.flushBatchSize: the buffered T2 audit-event count that triggers an immediate flush when batching is enabled. Default 100. Override via LENNY_AUDIT_FLUSH_BATCH_SIZE. F-12.3.14.")
 	f.retryMaxRetries = flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
 	f.envVarBlocklistCSV = flag.String("env-var-blocklist", os.Getenv("LENNY_ENV_VAR_BLOCKLIST"),
-		"§14 line 105 deployer extension to the env-var blocklist applied to a CreateSessionRequest's `env` field, a comma-separated list of exact names or `*` globs (e.g. AWS_SECRET_ACCESS_KEY,*_TOKEN). The platform default blocklist is always merged in first, so an operator can extend but not reduce it. Override via LENNY_ENV_VAR_BLOCKLIST.")
+		"§14 deployer extension to the env-var blocklist applied to a CreateSessionRequest's `env` field, a comma-separated list of exact names or `*` globs (e.g. AWS_SECRET_ACCESS_KEY,*_TOKEN). The platform default blocklist is always merged in first, so an operator can extend but not reduce it. Override via LENNY_ENV_VAR_BLOCKLIST.")
 	f.callbackURLAllowedDomains = flag.String("callback-url-allowed-domains", os.Getenv("LENNY_CALLBACK_URL_ALLOWED_DOMAINS"),
-		"§14 line 112 callbackUrlAllowedDomains: a comma-separated allowlist of hostnames (exact or `*.suffix` wildcard) a session callbackUrl may target. When set, only matching hosts are accepted; when empty, the §14 public-DNS / private-range SSRF validation applies. Override via LENNY_CALLBACK_URL_ALLOWED_DOMAINS.")
+		"§14 callbackUrlAllowedDomains: a comma-separated allowlist of hostnames (exact or `*.suffix` wildcard) a session callbackUrl may target. When set, only matching hosts are accepted; when empty, the §14 public-DNS / private-range SSRF validation applies. Override via LENNY_CALLBACK_URL_ALLOWED_DOMAINS.")
 	f.maxResumePendingSeconds = flag.Int("max-resume-pending-seconds",
 		envInt("LENNY_MAX_RESUME_PENDING_SECONDS", watchdog.DefaultMaxResumePendingSeconds),
-		"§6.2 line 292 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
+		"§6.2 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
 	f.maxResumingSeconds = flag.Int("max-resuming-seconds",
 		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
-		"§6.2 line 249 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS.")
+		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS.")
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
@@ -872,37 +872,37 @@ func (f *gatewayFlags) registerSessionFlags() {
 	f.tokenServiceCA = flag.String("token-service-ca", os.Getenv("LENNY_TOKEN_SERVICE_CA"),
 		"path to the CA bundle that verifies the Token Service's server certificate on the §4.3 mTLS link.")
 	f.mtlsCurrentCAID = flag.String("mtls-current-ca-id", os.Getenv("LENNY_MTLS_CURRENT_CA_ID"),
-		"§10.3 lines 344-350 id of the cluster-internal CA that currently signs control-plane leaves (the chart's mtls.currentCAID, default lenny-mtls-ca when mtls.enabled). When set, the gateway serves the durable /v1/admin/ca-rotation procedure (begin/promote/retire) so an operator rotation is audited, overlap-window enforced, and resumable across restarts. Empty disables the CA-rotation admin surface (mTLS PKI disabled).")
+		"§10.3 id of the cluster-internal CA that currently signs control-plane leaves (the chart's mtls.currentCAID, default lenny-mtls-ca when mtls.enabled). When set, the gateway serves the durable /v1/admin/ca-rotation procedure (begin/promote/retire) so an operator rotation is audited, overlap-window enforced, and resumable across restarts. Empty disables the CA-rotation admin surface (mTLS PKI disabled).")
 	f.tokenServiceTenant = flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
 		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
 	f.elicitationFloor = flag.String("elicitation-content-integrity-floor", os.Getenv("LENNY_ELICITATION_CONTENT_INTEGRITY_FLOOR"),
 		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor). This value seeds the floor at startup; the §17.2 phase-stamp ConfigMap reconcile then keeps it live.")
 	f.elicitationFloorConfigMap = flag.String("elicitation-floor-configmap-name", envOr("LENNY_ELICITATION_FLOOR_CONFIGMAP", elicitationfloor.DefaultConfigMapName),
-		"§17.2 line 86 ConfigMap (in --gateway-namespace) whose security.elicitationContentIntegrity.floor key the gateway re-reads to keep the platform floor live without a restart. Requires a cluster client; ignored on a Postgres-only deployment.")
+		"§17.2 ConfigMap (in --gateway-namespace) whose security.elicitationContentIntegrity.floor key the gateway re-reads to keep the platform floor live without a restart. Requires a cluster client; ignored on a Postgres-only deployment.")
 	f.elicitationFloorReconcileSeconds = flag.Int("elicitation-floor-reconcile-interval-seconds", int(elicitationfloor.DefaultReconcileInterval/time.Second),
-		"§17.2 line 86 cadence the gateway re-reads the phase-stamp ConfigMap floor key. The change is observed by polling because the gateway client is non-cached; the value bounds floor-change staleness.")
+		"§17.2 cadence the gateway re-reads the phase-stamp ConfigMap floor key. The change is observed by polling because the gateway client is non-cached; the value bounds floor-change staleness.")
 	f.grpcAddr = flag.String("grpc-addr", os.Getenv("LENNY_GRPC_ADDR"),
 		"§8.6 GatewayControl gRPC listen address (host:port, e.g. :50061). When set, the gateway serves the adapter→gateway control surface — the §9.1 platform-tool, §9.3 connector-tool, and §4.7 scrub-report RPCs — on this address. Empty disables the GatewayControl listener.")
 	f.leaseAutoMaxPerMin = flag.Int("lease-extension-auto-max-per-min", 0,
-		"§8.6 line 712 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
+		"§8.6 deployment-default autoModeRateLimit.maxAutoExtensionsPerMinute: the per-task-tree cap on auto-approved lease extensions per minute before the gateway pauses auto-approval and falls back to elicitation. Zero is the spec default (no limit). A tenant or runtime override (when registered) takes precedence. F-8.6.7.")
 	f.leaseDefaultBudget = flag.Int64("lease-extension-default-budget", 0,
-		"§8.6 line 660 deployment-default maxExtendableBudget (Helm leaseExtension.defaults.maxExtendableBudget): the token ceiling a delegation tree may extend to absent a tenant or runtime override. Zero registers root trees with no token-extension headroom (every ExtendLease returns CEILING_REACHED). F-15.3.5.")
+		"§8.6 deployment-default maxExtendableBudget (Helm leaseExtension.defaults.maxExtendableBudget): the token ceiling a delegation tree may extend to absent a tenant or runtime override. Zero registers root trees with no token-extension headroom (every ExtendLease returns CEILING_REACHED). F-15.3.5.")
 	f.leaseMaxBudget = flag.Int64("lease-extension-max-budget", 0,
-		"§8.6 line 678 absolute maxExtendableBudget ceiling (Helm leaseExtension.max.maxExtendableBudget) no tenant or runtime override may exceed. Zero leaves the deployment default uncapped. F-15.3.5.")
+		"§8.6 absolute maxExtendableBudget ceiling (Helm leaseExtension.max.maxExtendableBudget) no tenant or runtime override may exceed. Zero leaves the deployment default uncapped. F-15.3.5.")
 	f.leaseDefaultApproval = flag.String("lease-extension-default-approval", "",
-		"§8.6 line 674 deployment-default extensionApproval mode (auto | elicitation). Empty resolves to the spec default (elicitation). F-15.3.5.")
+		"§8.6 deployment-default extensionApproval mode (auto | elicitation). Empty resolves to the spec default (elicitation). F-15.3.5.")
 	f.leaseCoolOffSec = flag.Int("lease-extension-cooloff-seconds", 0,
-		"§8.6 line 675 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
+		"§8.6 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
 	f.leaseRejectionCoolOffSec = flag.Int("lease-extension-rejection-cooloff-seconds", 0,
-		"§8.6 line 734 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
+		"§8.6 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
 	f.proxyExtensionWaitTimeout = flag.Duration("proxy-extension-wait-timeout", envDuration("LENNY_PROXY_EXTENSION_WAIT_TIMEOUT", defaultProxyExtensionWaitTimeout),
-		"§8.6 line 629 proxyExtensionWaitTimeout: how long the gateway LLM Proxy waits in-path for a budget-exhaustion lease extension to resolve before falling through to a recover-on-next-request BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves within this window and is transparent; a slower elicitation continues out-of-band. §8.6 does not fix this value; it is operator-tunable. Default 5s. Override via LENNY_PROXY_EXTENSION_WAIT_TIMEOUT.")
+		"§8.6 proxyExtensionWaitTimeout: how long the gateway LLM Proxy waits in-path for a budget-exhaustion lease extension to resolve before falling through to a recover-on-next-request BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves within this window and is transparent; a slower elicitation continues out-of-band. §8.6 does not fix this value; it is operator-tunable. Default 5s. Override via LENNY_PROXY_EXTENSION_WAIT_TIMEOUT.")
 	f.tokenAnomalyZeroWindow = flag.Int("token-anomaly-zero-window", envInt("LENNY_TOKEN_ANOMALY_ZERO_WINDOW", tokenanomaly.DefaultZeroTokenWindow),
 		"§11.2 direct-mode token-usage integrity: the count of consecutive zero-token direct-mode ReportUsage pulls a session must exceed before the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"zero_delta\"}. A non-zero pull resets the run. §11.2 fixes the default at greater than 3; a non-positive value falls back to the default so the primary under-reporting signal is never disabled. Override via LENNY_TOKEN_ANOMALY_ZERO_WINDOW.")
 	f.tokenAnomalyImplausibleRatio = flag.Float64("token-anomaly-implausible-ratio", envFloat("LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO", tokenanomaly.DefaultImplausiblySmallRatio),
 		"§11.2 direct-mode token-usage integrity: the cumulative tokens-per-LLM-call ratio below which the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"implausibly_small\"} for a direct-mode session. §11.2 leaves the numeric value operator-tunable; the default flags a session averaging fewer than one token per call. A non-positive value disables the ratio branch (the zero-token window still fires). Override via LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO.")
 	f.directUsagePollIntervalSeconds = flag.Int("direct-usage-poll-interval-seconds", envInt("LENNY_DIRECT_USAGE_POLL_INTERVAL_SECONDS", defaultDirectUsagePollIntervalSeconds),
-		"§11.2 direct-mode usage: cadence (seconds) at which the gateway pulls each direct-delivery session's incremental token delta over the §4.7 ReportUsage RPC and fans it into the usage/quota accounting sinks and the §11.2 under-reporting anomaly detector. §8.3 line 435 bounds direct-mode over-run against this interval, and §6.2 line 253 idle detection resets a session's idle clock only on a non-zero pulled delta, so a hung pod still idle-terminates. A value below the 10s minimum is clamped up; a non-positive value selects the 30s default. Override via LENNY_DIRECT_USAGE_POLL_INTERVAL_SECONDS.")
+		"§11.2 direct-mode usage: cadence (seconds) at which the gateway pulls each direct-delivery session's incremental token delta over the §4.7 ReportUsage RPC and fans it into the usage/quota accounting sinks and the §11.2 under-reporting anomaly detector. §8.3 bounds direct-mode over-run against this interval, and §6.2 idle detection resets a session's idle clock only on a non-zero pulled delta, so a hung pod still idle-terminates. A value below the 10s minimum is clamped up; a non-positive value selects the 30s default. Override via LENNY_DIRECT_USAGE_POLL_INTERVAL_SECONDS.")
 	f.spiffeTrustDomain = flag.String("spiffe-trust-domain", os.Getenv("LENNY_SPIFFE_TRUST_DOMAIN"),
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	f.interceptorNamespaces = flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),
@@ -912,7 +912,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 	f.platformAdminServiceAccounts = flag.String("platform-admin-service-accounts", os.Getenv("LENNY_PLATFORM_ADMIN_SERVICE_ACCOUNTS"),
 		"§25.4 comma-separated fully-qualified ServiceAccount usernames (system:serviceaccount:<namespace>:<name>) granted the §10.2 platform-admin role on the admin API. The chart lists lenny-ops-sa here so the §25.5 Redis-down gateway-buffer fan-out reaches the buffer endpoint. An account absent from this list is not admitted, whatever token it presents; empty grants no service account anything.")
 	f.saTokenAudience = flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
-		"§10.3 line 334 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
+		"§10.3 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
 	f.llmProxyAddr = flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
 		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	f.llmProxyPublicURL = flag.String("llm-proxy-public-url", os.Getenv("LENNY_LLM_PROXY_PUBLIC_URL"),
@@ -925,7 +925,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§4.9 credentialPolicy fallback.cooldownOnRateLimit: seconds a faulted credential pool is held on cooldown before the fallback chain selects it again. The spec default is 60s; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS.")
 	f.anthropicVersion = flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
 		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
-	// §4.9 lines 1525-1526: the proxy dispatches each lease to the
+	// §4.9: the proxy dispatches each lease to the
 	// translator for its resolved provider. anthropic_direct and
 	// openai_direct carry safe global defaults and are always
 	// registered. aws_bedrock, vertex_ai, and azure_openai need
@@ -962,7 +962,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 	f.objectStorageAccountURL = flag.String("object-storage-account-url", os.Getenv("LENNY_OBJECT_STORAGE_ACCOUNT_URL"),
 		"§17.9.3 Azure Blob storage account URL (https://<account>.blob.core.windows.net) for --object-storage-provider=azure. Override via LENNY_OBJECT_STORAGE_ACCOUNT_URL. F-17.5.1.")
 	f.objectStorageFilesystemRoot = flag.String("object-storage-filesystem-root", os.Getenv("LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT"),
-		"§17.4 line 165 local-filesystem object-storage directory for --object-storage-provider=filesystem (e.g. ~/.lenny/artifacts/). Persists artifacts across a restart. Override via LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT. F-17.4.8.")
+		"§17.4 local-filesystem object-storage directory for --object-storage-provider=filesystem (e.g. ~/.lenny/artifacts/). Persists artifacts across a restart. Override via LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT. F-17.4.8.")
 	f.minioEndpoint = flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
 		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
 	f.minioAccessKey = flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
@@ -971,14 +971,14 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"MinIO secret key. Required when --minio-endpoint is set.")
 	f.minioBucket = flag.String("minio-bucket", os.Getenv("LENNY_MINIO_BUCKET"),
 		"MinIO bucket for §4.5 artifacts. Required when --minio-endpoint is set.")
-	// spec: §12.5 line 279 — "MinIO connections MUST use TLS". TLS is on
+	// spec: §12.5 — "MinIO connections MUST use TLS". TLS is on
 	// by default; only §17.4 Embedded Mode (the chart's backends:embedded
 	// posture) renders LENNY_MINIO_USE_SSL=false. The Helm chart fails the
 	// render when tls.enabled is false on any non-embedded backend.
 	f.minioUseSSL = flag.Bool("minio-use-ssl", envFlagDefault("LENNY_MINIO_USE_SSL", true),
-		"connect to MinIO over HTTPS. Defaults to true per §12.5 line 279; only §17.4 Embedded Mode disables it. Override via LENNY_MINIO_USE_SSL.")
+		"connect to MinIO over HTTPS. Defaults to true per §12.5; only §17.4 Embedded Mode disables it. Override via LENNY_MINIO_USE_SSL.")
 	f.artifactReplicationConfig = flag.String("artifact-replication-config", os.Getenv("LENNY_ARTIFACT_REPLICATION_CONFIG"),
-		"§25.11 minio.artifactBackup configuration as JSON (enabled, regions[].{region,sourceBucket,dataResidencyRegion,target{endpoint,bucket,accessCredentialSecret}}). When set and enabled, the gateway runs the §12.5 line 278 ArtifactStore cross-region replication residency preflight. Empty (the default) disables it. Override via LENNY_ARTIFACT_REPLICATION_CONFIG.")
+		"§25.11 minio.artifactBackup configuration as JSON (enabled, regions[].{region,sourceBucket,dataResidencyRegion,target{endpoint,bucket,accessCredentialSecret}}). When set and enabled, the gateway runs the §12.5 ArtifactStore cross-region replication residency preflight. Empty (the default) disables it. Override via LENNY_ARTIFACT_REPLICATION_CONFIG.")
 	f.artifactReplicationRoleARN = flag.String("artifact-replication-role-arn", os.Getenv("LENNY_ARTIFACT_REPLICATION_ROLE_ARN"),
 		"§25.11 replication Role ARN the source MinIO cluster requires on a replication rule (arn:minio:replication or arn:aws:iam form). Optional. Override via LENNY_ARTIFACT_REPLICATION_ROLE_ARN.")
 }
@@ -988,10 +988,10 @@ func (f *gatewayFlags) registerSessionFlags() {
 // spec: §4.1 gateway subsystem seams.
 func (f *gatewayFlags) registerArtifactFlags() {
 	f.checkpointInterval = flag.Duration("checkpoint-interval", 10*time.Minute,
-		"§4.4 line 256 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
+		"§4.4 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
 	f.sessionArtifactRetentionSeconds = flag.Int("session-artifact-retention-seconds",
 		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
-		"§7.1 line 77 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
+		"§7.1 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
 	// spec: §7.1 derive rule 2 — gateway.persistDeriveFailureRows (default
 	// false). When true, a /derive that fails after the workspace copy is
 	// attempted persists a terminal failed row with
@@ -1000,19 +1000,19 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.persistDeriveFailureRows = flag.Bool("persist-derive-failure-rows",
 		envFlag("LENNY_PERSIST_DERIVE_FAILURE_ROWS"),
 		"§7.1 derive rule 2 gateway.persistDeriveFailureRows: when true, a POST /v1/sessions/{id}/derive that fails after the workspace copy is attempted persists a terminal failed Session row with failureClass=derive_failure for audit (reachable per §15.1). Default false keeps roll-back-without-persist. Override via LENNY_PERSIST_DERIVE_FAILURE_ROWS.")
-	// spec: §12.5 line 317 — gc.cycleIntervalSeconds (default 900, min 60).
-	// Drives both the §7.1 retention sweep and the §12.5 line 341 hard-prune
+	// spec: §12.5 — gc.cycleIntervalSeconds (default 900, min 60).
+	// Drives both the §7.1 retention sweep and the §12.5 hard-prune
 	// sweep cadence. A value below the floor is clamped up to 60s.
 	f.gcCycleIntervalSeconds = flag.Int("gc-cycle-interval-seconds",
 		envInt("LENNY_GC_CYCLE_INTERVAL_SECONDS", int(retentiongc.DefaultSweepInterval/time.Second)),
-		"§12.5 line 317 gc.cycleIntervalSeconds: the leader-elected GC sweep cadence in seconds (default 900, minimum 60). Drives the §7.1 retention soft-delete sweep and the §12.5 line 341 tombstone hard-prune sweep. Override via LENNY_GC_CYCLE_INTERVAL_SECONDS.")
-	// spec: §12.5 line 341 — gc.tombstoneRetentionSeconds (default 86400).
+		"§12.5 gc.cycleIntervalSeconds: the leader-elected GC sweep cadence in seconds (default 900, minimum 60). Drives the §7.1 retention soft-delete sweep and the §12.5 tombstone hard-prune sweep. Override via LENNY_GC_CYCLE_INTERVAL_SECONDS.")
+	// spec: §12.5 — gc.tombstoneRetentionSeconds (default 86400).
 	// The soft-deleted artifact_store row's tombstone-retention window before
 	// the hard-prune sweep physically removes it.
 	f.gcTombstoneRetentionSeconds = flag.Int("gc-tombstone-retention-seconds",
 		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
-		"§12.5 line 341 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
-	// spec: §12.5 lines 317, 332 — the gateway-singleton background sweeps
+		"§12.5 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
+	// spec: §12.5 — the gateway-singleton background sweeps
 	// (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
 	// retranscribe worker, legal-hold reconciler, T4 KMS probe) run under a
 	// single leader-elected `lenny-gateway-leader` Lease so exactly one
@@ -1021,87 +1021,87 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// single-process dev gateway (or `=false`) always runs the sweeps.
 	f.gatewayLeaderElection = flag.Bool("gateway-leader-election",
 		envBool("LENNY_GATEWAY_LEADER_ELECTION", true),
-		"§12.5 lines 317, 332: when true (default), gate the gateway-singleton background sweeps (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4 KMS probe) under the lenny-gateway-leader Kubernetes Lease so exactly one gateway replica runs them. Falls back to always-run when the gateway is not in-cluster. Override via LENNY_GATEWAY_LEADER_ELECTION.")
-	// spec: §12.5 line 307 (STO-021) — the leader-elected continuous T4
+		"§12.5: when true (default), gate the gateway-singleton background sweeps (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4 KMS probe) under the lenny-gateway-leader Kubernetes Lease so exactly one gateway replica runs them. Falls back to always-run when the gateway is not in-cluster. Override via LENNY_GATEWAY_LEADER_ELECTION.")
+	// spec: §12.5 — the leader-elected continuous T4
 	// KMS availability probe. The cadence floor (60s) and the
 	// token-bucket rate ceiling keep a large T4 fleet from bursting the
 	// KMS backend; both are operator-tunable.
 	f.t4KmsProbeIntervalSeconds = flag.Int("t4-kms-probe-interval-seconds",
 		envInt("LENNY_T4_KMS_PROBE_INTERVAL_SECONDS", int(tenantkms.DefaultProbeInterval/time.Second)),
-		"§12.5 line 307 storage.t4KmsProbeInterval: the leader-elected continuous T4 KMS availability probe cadence in seconds (default 300, minimum 60; a smaller value is clamped up to the floor). Override via LENNY_T4_KMS_PROBE_INTERVAL_SECONDS.")
+		"§12.5 storage.t4KmsProbeInterval: the leader-elected continuous T4 KMS availability probe cadence in seconds (default 300, minimum 60; a smaller value is clamped up to the floor). Override via LENNY_T4_KMS_PROBE_INTERVAL_SECONDS.")
 	f.t4KmsProbeRateLimit = flag.Float64("t4-kms-probe-rate-limit",
 		envFloat("LENNY_T4_KMS_PROBE_RATE_LIMIT", tenantkms.DefaultProbeRateLimit),
-		"§12.5 line 307 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
+		"§12.5 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
 	f.maxCreatedStateTimeoutSeconds = flag.Int("max-created-state-timeout-seconds",
 		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
-		"§7.1 line 58 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
+		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL, the watchdog's `created`-state budget, and the createdsweeper's abandoned-row timeout so the three deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
 	f.maxDeadlockWaitSeconds = flag.Int("max-deadlock-wait-seconds",
 		envInt("LENNY_MAX_DEADLOCK_WAIT_SECONDS", 120),
-		"§8.8 line 981 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")
-	// spec: §11.3 line 219-221 — gateway.max{Finalizing,Ready,Starting}TimeoutSeconds
+		"§8.8 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")
+	// spec: §11.3 — gateway.max{Finalizing,Ready,Starting}TimeoutSeconds
 	// and the platform-wide cap on §6.2 awaiting_client_action /
 	// maxSessionAge. Each is operator-tunable; the watchdog applied the
 	// constructed defaults silently before. F-11.3.11.
 	f.maxFinalizingTimeoutSeconds = flag.Int("max-finalizing-state-timeout-seconds",
 		envInt("LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxFinalizingStateSeconds),
-		"§11.3 line 219 maxFinalizingTimeoutSeconds: the deadline on the `finalizing` pre-running state. A session stuck longer than this wall-clock window is transitioned to `failed`. The §6.2 line 260 invariant `maxFinalizingTimeoutSeconds ≥ runtime.setupTimeoutSeconds` is enforced at admin registration; raising this flag also raises the gateway-side cap admin uses when validating new runtimes. Default 600s. Override via LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS.")
+		"§11.3 maxFinalizingTimeoutSeconds: the deadline on the `finalizing` pre-running state. A session stuck longer than this wall-clock window is transitioned to `failed`. The §6.2 invariant `maxFinalizingTimeoutSeconds ≥ runtime.setupTimeoutSeconds` is enforced at admin registration; raising this flag also raises the gateway-side cap admin uses when validating new runtimes. Default 600s. Override via LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS.")
 	f.maxReadyStateTimeoutSeconds = flag.Int("max-ready-state-timeout-seconds",
 		envInt("LENNY_MAX_READY_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxReadyStateSeconds),
-		"§11.3 line 220 maxReadyTimeoutSeconds: the deadline on the `ready` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 300s. Override via LENNY_MAX_READY_STATE_TIMEOUT_SECONDS.")
+		"§11.3 maxReadyTimeoutSeconds: the deadline on the `ready` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 300s. Override via LENNY_MAX_READY_STATE_TIMEOUT_SECONDS.")
 	f.maxStartingStateTimeoutSeconds = flag.Int("max-starting-state-timeout-seconds",
 		envInt("LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxStartingStateSeconds),
-		"§11.3 line 221 maxStartingTimeoutSeconds: the deadline on the `starting` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 120s. Override via LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS.")
+		"§11.3 maxStartingTimeoutSeconds: the deadline on the `starting` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 120s. Override via LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS.")
 	f.maxSessionAgeSeconds = flag.Int("max-session-age-seconds",
 		envInt("LENNY_MAX_SESSION_AGE_SECONDS", watchdog.DefaultMaxSessionAgeSeconds),
-		"§11.3 line 198 / §6.2 line 240 platform-wide maxSessionAgeSeconds: the total non-terminal lifetime cap of a session, measured from its creation. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
+		"§11.3 / §6.2 platform-wide maxSessionAgeSeconds: the total non-terminal lifetime cap of a session, measured from its creation. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
 	f.maxAwaitingClientActionSeconds = flag.Int("max-awaiting-client-action-seconds",
 		envInt("LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS", watchdog.DefaultMaxAwaitingClientActionSeconds),
-		"§11.3 line 199 maxAwaitingClientActionSeconds: the deadline on the `awaiting_client_action` state. A session that has waited this long for client action is transitioned to `expired`. Default 900s. Override via LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS.")
+		"§11.3 maxAwaitingClientActionSeconds: the deadline on the `awaiting_client_action` state. A session that has waited this long for client action is transitioned to `expired`. Default 900s. Override via LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS.")
 	f.maxSuspendedPodHoldSeconds = flag.Int("max-suspended-pod-hold-seconds",
 		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
-		"§11.3 line 233 maxSuspendedPodHoldSeconds: the wall-clock window a `suspended` session may hold its pod before the watchdog transitions it to `expired`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
+		"§11.3 maxSuspendedPodHoldSeconds: the wall-clock window a `suspended` session may hold its pod before the watchdog transitions it to `expired`. Both the deploy-wide cap (this flag) and a per-tenant cap apply; the more restrictive value wins. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
 	f.maxIdleTimeSeconds = flag.Int("max-idle-time-seconds",
 		envInt("LENNY_MAX_IDLE_TIME_SECONDS", watchdog.DefaultMaxIdleSeconds),
-		"§11.3 line 199 / §6.2 lines 273-300 maxIdleTimeSeconds: the platform-default idle cap on a `running` session — one with no qualifying agent activity (agent_output / tool_use, await_children poll, proxied LLM response) for longer than this is transitioned to `expired` with reason expired:idle. The per-runtime `limits.maxIdleTimeSeconds` and the §27.6 playground idle override tighten this default. Default 600s. Override via LENNY_MAX_IDLE_TIME_SECONDS.")
+		"§11.3 / §6.2 maxIdleTimeSeconds: the platform-default idle cap on a `running` session — one with no qualifying agent activity (agent_output / tool_use, await_children poll, proxied LLM response) for longer than this is transitioned to `expired` with reason expired:idle. The per-runtime `limits.maxIdleTimeSeconds` and the §27.6 playground idle override tighten this default. Default 600s. Override via LENNY_MAX_IDLE_TIME_SECONDS.")
 	f.sessionExpiryWarningSeconds = flag.Int("session-expiry-warning-seconds",
 		envInt("LENNY_SESSION_EXPIRY_WARNING_SECONDS", watchdog.DefaultExpiryWarningSeconds),
-		"§11.3 line 240 session-expiry warning lead time: the gateway sends a `session_expiring_soon` SSE event to the client and a `DEADLINE_APPROACHING` lifecycle-channel signal to the pod this many seconds before a session's effective maxSessionAge deadline so the agent can checkpoint and the client can extend or wrap up. Default 300s (5 minutes). Override via LENNY_SESSION_EXPIRY_WARNING_SECONDS.")
-	// spec: §11.3 line 205-206 — grpc.keepaliveTime{,out}Ms on the
+		"§11.3 session-expiry warning lead time: the gateway sends a `session_expiring_soon` SSE event to the client and a `DEADLINE_APPROACHING` lifecycle-channel signal to the pod this many seconds before a session's effective maxSessionAge deadline so the agent can checkpoint and the client can extend or wrap up. Default 300s (5 minutes). Override via LENNY_SESSION_EXPIRY_WARNING_SECONDS.")
+	// spec: §11.3 — grpc.keepaliveTime{,out}Ms on the
 	// adapter client (gateway → pod), operator-tunable. The library
 	// default is no keepalive on the client side, so the §11.3 5s timeout
 	// is unenforced without this. F-11.3.12.
 	f.adapterKeepaliveTimeMs = flag.Int("adapter-keepalive-time-ms",
 		envInt("LENNY_ADAPTER_KEEPALIVE_TIME_MS", 10_000),
-		"§11.3 line 205 grpc.keepaliveTimeMs: the interval at which the gateway sends a keepalive ping on an idle adapter connection. Default 10000ms (10s). Override via LENNY_ADAPTER_KEEPALIVE_TIME_MS.")
+		"§11.3 grpc.keepaliveTimeMs: the interval at which the gateway sends a keepalive ping on an idle adapter connection. Default 10000ms (10s). Override via LENNY_ADAPTER_KEEPALIVE_TIME_MS.")
 	f.adapterKeepaliveTimeoutMs = flag.Int("adapter-keepalive-timeout-ms",
 		envInt("LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS", 5_000),
-		"§11.3 line 206 grpc.keepaliveTimeoutMs: how long the gateway waits for an adapter keepalive-ping reply before closing the connection. Default 5000ms (5s). Override via LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS.")
-	// spec: §11.3 line 224 — delegation.usageQuiescenceTimeoutSeconds,
+		"§11.3 grpc.keepaliveTimeoutMs: how long the gateway waits for an adapter keepalive-ping reply before closing the connection. Default 5000ms (5s). Override via LENNY_ADAPTER_KEEPALIVE_TIMEOUT_MS.")
+	// spec: §11.3 — delegation.usageQuiescenceTimeoutSeconds,
 	// operator-tunable. The §8.10 tree-recovery path waits this long after
 	// the last usage report before declaring the tree quiescent and
 	// progressing to drain. F-11.3.19.
 	f.delegationUsageQuiescenceTimeoutSeconds = flag.Int("delegation-usage-quiescence-timeout-seconds",
 		envInt("LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS", 5),
-		"§11.3 line 224 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
-	// spec: §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
+		"§11.3 delegation.usageQuiescenceTimeoutSeconds: the wall-clock window the §8.10 tree-recovery path waits after the last child usage report before declaring the delegation tree quiescent. Default 5s. Override via LENNY_DELEGATION_USAGE_QUIESCENCE_TIMEOUT_SECONDS.")
+	// spec: §8.10 — operator-tunable per-level and
 	// whole-tree recovery deadlines. The default (120s / 600s) matches
 	// `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds`. Deployers
-	// running deep trees apply the §8.10 line 1032 formula to raise the
+	// running deep trees apply the §8.10 formula to raise the
 	// tree cap. F-8.10.6.
 	f.delegationMaxLevelRecoverySeconds = flag.Int("delegation-max-level-recovery-seconds",
 		envInt("LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS", int(recovery.DefaultLevelTimeout/time.Second)),
-		"§8.10 line 1022 delegation.maxLevelRecoverySeconds: maximum time the gateway waits for all nodes at a single tree depth to complete recovery before marking the unrecovered ones as terminally failed. Default 120s. Override via LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.")
+		"§8.10 delegation.maxLevelRecoverySeconds: maximum time the gateway waits for all nodes at a single tree depth to complete recovery before marking the unrecovered ones as terminally failed. Default 120s. Override via LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS.")
 	f.delegationMaxTreeRecoverySeconds = flag.Int("delegation-max-tree-recovery-seconds",
 		envInt("LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS", int(recovery.DefaultTreeTimeout/time.Second)),
-		"§8.10 line 1023 / line 1042 delegation.maxTreeRecoverySeconds: total wall-clock bound for recovering the full delegation tree; overrides per-level budgets. Default 600s. Deployers running deep trees should apply the §8.10 line 1032 formula. Override via LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.")
-	// spec: §8.10 line 1078 — cascadeTimeoutSeconds is the deployer-tuned
+		"§8.10 delegation.maxTreeRecoverySeconds: total wall-clock bound for recovering the full delegation tree; overrides per-level budgets. Default 600s. Deployers running deep trees should apply the §8.10 formula. Override via LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS.")
+	// spec: §8.10 — cascadeTimeoutSeconds is the deployer-tuned
 	// wall-clock bound an `await_completion` child may run after parent
 	// failure and how long a `detach` orphan persists before cleanup.
 	// F-8.10.9.
 	f.delegationCascadeTimeoutSeconds = flag.Int("delegation-cascade-timeout-seconds",
 		envInt("LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS", int(orphancleanup.DefaultCascadeTimeout/time.Second)),
-		"§8.10 line 1078 delegation.cascadeTimeoutSeconds: deployer-wide cap on how long an `await_completion` child may run after parent failure and how long a `detach` orphan persists before §8.10 cleanup. Default 3600s (1h). Override via LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS.")
-	// spec: §8.10 line 1103 — maxOrphanTasksPerTenant caps a tenant's
+		"§8.10 delegation.cascadeTimeoutSeconds: deployer-wide cap on how long an `await_completion` child may run after parent failure and how long a `detach` orphan persists before §8.10 cleanup. Default 3600s (1h). Override via LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS.")
+	// spec: §8.10 — maxOrphanTasksPerTenant caps a tenant's
 	// active orphan tasks; when exceeded, the `detach` cascade falls back
 	// to `cancel_all`. The §16.5 OrphanTasksPerTenantHigh alert reads
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` as the denominator;
@@ -1109,44 +1109,44 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	// against the live cap. F-8.10.10.
 	f.delegationMaxOrphanTasksPerTenant = flag.Int("delegation-max-orphan-tasks-per-tenant",
 		envInt("LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT", sessionserver.DefaultMaxOrphanTasksPerTenant),
-		"§8.10 line 1103 delegation.maxOrphanTasksPerTenant: per-tenant cap on active orphan tasks; when the count would exceed this, the gateway falls back from `detach` to `cancel_all`. Default 100. Override via LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT.")
-	// spec: §11.3 line 215 — credentials.expiryWarningLeadSeconds,
+		"§8.10 delegation.maxOrphanTasksPerTenant: per-tenant cap on active orphan tasks; when the count would exceed this, the gateway falls back from `detach` to `cancel_all`. Default 100. Override via LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT.")
+	// spec: §11.3 — credentials.expiryWarningLeadSeconds,
 	// operator-tunable. Each tracked credential lease fires a structured
 	// expiry-warning log line once when now is within this window of the
 	// lease's ExpiresAt, so deployers see impending expiry before the
 	// §4.9 fault-rotation path is consumed. F-11.3.20.
 	f.credentialsExpiryWarningLeadSeconds = flag.Int("credentials-expiry-warning-lead-seconds",
 		envInt("LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS", int(credrenewal.DefaultExpiryWarningLead/time.Second)),
-		"§11.3 line 215 credentials.expiryWarningLeadSeconds: how long before a credential lease's ExpiresAt the gateway fires a structured warning log. Set to 0 to disable. Default 3600 (1h). Override via LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS.")
+		"§11.3 credentials.expiryWarningLeadSeconds: how long before a credential lease's ExpiresAt the gateway fires a structured warning log. Set to 0 to disable. Default 3600 (1h). Override via LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS.")
 	f.workspaceSealMaxDurationSeconds = flag.Int("workspace-seal-max-duration-seconds",
 		envInt("LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS", int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second)),
-		"§7.1 line 112 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
+		"§7.1 maxWorkspaceSealDurationSeconds: the total wall-clock window the gateway retries seal-and-export (exponential backoff 5s→60s) before failing the session with workspace_seal_timeout and terminating the pod anyway. Default 300s. Override via LENNY_WORKSPACE_SEAL_MAX_DURATION_SECONDS.")
 	f.idempotencyGCIntervalSeconds = flag.Int("idempotency-gc-interval-seconds",
 		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
-		"§11.5 line 277 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
+		"§11.5 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
 	f.credentialLeaseGCIntervalSeconds = flag.Int("credential-lease-gc-interval-seconds",
 		envInt("LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS", 3600),
-		"§4.9 line 1671 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")
+		"§4.9 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")
 	f.idempotencyMaxBodyBytes = flag.Int64("idempotency-max-body-bytes",
 		envInt64("LENNY_IDEMPOTENCY_MAX_BODY_BYTES", 8<<20),
-		"§11.5 line 277 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")
+		"§11.5 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")
 	f.checkpointJitterFraction = flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
-		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
+		"§4.4. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	f.objectStorageGCSBucketDefaultCMEK = flag.String("object-storage-gcs-bucket-default-cmek", os.Getenv("LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK"),
-		"§12.5 line 315 objectStorage.gcs.bucketDefaultCmek: the per-tenant GCS bucket-default CMEK resource name that a T4 checkpoint PUT inherits (the GCS V4 signed URL cannot carry a per-request CMEK). Required when --object-storage-provider=gcs serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK.")
+		"§12.5 objectStorage.gcs.bucketDefaultCmek: the per-tenant GCS bucket-default CMEK resource name that a T4 checkpoint PUT inherits (the GCS V4 signed URL cannot carry a per-request CMEK). Required when --object-storage-provider=gcs serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK.")
 	f.objectStorageAzureDefaultEncryptionScope = flag.String("object-storage-azure-default-encryption-scope", os.Getenv("LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE"),
-		"§12.5 line 315 objectStorage.azure.defaultEncryptionScope: the Azure container-level default encryption scope a T4 chunk PUT lands under (the SAS carries no encryption scope). Required with --object-storage-azure-deny-encryption-scope-override when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE.")
+		"§12.5 objectStorage.azure.defaultEncryptionScope: the Azure container-level default encryption scope a T4 chunk PUT lands under (the SAS carries no encryption scope). Required with --object-storage-azure-deny-encryption-scope-override when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE.")
 	f.objectStorageAzureDenyEncryptionScopeOverride = flag.Bool("object-storage-azure-deny-encryption-scope-override", envFlagDefault("LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE", false),
-		"§12.5 line 315 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
+		"§12.5 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
 	f.checkpointGrantWindow = flag.Int("checkpoint-grant-window",
 		envInt("LENNY_CHECKPOINT_GRANT_WINDOW", checkpointer.DefaultGrantWindow),
-		"§10.1 line 131 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
+		"§10.1 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
 	f.checkpointCapabilityTTLSeconds = flag.Int("checkpoint-capability-ttl-seconds",
 		envInt("LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS", checkpointer.DefaultCapabilityTTLSeconds),
 		"§13.2 / §17.8.1 checkpointCapabilityTTLSeconds: the expiry, in seconds, of each gateway-minted presigned checkpoint upload or restore capability. Default 30. Override via LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.")
 	f.partialRecoveryThresholdFraction = flag.Float64("partial-recovery-threshold-fraction",
 		envFloat("LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION", 0.5),
-		"§10.1 line 155 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
+		"§10.1 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
 	f.noEnvPolicy = flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	f.connectorOAuthCallbackURL = flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),
@@ -1166,37 +1166,36 @@ func (f *gatewayFlags) registerOpsFlags() {
 	f.billingDualControlThreshold = flag.Float64("billing-dual-control-threshold", envFloat("LENNY_BILLING_DUAL_CONTROL_THRESHOLD", 0),
 		"§11.2.1 billing.dualControlThreshold: an operator-initiated billing correction whose absolute adjustment value exceeds this requires a second platform-admin's approval. The default of 0 makes every correction dual-control. Override via LENNY_BILLING_DUAL_CONTROL_THRESHOLD.")
 	f.billingCorrectionRateThreshold = flag.Float64("billing-correction-rate-threshold", envFloat("LENNY_BILLING_CORRECTION_RATE_THRESHOLD", 0.05),
-		"§11.2.1 line 187 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
+		"§11.2.1 billing.correctionRateThreshold: BillingCorrectionRateHigh alert threshold as a fraction (0.05 = 5%). Emitted at startup on the lenny_billing_correction_rate_threshold gauge so the §16.5 alert can evaluate via scalar(lenny_billing_correction_rate_threshold). Override via LENNY_BILLING_CORRECTION_RATE_THRESHOLD.")
 	f.billingSinkWebhookURL = flag.String("billing-sink-webhook-url", os.Getenv("LENNY_BILLING_SINK_WEBHOOK_URL"),
-		"§11.2.1 line 136 billing.sink webhook URL: when set, every billing event committed to Postgres is POSTed as JSON with an HMAC-SHA256 X-Lenny-Signature header, retried with exponential backoff, and dead-lettered after exhaustion. Empty disables the webhook sink. Override via LENNY_BILLING_SINK_WEBHOOK_URL. F-11.2.14.")
+		"§11.2.1 billing.sink webhook URL: when set, every billing event committed to Postgres is POSTed as JSON with an HMAC-SHA256 X-Lenny-Signature header, retried with exponential backoff, and dead-lettered after exhaustion. Empty disables the webhook sink. Override via LENNY_BILLING_SINK_WEBHOOK_URL. F-11.2.14.")
 	f.billingApproverWebhookURL = flag.String("billing-approver-webhook-url", os.Getenv("LENNY_BILLING_APPROVER_WEBHOOK_URL"),
-		"§11.2.1 line 175 billing.approverNotificationWebhook: when set, a billing correction entering the dual-control pending state notifies eligible approvers by POSTing a signed notification to this URL. Empty leaves the channel unconfigured. Override via LENNY_BILLING_APPROVER_WEBHOOK_URL. F-11.2.14.")
+		"§11.2.1 billing.approverNotificationWebhook: when set, a billing correction entering the dual-control pending state notifies eligible approvers by POSTing a signed notification to this URL. Empty leaves the channel unconfigured. Override via LENNY_BILLING_APPROVER_WEBHOOK_URL. F-11.2.14.")
 	// §11.2.1 HMAC signing secrets are read from the environment only (a
 	// Helm secretKeyRef) so they never appear in the process argv.
 	f.billingSinkWebhookSecret = []byte(os.Getenv("LENNY_BILLING_SINK_WEBHOOK_SECRET"))
 	f.billingApproverWebhookSecret = []byte(os.Getenv("LENNY_BILLING_APPROVER_WEBHOOK_SECRET"))
 	f.billingRetentionDays = flag.Int("billing-retention-days", envInt("LENNY_BILLING_RETENTION_DAYS", billingretention.DefaultRetentionDays),
-		"§11.2.1 line 151 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
+		"§11.2.1 billing.retentionDays: how long billing events are retained before the periodic retention pruner deletes them (default 395). The gateway rejects a value below the compliance floor of any tenant's regulated complianceProfile at startup (hipaa 2190, soc2 365, fedramp 365). Override via LENNY_BILLING_RETENTION_DAYS.")
 	f.gdprRetentionDays = flag.Int("audit-gdpr-retention-days", envInt("LENNY_AUDIT_GDPR_RETENTION_DAYS", audit.GDPRRetentionDefaultDays),
-		"§12.8 line 839 audit.gdprRetentionDays: how long gdpr.* audit rows (erasure receipts, legal-hold ledger events) are retained, on a window separate from audit.retentionDays (default 2555 / 7 years). The gateway rejects a value below 2190 (6 years) when any tenant has a regulated complianceProfile (soc2, fedramp, hipaa) at startup. Override via LENNY_AUDIT_GDPR_RETENTION_DAYS.")
+		"§12.8 audit.gdprRetentionDays: how long gdpr.* audit rows (erasure receipts, legal-hold ledger events) are retained, on a window separate from audit.retentionDays (default 2555 / 7 years). The gateway rejects a value below 2190 (6 years) when any tenant has a regulated complianceProfile (soc2, fedramp, hipaa) at startup. Override via LENNY_AUDIT_GDPR_RETENTION_DAYS.")
 	f.auditRetentionPreset = flag.String("audit-retention-preset", envOr("LENNY_AUDIT_RETENTION_PRESET", string(audit.PresetSOC2)),
 		"§16.4 audit.retentionPreset: the compliance-aware retention bundle for non-gdpr audit rows (soc2, fedramp-high, hipaa, nis2-dora, custom). A named preset fixes the retention window (soc2 365, fedramp-high 1095, hipaa 2190, nis2-dora 1825); custom uses --audit-retention-days. The gateway warns at startup when the preset is incompatible with an active tenant's complianceProfile. Override via LENNY_AUDIT_RETENTION_PRESET.")
 	f.auditRetentionDays = flag.Int("audit-retention-days", envInt("LENNY_AUDIT_RETENTION_DAYS", audit.PresetSOC2.PresetDays()),
 		"§16.4 audit.retentionDays: the general (non-gdpr) Postgres audit-log retention window in days, used when --audit-retention-preset is custom. Emitted at startup on the lenny_audit_retention_days gauge so the §16.5 AuditRetentionLow alert can evaluate. Override via LENNY_AUDIT_RETENTION_DAYS.")
 	f.auditRetentionPruneIntervalSeconds = flag.Int("audit-retention-prune-interval-seconds", envInt("LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS", 3600),
-		"§16.4 line 378 audit-retention sweep cadence in seconds: how often the leader-elected pruner deletes audit rows past audit.retentionDays (gdpr.* rows held under audit.gdprRetentionDays, undelivered rows held by the SIEM delivery guard). Clamped up to a 60s floor. Override via LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS.")
-	// §12.6 lines 685-689 EventBus retranscribe worker + line 683/699
-	// publish-drop knobs. These mirror the eventBus.* Helm values; the
+		"§16.4 audit-retention sweep cadence in seconds: how often the leader-elected pruner deletes audit rows past audit.retentionDays (gdpr.* rows held under audit.gdprRetentionDays, undelivered rows held by the SIEM delivery guard). Clamped up to a 60s floor. Override via LENNY_AUDIT_RETENTION_PRUNE_INTERVAL_SECONDS.")
+	// §12.6 EventBus retranscribe worker and publish-drop knobs. These mirror the eventBus.* Helm values; the
 	// gateway consumes them when constructing the §12.6 RedisEventBus and
 	// the leader-elected retranscribe worker. F-12.6.22 / F-12.6.23.
 	f.eventBusRetryIntervalSeconds = flag.Int("eventbus-retry-interval-seconds", envInt("LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS", 60),
-		"§12.6 line 685 eventBus.retryInterval: the retranscribe-worker sweep cadence in seconds (default 60). The worker re-publishes audit rows whose first EventBus publish failed. Override via LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS.")
+		"§12.6 eventBus.retryInterval: the retranscribe-worker sweep cadence in seconds (default 60). The worker re-publishes audit rows whose first EventBus publish failed. Override via LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS.")
 	f.eventBusMaxRetryAttempts = flag.Int("eventbus-max-retry-attempts", envInt("LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS", 5),
-		"§12.6 line 689 eventBus.maxRetryAttempts: the retry_count ceiling above which a failed-publish audit row stops being swept and needs a manual republish (default 5). Override via LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS.")
+		"§12.6 eventBus.maxRetryAttempts: the retry_count ceiling above which a failed-publish audit row stops being swept and needs a manual republish (default 5). Override via LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS.")
 	f.eventBusDuplicateInjectionFactor = flag.Int("eventbus-duplicate-injection-factor", envInt("LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR", 1),
-		"§12.6 line 699 eventBus.duplicateInjectionFactor: a test-only staging knob; the EventBus re-sends every successful publish this many times so the dedup integration test can assert no doubled side effects. 1 (the default) disables injection. Override via LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR.")
+		"§12.6 eventBus.duplicateInjectionFactor: a test-only staging knob; the EventBus re-sends every successful publish this many times so the dedup integration test can assert no doubled side effects. 1 (the default) disables injection. Override via LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR.")
 	f.eventBusDropAlertThreshold = flag.Int("eventbus-drop-alert-threshold", envInt("LENNY_EVENTBUS_DROP_ALERT_THRESHOLD", 10),
-		"§12.6 line 683 eventBus.dropAlertThreshold: the per-minute dropped-publish rate above which the §16.5 EventBusPublishDropped alert fires (default 10/min). Emitted at startup on the lenny_event_bus_drop_alert_threshold gauge the alert reads via scalar(...). Override via LENNY_EVENTBUS_DROP_ALERT_THRESHOLD.")
+		"§12.6 eventBus.dropAlertThreshold: the per-minute dropped-publish rate above which the §16.5 EventBusPublishDropped alert fires (default 10/min). Emitted at startup on the lenny_event_bus_drop_alert_threshold gauge the alert reads via scalar(...). Override via LENNY_EVENTBUS_DROP_ALERT_THRESHOLD.")
 	// §27.2 web-playground flags. These mirror the playground.* Helm
 	// values; the gateway reads them from its own configuration so the
 	// playground is gated without a separate deployment target.
@@ -1219,7 +1218,7 @@ func (f *gatewayFlags) registerOpsFlags() {
 	f.playgroundGatewayHost = flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
 		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
 	f.playgroundSessionLabels = flag.String("playground-session-labels", os.Getenv("LENNY_PLAYGROUND_SESSION_LABELS"),
-		"§27.2 line 41 playground.sessionLabels: comma-separated key=value pairs stamped on every playground session record and audit event. Empty applies the default {origin: \"playground\"}; the load-bearing origin entry is re-stamped at startup regardless of the supplied value. Override via LENNY_PLAYGROUND_SESSION_LABELS.")
+		"§27.2 playground.sessionLabels: comma-separated key=value pairs stamped on every playground session record and audit event. Empty applies the default {origin: \"playground\"}; the load-bearing origin entry is re-stamped at startup regardless of the supplied value. Override via LENNY_PLAYGROUND_SESSION_LABELS.")
 	f.maxSessionsPerReplica = flag.Int("max-sessions-per-replica", envInt("LENNY_MAX_SESSIONS_PER_REPLICA", 50),
 		"§4.1 gateway.maxSessionsPerReplica: per-replica capacity ceiling used as the denominator of the GatewaySessionBudgetNearExhaustion alert (§16.5) and the §17.8.2 SCL-036 burst-absorption minReplicas formula. Provisional Tier defaults: 50 (Tier 1), 200 (Tier 2), 400 (Tier 3). Emitted at startup on the lenny_gateway_max_sessions_per_replica gauge. Override via LENNY_MAX_SESSIONS_PER_REPLICA.")
 	// §4.1 / §16.5: scalar gauges read by the GatewayNoHealthyReplicas
@@ -1231,7 +1230,7 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§4.1 / §16.5 gateway HPA minReplicas floor (§17.8.2 SCL-036). Emitted at startup on the lenny_gateway_min_replicas gauge so the GatewayNoHealthyReplicas alert (§16.5) can evaluate via scalar(lenny_gateway_min_replicas). Override via LENNY_MIN_REPLICAS.")
 	f.streamCeiling = flag.Int("stream-ceiling", envInt("LENNY_STREAM_CEILING", 100),
 		"§4.1 / §16.5 per-replica streaming-connection ceiling. Emitted at startup on the lenny_gateway_stream_ceiling gauge so the GatewayActiveStreamsHigh alert (§16.5) can evaluate via scalar(lenny_gateway_stream_ceiling). Override via LENNY_STREAM_CEILING.")
-	// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — the §10.4 PDB
+	// spec: §10.4 / §16.5 PDBBlockedEvictions — the §10.4 PDB
 	// status poller addresses the gateway's PodDisruptionBudget object
 	// by namespace+name. The chart sets --gateway-namespace from the
 	// release namespace and --gateway-pdb-name to `lenny-gateway`.
@@ -1241,46 +1240,46 @@ func (f *gatewayFlags) registerOpsFlags() {
 	f.gatewayPDBName = flag.String("gateway-pdb-name", envOr("LENNY_GATEWAY_PDB_NAME", "lenny-gateway"),
 		"§10.4 name of the gateway PodDisruptionBudget object for the periodic poller. Override via LENNY_GATEWAY_PDB_NAME.")
 	f.gatewayServiceName = flag.String("gateway-service-name", envOr("LENNY_GATEWAY_SERVICE_NAME", "lenny-gateway"),
-		"§12.4 line 224 name of the gateway Service whose Endpoints object the fail-open cached_replica_count poller reads. Override via LENNY_GATEWAY_SERVICE_NAME.")
-	// spec: §17.6 lines 455-474 — the initial admin credential. The
+		"§12.4 name of the gateway Service whose Endpoints object the fail-open cached_replica_count poller reads. Override via LENNY_GATEWAY_SERVICE_NAME.")
+	// spec: §17.6 — the initial admin credential. The
 	// bootstrap flow provisions a platform-admin user (lenny-admin) and
 	// writes its generated token to a Secret in the gateway namespace.
 	// F-17.6.3.
 	f.adminTokenDisabled = flag.Bool("admin-token-disabled", envBool("LENNY_ADMIN_TOKEN_DISABLED", false),
 		"§17.6 disable initial-admin-credential provisioning (no lenny-admin user or lenny-admin-token Secret is created on bootstrap). Override via LENNY_ADMIN_TOKEN_DISABLED.")
 	f.adminTokenNamespace = flag.String("admin-token-namespace", envOr("LENNY_ADMIN_TOKEN_NAMESPACE", os.Getenv("POD_NAMESPACE")),
-		"§17.6 line 463 namespace for the lenny-admin-token Secret (defaults to the gateway's own namespace / POD_NAMESPACE). Override via LENNY_ADMIN_TOKEN_NAMESPACE.")
+		"§17.6 namespace for the lenny-admin-token Secret (defaults to the gateway's own namespace / POD_NAMESPACE). Override via LENNY_ADMIN_TOKEN_NAMESPACE.")
 	f.adminTokenSecretName = flag.String("admin-token-secret-name", envOr("LENNY_ADMIN_TOKEN_SECRET_NAME", "lenny-admin-token"),
-		"§17.6 line 463 name of the initial-admin-token Secret. Override via LENNY_ADMIN_TOKEN_SECRET_NAME.")
+		"§17.6 name of the initial-admin-token Secret. Override via LENNY_ADMIN_TOKEN_SECRET_NAME.")
 	f.adminTokenTenant = flag.String("admin-token-tenant", envOr("LENNY_ADMIN_TOKEN_TENANT", "default"),
 		"§17.6 tenant the initial lenny-admin user and token are scoped to. Override via LENNY_ADMIN_TOKEN_TENANT.")
 	f.adminTokenReclaimIntervalSeconds = flag.Int("admin-token-reclaim-interval-seconds", envInt("LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS", 300),
 		"§13.3 cadence in seconds of the leader-gated admin-token reclaimer sweep, which durably revokes a lenny-admin-token predecessor orphaned by a crash between the Secret patch and the in-request revoke (default 300 / 5 minutes). A non-positive value falls back to the default. This bounds the residual crash-window exposure of a superseded admin credential. Override via LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS.")
-	// spec: §10.4 line 389 — operator-tunable SSE replay-buffer depth.
+	// spec: §10.4 — operator-tunable SSE replay-buffer depth.
 	// Default 512 events matches the §10.4 reconnect-window assumption
 	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated
 	// range. F-10.4.5.
 	f.sessionEventReplayBufferDepth = flag.Int("session-event-replay-buffer-depth", envInt("LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH", 512),
-		"§10.4 line 389 per-session SSE replay buffer depth (events). Default 512 matches the §10.4 60s reconnect window at 10 events/s; accepted range 64..4096. Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.")
-	// spec: §9.4 line 202 — `memory.maxMemoriesPerUser` (default
+		"§10.4 per-session SSE replay buffer depth (events). Default 512 matches the §10.4 60s reconnect window at 10 events/s; accepted range 64..4096. Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.")
+	// spec: §9.4 — `memory.maxMemoriesPerUser` (default
 	// 10,000) bounds the per-user record count; a Write that exceeds
 	// it evicts the oldest by created_at. F-9.4.5.
 	f.memoryMaxPerUser = flag.Int("memory-max-per-user", envInt("LENNY_MEMORY_MAX_PER_USER", memorystore.DefaultMaxMemoriesPerUser),
-		"§9.4 line 202 per-user memory cap before oldest-first eviction. Override via LENNY_MEMORY_MAX_PER_USER.")
-	// spec: §9.4 line 196 / §12.8 line 746 — `memory.enabled=false`
+		"§9.4 per-user memory cap before oldest-first eviction. Override via LENNY_MEMORY_MAX_PER_USER.")
+	// spec: §9.4 / §12.8 — `memory.enabled=false`
 	// is the escape hatch that disables the MemoryStore entirely;
 	// the lenny/memory_write and lenny/memory_query MCP tools are
 	// not registered, the §12.8 erasure preflight is skipped, and
 	// no `agent_memory` rows are written. Default true. F-9.4.7.
 	f.memoryEnabled = flag.Bool("memory-enabled", envFlagDefault("LENNY_MEMORY_ENABLED", true),
-		"§9.4 / §12.8 line 746 MemoryStore feature flag. false disables the lenny/memory_* MCP tools and skips the preflight. Override via LENNY_MEMORY_ENABLED.")
-	// spec: §9.4 line 202 / §16.1 line 153 — periodic sampler for the
+		"§9.4 / §12.8 MemoryStore feature flag. false disables the lenny/memory_* MCP tools and skips the preflight. Override via LENNY_MEMORY_ENABLED.")
+	// spec: §9.4 / §16.1 — periodic sampler for the
 	// `lenny_memory_store_record_count` gauge. The store-specific
 	// implementation walks tenants and emits the per-tenant count.
 	// Default 60s aligns with the §16.5 alert windows; zero disables.
 	f.memoryRecordCountInterval = flag.Duration("memory-record-count-interval", envDuration("LENNY_MEMORY_RECORD_COUNT_INTERVAL", 60*time.Second),
-		"§9.4 line 202 / §16.1 line 153 periodic sampler interval for the MemoryStore record-count gauge. 0 disables. Override via LENNY_MEMORY_RECORD_COUNT_INTERVAL.")
-	// spec: §4.2 line 165 — LENNY_POOLER_MODE names the deployment
+		"§9.4 / §16.1 periodic sampler interval for the MemoryStore record-count gauge. 0 disables. Override via LENNY_MEMORY_RECORD_COUNT_INTERVAL.")
+	// spec: §4.2 — LENNY_POOLER_MODE names the deployment
 	// posture for the Postgres pooler. The gateway honours the value
 	// at the application layer (logging it at startup so operators can
 	// confirm the deployment posture); the load-bearing enforcement
@@ -1294,12 +1293,12 @@ func (f *gatewayFlags) registerOpsFlags() {
 	// flags. spec: F-4.3.11 / F-10.2.11 / F-17.5.2.
 	f.kmsOpts, f.kmsFinalize = providerflags.Bind(flag.CommandLine, os.Getenv,
 		providerflags.Options{Provider: providerflags.ProviderLocal})
-	// §12.8 lines 880-889 — the single-region legal-hold escrow bucket the
+	// §12.8 — the single-region legal-hold escrow bucket the
 	// Phase 3.5 force-delete override migrates held evidence into. When
 	// `--legal-hold-escrow-bucket` is unset the deployment configures no
 	// escrow, so a force-delete with acknowledgeHoldOverride fails closed
 	// with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE rather than destroying
-	// held evidence with nowhere to segregate it. spec: §12.8 line 883.
+	// held evidence with nowhere to segregate it. spec: §12.8.
 	f.legalHoldEscrowBucket = flag.String("legal-hold-escrow-bucket", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_BUCKET"),
 		"§12.8 single-region legal-hold escrow bucket name. Empty disables the force-delete override (it fails closed with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE).")
 	f.legalHoldEscrowEndpoint = flag.String("legal-hold-escrow-endpoint", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_ENDPOINT"),

@@ -2,7 +2,7 @@
 
 //go:build chaos
 
-// Tier-8 chaos test for the §11.2 line 46 direct-mode gateway-crash-recovery
+// Tier-8 chaos test for the §11.2 direct-mode gateway-crash-recovery
 // MAX rule. It is the failure/recovery path proposal 0024 S14 names: a
 // direct-mode session accumulates a known pod-reported cumulative token total
 // C in its runtime adapter meter, a gateway replica crashes and its Redis quota
@@ -121,7 +121,7 @@ var _ quotacheckpoint.PodUsageReader = (*meterPodUsageReader)(nil)
 // checkpoint rows the pre-crash replica persisted. The crash-recovery contract
 // under test is the Redis-counter reconstruction, so the durable checkpoint is
 // held in memory while the counter writes hit real Redis; this isolates the
-// §11.2 line 46 MAX rule from Postgres RLS plumbing (covered in the tier-2
+// §11.2 MAX rule from Postgres RLS plumbing (covered in the tier-2
 // store suites).
 type recoveryStore struct {
 	rows []quotacheckpoint.Row
@@ -155,13 +155,13 @@ var _ quotacheckpoint.Store = (*recoveryStore)(nil)
 // watermark advance that keeps the post-recovery delta at zero), 12 (Redis
 // counter reconstruction after a replica crash).
 //
-// diagnosis: a failure means the §11.2 line 46 direct-mode crash-recovery MAX
+// diagnosis: a failure means the §11.2 direct-mode crash-recovery MAX
 // rule did not hold end to end against real Redis. Either (a) the reconnected
 // replica silently UNDER-COUNTED — it reconstructed the direct-mode counter to
 // a stale checkpoint below the pod-reported cumulative total C because the
 // pod-reported source was dropped or the cumulative pull returned a delta
 // instead of the running total, un-recovering the exact under-count protection
-// §11.2 line 46 exists to provide; or (b) it DOUBLE-COUNTED — the first
+// §11.2 exists to provide; or (b) it DOUBLE-COUNTED — the first
 // post-recovery steady-state delta pull re-added the already-recovered tokens
 // for a session total of 2C, because the meter's cumulative read did not advance
 // its watermark (the S3 watermark-advance invariant regressed to a reset).
@@ -204,7 +204,7 @@ func TestDirectModeGatewayCrashRecoveryReconstructsMaxWithoutDoubleCount(t *test
 
 	// The durable Postgres checkpoint the pre-crash replica persisted: value D,
 	// below the true cumulative C. Restoring only from this stale checkpoint is
-	// the silent under-count §11.2 line 46 prevents.
+	// the silent under-count §11.2 prevents.
 	store := &recoveryStore{}
 	_ = store.Write(ctx, []quotacheckpoint.Row{
 		{TenantID: recoveryTenant, Scope: quotacheckpoint.ScopeUser, SubjectID: recoveryUser, Period: string(period), WindowLabel: label, TokenTotal: checkpointTokens},
@@ -226,7 +226,7 @@ func TestDirectModeGatewayCrashRecoveryReconstructsMaxWithoutDoubleCount(t *test
 		session: recoverySession, period: period,
 	}
 
-	// The reconnected replica runs the §11.2 line 46 reconcile against real
+	// The reconnected replica runs the §11.2 reconcile against real
 	// Redis, folding the pod-reported cumulative total into the MAX.
 	svc := &quotacheckpoint.Service{
 		Store:    store,

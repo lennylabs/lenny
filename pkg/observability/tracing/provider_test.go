@@ -12,7 +12,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// spec: §16.3 line 359 — with no OTLP endpoint, InitProvider installs the
+// spec: §16.3 — with no OTLP endpoint, InitProvider installs the
 // stdout exporter (the `make run` / dev posture). F-16.3.8.
 func TestNewExporterStdoutWhenNoEndpoint_spec_16_3(t *testing.T) {
 	exp, err := newExporter(context.Background(), ProviderConfig{ServiceName: "t"})
@@ -24,7 +24,7 @@ func TestNewExporterStdoutWhenNoEndpoint_spec_16_3(t *testing.T) {
 	}
 }
 
-// spec: §16.3 line 359 — dev mode forces the stdout exporter even when an
+// spec: §16.3 — dev mode forces the stdout exporter even when an
 // OTLP endpoint is configured, so a local developer sees spans on stdout
 // instead of failing to reach a Collector. F-16.3.8.
 func TestNewExporterDevModeForcesStdout_spec_16_3(t *testing.T) {
@@ -41,7 +41,7 @@ func TestNewExporterDevModeForcesStdout_spec_16_3(t *testing.T) {
 	}
 }
 
-// spec: §16.3 line 359 — a configured OTLP endpoint selects the OTLP/HTTP
+// spec: §16.3 — a configured OTLP endpoint selects the OTLP/HTTP
 // exporter. F-16.3.2. Construction does not dial, so no Collector is needed.
 func TestNewExporterOTLPWhenEndpointSet_spec_16_3(t *testing.T) {
 	exp, err := newExporter(context.Background(), ProviderConfig{
@@ -97,7 +97,7 @@ func TestInitProviderInstallsSDKProviderAndPropagator_spec_16_3(t *testing.T) {
 	}
 }
 
-// spec: §16.3 lines 347-348, 357 — the budget and coordinator-handoff span
+// spec: §16.3 — the budget and coordinator-handoff span
 // attribute keys are declared as constants so call sites cannot drift from
 // the spec's attribute names. F-16.3.5.
 func TestBudgetAndHandoffAttributeKeys_spec_16_3(t *testing.T) {

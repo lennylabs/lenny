@@ -13,7 +13,7 @@
 // authorization decision is reached the same way a Bearer-JWT caller
 // against the deployed lenny-ops service reaches it.
 //
-// spec: §25.4 line 1840 (Operations Inventory Authorization).
+// spec: §25.4.
 
 package tier9_security_test
 
@@ -120,7 +120,7 @@ func opsInventoryOperationIDs(t *testing.T, body []byte) []string {
 	return ids
 }
 
-// spec: §25.4 line 1840 — "tenant-admin sees only operations where (a)
+// spec: §25.4 — "tenant-admin sees only operations where (a)
 // started_by is themselves, OR (b) the operation carries a tenantId
 // field AND its value matches the caller's tenant. Platform-scoped
 // operations (no tenantId field ...) are visible only when started_by

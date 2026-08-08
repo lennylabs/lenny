@@ -469,7 +469,7 @@ func (h *cpDriverHarness) manifestForSession(t *testing.T, sessionID string) par
 		}
 	}
 	// A zero-chunk abort soft-deletes its row in the finalising transaction
-	// (§10.1 line 132), so it is neither active nor referenced by a session
+	// (§10.1), so it is neither active nor referenced by a session
 	// ref. Recover the tombstoned row so the test can assert its disposition.
 	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))
 	if derr == nil {

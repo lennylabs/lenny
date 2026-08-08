@@ -85,7 +85,7 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 		"runtimes": []map[string]any{{
 			"name":   "echo",
 			"image":  "lenny/echo@sha256:abc",
-			"labels": map[string]string{"tier": "test"}, // §5.1 line 51: labels required
+			"labels": map[string]string{"tier": "test"}, // §5.1: labels required
 			"capabilities": map[string]any{
 				"injection": map[string]any{"supported": true},
 			},

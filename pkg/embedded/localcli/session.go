@@ -33,7 +33,7 @@ Subcommands (§24.17):
   lenny session get <sessionId>                                      Fetch a session's state
   lenny session logs <sessionId> [--since <RFC3339>] [--limit <n>]   Fetch session logs
 
-Discovery (§24.17 line 222): --api-url / LENNY_API_URL select the gateway;
+Discovery (§24.17): --api-url / LENNY_API_URL select the gateway;
 --token / LENNY_API_TOKEN supply the bearer. Without them the command
 targets the running Embedded Mode stack.`
 
@@ -41,10 +41,9 @@ targets the running Embedded Mode stack.`
 // route through the Lenny Go client SDK (§15.6): the create/send/
 // interrupt/cancel verbs exercise the §15.2 MCP surface (the same code
 // path any MCP client uses), and list/get/logs use the REST surface the
-// spec maps each to. Gateway discovery follows the §24.17 line 222 rules
+// spec maps each to. Gateway discovery follows the §24.17 rules
 // (--api-url / LENNY_API_URL, then the Embedded Mode stack); the bearer
-// follows §24 line 8 (--token / LENNY_API_TOKEN, then the embedded OIDC
-// key).
+// follows §24.
 func cmdSession(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny session: a subcommand is required")
@@ -214,7 +213,7 @@ func sessionClient(f sessionFlags, verb string, stderr io.Writer) (*lenny.Client
 	return client, true, 0
 }
 
-// resolveGatewayURL applies the §24.17 line 222 discovery precedence:
+// resolveGatewayURL applies the §24.17 discovery precedence:
 // --api-url, then LENNY_API_URL, then the running Embedded Mode stack.
 func resolveGatewayURL(f sessionFlags) (string, error) {
 	if f.apiURL != "" {
@@ -226,7 +225,7 @@ func resolveGatewayURL(f sessionFlags) (string, error) {
 	return stack.RunningGateway("")
 }
 
-// resolveBearer applies the §24 line 8 token precedence: --token, then
+// resolveBearer applies the §24 token precedence: --token, then
 // LENNY_API_TOKEN, then a token minted from the embedded OIDC key. The
 // embedded path requires a running stack; the explicit flag/env paths do
 // not, so the CLI authenticates against a remote gateway without one.
@@ -257,14 +256,14 @@ func mintEmbeddedBearer() (string, error) {
 	return signer.Issue(devauth.DefaultTokenTTL)
 }
 
-// cmdSessionNew implements `lenny session new` per §24.17 line 213. With
+// cmdSessionNew implements `lenny session new` per §24.17. With
 // no `--workspace`/`--file` it routes through the §15.2 MCP
 // lenny/create_session tool. With `--workspace <dir>` or `--file <path>`
-// it runs the §26.2 lines 95-114 staging flow: create over REST, tar the
+// it runs the §26.2 staging flow: create over REST, tar the
 // workspace honoring `.lennyignore`/`.gitignore`, upload it, bind the
 // resulting `uploadArchive` plan at finalize, then start. A positional
 // argument is delivered as the session's opening prompt. When `--attach`
-// is set (the §24.17 line 213 default in an interactive TTY) it then opens
+// is set (the §24.17 default in an interactive TTY) it then opens
 // the §15.1 event stream and renders output, elicitation prompts, and
 // lifecycle transitions inline until the session terminates.
 func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -286,7 +285,7 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	var sessionID string
 	if f.workspace != "" || len(f.files) > 0 {
-		// spec: §26.2 lines 95-114 — stage the local workspace into the
+		// spec: §26.2 — stage the local workspace into the
 		// session before it starts.
 		id, werr := createSessionWithWorkspace(ctx, client, f, stderr)
 		if werr != nil {
@@ -307,7 +306,7 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 1
 	}
 
-	// spec: §24.17 line 213 / §26.2 line 126 — deliver the positional
+	// spec: §24.17 / §26.2 — deliver the positional
 	// prompt as the session's opening message so the agent starts working.
 	if prompt != "" {
 		if _, err := client.SendMessages(ctx, sessionID, lenny.SendMessagesRequest{
@@ -320,7 +319,7 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	fmt.Fprintln(stdout, sessionID)
 	if attachWanted(f, stdout) {
-		// spec: §24.17 line 213 — render the session inline until it
+		// spec: §24.17 — render the session inline until it
 		// terminates. The created id is already on stdout so a caller
 		// that captured it can still drive the session even if the
 		// attach stream is interrupted.
@@ -329,14 +328,14 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 	return 0
 }
 
-// createSessionWithWorkspace runs the §26.2 lines 95-114 workspace-staging
+// createSessionWithWorkspace runs the §26.2 workspace-staging
 // flow: it creates the session over REST (to obtain the §7.1 uploadToken),
 // tars the `--workspace` directory honoring `.lennyignore`/`.gitignore`
 // and uploads it as an `uploadArchive` source, uploads each `--file` as an
 // `uploadFile` source, binds the resulting §14 plan at finalize, and
 // starts the session. It returns the created session id.
 //
-// spec: §26.2 lines 95-114; §7.1 (decomposed create → upload → finalize →
+// spec: §26.2; §7.1 (decomposed create → upload → finalize →
 // start); §14 uploadArchive / uploadFile.
 func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f sessionFlags, stderr io.Writer) (string, error) {
 	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
@@ -404,7 +403,7 @@ func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f ses
 }
 
 // cmdSessionAttach implements `lenny session attach <sessionId>` per
-// §24.17 line 214. It opens the §15.1 event stream from the retained
+// §24.17. It opens the §15.1 event stream from the retained
 // backlog and renders the session inline until it terminates or the
 // caller interrupts. Reconnect-with-cursor is handled by the SDK's
 // StreamEvents (Last-Event-ID resume).
@@ -426,7 +425,7 @@ func cmdSessionAttach(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 // cmdSessionSend implements `lenny session send <id> <message>` over the
-// §15.2 MCP lenny/send_message tool (the §24.17 line 215 mapping).
+// §15.2 MCP lenny/send_message tool (the §24.17 mapping).
 func cmdSessionSend(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -453,7 +452,7 @@ func cmdSessionSend(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 // cmdSessionInterrupt implements `lenny session interrupt <id>` over the
-// §15.2 MCP interrupt tool (the §24.17 line 216 mapping).
+// §15.2 MCP interrupt tool (the §24.17 mapping).
 func cmdSessionInterrupt(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -478,7 +477,7 @@ func cmdSessionInterrupt(ctx context.Context, args []string, stdout, stderr io.W
 }
 
 // cmdSessionCancel implements `lenny session cancel <id>` over the §15.2
-// MCP lenny/cancel_session tool (the §24.17 line 217 mapping).
+// MCP lenny/cancel_session tool (the §24.17 mapping).
 func cmdSessionCancel(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -503,7 +502,7 @@ func cmdSessionCancel(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 // cmdSessionList implements `lenny session list` over REST GET
-// /v1/sessions (the §24.17 line 218 mapping; the one session command that
+// /v1/sessions (the §24.17 mapping; the one session command that
 // works over REST for non-interactive callers).
 func cmdSessionList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
@@ -531,7 +530,7 @@ func cmdSessionList(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 // cmdSessionGet implements `lenny session get <id>` over REST GET
-// /v1/sessions/{id} (the §24.17 line 219 mapping).
+// /v1/sessions/{id} (the §24.17 mapping).
 func cmdSessionGet(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -557,7 +556,7 @@ func cmdSessionGet(ctx context.Context, args []string, stdout, stderr io.Writer)
 }
 
 // cmdSessionLogs implements `lenny session logs <id>` over REST GET
-// /v1/sessions/{id}/logs (the §24.17 line 220 mapping), honoring the
+// /v1/sessions/{id}/logs (the §24.17 mapping), honoring the
 // --since and --limit filters.
 func cmdSessionLogs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)

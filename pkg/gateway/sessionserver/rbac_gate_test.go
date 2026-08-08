@@ -360,7 +360,7 @@ func TestSessionEndpointAdmitsRolelessPrincipal(t *testing.T) {
 // a dev-header path without AllowDevRoles — both fail the §10.2 RBAC
 // gate. The matrix is unconditional in multi-tenant deployments, so a
 // no-role principal cannot exercise any session permission.
-// spec: §10.2 lines 256–264.
+// spec: §10.2.
 func TestSessionEndpointMultiTenantRejectsRolelessPrincipal(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

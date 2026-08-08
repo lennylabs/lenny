@@ -194,10 +194,10 @@ func acquireLock(t *testing.T, baseURL, scope string) acquireResult {
 
 // spec: 25.4 (multi-replica memoryTier rejection under dual-store outage)
 // diagnosis: the §25.4 remediation-lock multi-replica safety default did
-// not hold against real stores. §25.4 line 1545: "Default behavior in
+// not hold against real stores. §25.4: "Default behavior in
 // multi-replica mode (ops.locks.memoryTier: single-replica-only) rejects
 // in-memory locks during dual-storage outages, returning 503
-// REMEDIATION_LOCK_NO_COORDINATION." §25.4 line 2214: Tier 3 "succeeds
+// REMEDIATION_LOCK_NO_COORDINATION." §25.4: Tier 3 "succeeds
 // only if lenny-ops is running with a single replica ... In multi-replica
 // deployments, Tier 3 returns 503 REMEDIATION_LOCK_NO_COORDINATION." The
 // test composes the real tiered lock service (real Postgres Tier 1 + real
@@ -296,7 +296,7 @@ func TestOpsLockMultiReplicaRejectsUncoordinatedAcquireUnderDualOutage(t *testin
 	t.Logf("multi-replica deployment rejected the uncoordinated acquire with 503 REMEDIATION_LOCK_NO_COORDINATION")
 
 	// Control: a single-replica deployment under the SAME dual outage still
-	// grants an in-memory Tier 3 lock (§25.4 line 2214: Tier 3 "succeeds only
+	// grants an in-memory Tier 3 lock (§25.4: Tier 3 "succeeds only
 	// if lenny-ops is running with a single replica"). This attributes the
 	// 503 above specifically to the multi-replica count rather than to a
 	// blanket dual-outage denial. A fresh service over the same down stores

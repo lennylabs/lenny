@@ -12,14 +12,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// FailureReport is the §7.3 line 401 "Gateway detects session failure"
+// FailureReport is the §7.3
 // payload. It is the single entry-point a pod-failure detector
 // (controller-side Sandbox CR watcher, gateway-side adapter-call error
 // path, manual operator drain) calls into the session server with;
-// ReportSessionFailure runs the §7.3 line 402 classifier and writes the
+// ReportSessionFailure runs the §7.3 classifier and writes the
 // matching state-machine edge.
 //
-// spec: §7.3 lines 399-411.
+// spec: §7.3.
 type FailureReport struct {
 	// TenantID scopes the session lookup.
 	TenantID string
@@ -68,28 +68,25 @@ type FailureDisposition struct {
 // store is not consulted on a malformed report — the caller is buggy.
 var ErrFailureReportInvalid = errors.New("sessionserver: failure report missing required field")
 
-// ReportSessionFailure runs the §7.3 line 402 failure classifier
+// ReportSessionFailure runs the §7.3 failure classifier
 // against the session's effective retry policy and drives the
-// state-machine edge mandated by §7.3 lines 403-411 + §6.2 line 174:
+// state-machine edge mandated by §7.3 + §6.2:
 //
 //   - Retryable AND RetryCount < effective MaxRetries → resume_pending.
-//     The §6.2 line 292 wall-clock cap is then enforced by the watchdog
+//     The §6.2 wall-clock cap is then enforced by the watchdog
 //     sweep; on retry success the §15.1 /resume handler advances to
 //     running. RetryCount is incremented in the same transaction and
 //     the §16.1 lenny_session_retry_total counter + §11.7 audit row
 //     fire from the existing recordSessionRetry helper.
 //
-//   - Retryable AND retries exhausted → awaiting_client_action (§7.3
-//     line 411 "If retries exhausted → state becomes
-//     awaiting_client_action"). The §7.3 line 427 webhook + §11.7
+//   - Retryable AND retries exhausted → awaiting_client_action (§7.3). The §7.3 webhook + §11.7
 //     audit row fire via emitAwaitingClientActionEntered.
 //
 //   - NonRetryable from running / suspended / resume_pending → failed
-//     (§6.2 line 174 "running ──→ failed (non-retryable error: OOM,
-//     workspace validation, policy rejection)"). The terminal pipeline
+//     (§6.2). The terminal pipeline
 //     runs (seal, executor release, cascade, billing, audit).
 //
-//   - NonRetryable from resuming → awaiting_client_action (§6.2 line 250
+//   - NonRetryable from resuming → awaiting_client_action (§6.2
 //     "Non-retryable errors during resuming ... transition directly to
 //     awaiting_client_action regardless of retry count").
 //
@@ -113,8 +110,7 @@ var ErrFailureReportInvalid = errors.New("sessionserver: failure report missing 
 // safe to call concurrently — the store update is compare-and-swap on
 // state so a duplicate report observes the second-write disposition.
 //
-// spec: §7.3 lines 399-411 (resume flow); §6.2 lines 174, 250 (failure
-// branching); §7.3 line 427 (awaiting-action webhook); §16.1 retry
+// spec: §7.3; §6.2; §7.3; §16.1 retry
 // metric; §11.7 / §16.7 retry audit. F-7.3.4 / F-7.3.5 / F-7.3.16.
 func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (FailureDisposition, error) {
 	if rep.TenantID == "" || rep.SessionID == "" || rep.Reason == "" {
@@ -162,7 +158,7 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 	}
 }
 
-// applyFailureFromActive drives the §7.3 line 403/411 edge from a
+// applyFailureFromActive drives the §7.3 edge from a
 // running / suspended / resume_pending source state. Retryable causes
 // with retry budget remaining write resume_pending and bump the
 // retry counter; exhausted budgets write awaiting_client_action;
@@ -184,21 +180,21 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 		return s.transitionToAwaitingClientAction(ctx, row, rep, classification, maxRetries, from)
 	default:
 		// NonRetryable / Unknown / Unclassified from active state →
-		// failed per §6.2 line 174. The §7.3 default-platform list calls
+		// failed per §6.2. The §7.3 default-platform list calls
 		// these out as the "policy rejection" / "workspace validation"
 		// terminal causes.
 		return s.transitionToFailed(ctx, row, rep, classification, maxRetries, from)
 	}
 }
 
-// applyFailureFromResuming drives the §6.2 line 250 mid-resume failure
+// applyFailureFromResuming drives the §6.2 mid-resume failure
 // branching: non-retryable / unknown causes write awaiting_client_action
 // (the resume cycle cannot continue); retryable causes with budget
 // re-enter resume_pending; retryable-exhausted writes
 // awaiting_client_action. The resuming watchdog has the same disposition
 // on timeout, but a direct failure report shortcuts the timeout wait.
 //
-// spec: §7.2 line 214 (a) — every exit from `resuming` that aborts the
+// spec: §7.2 — every exit from `resuming` that aborts the
 // in-flight resume bumps coordination_generation so any stale
 // coordinator's subsequent RPC fails the §4.2 CoordinatorFence check.
 // Both branches (re-enter resume_pending, write awaiting_client_action)
@@ -216,7 +212,7 @@ func (s *Server) applyFailureFromResuming(ctx context.Context, row sessionstore.
 		disp, err = s.transitionToResumePending(ctx, row, rep, classification, maxRetries)
 	default:
 		// Both retryable-exhausted and non-retryable from resuming go
-		// to awaiting_client_action per §6.2 line 250.
+		// to awaiting_client_action per §6.2.
 		disp, err = s.transitionToAwaitingClientAction(ctx, row, rep, classification, maxRetries, from)
 	}
 	if err == nil && disp.From == session.StateResuming && disp.To != session.StateResuming {
@@ -259,7 +255,7 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 	}
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	s.recordSessionRetry(ctx, updated)
-	// spec: §7.2 lines 305-311 — atomically drain the in-memory inbox to
+	// spec: §7.2 — atomically drain the in-memory inbox to
 	// the DLQ now that the session is recovering, so messages buffered
 	// for it survive a coordinator crash during the resume window. In
 	// durable mode the Redis inbox is left in place with an EXPIRE.
@@ -272,7 +268,7 @@ func (s *Server) transitionToResumePending(ctx context.Context, row sessionstore
 }
 
 // transitionToAwaitingClientAction writes from → awaiting_client_action
-// and fires the §7.3 line 427 webhook + §16.6 op event + §11.7 audit
+// and fires the §7.3 webhook + §16.6 op event + §11.7 audit
 // row via emitAwaitingClientActionEntered.
 func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
@@ -308,7 +304,7 @@ func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessi
 }
 
 // transitionToFailed writes from → failed for a non-retryable cause from
-// an active (non-resuming) state per §6.2 line 174. The terminal hook
+// an active (non-resuming) state per §6.2. The terminal hook
 // pipeline runs via recordSessionCompleted.
 func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
@@ -418,7 +414,7 @@ func failureClassForReason(reason string) session.FailureClass {
 // watchdog's effectiveMaxRetries semantics so the resuming-watchdog
 // branch and the failure-reporting branch use the same budget.
 //
-// spec: §7.3 line 382; F-6.2.14.
+// spec: §7.3; F-6.2.14.
 func effectiveMaxRetriesForRow(row sessionstore.Session, caps session.RetryPolicyCaps) int {
 	if row.RetryPolicy != nil && row.RetryPolicy.MaxRetries > 0 {
 		return row.RetryPolicy.MaxRetries

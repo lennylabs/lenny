@@ -68,7 +68,7 @@ only the env vars it can satisfy.
 {{- $hasSessRedis := and $concerns (hasKey $concerns "sessionDataUrl") (ne ($concerns.sessionDataUrl | toString) "") -}}
 {{- $hasDlgRedis := and $concerns (hasKey $concerns "delegationUrl") (ne ($concerns.delegationUrl | toString) "") -}}
 {{- $hasMinio := and $minio $minio.endpoint (ne $minio.endpoint "") -}}
-{{- /* §12.5 line 279 — TLS-mandate posture. tls.enabled selects HTTPS
+{{- /* §12.5 — TLS-mandate posture. tls.enabled selects HTTPS
    to the MinIO endpoint. The spec requires `true` on every
    non-embedded deployment; the chart enforces the posture below.
    Default tls.enabled is true; an explicit `false` is honored. */ -}}
@@ -88,25 +88,25 @@ only the env vars it can satisfy.
 {{- $backends := .Values.backends | default "" -}}
 {{- $complianceProfile := .Values.complianceProfile | default "" -}}
 {{- /* Regulated profiles MUST run with TLS. Embedded mode is the only
-   posture where TLS may be disabled (§12.5 line 279). */ -}}
+   posture where TLS may be disabled (§12.5). */ -}}
 {{- $regulated := or (eq $complianceProfile "soc2") (eq $complianceProfile "fedramp") (eq $complianceProfile "hipaa") -}}
 {{- if and (not $minioUseSSL) $regulated -}}
-{{- fail (printf "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is %q (regulated)." $complianceProfile) -}}
+{{- fail (printf "§12.5: minio.tls.enabled MUST be true when complianceProfile is %q (regulated)." $complianceProfile) -}}
 {{- end -}}
 {{- if and (not $minioUseSSL) (ne $backends "embedded") -}}
-{{- fail "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true." -}}
+{{- fail "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true." -}}
 {{- end -}}
-{{- /* §12.5 line 307 — the continuous T4 KMS probe cadence is bounded
+{{- /* §12.5 — the continuous T4 KMS probe cadence is bounded
    below by 60s to prevent excessive KMS API spend. Enforce the floor at
    Helm-validate so a misconfigured value fails the install closed. */ -}}
 {{- if and .Values.storage (hasKey .Values.storage "t4KmsProbeInterval") -}}
 {{- if lt (int .Values.storage.t4KmsProbeInterval) 60 -}}
-{{- fail (printf "§12.5 line 307: storage.t4KmsProbeInterval=%v is below the 60s minimum; raise it to at least 60." .Values.storage.t4KmsProbeInterval) -}}
+{{- fail (printf "§12.5: storage.t4KmsProbeInterval=%v is below the 60s minimum; raise it to at least 60." .Values.storage.t4KmsProbeInterval) -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.storage (hasKey .Values.storage "t4KmsProbeRateLimit") -}}
 {{- if le (.Values.storage.t4KmsProbeRateLimit | float64) 0.0 -}}
-{{- fail (printf "§12.5 line 307: storage.t4KmsProbeRateLimit=%v must be a positive probes/sec ceiling." .Values.storage.t4KmsProbeRateLimit) -}}
+{{- fail (printf "§12.5: storage.t4KmsProbeRateLimit=%v must be a positive probes/sec ceiling." .Values.storage.t4KmsProbeRateLimit) -}}
 {{- end -}}
 {{- end -}}
 apiVersion: v1
@@ -176,7 +176,7 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "patch"]
-  # §10.2 line 227 — "The gateway validates the signature on every
+  # §10.2 — "The gateway validates the signature on every
   # pod→gateway request." The GatewayControl listener submits a
   # TokenReview for each pod-presented projected SA token on the
   # §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs; the
@@ -210,14 +210,14 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
     lenny.dev/component: gateway
-  # spec: §10.3 lines 316, 334 (NET-064). The lenny-preflight Job
+  # spec: §10.3. The lenny-preflight Job
   # enumerates these annotations across every lenny-gateway Deployment
   # in the cluster to enforce SPIFFE-trust-domain / SA-token-audience
   # uniqueness. Without them, the collision check sees existing
   # deployments as having empty annotations and never flags a clash.
   # F-10.3.6.
   annotations:
-    # §10.3 line 316 (NET-064) — global.spiffeTrustDomain is a required
+    # §10.3 — global.spiffeTrustDomain is a required
     # chart value with no default; `required` fails `helm install/upgrade`
     # templating with the spec-mandated error when it is unset so two
     # deployments cannot silently share a trust domain. This annotation is
@@ -287,7 +287,7 @@ spec:
       volumes:
         {{- if .Values.mtls.enabled }}
         {{- if .Values.gateway.spiffe.enabled }}
-        # §4.3 line 205 per-replica mTLS identity. The
+        # §4.3 per-replica mTLS identity. The
         # cert-manager-csi-driver-spiffe (or equivalent SPIFFE CSI
         # driver) injects a per-pod certificate whose SAN carries a
         # distinct spiffe:// URI for each replica. The Token Service's
@@ -398,18 +398,18 @@ spec:
           args:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
-            # §8.6 line 712 — deployment-default auto-mode lease-extension
+            # §8.6 — deployment-default auto-mode lease-extension
             # rate limit. Rendered only when set; 0/unset keeps the spec
             # default of no limit. F-8.6.7.
             {{- if gt (int .Values.gateway.leaseExtension.autoModeMaxPerMinute) 0 }}
             - --lease-extension-auto-max-per-min={{ .Values.gateway.leaseExtension.autoModeMaxPerMinute }}
             {{- end }}
-            # §8.6 line 629 — in-path deadline the LLM Proxy waits for a
+            # §8.6 — in-path deadline the LLM Proxy waits for a
             # budget-exhaustion lease extension before falling through to a
             # recover-on-next-request BUDGET_EXHAUSTED. Operator-tunable
             # (§8.6 does not fix it); default 5s. Proposal 0023.
             - --proxy-extension-wait-timeout={{ .Values.gateway.leaseExtension.proxyExtensionWaitTimeout }}
-            {{- /* §17.6 line 365 / F-17.6.7: noEnvironmentPolicy is the
+            {{- /* §17.6 / F-17.6.7: noEnvironmentPolicy is the
                 spec-canonical global.* platform default. */}}
             - --no-environment-policy={{ .Values.global.noEnvironmentPolicy }}
             # §4.9 — the platform tenancy.mode the gateway enforces the two
@@ -417,19 +417,19 @@ spec:
             # value drives the lenny-webhook binary and the lenny-preflight
             # Job, so every enforcement point keys off one tenancy signal.
             - --tenancy-mode={{ .Values.tenancy.mode }}
-            # spec: §15.5 item 1; docs/api/index.md line 124 —
+            # spec: §15.5 item 1; docs/api/index.md —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.
             {{- with .Values.gateway.deprecatedAPIVersions }}
             - --deprecated-api-versions={{ join "," . }}
             {{- end }}
-            # §7.1 line 112 — the seal-and-export retry window. Rendered
+            # §7.1 — the seal-and-export retry window. Rendered
             # only when set; 0/unset keeps the gateway binary's compiled-in
             # 300s default.
             {{- if gt (int .Values.gateway.workspaceSealMaxDurationSeconds) 0 }}
             - --workspace-seal-max-duration-seconds={{ .Values.gateway.workspaceSealMaxDurationSeconds }}
             {{- end }}
-            # spec: §25.3 lines 596, 604, 625 — Capacity Recommendations
+            # spec: §25.3 — Capacity Recommendations
             # operator knobs. Rendered only when set so the gateway keeps
             # the spec defaults (all rules active, default windows, no
             # outage opt-out) when the operator leaves them empty.
@@ -441,18 +441,18 @@ spec:
             - --recommendations-window-overrides={{- $pairs := list }}{{- range $k, $v := . }}{{- $pairs = append $pairs (printf "%s=%s" $k $v) }}{{- end }}{{ join "," $pairs }}
             {{- end }}
             {{- if .Values.ops.recommendations.disableOnPrometheusOutage }}
-            # §25.4 line 944 — the canonical Prometheus-outage opt-out lives
+            # §25.4 — the canonical Prometheus-outage opt-out lives
             # under ops.recommendations; the gateway hosts the recommendation
             # service, so the flag renders here. F-25.4.25.
             - --recommendations-disable-on-prometheus-outage=true
             {{- end }}
-            # §10.2 line 212 — OIDC claim the gateway extracts the
+            # §10.2 — OIDC claim the gateway extracts the
             # tenant identifier from. Operator-configurable so an
             # upstream IdP that stamps tenant identity under a non-
             # canonical claim name still works without a code change.
             # F-10.2.9.
             - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
-            # §10.3 lines 365-366 — OIDC issuer + client registration the
+            # §10.3 — OIDC issuer + client registration the
             # gateway's token validation trusts. Required platform keys
             # outside global.devMode; the gateway fails closed at startup
             # (LENNY_CONFIG_MISSING) when unset on a non-dev install.
@@ -523,7 +523,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- if .Values.mtls.enabled }}
-            # §4.3 line 195 / §10.3 mTLS client material. The gateway
+            # §4.3 / §10.3 mTLS client material. The gateway
             # presents the lenny-gateway-tls cert to the Token Service
             # gRPC listener and verifies the Token Service server cert
             # against the shared cluster-internal CA. cert-manager
@@ -531,12 +531,12 @@ spec:
             - --token-service-tls-cert=/etc/lenny/mtls/tls.crt
             - --token-service-tls-key=/etc/lenny/mtls/tls.key
             - --token-service-ca=/etc/lenny/mtls/ca.crt
-            # §10.3 lines 344-350: seed the durable CA-rotation state
+            # §10.3: seed the durable CA-rotation state
             # machine with the current trust anchor so the operator-driven
             # /v1/admin/ca-rotation procedure (begin/promote/retire) is
             # served, audited, and resumable across restarts. F-10.3.21.
             - --mtls-current-ca-id={{ .Values.mtls.currentCAID }}
-            # §4.7 / §10.3 line 320 (NET-060) adapter mTLS client
+            # §4.7 / §10.3 adapter mTLS client
             # material. The same lenny-gateway-tls Secret carries the
             # client cert the gateway presents to each pod adapter's
             # gRPC listener; ca.crt verifies the adapter's per-pod
@@ -544,7 +544,7 @@ spec:
             - --adapter-tls-cert=/etc/lenny/mtls/tls.crt
             - --adapter-tls-key=/etc/lenny/mtls/tls.key
             - --adapter-ca=/etc/lenny/mtls/ca.crt
-            # §10.3 line 321 (NET-060): validate each inbound pod
+            # §10.3: validate each inbound pod
             # certificate's spiffe://<trust-domain>/agent/{pool}/{pod}
             # URI SAN against this trust domain at the GatewayControl
             # handshake. Paired with --adapter-ca above so SPIFFE
@@ -552,7 +552,7 @@ spec:
             # F-10.3.1.
             - --spiffe-trust-domain={{ .Values.global.spiffeTrustDomain }}
             {{- with .Values.gateway.interceptorNamespaces }}
-            # §10.3 line 328 (NET-063): the interceptor-namespace
+            # §10.3: the interceptor-namespace
             # allowlist the gateway enforces against each in-cluster
             # interceptor certificate's
             # spiffe://<trust-domain>/interceptor/{namespace}/{pod} URI
@@ -560,7 +560,7 @@ spec:
             - --interceptor-namespaces={{ join "," . }}
             {{- end }}
             {{- with .Values.global.saTokenAudience }}
-            # §10.3 line 334: validate the projected SA token's
+            # §10.3: validate the projected SA token's
             # deployment-specific audience claim on every pod→gateway
             # GatewayControl request, the SA-token layer of the §10.3
             # defense-in-depth chain. F-10.3.20.
@@ -582,7 +582,7 @@ spec:
             # as max(floor, tenantStored); a PUT below the floor is
             # rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR.
             - --elicitation-content-integrity-floor={{ .Values.security.elicitationContentIntegrity.floor }}
-            {{- /* §10.3 line 359 — gateway startup TLS probe. When
+            {{- /* §10.3 — gateway startup TLS probe. When
                   enabled the gateway verifies a TLS handshake to Redis
                   and PgBouncer succeeds and a plaintext connection is
                   refused before becoming ready. Off by default (dev /
@@ -611,16 +611,16 @@ spec:
             {{- with (first .Values.agentNamespaces) }}
             - --agent-namespace={{ .name }}
             {{- end }}
-            {{/* §4.4 line 256 / line 258 — periodic-checkpoint
+            {{/* §4.4 — periodic-checkpoint
                   cadence and per-session first-checkpoint jitter
                   fraction. The gateway honors these flags only when
                   --agent-namespace is set. */}}
             - --checkpoint-interval={{ .Values.gateway.periodicCheckpointIntervalSeconds }}s
             - --checkpoint-jitter-fraction={{ .Values.gateway.periodicCheckpointJitterFraction }}
-            # §10.4 line 389 — per-session SSE replay buffer depth.
+            # §10.4 — per-session SSE replay buffer depth.
             # F-10.4.5.
             - --session-event-replay-buffer-depth={{ .Values.gateway.sessionEventReplayBufferDepth }}
-            # §10.4 line 385 / §16.5 PDBBlockedEvictions — name the
+            # §10.4 / §16.5 PDBBlockedEvictions — name the
             # gateway PDB so the in-process poller can address it. The
             # namespace defaults to the gateway pod's own namespace via
             # POD_NAMESPACE (env var below). F-10.4.4.
@@ -635,8 +635,8 @@ spec:
             # invariant. Dev mode acknowledges the insecure dev Redis.
             - --redis-allow-insecure
             {{- else }}
-            # §17.4 line 268 — the production Deployment+Service+Ingress
-            # topology (§17 line 7) terminates TLS at the ingress in front
+            # §17.4 — the production Deployment+Service+Ingress
+            # topology (§17) terminates TLS at the ingress in front
             # of the gateway's plain-HTTP listener. Acknowledge it so the
             # dev-mode hard startup assertion passes outside dev mode.
             # F-17.4.5.
@@ -657,7 +657,7 @@ spec:
             {{- with .Values.playground.gatewayHost }}
             - --playground-gateway-host={{ . }}
             {{- end }}
-            {{/* §27.2 line 41 — sessionLabels is rendered as a
+            {{/* §27.2 — sessionLabels is rendered as a
                   comma-separated key=value list so the gateway flag
                   reader can split it without a sub-language. The
                   load-bearing origin entry is re-stamped at startup
@@ -682,7 +682,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # §10.4 line 385 — the §10.4 PDB poller reads POD_NAMESPACE
+            # §10.4 — the §10.4 PDB poller reads POD_NAMESPACE
             # as the default gateway-namespace so the chart does not
             # need to repeat the release namespace in the args list.
             # F-10.4.4.
@@ -700,7 +700,7 @@ spec:
             # lenny_gateway_max_sessions_per_replica gauge at startup.
             - name: LENNY_MAX_SESSIONS_PER_REPLICA
               value: {{ .Values.gateway.maxSessionsPerReplica | quote }}
-            # §17.6 lines 455-474 — the initial admin credential. On
+            # §17.6 — the initial admin credential. On
             # bootstrap the gateway provisions the lenny-admin user and
             # writes its token to the lenny-admin-token Secret in this
             # namespace (the admin-token Role grants the gateway SA
@@ -714,7 +714,7 @@ spec:
               value: {{ .Values.gateway.adminToken.secretName | quote }}
             - name: LENNY_ADMIN_TOKEN_TENANT
               value: {{ .Values.gateway.adminToken.tenant | quote }}
-            # §16.5 line 623 — slo.validated gates the gateway's
+            # §16.5 — slo.validated gates the gateway's
             # provisional-SLO startup warning. False (the default) emits
             # the §16.5 warning at startup so an operator running
             # unvalidated SLO defaults is informed before relying on them
@@ -722,7 +722,7 @@ spec:
             # automation sets it true on the validated release. F-16.5.5.
             - name: LENNY_SLO_VALIDATED
               value: {{ .Values.slo.validated | default false | quote }}
-            # §16.5 line 640 — slo.burnRate.{fast,slow}Multiplier are the
+            # §16.5 — slo.burnRate.{fast,slow}Multiplier are the
             # operator-configurable multi-window burn-rate thresholds. The
             # gateway mirrors them onto the
             # lenny_slo_burn_rate_{fast,slow}_multiplier gauges every
@@ -732,7 +732,7 @@ spec:
             - name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER
               value: {{ .Values.slo.burnRate.slowMultiplier | default 3 | quote }}
             {{- if .Values.gateway.opsEvents.nonceCheckpointPath }}
-            # §25.3 line 748 — the operational-event nonce checkpoint path.
+            # §25.3 — the operational-event nonce checkpoint path.
             # Set with a stable LENNY_REPLICA_ID and a writable volume
             # mounted at the path so the eventKey nonce survives a restart.
             - name: LENNY_OPS_NONCE_CHECKPOINT_PATH
@@ -750,19 +750,19 @@ spec:
             # capacity (each session may hold at most one active stream).
             - name: LENNY_STREAM_CEILING
               value: {{ .Values.gateway.streamCeiling | default .Values.gateway.maxSessionsPerReplica | quote }}
-            # §4.4 line 263 / §10.1 — preStop hook reads this to bound
+            # §4.4 / §10.1 — preStop hook reads this to bound
             # the staged drain budget. The chart-default 240s matches
             # the terminationGracePeriodSeconds set below so the
             # gateway honors the same deadline Kubernetes enforces.
             - name: LENNY_TERMINATION_GRACE_SECONDS
               value: {{ .Values.gateway.terminationGracePeriodSeconds | default 240 | quote }}
-            # §10.1 line 167 / §11.3 line 210 — checkpointBarrierAckTimeoutSeconds:
+            # §10.1 / §11.3 — checkpointBarrierAckTimeoutSeconds:
             # the single wall-clock deadline the preStop CheckpointBarrier
             # fan-out runs under across all coordinated pods. The 90s default
-            # matches the §11.3 line 210 value and fits inside the grace period.
+            # matches the §11.3 value and fits inside the grace period.
             - name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
               value: {{ .Values.gateway.checkpointBarrierAckTimeoutSeconds | default 90 | quote }}
-            # §10.1 line 131 / §17.8.1 — checkpointGrantWindow: the number of
+            # §10.1 / §17.8.1 — checkpointGrantWindow: the number of
             # chunk-upload capabilities the gateway keeps outstanding at once
             # while draining a session's workspace checkpoint. It bounds the
             # pipelining depth and the worst-case unreconciled overage against
@@ -803,7 +803,7 @@ spec:
             # higher-latency Postgres path indefinitely.
             - name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS
               value: {{ .Values.gateway.slotCounterPostgresFallbackMaxSeconds | default 60 | quote }}
-            # §11.3 line 215 — credentials.expiryWarningLeadSeconds. The
+            # §11.3 — credentials.expiryWarningLeadSeconds. The
             # renewal worker emits a structured warning log when a tracked
             # lease enters this window of its ExpiresAt. 0 disables.
             # F-11.3.20.
@@ -813,7 +813,7 @@ spec:
               value: {{ .expiryWarningLeadSeconds | quote }}
             {{- end }}
             {{- end }}
-            # §11.3 line 222 — rateLimitFailOpenMaxSeconds. The §11.1
+            # §11.3 — rateLimitFailOpenMaxSeconds. The §11.1
             # admission middleware fails closed once a single fail-open
             # episode has run past this cap. Negative disables the cap.
             # F-11.3.22.
@@ -821,7 +821,7 @@ spec:
             - name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS
               value: {{ .Values.gateway.rateLimitFailOpenMaxSeconds | quote }}
             {{- end }}
-            # §12.4 lines 222-224 — per-replica fail-open emergency controls.
+            # §12.4 — per-replica fail-open emergency controls.
             # quotaUserFailOpenFraction bounds a single user; the hard cap
             # bounds the per-replica tenant ceiling; the cumulative max is the
             # financial-security control that transitions the replica to
@@ -838,7 +838,7 @@ spec:
             - name: LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS
               value: {{ .Values.gateway.quotaFailOpenCumulativeMaxSeconds | quote }}
             {{- end }}
-            # §11.2 line 44 — quotaSyncIntervalSeconds: cadence at which
+            # §11.2 — quotaSyncIntervalSeconds: cadence at which
             # Redis quota and delegation-budget counters checkpoint to
             # Postgres (default 30, minimum 10). Lower it for high-throughput
             # tenants to bound crash-recovery overshoot. F-11.2.16.
@@ -846,7 +846,7 @@ spec:
             - name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS
               value: {{ .Values.gateway.quotaSyncIntervalSeconds | quote }}
             {{- end }}
-            # §12.4 line 268 — quotaEnforcementMode: `redis` (default) reads
+            # §12.4 — quotaEnforcementMode: `redis` (default) reads
             # the Redis token counters on the admission path;
             # `in_memory_reconciled` draws a per-replica budget slice from
             # Postgres and reconciles it every quotaSyncIntervalSeconds (or at
@@ -857,7 +857,7 @@ spec:
             - name: LENNY_QUOTA_ENFORCEMENT_MODE
               value: {{ .Values.gateway.quotaEnforcementMode | quote }}
             {{- end }}
-            # §11.2 line 48 — delegationNodeMemoryFootprintBytes: per-node
+            # §11.2 — delegationNodeMemoryFootprintBytes: per-node
             # footprint the delegation-budget reconstruction multiplies by
             # the live descendant count to derive liveMemoryBytes on Redis
             # recovery (default 12288 / 12 KB). F-11.2.5.
@@ -865,7 +865,7 @@ spec:
             - name: LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES
               value: {{ .Values.gateway.delegationNodeMemoryFootprintBytes | quote }}
             {{- end }}
-            # §10.7 line 938 — per-session and per-tenant eval-submission
+            # §10.7 — per-session and per-tenant eval-submission
             # rate limits on POST /v1/sessions/{id}/eval. Default 100 /
             # 10000 per minute; a negative value disables the scope.
             # F-10.7.4 / F-11.2.19.
@@ -879,14 +879,14 @@ spec:
               value: {{ .perTenantPerMinute | quote }}
             {{- end }}
             {{- end }}
-            # §10.7 line 1088 — lenny_eval_aggregates materialized-view
+            # §10.7 — lenny_eval_aggregates materialized-view
             # refresh interval. 0 keeps on-read aggregation; positive
             # enables the matview read + periodic REFRESH. F-10.7.12.
             {{- if hasKey .Values.gateway "evalAggregationRefreshSeconds" }}
             - name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS
               value: {{ .Values.gateway.evalAggregationRefreshSeconds | quote }}
             {{- end }}
-            # §11.1 lines 10-11 — concurrent-upload and per-session
+            # §11.1 — concurrent-upload and per-session
             # upload-size admission caps, distinct from the §4.1 upload
             # handler back-pressure semaphore. Zero leaves each scope
             # unlimited. F-11.1.5, F-11.1.6.
@@ -904,7 +904,7 @@ spec:
               value: {{ .maxBytesPerSession | quote }}
             {{- end }}
             {{- end }}
-            # §11.1 line 8 — global, per-user, and per-runtime
+            # §11.1 — global, per-user, and per-runtime
             # concurrent-session admission caps (live non-terminal session
             # counts). The per-tenant scope is enforced separately against
             # the tenant record. Zero leaves a scope unlimited. F-11.1.3.
@@ -923,7 +923,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- with .Values.delegation }}
-            # §8.10 lines 1022-1023 / 1042 — operator-tunable per-level and
+            # §8.10 — operator-tunable per-level and
             # whole-tree recovery deadlines feed recovery.Config. F-8.10.6.
             {{- if hasKey . "maxLevelRecoverySeconds" }}
             - name: LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS
@@ -933,19 +933,19 @@ spec:
             - name: LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS
               value: {{ .maxTreeRecoverySeconds | quote }}
             {{- end }}
-            # §8.10 line 1078 — cascadeTimeoutSeconds. F-8.10.9.
+            # §8.10 — cascadeTimeoutSeconds. F-8.10.9.
             {{- if hasKey . "cascadeTimeoutSeconds" }}
             - name: LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS
               value: {{ .cascadeTimeoutSeconds | quote }}
             {{- end }}
-            # §8.10 line 1103 — maxOrphanTasksPerTenant. Feeds both the
+            # §8.10 — maxOrphanTasksPerTenant. Feeds both the
             # sessionserver detach-cascade fallback and the §16.5
             # OrphanTasksPerTenantHigh alert denominator. F-8.10.10.
             {{- if hasKey . "maxOrphanTasksPerTenant" }}
             - name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT
               value: {{ .maxOrphanTasksPerTenant | quote }}
             {{- end }}
-            # §11.1 line 9 — per-user active-delegated-children admission
+            # §11.1 — per-user active-delegated-children admission
             # cap (live children across all of a user's sessions/trees).
             # Zero (or omitted) leaves the scope unlimited and renders no
             # env var. F-11.1.4.
@@ -955,22 +955,22 @@ spec:
             {{- end }}
             {{- end }}
             {{- with .Values.gc }}
-            # §12.5 line 317 — gc.cycleIntervalSeconds: the leader-elected
+            # §12.5 — gc.cycleIntervalSeconds: the leader-elected
             # GC sweep cadence (default 900, minimum 60). Drives both the
-            # §7.1 retention soft-delete sweep and the §12.5 line 341
+            # §7.1 retention soft-delete sweep and the §12.5
             # tombstone hard-prune sweep. F-12.5.19.
             {{- if hasKey . "cycleIntervalSeconds" }}
             - name: LENNY_GC_CYCLE_INTERVAL_SECONDS
               value: {{ .cycleIntervalSeconds | quote }}
             {{- end }}
-            # §12.5 line 341 — gc.tombstoneRetentionSeconds: how long a
+            # §12.5 — gc.tombstoneRetentionSeconds: how long a
             # soft-deleted artifact_store row is retained before the
             # hard-prune sweep removes it (default 86400 / 24h). F-12.5.19.
             {{- if hasKey . "tombstoneRetentionSeconds" }}
             - name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS
               value: {{ .tombstoneRetentionSeconds | quote }}
             {{- end }}
-            # §12.5 lines 317, 332 — gc.leaderElection: gate the
+            # §12.5 — gc.leaderElection: gate the
             # gateway-singleton sweeps under the lenny-gateway-leader Lease
             # so exactly one replica is the GC writer. Defaults to true in
             # the binary; set false to run un-elected (single-replica
@@ -981,7 +981,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- with .Values.storage }}
-            # §12.5 line 307 (STO-021) — the leader-elected continuous T4
+            # §12.5 — the leader-elected continuous T4
             # KMS availability probe cadence (default 300, minimum 60) and
             # the token-bucket rate ceiling (default 10 probes/sec).
             # F-12.5.4.
@@ -1029,7 +1029,7 @@ spec:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.observability.otlpEndpoint | quote }}
             {{- else if .Values.tracing.collector.enabled }}
-            # §16.3 line 359 — with no explicit OTLP endpoint and the
+            # §16.3 — with no explicit OTLP endpoint and the
             # bundled collector enabled, the gateway exports spans to the
             # in-cluster collector's OTLP/HTTP port. F-16.3.4.
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
@@ -1039,19 +1039,19 @@ spec:
             - name: LENNY_BILLING_SINK
               value: {{ . | quote }}
             {{- end }}
-            # §11.2.1 line 187 / §16.5: BillingCorrectionRateHigh
+            # §11.2.1 / §16.5: BillingCorrectionRateHigh
             # alert threshold as a fraction. Gateway emits it on
             # lenny_billing_correction_rate_threshold at startup.
             - name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD
               value: {{ .Values.billing.correctionRateThreshold | default 0.05 | quote }}
-            # §11.2.1 line 151 billing.retentionDays: how long billing
+            # §11.2.1 billing.retentionDays: how long billing
             # events are retained before the retention pruner deletes
             # them (default 395). The gateway rejects a value below a
             # tenant's regulated complianceProfile floor at startup.
             # F-11.2.15.
             - name: LENNY_BILLING_RETENTION_DAYS
               value: {{ .Values.billing.retentionDays | default 395 | quote }}
-            # §12.3 line 76 billing-event buffering tunables. The gateway
+            # §12.3 billing-event buffering tunables. The gateway
             # flushes the Tier 2 write-ahead buffer in flushBatchSize
             # batches every flushIntervalMs, and emits
             # billing_flush_pressure once the buffer exceeds
@@ -1068,7 +1068,7 @@ spec:
             - name: LENNY_BILLING_FLUSH_MAX_PENDING
               value: {{ .Values.billing.flushMaxPending | quote }}
             {{- end }}
-            # §17.8.2 line 1203 billingRedisStreamMaxLen — per-tenant
+            # §17.8.2 billingRedisStreamMaxLen — per-tenant
             # MAXLEN of the §11.2.1 billing failover Redis stream. 0 lets
             # the gateway resolve the per-tier default from
             # LENNY_CAPACITY_TIER (72,000 at Tier 3, else 50,000); a
@@ -1077,9 +1077,9 @@ spec:
             - name: LENNY_BILLING_REDIS_STREAM_MAX_LEN
               value: {{ .Values.billing.redisStreamMaxLen | quote }}
             {{- end }}
-            # §11.2.1 lines 132-138 billing-event delivery sinks: the
+            # §11.2.1 billing-event delivery sinks: the
             # webhook sink URL and (via secretKeyRef) its HMAC signing
-            # secret, plus the §11.2.1 line 175 dual-control approver
+            # secret, plus the §11.2.1 dual-control approver
             # notification webhook. Each is rendered only when configured.
             # F-11.2.14.
             {{- with .Values.billing.deliverySink }}
@@ -1109,25 +1109,25 @@ spec:
             {{- end }}
             {{- end }}
             # §17.8.2 capacityPlanning.tier — drives the
-            # billingRedisStreamMaxLen default and the §17.8.2 line 1164
+            # billingRedisStreamMaxLen default and the §17.8.2
             # RedisClusterRecommended startup warning. F-17.8.5, F-17.8.7.
             - name: LENNY_CAPACITY_TIER
               value: {{ .Values.capacityPlanning.tier | default "tier1" | quote }}
-            # §17.8.2 line 1164 capacityPlanning.singleTenantRedisTopology —
+            # §17.8.2 capacityPlanning.singleTenantRedisTopology —
             # set "sentinel" to suppress the Tier 3 RedisClusterRecommended
             # startup warning. F-17.8.7.
             {{- if .Values.capacityPlanning.singleTenantRedisTopology }}
             - name: LENNY_SINGLE_TENANT_REDIS_TOPOLOGY
               value: {{ .Values.capacityPlanning.singleTenantRedisTopology | quote }}
             {{- end }}
-            # §12.3 line 123 postgres.writeCeilingIops — emitted on
+            # §12.3 postgres.writeCeilingIops — emitted on
             # lenny_postgres_write_ceiling_iops for the §16.5
             # PostgresWriteSaturation alert. F-12.3.8.
             {{- if hasKey .Values.postgres "writeCeilingIops" }}
             - name: LENNY_POSTGRES_WRITE_CEILING_IOPS
               value: {{ .Values.postgres.writeCeilingIops | quote }}
             {{- end }}
-            # §12.6 lines 556-558 storeRouter.* — scatter-gather execution
+            # §12.6 storeRouter.* — scatter-gather execution
             # bounds. v1 is single-shard so these are inert; surfaced so a
             # multi-shard deployment tunes them and the §16
             # ScatterGatherSlowQuery alert has a series. F-12.6.18.
@@ -1145,7 +1145,7 @@ spec:
               value: {{ .Values.storeRouter.scatterGatherAggregateTimeoutSeconds | quote }}
             {{- end }}
             {{- end }}
-            # §12.6 lines 683-699 eventBus.* — the EventBus retranscribe
+            # §12.6 eventBus.* — the EventBus retranscribe
             # worker cadence/ceiling, the EventBusPublishDropped alert
             # threshold gauge, and the test-only duplicate-injection factor.
             # F-12.6.22 / F-12.6.23.
@@ -1167,7 +1167,7 @@ spec:
               value: {{ .Values.eventBus.duplicateInjectionFactor | quote }}
             {{- end }}
             {{- end }}
-            # §12.3 line 101 audit.startupChainCheckEntries — the
+            # §12.3 audit.startupChainCheckEntries — the
             # most-recent N audit rows per tenant re-verified by the
             # startup chain-continuity check. F-12.3.9.
             {{- if and .Values.audit (hasKey .Values.audit "startupChainCheckEntries") }}
@@ -1187,7 +1187,7 @@ spec:
             - name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT
               value: {{ .Values.audit.hardFailOnDrift | quote }}
             {{- end }}
-            # §12.3 lines 79-81 audit sync write pool + T2 batching
+            # §12.3 audit sync write pool + T2 batching
             # opt-in. syncWritePoolSize sizes the dedicated audit write
             # pool; batchingEnabled + flushIntervalMs + flushBatchSize
             # drive the opt-in T2 batch buffer. F-12.3.14 / F-12.3.15.
@@ -1207,7 +1207,7 @@ spec:
             - name: LENNY_AUDIT_FLUSH_BATCH_SIZE
               value: {{ .Values.audit.flushBatchSize | quote }}
             {{- end }}
-            # §25.9 line 3709 ops.audit.scatterGatherCacheEnabled — opt-out
+            # §25.9 ops.audit.scatterGatherCacheEnabled — opt-out
             # of the platform-admin cross-tenant audit scatter-gather
             # result cache (in-process, 5-minute TTL). F-25.9.11.
             {{- if and .Values.audit (hasKey .Values.audit "scatterGatherCacheEnabled") }}
@@ -1233,7 +1233,7 @@ spec:
             - name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT
               value: {{ .Values.audit.siem.failureThresholdPercent | quote }}
             {{- end }}
-            # §12.3 line 97 audit.siem.maxDeliveryLagSeconds — the
+            # §12.3 audit.siem.maxDeliveryLagSeconds — the
             # AuditSIEMDeliveryLag threshold the §12.3 outbox forwarder
             # emits on lenny_audit_siem_max_delivery_lag_seconds.
             # F-12.3.17.
@@ -1269,7 +1269,7 @@ spec:
             - name: LENNY_AUDIT_OCSF_BATCH_SIZE
               value: {{ .Values.audit.ocsf.batchSize | quote }}
             {{- end }}
-            # §12.8 line 839 audit.gdprRetentionDays: retention window for
+            # §12.8 audit.gdprRetentionDays: retention window for
             # gdpr.* audit rows. The gateway rejects a value below 2190
             # under a regulated complianceProfile at startup. F-12.8.16.
             {{- if and .Values.audit (hasKey .Values.audit "gdprRetentionDays") }}
@@ -1289,7 +1289,7 @@ spec:
             - name: LENNY_AUDIT_RETENTION_DAYS
               value: {{ .Values.audit.retentionDays | quote }}
             {{- end }}
-            # §25.13 line 4798 healthTracker.useCompiledRules: gates the
+            # §25.13 healthTracker.useCompiledRules: gates the
             # gateway's in-process §16.5 alert evaluator. Set false to
             # suppress the per-replica tracker and let /v1/admin/health
             # report only dependency probes and circuit breaker state —
@@ -1297,7 +1297,7 @@ spec:
             # customisations diverge from the compiled-in defaults.
             - name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES
               value: {{ dig "healthTracker" "useCompiledRules" true .Values.gateway | quote }}
-            # §25.13 line 4833 / F-25.13.3 — the gateway stamps
+            # §25.13 / F-25.13.3 — the gateway stamps
             # lenny_alerting_rules_bundled{format} so an operator can
             # verify the bundling configuration from /metrics. The
             # value mirrors monitoring.format (closed enum
@@ -1318,7 +1318,7 @@ spec:
               {{- end }}
             - name: LENNY_ALERTING_OVERRIDE_COUNT
               value: {{ len (.Values.monitoring.alertOverrides | default dict) | quote }}
-            # §25.13 line 4737 / F-25.13.2 — tier-dependent §16.5
+            # §25.13 / F-25.13.2 — tier-dependent §16.5
             # thresholds. The gateway emits each value on a startup-set
             # Prometheus gauge so the bundled alert expressions read
             # the configured number via scalar(...). Tier presets
@@ -1330,7 +1330,7 @@ spec:
               value: {{ dig "alertThresholds" "gatewayLatencyHigh" "p99Seconds" 3.0 .Values.monitoring | quote }}
             - name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD
               value: {{ dig "alertThresholds" "credentialPoolLow" "utilizationThreshold" 0.80 .Values.monitoring | quote }}
-            # §4.2 line 165 / §12.3 line 56 LENNY_POOLER_MODE: the
+            # §4.2 / §12.3 LENNY_POOLER_MODE: the
             # Postgres pooler posture, derived from
             # postgres.connectionPooler so the install-time preflight
             # check and the gateway startup refusal share one source of
@@ -1340,7 +1340,7 @@ spec:
             # enforces the connect_query __unset__ sentinel.
             - name: LENNY_POOLER_MODE
               value: {{ include "lenny.poolerMode" . | quote }}
-            {{- /* §17.9.1 line 1350 — the environment dimension drives
+            {{- /* §17.9.1 — the environment dimension drives
                    gateway log verbosity. Rendered only when environment is
                    set so a stock render keeps the gateway's own Info
                    default; local/dev select debug, staging/prod info. */}}
@@ -1356,7 +1356,7 @@ spec:
                   key: postgres-dsn
             {{- end }}
             {{- if $hasBillingAuditPg }}
-            # §12.3 line 103 LENNY_PG_BILLING_AUDIT_DSN: the separate
+            # §12.3 LENNY_PG_BILLING_AUDIT_DSN: the separate
             # billing/audit Postgres instance. When set, the §12.3 R-03
             # StoreRouter routes billing-event and audit-log writes here
             # while all other writes stay on the primary. F-12.3.5.
@@ -1394,7 +1394,7 @@ spec:
                   key: primary-ddl-postgres-dsn
             {{- end }}
             {{- if $hasReadPg }}
-            # §12.3 line 146 LENNY_PG_READ_DSN: the read-replica reader
+            # §12.3 LENNY_PG_READ_DSN: the read-replica reader
             # endpoint. When set, read-heavy queries (session status, task
             # tree, audit reads, usage reports) route here while all writes
             # stay on the primary. F-12.3.16 / F-17.9.13.
@@ -1411,7 +1411,7 @@ spec:
                   name: lenny-datastore-conn
                   key: redis-url
             {{- end }}
-            {{- /* §12.4 lines 260-264 — Redis Cluster seed nodes (plain
+            {{- /* §12.4 — Redis Cluster seed nodes (plain
                    env; addresses are not secret). */}}
             {{- if $hasRedisCluster }}
             - name: LENNY_REDIS_CLUSTER_ADDRS
@@ -1444,7 +1444,7 @@ spec:
                   key: redis-sentinel-password
             {{- end }}
             {{- end }}
-            {{- /* §12.4 lines 237-245 — per-concern Redis URLs (logical
+            {{- /* §12.4 — per-concern Redis URLs (logical
                    separation of concerns); each read from the datastore
                    Secret so credentials never land in the pod spec. */}}
             {{- if $hasCoordRedis }}
@@ -1511,7 +1511,7 @@ spec:
             {{- end }}
             {{- $replConfig := include "lenny.artifactReplicationConfigJSON" . }}
             {{- if $replConfig }}
-            # spec: §25.11 lines 4045-4071 — the ArtifactStore continuous
+            # spec: §25.11 — the ArtifactStore continuous
             # replication configuration (minio.artifactBackup / minio.regions)
             # rendered into the gateway flag. The gateway runs the runtime
             # residency preflight and the lag/failure gauge scrape from it.
@@ -1525,7 +1525,7 @@ spec:
             {{- end }}
             {{- end }}
             {{- if and .Values.ops.ingress.enabled .Values.ops.ingress.host }}
-            # spec: §25.16 line 5115 / §25.14 — advertise the externally
+            # spec: §25.16 / §25.14 — advertise the externally
             # reachable lenny-ops URL in GET /v1/admin/platform/version so
             # lenny-ctl auto-discovers the ops endpoint. The lenny-ops
             # Ingress (ops-ingress.yaml) terminates TLS, so the public URL
@@ -1538,7 +1538,7 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.gateway.internalPort }}
-            # spec: §16.9 line 723 — named metrics containerPort so a
+            # spec: §16.9 — named metrics containerPort so a
             # PodMonitor `port: metrics` discovery works uniformly across
             # control-plane components. /metrics is served on the same
             # HTTP listener as the REST API (internalPort); the named
@@ -1586,7 +1586,7 @@ spec:
           # NotReady — removing it from the Service endpoints before the
           # eviction-checkpoint drain begins — without also tripping the
           # liveness probe (/healthz) and being killed mid-drain. /readyz
-          # also reports NotReady on NTP drift and on §10.4 line 386 hard
+          # also reports NotReady on NTP drift and on §10.4 hard
           # backend (Postgres session-truth) unreachability, so a replica
           # whose store connection is broken leaves traffic. The handler
           # runs a cached (5s) backend probe with a 2s budget, so
@@ -1598,7 +1598,7 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
-          # §4.4 line 234, 263 / §10.1 preStop staged drain. Kubernetes
+          # §4.4 / §10.1 preStop staged drain. Kubernetes
           # invokes the hook before SIGTERM; the gateway selects the
           # tiered checkpoint cap per session, triggers a synchronous
           # eviction checkpoint per session, and emits the
@@ -1675,7 +1675,7 @@ metadata:
     lenny.dev/component: gateway
 spec:
   clusterIP: None
-  # §25.4 line 1064 — only ready replicas are returned via DNS so the
+  # §25.4 — only ready replicas are returned via DNS so the
   # lenny-ops per-replica fan-out skips replicas that cannot serve.
   publishNotReadyAddresses: false
   selector:
@@ -1687,7 +1687,7 @@ spec:
       targetPort: http
 {{- if .Values.gateway.podDisruptionBudget.enabled }}
 ---
-# PodDisruptionBudget for the lenny-gateway Deployment (§4.1 line 61,
+# PodDisruptionBudget for the lenny-gateway Deployment (§4.1,
 # §17.1). The gateway's §10.1 preStop hook fans out CheckpointBarrier to
 # up to 400 pods per replica; a flat maxUnavailable: 1 caps voluntary
 # disruptions (kubectl drain, cluster-autoscaler node consolidation,
@@ -1715,7 +1715,7 @@ spec:
 {{- end }}
 {{- if .Values.gateway.adminToken.enabled }}
 ---
-# §17.6 line 474 — the gateway provisions the initial admin credential by
+# §17.6 — the gateway provisions the initial admin credential by
 # writing the lenny-admin-token Secret in the release namespace. This
 # namespaced Role grants the gateway SA the minimal Secret access the spec
 # mandates (create/get/patch) and nothing broader: `create` cannot be
@@ -1756,12 +1756,12 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
-# spec: §12.5 lines 317, 332 — the gateway-singleton background sweeps
+# spec: §12.5 — the gateway-singleton background sweeps
 # (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
 # retranscribe worker, legal-hold reconciler, T4 KMS probe) run under a
 # single leader-elected `lenny-gateway-leader` Lease scoped to the gateway
 # Deployment's namespace, so exactly one gateway replica is the GC writer
-# at a time (§12.5 line 332 single-writer model, with the §4.6.1 25s
+# at a time (§12.5 single-writer model, with the §4.6.1 25s
 # crash-failover bound). This namespaced Role grants the gateway
 # ServiceAccount the coordination.k8s.io Lease verbs client-go's leader
 # election needs, plus the Event verbs it emits on leadership transitions.
@@ -1799,7 +1799,7 @@ subjects:
     name: lenny-gateway
     namespace: {{ .Release.Namespace }}
 ---
-# §17.2 line 86: the gateway reads the
+# §17.2: the gateway reads the
 # security.elicitationContentIntegrity.floor key from the
 # lenny-deployment-phase-stamp ConfigMap at startup and on change events
 # so a `helm upgrade` floor change takes effect without a restart. The

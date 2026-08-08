@@ -7,11 +7,11 @@
 //   - The lenny-sandboxtemplate-deletion-guard ValidatingAdmissionWebhook
 //     queries it before admitting a SandboxTemplate DELETE, so the old
 //     template cannot be deleted while a RuntimeUpgrade record that
-//     references its pool is still active (§10.5 line 508, the "key
+//     references its pool is still active (§10.5, the "key
 //     safety invariant").
 //   - A Phase 3 (contract) schema migration consults the same record's
 //     `schemaGated` flag and refuses to run while the upgrade is not
-//     Complete for the referenced pool (§10.5 line 502).
+//     Complete for the referenced pool (§10.5).
 //
 // The endpoint reads the durable runtimeupgradestore record for one
 // pool. An upgrade is active until it reaches the terminal Complete
@@ -44,7 +44,7 @@ type Handler struct {
 // activeResponse is the §10.5 HTTP 200 body. Active is true while a
 // RuntimeUpgrade record exists for the pool and has not reached the
 // terminal Complete phase. SchemaGated is true when, in addition, the
-// upgrade carries a schemaVersion (§10.5 line 502): a Phase 3 migration
+// upgrade carries a schemaVersion (§10.5): a Phase 3 migration
 // for the pool must wait until the upgrade completes.
 type activeResponse struct {
 	Pool        string `json:"pool"`
@@ -59,7 +59,7 @@ type activeResponse struct {
 // rather than admitting a delete it could not verify against the safety
 // invariant.
 //
-// spec: §10.5 line 508 (deletion guard); §10.5 line 502 (Phase 3 gate).
+// spec: §10.5; §10.5.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "runtime-upgrade active endpoint accepts GET", http.StatusMethodNotAllowed)

@@ -66,7 +66,7 @@ func (w *gatewayWiring) buildLLMProxy(
 		azureEndpoint:    *azureEndpoint,
 		azureAPIVersion:  *azureAPIVersion,
 	})
-	// §4.9 lines 1542-1556: the semantic cache is opt-in per pool. When
+	// §4.9: the semantic cache is opt-in per pool. When
 	// --llm-semantic-cache is set the gateway provisions the in-process
 	// backend and the proxy consults it for any pool whose cachePolicy is
 	// enabled; left off, the proxy path is uncached regardless of pool
@@ -79,23 +79,23 @@ func (w *gatewayWiring) buildLLMProxy(
 		// exact cache this proxy path populates. F-12.2.16.
 		llmCache = proxycache.New(w.credentialPools, erasureSemanticCache, sessionUserLookup{w.sessions})
 	}
-	// spec: §4.9 line 1468 — wire the §15.1 / §11.2 usage recorder so
+	// spec: §4.9 — wire the §15.1 / §11.2 usage recorder so
 	// proxy-extracted (authoritative) counts are persisted as the
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
 	llmProxyUsage := newProxyUsageRecorder(usage, w.sessions, w.sessionUsage, quotaCounter, tenantLimits, sessionBudgetEnforcer)
-	// spec: §8.6 line 629 / proposal 0023 S3/S4 — record the recorder so
+	// spec: §8.6 / proposal 0023 S3/S4 — record the recorder so
 	// buildControlServer can wire it as the leasecontrol SessionReclaimer.
 	// The recorder, not the enforcer directly, is the reclaimer: it
 	// accumulates each granted token delta as it raises the enforcer budget,
 	// so RecordUsage adds that delta to the base MaxTokenBudget and the raise
 	// survives the next Enforcer.Record.
 	w.proxyUsageRec = llmProxyUsage
-	// spec: §8.6 line 629 — apply the operator-tunable in-path extension
+	// spec: §8.6 — apply the operator-tunable in-path extension
 	// deadline (--proxy-extension-wait-timeout). §8.6 does not fix this
 	// value; a zeroed flag leaves the recorder's 5s default in place. 0023.
 	llmProxyUsage.setProxyExtensionWaitTimeout(*f.proxyExtensionWaitTimeout)
-	// spec: §12.4 line 268 — in the in_memory_reconciled mode the
+	// spec: §12.4 — in the in_memory_reconciled mode the
 	// authoritative per-tenant token accounting feeds the per-replica
 	// budget slice rather than the Redis counter; route the recorder's
 	// quota write to the tracker.
@@ -104,7 +104,7 @@ func (w *gatewayWiring) buildLLMProxy(
 	// in-memory fail-open accumulator so the Redis-recovery reconcile can
 	// restore usage a Redis write dropped during an outage. F-12.4.20.
 	llmProxyUsage.setFailOpenAccumulator(w.quotaFailOpenAccum)
-	// spec: §6.2 line 277 — each proxied LLM response is direct evidence of
+	// spec: §6.2 — each proxied LLM response is direct evidence of
 	// active agent work; reset the session's idle clock so a long-running
 	// streaming generation is not reaped by the §11.3 idle watchdog. F-11.3.7.
 	llmProxyUsage.setActivityStamper(activityStamper)
@@ -125,7 +125,7 @@ func (w *gatewayWiring) buildLLMProxy(
 		panic(fmt.Sprintf("wire token-usage anomaly detector: %v", err))
 	}
 	llmProxyUsage.setAnomalyObserver(tokenAnomaly)
-	// spec: §4.9 lines 1383-1411 — the credentialPolicy Fallback Flow.
+	// spec: §4.9 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
 	// next pool and pushes it via the §4.7 RotateCredentials RPC, and the

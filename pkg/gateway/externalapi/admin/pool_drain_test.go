@@ -23,7 +23,7 @@ import (
 // session-age arithmetic is deterministic.
 var drainClock = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-// fakeDrainMetrics records the last §15.1 line 797
+// fakeDrainMetrics records the last §15.1
 // lenny_pool_draining_sessions_total gauge value per pool.
 type fakeDrainMetrics struct {
 	mu   sync.Mutex
@@ -85,7 +85,7 @@ func seedDrainSession(t *testing.T, s *memstore.Store, id, pool string, state se
 	}
 }
 
-// TestDrainPoolTransitionsAndReports verifies the §15.1 line 797 drain
+// TestDrainPoolTransitionsAndReports verifies the §15.1 drain
 // endpoint transitions the pool to `draining`, returns the documented
 // body, sets the gauge, and emits an audit event.
 func TestDrainPoolTransitionsAndReports_spec_15_1_797(t *testing.T) {
@@ -132,7 +132,7 @@ func TestDrainPoolTransitionsAndReports_spec_15_1_797(t *testing.T) {
 
 // TestDrainPoolEstimateCappedAtMaxAge verifies the Retry-After estimate is
 // capped at maxSessionAgeSeconds when the longest session age exceeds it.
-// spec: §15.1 line 797.
+// spec: §15.1.
 func TestDrainPoolEstimateCappedAtMaxAge_spec_15_1_797(t *testing.T) {
 	router, pools, sessions, _, _ := newDrainAdmin(t)
 	seedPool(t, pools, "p", 30)
@@ -147,7 +147,7 @@ func TestDrainPoolEstimateCappedAtMaxAge_spec_15_1_797(t *testing.T) {
 }
 
 // TestDrainPoolCountsOnlyLivePoolSessions verifies activeSessions excludes
-// terminal sessions and sessions bound to other pools. spec: §15.1 line 797.
+// terminal sessions and sessions bound to other pools. spec: §15.1.
 func TestDrainPoolCountsOnlyLivePoolSessions_spec_15_1_797(t *testing.T) {
 	router, pools, sessions, _, _ := newDrainAdmin(t)
 	seedPool(t, pools, "p", 3600)
@@ -165,7 +165,7 @@ func TestDrainPoolCountsOnlyLivePoolSessions_spec_15_1_797(t *testing.T) {
 }
 
 // TestDrainPoolNotFound verifies a drain on a missing pool returns 404.
-// spec: §15.1 line 797.
+// spec: §15.1.
 func TestDrainPoolNotFound_spec_15_1_797(t *testing.T) {
 	router, _, _, _, _ := newDrainAdmin(t)
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools/ghost/drain", nil)
@@ -175,7 +175,7 @@ func TestDrainPoolNotFound_spec_15_1_797(t *testing.T) {
 }
 
 // TestDrainPoolDeletedReads404 verifies a drain on a soft-deleted pool
-// reads as not found. spec: §15.1 line 797.
+// reads as not found. spec: §15.1.
 func TestDrainPoolDeletedReads404_spec_15_1_797(t *testing.T) {
 	router, pools, _, _, _ := newDrainAdmin(t)
 	seedPool(t, pools, "p", 3600)
@@ -189,7 +189,7 @@ func TestDrainPoolDeletedReads404_spec_15_1_797(t *testing.T) {
 }
 
 // TestDrainPoolIdempotent verifies a second drain does not churn the
-// pool_config_generation (the drain clock is not reset). spec: §15.1 line 797.
+// pool_config_generation (the drain clock is not reset). spec: §15.1.
 func TestDrainPoolIdempotent_spec_15_1_797(t *testing.T) {
 	router, pools, sessions, _, _ := newDrainAdmin(t)
 	seedPool(t, pools, "p", 3600)
@@ -211,7 +211,7 @@ func TestDrainPoolIdempotent_spec_15_1_797(t *testing.T) {
 	}
 }
 
-// TestGetPoolSurfacesPhase verifies the §15.1 line 797 GET surfaces
+// TestGetPoolSurfacesPhase verifies the §15.1 GET surfaces
 // `phase` and, while draining, `activeSessions`. An active pool reports
 // phase=active and omits activeSessions.
 func TestGetPoolSurfacesPhase_spec_15_1_797(t *testing.T) {

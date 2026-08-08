@@ -63,8 +63,8 @@ func TestManifestLLMFromEmptyPayload_spec_4_7(t *testing.T) {
 }
 
 func TestAPIKeyEnvForDialect_spec_4_7(t *testing.T) {
-	// spec: §4.9 lines 1473-1474 — anthropic + openai are the launch
-	// dialects; §26.5 / §26.8 / §26.9 add google; §26.6 line 297 adds
+	// spec: §4.9 — anthropic + openai are the launch
+	// dialects; §26.5 / §26.8 / §26.9 add google; §26.6 adds
 	// cursor. An unrecognized dialect yields the empty string.
 	cases := map[string]string{
 		"anthropic": "ANTHROPIC_API_KEY",

@@ -4,7 +4,7 @@ package saltlockpg
 
 import "testing"
 
-// spec: §12.8 line 856 — the advisory-lock key is stable per tenant (so
+// spec: §12.8 — the advisory-lock key is stable per tenant (so
 // every replica computes the same key and they contend on the same lock)
 // and distinct across tenants (so two tenants' rotations do not serialize
 // against each other). F-12.8.5.

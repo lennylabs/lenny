@@ -121,8 +121,7 @@ func TestAdminAuditQueryOverPostgres(t *testing.T) {
 	appendAuditRow(t, ctx, store, "globex", "credential.leased", "carol@globex.com", "credential/g1", adminQueryClock.Add(-1*time.Hour))
 
 	// A `since` that admits every acme row (all rows fall within the last
-	// two days of the clock) while keeping the span under the §25.9 line
-	// 3707 90-day cap so an unfiltered query is not rejected as too broad.
+	// two days of the clock) while keeping the span under the §25.9 90-day cap so an unfiltered query is not rejected as too broad.
 	sinceAll := "&since=2026-05-01T00:00:00Z"
 
 	t.Run("default window excludes rows older than 24h and tallies verified", func(t *testing.T) {
@@ -258,9 +257,9 @@ func TestAdminAuditQueryOverPostgres(t *testing.T) {
 	})
 }
 
-// spec: §25.9 line 3659 — the list endpoint accepts
+// spec: §25.9 — the list endpoint accepts
 // "?eventbus_publish_state= (one of pending | retry_pending | published
-// | failed ...)" and "Combining filters is AND." §25.9 line 3663 —
+// | failed ...)" and "Combining filters is AND." §25.9 —
 // "Operators reconciling after an EventBus outage typically query
 // ?eventbus_publish_state=failed&since=<outage_start>." The publish
 // state lives on the §12.3.7 audit_log.eventbus_publish_state column,
@@ -328,7 +327,7 @@ func TestAdminAuditQueryEventbusPublishStateFilterOverPostgres(t *testing.T) {
 		t.Fatalf("test setup: expected 2 failed rows, got %d", len(wantFailed))
 	}
 
-	// spec: §25.9 line 3663 — the reconciliation query form. `since` opens
+	// spec: §25.9 — the reconciliation query form. `since` opens
 	// the window wide enough to admit every seeded row so the only
 	// exclusion under test is the eventbus_publish_state=failed predicate.
 	env := getAuditEnvelope(t, router,
@@ -375,7 +374,7 @@ func TestAdminAuditQueryEventbusPublishStateFilterOverPostgres(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3661 — "GET /v1/admin/audit-events/summary Aggregate
+// spec: §25.9 — "GET /v1/admin/audit-events/summary Aggregate
 // counts by type/actor/resource over a time window. Params: ?since=,
 // ?until=, ?groupBy=eventType|actorId|resourceType".
 //

@@ -25,7 +25,7 @@ func seedCred(t *testing.T, store *connectorcredstore.Memory, tenant, connector,
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser removes every credential keyed to
+// spec: §12.1 — DeleteByUser removes every credential keyed to
 // (tenant, user) across connectors and environments; the TokenStore
 // role is the §12.9 T4 highest-risk class the §12.8 user-erasure path
 // must purge.
@@ -53,7 +53,7 @@ func TestMemoryDeleteByUser_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is idempotent: a second call finds
+// spec: §12.1 — DeleteByUser is idempotent: a second call finds
 // nothing and returns (0, nil).
 func TestMemoryDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	store := connectorcredstore.NewMemory(fixedClock(time.Unix(0, 0).UTC()))
@@ -70,7 +70,7 @@ func TestMemoryDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — empty scope ids are rejected so a malformed
+// spec: §12.1 — empty scope ids are rejected so a malformed
 // erasure cannot silently widen to the whole store.
 func TestMemoryDeleteByUserEmptyScopeRejected_spec_12_1(t *testing.T) {
 	store := connectorcredstore.NewMemory(fixedClock(time.Unix(0, 0).UTC()))
@@ -82,7 +82,7 @@ func TestMemoryDeleteByUserEmptyScopeRejected_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5, §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1, §12.8 Phase 4 — DeleteByTenant removes every
 // credential the tenant owns and leaves other tenants untouched.
 func TestMemoryDeleteByTenant_spec_12_1(t *testing.T) {
 	store := connectorcredstore.NewMemory(fixedClock(time.Unix(0, 0).UTC()))
@@ -102,7 +102,7 @@ func TestMemoryDeleteByTenant_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByTenant rejects the empty tenant id; an
+// spec: §12.1 — DeleteByTenant rejects the empty tenant id; an
 // unscoped tenant deletion must never run.
 func TestMemoryDeleteByTenantEmptyRejected_spec_12_1(t *testing.T) {
 	store := connectorcredstore.NewMemory(fixedClock(time.Unix(0, 0).UTC()))

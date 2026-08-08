@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// TestSDKWarmOverrideIsValid covers the §15.1 line 801 closed override
+// TestSDKWarmOverrideIsValid covers the §15.1 closed override
 // vocabulary, including the stored-default unset value.
 func TestSDKWarmOverrideIsValid_spec_15_1(t *testing.T) {
 	valid := []poolstore.SDKWarmCircuitBreakerOverride{
@@ -32,7 +32,7 @@ func TestSDKWarmOverrideIsValid_spec_15_1(t *testing.T) {
 
 // TestValidateSDKWarmConfigRejectsBadOverride asserts the store rejects a
 // pool whose §6.1 override is outside the closed vocabulary, on both
-// Create and Update. spec: §6.1 line 63, §15.1 line 801.
+// Create and Update. spec: §6.1, §15.1.
 func TestValidateSDKWarmConfigRejectsBadOverride_spec_6_1(t *testing.T) {
 	s := poolstore.NewMemory()
 	bad := poolstore.Pool{
@@ -104,7 +104,7 @@ func TestMemoryRoundTripsSDKWarmConfig_spec_6_1(t *testing.T) {
 }
 
 // TestValidateSDKWarmConfigRejectsBadDemotionRateThreshold asserts the
-// store rejects a §6.1 line 48 demotionRateThreshold outside (0, 1] while
+// store rejects a §6.1 demotionRateThreshold outside (0, 1] while
 // accepting a valid fraction and a nil (inherit-default) value.
 func TestValidateSDKWarmConfigRejectsBadDemotionRateThreshold_spec_6_1_48(t *testing.T) {
 	mk := func(threshold *float64) poolstore.Pool {

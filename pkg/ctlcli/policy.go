@@ -18,7 +18,7 @@ import (
 // delegation would be rejected at runtime by the §8.3 isolation
 // monotonicity check.
 //
-// spec: §24.14 line 172.
+// spec: §24.14.
 func cmdPolicy(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: policy requires a subcommand (audit-isolation)")
@@ -89,14 +89,14 @@ type isolationViolationOut struct {
 // read-only: a non-empty report exits 0 because the violations are the
 // deliverable, not a failure of the audit itself.
 //
-// spec: §24.14 line 172; §8.3 lines 346-352.
+// spec: §24.14; §8.3.
 func cmdPolicyAuditIsolation(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "lenny-ctl: policy audit-isolation takes no arguments (got %q)\n", args[0])
 		return 2
 	}
 
-	// spec: §15.1 lines 1228-1253 — the delegation-policies, pools, and
+	// spec: §15.1 — the delegation-policies, pools, and
 	// runtimes admin collections return the canonical cursor-paginated
 	// envelope. The isolation audit joins the full inventory, so it walks
 	// every page rather than reading a single 50-item default page.

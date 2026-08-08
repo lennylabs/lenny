@@ -27,13 +27,13 @@ import (
 //     gateway host on the assumption that its operability endpoints still
 //     serve the request, and surface a warning for the ops command.
 //
-// spec: §24.16 line 201 (routing rules 1-3).
+// spec: §24.16.
 func withOps(ctx context.Context, flags globalFlags, gateway *ctl.Client, stderr io.Writer, fn func(*ctl.Client) int) int {
 	opsURL := flags.opsServer
 	if opsURL == "" {
 		discovered, err := discoverOpsURL(ctx, gateway)
 		if err != nil {
-			// spec: §24.16 line 201 routing rule 3 — auto-discovery failed,
+			// spec: §24.16 routing rule 3 — auto-discovery failed,
 			// so fall back to the gateway host rather than aborting. The
 			// command proceeds against the gateway; the operator is warned
 			// that only gateway-hosted operability endpoints will answer.
@@ -113,8 +113,7 @@ func cmdRunbooks(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 }
 
 // cmdLocks dispatches the §25.14 `locks` group, which maps to the
-// §25.4 remediation-lock endpoints on lenny-ops. spec: §25.14 lines
-// 4877-4879 (list/acquire/release); §24.15 line 190 names inspect, steal,
+// §25.4 remediation-lock endpoints on lenny-ops. spec: §25.14; §24.15 names inspect, steal,
 // and release, so `get` and `steal` round out the group. F-24.15.12.
 func cmdLocks(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -125,7 +124,7 @@ func cmdLocks(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	case "list":
 		return opsGet(ctx, c, "/v1/admin/remediation-locks", stdout, stderr)
 	case "get":
-		// §24.15 line 190 calls for an explicit per-id inspect; it maps to
+		// §24.15 calls for an explicit per-id inspect; it maps to
 		// GET /v1/admin/remediation-locks/{id}. F-24.15.12.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: locks get requires <id>")
@@ -148,7 +147,7 @@ func cmdLocks(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 		}
 		return opsSend(ctx, c, "DELETE", "/v1/admin/remediation-locks/"+url.PathEscape(args[1]), nil, stdout, stderr)
 	case "steal":
-		// §25.4 line 2106: steal takes over an existing lock and requires
+		// §25.4: steal takes over an existing lock and requires
 		// confirm:true and a reason. Without --confirm the server returns
 		// the §25.2 dry-run preview, so --reason is enforced client-side
 		// only when --confirm is present. F-24.15.12.
@@ -254,8 +253,7 @@ func cmdDiagnose(ctx context.Context, c *ctl.Client, args []string, stdout, stde
 // read-only and prints a remediation report; with --fix it applies the
 // §25.6 auto-remediations and prints the per-finding outcomes plus the
 // §25.2 operation envelope. An optional --findings <a,b,c> narrows the
-// run to specific finding codes. spec: §24.2 lines 44-45; §25.6 lines
-// 2941-2982. F-24.2.3.
+// run to specific finding codes. spec: §24.2; §25.6. F-24.2.3.
 func cmdDoctor(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	fix := hasFlag(args, "--fix")
 	path := "/v1/admin/diagnostics/run"
@@ -284,7 +282,7 @@ func cmdDrift(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 	}
 	switch args[0] {
 	case "snapshot":
-		// §25.14 line 4943: `drift snapshot refresh --desired <file>`
+		// §25.14: `drift snapshot refresh --desired <file>`
 		// replaces the stored desired-state snapshot via
 		// POST /v1/admin/drift/snapshot/refresh. §25.10 keeps refresh an
 		// explicit operator action: without --confirm the server returns
@@ -353,7 +351,7 @@ func cmdDrift(ctx context.Context, c *ctl.Client, args []string, stdout, stderr 
 }
 
 // cmdBackup dispatches the §25.14 `backup` group, which maps to the
-// §25.11 backup endpoints on lenny-ops. spec: §25.14 lines 4950-4955.
+// §25.11 backup endpoints on lenny-ops. spec: §25.14.
 // F-24.15.6.
 func cmdBackup(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -370,7 +368,7 @@ func cmdBackup(ctx context.Context, c *ctl.Client, args []string, stdout, stderr
 		}
 		return opsGet(ctx, c, "/v1/admin/backups/"+url.PathEscape(args[1]), stdout, stderr)
 	case "create":
-		// §25.14 line 4952: --type is required; --confirm guards the
+		// §25.14: --type is required; --confirm guards the
 		// production-side §25.2 confirm pattern.
 		typ := flagValue(args[1:], "--type")
 		if typ == "" {
@@ -383,7 +381,7 @@ func cmdBackup(ctx context.Context, c *ctl.Client, args []string, stdout, stderr
 		}
 		return opsSend(ctx, c, "POST", "/v1/admin/backups", body, stdout, stderr)
 	case "verify":
-		// §25.14 line 4953: `backup verify <id> [--mode test-restore]`.
+		// §25.14: `backup verify <id> [--mode test-restore]`.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: backup verify requires <id>")
 			return 2
@@ -394,11 +392,11 @@ func cmdBackup(ctx context.Context, c *ctl.Client, args []string, stdout, stderr
 		}
 		return opsSend(ctx, c, "POST", path, nil, stdout, stderr)
 	case "schedule":
-		// §25.14 line 4954: `backup schedule get|set` → GET/PUT
+		// §25.14: `backup schedule get|set` → GET/PUT
 		// /v1/admin/backups/schedule.
 		return cmdBackupSubresource(ctx, c, "schedule", args[1:], stdout, stderr)
 	case "policy":
-		// §25.14 line 4955: `backup policy get|set` → GET/PUT
+		// §25.14: `backup policy get|set` → GET/PUT
 		// /v1/admin/backups/policy.
 		return cmdBackupSubresource(ctx, c, "policy", args[1:], stdout, stderr)
 	default:
@@ -438,7 +436,7 @@ func cmdBackupSubresource(ctx context.Context, c *ctl.Client, name string, args 
 }
 
 // cmdRestore dispatches the §25.14 `restore` group, which maps to the
-// §25.11 restore endpoints on lenny-ops. spec: §25.14 lines 4956-4961.
+// §25.11 restore endpoints on lenny-ops. spec: §25.14.
 // F-24.15.7.
 func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -447,7 +445,7 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 	}
 	switch args[0] {
 	case "safety-check":
-		// §25.14 line 4956: GET /v1/admin/restore/safety-check?backupId=.
+		// §25.14: GET /v1/admin/restore/safety-check?backupId=.
 		backupID := flagValue(args[1:], "--backup")
 		if backupID == "" {
 			fmt.Fprintln(stderr, "lenny-ctl: restore safety-check requires --backup <id>")
@@ -455,7 +453,7 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		}
 		return opsGet(ctx, c, "/v1/admin/restore/safety-check?backupId="+url.QueryEscape(backupID), stdout, stderr)
 	case "preview":
-		// §25.14 line 4957: POST /v1/admin/restore/preview {backupId}.
+		// §25.14: POST /v1/admin/restore/preview {backupId}.
 		backupID := flagValue(args[1:], "--backup")
 		if backupID == "" {
 			fmt.Fprintln(stderr, "lenny-ctl: restore preview requires --backup <id>")
@@ -463,7 +461,7 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		}
 		return opsSend(ctx, c, "POST", "/v1/admin/restore/preview", map[string]any{"backupId": backupID}, stdout, stderr)
 	case "execute":
-		// §25.14 line 4958: POST /v1/admin/restore/execute. Without
+		// §25.14: POST /v1/admin/restore/execute. Without
 		// --confirm the server returns the §25.2 dry-run preview; the
 		// destructive run additionally requires --acknowledge-data-loss.
 		backupID := flagValue(args[1:], "--backup")
@@ -480,21 +478,21 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 		}
 		return opsSend(ctx, c, "POST", "/v1/admin/restore/execute", body, stdout, stderr)
 	case "status":
-		// §25.14 line 4959: GET /v1/admin/restore/{id}/status.
+		// §25.14: GET /v1/admin/restore/{id}/status.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: restore status requires <id>")
 			return 2
 		}
 		return opsGet(ctx, c, "/v1/admin/restore/"+url.PathEscape(args[1])+"/status", stdout, stderr)
 	case "resume":
-		// §25.14 line 4960: POST /v1/admin/restore/resume?restoreId=.
+		// §25.14: POST /v1/admin/restore/resume?restoreId=.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: restore resume requires <id>")
 			return 2
 		}
 		return opsSend(ctx, c, "POST", "/v1/admin/restore/resume?restoreId="+url.QueryEscape(args[1]), nil, stdout, stderr)
 	case "confirm-legal-hold-ledger":
-		// §25.14 line 4961: POST /v1/admin/restore/{id}/confirm-legal-hold-
+		// §25.14: POST /v1/admin/restore/{id}/confirm-legal-hold-
 		// ledger {justification}.
 		if len(args) < 2 {
 			fmt.Fprintln(stderr, "lenny-ctl: restore confirm-legal-hold-ledger requires <id>")
@@ -519,8 +517,7 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 // /mcp/management. `mcp-management tools` issues tools/list; `mcp-management
 // call <tool> [--args <json>]` issues tools/call. The raw JSON-RPC
 // envelope is printed so operators can script against the §25.12 tool
-// surface for local testing. spec: §24.15 line 193; §25.12; §25.14 line
-// 4984 (--args flag name).
+// surface for local testing. spec: §24.15; §25.12; §25.14.
 func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: mcp-management requires a subcommand (tools|call)")
@@ -541,7 +538,7 @@ func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout,
 		tool := args[1]
 		fs := flag.NewFlagSet("mcp-management call", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		// spec: §25.14 line 4984 documents --args as the tool-arguments flag
+		// spec: §25.14 documents --args as the tool-arguments flag
 		// for `mcp-management tools call`.
 		toolArgs := fs.String("args", "", "tool arguments as a JSON object")
 		if err := fs.Parse(args[2:]); err != nil {
@@ -570,8 +567,8 @@ func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout,
 // pod-log proxy. It streams the §25.4 log-proxy endpoint
 // (GET /v1/admin/logs/pods/{namespace}/{name} on lenny-ops) to stdout as
 // raw text. The args slice is everything after `logs pods`: the namespace,
-// the pod name, then the optional query flags. spec: §24.15 line 192;
-// §25.4 lines 2528-2534.
+// the pod name, then the optional query flags. spec: §24.15;
+// §25.4.
 func cmdLogs(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) < 2 {
 		fmt.Fprintln(stderr, "lenny-ctl: logs pods requires <namespace> <name>")

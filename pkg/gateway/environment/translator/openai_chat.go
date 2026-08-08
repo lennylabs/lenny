@@ -33,7 +33,7 @@ import (
 // surfaces are not part of the OpenAI Chat wire shape — a consumer of
 // this adapter is treated as stateless across calls and cannot resolve
 // elicitations or approve tool use through the OpenAI envelope.
-// spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+// spec: §9.1; §15.1. F-9.1.6 / F-9.1.8.
 func OpenAIChatAdapterCapabilities() adapter.Capabilities {
 	return adapter.Capabilities{
 		PathPrefix:                "/v1/chat/completions",
@@ -222,7 +222,7 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		return
 	}
 	tenantID := resolveTenant(r)
-	// spec: §10.6 line 557 — a model named "environments/{name}/{model}"
+	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
 	envScope, runtimeRef := splitEnvModel(req.Model)

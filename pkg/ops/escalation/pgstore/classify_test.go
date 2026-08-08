@@ -27,8 +27,7 @@ import (
 // internal error. A genuine server-side query error (a constraint
 // violation, for example) is left intact so the caller surfaces it.
 //
-// spec: §25.4 lines 2422-2434 (Storage Tiers, Query Path; "Postgres down,
-// Redis available" and "Both down" degraded fall-through).
+// spec: §25.4.
 func TestClassifyErr_OperatorIntervention_spec_25_4(t *testing.T) {
 	cases := []struct {
 		name          string

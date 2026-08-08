@@ -6,7 +6,7 @@ deployments either run PgBouncer as a sidecar of an operator-managed
 workload outside this chart or rely on a managed pooler (AWS RDS Proxy,
 Cloud SQL Auth Proxy with PgBouncer profile, Crunchy Postgres for
 Kubernetes pgBouncer, etc.). What the chart owns is the connect_query
-sentinel string the §4.2 line 163 spec requires on every fresh server
+sentinel string the §4.2 spec requires on every fresh server
 connection — operators mount the ConfigMap below on whatever PgBouncer
 workload they run.
 
@@ -15,7 +15,7 @@ manage their pooler's configuration entirely out-of-band can set
 `pgbouncer.enabled: false` to suppress the ConfigMap; the SQL string
 remains in values.yaml as the authoritative reference.
 
-spec: §4.2 line 163 (PgBouncer connect_query sentinel)
+spec: §4.2
 spec: §12.3 (transaction-mode pooler leak prevention)
 */}}
 {{- if .Values.pgbouncer.enabled }}
@@ -38,7 +38,7 @@ data:
   pgbouncer.ini: |
     [pgbouncer]
     pool_mode = {{ .Values.pgbouncer.poolMode }}
-    # spec: §4.2 line 163 — fresh server connections begin with the
+    # spec: §4.2 — fresh server connections begin with the
     # SET sentinel so an unclaimed pooled connection is rejected by
     # the lenny_tenant_guard trigger and by RLS before tenant data
     # could leak. The pgbouncer.ini INI parser wraps the value in

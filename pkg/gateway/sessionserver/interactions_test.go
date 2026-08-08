@@ -208,7 +208,7 @@ func (c *captureInteractionAudit) EmitInteractionResolution(_ context.Context, e
 // reason. The audit row is the post-incident link from a state change
 // back to the user who authorized it; §11.7 mandates a row per
 // state-changing user decision.
-// spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+// spec: §7.2 table; §11.7; §16.7. F-7.2.8.
 func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 	cases := []struct {
 		name           string

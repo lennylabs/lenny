@@ -63,7 +63,7 @@ type Principal struct {
 	// header path leaves Scopes zero (no scope narrowing in dev mode).
 	Scopes scopes.Set
 
-	// JTI is the JWT `jti` claim copied verbatim. The §8.2 line 61
+	// JTI is the JWT `jti` claim copied verbatim. The §8.2
 	// child-token exchange reads the delegating (parent) session token's
 	// jti against the §13.3 revocation cache; the §8.5 lenny/delegate_task
 	// handler forwards this onto the delegation ParentToken. Empty under
@@ -78,7 +78,7 @@ type Principal struct {
 	// §27.8 origin=playground dashboard slice, and §11 policy rules —
 	// key on this value, which is why it must reach handlers as part of
 	// the resolved principal. Empty under the dev-headers path (no JWT).
-	// spec: §27.3 line 63. F-27.3.3.
+	// spec: §27.3. F-27.3.3.
 	Origin string
 }
 
@@ -143,7 +143,7 @@ type Options struct {
 	// `claims.TenantID` field when the name is "tenant_id"; for other
 	// names it resolves the claim via Claims.ClaimString so it picks up
 	// the value from the raw JWT payload.
-	// spec: §10.2 line 212. F-10.2.9.
+	// spec: §10.2. F-10.2.9.
 	TenantClaimName string
 
 	// AllowDevHeaders, when true, permits the X-Lenny-Tenant-ID /
@@ -179,12 +179,12 @@ type Options struct {
 
 	// RevocationFreshness, when set, reports whether the in-memory
 	// revocation set is too stale to trust because the replica cannot
-	// reach Postgres. §13.3 line 601 requires a replica that cannot reach
+	// reach Postgres. §13.3 requires a replica that cannot reach
 	// Postgres to refuse validation (503 token_validation_unavailable)
 	// rather than honor a possibly-revoked token from a stale cache. It is
 	// wired only when Postgres backs the revocation rehydration; the dev
 	// path leaves it nil so an in-memory deployment does not fail closed.
-	// spec: §13.3 line 601. F-13.3.4.
+	// spec: §13.3. F-13.3.4.
 	RevocationFreshness RevocationFreshness
 
 	// PlaygroundRevocations, when set, is the §27.6 authoritative
@@ -196,10 +196,10 @@ type Options struct {
 	// details.reason=bearer_revoked; a backing-store error fails closed
 	// with 503 REDIS_UNAVAILABLE rather than honoring the bearer.
 	// Non-playground bearers (no origin claim) never consult it.
-	// spec: §27.6 line 204 / §27.3.1 lines 95-97. F-27.6.3 / F-27.3.1.
+	// spec: §27.6 / §27.3.1. F-27.6.3 / F-27.3.1.
 	PlaygroundRevocations PlaygroundRevocationChecker
 
-	// AuthFailureSink, when set, receives §4.2 line 185 `auth_failure`
+	// AuthFailureSink, when set, receives §4.2
 	// audit events for every tenant-claim rejection
 	// (TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, TENANT_CLAIM_INVALID_FORMAT).
 	// The middleware also writes an INFO log line carrying `user_id`
@@ -215,19 +215,19 @@ type Options struct {
 	// after the principal is resolved and before the request reaches the
 	// inner handler. The built-in AuthEvaluator (priority 100) runs as
 	// the sole interceptor at this phase; external interceptors are
-	// rejected from PreAuth at registration (§4.8 line 1023). A chain
+	// rejected from PreAuth at registration (§4.8). A chain
 	// REJECT blocks the request with 403 INTERCEPTOR_REJECTED. nil skips
-	// the phase. spec: §4.8 lines 972, 1023, 1046.
+	// the phase. spec: §4.8.
 	Interceptors *interceptor.Chain
 
-	// PlatformRoles, when set, resolves the §10.2 line 294
+	// PlatformRoles, when set, resolves the §10.2
 	// platform-managed user→role mapping. The middleware consults it for
 	// every Bearer principal whose Subject is non-empty; when a mapping
 	// row exists for (TenantID, Subject), its Roles fully replace the
 	// roles claimed by the JWT, allowing tenant-admins to override
 	// OIDC-derived roles within their tenant. Absent the mapping the JWT
 	// roles claim stays authoritative.
-	// spec: §10.2 line 294. F-10.2.3.
+	// spec: §10.2. F-10.2.3.
 	PlatformRoles PlatformRoleResolver
 
 	// ServiceIdentity, when set, resolves a platform service account's
@@ -242,7 +242,7 @@ type Options struct {
 	// spec: §25.4 ("Calling the Gateway").
 	ServiceIdentity ServiceIdentityResolver
 
-	// GroupIntrospector, when set, performs the §10.6 line 661 real-time
+	// GroupIntrospector, when set, performs the §10.6 real-time
 	// group check. The middleware consults it for every verified Bearer.
 	// When the principal's tenant has identityProvider.introspectionEnabled
 	// set, the provider's RFC 7662 introspection endpoint supplies the
@@ -250,11 +250,11 @@ type Options struct {
 	// tenant leaves introspection off, the JWT groups stay authoritative.
 	// A transport/config failure or an inactive-token verdict fails closed
 	// (the operator enabled real-time checks for a security reason).
-	// spec: §10.6 line 661. F-10.6.8.
+	// spec: §10.6. F-10.6.8.
 	GroupIntrospector GroupIntrospector
 }
 
-// GroupIntrospector is the §10.6 line 661 real-time group check. The
+// GroupIntrospector is the §10.6 real-time group check. The
 // auth middleware calls it for every verified Bearer; the introspection
 // package satisfies it over the tenant's RFC 7662 endpoint.
 type GroupIntrospector interface {
@@ -297,7 +297,7 @@ type ServiceIdentityResolver interface {
 	ResolveService(ctx context.Context, token string) (identity ServiceIdentity, ok bool, err error)
 }
 
-// PlatformRoleResolver is the §10.2 line 294 platform-managed
+// PlatformRoleResolver is the §10.2 platform-managed
 // user→role mapping. The auth middleware consults it for every
 // authenticated Bearer principal; when a mapping row exists, its Roles
 // override the JWT claim.
@@ -320,7 +320,7 @@ type RevocationChecker interface {
 // stale to trust. The auth middleware consults it before honoring any
 // Bearer token: a stale set (the replica cannot reach Postgres to
 // confirm the token has not been revoked) fails closed with 503
-// token_validation_unavailable per §13.3 line 601.
+// token_validation_unavailable per §13.3.
 type RevocationFreshness interface {
 	// Stale reports that the in-memory revocation set is older than the
 	// freshness window because Postgres is unreachable.
@@ -333,25 +333,25 @@ type RevocationFreshness interface {
 // on this claim, not on authMode. It is duplicated here as a literal
 // rather than imported from the playground package to avoid an import
 // cycle (the playground package depends on the auth chain).
-// spec: §27.3 line 63.
+// spec: §27.3.
 const playgroundOriginClaim = "playground"
 
 // PlaygroundRevocationChecker is the §27.6 / §27.3.1 authoritative
 // per-request revocation check for playground-origin bearers. The auth
 // middleware consults it for every verified Bearer carrying the
 // `origin: "playground"` claim. The error return is non-nil only when
-// the backing store (Redis) is unreachable; §27.3.1 line 97 specifies
+// the backing store (Redis) is unreachable; §27.3.1 specifies
 // the middleware fails closed (503) on that error rather than honoring
-// the bearer. spec: §27.6 line 204 / §27.3.1 lines 95-97.
+// the bearer. spec: §27.6 / §27.3.1.
 type PlaygroundRevocationChecker interface {
 	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
 }
 
-// AuthFailureEvent captures the payload of an §4.2 line 185
+// AuthFailureEvent captures the payload of an §4.2
 // `auth_failure` audit event emitted by the middleware on tenant-claim
 // rejection.
 type AuthFailureEvent struct {
-	// Reason is the §4.2 line 185 error envelope code:
+	// Reason is the §4.2 error envelope code:
 	// TENANT_CLAIM_MISSING, TENANT_NOT_FOUND, or
 	// TENANT_CLAIM_INVALID_FORMAT.
 	Reason string
@@ -406,7 +406,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 3) No credentials.
 	if m.opts.RequireAuth {
-		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the §15.1 catalog
+		// spec: §15.1 — UNAUTHORIZED (401) is the §15.1 catalog
 		// code for "Missing or invalid authentication credentials". The
 		// details.reason discriminates the missing-bearer case so
 		// callers scripting against the §15.1 catalog get a stable code
@@ -421,7 +421,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token string) {
 	if m.opts.Verifier == nil {
-		// spec: §15.1 line 1016 — gateway misconfiguration surfaces as
+		// spec: §15.1 — gateway misconfiguration surfaces as
 		// the canonical INTERNAL_ERROR (500); details.reason names the
 		// configuration gap for operator triage.
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -447,7 +447,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		writeError(w, http.StatusUnauthorized, "TOKEN_INVALID", err.Error(), nil)
 		return
 	}
-	// §13.3 line 601 fail-closed validation: a replica that cannot reach
+	// §13.3 fail-closed validation: a replica that cannot reach
 	// Postgres refuses to validate tokens rather than honor one from a
 	// stale revocation cache that may be missing a revocation recorded
 	// during the outage. The freshness check fires for every Bearer
@@ -466,7 +466,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			"the presented token has been revoked", nil)
 		return
 	}
-	// spec: §10.2 line 212 — the OIDC claim used to derive tenant_id is
+	// spec: §10.2 — the OIDC claim used to derive tenant_id is
 	// configurable via `auth.tenantIdClaim`. Default is `tenant_id`; an
 	// operator can point at any string claim. F-10.2.9.
 	claimName := m.opts.TenantClaimName
@@ -486,7 +486,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		m.writeTenantError(r.Context(), w, terr, rawTenant, claims.Subject, claims.JWTID)
 		return
 	}
-	// §27.6 line 204 / §27.3.1 lines 95-97 — authoritative per-request
+	// §27.6 / §27.3.1 — authoritative per-request
 	// revocation check for playground-origin bearers. Every request
 	// carrying the `origin: "playground"` claim MUST consult
 	// pg:revoked:{jti} on the auth hot path before the bearer is honored,
@@ -529,13 +529,13 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Groups:     append([]string(nil), claims.Groups...),
 		Scopes:     scopeSet,
 		JTI:        claims.JWTID,
-		// spec: §27.3 line 63 — carry the mode-agnostic origin claim onto
+		// spec: §27.3 — carry the mode-agnostic origin claim onto
 		// the principal so the session-creation path can detect a
 		// /playground/*-originated session and apply the §27.6 caps +
 		// origin=playground label. F-27.3.3.
 		Origin: claims.Origin,
 	}
-	// spec: §10.2 line 294 — the platform-managed user→role mapping
+	// spec: §10.2 — the platform-managed user→role mapping
 	// takes precedence over OIDC-derived roles. When the resolver
 	// returns a row for (tenant, subject), its Roles override the JWT
 	// claim wholesale; on a transport error the request fails closed
@@ -553,7 +553,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 			p.Roles = append([]auth.Role(nil), roles...)
 		}
 	}
-	// spec: §10.6 line 661 — when the tenant has introspectionEnabled set,
+	// spec: §10.6 — when the tenant has introspectionEnabled set,
 	// an RFC 7662 introspection of the bearer supplies the authoritative
 	// group set, catching LDAP/AD membership changes the JWT groups claim
 	// has not yet reflected. The check is opt-in per tenant; tenants that
@@ -649,8 +649,7 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// Dev-header path: no JWT means no sub / jti claim. The
-		// rejection still produces an audit row + INFO log so the §4.2
-		// line 185 observability contract is honoured uniformly across
+		// rejection still produces an audit row + INFO log so the §4.2 observability contract is honoured uniformly across
 		// transports; user_id falls back to the X-Lenny-User-ID header
 		// when present so dev integrations carry traceability too.
 		m.writeTenantError(r.Context(), w, err, tenantHeader, r.Header.Get("X-Lenny-User-ID"), "")
@@ -680,8 +679,7 @@ func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 // authenticated identity, carried as metadata so AuthEvaluator and any
 // later phase read the same tenant_id / user_id keys.
 //
-// spec: §4.8 line 1046 (the PreAuth immutability row) and lines
-// 1025–1028 (authenticated identity available to the chain).
+// spec: §4.8.
 func (m *middleware) runPreAuth(w http.ResponseWriter, r *http.Request, p Principal) bool {
 	if m.opts.Interceptors == nil {
 		return true
@@ -765,14 +763,14 @@ func parseGroupsHeader(v string) []string {
 }
 
 // writeTenantError maps a §10.2 tenant-extraction error to the
-// HTTP envelope and, for the three §4.2 line 185 rejection reasons
+// HTTP envelope and, for the three §4.2 rejection reasons
 // (TENANT_CLAIM_MISSING / TENANT_NOT_FOUND / TENANT_CLAIM_INVALID_FORMAT),
 // emits an INFO log line with `user_id` and `jti` for traceability and
 // an `auth_failure` audit event via the configured sink. The audit
 // payload carries the inferred tenant identifier when one was
 // presented; for TENANT_CLAIM_MISSING the value is empty.
 //
-// spec: §4.2 line 185 ("Both rejection reasons are logged (INFO level,
+// spec: §4.2 ("Both rejection reasons are logged (INFO level,
 // with user_id and jti for traceability) and emitted as auth_failure
 // audit events.")
 func (m *middleware) writeTenantError(ctx context.Context, w http.ResponseWriter, err error, tenantID, userID, jti string) {
@@ -796,7 +794,7 @@ func (m *middleware) writeTenantError(ctx context.Context, w http.ResponseWriter
 	}
 }
 
-// recordAuthFailure writes the §4.2 line 185 INFO log line and emits
+// recordAuthFailure writes the §4.2 INFO log line and emits
 // the `auth_failure` audit event. Logging always fires; the audit
 // emission is a no-op when no sink is wired.
 func (m *middleware) recordAuthFailure(ctx context.Context, reason, tenantID, userID, jti string) {
@@ -818,7 +816,7 @@ func (m *middleware) recordAuthFailure(ctx context.Context, reason, tenantID, us
 	})
 }
 
-// AuthFailureEventType is the §4.2 line 185 event-type identifier the
+// AuthFailureEventType is the §4.2 event-type identifier the
 // middleware emits on tenant-claim rejection. The string is fixed by
 // the spec; the §16.7 catalog only enumerates §25-introduced events
 // so this constant is the source of truth for the auth-failure name.

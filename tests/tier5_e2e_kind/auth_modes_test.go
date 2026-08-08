@@ -36,7 +36,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// adminTokenSecretName is the §17.6 line 463 default Secret name the
+// adminTokenSecretName is the §17.6 default Secret name the
 // gateway bootstrap writes the initial platform-admin bearer JWT to
 // (chart default gateway.adminToken.secretName; the e2e install takes
 // the default).

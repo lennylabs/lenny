@@ -77,7 +77,7 @@ func Merge(base, derived Runtime) Runtime {
 	eff.RequireSoPeercred = cb.RequireSoPeercred
 	eff.Capabilities = cb.Capabilities
 	eff.AllowedResourceClasses = append([]string(nil), cb.AllowedResourceClasses...)
-	// §5.1 lines 22-24: sdkWarmBlockingPaths is the companion of the
+	// §5.1: sdkWarmBlockingPaths is the companion of the
 	// inherited capabilities.preConnect flag (SDK-warm is a property of
 	// the base image's pre-connect behavior). It is taken from the base, so
 	// a derived runtime inherits the base's demotion path set.
@@ -296,7 +296,7 @@ func mergeSetupPolicy(base, derived *SetupPolicy) *SetupPolicy {
 		TimeoutSeconds: base.TimeoutSeconds,
 		OnTimeout:      base.OnTimeout,
 	}
-	// §5.1 line 195: timeoutSeconds is Maximum. Zero means "no aggregate
+	// §5.1: timeoutSeconds is Maximum. Zero means "no aggregate
 	// cap" (waits indefinitely), which is the largest possible bound — it
 	// wins the max over any finite value so a base's no-cap floor survives
 	// a finite derived value. The registration validator rejects a mixed

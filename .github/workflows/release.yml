@@ -622,7 +622,7 @@ jobs:
             --title "Update lenny and lenny-ctl to ${VERSION}" \
             --body "Automated formula update for Lenny ${VERSION}. Release: https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
 
-  # Verify the krew plugin end to end after publish (§17.6 line 360). On a
+  # Verify the krew plugin end to end after publish (§17.6). On a
   # disposable kind cluster, install the plugin from the freshly rendered
   # manifest (it points at the just-published archives and validates their
   # SHA-256), then assert that `kubectl lenny --version` succeeds and

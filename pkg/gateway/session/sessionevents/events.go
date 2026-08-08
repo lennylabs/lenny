@@ -9,13 +9,12 @@
 // contract).
 //
 // In single-replica deployments the Bus uses its in-memory state
-// alone. In multi-replica deployments the Bus pairs with the §4.4
-// line 225 / §12.4 (lenny:events: relay row) RedisRelay (see
+// alone. In multi-replica deployments the Bus pairs with the §4.4 / §12.4 (lenny:events: relay row) RedisRelay (see
 // redisrelay.go): every Publish fans out to Redis Streams via `XADD`,
 // and every Subscribe pulls the cross-replica history via `XRANGE` so a
 // client that reconnects to a different replica sees the prior events.
 //
-// spec: §4.4 line 225 — durable event cursors / stream offsets across
+// spec: §4.4 — durable event cursors / stream offsets across
 // replicas.
 package sessionevents
 
@@ -83,8 +82,7 @@ type Bus struct {
 	lastSeqPersister LastSeqPersister
 	// seedLoader, when set, is consulted on the first Publish for a
 	// session to seed the in-memory counter from the persisted
-	// last_seq — the §7.3 line 397 "coordinator-local copy is an
-	// advisory cache primed from Postgres at handoff step 0" contract.
+	// last_seq — the §7.3 contract.
 	// A nil loader leaves the counter at 0 (single-replica or no
 	// prior coordinator). F-7.3.3.
 	seedLoader LastSeqLoader
@@ -94,7 +92,7 @@ type Bus struct {
 	seeded map[string]struct{}
 }
 
-// LastSeqPersister durably advances the §7.3 line 397 sessions.last_seq
+// LastSeqPersister durably advances the §7.3 sessions.last_seq
 // counter for a session. Implementations MUST treat the value as a
 // monotonic floor — a write that would rewind an existing higher value
 // is a no-op (the Postgres pgstore enforces this via GREATEST). The
@@ -104,7 +102,7 @@ type LastSeqPersister interface {
 	AdvanceLastSeq(ctx context.Context, tenantID, sessionID string, seq int64) error
 }
 
-// LastSeqLoader returns the persisted §7.3 line 397 sessions.last_seq
+// LastSeqLoader returns the persisted §7.3 sessions.last_seq
 // counter for a session, used to seed the Bus's in-memory counter on
 // the first publish for that session (the §7.3 / §10.4 "primed from
 // Postgres at handoff step 0" contract). A miss returns (0, nil) so the
@@ -137,7 +135,7 @@ func NewBus(maxHistory int) *Bus {
 	}
 }
 
-// WithLastSeqPersister wires the §7.3 line 397 durable counter writer.
+// WithLastSeqPersister wires the §7.3 durable counter writer.
 // Every Publish schedules an asynchronous AdvanceLastSeq so the
 // persisted sessions.last_seq advances atomically with each event
 // without blocking subscribers. A nil persister keeps the Bus's local
@@ -149,7 +147,7 @@ func (b *Bus) WithLastSeqPersister(p LastSeqPersister) *Bus {
 	return b
 }
 
-// WithLastSeqLoader wires the §7.3 line 397 / §10.4 handoff seed
+// WithLastSeqLoader wires the §7.3 / §10.4 handoff seed
 // loader. On the first Publish for a session the Bus consults the
 // loader to prime its in-memory counter from the persisted last_seq,
 // so a fresh replica picking up a session never rewinds. A nil loader
@@ -177,7 +175,7 @@ var ErrTenantMismatch = errors.New("sessionevents: session belongs to a differen
 // The relay attaches at construction time; later changes require a
 // fresh Bus so the publish path and history path stay consistent.
 //
-// spec: §4.4 line 225.
+// spec: §4.4.
 func (b *Bus) WithRedisRelay(relay *RedisRelay) *Bus {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -219,7 +217,7 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 			return Event{}
 		}
 	}
-	// spec: §7.3 line 397 / §10.4 — prime the local counter from the
+	// spec: §7.3 / §10.4 — prime the local counter from the
 	// persisted last_seq on the first publish for the session so a
 	// fresh replica picking up the session after a coordinator handoff
 	// never rewinds. The seed is best-effort: a loader miss / error
@@ -273,7 +271,7 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 		// stall in-memory subscribers on the same replica.
 		relay.PublishEvent(context.Background(), ev)
 	}
-	// spec: §7.3 line 397 — durably advance the per-session
+	// spec: §7.3 — durably advance the per-session
 	// monotonic counter. Best-effort and asynchronous so a Postgres
 	// outage does not stall subscribers; the persister's GREATEST
 	// floor keeps the persisted value monotonic across replicas.
@@ -299,7 +297,7 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 // of declaring both stores unreachable. The event publishes under each
 // session's frozen tenant so the §7.2 isolation invariant holds.
 //
-// spec: §10.1 line 45 — "all active client SSE streams receive a
+// spec: §10.1 — "all active client SSE streams receive a
 // PLATFORM_DEGRADED server-sent event ... within 1 second".
 func (b *Bus) Broadcast(eventType, data string, now time.Time) int {
 	b.mu.Lock()
@@ -484,18 +482,18 @@ func (b *Bus) History(sessionID string, afterSeq uint64) []Event {
 // OldestRetainedSeq returns the smallest Seq currently held in the
 // in-memory replay buffer for sessionID, and ok=true when the bus has
 // any retained events. The caller uses this together with a client's
-// reconnect cursor to detect the §7.2 line 143 buffer-eviction case:
+// reconnect cursor to detect the §7.2 buffer-eviction case:
 // when the client's last-seen cursor sits below the oldest retained
 // event, the gateway emits a `gap_detected` / `checkpoint_boundary`
 // marker before replaying the backlog so the client knows events were
 // dropped. The Bus does not currently track time-based replay-window
-// boundaries (§7.2 line 349); buffer-count eviction is the only path,
+// boundaries (§7.2); buffer-count eviction is the only path,
 // and the result here is authoritative for that case.
 //
 // When the bus has never seen sessionID (or every event for it has been
 // removed) the function returns (0, false).
 //
-// spec: §7.2 line 143 — "If the requested sequence has been evicted
+// spec: §7.2 — "If the requested sequence has been evicted
 // from the gateway event replay buffer (§10.4), the adapter emits a
 // single protocol-level gap_detected frame ({\"lastSeenSeq\": N,
 // \"nextSeq\": M}) before the oldest retained event".
@@ -536,8 +534,7 @@ func (b *Bus) ActiveSubscribers() int {
 // are being evicted. Returns 0 when the bus has no retained events.
 //
 // The gateway samples this value periodically to feed the §16.1
-// lenny_event_bus_replay_buffer_utilization gauge so the §10.4 line
-// 389 buffer-depth knob has a feedback signal. F-10.4.11.
+// lenny_event_bus_replay_buffer_utilization gauge so the §10.4 buffer-depth knob has a feedback signal. F-10.4.11.
 //
 // spec: §16 observability catalog `lenny_event_bus_replay_buffer_utilization`.
 func (b *Bus) MaxReplayBufferUtilization() float64 {

@@ -13,7 +13,7 @@ import (
 )
 
 // The gateway rewrites a symlink-bearing archive entry into a `symlink`
-// source (§7.4 line 448 — the pod never decompresses). These tests cover
+// source (§7.4 — the pod never decompresses). These tests cover
 // the adapter's materialization of that source, and the fail-closed
 // rejection of the uploadArchive / gitClone sources the gateway is
 // supposed to have already extracted. F-7.4.1, F-13.4.1.
@@ -49,7 +49,7 @@ func TestMaterializeSymlinkSource_spec_7_4_458(t *testing.T) {
 }
 
 // A symlink source under a runtime that did NOT opt in fails closed: the
-// gateway should never have produced it. spec: §7.4 line 458 — F-7.4.1.
+// gateway should never have produced it. spec: §7.4 — F-7.4.1.
 func TestMaterializeSymlinkSourceRejectedWithoutOptIn_spec_7_4_458(t *testing.T) {
 	root := t.TempDir()
 	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
@@ -64,7 +64,7 @@ func TestMaterializeSymlinkSourceRejectedWithoutOptIn_spec_7_4_458(t *testing.T)
 }
 
 // A symlink whose target escapes the workspace root is rolled back by the
-// §7.4 post-promotion re-validation. spec: §13.4 line 665 — F-7.4.1.
+// §7.4 post-promotion re-validation. spec: §13.4 — F-7.4.1.
 func TestMaterializeSymlinkEscapeRolledBack_spec_13_4_665(t *testing.T) {
 	root := t.TempDir()
 	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
@@ -78,7 +78,7 @@ func TestMaterializeSymlinkEscapeRolledBack_spec_13_4_665(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 448; §13.4 line 652 — the adapter must never decompress
+// spec: §7.4; §13.4 — the adapter must never decompress
 // an archive. A uploadArchive source reaching the adapter (a trust-
 // boundary violation) fails closed. F-7.4.1, F-13.4.1.
 func TestMaterializeUploadArchiveSourceRejected_spec_7_4_448(t *testing.T) {
@@ -94,7 +94,7 @@ func TestMaterializeUploadArchiveSourceRejected_spec_7_4_448(t *testing.T) {
 	}
 }
 
-// spec: §7.4 line 448; §14 line 95 — gitClone is cloned and extracted by
+// spec: §7.4; §14 — gitClone is cloned and extracted by
 // the gateway; a gitClone source reaching the adapter fails closed.
 // F-7.4.1.
 func TestMaterializeGitCloneSourceRejected_spec_7_4_448(t *testing.T) {

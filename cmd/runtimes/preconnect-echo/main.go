@@ -45,7 +45,7 @@ import (
 var version = "0.1.0"
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs (component=preconnect-echo).
+	// spec: §16.4 — structured JSON logs (component=preconnect-echo).
 	logging.Setup(os.Stderr, "preconnect-echo")
 
 	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
@@ -126,7 +126,7 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
-		// §6.1 line 67 — SIGTERM during sdk_connecting tears the SDK down
+		// §6.1 — SIGTERM during sdk_connecting tears the SDK down
 		// within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s), force-terminating
 		// it on overrun, before the process exits so it does not leak
 		// credentials or hold provider connections open.
@@ -134,7 +134,7 @@ func main() {
 		srv.GracefulStop()
 	}()
 
-	// §6.1 line 30 — pre-connect the SDK at warm time, before any session
+	// §6.1 — pre-connect the SDK at warm time, before any session
 	// is assigned. The server is already serving, so a concurrent gateway
 	// claim that arrives before pre-connect completes is handled by the
 	// idempotent ConfigureWorkspace path.

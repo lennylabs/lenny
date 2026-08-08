@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// spec: §24.18 line 231 / §15.4.6 — `lenny runtime validate` declared-vs-
+// spec: §24.18 / §15.4.6 — `lenny runtime validate` declared-vs-
 // observed probe and --report.
 
 // writeRepo creates a minimal runtime repository that passes the static

@@ -8,8 +8,7 @@
 // issued_tokens table, and the only component writing
 // `token.exchanged` audit rows.
 //
-// spec: §4.3 line 193 ("Canonical token endpoint — POST
-// /v1/oauth/token ... All Lenny bearer tokens are minted here") and
+// spec: §4.3 and
 // F-4.3.12 (the in-process gateway mount is removed; the gateway
 // forwards to the Token Service HTTP listener).
 package tokensvcproxy

@@ -11,12 +11,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
 
-// CodeOpsRollTimeout is the §25.8 line 3509 failure code the watchdog
+// CodeOpsRollTimeout is the §25.8 failure code the watchdog
 // stamps on State.Error when OpsRoll exceeds opsRollTimeoutSeconds and the
 // new lenny-ops pod never wrote a heartbeat: the old pod auto-rolls-back.
 const CodeOpsRollTimeout = "OPS_ROLL_TIMEOUT"
 
-// Default §25.8 watchdog timeouts (spec lines 3509, 3529, 3533, 3510).
+// Default §25.8 watchdog timeouts.
 const (
 	// DefaultOpsRollTimeout is platform.upgrade.opsRollTimeoutSeconds.
 	DefaultOpsRollTimeout = 600 * time.Second
@@ -24,7 +24,7 @@ const (
 	DefaultGatewayRollTimeout = 1200 * time.Second
 	// DefaultControllerRollTimeout is platform.upgrade.controllerRollTimeoutSeconds.
 	DefaultControllerRollTimeout = 600 * time.Second
-	// DefaultObservationWindow is the §25.8 line 3510 pod-watch window
+	// DefaultObservationWindow is the §25.8 pod-watch window
 	// within which a stuck ImagePullBackOff / CrashLoopBackOff is surfaced.
 	DefaultObservationWindow = 60 * time.Second
 )
@@ -69,7 +69,7 @@ func (c WatchdogConfig) rollTimeout(p upgrade.Phase) (time.Duration, bool) {
 	}
 }
 
-// PodStatus is the §25.8 line 3510 observation of the new pod for the
+// PodStatus is the §25.8 observation of the new pod for the
 // rolling component during a roll phase.
 type PodStatus struct {
 	// Stuck reports that the new pod is in ImagePullBackOff or
@@ -96,8 +96,7 @@ type PodObserver interface {
 }
 
 // ImagePullCheckRecorder records the latency of one image-pull
-// observation into the §25.8 lenny_platform_image_pull_check_duration_seconds
-// histogram (spec line 3619), labelled by component. A nil recorder drops it.
+// observation into the §25.8 lenny_platform_image_pull_check_duration_seconds histogram, labelled by component. A nil recorder drops it.
 type ImagePullCheckRecorder func(component string, d time.Duration)
 
 // WatchdogResult reports what one Evaluate did, for observability and
@@ -128,8 +127,7 @@ type WatchdogResult struct {
 // orchestrator (which records phase transitions rather than mutating the
 // cluster directly).
 //
-// spec: §25.8 lines 3509-3511 (OpsRoll timeout, image-pull failure event,
-// heartbeat), line 3619 (image-pull-check histogram).
+// spec: §25.8.
 type Watchdog struct {
 	svc      *Service
 	cfg      WatchdogConfig
@@ -212,7 +210,7 @@ func (w *Watchdog) Evaluate(ctx context.Context) (WatchdogResult, error) {
 	}
 	res := WatchdogResult{Active: true, Phase: st.Phase, Elapsed: w.now().Sub(st.UpdatedAt)}
 
-	// §25.8 line 3510: observe the new pod; emit the image-pull-failed
+	// §25.8: observe the new pod; emit the image-pull-failed
 	// event once when it is stuck. The observation latency feeds the
 	// image-pull-check histogram.
 	if w.observer != nil {

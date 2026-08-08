@@ -64,7 +64,7 @@ func Known(code string) bool {
 // (TRANSIENT, retryable) would wrongly mark a 4xx validation or
 // not-found error as retryable. A 429 or 5xx is treated as transient
 // and retryable; every other status is treated as permanent and not
-// retryable. spec: §25.2 lines 320-329 (category HTTP ranges).
+// retryable. spec: §25.2.
 func ClassifyStatus(code string, status int) (Category, bool) {
 	if c, ok := table[code]; ok {
 		return c.cat, c.retryable
@@ -83,7 +83,7 @@ type entry struct {
 // table is the §15.2.1 code → (category, retryable) map. The keys
 // are the canonical lenny error codes the gateway emits.
 var table = map[string]entry{
-	// spec: §15.1 lines 974-1099 error catalog — the canonical 400
+	// spec: §15.1 error catalog — the canonical 400
 	// validation code is VALIDATION_ERROR. The non-spec INVALID_REQUEST
 	// code was removed (F-15.1.4).
 	"VALIDATION_ERROR":        {CategoryPermanent, false},
@@ -91,8 +91,7 @@ var table = map[string]entry{
 	"RESOURCE_NOT_FOUND":      {CategoryPermanent, false},
 	"RESOURCE_HAS_DEPENDENTS": {CategoryPolicy, false},
 	"IDEMPOTENCY_KEY_REUSED":  {CategoryPermanent, false},
-	// spec: §11.5 line 277 ("returns the cached response … without
-	// re-executing the operation"). The middleware atomically claims the
+	// spec: §11.5. The middleware atomically claims the
 	// (tenant_id, idempotency_key) row before executing the inner handler;
 	// a concurrent retry that arrives while the original is still in flight
 	// observes the pending claim and is rejected with this code so the two
@@ -127,12 +126,12 @@ var table = map[string]entry{
 	"QUOTA_EXCEEDED":            {CategoryPolicy, false},
 	"RATE_LIMITED":              {CategoryPolicy, true},
 	"INTERCEPTOR_REJECTED":      {CategoryPolicy, false},
-	// spec: §15.1 line 1008 — an interceptor timeout in a fail-closed
+	// spec: §15.1 — an interceptor timeout in a fail-closed
 	// chain is TRANSIENT and retryable, distinct from the POLICY
 	// INTERCEPTOR_REJECTED a deliberate REJECT produces.
 	"INTERCEPTOR_TIMEOUT":            {CategoryTransient, true},
 	"INTERCEPTOR_COOLDOWN_IMMUTABLE": {CategoryPolicy, false},
-	// spec: §8.3 line 181 — the gateway rejects every `delegate_task`
+	// spec: §8.3 — the gateway rejects every `delegate_task`
 	// (and §7.2 `lenny/send_message`) whose effective DelegationPolicy
 	// is inside the cluster-scoped scanExportedFiles weakening
 	// cooldown window. TRANSIENT and retryable: the same request
@@ -141,13 +140,13 @@ var table = map[string]entry{
 	// gateway populates `details.retryAfterSeconds` so the client can
 	// schedule a precise retry. F-8.7.12 / F-13.5.7.
 	"INTERCEPTOR_WEAKENING_COOLDOWN": {CategoryTransient, true},
-	// spec: §15.1 lines 1012-1013 — a deliberate REJECT by a PreLLMRequest
+	// spec: §15.1 — a deliberate REJECT by a PreLLMRequest
 	// or PostLLMResponse interceptor in the §4.9 LLM proxy. PERMANENT (the
 	// same request fails again), distinct from the TRANSIENT
 	// INTERCEPTOR_TIMEOUT a fail-closed interceptor error produces.
 	"LLM_REQUEST_REJECTED":  {CategoryPermanent, false},
 	"LLM_RESPONSE_REJECTED": {CategoryPermanent, false},
-	// spec: §15.1 line 1067, §8.3 line 157 — a delegation whose
+	// spec: §15.1, §8.3 — a delegation whose
 	// TaskSpec.input exceeds the effective contentPolicy.maxInputSize is
 	// rejected by the §4.8 DelegationPolicyEvaluator at PreDelegation.
 	// PERMANENT and not retryable: the caller must reduce the input size.
@@ -160,77 +159,77 @@ var table = map[string]entry{
 	"INVALID_RUNTIME_TYPE": {CategoryPermanent, false},
 	"RUNTIME_UNAVAILABLE":  {CategoryTransient, true},
 	"METHOD_NOT_ALLOWED":   {CategoryPermanent, false},
-	// spec: §15.2.1 line 1017 — no idle pods (or no free concurrent
+	// spec: §15.2.1 — no idle pods (or no free concurrent
 	// slots) are available after exhausting the claim path; the client
 	// should retry with exponential backoff.
 	"WARM_POOL_EXHAUSTED": {CategoryTransient, true},
-	// §4.3 line 214: a session that requires LLM or OAuth credentials
+	// §4.3: a session that requires LLM or OAuth credentials
 	// fails with a retryable error when the Token Service is
 	// unavailable, so clients can back off and retry. The session-start
 	// handler emits this code with HTTP 503 + Retry-After.
 	"TOKEN_SERVICE_UNAVAILABLE": {CategoryUpstream, true},
-	// §4.9 line 1212 admin-time RBAC live-probe. A DENIED/NOT_FOUND
+	// §4.9 admin-time RBAC live-probe. A DENIED/NOT_FOUND
 	// verdict is PERMANENT: the secretRef cannot be read until the
 	// operator patches the Token Service RBAC, so retrying the same
 	// write fails identically.
 	"CREDENTIAL_SECRET_RBAC_MISSING": {CategoryPermanent, false},
-	// §4.9 line 1212: the probe could not be evaluated (Token Service
+	// §4.9: the probe could not be evaluated (Token Service
 	// unreachable, mTLS handshake failure, upstream Kubernetes API
 	// timeout). TRANSIENT and retryable; the write was rejected rather
 	// than fail open.
 	"CREDENTIAL_PROBE_UNAVAILABLE": {CategoryTransient, true},
-	// §4.9 lines 1218, §15.1 line 990 — the §4.9 pre-claim check found
+	// §4.9, §15.1 — the §4.9 pre-claim check found
 	// no provider in the intersection with an assignable credential, or
 	// the credential pool exhausted at assignment. POLICY, HTTP 503; the
 	// client may retry once the pool frees up.
 	"CREDENTIAL_POOL_EXHAUSTED": {CategoryPolicy, true},
-	// §4.9 lines 1364, §15.1 line 993 — a user-only credentialPolicy had
+	// §4.9, §15.1 — a user-only credentialPolicy had
 	// no pre-registered credential for the user and provider. PERMANENT,
 	// HTTP 404; the same request fails until the user registers a
 	// credential or the operator configures pool fallback.
 	"USER_CREDENTIAL_NOT_FOUND": {CategoryPermanent, false},
-	// spec: §11.5 line 277 — an idempotency key that exceeds the 128-rune
+	// spec: §11.5 — an idempotency key that exceeds the 128-rune
 	// limit or fails the tenant scoping check is rejected before any
 	// dispatch happens. PERMANENT (the same key fails identically until
 	// the client picks a different one). The MCP surface uses this
 	// dedicated code so callers can distinguish a malformed key from a
 	// generic body-validation failure. F-11.5.1 / F-15.1.30.
 	"INVALID_IDEMPOTENCY_KEY": {CategoryPermanent, false},
-	// spec: §15.1 line 1052 — `POST /v1/sessions/{id}/derive` rejected
+	// spec: §15.1 — `POST /v1/sessions/{id}/derive` rejected
 	// because the source session is non-terminal and the caller did not
 	// pass `allowStale: true`. PERMANENT (the source state controls the
 	// failure; the same request fails until the caller sets the flag or
 	// the source reaches a terminal state). F-15.1.29.
 	"DERIVE_ON_LIVE_SESSION": {CategoryPermanent, false},
-	// spec: §15.1 line 1054 — `POST /v1/sessions/{id}/derive` failed
+	// spec: §15.1 — `POST /v1/sessions/{id}/derive` failed
 	// because the workspace snapshot object was not found in object
 	// storage (TTL expiry or GC). TRANSIENT — re-issuing immediately is
 	// unlikely to help but the underlying condition can resolve out of
 	// band; HTTP 503.
 	"DERIVE_SNAPSHOT_UNAVAILABLE": {CategoryTransient, true},
-	// spec: §15.1 line 1055 — derive/replay/delegate rejected by the
+	// spec: §15.1 — derive/replay/delegate rejected by the
 	// SEC-001 isolation-monotonicity rule. POLICY (the deployer's
 	// isolation lattice forbids the move); HTTP 422. Overridable only
 	// by a platform-admin with `allowIsolationDowngrade: true`.
 	"ISOLATION_MONOTONICITY_VIOLATED": {CategoryPolicy, false},
-	// spec: §15.1 line 1053 — derive rate-limited because too many
+	// spec: §15.1 — derive rate-limited because too many
 	// concurrent derives are running against the same source session.
 	// POLICY, retryable=true with exponential backoff; HTTP 429.
 	"DERIVE_LOCK_CONTENTION": {CategoryPolicy, true},
-	// spec: §15.1 line 1084 — `respond_to_elicitation` /
+	// spec: §15.1 — `respond_to_elicitation` /
 	// `dismiss_elicitation` rejected because the (session_id, user_id,
 	// elicitation_id) triple does not match any pending elicitation.
 	// PERMANENT, retryable=false; HTTP 404. 404 is returned in every
 	// mismatch case to avoid leaking the existence of other-session
 	// elicitations. F-9.2.17 / F-9.2.18.
 	"ELICITATION_NOT_FOUND": {CategoryPermanent, false},
-	// spec: §15.1 line 1085 — an intermediate hop's elicitation/create
+	// spec: §15.1 — an intermediate hop's elicitation/create
 	// re-emission carried a {message, schema} pair that diverges from
 	// the gateway-recorded original; the chain walker dropped the
 	// forward and the originating pod sees its pending elicitation fail
 	// with a tamper signal. PERMANENT, retryable=false; HTTP 409.
 	"ELICITATION_CONTENT_TAMPERED": {CategoryPermanent, false},
-	// spec: §9.2 line 103 — `lenny/request_elicitation` timed out
+	// spec: §9.2 — `lenny/request_elicitation` timed out
 	// waiting for a human response within `maxElicitationWait` (default
 	// 600 s). The elicitation is dismissed by the gateway and the
 	// agent receives this structured error so it can either give up
@@ -238,7 +237,7 @@ var table = map[string]entry{
 	// (a new elicitation_id) may succeed; not retryable as-is because
 	// the original elicitation has already been dismissed. F-9.2.18.
 	"ELICITATION_TIMEOUT": {CategoryTransient, false},
-	// spec: §11.3 line 211; §9.1 line 104 — per-hop forwarding deadline
+	// spec: §11.3; §9.1 — per-hop forwarding deadline
 	// (30 s, hard-coded) blew on the elicitation chain walk. The agent
 	// receives this structured error so it can either give up or raise a
 	// fresh elicitation. TRANSIENT — the same chain may succeed on a
@@ -246,7 +245,7 @@ var table = map[string]entry{
 	// false because the original elicitation_id has been dropped by the
 	// gateway. F-11.3.16.
 	"ELICITATION_PER_HOP_TIMEOUT": {CategoryTransient, false},
-	// spec: §9.2 line 87 — agent-initiated url-mode elicitation dropped
+	// spec: §9.2 — agent-initiated url-mode elicitation dropped
 	// because the URL's effective host does not match any entry in the
 	// pool's `urlModeElicitation.domainAllowlist`. POLICY, retryable=
 	// false; HTTP 403. The pool admin must allowlist the host or the
@@ -273,7 +272,7 @@ var table = map[string]entry{
 	// but a fresh request_input call may succeed. retryable=false: the
 	// original request id is no longer pending. F-8.5.10.
 	"REQUEST_INPUT_TIMEOUT": {CategoryTransient, false},
-	// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+	// spec: §8.2 — `lenny/delegate_task` rejects `type: mcp`
 	// targets at the type gate. POLICY (the deployer's runtime catalog
 	// type forbids the target); HTTP 422; retryable=false because the
 	// runtime's type is structural. F-8.5.10 / F-8.2.8.
@@ -295,25 +294,25 @@ var table = map[string]entry{
 	// POLICY; HTTP 403; retryable=false because the relation is
 	// structural for this delegation tree. F-8.5.10.
 	"SCOPE_DENIED": {CategoryPolicy, false},
-	// spec: §8.2 line 90 / §8.3 — the child's effective `messagingScope`
+	// spec: §8.2 / §8.3 — the child's effective `messagingScope`
 	// is `siblings` but the effective `treeVisibility` is not `full`, so
 	// the gateway rejects the lease at delegation time. POLICY; HTTP
 	// 422; retryable=false because the lease is rejected before any
 	// admission. F-8.5.10.
 	"TREE_VISIBILITY_INSUFFICIENT_FOR_MESSAGING_SCOPE": {CategoryPolicy, false},
-	// spec: §8.3 line 317 — the child declares a broader `treeVisibility`
+	// spec: §8.3 — the child declares a broader `treeVisibility`
 	// than the parent's effective value. POLICY; HTTP 422; retryable=
 	// false because the weakening is rejected before admission.
 	// F-8.5.10.
 	"TREE_VISIBILITY_WEAKENING": {CategoryPolicy, false},
-	// spec: §8.2 line 58 — the delegation parent has no authenticated
+	// spec: §8.2 — the delegation parent has no authenticated
 	// user identity, so the §8.2 RFC 8693 child-token exchange has no
 	// `subject_token`. PERMANENT; HTTP 422; retryable=false because the
 	// parent's identity stays empty until it is re-bound by a new
 	// session-create flow. F-8.5.10.
 	"DELEGATION_PARENT_NO_USER": {CategoryPermanent, false},
 
-	// spec: §15 error-code catalog (15_external-api-surface.md:976-1099).
+	// spec: §15 error-code catalog (§15.1).
 	// The (category, retryable) pair below is transcribed from the
 	// authoritative catalog table's Category column and its prose
 	// retry language so REST `writeError` and MCP `handleToolCall` —
@@ -369,14 +368,14 @@ var table = map[string]entry{
 	"EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN":       {CategoryPermanent, false}, // spec: 15:1099
 	"REGION_CONSTRAINT_UNRESOLVABLE":               {CategoryPermanent, false}, // spec: 15:1058 (§15.4 family)
 	"KMS_REGION_UNRESOLVABLE":                      {CategoryPermanent, false}, // spec: 15:1060
-	// spec: §8.8 line 869 — a `one_shot` runtime's second input round is
+	// spec: §8.8 — a `one_shot` runtime's second input round is
 	// rejected with HTTP 400. PERMANENT, not retryable.
 	"ONE_SHOT_INPUT_EXHAUSTED": {CategoryPermanent, false},
 	// Code-internal §8.5 delegate_task lease-field validation rejection
 	// (no §15.4 catalog row); a malformed lease field fails identically
 	// until corrected, mirroring VALIDATION_ERROR.
 	"INVALID_LEASE_FIELD": {CategoryPermanent, false},
-	// spec: §25.9 line 3732 — AUDIT_EVENT_NOT_FOUND is PERMANENT (404):
+	// spec: §25.9 — AUDIT_EVENT_NOT_FOUND is PERMANENT (404):
 	// the audit event id does not exist and will not on retry.
 	"AUDIT_EVENT_NOT_FOUND": {CategoryPermanent, false},
 
@@ -412,7 +411,7 @@ var table = map[string]entry{
 	// Code-internal §8.5 delegate_task policy denial (no §15.4 catalog
 	// row); a delegation rejected by policy fails identically on retry.
 	"DELEGATION_DENIED": {CategoryPolicy, false},
-	// spec: §25.9 line 3733 — AUDIT_QUERY_TOO_BROAD is POLICY (400): the
+	// spec: §25.9 — AUDIT_QUERY_TOO_BROAD is POLICY (400): the
 	// query would scan too many rows or spans more than 90 days without a
 	// narrowing filter; it fails identically until the caller narrows it.
 	"AUDIT_QUERY_TOO_BROAD": {CategoryPolicy, false},
@@ -423,13 +422,13 @@ var table = map[string]entry{
 	"CREDENTIAL_RENEWAL_FAILED":   {CategoryTransient, true}, // spec: 15:1025
 	"BUDGET_STATE_UNRECOVERABLE":  {CategoryTransient, true}, // spec: 15:1027
 	"DELEGATION_AUDIT_CONTENTION": {CategoryTransient, true}, // spec: 15:1037
-	// spec: §11.7 item 3 line 368 — the audit-write advisory lock could
+	// spec: §11.7 item 3 — the audit-write advisory lock could
 	// not be acquired within audit.lock.acquireTimeoutMs. TRANSIENT and
 	// retryable: the gateway retries on the same replica up to
 	// audit.lock.maxRetries; sustained failure surfaces as 503
 	// audit_unavailable (mapped via SERVICE_UNAVAILABLE).
 	"AUDIT_CONCURRENCY_TIMEOUT": {CategoryTransient, true},
-	// spec: §25.9 lines 3734-3735 — the audit read path has no cache, so
+	// spec: §25.9 — the audit read path has no cache, so
 	// a Postgres outage surfaces as AUDIT_STORE_UNAVAILABLE (503,
 	// retryable once the store recovers); a partial-shard outage surfaces
 	// as AUDIT_PARTIAL_RESULTS (207, retryable when the missing shards
@@ -447,7 +446,7 @@ var table = map[string]entry{
 	// consumed, so the same call is not retryable.
 	"REQUEST_INPUT_CANCELLED": {CategoryTransient, false},
 
-	// spec: §15.1 lines 1101-1104 — the session-lifecycle generic
+	// spec: §15.1 — the session-lifecycle generic
 	// fallback codes the gateway emits when an atomic create, the
 	// two-step start, or a resume fails for a reason without a more
 	// specific code, plus the JWT-signer-unavailable code. All are
@@ -462,7 +461,7 @@ var table = map[string]entry{
 	"RESUME_FAILED":           {CategoryTransient, true}, // spec: 15:1103
 	"KMS_SIGNING_UNAVAILABLE": {CategoryTransient, true}, // spec: 15:1104
 
-	// spec: §15.1 lines 1105-1106 — two non-retryable session/admin
+	// spec: §15.1 — two non-retryable session/admin
 	// codes. CONFIRMATION_REQUIRED (422) rejects a destructive admin
 	// operation issued without its confirmation flag; the same request
 	// fails identically until the flag is set. SETUP_COMMAND_FAILED

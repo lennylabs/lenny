@@ -24,7 +24,7 @@ func (s staticTenantLister) ListTenants(_ context.Context) ([]string, error) {
 	return []string(s), nil
 }
 
-// spec: §7.3 line 423 — "After expiry the session transitions to
+// spec: §7.3 — "After expiry the session transitions to
 // `expired` ... The gateway applies the session's cascadeOnFailure policy
 // to all active children (same behavior as terminal failure after retry
 // exhaustion)." F-7.3.11.
@@ -32,7 +32,7 @@ func (s staticTenantLister) ListTenants(_ context.Context) ([]string, error) {
 // The integration test wires the watchdog's TerminalHook to the Server
 // (the same wiring cmd/lenny-gateway does at boot) and drives an
 // awaiting_client_action row past the §11.3 maxAwaitingClientAction
-// deadline. The terminal hook is the §7.3 line 423 cascade entry point:
+// deadline. The terminal hook is the §7.3 cascade entry point:
 // recordSessionCompleted → cascadeToChildren, which walks active
 // descendants and cancels them per the parent's CascadeOnFailure.
 func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) {
@@ -80,7 +80,7 @@ func TestAwaitingExpiredAppliesCascadeViaTerminalHook_spec_7_3_11(t *testing.T) 
 	}
 }
 
-// spec: §7.3 line 423 — a detach parent must NOT cancel its children
+// spec: §7.3 — a detach parent must NOT cancel its children
 // on expiry; only the cancel_all cascade walks descendants. The
 // terminal hook applies the parent's own CascadeOnFailure, so a detach
 // parent leaves its children alive. F-7.3.11.

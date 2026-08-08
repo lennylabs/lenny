@@ -137,7 +137,7 @@ func TestElicitationRejectionDeniesSubtree_spec_8_6_line_729(t *testing.T) {
 	if resp.Status != leasecontrol.StatusRejected {
 		t.Fatalf("status = %v, want REJECTED", resp.Status)
 	}
-	// §8.6 line 729 — the subtree is now extension-denied; a follow-up
+	// §8.6 — the subtree is now extension-denied; a follow-up
 	// request is auto-rejected during the cool-off without re-eliciting.
 	tb, err := budgets.TreeBudget(context.Background(), "acme", "root-1")
 	if err != nil {
@@ -205,7 +205,7 @@ func TestElicitationConcurrentBatchesSingleElicitation_spec_8_6_line_719(t *test
 // approval opens the cool-off window, a follow-up request is auto-granted
 // without a fresh elicitation and is attributed to gateway-auto. After
 // the window expires, the next request opens a new elicitation cycle
-// (§8.6 line 726). F-8.6.2.
+// (§8.6). F-8.6.2.
 func TestElicitationSuccessCoolOffAutoGrants_spec_8_6_line_723(t *testing.T) {
 	clk := &mutableClock{now: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)}
 	cfg := baseElicitConfig()
@@ -433,7 +433,7 @@ func (r *fakeReclaimer) terminateCount(sessionID string) int {
 
 // TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719: two sessions
 // in one tree exhaust concurrently and join one pending per-tree
-// extension episode (§8.6 line 719 batching). Both detach at the in-path
+// extension episode (§8.6 batching). Both detach at the in-path
 // deadline (returning Pending), then the single episode's per-session
 // fan-out resolves each independently: the session with token headroom is
 // raised, and the session already at its ceiling is terminated (fail
@@ -446,8 +446,7 @@ func TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719(t *testing.T) {
 	// Session B's parent lease caps its extension at its own current
 	// budget, so B's per-session Grant math returns CEILING_REACHED
 	// (terminal) while A's returns GRANTED — the shared elicitation
-	// resolves once, the grant math resolves per session (§8.6 line
-	// 737-741).
+	// resolves once, the grant math resolves per session (§8.6).
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
 		TenantID:           "acme",
 		CurrentTokenBudget: 100_000,
@@ -510,7 +509,7 @@ func TestExtendForBudgetPerTreeEpisodeFanOut_spec_8_6_line_719(t *testing.T) {
 		}
 	}
 
-	// Exactly one elicitation was opened for the whole tree (§8.6 line 719).
+	// Exactly one elicitation was opened for the whole tree (§8.6).
 	if el.callCount() != 1 {
 		t.Errorf("elicitations = %d, want 1 (both sessions batch onto one per-tree episode)", el.callCount())
 	}
@@ -677,15 +676,15 @@ func TestExtendForBudgetTreeBudgetErrorIsTerminal_spec_8_6_line_629(t *testing.T
 
 // subtreeDenialSource is a BudgetSource whose extension-denied flag is
 // scoped per requesting subtree, matching the production Postgres source
-// that keys the flag with a per-row subtree id (§8.6 line 729/730). It
+// that keys the flag with a per-row subtree id (§8.6). It
 // wraps a MemoryBudgetSource for the budget math and only overrides the
 // denial scope: Deny(requestingSessionID) marks that subtree alone, and
 // TreeBudget(sessionID) reports ExtensionDenied only when that session's
-// own subtree was denied. This is the double the §8.6 line 719 batching
+// own subtree was denied. This is the double the §8.6 batching
 // regression needs: it lets one session's rejection deny only its own
 // subtree, so a sibling that failed to join the live elicitation batch
 // would re-elicit (a second prompt), which the tree-wide MemoryBudgetSource
-// would silently mask. spec: §8.6 line 719, line 729.
+// would silently mask. spec: §8.6.
 type subtreeDenialSource struct {
 	inner  *leasecontrol.MemoryBudgetSource
 	clock  func() time.Time
@@ -749,7 +748,7 @@ func (s *subtreeDenialSource) TenantOf(ctx context.Context, sessionID string) (s
 // prompt (el.callCount() == 2) once the first session's rejection resolved
 // and cleared the batch. Because the episode dispatches its joined members
 // concurrently, the second session observes the live tc.pending and awaits
-// the one prompt, so el.callCount() == 1. This pins the §8.6 line 719
+// the one prompt, so el.callCount() == 1. This pins the §8.6
 // "one elicitation at a time, concurrent requests batched" invariant on
 // the rejection path, which the sequential (pre-fix) dispatch broke and
 // the success cool-off could not mask.
@@ -766,7 +765,7 @@ func TestExtendForBudgetPerTreeEpisodeRejectionSinglePrompt_spec_8_6_line_719(t 
 
 	// The elicitor rejects, and blocks inside Elicit until released so both
 	// concurrent requests reach requestConsent and the second batches onto
-	// the first's live prompt (§8.6 line 719) rather than opening a second.
+	// the first's live prompt (§8.6) rather than opening a second.
 	el := &scriptedElicitor{approve: false, release: make(chan struct{}), started: make(chan struct{})}
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:        budgets,
@@ -815,7 +814,7 @@ func TestExtendForBudgetPerTreeEpisodeRejectionSinglePrompt_spec_8_6_line_719(t 
 	// cleared tc.pending, child-B — a distinct, still-extendable subtree —
 	// would open a SECOND prompt and this assertion would read 2.
 	if el.callCount() != 1 {
-		t.Errorf("elicitations = %d, want 1 (both subtrees batch onto one prompt on the rejection path, §8.6 line 719)", el.callCount())
+		t.Errorf("elicitations = %d, want 1 (both subtrees batch onto one prompt on the rejection path, §8.6)", el.callCount())
 	}
 
 	// Release the rejection; the episode fans out and terminates both
@@ -984,7 +983,7 @@ func TestExtendForBudgetInPathTerminalNoRaise_spec_8_6_line_712(t *testing.T) {
 // which ExtendForBudget maps to Terminal (fail closed): the proxy
 // terminates the session and returns BUDGET_EXHAUSTED. This pins the
 // terminal branch so a regression that treats a zero grant as recoverable
-// (an infinite retry loop, §8.6 line 712) fails.
+// (an infinite retry loop, §8.6) fails.
 func TestExtendForBudgetCeilingReachedTerminal_spec_8_6_line_712(t *testing.T) {
 	budgets := leasecontrol.NewMemoryBudgetSource()
 	budgets.RegisterTree("root-1", leasecontrol.TreeConfig{
@@ -1192,7 +1191,7 @@ func TestOutcomeString_spec_8_6_line_629(t *testing.T) {
 	}
 }
 
-// TestExtendStatusString_spec_8_6_line_743: the §8.6 line 743 extension
+// TestExtendStatusString_spec_8_6_line_743: the §8.6 extension
 // status renders its spec-facing name (GRANTED / PARTIALLY_GRANTED /
 // CEILING_REACHED / REJECTED), and the zero value and any out-of-range
 // value render UNSPECIFIED so a malformed dispatch status cannot be

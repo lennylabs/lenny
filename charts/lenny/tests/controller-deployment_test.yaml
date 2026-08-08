@@ -28,7 +28,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --leader-elect
 
-  # spec: §9.1 lines 14-31 — the controller points each agent pod's
+  # spec: §9.1 — the controller points each agent pod's
   # adapter at the gateway's GatewayControl listener so a type:agent
   # runtime's platform tool calls reach the gateway platform tool
   # surface. F-9.1.1.
@@ -43,7 +43,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-grpc-addr=lenny-gateway.NAMESPACE.svc:50051
 
-  # spec: §10.3 line 334 (NET-064) — when set the controller stamps the
+  # spec: §10.3 — when set the controller stamps the
   # audience-bound projected SA token on every warm pod. F-10.3.5.
   - it: passes --sa-token-audience when global.saTokenAudience is set
     documentSelector:
@@ -272,7 +272,7 @@ tests:
             port: 9123
             targetPort: metrics
 
-  # spec: §10.5 line 403 ("Rolling Deployment updates") / §17.1 — the
+  # spec: §10.5 / §17.1 — the
   # controller declares an explicit, auditable RollingUpdate strategy
   # rather than relying on the Kubernetes 25% default. F-10.5.9.
   - it: renders the §10.5 / §17.1 RollingUpdate strategy by default
@@ -469,7 +469,7 @@ tests:
                 lenny.dev/component: pool-scaling-controller
             topologyKey: kubernetes.io/hostname
 
-  # spec: §5.2 line 369 / §6.4 line 413 — F-6.1.3. A stock render leaves
+  # spec: §5.2 / §6.4 — F-6.1.3. A stock render leaves
   # the resource classes to the binary defaults (small/medium/large with
   # tmpfs-accounted memory limits).
   - it: omits resource-class flags by default
@@ -495,7 +495,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
 
-  # spec: §13.1 line 7 — the controller stamps the operator-tunable
+  # spec: §13.1 — the controller stamps the operator-tunable
   # non-root pod UIDs (default 65532/65533/65534) onto every agent pod;
   # the lenny-webhook Deployments are wired from the same security.podUIDs
   # values so a built pod passes the pod-security UID checks. F-13.1.16.

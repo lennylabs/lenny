@@ -173,7 +173,7 @@ func newMCPNonce() (string, error) {
 // no access for other UIDs. The agent-container runtime runs as a
 // distinct UID (§13.1) but shares the lenny-cred-readers supplementary
 // group via the pod fsGroup, so 0o640 lets the runtime read the manifest
-// over its /run/lenny read-only mount (spec: §4.7 line 846) without
+// over its /run/lenny read-only mount (spec: §4.7) without
 // exposing the §15.4.3 mcpNonce to any other UID in the pod. The mode
 // mirrors the credential file's group-read boundary (credfile.FileMode).
 const ManifestFileMode = 0o640
@@ -262,7 +262,7 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if s.MCPSocket != "" {
 		m.PlatformMcpServer = &ManifestMCPServer{Socket: s.MCPSocket}
 	}
-	// §9.3 line 142 — render one connectorServers entry per connector the
+	// §9.3 — render one connectorServers entry per connector the
 	// session's effective delegation policy permits, so the runtime can
 	// dial each connector's intra-pod MCP server. F-9.1.2.
 	for _, c := range in.connectors {
@@ -357,7 +357,7 @@ func manifestLLMFromPayload(payload []byte) *ManifestLLM {
 // apiKeyEnvForDialect returns the §4.7 canonical API-key env var the
 // runtime's SDK reads for a proxy dialect. An unrecognized dialect yields
 // an empty string (the field is then omitted).
-// spec: §4.9 lines 1473-1474; §26.5/§26.8/§26.9 (google); §26.6 line 297
+// spec: §4.9; §26.5/§26.8/§26.9 (google); §26.6
 // (cursor).
 func apiKeyEnvForDialect(dialect string) string {
 	switch dialect {

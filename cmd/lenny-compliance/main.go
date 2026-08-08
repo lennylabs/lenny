@@ -209,11 +209,11 @@ type checkCase struct {
 
 // basicCases is the §15.4.6 Basic-level conformance battery, run as-is by
 // every level. The three schema-driven checks generate their assertions
-// from the published artifacts §24.8 line 113 names rather than from
-// hand-coded prose: response_matches_jsonl_schema (§15.4.6 line 2405,
+// from the published artifacts §24.8 names rather than from
+// hand-coded prose: response_matches_jsonl_schema (§15.4.6,
 // schemas/lenny-adapter-jsonl.schema.json), messagepart_schema_compliance
-// (§15.4.6 line 2408, schemas/messagepart.schema.json), and
-// response_error_code_in_proto_catalog (§24.8 line 113, the
+// (§15.4.6, schemas/messagepart.schema.json), and
+// response_error_code_in_proto_catalog (§24.8, the
 // schemas/lenny-adapter.proto Error.ErrorCode enum the JSONL schema leaves
 // open). Each failing assertion is cited in the report by name and source
 // artifact.
@@ -420,8 +420,7 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 }
 
 // checkResponseMatchesJSONLSchema validates that the runtime's response
-// frame matches the published adapter JSONL schema. spec: §15.4.6 line
-// 2405 ("The response matches schemas/lenny-adapter-jsonl.schema.json").
+// frame matches the published adapter JSONL schema. spec: §15.4.6.
 func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
@@ -445,7 +444,7 @@ func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbo
 // checkMessagePartSchemaCompliance validates every MessagePart in the
 // runtime's response against the published MessagePart schema. A
 // text-shorthand response (no output array) carries no MessageParts to
-// validate and passes. spec: §15.4.6 line 2408.
+// validate and passes. spec: §15.4.6.
 func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
@@ -488,8 +487,7 @@ func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verb
 // schemas/lenny-adapter.proto Error.ErrorCode enum (the §15.1 catalog), so a
 // runtime that fails a task with an out-of-catalog code is non-conformant in
 // a way no JSON-Schema assertion can catch. A successful response carries no
-// error and passes vacuously. spec: §24.8 line 113 (schema-driven assertions
-// generated from lenny-adapter.proto, report cites the failing assertion).
+// error and passes vacuously. spec: §24.8.
 func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
@@ -519,7 +517,7 @@ func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose
 	return "no error frame to assert against " + adapterProtoFile, nil
 }
 
-// heartbeatAckDeadline is the §15.4.6 line 2406 Basic-conformance bound:
+// heartbeatAckDeadline is the §15.4.6 Basic-conformance bound:
 // the binary MUST write heartbeat_ack within 10s of receiving heartbeat.
 // The harness drives the adapter under this deadline (rather than the
 // generic test timeout) so a slow-starting runtime that acks at, say,
@@ -528,7 +526,7 @@ func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose
 const heartbeatAckDeadline = 10 * time.Second
 
 func checkHeartbeatAck(binary string, timeout time.Duration, _ bool) (string, error) {
-	// spec: §15.4.6 line 2406 — bound the wait to the 10s ack deadline.
+	// spec: §15.4.6 — bound the wait to the 10s ack deadline.
 	// A smaller caller timeout still wins so an aggressive overall budget
 	// is honored.
 	deadline := heartbeatAckDeadline
@@ -581,7 +579,7 @@ func checkUnknownTypeIgnored(binary string, timeout time.Duration, _ bool) (stri
 	return "unknown type silently dropped; heartbeat still answered", nil
 }
 
-// shutdownDeadlineMs is the §15.4.6 line 2407 Basic-conformance shutdown
+// shutdownDeadlineMs is the §15.4.6 Basic-conformance shutdown
 // budget: "the binary exits cleanly before the deadline elapses (tested
 // with N = 5000)". The harness sends deadline_ms=5000 and asserts the
 // binary exits — cleanly (exit 0) — within that window rather than under
@@ -593,10 +591,10 @@ func checkShutdownDeadline(binary string, _ time.Duration, _ bool) (string, erro
 }
 
 // runShutdownDeadlineCheck drives binary with a shutdown frame carrying
-// deadlineMs and asserts the §15.4.6 line 2407 contract: a clean exit
+// deadlineMs and asserts the §15.4.6 contract: a clean exit
 // (code 0) before the deadline elapses. The deadlineMs is a parameter so
 // tests can exercise the boundary fast; the public check passes the
-// spec's N=5000. spec: §15.4.6 line 2407. 15.4-MED-023.
+// spec's N=5000. spec: §15.4.6. 15.4-MED-023.
 func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
 	deadline := time.Duration(deadlineMs) * time.Millisecond
 	in := []string{fmt.Sprintf(`{"type":"shutdown","reason":"test","deadline_ms":%d}`, deadlineMs)}
@@ -609,12 +607,12 @@ func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// spec: §15.4.6 line 2407 — a clean exit is exit code 0. A binary
+	// spec: §15.4.6 — a clean exit is exit code 0. A binary
 	// force-killed at the harness bound returns non-zero.
 	if code != 0 {
 		return "", fmt.Errorf("exit %d (must exit cleanly within the %s deadline)", code, deadline)
 	}
-	// spec: §15.4.6 line 2407 — the binary must exit *before* the deadline
+	// spec: §15.4.6 — the binary must exit *before* the deadline
 	// elapses, not merely before a looser guard.
 	if elapsed > deadline {
 		return "", fmt.Errorf("exit took %v, exceeds the %s deadline_ms", elapsed.Round(time.Millisecond), deadline)

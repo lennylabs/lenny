@@ -17,8 +17,8 @@ import (
 // so a rotation, teardown, or workspace change on one slot does not disturb
 // another. The single pod-global runtime serves every slot, multiplexed on
 // slotId over the one runtime connection (spec/05:509, spec/15:1459), so a
-// slot owns no runtime process of its own. spec: §6.4 lines 385-409;
-// §6.1 line 28.
+// slot owns no runtime process of its own. spec: §6.4;
+// §6.1.
 type slotState struct {
 	// sessionID is the session assigned to this slot. The gateway uses
 	// the session id as the slot id, but the adapter validates inbound
@@ -69,7 +69,7 @@ func (s *Server) resolveSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 // call for the same slot returns the existing state without recreating
 // the tree's content. Callers hold s.mu.
 //
-// spec: §6.4 lines 401-405 — "The adapter creates the slot directory on
+// spec: §6.4 — "The adapter creates the slot directory on
 // slotId assignment".
 func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
 	if s.slots == nil {
@@ -173,7 +173,7 @@ func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, e
 }
 
 // removeSlotTree removes the slot's per-slot directory tree on cleanup.
-// spec: §6.4 lines 401-405.
+// spec: §6.4.
 func removeSlotTree(st *slotState) error {
 	return slotlayout.RemoveTree(st.paths)
 }

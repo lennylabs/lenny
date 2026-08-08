@@ -28,7 +28,7 @@ type sessionConnector struct {
 // failure yields no connectors so a session still starts. The gateway
 // filters the list by the session's policy, so the adapter opens a
 // per-connector server only for connectors the runtime may use.
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func (s *Server) sessionConnectors(ctx context.Context, sessionID string) []sessionConnector {
 	if s.ConnectorForwarder == nil || s.MCPSocket == "" || s.RuntimeKind == RuntimeKindMCP {
 		return nil
@@ -55,7 +55,7 @@ func (s *Server) sessionConnectors(ctx context.Context, sessionID string) []sess
 // GatewayControl, scoped to the session and that one connector. It is
 // best-effort: a per-connector listen failure is logged and skipped so
 // the remaining connectors still serve. releaseSession stops every
-// server started here. spec: §9.3 lines 142-164. F-9.1.2.
+// server started here. spec: §9.3. F-9.1.2.
 func (s *Server) startConnectorMCPServers(sessionID, nonce string, conns []sessionConnector) {
 	if nonce == "" || s.ConnectorForwarder == nil {
 		return
@@ -78,7 +78,7 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 		return err
 	}
 	srv := mcp.NewServer()
-	// §4.7 lines 879-883: mirror the platform server's per-connection
+	// §4.7: mirror the platform server's per-connection
 	// challenge when SO_PEERCRED is disabled so the static nonce is not
 	// replayable on the connector sockets either.
 	srv.RequireChallenge = s.NonceOnlyMode
@@ -117,7 +117,7 @@ func (s *Server) listenIntraPodMCP(socket string) (net.Listener, error) {
 // per-connector socket; a filesystem base (the dev / test form) yields a
 // sibling `.sock` file. The id is sanitised so a registry id carrying
 // path-unsafe characters cannot escape the socket namespace.
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func connectorSocketName(base, id string) string {
 	safe := sanitizeConnectorID(id)
 	if strings.HasPrefix(base, "@") {

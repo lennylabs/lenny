@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 )
 
-// spec: §10.6 lines 588-607 — capability-based tool filtering for
+// spec: §10.6 — capability-based tool filtering for
 // mcpRuntimeFilters and connectorSelector.
 
 func TestPermitCapabilities_spec_10_6_607(t *testing.T) {

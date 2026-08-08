@@ -236,7 +236,7 @@ func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 240 — DEADLINE_APPROACHING is delivered over the
+// spec: §11.3 — DEADLINE_APPROACHING is delivered over the
 // CH-RUNTIMEOPS. F-11.3.5.
 func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
@@ -267,7 +267,7 @@ func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
 	}
 }
 
-// spec: §15 line 2141 — a Basic/Standard runtime with no CH-RUNTIMEOPS
+// spec: §15 — a Basic/Standard runtime with no CH-RUNTIMEOPS
 // receives no advance notice; the adapter reports delivered=false rather than
 // erroring. F-11.3.5.
 func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *testing.T) {
@@ -286,7 +286,7 @@ func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *test
 	}
 }
 
-// spec: §11.3 line 240 — an empty trigger defaults to session_age, the only
+// spec: §11.3 — an empty trigger defaults to session_age, the only
 // trigger the maxSessionAge warning uses. F-11.3.5.
 func TestSignalDeadlineDefaultsTriggerToSessionAge_spec_11_3_240(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")

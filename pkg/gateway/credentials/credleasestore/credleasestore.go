@@ -41,7 +41,7 @@ type LeaseStore interface {
 	// expired-lease sweep that keeps the lease working set and the deny
 	// list bounded within a replica's lifetime.
 	//
-	// spec: §4.9 line 1671 — deny-list entries expire when the
+	// spec: §4.9 — deny-list entries expire when the
 	// credential's natural lease TTL lapses.
 	DeleteExpired(ctx context.Context, cutoff time.Time) (int, error)
 	// LeasesByCredentialCount reports how many leases the store holds
@@ -53,7 +53,7 @@ type LeaseStore interface {
 	// §4.9 fail-closed deny-list-entry removal and the startup rebuild
 	// filter.
 	//
-	// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+	// spec: §4.9 — the startup rebuild seeds a deny-list
 	// entry only for a revoked credential that still has an active lease.
 	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
 }
@@ -178,7 +178,7 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 // removing the leases. The match is source-aware: a pool key never
 // aliases a user key (§4.9).
 //
-// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// spec: §4.9 — look up all active leases backed by the
 // credential and terminate them.
 func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
 	s.mu.RLock()
@@ -198,7 +198,7 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 // answers, so the error is nil. It backs the §4.9 bounded expired-lease
 // sweep.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) DeleteExpired(_ context.Context, cutoff time.Time) (int, error) {
 	s.mu.Lock()
@@ -223,7 +223,7 @@ func (s *Store) DeleteExpired(_ context.Context, cutoff time.Time) (int, error) 
 // always answers, so the error is nil. It backs the §4.9 fail-closed
 // deny-list-entry removal (the sweep) and the startup rebuild filter.
 //
-// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// spec: §4.9 — the startup rebuild seeds a deny-list
 // entry only for a revoked credential that still has an active lease.
 func (s *Store) LeasesByCredentialCount(_ context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
 	s.mu.RLock()

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.6 line 520. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestOpsIngressClusterIssuerCheck_spec_17_6_520(t *testing.T) {
 	// No issuer annotation: silent pass.
 	if d := (OpsIngressClusterIssuerCheck{}).Decide(); !d.Passed || d.Reason != "" {
@@ -29,7 +29,7 @@ func TestOpsIngressClusterIssuerCheck_spec_17_6_520(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 521. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestMonitoringNamespaceCheck_spec_17_6_521(t *testing.T) {
 	// Missing namespace or label: silent pass.
 	if d := (MonitoringNamespaceCheck{PodLabel: "app=prometheus"}).Decide(); d.Reason != "" {
@@ -61,7 +61,7 @@ func (f fakeSARProber) CanI(_ context.Context, _ string, rule OpsSARBACRule) (bo
 	return !f.deny[rule.String()], nil
 }
 
-// spec: §17.6 line 519; §25.4. F-17.6.1.
+// spec: §17.6; §25.4. F-17.6.1.
 func TestOpsSARBACCheck_spec_17_6_519(t *testing.T) {
 	ctx := context.Background()
 	rules := CanonicalOpsSARBACRules("lenny-system")

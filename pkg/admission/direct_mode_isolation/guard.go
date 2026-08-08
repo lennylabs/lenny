@@ -4,7 +4,7 @@
 // the lenny-direct-mode-isolation ValidatingAdmissionWebhook per spec
 // §4.9 and §13.2. The webhook is deployed fail-closed in front of
 // SandboxTemplate resources in agent namespaces and renders
-// unconditionally (§13.2 line 440 step 2). The credential-delivery
+// unconditionally (§13.2 step 2). The credential-delivery
 // fields it inspects (deliveryMode, isolationProfile, spiffeBinding,
 // egressProfile) are authored only on the SandboxTemplate spec. A
 // SandboxWarmPool references a template by name (templateRef) and
@@ -13,7 +13,7 @@
 // the SandboxTemplate is the only admitted resource that can carry a
 // forbidden combination. Scoping the chart rule to sandboxtemplates is
 // therefore complete; matching SandboxWarmPool or core Pods would add
-// rules with no fields to inspect. spec: §17.2 line 47. F-17.2.14.
+// rules with no fields to inspect. spec: §17.2. F-17.2.14.
 //
 // In a multi-tenant deployment two credential-delivery configurations
 // expose cross-tenant credential risk and are rejected:
@@ -124,7 +124,7 @@ type Decision struct {
 // do not rescue them here — the webhook enforces regardless of any
 // opt-in field value.
 func Decide(r Request) Decision {
-	// spec: §13.2 line 438 (NET-006) — proxy + provider-direct is an
+	// spec: §13.2 — proxy + provider-direct is an
 	// incoherent security posture in any tenancy mode, so this check is
 	// not gated on enforced(). The proxy path is designed to keep API
 	// keys off the pod; provider-direct egress would hand the pod a

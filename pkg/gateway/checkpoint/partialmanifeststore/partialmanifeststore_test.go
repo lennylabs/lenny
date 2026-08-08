@@ -28,7 +28,7 @@ func intentRow(clock time.Time, tenant, checkpointID, session string, gen int64)
 	}
 }
 
-// spec: §10.1 lines 141-151 — the intent-row Put + Get round-trip must
+// spec: §10.1 — the intent-row Put + Get round-trip must
 // persist every spec-mandated field, keyed on (tenant_id, checkpoint_id).
 func TestPutAndGet(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -66,7 +66,7 @@ func TestPutAndGet(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — baseline_full_checkpoint_bytes is nullable and
+// spec: §10.1 — baseline_full_checkpoint_bytes is nullable and
 // the NULL state is load-bearing; a nil pointer round-trips as NULL.
 func TestPutRoundTripsNullBaseline(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -129,7 +129,7 @@ func TestSoftDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 157 — LatestActive is the resume-time cleanup
+// spec: §10.1 — LatestActive is the resume-time cleanup
 // selector and carries the `partial = TRUE` predicate, so a completed
 // checkpoint (partial = false) is never returned to the cleaner and thus
 // never destroyed by its own restore.
@@ -166,7 +166,7 @@ func TestLatestActiveSelectsPartialOnly(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly selector.
+// spec: §10.1 — LatestActiveAny is the resume-reassembly selector.
 // Unlike LatestActive (partial = TRUE), it returns the highest-generation
 // active row regardless of partial, so a completed checkpoint is returned
 // when it is the only active row, and a newer partial drain attempt at a
@@ -181,7 +181,7 @@ func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
 		t.Fatalf("Put complete intent: %v", err)
 	}
 	// A confirmed chunk keeps the completed row active (a zero-chunk row is
-	// soft-deleted by Finalise, §10.1 line 132).
+	// soft-deleted by Finalise, §10.1).
 	if err := store.ConfirmChunk(context.Background(), "acme", "cp-complete", 0, 4096); err != nil {
 		t.Fatalf("ConfirmChunk complete: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 137 — supersede-on-write collapses the active partial
+// spec: §10.1 — supersede-on-write collapses the active partial
 // set to the highest-generation row for the (session, slot). A same-slot
 // write at or above the incoming generation soft-deletes the prior
 // active partial row, even at the same coordination_generation (two
@@ -250,7 +250,7 @@ func TestPutSupersedesAtOrBelowGeneration(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a write whose coordination_generation sits
+// spec: §10.1 — a write whose coordination_generation sits
 // below an already-active strictly-higher generation is a fenced
 // stale-coordinator write; Put rejects it with ErrStaleGeneration
 // without mutating the active manifest.
@@ -274,7 +274,7 @@ func TestPutRejectsStaleLowerGeneration(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 147 — the supersede predicate is scoped to
+// spec: §10.1 — the supersede predicate is scoped to
 // (session_id, slot_id); a write in a different slot does not supersede
 // another slot's active partial row.
 func TestPutSupersedeScopedToSlot(t *testing.T) {
@@ -298,7 +298,7 @@ func TestPutSupersedeScopedToSlot(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial row
+// spec: §10.1 — LatestActiveForSlot returns the active partial row
 // for the exact (session, slot) the supersede path scopes on, even when
 // another slot in the same session holds a higher-generation active row that
 // the session-wide LatestActive would return first.
@@ -338,7 +338,7 @@ func TestLatestActiveForSlotIsSlotScoped(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 131 — ConfirmChunk advances chunk_count and
+// spec: §10.1 — ConfirmChunk advances chunk_count and
 // workspace_bytes_uploaded monotonically under the `chunk_count < n + 1`
 // guard, so an out-of-order acknowledgement cannot decrement the counter.
 func TestConfirmChunkIsMonotonic(t *testing.T) {
@@ -367,7 +367,7 @@ func TestConfirmChunkIsMonotonic(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — Finalise stamps the terminal disposition: a
+// spec: §10.1 — Finalise stamps the terminal disposition: a
 // complete checkpoint finalises partial = false, and every other arm
 // finalises partial = true with its reason.
 func TestFinalise(t *testing.T) {
@@ -389,7 +389,7 @@ func TestFinalise(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 132 — a terminal arm that finalises with chunk_count == 0
+// spec: §10.1 — a terminal arm that finalises with chunk_count == 0
 // soft-deletes the row in the same transaction, so an empty partial manifest
 // (an adapter crash or a quota refusal before the first chunk confirmed) is
 // never left active occupying the partial_manifest_active_uniq slot for a
@@ -506,7 +506,7 @@ func TestListReclaimableResumeWindow(t *testing.T) {
 	// An old finalised-timeout row created at base. It confirmed a chunk
 	// before the deadline fired, so it is retained (not soft-deleted at
 	// finalise) for the resume path and remains reclaimable by the backstop
-	// once its resume window expires (§10.1 line 132 soft-deletes only the
+	// once its resume window expires (§10.1 soft-deletes only the
 	// zero-chunk finalisation).
 	_ = store.Put(context.Background(), intentRow(clock, "acme", "cp-old", "s1", 1))
 	_ = store.ConfirmChunk(context.Background(), "acme", "cp-old", 0, 128)
@@ -538,7 +538,7 @@ func TestListReclaimableResumeWindow(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — a row with an empty chunk_object_key_prefix is
+// spec: §10.1 — a row with an empty chunk_object_key_prefix is
 // meaningless (the cleanup path cannot locate the chunks); reject at the
 // store boundary.
 func TestPutRejectsEmptyPrefix(t *testing.T) {
@@ -583,7 +583,7 @@ func TestPutDefaultsEncodingAndReason(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — empty tenant, session, or checkpoint id is a
+// spec: §10.1 — empty tenant, session, or checkpoint id is a
 // programming error; reject at the store boundary.
 func TestPutRejectsEmptyIDs(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
@@ -708,7 +708,7 @@ func TestChunkEncodingValidValues(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — manifest_reason is a closed enum.
+// spec: §10.1 — manifest_reason is a closed enum.
 func TestManifestReasonValidValues(t *testing.T) {
 	for _, r := range []string{
 		partialmanifeststore.ReasonInProgress, partialmanifeststore.ReasonComplete,
@@ -758,7 +758,7 @@ func TestHasActivePartialManifest(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — LatestFull returns the most-recently-created
+// spec: §10.1 — LatestFull returns the most-recently-created
 // active full checkpoint row (partial = false) and never a partial one.
 func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
 	clock := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)

@@ -17,7 +17,7 @@ func failProber() PrometheusProber {
 	return PrometheusProbeFunc(func(context.Context, string) error { return errors.New("connection refused") })
 }
 
-// spec: §25.4 lines 1462-1470 — the prometheus-reachability check is
+// spec: §25.4 — the prometheus-reachability check is
 // non-blocking (always Passed) and tier-specific. This matrix pins the
 // INFO/WARN/silent outcomes across tier × configured × reachable ×
 // acknowledged.
@@ -104,7 +104,7 @@ func TestPrometheusReachabilityCheck_Matrix_spec_25_4_25(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1470 — the message names the configured URL when one
+// spec: §25.4 — the message names the configured URL when one
 // was set but unreachable, so the operator can tell "not configured" from
 // "configured but down".
 func TestPrometheusReachabilityCheck_NamesURLWhenUnreachable_spec_25_4_25(t *testing.T) {

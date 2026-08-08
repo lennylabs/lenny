@@ -58,7 +58,7 @@ func (c *slotDrainCheckpointer) completions(sessionID string) int {
 }
 
 // spec: §5.2 (per-slot checkpoint serialization), §4.4 (checkpoint store
-// durability), §10.1 line 169. A concurrent pod's drain fans one
+// durability), §10.1. A concurrent pod's drain fans one
 // gateway-side Checkpoint stream out per occupied slot and acks each
 // target only after that slot's checkpoint is recorded. With three
 // occupied slots against the one adapter, every slot drives its own

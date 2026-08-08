@@ -121,8 +121,7 @@ func TestSinceRespectsLimit(t *testing.T) {
 	}
 }
 
-// TestSinceFilteredLabelContainment_spec_14_106 exercises the §14 line
-// 106 label-scoped metering stream: SinceFiltered narrows to events whose
+// TestSinceFilteredLabelContainment_spec_14_106 exercises the §14 label-scoped metering stream: SinceFiltered narrows to events whose
 // denormalized labels contain every requested pair, the limit applies to
 // the matching rows (so the §15.1 cursor stays correct), and an
 // empty/nil filter is identical to Since. F-14.1.13.
@@ -497,7 +496,7 @@ func createdAt(tenant, session string, t time.Time) billingstore.Event {
 	return e
 }
 
-// spec: §11.2.1 line 151 — DeleteOlderThan prunes a tenant's events with
+// spec: §11.2.1 — DeleteOlderThan prunes a tenant's events with
 // created_at before the cutoff, leaves newer events, is tenant-scoped,
 // and is idempotent on an empty range. F-11.2.15.
 func TestMemoryDeleteOlderThan_spec_11_2_151(t *testing.T) {

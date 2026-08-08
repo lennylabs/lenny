@@ -24,7 +24,7 @@ type recordingCheckpointer struct {
 	errs     map[string]error
 	// started, when non-nil, is closed the first time
 	// CheckpointWithTrigger is entered. A test uses it to prove the stream
-	// was opened concurrently with the barrier RPC (§10.1 line 169): the
+	// was opened concurrently with the barrier RPC (§10.1): the
 	// dispatcher can block its ack on this signal, so a serial
 	// ack-then-checkpoint ordering would never fire it.
 	started     chan struct{}
@@ -56,7 +56,7 @@ func (c *recordingCheckpointer) callCount(sessionID string) int {
 	return c.calls[sessionID]
 }
 
-// spec: §10.1 line 169 — the barrier drives one gateway-side Checkpoint
+// spec: §10.1 — the barrier drives one gateway-side Checkpoint
 // stream per target under the eviction trigger, opened concurrently with
 // the CheckpointBarrier RPC. Each acked Outcome carries the stream's
 // error (nil here) and every target is checkpointed exactly once.
@@ -115,7 +115,7 @@ func (d gatedDispatcher) Send(ctx context.Context, t Target, _ string) (Ack, err
 	}
 }
 
-// spec: §10.1 line 169 — the ack is never blocked on a stream nobody
+// spec: §10.1 — the ack is never blocked on a stream nobody
 // opened: the barrier opens the Checkpoint stream concurrently with the
 // CheckpointBarrier RPC. Here the ack fires only once the stream has been
 // entered, so a serial "ack then open the stream" ordering would time out
@@ -149,7 +149,7 @@ func TestDispatchCheckpointConcurrentWithBarrier_spec_10_1_169(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 169 — a barrier-window Checkpoint that errors does not
+// spec: §10.1 — a barrier-window Checkpoint that errors does not
 // un-ack the target: the stream finalises the manifest row (a partial row
 // on abort) itself, so the session is still captured and the Outcome
 // stays Acked with the stream error recorded on CheckpointErr.
@@ -177,7 +177,7 @@ func TestDispatchCheckpointErrorKeepsAcked_spec_10_1_169(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 169 — a nil Checkpointer leaves the barrier firing
+// spec: §10.1 — a nil Checkpointer leaves the barrier firing
 // without driving a gateway-side checkpoint (the dev-mode posture); the
 // ack path is unchanged and no CheckpointErr is recorded.
 func TestDispatchNilCheckpointerFiresBarrierOnly_spec_10_1_169(t *testing.T) {

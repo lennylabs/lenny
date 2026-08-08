@@ -9,7 +9,7 @@
 // fails closed (503) on a store outage for those required endpoints
 // rather than silently proceeding.
 //
-// spec: §25.4 lines 2011-2130 ("Idempotency").
+// spec: §25.4.
 package opsidem
 
 import (

@@ -13,7 +13,7 @@
 // and the §12.5 backstop sweep read it to release the chunk objects and
 // reservation and soft-delete the row.
 //
-// spec: §10.1 lines 141-151.
+// spec: §10.1.
 package partialmanifeststore
 
 import (
@@ -40,7 +40,7 @@ func (e ChunkEncoding) IsValid() bool {
 	return e == ChunkEncodingTar || e == ChunkEncodingTarGz
 }
 
-// The §10.1 line 141 closed enum of manifest_reason dispositions. A row
+// The §10.1 closed enum of manifest_reason dispositions. A row
 // carries ReasonInProgress from intent-row INSERT until a terminal arm
 // overwrites it.
 const (
@@ -52,7 +52,7 @@ const (
 	ReasonQuotaExceeded   = "quota_exceeded"
 )
 
-// IsValidReason reports whether r is one of the §10.1 line 141
+// IsValidReason reports whether r is one of the §10.1
 // manifest_reason enum values.
 func IsValidReason(r string) bool {
 	switch r {
@@ -66,7 +66,7 @@ func IsValidReason(r string) bool {
 
 // SlotDefault is the sentinel slot_id for pools with
 // maxConcurrentSessions: 1, so the (session_id, slot_id) scoping key is
-// well-defined for every session (§10.1 line 147).
+// well-defined for every session (§10.1).
 const SlotDefault = "default"
 
 // Record is one checkpoint_manifest row.
@@ -75,7 +75,7 @@ type Record struct {
 	// gateway mints CheckpointID (a UUID) at intent-row INSERT.
 	TenantID     string
 	CheckpointID string
-	// SessionID and SlotID are the §10.1 line 147 scoping key the
+	// SessionID and SlotID are the §10.1 scoping key the
 	// partial_manifest_active_uniq index and the supersede predicate
 	// key on. SlotID defaults to SlotDefault.
 	SessionID string
@@ -84,16 +84,16 @@ type Record struct {
 	// intent-row INSERT. The resume path selects the row at
 	// MAX(coordination_generation) so a late-committed older-generation
 	// row cannot win against a fenced newer writer under split-brain,
-	// and the supersede predicate fences on it (§10.1 lines 141, 155).
+	// and the supersede predicate fences on it (§10.1).
 	CoordinationGeneration int64
 	// RecoveryGeneration is the session's recovery counter at the time
 	// the row was written, captured for audit reconstruction.
 	RecoveryGeneration int64
-	// Partial is the §10.1 line 141 disposition flag. It is true from
+	// Partial is the §10.1 disposition flag. It is true from
 	// intent-row INSERT and stays true on every terminal arm except a
 	// complete checkpoint, which finalises Partial = false.
 	Partial bool
-	// ManifestReason is the §10.1 line 141 manifest_reason enum value.
+	// ManifestReason is the §10.1 manifest_reason enum value.
 	ManifestReason string
 	// ChunkObjectKeyPrefix is the
 	// /{tenant_id}/checkpoints/{session_id}/{checkpoint_id}/ prefix
@@ -125,7 +125,7 @@ type Record struct {
 	// BaselineFullCheckpointBytes is the session's
 	// last_checkpoint_workspace_bytes at intent-row INSERT, frozen for
 	// the life of the row. Nil is load-bearing: it denotes a session
-	// with no prior successful full checkpoint (§10.1 line 155).
+	// with no prior successful full checkpoint (§10.1).
 	BaselineFullCheckpointBytes *int64
 	// CheckpointStartedAt and CheckpointTimeoutAt bound the attempt. The
 	// §12.5 backstop treats a row past CheckpointTimeoutAt as reclaimable
@@ -147,10 +147,10 @@ var ErrNotFound = errors.New("partialmanifeststore: row not found")
 // at a strictly higher coordination_generation already exists for the
 // same (session, slot). The write is a fenced stale-coordinator attempt:
 // honoring it would downgrade the active manifest below the highest
-// fenced generation, which the §10.1 line 155 MAX(coordination_generation)
+// fenced generation, which the §10.1 MAX(coordination_generation)
 // resume selector forbids. The losing writer rolls back and re-reads.
 //
-// spec: §10.1 lines 137, 155.
+// spec: §10.1.
 var ErrStaleGeneration = errors.New("partialmanifeststore: a higher-generation active manifest already exists")
 
 // ErrAlreadyExists is returned by Put when a row already carries the
@@ -178,7 +178,7 @@ type Store interface {
 	// rejected with ErrAlreadyExists. Returns an error when a required
 	// field is empty or invalid.
 	//
-	// spec: §10.1 lines 137, 143-151, 155.
+	// spec: §10.1.
 	Put(ctx context.Context, r Record) error
 
 	// Get returns the row for (tenantID, checkpointID) or ErrNotFound.
@@ -191,19 +191,19 @@ type Store interface {
 	// is never destroyed by the resume-time cleaner. Returns ErrNotFound
 	// when no active partial row exists.
 	//
-	// spec: §10.1 line 157 — the resume-time cleaner selects partial rows.
+	// spec: §10.1 — the resume-time cleaner selects partial rows.
 	LatestActive(ctx context.Context, tenantID, sessionID string) (Record, error)
 
 	// LatestActiveAny returns the highest-coordination_generation active row
 	// (`deleted_at IS NULL`) for (tenantID, sessionID) regardless of
 	// `partial`, taking the most recently created row among rows at that
-	// generation — the §10.1 line 154 resume-reassembly selector. It resolves
+	// generation — the §10.1 resume-reassembly selector. It resolves
 	// the checkpoint the resume restores from: a newer partial = true drain
 	// row at or above a completed checkpoint's generation wins, so the
 	// partialRecoveryThresholdFraction gate can arbitrate. Returns ErrNotFound
 	// when no active row exists.
 	//
-	// spec: §10.1 line 154 — select the active row at
+	// spec: §10.1 — select the active row at
 	// MAX(coordination_generation) regardless of partial.
 	LatestActiveAny(ctx context.Context, tenantID, sessionID string) (Record, error)
 
@@ -221,12 +221,11 @@ type Store interface {
 
 	// LatestFull returns the most-recently-created active full checkpoint
 	// row (`partial = FALSE AND deleted_at IS NULL`) for
-	// (tenantID, sessionID) — the §10.1 line 155 "last successful full
-	// checkpoint" the resume path falls back to when reassembly of the
+	// (tenantID, sessionID) — the §10.1 the resume path falls back to when reassembly of the
 	// selected partial manifest fails its contiguity check. Returns
 	// ErrNotFound when the session has no surviving full checkpoint.
 	//
-	// spec: §10.1 line 155 — fallback to the last successful full checkpoint.
+	// spec: §10.1 — fallback to the last successful full checkpoint.
 	LatestFull(ctx context.Context, tenantID, sessionID string) (Record, error)
 
 	// LatestActiveForSlot returns the active partial row for the single
@@ -239,18 +238,18 @@ type Store interface {
 	// this selector matches exactly the set Put supersedes, so a multi-slot
 	// session's supersede release never misses the target slot's prior row.
 	//
-	// spec: §10.1 line 137 — supersede is scoped to
+	// spec: §10.1 — supersede is scoped to
 	// (tenant_id, session_id, slot_id).
 	LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (Record, error)
 
 	// ConfirmChunk advances the monotonic chunk_count / workspace_bytes
-	// counters as chunk n commits. It applies the §10.1 line 131
+	// counters as chunk n commits. It applies the §10.1
 	// conditional UPDATE (`chunk_count < n + 1` guard) so out-of-order
 	// acknowledgements cannot decrement the counter, under the
 	// `deleted_at IS NULL` guard. A no-op (returns nil) when the row is
 	// missing, soft-deleted, or already at or beyond n + 1.
 	//
-	// spec: §10.1 line 131.
+	// spec: §10.1.
 	ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error
 
 	// Finalise stamps the terminal disposition on the row under the
@@ -263,7 +262,7 @@ type Store interface {
 	// never left active for the resume path or a downstream reclaimer to
 	// pick up. A no-op when the row is missing or soft-deleted.
 	//
-	// spec: §10.1 lines 132, 141 — the zero-chunk finalisation soft-deletes
+	// spec: §10.1 — the zero-chunk finalisation soft-deletes
 	// the row in the same transaction.
 	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
 
@@ -397,7 +396,7 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	if _, exists := m.rows[recordKey{r.TenantID, r.CheckpointID}]; exists {
 		return ErrAlreadyExists
 	}
-	// §10.1 line 155 fencing: reject a write whose generation sits below
+	// §10.1 fencing: reject a write whose generation sits below
 	// an already-active strictly-higher generation before mutating
 	// anything, so a stale-coordinator write never downgrades the active
 	// manifest.
@@ -409,7 +408,7 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 			return ErrStaleGeneration
 		}
 	}
-	// §10.1 line 137 supersede-on-write: soft-delete every active partial
+	// §10.1 supersede-on-write: soft-delete every active partial
 	// row at or below the incoming generation so at most one active
 	// partial row survives for this (session, slot).
 	for key, row := range m.rows {
@@ -467,7 +466,7 @@ func (m *MemoryStore) LatestActive(_ context.Context, tenantID, sessionID string
 }
 
 // LatestActiveAny returns the highest-generation active row for
-// (tenantID, sessionID) regardless of partial — the §10.1 line 154 resume
+// (tenantID, sessionID) regardless of partial — the §10.1 resume
 // selector. Ties on coordination_generation break to the most recently
 // created row.
 func (m *MemoryStore) LatestActiveAny(_ context.Context, tenantID, sessionID string) (Record, error) {
@@ -593,7 +592,7 @@ func (m *MemoryStore) Finalise(_ context.Context, tenantID, checkpointID string,
 	}
 	row.Partial = partial
 	row.ManifestReason = manifestReason
-	// spec: §10.1 line 132 — a terminal arm that finalises with no chunks
+	// spec: §10.1 — a terminal arm that finalises with no chunks
 	// committed soft-deletes the row in the same transaction, so an empty
 	// manifest never occupies the partial_manifest_active_uniq slot waiting
 	// on a later supersede or the §12.5 backstop to reclaim it.

@@ -162,7 +162,7 @@ func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	// ---- a fourth prompt with delivery:"immediate" sent to the now
 	// suspended, pod-held session atomically resumes the session
 	// (suspended → running) and delivers the message to the runtime:
-	// §7.2 path 6 line 327. The receipt is delivered with a non-empty
+	// §7.2 path 6. The receipt is delivered with a non-empty
 	// deliveredAt, the echo executor produces a fourth exchange, and
 	// the session returns to running. ----
 	code, delivered := sendMessage("fourth prompt", "immediate")

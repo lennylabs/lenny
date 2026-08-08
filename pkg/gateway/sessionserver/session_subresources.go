@@ -21,11 +21,10 @@ import (
 )
 
 // isDeriveFailureRow reports whether row is a §7.1 derive-failure audit
-// row (terminal `failed`, failureClass `derive_failure`). Per §15.1 line
-// 661 these rows never materialised a workspace, transcript, logs, tree,
+// row (terminal `failed`, failureClass `derive_failure`). Per §15.1 these rows never materialised a workspace, transcript, logs, tree,
 // usage data, or delivered messages, so every session subresource GET
 // returns 404 RESOURCE_NOT_FOUND even though GET /v1/sessions/{id} itself
-// returns 200 with the audit envelope. spec: §15.1 line 661; §7.1 derive
+// returns 200 with the audit envelope. spec: §15.1; §7.1 derive
 // rule 2. F-15.1.3.
 func isDeriveFailureRow(row sessionstore.Session) bool {
 	return row.State == session.StateFailed &&
@@ -35,8 +34,7 @@ func isDeriveFailureRow(row sessionstore.Session) bool {
 // artifactPayload is the §15.1 GET /v1/sessions/{id}/artifacts wire row.
 // It surfaces the §12.5 catalog fields a client needs to discover and
 // dereference a session artifact (the `ref` is the `lenny-blob://` URI
-// the §15.1 GET /v1/blobs/{ref} handler resolves). spec: §15.1; §12.5
-// line 309. F-15.2.3 / F-15.1.3.
+// the §15.1 GET /v1/blobs/{ref} handler resolves). spec: §15.1; §12.5. F-15.2.3 / F-15.1.3.
 type artifactPayload struct {
 	Ref       string `json:"ref"`
 	PartID    string `json:"partId,omitempty"`
@@ -52,7 +50,7 @@ type artifactPayload struct {
 // listing is scoped to the caller's resolved tenant; soft-deleted and
 // tombstoned rows are excluded so a client sees only dereferenceable
 // artifacts. A session with no catalog wired or no rows returns an empty
-// `{items: []}` envelope rather than an error. spec: §15.1 line 598;
+// `{items: []}` envelope rather than an error. spec: §15.1;
 // §12.5. F-15.2.3 / F-15.1.3.
 func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
@@ -70,7 +68,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 661 — a derive_failure audit row never materialised
+	// spec: §15.1 — a derive_failure audit row never materialised
 	// a workspace, so it owns no artifacts; the subresource GET 404s.
 	if isDeriveFailureRow(row) {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no artifacts", nil)
@@ -121,14 +119,14 @@ func toArtifactPayload(row artifactcatalog.Record) artifactPayload {
 
 // handleSessionUsage implements GET /v1/sessions/{id}/usage per §15.1:
 // the reconciled token + compute total drawn from the §11.2.1 billing
-// ledger. Per §15.1 line 676 the total is tree-aggregated — when the
+// ledger. Per §15.1 the total is tree-aggregated — when the
 // session has a §8 delegation subtree the report folds in every
 // descendant task's usage, not just this session's own ledger rows. A
 // leaf session's subtree is itself, so the single-session total is
 // unchanged. It requires the §10.2 view_usage permission (the same gate
 // the tenant /v1/usage and /v1/metering/events reports run). A session
 // with no billing events, or a gateway with metering disabled, returns a
-// zero-valued report rather than an error. spec: §15.1 lines 676, 661;
+// zero-valued report rather than an error. spec: §15.1;
 // §11.2.1; §10.2 view_usage. F-15.1.31 / F-15.2.3 / F-15.1.3.
 func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 	principal, ok := getPrincipal(r)
@@ -149,14 +147,14 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 661 — a derive_failure audit row never accrued any
+	// spec: §15.1 — a derive_failure audit row never accrued any
 	// usage; the subresource GET 404s rather than reporting a zero total.
 	if isDeriveFailureRow(row) {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session has no usage data", nil)
 		return
 	}
 
-	// spec: §15.1 line 676 — sum the §11.2.1 ledger totals across the
+	// spec: §15.1 — sum the §11.2.1 ledger totals across the
 	// session and every descendant in its delegation subtree. The subtree
 	// is {id} for a leaf, so a non-delegating session reports its own
 	// total unchanged. F-15.1.31.
@@ -191,8 +189,8 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetupOutput implements GET /v1/sessions/{id}/setup-output per
-// §15.1 (line 674): the §7.5 line 475 captured stdout/stderr/exit for
-// each setup command the adapter ran, plus the §7.5 line 488 synthetic
+// §15.1: the §7.5 captured stdout/stderr/exit for
+// each setup command the adapter ran, plus the §7.5 synthetic
 // rejection-reason entries the gateway recorded when it rejected a
 // command at admission. The same records already ride the single-session
 // GET /v1/sessions/{id} envelope as `setupOutput`; this dedicated
@@ -201,8 +199,7 @@ func (s *Server) handleSessionUsage(w http.ResponseWriter, r *http.Request) {
 // 404 contract as the session read, so a cross-tenant probe cannot
 // confirm a foreign session id. A session that ran no setup commands and
 // had none rejected returns an empty `{items: []}` envelope, mirroring
-// GET /v1/sessions/{id}/artifacts. spec: §15.1 line 674; §7.5 lines 475,
-// 488. F-15.1.3 / F-7.5.4 / F-7.5.11.
+// GET /v1/sessions/{id}/artifacts. spec: §15.1; §7.5. F-15.1.3 / F-7.5.4 / F-7.5.11.
 func (s *Server) handleSetupOutput(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -216,7 +213,7 @@ func (s *Server) handleSetupOutput(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 661 — a derive_failure audit row never ran setup,
+	// spec: §15.1 — a derive_failure audit row never ran setup,
 	// so the subresource GET 404s rather than returning an empty list. A
 	// normal session that ran no setup commands still returns 200 {items:
 	// []}; the distinguishing factor is the derive_failure audit class.
@@ -244,17 +241,16 @@ func (s *Server) handleSetupOutput(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
 }
 
-// handleWorkspace implements GET /v1/sessions/{id}/workspace per §15.1
-// (line 671): it streams the session's workspace snapshot tar.gz from
+// handleWorkspace implements GET /v1/sessions/{id}/workspace per §15.1: it streams the session's workspace snapshot tar.gz from
 // the §4.5 object store. The snapshot ref is resolved from the session
 // row (`WorkspaceSnapshot.Ref`), then read through the tenant-scoped
 // blob-store view so a caller cannot reach a snapshot outside its own
-// tenant. The §15.1 line 661 contract is honoured directly: a session
+// tenant. The §15.1 contract is honoured directly: a session
 // that never produced a snapshot — including a failed-derive row that is
 // terminal from birth — returns 404 RESOURCE_NOT_FOUND because no
 // workspace ever existed. The bytes are streamed with the stored MIME
 // type and a `Content-Disposition` naming the archive after the session.
-// spec: §15.1 lines 671, 661; §4.5 line 311 (content-addressed snapshot).
+// spec: §15.1; §4.5.
 // F-15.1.3.
 func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
@@ -270,7 +266,7 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §15.1 line 661 — a derive_failure audit row never materialised
+	// spec: §15.1 — a derive_failure audit row never materialised
 	// a workspace; the download 404s. (The no-snapshot guard below also
 	// covers this, but the explicit class check keeps the contract legible
 	// and holds even if a stale ref were ever attached to such a row.)
@@ -280,7 +276,7 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §15.1 line 661 — no snapshot ever written (never-ran or
+	// spec: §15.1 — no snapshot ever written (never-ran or
 	// failed-derive row) is a 404, not an empty stream.
 	if row.WorkspaceSnapshot == nil || row.WorkspaceSnapshot.Ref == "" {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
@@ -293,7 +289,7 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §10.1 line 155, §15.1 line 671 — a chunked checkpoint stores no
+	// spec: §10.1, §15.1 — a chunked checkpoint stores no
 	// single snapshot object; the workspace archive is the concatenation of
 	// the manifest row's chunks in index order. The gateway reads the chunk
 	// bodies directly (the caller is the API client, not a pod) and streams
@@ -342,8 +338,7 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkpointIDFromSnapshotRef extracts the checkpoint_id (the checkpoint
-// manifest primary key) from a stored WorkspaceSnapshot.Ref. spec: §10.1
-// line 155 — the ref is the four-segment object-path form the parsers accept
+// manifest primary key) from a stored WorkspaceSnapshot.Ref. spec: §10.1 — the ref is the four-segment object-path form the parsers accept
 // (/{tenant}/checkpoints/{session}/{checkpoint_id}) whose last segment is
 // the checkpoint_id the manifest row is keyed by. A ref carrying only the
 // bare checkpoint_id (no path segments) is returned unchanged, so both
@@ -367,7 +362,7 @@ func checkpointIDFromSnapshotRef(ref string) string {
 // manifest resolved so the caller should fall through to the legacy
 // single-snapshot path.
 //
-// spec: §10.1 line 155 — reassembly in index order; §15.1 line 671.
+// spec: §10.1 — reassembly in index order; §15.1.
 // chunkReadTTL is the read-time TTL the gateway-direct workspace download
 // applies to a chunk object. A blob backend that derives expiry from the
 // read URI (miniostore) would otherwise treat a TTL-less read as already

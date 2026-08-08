@@ -110,7 +110,7 @@ func (r *Router) WithUserRevocation(pods UserPodTerminator, leases UserLeaseRevo
 // the §11.4 full_revoke fan-out so an OIDC invalidation drives the
 // user's playground sessions through the §27.6 revocation primitive.
 // Nil leaves the playground step inactive (the playground is disabled or
-// not wired). spec: §27.3.1 line 148, §27.6 line 204.
+// not wired). spec: §27.3.1, §27.6.
 func (r *Router) WithPlaygroundRevocation(pg UserPlaygroundRevoker) *Router {
 	r.userPlayground = pg
 	return r
@@ -180,7 +180,7 @@ func (r *Router) runFullRevokeFanOut(ctx context.Context, tenantID, userID, reas
 		}
 	}
 
-	// §11.4 / §27.6 line 204: drive the user's playground sessions through
+	// §11.4 / §27.6: drive the user's playground sessions through
 	// the §27.6 revocation primitive so the OIDC invalidation disconnects
 	// the user's in-flight playground bearers and blocks new mints.
 	// Best-effort: a playground-store failure is recorded and does not

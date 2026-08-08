@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package childtoken implements the §8.2 line 59 in-process RFC 8693
+// Package childtoken implements the §8.2 in-process RFC 8693
 // child-token exchange the gateway runs when it admits a delegation.
 // Per §8.2 there is no external RFC 8693 endpoint traffic for internal
 // delegation; the exchange is an in-process Token Service call. The
@@ -27,7 +27,7 @@ import (
 // the actor (parent) token's `jti` inside the minting transaction so a
 // parent rotated or revoked mid-flight is caught.
 //
-// spec: §8.2 line 61; §13.3 "Token rotation and revocation".
+// spec: §8.2; §13.3 "Token rotation and revocation".
 type RevocationChecker interface {
 	IsRevoked(jti string) bool
 }
@@ -40,7 +40,7 @@ type RevocationChecker interface {
 // the Minter skips the contention gate (the audit write is best-effort
 // in the in-process minimal path).
 //
-// spec: §8.2 line 63; §11.7 item 3.
+// spec: §8.2; §11.7 item 3.
 type AuditLock interface {
 	Acquire(ctx context.Context, tenantID string) (release func(), err error)
 }
@@ -103,20 +103,20 @@ func NewMinter(opts Options) *Minter {
 	}
 }
 
-// MintChildToken runs the §8.2 line 59 exchange. The order matches the
+// MintChildToken runs the §8.2 exchange. The order matches the
 // spec's "inside the same advisory-locked transaction": acquire the
 // audit lock (contention → ErrAuditContention), read the actor `jti`
 // against the revocation cache (revoked → ErrParentRevoked), then
 // validate and issue the narrowed child token.
 //
-// spec: §8.2 lines 59-63; §13.3.
+// spec: §8.2; §13.3.
 func (m *Minter) MintChildToken(ctx context.Context, p delegation.ChildTokenParams) (delegation.ChildToken, error) {
 	now := p.Now
 	if now.IsZero() {
 		now = m.clock()
 	}
 
-	// §8.2 line 63: the exchange's audit write runs under the per-tenant
+	// §8.2: the exchange's audit write runs under the per-tenant
 	// audit advisory lock. A lock timeout fails the whole exchange so the
 	// caller retries the entire lenny/delegate_task (re-running the
 	// freshness check), rather than admitting a child whose minting was
@@ -129,7 +129,7 @@ func (m *Minter) MintChildToken(ctx context.Context, p delegation.ChildTokenPara
 		defer release()
 	}
 
-	// §8.2 line 61: actor-token freshness. A parent rotated or revoked
+	// §8.2: actor-token freshness. A parent rotated or revoked
 	// between the delegate_task call and this exchange now resolves to a
 	// revoked jti; fail closed before issuing any child token.
 	if p.ParentJTI != "" && m.revocations != nil && m.revocations.IsRevoked(p.ParentJTI) {

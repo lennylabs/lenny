@@ -166,7 +166,7 @@ func TestSpanNamesCatalogIsExhaustive(t *testing.T) {
 // markdown table. A new span row added to the spec without a Go
 // constant — or vice versa — fails this test.
 //
-// spec: spec/16_observability.md §16.3 line 332 ("Span boundaries
+// spec: spec/16_observability.md §16.3 ("Span boundaries
 // (instrumented):") through the closing blank line of the table.
 func TestSpanNamesCatalogMatchesSpec163Table(t *testing.T) {
 	specNames, err := readSpec163SpanTable(t)
@@ -221,7 +221,7 @@ func repoRootFromTest(t testing.TB) string {
 // table from spec/16_observability.md. It returns the list of span
 // names (the backtick-quoted first column) in spec order.
 //
-// spec: spec/16_observability.md §16.3 line 332-357.
+// spec: spec/16_observability.md §16.3.
 func readSpec163SpanTable(t testing.TB) ([]string, error) {
 	root := repoRootFromTest(t)
 	path := filepath.Join(root, "spec", "16_observability.md")

@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// TestSessionCookieIsOpaqueAndDoesNotEmbedTenant asserts the §27.3.1
-// line 81 contract that the lenny_playground_session cookie carries only
+// TestSessionCookieIsOpaqueAndDoesNotEmbedTenant asserts the §27.3.1 contract that the lenny_playground_session cookie carries only
 // the opaque session id and never the tenant. The tenant is recovered
 // server-side from the fan-in index. F-27.3.8.
 func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T) {

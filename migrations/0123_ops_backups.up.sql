@@ -9,10 +9,10 @@
 -- multi-shard restore is resumable.
 --
 -- All four tables are platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists them among the
+-- multi-tenanted at this boundary; §25.4 lists them among the
 -- PlatformPostgres() tables), so no tenant column or RLS policy applies.
 --
--- spec: §25.11 lines 4165-4295.
+-- spec: §25.11.
 
 CREATE TABLE ops_backups (
     id              TEXT PRIMARY KEY,

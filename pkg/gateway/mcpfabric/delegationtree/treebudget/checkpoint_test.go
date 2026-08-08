@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 )
 
-// spec: §11.2 line 29, line 44 — Snapshot reads the tree-wide counters a
+// spec: §11.2 — Snapshot reads the tree-wide counters a
 // reserve advanced so the periodic checkpoint can persist them.
 func TestSnapshotReadsReservedCounters_spec_11_2_29(t *testing.T) {
 	t.Parallel()
@@ -36,7 +36,7 @@ func TestSnapshotReadsReservedCounters_spec_11_2_29(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 29 — a tree that admitted no delegation has no keys;
+// spec: §11.2 — a tree that admitted no delegation has no keys;
 // Snapshot reads each absent counter as zero rather than erroring.
 func TestSnapshotAbsentTreeIsZero_spec_11_2_29(t *testing.T) {
 	t.Parallel()
@@ -50,7 +50,7 @@ func TestSnapshotAbsentTreeIsZero_spec_11_2_29(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48; §12.4 line 218 — Restore writes the reconstructed
+// spec: §11.2; §12.4 — Restore writes the reconstructed
 // counters back so the fast-path reserve enforces against the restored
 // value. A reserve after Restore advances from the restored base.
 func TestRestoreSeedsCountersForFastPath_spec_11_2_48(t *testing.T) {

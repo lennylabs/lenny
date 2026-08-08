@@ -190,7 +190,7 @@ func TestNamespaceFlag(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 278 — `lenny image rm` classifies the containerd
+// spec: §24.19.1 — `lenny image rm` classifies the containerd
 // "image is in use" failure (referenced by container or snapshot) so
 // operators see an actionable diagnostic instead of the raw ctr error.
 func TestImageInUseErrorClassifier(t *testing.T) {
@@ -218,7 +218,7 @@ func TestImageInUseErrorClassifier(t *testing.T) {
 	}
 }
 
-// spec: §24.19.1 line 278 — when ctr names the consuming reference,
+// spec: §24.19.1 — when ctr names the consuming reference,
 // the wrapped message points at it for faster operator triage.
 func TestImageInUseReferenceExtraction(t *testing.T) {
 	if got := imageInUseReference("ctr: image \"foo\" is referenced by snapshot \"abc\":"); got != "snapshot \"abc\"" {
@@ -241,8 +241,7 @@ func TestImageInUseReferenceExtraction(t *testing.T) {
 // through to CtrCommand and return exitK3sUnavailable (4); this asserts
 // the corrected exit 3 and would fail against the pre-fix code.
 //
-// spec: §24.19.1 line 282,291 (image import requires embedded mode, exit
-// 3 EMBEDDED_MODE_REQUIRED; same guard as lenny token print). (F-CTL-7)
+// spec: §24.19.1. (F-CTL-7)
 func TestCmdImageImportRequiresEmbeddedStack_spec_24_19_1(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
@@ -267,8 +266,7 @@ func TestCmdImageImportRequiresEmbeddedStack_spec_24_19_1(t *testing.T) {
 // planted at the `oidc` path makes the `oidc/signing.key` stat fail with
 // ENOTDIR, which is not ErrNotExist.
 //
-// spec: §24.19.1 line 282,291 (embedded-mode probe; a probe fault is exit
-// 1, distinct from the EMBEDDED_MODE_REQUIRED skip).
+// spec: §24.19.1.
 func TestRequireEmbeddedStackProbeError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LENNY_HOME", home)
@@ -293,8 +291,7 @@ func TestRequireEmbeddedStackProbeError(t *testing.T) {
 // then reports K3S_UNAVAILABLE (4), demonstrating the guard fired only on
 // the missing-stack path and not on a present stack.
 //
-// spec: §24.19.1 line 282 (the guard passes once embedded mode is up;
-// K3S_UNAVAILABLE then surfaces when the containerd socket is unreachable).
+// spec: §24.19.1.
 func TestCmdImageImportReachesCtrWithEmbeddedStack_spec_24_19_1(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LENNY_HOME", home)
@@ -315,8 +312,7 @@ func TestCmdImageImportReachesCtrWithEmbeddedStack_spec_24_19_1(t *testing.T) {
 // K3S_UNAVAILABLE and cmdImageList propagates that exit without attempting a
 // ctr invocation.
 //
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE when the embedded containerd is
-// unreachable).
+// spec: §24.19.1.
 func TestCmdImageListUnavailableStack_spec_24_19_1(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer
@@ -332,7 +328,7 @@ func TestCmdImageListUnavailableStack_spec_24_19_1(t *testing.T) {
 // valid reference passes validation: stack.CtrCommand reports K3S_UNAVAILABLE
 // and cmdImageRm propagates the exit without invoking ctr.
 //
-// spec: §24.19.1 line 282 (K3S_UNAVAILABLE).
+// spec: §24.19.1.
 func TestCmdImageRmUnavailableStack_spec_24_19_1(t *testing.T) {
 	t.Setenv("LENNY_HOME", t.TempDir())
 	var stdout, stderr bytes.Buffer

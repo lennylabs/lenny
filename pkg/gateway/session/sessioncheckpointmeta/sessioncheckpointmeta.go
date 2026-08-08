@@ -6,14 +6,14 @@
 // workspace_recovery_fraction. The gateway writes a row after
 // receiving a CheckpointBarrierAck during a graceful drain, so a later
 // coordinator handoff can report the workspace-recovery fraction the
-// row records (§10.1 line 393).
+// row records (§10.1).
 //
 // The in-memory MemoryStore backs unit tests and the developer-mode
 // deployment; the Postgres-backed implementation lives in the pgstore
 // subpackage and writes the migration-0148 session_checkpoint_meta
 // table under the §12.3 tenant-context RLS guard.
 //
-// spec: §10.1 line 393.
+// spec: §10.1.
 package sessioncheckpointmeta
 
 import (
@@ -35,7 +35,7 @@ type Record struct {
 	TenantID  string
 	SessionID string
 	// CoordinationGeneration is the coordinator's fenced generation at
-	// BarrierAck time (§10.1 line 165).
+	// BarrierAck time (§10.1).
 	CoordinationGeneration int64
 	// BarrierID is the gateway's monotonically-increasing-per-session
 	// correlation id for the barrier that produced this row.
@@ -43,7 +43,7 @@ type Record struct {
 	// CheckpointRef is the MinIO checkpoint manifest the barrier flush
 	// stored; empty when the best-effort flush produced no checkpoint.
 	CheckpointRef string
-	// WorkspaceRecoveryFraction is the §10.1 line 393 value the
+	// WorkspaceRecoveryFraction is the §10.1 value the
 	// coordinator-handoff `session.resumed` event reports. Nil when the
 	// session had no prior full checkpoint to compute a fraction
 	// against (the event omits the field per §7.2 optional-fraction
@@ -56,7 +56,7 @@ type Record struct {
 // Store persists session_checkpoint_meta rows. The DeleteByUser /
 // DeleteByTenant methods carry the §12.8 GDPR erasure contract so a
 // substitute backend that omits either method cannot compile into the
-// gateway binary (§12.1 line 5).
+// gateway binary (§12.1).
 type Store interface {
 	// Upsert inserts or overwrites the single row for (tenant,
 	// session). A barrier on a session that already has a row replaces

@@ -49,7 +49,7 @@ func (c *mutableClock) advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// spec: §25.8 line 3564 ("Behavior across long pauses (hours to days).
+// spec: §25.8 ("Behavior across long pauses (hours to days).
 // The upgrade state lives in the platform_upgrade_state Postgres row, not
 // in process memory — a lenny-ops restart or leader-election change
 // during a paused upgrade is harmless. When a new leader takes over

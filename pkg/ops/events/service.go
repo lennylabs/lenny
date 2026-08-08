@@ -53,8 +53,7 @@ import (
 const DefaultBufferCapacity = eventbuffer.DefaultBufferCapacity
 
 // DefaultPollLimit and MaxPollLimit are the §25.2 canonical pagination
-// bounds for GET /v1/admin/events. spec: §25.2 line 240 (default 100,
-// max 1000).
+// bounds for GET /v1/admin/events. spec: §25.2.
 const (
 	DefaultPollLimit = 100
 	MaxPollLimit     = 1000
@@ -62,7 +61,7 @@ const (
 
 // codeInvalidEventFilter is the §25.5 error code for an unparseable
 // cursor, an unrecognized filter token, or a malformed query parameter.
-// spec: §25.5 line 2795.
+// spec: §25.5.
 const codeInvalidEventFilter = "INVALID_EVENT_FILTER"
 
 // WebhookFanOut is the §25.5 callback the Service invokes after every
@@ -188,7 +187,7 @@ func (s *Service) SetRedisReEmitter(fn func(context.Context, gwevents.Operationa
 // with the gateway reachable, and both unreachable. A deployment with no Redis
 // client wired at all is not one of them: it is a healthy replica whose only
 // source is its own ring, so it serves that ring and attaches no envelope.
-// spec: §25.5 (lines 2768-2780).
+// spec: §25.5.
 func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 	actual, deg, dualDown := s.streamState()
 	switch actual {
@@ -228,19 +227,19 @@ type Options struct {
 	Webhook WebhookFanOut
 	// ReplicaID is the per-replica identifier baked into each event's
 	// canonical eventKey ({replicaID}:{emittedAt}:{nonce}). An empty
-	// value falls back to "ops". spec: §25.5 line 2671.
+	// value falls back to "ops". spec: §25.5.
 	ReplicaID string
 	// OnGap, when non-nil, is invoked once per stream or poll request that
 	// resolves a cursor whose event has been evicted (the response carries
 	// pagination.gapDetected: true). It backs the §25.5
-	// lenny_ops_events_stream_gaps_total counter. spec: §25.5 line 2788.
+	// lenny_ops_events_stream_gaps_total counter. spec: §25.5.
 	OnGap func()
 	// SourceHealth, when non-nil, drives the §25.5 degradation matrix: the
 	// poll and stream surfaces consult it to decide whether to attach a
 	// degradation envelope (Redis-down fall-back to the gateway buffer),
 	// emit the :degradation SSE comment, or return 503
 	// EVENT_STREAM_UNAVAILABLE (dual Redis + gateway outage). A nil value
-	// is treated as fully healthy. spec: §25.5 lines 2768-2780.
+	// is treated as fully healthy. spec: §25.5.
 	SourceHealth SourceHealth
 	// RedisClient, when non-nil, wires the §25.5 Redis ops:events:stream
 	// as the primary read source: XRANGE for polling and SSE backlog
@@ -289,7 +288,7 @@ func New(opts Options) *Service {
 	return s
 }
 
-// observeGap fires the OnGap hook when configured. spec: §25.5 line 2788.
+// observeGap fires the OnGap hook when configured. spec: §25.5.
 func (s *Service) observeGap() {
 	if s.onGap != nil {
 		s.onGap()
@@ -343,7 +342,7 @@ func (s *Service) PublishBuffered(ctx context.Context, e gwevents.OperationalEve
 // {replicaID}:{emittedAt}:{nonce}. The nonce is a per-replica
 // monotonic counter so the key is unique even when two events share a
 // timestamp; this makes the SSE Last-Event-ID resume and the opaque
-// poll cursor unambiguous. spec: §25.5 lines 2666-2675.
+// poll cursor unambiguous. spec: §25.5.
 func (s *Service) eventKey(at time.Time) string {
 	return fmt.Sprintf("%s:%d:%d", s.replicaID, at.UnixNano(), s.nonce.Add(1))
 }
@@ -435,8 +434,7 @@ func (s *Service) ActiveStreams() int {
 // ?resourceType=, ?resourceId=, ?since=, and ?until= (the last two
 // RFC 3339 timestamps). An unrecognized event type or severity, or a
 // malformed timestamp, returns an error the caller maps to
-// INVALID_EVENT_FILTER. spec: §25.2 lines 334-345; §25.5 lines 2693,
-// 2795.
+// INVALID_EVENT_FILTER. spec: §25.2; §25.5.
 func parseFilter(q url.Values) (gwevents.EventFilter, error) {
 	f := gwevents.EventFilter{
 		EventType:    q.Get("eventType"),
@@ -466,7 +464,7 @@ func parseFilter(q url.Values) (gwevents.EventFilter, error) {
 
 // parseLimit applies the §25.2 page-size bounds: default 100, max 1000.
 // A non-numeric value is treated as the default rather than an error so
-// a stray ?limit= does not break a poll. spec: §25.2 line 240.
+// a stray ?limit= does not break a poll. spec: §25.2.
 func parseLimit(q url.Values) int {
 	limit := DefaultPollLimit
 	if v := q.Get("limit"); v != "" {
@@ -482,8 +480,7 @@ func parseLimit(q url.Values) int {
 
 // parseSortOrder reports whether the §25.2 ?sortOrder= parameter
 // reverses the default oldest-first ordering. An unrecognized value is
-// an error the caller maps to INVALID_EVENT_FILTER. spec: §25.2 line
-// 243.
+// an error the caller maps to INVALID_EVENT_FILTER. spec: §25.2.
 func parseSortOrder(q url.Values) (desc bool, err error) {
 	switch q.Get("sortOrder") {
 	case "", "asc":
@@ -499,15 +496,14 @@ func parseSortOrder(q url.Values) (desc bool, err error) {
 // It returns the §25.2 canonical pagination envelope with an opaque
 // source-kind cursor, honours ?cursor=, ?limit=, ?sortOrder=, and the
 // canonical filter set, and reports a gap when the cursor's event has
-// been evicted. spec: §25.5 lines 2687-2699; §25.2 lines 234-275.
+// been evicted. spec: §25.5; §25.2.
 func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	// §25.5 dual Redis + gateway outage: when both the Redis stream and the gateway
 	// buffer are unreachable, polling for gateway-originated events cannot
 	// be served and cannot partial-serve, so it fails with a transient
 	// 503 the agent retries. The SSE surface still serves
-	// lenny-ops-originated events from the local buffer. spec: §25.5 lines
-	// 2768-2780.
+	// lenny-ops-originated events from the local buffer. spec: §25.5.
 	// The source is resolved exactly once per request. SourceHealth is a
 	// live signal refreshed by a background probe, so re-resolving it for the
 	// data path would let a refresh landing mid-request attach a
@@ -549,8 +545,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	// §25.5 Redis-down gateway-buffer fall-back: serving from the gateway buffer
 	// during a Redis outage is reported as response metadata
-	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
-	// lines 2768-2772.
+	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5.
 	page.Degradation = deg
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(page)
@@ -567,8 +562,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // the degradation envelope its caller attached describe the same source. deg is
 // the envelope that classification produced; the returned envelope replaces it
 // when the request had to be re-classified onto another source mid-read, so the
-// label always names the source the response was served from. spec: §25.5 lines
-// 2666-2699.
+// label always names the source the response was served from. spec: §25.5.
 func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions.Degradation, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
 	var (
 		page EventPage
@@ -613,8 +607,7 @@ func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions
 // through to the gateway-buffer fan-out under the case-1 envelope. With no
 // fall-back source wired, gateway-originated events have nowhere to come from,
 // which is the case-4 outcome: the error returns 503 EVENT_STREAM_UNAVAILABLE.
-// spec: §25.5 lines 2768-2780 (actualSource names the source the response was
-// served from; EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
+// spec: §25.5.
 func (s *Service) pollRedisUnreachable(ctx context.Context, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
 	if s.gateway == nil {
 		return EventPage{}, nil, fmt.Errorf("redis read failed and no gateway-buffer fall-back source is wired")
@@ -633,7 +626,7 @@ func (s *Service) pollRedisUnreachable(ctx context.Context, cur eventCursor, fil
 // opaque cursor to a buffer position by eventKey, runs the buffer query, and
 // wraps the result in the §25.2 canonical envelope. When the cursor's
 // eventKey is no longer retained (evicted), the page reports gapDetected and
-// serves from the oldest retained event. spec: §25.5 lines 2666-2699.
+// serves from the oldest retained event. spec: §25.5.
 func (s *Service) bufferPollPage(cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	var since uint64
 	servedKind := SourceKindBuffer
@@ -690,7 +683,7 @@ func (s *Service) bufferPollPage(cursorKind, eventKey string, filter gwevents.Ev
 // the buffer in response to a cursor produced by cursorKind. A buffer
 // (or empty) cursor stays "buffer"; any other source produced cursor
 // served here spans a transition and is reported as "mixed". spec:
-// §25.5 lines 2666-2675.
+// §25.5.
 func transitionKind(cursorKind string) string {
 	if cursorKind == "" || cursorKind == SourceKindBuffer {
 		return SourceKindBuffer
@@ -715,8 +708,7 @@ func reversed(events []gwevents.BufferedEvent) []gwevents.BufferedEvent {
 // events until the client disconnects. Each frame's id: line carries
 // the CloudEvents id so a reconnecting client resumes from the correct
 // position. The handler honours the canonical filter set and emits a
-// :gap comment when the resume point has been evicted. spec: §25.5
-// lines 2677-2685.
+// :gap comment when the resume point has been evicted. spec: §25.5.
 func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -776,8 +768,7 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 // id (an eventKey with no source kind), so it resolves by eventKey scan and
 // reports an empty kind. The ?cursor= fallback carries the source kind the
 // poll minted; its position is the same canonical eventKey either way, which
-// each source translates to a local position by scan. spec: §25.5
-// lines 2679-2680 (Last-Event-ID / cursor resume, cross-source translation).
+// each source translates to a local position by scan. spec: §25.5.
 func resumeCursor(r *http.Request) eventCursor {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		return eventCursor{EventKey: v}
@@ -807,8 +798,7 @@ func writeSSEFrame(w http.ResponseWriter, ev gwevents.BufferedEvent) {
 
 // writeSSEGap writes the §25.5 :gap comment line when the SSE resume
 // point has been evicted from the buffer, so the client knows to
-// re-read platform state before assuming continuity. spec: §25.5 line
-// 2684 (cursor transition safety, ":gap {...}\n").
+// re-read platform state before assuming continuity. spec: §25.5.
 func writeSSEGap(w http.ResponseWriter, resumeKey string) {
 	payload, err := json.Marshal(map[string]any{
 		"gapDetected":     true,

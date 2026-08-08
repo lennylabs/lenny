@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 )
 
-// spec: §12.9 line 1033 — an environment-level workspaceTier override
+// spec: §12.9 — an environment-level workspaceTier override
 // must be a tenant-settable §12.9 tier (T3 or T4); empty inherits. An
 // out-of-enum value is rejected at the store admission boundary.
 func TestEnvironmentRejectsInvalidWorkspaceTier(t *testing.T) {

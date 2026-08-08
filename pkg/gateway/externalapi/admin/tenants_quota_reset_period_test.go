@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §11.2 line 31 — per-tenant token-quota reset period through the
+// spec: §11.2 — per-tenant token-quota reset period through the
 // admin API.
 
 // TestCreateTenantWithQuotaResetPeriod_spec_11_2_31 round-trips a valid

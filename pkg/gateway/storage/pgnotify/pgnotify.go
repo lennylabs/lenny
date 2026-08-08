@@ -2,7 +2,7 @@
 
 // Package pgnotify is the Postgres LISTEN/NOTIFY substrate the gateway
 // uses as the §4.9 credential-deny-list fallback when Redis pub/sub is
-// unavailable. §4.9 line 1647 specifies that a credential revocation
+// unavailable. §4.9 specifies that a credential revocation
 // propagates across replicas "via Redis pub/sub with Postgres
 // LISTEN/NOTIFY as fallback": Redis is the low-latency primary, and the
 // authoritative Postgres connection carries the revocation when Redis
@@ -21,7 +21,7 @@
 // startup deny-list rebuild reconciles any missed revocation on the
 // next restart, so a dropped notification degrades convergence latency
 // rather than correctness — the same bound the Redis path carries.
-// spec: §4.9 line 1647 / §13.3 line 648.
+// spec: §4.9 / §13.3.
 package pgnotify
 
 import (

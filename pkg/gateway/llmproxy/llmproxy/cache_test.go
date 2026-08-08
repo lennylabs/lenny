@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 )
 
-// spec: §4.9 lines 1542-1556 — the proxy consults the per-pool semantic
+// spec: §4.9 — the proxy consults the per-pool semantic
 // cache on the non-streaming path: a hit replays the cached response
 // without an upstream call, a miss forwards and records, and a streaming
 // request bypasses the cache entirely.

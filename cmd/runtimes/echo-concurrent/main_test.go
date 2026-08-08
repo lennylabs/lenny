@@ -79,8 +79,8 @@ func message(slotID, text string) string {
 // pod depends on. slotId is the only field the §15.4.1 outbound schema tags
 // for concurrent multiplexing; the per-slot cwd derivation is asserted
 // directly in TestSlotCwdDerivation rather than read off the wire.
-// spec: §5.2 line 509 (slotId multiplexing, dispatch loop keyed on slotId),
-// §15.4.1 line 1459 (single stdin channel), §6.4 line 384 (per-slot cwd).
+// spec: §5.2,
+// §15.4.1, §6.4.
 func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 	// Interleave two slots: slot-01 gets two messages, slot-02 one. Each
 	// slot's sequence counter is independent, so slot-01's second response
@@ -101,7 +101,7 @@ func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 		t.Fatalf("slot-02 got %d responses, want 1: %+v", len(bySlot["slot-02"]), bySlot["slot-02"])
 	}
 
-	// Per-slot cwd derivation (§6.4 line 384) is an internal filesystem
+	// Per-slot cwd derivation (§6.4) is an internal filesystem
 	// derivation the runtime never emits on the wire; it is asserted
 	// directly in TestSlotCwdDerivation. Here, confirm the dispatch tagged
 	// each response with the slot whose cwd the runtime derives.
@@ -132,7 +132,7 @@ func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 // takes the single-session whole-pod path: the response carries no slotId,
 // so echo-concurrent also serves a maxConcurrentSessions: 1 pod, where
 // runtimes never see slotId.
-// spec: §15.4.1 line 1459 (maxConcurrentSessions: 1 pods never carry slotId).
+// spec: §15.4.1.
 func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 	frames := responsesOnly(drive(t, message("", "solo")))
 	if len(frames) != 1 {
@@ -150,7 +150,7 @@ func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 // answered with a heartbeat_ack carrying no content payload: the front
 // loop does not stamp slotId onto the protocol-level ack, matching the
 // §15.4.1 heartbeat_ack schema.
-// spec: §15.4.1 line 1453 (heartbeat_ack is protocol-level, no payload).
+// spec: §15.4.1.
 func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 	in := `{"type":"heartbeat","ts":1,"slotId":"slot-01"}` + "\n"
 	frames := drive(t, in)
@@ -171,7 +171,7 @@ func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 
 // TestShutdownEndsEverySlot asserts a pod-level shutdown frame ends the
 // loop and is not echoed: a trailing message after shutdown produces no
-// further output. spec: §15.4.1 line 1443 (shutdown is a graceful exit).
+// further output. spec: §15.4.1.
 func TestShutdownEndsEverySlot(t *testing.T) {
 	var out bytes.Buffer
 	in := message("slot-01", "before") +
@@ -217,8 +217,7 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 // TestSlotCwdDerivation asserts the per-slot cwd derivation: a non-empty
 // slotId yields /workspace/slots/{slotId}/current/, and the empty default
 // session keeps the global /workspace/current.
-// spec: §6.4 line 384 (per-slot cwd; no global /workspace/current when
-// maxConcurrentSessions > 1).
+// spec: §6.4.
 func TestSlotCwdDerivation(t *testing.T) {
 	if got := slotCwd("slot-7"); got != "/workspace/slots/slot-7/current/" {
 		t.Errorf("slotCwd(slot-7) = %q, want the per-slot path", got)
@@ -234,7 +233,7 @@ func TestSlotCwdDerivation(t *testing.T) {
 // surfaces it through the slot drain, and run returns a protocolError the
 // entrypoint maps to exit code 2. Failing closed prevents a slot from
 // hanging a concurrent pod.
-// spec: §15.4 (protocol-error exit code 2), §5.2 line 509 (per-slot dispatch).
+// spec: §15.4 (protocol-error exit code 2), §5.2.
 func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
 	// A frame whose `input` is a string, not a MessagePart array: the front
 	// loop accepts it (it reads only type and slotId) but echocore's

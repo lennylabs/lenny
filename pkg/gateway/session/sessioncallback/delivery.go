@@ -20,19 +20,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/webhooksig"
 )
 
-// ContentType is the §14 line 114 callback request Content-Type: the
+// ContentType is the §14 callback request Content-Type: the
 // body is a CloudEvents v1.0.2 JSON record.
 const ContentType = "application/cloudevents+json"
 
-// MaxAttempts is the §14 line 150 callback delivery budget: five total
+// MaxAttempts is the §14 callback delivery budget: five total
 // HTTP delivery attempts before the event is recorded undelivered.
 const MaxAttempts = 5
 
-// RetrySchedule is the §14 line 150 exponential backoff applied before
+// RetrySchedule is the §14 exponential backoff applied before
 // each retry. With MaxAttempts == 5 the worker consumes the first four
 // entries as the inter-attempt waits (before attempts 2-5); the fifth
 // entry is the documented backoff that would precede a sixth attempt the
-// budget does not take. spec: §14 line 150.
+// budget does not take. spec: §14.
 var RetrySchedule = []time.Duration{
 	10 * time.Second,
 	30 * time.Second,
@@ -42,14 +42,13 @@ var RetrySchedule = []time.Duration{
 }
 
 // SecretOpener recovers the plaintext callbackSecret from its
-// KMS-envelope-sealed form for the (tenant) KEK alias. spec: §14 line
-// 139 (callbackSecret KMS-envelope storage).
+// KMS-envelope-sealed form for the (tenant) KEK alias. spec: §14.
 type SecretOpener func(ctx context.Context, tenantID string, sealed []byte) ([]byte, error)
 
 // Finalizer persists the post-delivery §14 callback state: it clears the
-// sealed secret (the §14 line 139 NULL-on-terminal rule) and, when
+// sealed secret (the §14 NULL-on-terminal rule) and, when
 // undelivered is non-nil, records the exhausted event for the §15.1
-// GET /v1/sessions/{id}/webhook-events query. spec: §14 lines 139, 150.
+// GET /v1/sessions/{id}/webhook-events query. spec: §14.
 type Finalizer func(ctx context.Context, tenantID, sessionID string, undelivered *DeliveryRecord) error
 
 // DeliveryRecord is one undelivered §14 webhook event surfaced by
@@ -95,7 +94,7 @@ type Config struct {
 }
 
 // Dispatcher delivers §14 session-completion webhooks from an isolated
-// goroutine pool (§14 line 111). Each Job runs the bounded-retry budget
+// goroutine pool (§14). Each Job runs the bounded-retry budget
 // on its own goroutine, signs every attempt with a fresh delivery
 // timestamp, and finalizes the callback state when the budget resolves.
 type Dispatcher struct {
@@ -152,7 +151,7 @@ func NewDispatcher(cfg Config) *Dispatcher {
 
 // Enqueue schedules a callback delivery. It returns immediately; the
 // delivery runs on a pooled goroutine. A Job enqueued after Close is
-// dropped. spec: §14 line 111 (isolated callback worker).
+// dropped. spec: §14.
 func (d *Dispatcher) Enqueue(j Job) {
 	if d == nil || j.CallbackURL == "" {
 		return
@@ -176,7 +175,7 @@ func (d *Dispatcher) Enqueue(j Job) {
 }
 
 // Close stops accepting new jobs and waits for in-flight deliveries to
-// settle so the §14 line 139 secret-clear runs before shutdown.
+// settle so the §14 secret-clear runs before shutdown.
 func (d *Dispatcher) Close() {
 	if d == nil {
 		return
@@ -215,7 +214,7 @@ func (d *Dispatcher) run(j Job) {
 				return
 			}
 		}
-		// spec: §14 line 110 — re-check the pin is still public; a pin
+		// spec: §14 — re-check the pin is still public; a pin
 		// that resolved private since registration must not be dialed.
 		if !d.revalidate(j.PinnedIP) {
 			d.finalizeUndelivered(j, body, attempt-1, 0, "pinned IP is not public")
@@ -248,7 +247,7 @@ func (d *Dispatcher) attempt(client *http.Client, j Job, body, secret []byte, ev
 		return 0, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", ContentType)
-	// spec: §14 line 139 — sign with a fresh delivery timestamp each
+	// spec: §14 — sign with a fresh delivery timestamp each
 	// attempt; the CloudEvents time inside body stays fixed.
 	if len(secret) > 0 {
 		req.Header.Set("X-Lenny-Signature", webhooksig.Sign(secret, body, d.nowFn()))
@@ -269,7 +268,7 @@ func (d *Dispatcher) attempt(client *http.Client, j Job, body, secret []byte, ev
 // buildBody renders the §14 CloudEvents v1.0.2 envelope for a Job. The
 // envelope reuses the shared eventbus builder so the callback id/source
 // format matches the EventBus, SSE, and §25 webhook transports. spec:
-// §14 lines 114-137.
+// §14.
 func (d *Dispatcher) buildBody(j Job) ([]byte, error) {
 	ev, err := eventbus.NewEvent(eventbus.NewEventInput{
 		PublisherID:   d.gatewayID,

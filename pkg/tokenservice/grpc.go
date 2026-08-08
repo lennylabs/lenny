@@ -48,7 +48,7 @@ func NewGRPCServer(assign *credassign.Service, leases credleasestore.LeaseStore)
 // SetAuditor wires the §13.3 audit emitter onto the gRPC server. The
 // RevokeCredentials and RotateCredentials handlers emit
 // `token.revoked` rows through it on every successful revocation /
-// rotation. spec: §13.3 line 597.
+// rotation. spec: §13.3.
 func (s *GRPCServer) SetAuditor(a Auditor) { s.auditor = a }
 
 // SetMetrics wires the §16.1 Token Service catalog onto the gRPC
@@ -95,7 +95,7 @@ func (s *GRPCServer) AssignCredentials(ctx context.Context, req *tokensv1.Assign
 					"credential pool %q is exhausted", poolID)
 			}
 			if me := materializationError(lerr); me != nil {
-				// §4.9 line 1298: a missing required materializedConfig
+				// §4.9: a missing required materializedConfig
 				// field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR
 				// (category INTERNAL) but surfaces to the client as
 				// CREDENTIAL_POOL_EXHAUSTED. ResourceExhausted maps to that
@@ -126,7 +126,7 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 	if req.LeaseId == "" {
 		return nil, status.Error(codes.InvalidArgument, "lease_id is required")
 	}
-	// §4.9 line 1413: every RotateCredentials carries a rotationTrigger
+	// §4.9: every RotateCredentials carries a rotationTrigger
 	// identifying the cause. An empty value is treated as a fault trigger
 	// (fail-closed: the §4.7 ceiling applies and the old credential is
 	// assumed untrustworthy); a non-empty value that is not one of the
@@ -150,12 +150,12 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		// its KMS decrypt rights — and are never routed through the Token
 		// Service's pool-credential RotateCredentials path. A user lease
 		// reaching here is an invariant violation, so it is rejected rather
-		// than silently mis-rotated. spec: §4.9 lines 1340-1381.
+		// than silently mis-rotated. spec: §4.9.
 		return nil, status.Errorf(codes.InvalidArgument,
 			"user-backed lease rotation is gateway-local, not a Token Service path (lease source: %q)", old.Source)
 	}
 	s.assign.Release(req.LeaseId)
-	// §13.3 line 597: rotation revokes the previous lease's lease
+	// §13.3: rotation revokes the previous lease's lease
 	// token. Emit token.revoked so SIEM has a revocation receipt; the
 	// §4.9 rotationTrigger is recorded as the revocation reason so the
 	// audit trail distinguishes a proactive renewal from a fault- or
@@ -172,7 +172,7 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 				"credential pool %q is exhausted on rotate", old.PoolID)
 		}
 		if me := materializationError(rerr); me != nil {
-			// §4.9 line 1298: surfaces to the client as
+			// §4.9: surfaces to the client as
 			// CREDENTIAL_POOL_EXHAUSTED, like the assign path.
 			return nil, status.Errorf(codes.ResourceExhausted,
 				"credential pool %q: %s: %v", old.PoolID, credential.CodeCredentialMaterializationError, me)
@@ -201,7 +201,7 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
 	}
 	s.assign.Release(req.LeaseId)
-	// §13.3 line 597: emit `token.revoked` for every successful
+	// §13.3: emit `token.revoked` for every successful
 	// revocation so SIEM has a revocation receipt and operators can
 	// reconstruct when a lease token was deactivated.
 	s.emitRevocation(ctx, req.TenantId, "", req.LeaseId, req.Reason)
@@ -214,7 +214,7 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 // unset (the dev path with no in-cluster Kubernetes client),
 // ProbeSecretAccess returns codes.Unavailable so the gateway admin
 // handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails
-// open. spec: §4.9 line 1212.
+// open. spec: §4.9.
 func (s *GRPCServer) SetSecretAccessProber(p SecretAccessProber) { s.prober = p }
 
 // ProbeSecretAccess answers whether the Token Service ServiceAccount can
@@ -224,7 +224,7 @@ func (s *GRPCServer) SetSecretAccessProber(p SecretAccessProber) { s.prober = p 
 // so the caller distinguishes a denied probe (fix RBAC) from a failed
 // probe (fix reachability) and never persists an unprobed secretRef.
 //
-// spec: §4.9 line 1212.
+// spec: §4.9.
 func (s *GRPCServer) ProbeSecretAccess(ctx context.Context, req *tokensv1.ProbeSecretAccessRequest) (resp *tokensv1.ProbeSecretAccessResponse, err error) {
 	defer s.observe("probe_secret_access", time.Now())(&err)
 	if req == nil {

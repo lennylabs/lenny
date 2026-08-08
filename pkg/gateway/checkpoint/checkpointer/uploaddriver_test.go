@@ -489,7 +489,7 @@ func TestDriverAbortsWhenQuotaLimitLookupFails_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 157 — the intent row is partial = true from INSERT and
+// spec: §10.1 — the intent row is partial = true from INSERT and
 // stays partial until every declared byte is confirmed. A stream that
 // truncates before the Summary leaves partial = true and the sweep removes
 // the confirmed chunks.
@@ -548,7 +548,7 @@ func TestDriverAbortSweepSoftDeletesRowAfterPrefixEmpty_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 — when a chunk
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 — when a chunk
 // DeleteObject fails during the abort sweep the gateway increments
 // lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for
 // that object and leaves the manifest row active (deleted_at IS NULL) so the
@@ -595,7 +595,7 @@ func TestDriverAbortSweepCountsOrphanOnDeleteFailure_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — every terminal abort arm emits
+// spec: §16.1 — every terminal abort arm emits
 // lenny_checkpoint_partial_total once, with recovered = false, the
 // manifest_reason that named the arm, and the trigger the attempt was
 // started with. The Checkpoint entry point drives a periodic attempt, so the
@@ -634,7 +634,7 @@ func TestDriverEmitsPartialCounterOnAbortArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the partial counter increments once per partial-
+// spec: §16.1 — the partial counter increments once per partial-
 // manifest row finalised. An attempt whose stream errors before onProbe
 // commits the intent row finalises zero rows, so no lenny_checkpoint_partial_
 // total is emitted.
@@ -660,7 +660,7 @@ func TestDriverEmitsNoPartialCounterWhenNoIntentRowWritten_spec_16_1(t *testing.
 	}
 }
 
-// spec: §16.1 line 195 — the success arm (onSummary, partial = false) is not
+// spec: §16.1 — the success arm (onSummary, partial = false) is not
 // a partial-manifest write, so it emits no lenny_checkpoint_partial_total.
 //
 // diagnosis: an emission on the complete arm would count a successful full
@@ -682,7 +682,7 @@ func TestDriverEmitsNoPartialCounterOnCompleteArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the supersede arm finalises an abandoned in_progress
+// spec: §16.1 — the supersede arm finalises an abandoned in_progress
 // intent row manifest_reason = 'superseded', so it emits
 // lenny_checkpoint_partial_total once with that reason (recovered = false),
 // alongside the supersede-specific counter. An abandoned intent is a row no
@@ -705,7 +705,7 @@ func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the partial counter increments once per finalised
+// spec: §16.1 — the partial counter increments once per finalised
 // partial-manifest row. A deadline-fire (timeout) row is counted on its own
 // finaliseAbort arm and then retained active for the resume path. When the next
 // attempt fences that still-active row, the supersede arm must NOT count it a
@@ -758,7 +758,7 @@ func TestDriverAbortsOnOverSizeConfirm_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 139 / §13.2 — a declared chunk length larger than the
+// spec: §10.1 / §13.2 — a declared chunk length larger than the
 // gateway-chosen chunk_size_bytes gets no capability; the attempt aborts
 // with stream_truncated before anything is signed, so the bytes a
 // capability can carry are a gateway constant.
@@ -780,7 +780,7 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant minted)", rec.ChunkCount)
 	}
-	// spec: §10.1 line 132 — a zero-chunk finalisation soft-deletes the row
+	// spec: §10.1 — a zero-chunk finalisation soft-deletes the row
 	// in the same transaction, so an empty partial manifest is never left
 	// active occupying the (session, slot) slot for a later supersede or the
 	// §12.5 backstop to reclaim.
@@ -789,7 +789,7 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 303 — a kms:-coded object-store rejection maps onto a
+// spec: §12.5 — a kms:-coded object-store rejection maps onto a
 // classification-control violation: no retry, the KMS telemetry fires, and
 // the checkpoint fails.
 func TestDriverMapsKMSRejectionToControlViolation_spec_12_5(t *testing.T) {
@@ -813,7 +813,7 @@ func TestDriverMapsKMSRejectionToControlViolation_spec_12_5(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 255 — a workspace-size-probe rejection increments
+// spec: §4.4 — a workspace-size-probe rejection increments
 // lenny_checkpoint_size_exceeded_total, emits the checkpoint.skipped
 // session event, and writes no manifest row.
 func TestDriverEmitsSkippedOnSizeLimit_spec_4_4(t *testing.T) {
@@ -889,7 +889,7 @@ func TestDriverCountersCarrySessionBoundPool_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 35 — reservation release is exactly-once and guarded:
+// spec: §11.2 — reservation release is exactly-once and guarded:
 // when a next attempt supersedes a retained 'timeout' resume-aid row whose
 // reservation was already released on its own deadline-fire arm, the guarded
 // UPDATE reports rows_affected == 0 and the tenant storage counter is NOT
@@ -950,7 +950,7 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 	}
 }
 
-// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+// spec: §10.1 — the supersede predicate fences on
 // coordination_generation. A prior active row at a strictly higher
 // generation is a fenced newer writer, so a stale coordinator (a lower
 // incoming generation) must not release its reservation or sweep its chunk
@@ -1010,7 +1010,7 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 137 — supersede is scoped to (session_id, slot_id). In a
+// spec: §10.1 — supersede is scoped to (session_id, slot_id). In a
 // multi-slot session the driver releases the prior active row for the exact
 // slot it is superseding, not a session-wide winner that may belong to a
 // different slot.
@@ -1122,7 +1122,7 @@ func (s ctxHonoringManifests) ReleaseReservation(ctx context.Context, tenantID, 
 	return s.MemoryStore.ReleaseReservation(ctx, tenantID, checkpointID)
 }
 
-// spec: §10.1 line 132 — every abort arm finalises the intent row
+// spec: §10.1 — every abort arm finalises the intent row
 // partial = true with its manifest_reason and releases the reservation the
 // attempt did not keep, even though a latched abort cancels the attempt's
 // stream context before the terminal handler runs.
@@ -1160,7 +1160,7 @@ func TestDriverAbortFinalisesOnDetachedContext_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 35 — reservation release is exactly-once and guarded, and
+// spec: §11.2 — reservation release is exactly-once and guarded, and
 // a config with Quota wired but QuotaLimitFor nil disables reservation by
 // contract: no Reserve runs, so no abort-arm release may decrement the tenant
 // counter even though the intent row records a probed reserved_bytes.
@@ -1202,7 +1202,7 @@ func (s failingPutManifests) Put(context.Context, partialmanifeststore.Record) e
 	return fmt.Errorf("failingPutManifests: put rejected")
 }
 
-// spec: §11.2 line 35 — the early-abort reservation release on an intent-row
+// spec: §11.2 — the early-abort reservation release on an intent-row
 // Put failure is exactly-once and guarded: with reservation disabled
 // (QuotaLimitFor nil) no Reserve ran, so releaseReservation must not decrement
 // the tenant counter.
@@ -1265,7 +1265,7 @@ func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapte
 	return nil
 }
 
-// spec: §10.1 line 130 — the gateway mints a chunk capability only after the
+// spec: §10.1 — the gateway mints a chunk capability only after the
 // intent-row INSERT commits. A ChunkReady that arrives before the Probe wrote
 // the row gets an Abort, not a Grant, so no PUT can orphan an object under a
 // checkpoint_id with no manifest row.
@@ -1379,7 +1379,7 @@ func (p *countingPresigner) count() int {
 	return p.signed
 }
 
-// spec: §10.1 line 130 — the chunk-capability gate is unconditional: no PUT
+// spec: §10.1 — the chunk-capability gate is unconditional: no PUT
 // capability may be minted before an intent row commits. A gateway with a
 // Presigner wired but no manifest store writes no intent row (onProbe returns
 // early), so a ChunkReady must still receive an Abort and sign nothing;
@@ -1500,7 +1500,7 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 		}
 	}
 	// A zero-chunk abort soft-deletes its row in the finalising transaction
-	// (§10.1 line 132), so LatestActive no longer returns it and the failed
+	// (§10.1), so LatestActive no longer returns it and the failed
 	// attempt left no session ref. Recover the tombstoned row so the test can
 	// assert its finalised disposition.
 	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))

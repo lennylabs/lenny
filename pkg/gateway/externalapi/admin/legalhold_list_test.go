@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §15.1 line 865 — GET /v1/admin/legal-holds.
+// spec: §15.1 — GET /v1/admin/legal-holds.
 
 type holdItem struct {
 	ResourceType string `json:"resourceType"`
@@ -110,7 +110,7 @@ func TestListLegalHoldsTenantScoped(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 865 — a platform-admin omitting tenant_id lists across
+// spec: §15.1 — a platform-admin omitting tenant_id lists across
 // every tenant.
 func TestListLegalHoldsAllTenants(t *testing.T) {
 	router, sessions, _ := newLegalHoldListAdmin(t, false)
@@ -134,7 +134,7 @@ func TestListLegalHoldsAllTenants(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 865 — a tenant-admin caller is automatically scoped to
+// spec: §15.1 — a tenant-admin caller is automatically scoped to
 // its own tenant; the tenant_id param cannot widen it.
 func TestListLegalHoldsTenantAdminScoped(t *testing.T) {
 	router, sessions, _ := newLegalHoldListAdmin(t, false)
@@ -214,7 +214,7 @@ func TestListLegalHoldsEmpty(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 865 — requires platform-admin or tenant-admin; a plain
+// spec: §15.1 — requires platform-admin or tenant-admin; a plain
 // user is forbidden.
 func TestListLegalHoldsForbiddenForUser(t *testing.T) {
 	router, _, _ := newLegalHoldListAdmin(t, false)
@@ -224,7 +224,7 @@ func TestListLegalHoldsForbiddenForUser(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated envelope
+// spec: §15.1 — the canonical cursor-paginated envelope
 // bounds the page and exposes the total.
 func TestListLegalHoldsPagination(t *testing.T) {
 	router, sessions, _ := newLegalHoldListAdmin(t, false)

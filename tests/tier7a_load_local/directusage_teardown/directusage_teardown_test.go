@@ -105,11 +105,10 @@ func (l *pollLoop) pollOnce() {
 	}
 }
 
-// spec: §11.2 line 42 (direct-mode usage poll loop, registry-keyed teardown),
+// spec: §11.2,
 // §4.7 (ReportUsage pull over the session-scoped registry). This test exercises
 // the loop's concurrent Snapshot/Get teardown safety and its context-tied
-// goroutine exit, which are §11.2/§4.7 loop-concurrency surfaces; the §6.2 line
-// 253 idle-clock reset is a distinct behavior driven by the idle stamper and is
+// goroutine exit, which are §11.2/§4.7 loop-concurrency surfaces; the §6.2 idle-clock reset is a distinct behavior driven by the idle stamper and is
 // pinned by the in-package TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253
 // and TestDirectUsageLoopFailedPullDoesNotStamp_spec_6_2_253, so this test does
 // not cite §6.2.

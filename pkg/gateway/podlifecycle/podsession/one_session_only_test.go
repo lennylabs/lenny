@@ -16,7 +16,7 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// spec: §6.1 lines 5, 16, 24 — "After a session completes or fails in
+// spec: §6.1 — "After a session completes or fails in
 // `executionMode: session`, the pod is terminated and replaced — never
 // recycled for a different session." F-6.1.12.
 //

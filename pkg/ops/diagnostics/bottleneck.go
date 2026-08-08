@@ -23,7 +23,7 @@ const (
 // PoolSignals are the §25.6 warm-pool bottleneck signals: the warm-up
 // failure counts by cause, the replenishment-versus-claim rates, the
 // setup-command failure count, and the CRD-sync-lag flag.
-// spec: §25.6 lines 2862–2865.
+// spec: §25.6.
 type PoolSignals struct {
 	ImagePullFailures     int
 	NodePressureFailures  int
@@ -50,7 +50,7 @@ type PoolSignals struct {
 // the desired rate regardless of node or image health. When no warm-up
 // is failing and the CRD is converged, demand outpacing replenishment
 // is the bottleneck. ok is false when the pool shows no bottleneck.
-// spec: §25.6 lines 2862–2865.
+// spec: §25.6.
 func ClassifyPoolBottleneck(s PoolSignals) (BottleneckCategory, bool) {
 	switch {
 	case s.ImagePullFailures > 0:

@@ -64,7 +64,7 @@ func NewPodExecutor(registry *podsession.Registry, binder *podsession.Binder) *P
 // gateway calls it during wiring after the interaction store and event
 // bus exist. A nil gate (the dev / echo posture) leaves approval-
 // required tool_call frames skipped, matching the prior behavior.
-// spec: §7.2 lines 124-134. F-7.2.9, F-7.2.18.
+// spec: §7.2. F-7.2.9, F-7.2.18.
 func (e *PodExecutor) SetApprovalGate(g ApprovalGate) {
 	e.approvals = g
 }
@@ -182,7 +182,7 @@ func (e *PodExecutor) EvictStream(sessionID string) {
 // readAttachResponse reads Attach frames until a `response` envelope and
 // returns its output parts. heartbeat_ack, status, and unparseable
 // frames are skipped. A `tool_call` frame carrying approvalRequired:true
-// is the §7.2 line 134 user-approval signal: when an ApprovalGate is
+// is the §7.2 user-approval signal: when an ApprovalGate is
 // wired the executor records the interaction, publishes the
 // `tool_use_requested` SSE event, and blocks on the gate until the user
 // resolves the call, then relays the verdict to the runtime (approve →
@@ -281,7 +281,7 @@ func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID
 		}
 		return true, nil
 	}
-	// §7.2 line 125: a denial returns the tool a tool_result carrying
+	// §7.2: a denial returns the tool a tool_result carrying
 	// isError:true and the deny reason.
 	denied, mErr := json.Marshal(toolResultFrame{
 		Type:    "tool_result",

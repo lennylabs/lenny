@@ -66,7 +66,7 @@ func New(opts Options) *Client {
 	}
 	httpClient := &http.Client{Timeout: timeout}
 	if opts.InsecureSkipVerify {
-		// spec: §24.16 line 205 — `--insecure-skip-verify` (dev only).
+		// spec: §24.16 — `--insecure-skip-verify` (dev only).
 		// Clone the default transport so connection-pool defaults are
 		// preserved and only TLS verification is relaxed.
 		tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -128,7 +128,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 // precondition header so the gateway can enforce optimistic concurrency.
 // An empty ifMatch sends no header, leaving the server to reject the
 // write with 428 ETAG_REQUIRED if it requires the precondition.
-// spec: §15.1 lines 1207-1213.
+// spec: §15.1.
 func (c *Client) DoIfMatch(ctx context.Context, method, path, ifMatch string, body, out any) error {
 	var headers map[string]string
 	if ifMatch != "" {
@@ -140,8 +140,7 @@ func (c *Client) DoIfMatch(ctx context.Context, method, path, ifMatch string, bo
 // ETag issues a GET against path and returns the value of the response's
 // ETag header, used to satisfy the §15.1 If-Match precondition on a
 // subsequent write. An empty return means the server sent no ETag (the
-// resource does not enforce optimistic concurrency). spec: §15.1 lines
-// 1207-1213.
+// resource does not enforce optimistic concurrency). spec: §15.1.
 func (c *Client) ETag(ctx context.Context, path string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
 	if err != nil {
@@ -164,7 +163,7 @@ func (c *Client) ETag(ctx context.Context, path string) (string, error) {
 // admin API documents: it fetches the resource's current ETag via
 // getPath, then issues a PUT to putPath carrying it as If-Match. The two
 // paths are usually identical; they differ only when the GET requires a
-// query the PUT does not. spec: §15.1 lines 1202-1213.
+// query the PUT does not. spec: §15.1.
 func (c *Client) PutIfMatch(ctx context.Context, getPath, putPath string, body, out any) error {
 	etag, err := c.ETag(ctx, getPath)
 	if err != nil {
@@ -222,7 +221,7 @@ func (c *Client) do(ctx context.Context, method, path string, headers map[string
 // rather than a single JSON document. Unlike Do, Stream does not apply
 // the per-request Timeout: an SSE stream is bounded only by ctx, so a
 // 30 s client timeout would otherwise sever a healthy tail.
-// spec: §25.14 line 4920 — `lenny-ctl events tail` maps to
+// spec: §25.14 — `lenny-ctl events tail` maps to
 // GET /v1/admin/events/stream (SSE).
 func (c *Client) Stream(ctx context.Context, path string, w io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
@@ -262,7 +261,7 @@ func (c *Client) Stream(ctx context.Context, path string, w io.Writer) error {
 // streaming Accept header. It backs the §24.15 `lenny-ctl logs pods`
 // pod-log proxy, whose upstream (GET /v1/admin/logs/pods/{ns}/{name} on
 // lenny-ops) returns the raw container log as text/plain.
-// spec: §24.15 line 192; §25.4 lines 2528-2534.
+// spec: §24.15; §25.4.
 func (c *Client) Get(ctx context.Context, path string, w io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
 	if err != nil {

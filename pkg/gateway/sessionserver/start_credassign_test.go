@@ -13,12 +13,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 )
 
-// TestWriteTokenServiceUnavailableShape exercises the §4.3 line 214
+// TestWriteTokenServiceUnavailableShape exercises the §4.3
 // "retryable error" response envelope: HTTP 503, the
 // TOKEN_SERVICE_UNAVAILABLE code, an UPSTREAM category, retryable: true,
 // and a Retry-After header of 5 seconds. A client that backs off and
 // retries is matched against this shape.
-// spec: §4.3 line 214.
+// spec: §4.3.
 func TestWriteTokenServiceUnavailableShape(t *testing.T) {
 	t.Parallel()
 	s := &Server{}
@@ -70,7 +70,7 @@ func TestWriteTokenServiceUnavailableShape(t *testing.T) {
 // session-start handler has only the sentinel and no wrapping context:
 // the Retry-After header still emits and the response still classifies
 // as TOKEN_SERVICE_UNAVAILABLE.
-// spec: §4.3 line 214.
+// spec: §4.3.
 func TestWriteTokenServiceUnavailableNilCause(t *testing.T) {
 	t.Parallel()
 	s := &Server{}
@@ -100,7 +100,7 @@ func TestWriteTokenServiceUnavailableNilCause(t *testing.T) {
 // Retry-After budget agrees with the subsystem circuit-breaker
 // cool-down. The 5-second value matches the open-state window in
 // pkg/gateway/subsystem.
-// spec: §4.3 line 214.
+// spec: §4.3.
 func TestTokenServiceUnavailableRetryAfterConstant(t *testing.T) {
 	t.Parallel()
 	if tokenServiceUnavailableRetryAfterSeconds != 5 {

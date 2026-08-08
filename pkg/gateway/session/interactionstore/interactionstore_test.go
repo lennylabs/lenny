@@ -132,7 +132,7 @@ func TestDeleteByUserNoInteractionsIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant is mandatory on
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant is mandatory on
 // the Store interface (lifted from the concrete type by F-12.2.11) and
 // erases exactly one tenant's interactions.
 func TestDeleteByTenantScopesToTenant_spec_12_1(t *testing.T) {
@@ -236,11 +236,10 @@ func TestDismissByUserNoInteractionsIsNoOp(t *testing.T) {
 	}
 }
 
-// TestListPendingReturnsOnlyPendingOldestFirst covers the §7.2 line
-// 153 lookup used by `children_reattached`. The list omits resolved
+// TestListPendingReturnsOnlyPendingOldestFirst covers the §7.2 lookup used by `children_reattached`. The list omits resolved
 // rows and orders by CreatedAt ascending so the resumed parent
 // addresses the longest-waiting request first.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestListPendingReturnsOnlyPendingOldestFirst(t *testing.T) {
 	s := interactionstore.NewMemory()
 	ctx := context.Background()
@@ -275,7 +274,7 @@ func TestListPendingReturnsOnlyPendingOldestFirst(t *testing.T) {
 
 // TestListPendingEmptyForUnknownSession — a session with no
 // interactions returns an empty slice and no error.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestListPendingEmptyForUnknownSession(t *testing.T) {
 	s := interactionstore.NewMemory()
 	got, err := s.ListPending(context.Background(), "acme", "sess_empty")
@@ -289,7 +288,7 @@ func TestListPendingEmptyForUnknownSession(t *testing.T) {
 
 // TestListPendingScopedByTenantAndSession — entries leak across
 // neither boundary.
-// spec: §7.2 line 153 (tenant/session triple); F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestListPendingScopedByTenantAndSession(t *testing.T) {
 	s := interactionstore.NewMemory()
 	ctx := context.Background()

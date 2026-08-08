@@ -57,8 +57,7 @@ const conditionPoolWarmingUp = "PoolWarmingUp"
 // Status change and the PoolWarmingUp Available→Drained transition keeps Status
 // False.
 //
-// spec: §25.6 line 2956 (warmPoolStuckReplenish detection: zero in-flight
-// warm-up claims for > 5m).
+// spec: §25.6.
 const conditionPoolDrained = "PoolDrained"
 
 // Label keys the controller stamps on every Sandbox it creates. The
@@ -73,31 +72,31 @@ const (
 	// NetworkPolicy (which selects lenny.dev/delivery-mode: proxy) admits
 	// the pod's egress to the gateway LLM proxy port. Direct-mode pools
 	// do not receive the label and therefore cannot reach that port.
-	// spec: §13.2 lines 118, 130.
+	// spec: §13.2.
 	LabelDeliveryMode = "lenny.dev/delivery-mode"
 
 	// LabelEgressProfile is stamped with the pool's resolved §13.2 egress
 	// profile (restricted|provider-direct|internet) so the matching
 	// pre-created supplemental NetworkPolicy takes effect. The controller
 	// does not create NetworkPolicies; it only labels pods so the
-	// chart-rendered policies select them. spec: §13.2 lines 424-432.
+	// chart-rendered policies select them. spec: §13.2.
 	LabelEgressProfile = "lenny.dev/egress-profile"
 
 	// LabelDNSPolicy is stamped with value `cluster-default` only on pods
 	// in pools that opt out of the dedicated CoreDNS instance, so the
 	// chart-rendered kube-system DNS egress supplemental policy (which
 	// selects this label) admits their fallback DNS path. Pods in all
-	// other pools do not receive the label. spec: §13.2 lines 470-490.
+	// other pools do not receive the label. spec: §13.2.
 	LabelDNSPolicy = "lenny.dev/dns-policy"
 
 	// EgressProfileRestricted is the §13.2 default egress profile (gateway
 	// + DNS only); an empty SandboxTemplate.spec.egressProfile resolves to
-	// it. spec: §13.2 line 430.
+	// it. spec: §13.2.
 	EgressProfileRestricted = "restricted"
 
 	// DNSPolicyClusterDefault is the §13.2 pool opt-out value that reverts
 	// the pod to kube-system CoreDNS instead of the dedicated instance.
-	// spec: §13.2 line 484.
+	// spec: §13.2.
 	DNSPolicyClusterDefault = "cluster-default"
 )
 
@@ -153,14 +152,14 @@ type Reconciler struct {
 
 	// RuntimeClasses, when set, validates that the RuntimeClass the
 	// pool's isolation profile maps to exists in the cluster before the
-	// pool is sized (§5.3 line 675). A missing RuntimeClass marks the
+	// pool is sized (§5.3). A missing RuntimeClass marks the
 	// pool Degraded and suppresses pod creation that the API server
 	// would reject. A nil checker disables the validation; the
 	// lenny-controller binary wires the production reader-backed checker.
 	RuntimeClasses RuntimeClassChecker
 
 	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
-	// cluster-specific RuntimeClass name (spec: §17.5 line 3). The
+	// cluster-specific RuntimeClass name (spec: §17.5). The
 	// pool's RuntimeClass-presence check resolves the override here so
 	// a cluster running gVisor as `runsc` or Kata as `kata-qemu` sees
 	// the Degraded condition reference the operator's actual cluster
@@ -257,7 +256,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	decision := plan.Compute(in)
 
-	// spec: §5.3 line 675 — validate the pool's RuntimeClass exists
+	// spec: §5.3 — validate the pool's RuntimeClass exists
 	// before sizing it. When the isolation profile maps to an
 	// uninstalled RuntimeClass the pool is marked Degraded and pod
 	// creation is suppressed, because every create would only produce an
@@ -306,11 +305,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	r.idle.observe(req.NamespacedName.String(), pool.Name, resourceClass, decision.ReadyCount)
 
 	// Publish the §16.1 lenny_warmpool_idle_pods gauge — the
-	// instantaneous idle-pod count keyed by pool. §17.8.2 line 1101's
+	// instantaneous idle-pod count keyed by pool. §17.8.2's
 	// first-week monitoring workflow reads it directly ("if consistently
 	// near zero, minWarm is too low") and several §16.5 alerts join
 	// against it (WarmPoolExhausted, WarmPoolLow, PodClaimQueueBacklog).
-	// spec: §16.1, §17.8.2 line 1101.
+	// spec: §16.1, §17.8.2.
 	setIdlePods(pool.Name, decision.ReadyCount)
 
 	// Publish the §16.1 lenny_warmpool_reserved_pods gauge — the
@@ -523,14 +522,14 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 		Spec: lennyv1.SandboxSpec{
 			RuntimeRef: tmpl.Spec.RuntimeRef,
 			PoolRef:    pool.Name,
-			// spec: §12.6 line 421 — denormalize the pool's isolation
+			// spec: §12.6 — denormalize the pool's isolation
 			// profile and execution mode onto each Sandbox so the
 			// PodRegistry projects PodRecord.{IsolationProfile,ExecutionMode}
 			// without resolving the SandboxTemplate on every read.
 			IsolationProfile: tmpl.Spec.IsolationProfile,
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
 			DeliveryMode:     tmpl.Spec.DeliveryMode,
-			// spec: §5.2 lines 631-636 — the WarmPoolController (which owns
+			// spec: §5.2 — the WarmPoolController (which owns
 			// Sandbox.spec) copies the pool's topology spread constraints
 			// from the SandboxTemplate so the Sandbox-to-Pod reconciler can
 			// stamp them onto the agent pod.
@@ -548,17 +547,17 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 // reconciler copies sb.Labels onto the pod), where the §13.2
 // pre-created NetworkPolicies select them. The controller never creates
 // NetworkPolicies; it only labels pods so the chart-rendered policies
-// take effect (spec: §13.2 line 424).
+// take effect (spec: §13.2).
 //
 //   - LabelPool / LabelManaged: pool scoping and §17.2 admission targeting.
 //   - LabelDeliveryMode: `proxy` only on proxy-mode pools so the
 //     allow-pod-egress-llm-proxy policy admits the LLM proxy port
-//     (spec: §13.2 lines 118, 130). F-13.2.1.
+//     (spec: §13.2). F-13.2.1.
 //   - LabelEgressProfile: the resolved egress profile so the matching
 //     supplemental policy takes effect; empty resolves to `restricted`
-//     (spec: §13.2 lines 424-432). F-13.2.11.
+//     (spec: §13.2). F-13.2.11.
 //   - LabelDNSPolicy: `cluster-default` only on pools that opt out of the
-//     dedicated CoreDNS instance (spec: §13.2 lines 470-490). F-13.2.4.
+//     dedicated CoreDNS instance (spec: §13.2). F-13.2.4.
 func sandboxLabels(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) map[string]string {
 	labels := map[string]string{
 		LabelPool:    pool.Name,
@@ -653,7 +652,7 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 // present one yields Degraded=False so a previously-degraded pool
 // recovers.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
 	if r.RuntimeClasses == nil {
 		return nil, nil
@@ -691,7 +690,7 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 // > 1`, which lives on the gateway-side poolstore mirror rather than the
 // SandboxTemplate CRD, so the gateway pool-admission path (§4.7) stamps the
 // condition. The SandboxTemplate `executionMode` enum no longer admits
-// `concurrent`. spec: §13.1 line 29; §5.2.
+// `concurrent`. spec: §13.1; §5.2.
 func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, conds ...*metav1.Condition) error {
 	drained := len(decision.Drain)
 	warm := int32(decision.WarmCount + decision.Create - drained)
@@ -778,7 +777,7 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 // changed, so the bundled rules have live series after a controller
 // restart.
 //
-// spec: §5.2 line 627 (PoolWarmingUp + lenny_pool_warming_up gauge); §4.5,
+// spec: §5.2; §4.5,
 // §4.7 (SecurityDegradedMode + lenny_pool_security_degraded gauge); §4.6.3
 // (SandboxTemplate.status owned by the WarmPoolController).
 func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool, decision plan.Plan, sandboxes []lennyv1.Sandbox) error {
@@ -892,7 +891,7 @@ func poolWarmingUpCondition(minWarm, warm, ready int) metav1.Condition {
 // (warming > 0) and Available (idle pods present) are both False, matching the
 // PoolWarmingUp reasons that are not the stuck signal.
 //
-// spec: §25.6 line 2956 (zero in-flight warm-up claims).
+// spec: §25.6.
 func poolDrainedCondition(minWarm, warm, ready int) metav1.Condition {
 	warming := warm - ready
 	if minWarm > 0 && ready == 0 && warming == 0 {

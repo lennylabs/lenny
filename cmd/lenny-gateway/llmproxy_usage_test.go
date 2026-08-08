@@ -69,7 +69,7 @@ func (f fakeQuotaLimits) LookupLimits(_ context.Context, _ string) (policy.Tenan
 // TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468 confirms a
 // proxy-mode lease's authoritative counts land in the usagestore with
 // the lease's tenant and the session's runtime.
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 	var sessions sessionstore.Store = memstore.New()
 	if err := sessions.Create(context.Background(), sessionstore.Session{
@@ -104,7 +104,7 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 // direct-mode lease's counts are not double-counted by the proxy
 // recorder (the §4.9 LLM proxy never sees direct-mode traffic; the
 // defensive check guards against future regressions).
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
 	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
@@ -121,7 +121,7 @@ func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 // TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468 confirms a
 // lease without a tenant attribution is dropped rather than producing
 // a tenant-empty usage series.
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
 	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
@@ -138,7 +138,7 @@ func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 // TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468 confirms
 // the recorder still records tenant-scoped counts when the session
 // lookup misses (the byTenant rollup must keep reporting).
-// spec: spec/04_system-components.md line 1468.
+// spec: §4.9.
 func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
 	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
@@ -500,7 +500,7 @@ func TestProxyUsageRecorderAdvancesQuotaCounter_Spec11_2(t *testing.T) {
 	}
 }
 
-// spec: §12.4 source (2); §11.2 line 48 — F-12.4.20: the recorder folds
+// spec: §12.4 source (2); §11.2 — F-12.4.20: the recorder folds
 // each proxy-extracted token delta into the in-memory fail-open accumulator
 // (both the per-user window and the per-tenant rollup) so a Redis-recovery
 // reconcile can restore usage a Redis write dropped during an outage.
@@ -606,7 +606,7 @@ func TestProxyUsageRecorderRollingWritesSlidingWindow_Spec11_2(t *testing.T) {
 // per-session accumulator (the source the TaskResult usage / treeUsage
 // rollups read), keyed by the lease's session, and ignores a direct-mode
 // lease.
-// spec: §8.8 lines 897-917; §4.9 line 1468. F-8.8.3.
+// spec: §8.8; §4.9. F-8.8.3.
 func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
@@ -648,7 +648,7 @@ func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
 // 5s default; a zero or negative value leaves the default in place so a
 // zeroed flag never collapses the wait window to nothing (which would turn
 // every elicitation-mode extension into an immediate BUDGET_EXHAUSTED).
-// spec: §8.6 line 629; proposal 0023 S5.
+// spec: §8.6; proposal 0023 S5.
 func TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride(t *testing.T) {
 	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	if rec.proxyExtensionWaitTimeout != defaultProxyExtensionWaitTimeout {
@@ -684,8 +684,7 @@ func TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride(t *testing.T) {
 // step no gateway code recorded direct-mode usage, so every sink read zero for
 // a direct-mode session.
 //
-// spec: §11.2 (direct-mode usage recording), §15.1 (metering), §8.8 lines
-// 897-917 (per-session rollup), §12.4 source (2) (fail-open accumulator).
+// spec: §11.2 (direct-mode usage recording), §15.1 (metering), §8.8, §12.4 source (2) (fail-open accumulator).
 func TestRecordDirectUsageReachesAccountingSinks_spec_11_2(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
@@ -742,14 +741,13 @@ func TestRecordDirectUsageReachesAccountingSinks_spec_11_2(t *testing.T) {
 // TestRecordDirectUsageExcludesEnforcer_spec_11_2_44 proves the direct-mode
 // path never routes through the mid-session sessionbudget.Enforcer, so a
 // direct-mode session is neither terminated in-path on budget breach nor
-// offered an in-path extension. §11.2 line 44 and §8.3 line 631 forbid both
+// offered an in-path extension. §11.2 and §8.3 forbid both
 // for a direct-mode session. It is the Pass-5 regression: a delta far exceeding
 // the session's lease budget must not terminate the session or consult the
 // §8.6 extension seam. It would fail against a design that shared the proxy
 // RecordUsage fan-out wholesale (which drives Enforcer.Record).
 //
-// spec: §11.2 line 44 (no in-path termination), §8.3 line 631 (no in-path
-// extension), §8.3 line 435 (settlement-time reconciliation).
+// spec: §11.2, §8.3, §8.3.
 // diagnosis: the direct-mode usage path fed the mid-session budget enforcer, terminating a direct-mode session in-path or offering it a forbidden in-path extension (proposal 0024 S4/Pass-5 exclusion broken).
 func TestRecordDirectUsageExcludesEnforcer_spec_11_2_44(t *testing.T) {
 	ctx := context.Background()
@@ -790,7 +788,7 @@ func TestRecordDirectUsageExcludesEnforcer_spec_11_2_44(t *testing.T) {
 // TestRecordDirectUsageDropsProxyLease_spec_4_9_1468 proves the direct-mode
 // path drops a proxy-mode (or tenantless) lease so proxy-extracted counts are
 // not double-counted: RecordUsage on the §4.9 path already records them
-// authoritatively. spec: §4.9 line 1468.
+// authoritatively. spec: §4.9.
 func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 	ctx := context.Background()
 	usage := usagestore.NewMemory()
@@ -820,14 +818,14 @@ func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 	nilRec.setAnomalyObserver(obs)
 }
 
-// TestRecordDirectUsageIdleClockGate_spec_6_2_253 proves the §6.2 line 253
+// TestRecordDirectUsageIdleClockGate_spec_6_2_253 proves the §6.2
 // direct-mode idle reconciliation under the gateway pull: a zero-token delta
 // leaves the idle clock untouched (a bare timer tick is not evidence of agent
 // work, so a hung pod still idle-terminates), while a non-zero delta resets it
 // (direct evidence the agent issued LLM work). It would fail against a design
 // that reused the proxy recorder's unconditional per-chunk idle stamp.
 //
-// spec: §6.2 line 253 (direct-mode idle reset on non-zero delta), §11.2
+// spec: §6.2, §11.2
 // (direct-mode usage).
 // diagnosis: the direct-mode usage path stamped the §6.2 idle clock on every gateway ReportUsage poll rather than only on a non-zero delta, so a hung direct-mode pod that emits no tokens never idle-terminates and its pod, lease, and session leak (proposal 0024 S4 idle-gate broken).
 func TestRecordDirectUsageIdleClockGate_spec_6_2_253(t *testing.T) {

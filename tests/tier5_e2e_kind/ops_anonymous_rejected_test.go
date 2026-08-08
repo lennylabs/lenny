@@ -26,7 +26,7 @@
 // caller, so the anonymous rejection is a genuine authorization decision
 // rather than an unconditionally closed or missing route.
 //
-// §25.4's error taxonomy (line 328) places both 401 and 403 in the AUTH
+// §25.4 's error taxonomy places both 401 and 403 in the AUTH
 // category, and the sentence under test mandates denial rather than a
 // specific status. The deployed dev-mode binary runs single-tenant with
 // AllowDevHeaders, so a no-credential request is admitted through the
@@ -34,8 +34,7 @@
 // with 403; a production binary rejects it at authentication with 401.
 // Both deny anonymous access, so the assertion accepts either.
 //
-// spec: §25.4 line 1567 (lenny-ops authentication; no anonymous access
-// except /healthz); §25.4 line 328 (AUTH category is 401 or 403).
+// spec: §25.4; §25.4.
 
 package tier5_e2e_kind_test
 
@@ -50,7 +49,7 @@ import (
 )
 
 // opsAnonEndpoints are non-/healthz operability endpoints that read
-// platform state. §25.4 line 1567 requires every one of them to reject
+// platform state. §25.4 requires every one of them to reject
 // an anonymous caller; none is on the /healthz-and-/readyz exemption
 // list.
 var opsAnonEndpoints = []struct {
@@ -62,7 +61,7 @@ var opsAnonEndpoints = []struct {
 	{"remediation-locks list", "/v1/admin/remediation-locks"},
 }
 
-// spec: §25.4 line 1567 — "Requires platform-admin or tenant-admin role
+// spec: §25.4 — "Requires platform-admin or tenant-admin role
 // on all endpoints. No anonymous access except /healthz." Verified
 // end-to-end against the deployed lenny-ops binary, whose auth wiring
 // runs through cmd/lenny-ops/main.go and the Helm chart's

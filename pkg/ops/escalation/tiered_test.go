@@ -150,7 +150,7 @@ func mkCreate(t *testing.T, s *escalation.Service) *escalation.Escalation {
 
 // TestTieredCreatePrefersPostgres asserts a create with both durable
 // tiers reachable lands at Tier 1 (durable-postgres).
-// spec: §25.4 lines 2380-2384.
+// spec: §25.4.
 func TestTieredCreatePrefersPostgres_spec_25_4(t *testing.T) {
 	pg := newFakeStore(escalation.PersistenceDurablePostgres)
 	rd := newFakeStore(escalation.PersistenceDurableRedis)
@@ -166,7 +166,7 @@ func TestTieredCreatePrefersPostgres_spec_25_4(t *testing.T) {
 
 // TestTieredCreateFallsBackToRedisThenMemory walks the §25.4 fallback
 // ladder as each higher tier goes unreachable.
-// spec: §25.4 lines 2376-2384.
+// spec: §25.4.
 func TestTieredCreateFallsBackToRedisThenMemory_spec_25_4(t *testing.T) {
 	pg := newFakeStore(escalation.PersistenceDurablePostgres)
 	rd := newFakeStore(escalation.PersistenceDurableRedis)
@@ -185,7 +185,7 @@ func TestTieredCreateFallsBackToRedisThenMemory_spec_25_4(t *testing.T) {
 	}
 }
 
-// TestRequireDurableRejectsWhenNoDurableStore asserts the §25.4 line 2396
+// TestRequireDurableRejectsWhenNoDurableStore asserts the §25.4
 // conservative posture: with requireDurable set and both durable tiers
 // down, a create fails with ESCALATION_NO_DURABLE_STORE rather than
 // buffering in memory.
@@ -280,7 +280,7 @@ func TestRequireDurableSuccessEmitsOnce_spec_25_4(t *testing.T) {
 // flush: a record buffered during an outage is promoted to Postgres once
 // it recovers, preserving the authoring timestamp and the emitted flag,
 // and emitting one remediation.escalation_persisted audit event.
-// spec: §25.4 lines 2407-2415.
+// spec: §25.4.
 func TestFlushPromotesBufferedToPostgres_spec_25_4(t *testing.T) {
 	pg := newFakeStore(escalation.PersistenceDurablePostgres)
 	em := &recordingEmitter{}
@@ -340,7 +340,7 @@ func TestFlushPromotesBufferedToPostgres_spec_25_4(t *testing.T) {
 // TestFlushStopsWhenNoDurableStoreReachable asserts the flush leaves the
 // buffer intact when no durable tier is reachable, so the next pass can
 // retry.
-// spec: §25.4 lines 2407-2409.
+// spec: §25.4.
 func TestFlushStopsWhenNoDurableStoreReachable_spec_25_4(t *testing.T) {
 	pg := newFakeStore(escalation.PersistenceDurablePostgres)
 	s := escalation.NewWithStores(escalation.Options{Durable: []escalation.Store{pg}})

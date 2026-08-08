@@ -170,7 +170,7 @@ func (f fakeStore) DeleteByTenant(context.Context, string) error       { return 
 // TestFromCountingWiresTypedStore verifies erasure.FromCounting adapts a
 // CountingEraser onto the orchestrator, preserving the deleted-row count.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func TestFromCountingWiresTypedStore_spec_12_1(t *testing.T) {
 	o := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{
 		erasure.FromCounting("sessions", fakeCounting{n: 7}),
@@ -188,7 +188,7 @@ func TestFromCountingWiresTypedStore_spec_12_1(t *testing.T) {
 // StoreEraser (error-only) onto the orchestrator with a 0 count and still
 // invokes the underlying DeleteByUser.
 //
-// spec: §12.1 line 5; §9.4.
+// spec: §12.1; §9.4.
 func TestFromStoreAdaptsPluggableRole_spec_12_1(t *testing.T) {
 	called := false
 	o := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{

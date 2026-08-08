@@ -8,8 +8,7 @@ import (
 	"fmt"
 )
 
-// DenyChecker reports whether a SPIFFE URI is on the §10.3 certificate
-// revocation deny list (spec line 352, "keyed by SPIFFE URI"). The
+// DenyChecker reports whether a SPIFFE URI is on the §10.3 certificate revocation deny list. The
 // gateway's *denylist.DenyList satisfies it; the interface keeps this
 // package free of a denylist import so the verifier stays a leaf
 // dependency.
@@ -40,12 +39,10 @@ const (
 	ReasonRevoked MismatchReason = "certificate_revoked"
 )
 
-// AgentPeerVerifier validates an inbound agent-pod mTLS peer per §10.3
-// NET-060 (spec line 321): the peer certificate's SPIFFE URI SAN MUST
+// AgentPeerVerifier validates an inbound agent-pod mTLS peer per §10.3 NET-060: the peer certificate's SPIFFE URI SAN MUST
 // parse as spiffe://<trust-domain>/agent/{pool}/{pod-name} with the
 // trust domain equal to the configured global.spiffeTrustDomain, and
-// the certificate MUST NOT be on the §10.3 revocation deny list (spec
-// line 352). Either failure rejects the handshake before any gRPC frame
+// the certificate MUST NOT be on the §10.3 revocation deny list. Either failure rejects the handshake before any gRPC frame
 // is exchanged. Possession of a valid cluster-CA certificate is
 // necessary but never sufficient (spec line 324): chain verification
 // alone does not establish that the peer is an agent pod in this
@@ -82,7 +79,7 @@ type AgentPeerVerifier struct {
 // verifiedChains is populated) and applies the §10.3 NET-060 SPIFFE
 // identity check on top of CA trust. Returning a non-nil error aborts
 // the handshake with no gRPC response, exactly as the spec requires.
-// spec: §10.3 line 321 (NET-060); §10.3 line 352 (deny list)
+// spec: §10.3; §10.3
 func (v AgentPeerVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	leaf, err := leafCertificate(rawCerts, verifiedChains)
 	if err != nil {
@@ -135,14 +132,13 @@ func (e *VerifyError) Error() string { return e.Err.Error() }
 func (e *VerifyError) Unwrap() error { return e.Err }
 
 // InterceptorPeerVerifier validates an outbound in-cluster-interceptor
-// mTLS peer per §10.3 NET-063 (spec lines 326-332): the interceptor
+// mTLS peer per §10.3 NET-063: the interceptor
 // certificate's SPIFFE URI SAN MUST parse as
 // spiffe://<trust-domain>/interceptor/{namespace}/{pod-name} with the
 // trust domain equal to the configured global.spiffeTrustDomain and the
 // {namespace} equal to one of the entries declared in
 // gateway.interceptorNamespaces, and the certificate MUST NOT be on the
-// §10.3 revocation deny list. The DNS-SAN half of the check (spec line
-// 328) is enforced separately by pinning tls.Config.ServerName to the
+// §10.3 revocation deny list. The DNS-SAN half of the check is enforced separately by pinning tls.Config.ServerName to the
 // registered endpoint so Go's standard chain verification refuses any
 // cluster-CA-signed certificate whose SAN does not cover it. Possession
 // of a valid cluster-CA certificate is necessary but never sufficient
@@ -183,7 +179,7 @@ type InterceptorPeerVerifier struct {
 // the §10.3 NET-063 SPIFFE identity check on top of CA trust. Returning
 // a non-nil error aborts the handshake with no gRPC response. Every
 // returned error is a *VerifyError carrying the classified reason.
-// spec: §10.3 line 328 (NET-063); §10.3 line 352 (deny list)
+// spec: §10.3; §10.3
 func (v InterceptorPeerVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	leaf, err := leafCertificate(rawCerts, verifiedChains)
 	if err != nil {

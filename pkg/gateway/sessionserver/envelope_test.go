@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
-// spec: §14 lines 47-79, 154-155 — the CreateSessionRequest envelope
+// spec: §14 — the CreateSessionRequest envelope
 // fields (env, pool, timeouts, credentialPolicy, delegationLease,
 // runtimeOptions) and their admission validation. F-14.1.12 / F-14.1.14 /
 // F-14.1.15.
@@ -133,7 +133,7 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 
 // --- metadata key emptiness (F-CS4, 0018) ---
 
-// spec: §7.1 line 6 — a metadata key that is empty is rejected at the
+// spec: §7.1 — a metadata key that is empty is rejected at the
 // create boundary so the on-row annotation map stays well-formed,
 // mirroring the §14 env and label key checks. F-CS4 (0018).
 func TestCreateRejectsEmptyMetadataKey_spec_7_1(t *testing.T) {
@@ -155,7 +155,7 @@ func TestCreateRejectsEmptyMetadataKey_spec_7_1(t *testing.T) {
 }
 
 // A non-empty metadata key is admitted and survives the round trip onto
-// the §15.1 GET envelope. spec: §7.1 line 6.
+// the §15.1 GET envelope. spec: §7.1.
 func TestCreateAcceptsNonEmptyMetadataKey_spec_7_1(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.4 line 163 — the file-backed master key persists, so a
+// spec: §17.4 — the file-backed master key persists, so a
 // second load returns the identical seed (the property that lets
 // encrypted state survive a restart).
 func TestLoadOrCreateMasterKey_persistsAcrossLoads_spec_17_4_163(t *testing.T) {
@@ -64,7 +64,7 @@ func TestLoadOrCreateMasterKey_emptyPath(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 163 — a DEK wrapped by one process unwraps in a
+// spec: §17.4 — a DEK wrapped by one process unwraps in a
 // second process built from the same key file, which is the whole point
 // of a persisted master key (NewLocalRandom cannot do this).
 func TestNewLocalFromKeyFile_unwrapsAcrossInstances_spec_17_4_163(t *testing.T) {

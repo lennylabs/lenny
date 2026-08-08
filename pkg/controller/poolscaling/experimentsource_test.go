@@ -74,7 +74,7 @@ func TestExperimentSourceNilReaderPassesThrough(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1092 / §4.6.2 line 534 — an active experiment marks
+// spec: §10.7 / §4.6.2 — an active experiment marks
 // its variant pool as a variant and reduces the base pool by Σ weights.
 func TestExperimentSourceActiveVariantAndBaseAdjustment(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
@@ -100,7 +100,7 @@ func TestExperimentSourceActiveVariantAndBaseAdjustment(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1102 — a paused experiment's variant pool is pinned
+// spec: §10.7 — a paused experiment's variant pool is pinned
 // to minWarm 0, and its weight is removed from the base pool's sum.
 func TestExperimentSourcePausedForcesZeroMinWarm(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{
@@ -125,7 +125,7 @@ func TestExperimentSourcePausedForcesZeroMinWarm(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1104 — a concluded experiment's variant pool is
+// spec: §10.7 — a concluded experiment's variant pool is
 // flagged for drain-and-delete.
 func TestExperimentSourceConcludedMarksDrainAndDelete(t *testing.T) {
 	src := &poolscaling.ExperimentVariantSource{

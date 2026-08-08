@@ -26,7 +26,7 @@ import (
 // the dropped columns would fail to insert or scan. It downloads the
 // PostgreSQL bundle, so it is skipped under -short.
 //
-// spec: §10.1 lines 165-166, 393.
+// spec: §10.1.
 func TestSessionCheckpointMetaPgStore_spec_10_1(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

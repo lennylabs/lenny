@@ -19,7 +19,7 @@ import (
 )
 
 // stubRuntimeClassChecker is an injectable warmpool.RuntimeClassChecker
-// for the §5.3 line 675 Degraded-condition tests.
+// for the §5.3 Degraded-condition tests.
 type stubRuntimeClassChecker struct {
 	exists bool
 	err    error
@@ -46,7 +46,7 @@ func degradedCondition(t *testing.T, p lennyv1.SandboxWarmPool) (metav1.Conditio
 // Degraded with the spec-mandated message and that no warm pods are
 // created (the API server would reject them).
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(3, 10))
@@ -80,7 +80,7 @@ func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 // TestReconcileRuntimeClassPresent_spec_5_3 verifies that when the
 // RuntimeClass exists the pool fills normally and carries Degraded=False.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(2, 10))
@@ -108,7 +108,7 @@ func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 // from Degraded once the operator installs the missing RuntimeClass: a
 // second reconcile flips Degraded True→False and the pool fills.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(2, 10))
@@ -136,7 +136,7 @@ func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 // error fails the reconcile (so it retries) rather than mislabeling a
 // transient API error as a missing RuntimeClass.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(1, 10))
@@ -155,7 +155,7 @@ func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 // without the checker wired (nil RuntimeClasses) writes no Degraded
 // condition and fills the pool, preserving the prior counts-only status.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileNilRuntimeClassChecker_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, template(), pool(2, 10))
@@ -173,7 +173,7 @@ func TestReconcileNilRuntimeClassChecker_spec_5_3(t *testing.T) {
 // TestReaderRuntimeClassChecker_spec_5_3 covers the production
 // reader-backed checker: present and absent RuntimeClasses.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReaderRuntimeClassChecker_spec_5_3(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := nodev1.AddToScheme(s); err != nil {
@@ -197,7 +197,7 @@ func TestReaderRuntimeClassChecker_spec_5_3(t *testing.T) {
 // pod builder surfaces separately) does not produce a Degraded
 // RuntimeClass condition and does not call the checker.
 //
-// spec: §5.3 line 675.
+// spec: §5.3.
 func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 	s := newScheme(t)
 	tmpl := template()
@@ -229,7 +229,7 @@ func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 	}
 }
 
-// spec: §17.5 line 3 — a deployer-supplied RuntimeClass-name override
+// spec: §17.5 — a deployer-supplied RuntimeClass-name override
 // remaps the §5.3 sandboxed profile to the cluster's actual name
 // (e.g. `runsc`) so the presence check queries the right object and a
 // Degraded message references it.

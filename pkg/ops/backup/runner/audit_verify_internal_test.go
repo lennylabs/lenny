@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
-// spec: §25.11 line 4343, §16.7 backup.verified — RunVerify writes the
+// spec: §25.11, §16.7 backup.verified — RunVerify writes the
 // terminal audit row on a successful verification and writes nothing on
 // a verification failure (a failure is surfaced through the
 // status:verification_failed transition and the §25.11 gauges, which

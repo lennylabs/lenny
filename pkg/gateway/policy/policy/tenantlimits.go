@@ -99,7 +99,7 @@ func (l *TenantStoreLimits) LookupLimits(ctx context.Context, tenantID string) (
 	if tenant.TokenQuotaPerWindow > 0 && userLimit > tenant.TokenQuotaPerWindow {
 		userLimit = tenant.TokenQuotaPerWindow
 	}
-	// §11.2 line 31: the reset period is configurable per tenant. A
+	// §11.2: the reset period is configurable per tenant. A
 	// tenant that names a valid period scopes its own token-usage
 	// window; an empty or invalid value inherits the platform default.
 	period := l.period

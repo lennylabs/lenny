@@ -7,7 +7,7 @@
 // and reads the live token from the credential's Kubernetes Secret. The
 // gateway uses the returned token to run `git ls-remote` (ref pinning)
 // and the clone on its own network path, so the runtime pod never sees
-// the raw credential, per §14 line 95 and §4.9.
+// the raw credential, per §14 and §4.9.
 //
 // v1 ships `github` as the built-in VCS provider. The token is a GitHub
 // App installation token or a personal access token the operator stored

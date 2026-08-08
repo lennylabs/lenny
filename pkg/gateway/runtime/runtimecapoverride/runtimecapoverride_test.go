@@ -85,7 +85,7 @@ func TestMemoryStore_GetClonesPointerState(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 49 — ResolveForTenant overlays the tenant override on
+// spec: §5.1 — ResolveForTenant overlays the tenant override on
 // top of the resolved platform-default runtime.
 func TestResolveForTenant_OverlaysOverride_spec_5_1_49(t *testing.T) {
 	ctx := context.Background()
@@ -146,7 +146,7 @@ func (erroringStore) Get(context.Context, string, string) (runtimestore.Capabili
 	return runtimestore.CapabilityOverride{}, false, errors.New("db down")
 }
 
-// spec: §5.1 line 49 — F-5.1.20: a non-not-found override-store read
+// spec: §5.1 — F-5.1.20: a non-not-found override-store read
 // error propagates from ResolveForTenant rather than being swallowed, so
 // the injection gate can fail closed on the tenant-narrowing path instead
 // of admitting injection against the un-overlaid base runtime. The
@@ -163,7 +163,7 @@ func TestResolveForTenant_OverrideStoreErrorPropagates_spec_5_1_49(t *testing.T)
 	}
 }
 
-// spec: §5.1 line 49 — F-5.1.20: the propagated override-store read error
+// spec: §5.1 — F-5.1.20: the propagated override-store read error
 // is tagged with runtimecapoverride.ErrOverrideStore so the §5.1 injection
 // gate can attribute its fail-closed metric to the override store rather
 // than the runtime registry, while the underlying cause stays inspectable
@@ -197,7 +197,7 @@ func (notFoundStore) Get(context.Context, string, string) (runtimestore.Capabili
 	return runtimestore.CapabilityOverride{}, false, nil
 }
 
-// spec: §5.1 line 49 — a genuine override not-found (ok=false, err=nil)
+// spec: §5.1 — a genuine override not-found (ok=false, err=nil)
 // returns the un-overlaid runtime, the only outcome that yields a usable
 // runtime with err==nil. This is the degrade-open path the injection gate
 // keeps when no tenant override is recorded.

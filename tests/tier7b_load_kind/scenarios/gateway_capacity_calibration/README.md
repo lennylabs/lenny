@@ -5,7 +5,7 @@ Phase 2 calibration harness for the §4.1 gateway capacity budget and the
 
 ## What this is
 
-`spec/04_system-components.md` §4.1 lines 86-94 specify the calibration
+`spec/04_system-components.md` §4.1 specify the calibration
 methodology that produces the empirical `gateway.maxSessionsPerReplica`
 value. Lines 136-144 specify the same methodology for the four subsystem
 extraction thresholds. Both sets of values ship with provisional
@@ -19,7 +19,7 @@ single isolated gateway replica sized for the Tier 2 target.
 
 ## When to run
 
-Before promoting a deployment to Tier 2. The §4.1 line 94 / line 144
+Before promoting a deployment to Tier 2. The §4.1
 language is "Provisional values must not remain in place for any Tier 2
 production deployment."
 
@@ -41,7 +41,7 @@ The scenario requires:
 
 ## Methodology
 
-Per `spec/04_system-components.md` §4.1 lines 86-94:
+Per `spec/04_system-components.md` §4.1:
 
 1. **Ramp test.** Drive the replica from 0 to `RAMP_PEAK` in 10%
    increments. At each step record:
@@ -68,7 +68,7 @@ Per `spec/04_system-components.md` §4.1 lines 86-94:
    - `gateway.extractionThresholds.llmProxy.activeConnections`
    - `gateway.extractionThresholds.llmProxy.p99TtfbSeconds`
 
-Per `spec/04_system-components.md` §4.1 lines 136-144 the threshold
+Per `spec/04_system-components.md` §4.1 the threshold
 methodology is the same shape: ramp through 25 / 50 / 75 / 100 percent
 of the Tier 2 target, identify the first statistically significant
 inflection per subsystem, set the threshold at the saturation value
@@ -109,11 +109,11 @@ silently disappear before Tier 2 promotion.
 
 ## Cross-references
 
-- `spec/04_system-components.md` §4.1 lines 86-94 — capacity-budget
+- `spec/04_system-components.md` §4.1 — capacity-budget
   methodology.
-- `spec/04_system-components.md` §4.1 lines 136-144 — extraction
+- `spec/04_system-components.md` §4.1 — extraction
   threshold methodology.
-- `spec/04_system-components.md` §4.1 line 117 — extraction threshold
+- `spec/04_system-components.md` §4.1 — extraction threshold
   Helm values.
 - `charts/lenny/values.yaml` — Helm defaults that the calibrated values
   replace.

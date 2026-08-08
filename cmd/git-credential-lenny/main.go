@@ -11,13 +11,13 @@ import (
 
 // main is the §26.2 in-pod Git credential helper entrypoint. Git invokes
 // it as `git-credential-lenny <operation>` with the request on stdin.
-// spec: §26.2 line 119. F-26.2.5.
+// spec: §26.2. F-26.2.5.
 func main() {
 	manifestPath := os.Getenv("LENNY_ADAPTER_MANIFEST")
 	if manifestPath == "" {
 		manifestPath = defaultManifestPath
 	}
-	// spec: §26.2 line 119 — gitClone.url declares vcs.<provider>.read or
+	// spec: §26.2 — gitClone.url declares vcs.<provider>.read or
 	// .write; Git does not tell the helper which operation it is for, so
 	// the helper requests read (clone/fetch) by default. A session that
 	// pushes sets LENNY_VCS_MODE=write. The scope drives the §4.9.2 audit

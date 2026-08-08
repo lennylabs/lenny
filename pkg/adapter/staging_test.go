@@ -107,13 +107,13 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 
 // TestFinalizeWorkspacePlumsArchivePolicy covers F-7.4.4: the
 // FinalizeWorkspaceRequest.archive_policy.allow_symlinks toggle lifts
-// the §7.4 line 458 default-deny on symlink sources. The gateway extracts
+// the §7.4 default-deny on symlink sources. The gateway extracts
 // uploadArchive sources and rewrites their symlink entries into `symlink`
-// sources (§7.4 line 448 — the pod never decompresses); the adapter
+// sources (§7.4 — the pod never decompresses); the adapter
 // honors the same per-Runtime policy when it materializes them. With the
 // gateway-supplied policy set to AllowSymlinks=true and a target inside
 // the workspace the link is created; without it the same source is
-// rejected. spec: §7.4 lines 448, 458, 462; §13.4 — F-7.4.4, F-7.4.1.
+// rejected. spec: §7.4; §13.4 — F-7.4.4, F-7.4.1.
 func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	srv := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
 
@@ -146,7 +146,7 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	}
 }
 
-// spec: §14.1 line 326 — the adapter is a live consumer that MUST reject
+// spec: §14.1 — the adapter is a live consumer that MUST reject
 // a plan whose schemaVersion exceeds the known revision before touching
 // the filesystem, and surface the typed WORKSPACE_PLAN_SCHEMA_UNSUPPORTED
 // code. A source that would write a file proves the reject happens before
@@ -183,7 +183,7 @@ func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testi
 	}
 }
 
-// spec: §14 line 334 — an unknown source.type is skipped with a
+// spec: §14 — an unknown source.type is skipped with a
 // workspace_plan_unknown_source_type warning the adapter returns on
 // FinalizeWorkspaceResponse, carrying `unknownType` and the plan's
 // `schemaVersion`. F-14.1.2.
@@ -210,7 +210,7 @@ func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// spec: §14 line 338 — when two sources resolve to the same workspace
+// spec: §14 — when two sources resolve to the same workspace
 // path the adapter raises a workspace_plan_path_collision warning on
 // FinalizeWorkspaceResponse carrying `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so the gateway can republish them. F-14.1.9.
@@ -308,7 +308,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	}
 }
 
-// spec: §5.1 lines 89-91 — onTimeout `warn` proceeds past the aggregate
+// spec: §5.1 — onTimeout `warn` proceeds past the aggregate
 // cap rather than failing pod startup, and the §7.5 observability
 // contract requires a structured signal (operator-visible warning) so
 // "setup succeeded" and "setup truncated under warn" do not look

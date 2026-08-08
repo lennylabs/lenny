@@ -169,7 +169,7 @@ func TestMCPElicitationChain(t *testing.T) {
 	const elicitationID = "elic-chain-1"
 	done := make(chan map[string]any, 1)
 	go func() {
-		// spec: §8.5 line 559 (F-8.5.13) — request_elicitation requires
+		// spec: §8.5 — request_elicitation requires
 		// both `message` and `schema`. An empty schema object declares a
 		// free-form prompt, which is all this chain test needs.
 		done <- c.callTool("lenny/request_elicitation",
@@ -252,7 +252,7 @@ func TestMCPProvenance(t *testing.T) {
 	// drops it. With no urlModeElicitation config the rejection reason
 	// is "disabled for this pool"; DOMAIN_NOT_ALLOWLISTED applies only
 	// when url-mode is enabled and the host misses the allowlist. The
-	// required §8.5 line 559 `schema` is present so the request reaches
+	// required §8.5 is present so the request reaches
 	// the provenance check rather than failing input validation first
 	// (F-8.5.13).
 	agentRPC := c.callTool("lenny/request_elicitation",

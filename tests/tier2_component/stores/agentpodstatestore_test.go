@@ -506,7 +506,7 @@ func TestAgentPodStateReconcileAll(t *testing.T) {
 	})
 }
 
-// spec: §10.1 line 51 — the §10.1 orphan-session reconciler reads the
+// spec: §10.1 — the §10.1 orphan-session reconciler reads the
 // mirrored §6.2 phase for a session's bound pod through GetByPodID. The
 // read must surface the pool, phase, and the nullable tenant/session
 // columns, report a missing pod as (·, false, nil), and treat an empty

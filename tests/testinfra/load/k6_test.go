@@ -97,7 +97,7 @@ func TestAssertBaselineSeeds(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 360 / F-6.3.17 — writeBaseline preserves operator-
+// spec: §6.3 / F-6.3.17 — writeBaseline preserves operator-
 // edited Notes across LENNY_UPDATE_BASELINE refreshes. Without the
 // carry-over, a baseline refresh would silently strip §6.3 cross-
 // references and measurement-gap annotations.
@@ -107,7 +107,7 @@ func TestWriteBaselinePreservesNotes_spec_6_3_F_6_3_17(t *testing.T) {
 	original := Result{
 		Scenario: "test",
 		MetricMS: map[string]float64{"p95": 113.4},
-		Notes:    "§6.3 line 360 budgets ≤100ms; baseline at 113ms is recorded as measurement.",
+		Notes:    "§6.3 budgets ≤100ms; baseline at 113ms is recorded as measurement.",
 	}
 	writeBaseline(t, path, original)
 
@@ -131,7 +131,7 @@ func TestWriteBaselinePreservesNotes_spec_6_3_F_6_3_17(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 360 / F-6.3.17 — when the caller supplies new Notes,
+// spec: §6.3 / F-6.3.17 — when the caller supplies new Notes,
 // the new Notes win over any prior value.
 func TestWriteBaselineNotesOverride_spec_6_3_F_6_3_17(t *testing.T) {
 	tmp := t.TempDir()

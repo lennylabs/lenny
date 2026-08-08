@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.10 line 1027 — a node whose individual resume window elapsed
+// spec: §8.10 — a node whose individual resume window elapsed
 // transitions to `expired`; a node lost to a level/tree budget
 // transitions to `failed`. The terminal marker maps the recovery reason
 // onto those two terminal states.

@@ -37,7 +37,7 @@ func TestWindowLabel_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 44 — TenantRollupUsage reads the per-tenant rollup
+// spec: §11.2 — TenantRollupUsage reads the per-tenant rollup
 // window AddHierarchical advances, so the checkpoint persists the
 // tenant-scope counter the reconstruction restores.
 func TestTenantRollupUsage_spec_11_2(t *testing.T) {
@@ -57,7 +57,7 @@ func TestTenantRollupUsage_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — RestoreUserWindow raises a counter to the
+// spec: §11.2 — RestoreUserWindow raises a counter to the
 // checkpoint when the checkpoint exceeds the live value (Redis came back
 // empty) and leaves a higher live value intact.
 func TestRestoreUserWindowMaxRule_spec_11_2_line48(t *testing.T) {
@@ -91,8 +91,8 @@ func TestRestoreUserWindowMaxRule_spec_11_2_line48(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — RestoreTenantRollupWindow applies the MAX rule to
-// the tenant-scope rollup the §11.2 line 48 sentence names.
+// spec: §11.2 — RestoreTenantRollupWindow applies the MAX rule to
+// the tenant-scope rollup the §11.2 sentence names.
 func TestRestoreTenantRollupWindowMaxRule_spec_11_2_line48(t *testing.T) {
 	t.Parallel()
 	c := newCounter(t)
@@ -110,7 +110,7 @@ func TestRestoreTenantRollupWindowMaxRule_spec_11_2_line48(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — a negative checkpoint value is rejected; the
+// spec: §11.2 — a negative checkpoint value is rejected; the
 // rolling period has no restorable fixed window.
 func TestRestoreWindowRejectsBadInput_spec_11_2(t *testing.T) {
 	t.Parallel()

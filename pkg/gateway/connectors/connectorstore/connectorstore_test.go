@@ -58,7 +58,7 @@ func TestCapabilityMetadataRoundTrip_spec_9_3_136(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 173 — connectors are tenant-scoped. Tests use the
+// spec: §4.2 — connectors are tenant-scoped. Tests use the
 // built-in default tenant; multi-tenant isolation is exercised in
 // the tier-2 component suite.
 const testTenantID = "acme"
@@ -101,7 +101,7 @@ func TestCreateRejectsNonHTTPSMCPURL(t *testing.T) {
 }
 
 // validOAuth2 returns an oauth2 auth block populated with every
-// §9.3 line 116-130 required field so a test can attach it to a
+// §9.3 required field so a test can attach it to a
 // validConnector() and only mutate the field under inspection.
 func validOAuth2() *connectorstore.ConnectorAuth {
 	return &connectorstore.ConnectorAuth{
@@ -142,7 +142,7 @@ func TestCreateAcceptsRefClientSecret(t *testing.T) {
 	}
 }
 
-// spec: §9.2 line 87 — a declared expected_domain must be a well-formed
+// spec: §9.2 — a declared expected_domain must be a well-formed
 // host or `*.suffix` pattern. The host-match boundary itself is enforced
 // at emit time (the §9.3 OAuth authorize handler), not at registration,
 // so an oauth2 connector whose endpoints differ from its expected_domain
@@ -197,7 +197,7 @@ func TestCreateConnectorExpectedDomain_spec_9_2_87(t *testing.T) {
 	})
 }
 
-// spec: §9.3 line 116-130 — the oauth2 example block declares
+// spec: §9.3 — the oauth2 example block declares
 // authorizationEndpoint, tokenEndpoint, and clientId as mandatory.
 // F-9.3.6 — every field is required at registration time.
 func TestCreateRejectsIncompleteOAuth2_spec_9_3_116(t *testing.T) {
@@ -221,7 +221,7 @@ func TestCreateRejectsIncompleteOAuth2_spec_9_3_116(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 140 — all connectors must be registered before
+// spec: §9.3 — all connectors must be registered before
 // they can be used. An empty mcpServerUrl admits a connector that
 // cannot be dialed. F-9.3.10 — registration must reject the empty
 // value before the registry advertises the row.
@@ -321,7 +321,7 @@ func TestGetMissing(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 173 — a connector created in tenant A is not
+// spec: §4.2 — a connector created in tenant A is not
 // visible from tenant B, even with the same logical id. The
 // AllTenantsSentinel surface exposes both rows to a platform-admin
 // reader.
@@ -365,7 +365,7 @@ func TestTenantIsolationAndAllSentinel(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 173 — Create rejects an empty TenantID.
+// spec: §4.2 — Create rejects an empty TenantID.
 func TestCreateRejectsEmptyTenant(t *testing.T) {
 	s := connectorstore.NewMemory()
 	c := validConnector()
@@ -375,7 +375,7 @@ func TestCreateRejectsEmptyTenant(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 173 — write operations reject the
+// spec: §4.2 — write operations reject the
 // AllTenantsSentinel sentinel (it is reads-only).
 func TestWritesRejectSentinel(t *testing.T) {
 	s := connectorstore.NewMemory()
@@ -389,7 +389,7 @@ func TestWritesRejectSentinel(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is mandatory on the Store
+// spec: §12.1 — DeleteByUser is mandatory on the Store
 // interface; connectors are tenant-scoped so the call is a no-op that
 // returns 0 erased rows.
 func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
@@ -408,7 +408,7 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // connector belonging to the tenant.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := connectorstore.NewMemory()

@@ -86,7 +86,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	minioSecretKey := f.minioSecretKey
 	minioUseSSL := f.minioUseSSL
 
-	// spec: §5.2 line 500 — wire the concurrent-stateless ingress. When a
+	// spec: §5.2 — wire the concurrent-stateless ingress. When a
 	// cluster client and agent namespace are present the gateway routes
 	// /v1/stateless/{pool}/... to a tenant-pinned pod IP discovered from
 	// the pool's pods, bypassing the Service LB. Each pool's
@@ -112,19 +112,19 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 				res.Expirations)
 		}
 		if res.ResumePendingTimeouts > 0 {
-			log.Printf("lenny-gateway: watchdog transitioned %d resume_pending sessions to awaiting_client_action per §6.2 line 292",
+			log.Printf("lenny-gateway: watchdog transitioned %d resume_pending sessions to awaiting_client_action per §6.2",
 				res.ResumePendingTimeouts)
 		}
 		if res.ResumingTimeouts > 0 {
-			log.Printf("lenny-gateway: watchdog fired §6.2 line 249 resuming watchdog on %d sessions: %v",
+			log.Printf("lenny-gateway: watchdog fired §6.2 resuming watchdog on %d sessions: %v",
 				res.ResumingTimeouts, res.PerResumingOutcome)
 		}
 	})
 
-	// §7.1 line 67 uploadToken signing-key rotator. The default
+	// §7.1 uploadToken signing-key rotator. The default
 	// cadence rotates every 24h with a 5-minute overlap window; the
 	// rotator both installs the new key and sweeps overlap keys whose
-	// deadline has elapsed. spec: §7.1 line 67.
+	// deadline has elapsed. spec: §7.1.
 	go w.uploadRotator.Run(w.watchdogCtx)
 
 	// F-7.4.9: §7.1 single-use upload-token tracker sweep. The memory
@@ -133,7 +133,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	// monotonically with the gateway's process lifetime. The cadence is
 	// the watchdog tick interval — cheap enough to run frequently and
 	// short enough that a sweep happens well within one
-	// maxCreatedStateTimeoutSeconds window. spec: §7.1 line 60.
+	// maxCreatedStateTimeoutSeconds window. spec: §7.1.
 	go func() {
 		tick := time.NewTicker(uploadtoken.DefaultRotationInterval / 96) // 15m at the default 24h
 		if tick == nil {
@@ -154,14 +154,14 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 
 	// ----- §9.3 connector OAuth state-store sweep -----
 	// F-9.3.16: the in-memory MemoryStateStore is bound by the
-	// state-TTL (10 min per §9.3 line 157) plus a `consumed` flag for
+	// state-TTL (10 min per §9.3) plus a `consumed` flag for
 	// single-use enforcement. Without a periodic Sweep the entries
 	// accumulate until process restart. The cadence is well inside one
 	// TTL window so consumed/expired entries are reclaimed promptly.
 	// A Redis-backed store relies on native key expiry instead — this
 	// goroutine runs only when the in-memory store is wired (the
 	// `--connector-oauth-callback-url` opt-in path).
-	// spec: §9.3 line 157.
+	// spec: §9.3.
 	if w.connectorStateStore != nil {
 		go func(store *connectoroauth.MemoryStateStore) {
 			tick := time.NewTicker(1 * time.Minute)
@@ -187,7 +187,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	// impersonation bearer reaches its impersonation_duration_seconds. The
 	// bearer self-expires (its exp claim); the sweep records the terminal
 	// audit event so the SIEM sees a matching end for every start.
-	// spec: §16.7 line 680.
+	// spec: §16.7.
 	go func(svc *impersonation.Service) {
 		tick := time.NewTicker(1 * time.Minute)
 		defer tick.Stop()
@@ -207,18 +207,18 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 
 	// ----- §7.1 abandoned `created`-state row sweep -----
 	// Drops Session rows that stay in `created` past
-	// maxCreatedStateTimeoutSeconds (default 300s). The §7.1 line 58
+	// maxCreatedStateTimeoutSeconds (default 300s). The §7.1
 	// uploadToken TTL closes the upload window at that instant; without
 	// this sweep the row itself lived forever, so abandoned creates
 	// accumulated under repeated client retries.
-	// spec: §7.1 line 58.
+	// spec: §7.1.
 	createdGC := createdsweeper.New(w.sessions, tenantsLister{w.tenants}, createdsweeper.Options{
 		// F-7.4.7: pinned to the same maxCreatedStateTimeoutSeconds the
 		// watchdog and the uploadToken issuer use.
-		// spec: §7.1 line 58.
+		// spec: §7.1.
 		Timeout: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Clock:   clockinject.Now,
-		// §15.1 line 630 (proposal §4.5): an abandoned `created`-state row
+		// §15.1: an abandoned `created`-state row
 		// holds a pod claimed at /create; releasing the row must return that
 		// pod to the pool and revoke any lease. Wire the sweep to the same
 		// claimless reclaim /terminate runs (Binder.ReclaimClaimed), closing
@@ -243,7 +243,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 
 	w.startReconcilerWorkers()
 	// ----- §25.11 ArtifactStore cross-region replication -----
-	// The §12.5 line 278 / §25.11 ArtifactStore replication controller
+	// The §12.5 / §25.11 ArtifactStore replication controller
 	// configures continuous MinIO bucket replication to the off-cluster
 	// target and runs the runtime residency preflight, suspending
 	// replication fail-closed on a jurisdiction mismatch. It is hosted in
@@ -310,7 +310,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	exportGaugeMetrics := func(ctx context.Context) {
 		exportStorageQuotaMetrics(ctx, w.tenants, w.storageCounter, w.gwMetrics)
 		exportCircuitBreakerMetrics(ctx, w.breakers, w.breakerCache, w.gwMetrics)
-		// §16.5 line 460 — the standing ElicitationContentIntegrityWeakened
+		// §16.5 — the standing ElicitationContentIntegrityWeakened
 		// alert reads a gauge that must reflect the live tenant posture, so
 		// refresh it on the same 30s cadence as the other gauge exporters.
 		// F-9.2.5.
@@ -330,7 +330,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		}
 	}()
 
-	// spec: §10.7 line 1088 — when evalAggregationRefreshSeconds is
+	// spec: §10.7 — when evalAggregationRefreshSeconds is
 	// positive, the gateway schedules periodic REFRESH MATERIALIZED VIEW
 	// CONCURRENTLY lenny_eval_aggregates at the configured interval so the
 	// results API (routed to the matview) reads recent aggregates. The
@@ -393,13 +393,13 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	gcCollector := &gcpause.Collector{Gauge: w.gwMetrics}
 	go gcCollector.Run(w.watchdogCtx)
 
-	// spec: §13.3 line 595 — NTP drift sampler. Samples the clockinject
+	// spec: §13.3 — NTP drift sampler. Samples the clockinject
 	// offset on the configured cadence, publishes the
 	// lenny_time_drift_seconds gauge, and gates /healthz at the 5s
 	// degraded threshold. F-13.3.5.
 	go w.driftMonitor.Start(w.watchdogCtx, 30*time.Second)
 
-	// spec: §9.4 line 202 / §16.1 line 153 — periodic per-tenant
+	// spec: §9.4 / §16.1 — periodic per-tenant
 	// MemoryStore record-count sampler. Walks the store's tenants and
 	// emits `lenny_memory_store_record_count{tenant_id}` on the
 	// configured interval (default 60s); 0 disables. The contract is a
@@ -439,7 +439,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		}
 	}
 
-	// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — periodic PDB
+	// spec: §10.4 / §16.5 PDBBlockedEvictions — periodic PDB
 	// status poller. Each cycle that observes Status.DisruptionsAllowed
 	// == 0 on the gateway PDB increments the
 	// lenny_pdb_blocked_evictions_total counter so the §16.5 alert can
@@ -458,7 +458,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		log.Printf("lenny-gateway: §10.4 PDB poller watching %s/%s",
 			*gatewayNamespace, *gatewayPDBName)
 
-		// spec: §12.4 line 224 — drive the fail-open cached_replica_count
+		// spec: §12.4 — drive the fail-open cached_replica_count
 		// from the gateway Service's Endpoints object so the per-replica
 		// ceiling divides by the last-known good replica count. The poller
 		// retains the cached value across poll failures, so a dual outage
@@ -476,7 +476,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		log.Printf("lenny-gateway: §12.4 fail-open replica-count poller watching endpoints %s/%s",
 			*gatewayNamespace, *gatewayServiceName)
 
-		// spec: §17.2 line 86 — keep the §9.2 platform elicitation
+		// spec: §17.2 — keep the §9.2 platform elicitation
 		// content-integrity floor live by re-reading the phase-stamp
 		// ConfigMap's security.elicitationContentIntegrity.floor key. A
 		// `helm upgrade` that raises or lowers the floor takes effect
@@ -514,7 +514,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 			for _, s := range subsystems {
 				s.PublishGauges(w.subsystemMetrics)
 			}
-			// §4.3 line 211: mirror the Token Service subsystem's
+			// §4.3: mirror the Token Service subsystem's
 			// breaker state onto the dedicated
 			// lenny_token_service_circuit_state gauge the §16.5
 			// TokenServiceUnavailable alert reads. The §4.1
@@ -533,7 +533,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		}
 	}()
 
-	// spec: §11.2 line 42 / §4.7 / §8.3 line 435 / §6.2 line 253 — the single
+	// spec: §11.2 / §4.7 / §8.3 / §6.2 — the single
 	// global direct-mode ReportUsage poll loop. It iterates the replica's live
 	// pod bindings on the direct-usage poll interval, filters to direct-delivery
 	// sessions by their credential lease, pulls each session's incremental §4.7
@@ -588,7 +588,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	adminTokenReclaimIntervalSeconds := f.adminTokenReclaimIntervalSeconds
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
-	// spec: §12.5 lines 317, 332 — the artifact-GC orchestrator and the
+	// spec: §12.5 — the artifact-GC orchestrator and the
 	// other gateway-singleton sweeps below (tombstone hard-prune,
 	// audit-retention pruner, EventBus retranscribe worker, legal-hold
 	// reconciler, T4 KMS probe) run under a single leader-elected
@@ -641,16 +641,16 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	// mode, where no catalog is wired, retains the legacy direct-delete
 	// path.
 	{
-		// §12.5 line 317 gc.cycleIntervalSeconds: the GC sweep cadence,
+		// §12.5 gc.cycleIntervalSeconds: the GC sweep cadence,
 		// clamped up to the spec's 60s floor so a misconfigured chart
 		// value cannot make the leader-elected sweep busy-loop.
 		rawGCInterval := time.Duration(*gcCycleIntervalSeconds) * time.Second
 		gcInterval := retentiongc.ClampSweepInterval(rawGCInterval)
 		if gcInterval != rawGCInterval && rawGCInterval > 0 {
-			log.Printf("lenny-gateway: §12.5 line 317 gc.cycleIntervalSeconds=%d below the %ds floor; clamping to the minimum",
+			log.Printf("lenny-gateway: §12.5 gc.cycleIntervalSeconds=%d below the %ds floor; clamping to the minimum",
 				*gcCycleIntervalSeconds, int(retentiongc.MinSweepInterval/time.Second))
 		}
-		// §12.5 line 341 gc.tombstoneRetentionSeconds: the window a
+		// §12.5 gc.tombstoneRetentionSeconds: the window a
 		// soft-deleted artifact_store row is retained before hard-prune.
 		// This is distinct from the §7.1 artifact-retention TTL (when a
 		// terminal session's artifacts become soft-delete-eligible).
@@ -681,7 +681,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		})
 		log.Printf("lenny-gateway: §12.5 GC sweep cadence %s (gc.cycleIntervalSeconds=%d); tombstone retention %s (gc.tombstoneRetentionSeconds=%d)",
 			gcInterval, int(gcInterval/time.Second), gcTombstoneRetention, int(gcTombstoneRetention/time.Second))
-		// §12.5 line 317: bind the erasure-completion → immediate-sweep
+		// §12.5: bind the erasure-completion → immediate-sweep
 		// trigger now that the collector exists. A `gcPriority: high`
 		// tenant's expired artifacts are reclaimed the moment one of its
 		// erasure jobs completes, independent of the global cycle. A normal
@@ -716,7 +716,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			})
 		})
 
-		// §16.4 lines 378-382 audit-retention pruner: only constructed
+		// §16.4 audit-retention pruner: only constructed
 		// when a durable Postgres audit chain exists (the in-memory
 		// gateway has nothing to prune). Production runs it under the
 		// §10.1 leader lease alongside the artifact GC above. F-11.7.17.
@@ -736,7 +736,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			})
 		}
 
-		// spec: §16.4 line 378 EventStore partition maintainer: the
+		// spec: §16.4 EventStore partition maintainer: the
 		// leader-elected sweep that creates the current + ahead daily
 		// partitions of session_logs / stream_cursors and drops partitions
 		// whose entire range has aged past the §16.4 retention window (30
@@ -744,7 +744,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// a durable Postgres pool exists; the in-memory dev gateway has no
 		// partitioned EventStore tables. audit_log stays on the DELETE-based
 		// pruner above (native partitioning of audit_log conflicts with the
-		// §12.8 line 815 audit_redaction_receipts FK onto audit_log.id; see
+		// §12.8 audit_redaction_receipts FK onto audit_log.id; see
 		// BUILD-GAPS F-16.4.6).
 		if w.pgPool != nil {
 			partMaint := partitionmaint.New(
@@ -782,7 +782,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			})
 		}
 
-		// spec: §12.6 lines 685-689 EventBus retranscribe worker. Like the
+		// spec: §12.6 EventBus retranscribe worker. Like the
 		// artifact GC and audit-retention pruner above, production gates the
 		// sweep under the §10.1 / §12.5 gateway-leader lease (F-12.5.10) so
 		// exactly one replica re-publishes at a time; the republish is
@@ -894,7 +894,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			})
 		}
 
-		// §12.8 line 739 legal-hold reconciler: co-located with the
+		// §12.8 legal-hold reconciler: co-located with the
 		// retention-GC sweep. On the same cadence it scans for
 		// (tenant, session) pairs under legal_hold=true with one or
 		// more checkpoints rotated, emits a
@@ -922,7 +922,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		}
 	}
 
-	// ----- §12.5 line 307 continuous T4 KMS availability probe (STO-021) -----
+	// ----- §12.5 continuous T4 KMS availability probe (STO-021) -----
 	// A leader-elected background goroutine, co-located with the GC
 	// sweeps under the same gateway lease (the leader-election lease is
 	// the §10.1 model the GC loops above already run under). On each
@@ -972,8 +972,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	// surface. Wired under the same preconditions as the provisioner
 	// (adminrouter.go): an in-cluster client to read the Secret, a durable
 	// token store to revoke, a namespace, and admin-token provisioning enabled.
-	// spec: §13.3 (named predecessor and leader-gated reclaimer, lines
-	// 601-607), §16.7 (token.revoked rotation_replaced, line 673), §17.6.
+	// spec: §13.3, §16.7, §17.6.
 	if !*adminTokenDisabled && w.clusterClient != nil && w.pgPool != nil && *adminTokenNamespace != "" {
 		recl, rerr := admintokenreclaimer.New(admintokenreclaimer.Config{
 			Namespace:  *adminTokenNamespace,
@@ -1002,7 +1001,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		})
 	}
 
-	// spec: §12.5 lines 317, 332 — drive the lenny-gateway-leader election
+	// spec: §12.5 — drive the lenny-gateway-leader election
 	// and run every registered gateway-singleton sweep only while this
 	// replica holds the lease (or always, under the AlwaysLeader fallback).
 	// Started after every leaderGate.Add above so the full set is gated.
@@ -1030,14 +1029,14 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	orphanSweeper := orphancleanup.New(w.sessions, tenantsLister{w.tenants}, orphancleanup.Options{
 		Archive: w.treeArchive,
 		Clock:   clockinject.Now,
-		// spec: §8.10 line 1078 — operator-tunable cascade timeout. The
+		// spec: §8.10 — operator-tunable cascade timeout. The
 		// per-deploy cap is the Sweeper's wall-clock window an orphan may
 		// persist past its root's terminal state. F-8.10.9.
 		CascadeTimeout: time.Duration(*delegationCascadeTimeoutSeconds) * time.Second,
 		// F-5.2.26: same terminal pipeline as the watchdog so an orphan
 		// terminated by background sweep also releases its slot/pod.
 		Terminal: w.sessionSrv,
-		// spec: §8.10 lines 1091, 1093-1101, 1103; §16.1 lines 146-149 —
+		// spec: §8.10; §16.1 —
 		// publish the cleanup-runs counter, the cumulative terminated
 		// counter, the fleet-wide active gauge, and the per-tenant active
 		// gauge so the §16.5 OrphanTasksPerTenantHigh alert evaluates.
@@ -1065,7 +1064,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// direct Sandbox read. Active only when the Postgres mirror is wired;
 	// the transition is idempotent across replicas (the Update no-ops on a
 	// concurrent terminal write), matching the orphan-cleanup precedent.
-	// spec: §10.1 lines 47-52. F-10.1.5.
+	// spec: §10.1. F-10.1.5.
 	if w.pgPool != nil {
 		orphanSessionOpts := orphansession.Options{
 			Terminal: w.sessionSrv,
@@ -1106,7 +1105,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// event on its lenny/await_children poll, and if the deadlock is not
 	// resolved within maxDeadlockWaitSeconds the detector fails the deepest
 	// blocked tasks with DEADLOCK_TIMEOUT. Disabled when the timeout is
-	// zero. spec: §8.8 lines 981-997. F-8.8.6.
+	// zero. spec: §8.8. F-8.8.6.
 	if w.deadlockManager != nil {
 		deadlockLookup := func(ctx context.Context, tenantID, sessionID string) (session.State, bool) {
 			row, err := w.sessions.Get(ctx, tenantID, sessionID)
@@ -1168,7 +1167,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// §25.3 per-replica-scope note. F-25.3.20.
 	go recommendations.NewSampler(w.gwMetrics.Gatherer(), w.recommendationStore).Run(w.watchdogCtx)
 
-	// ----- §12.4 line 210 storage-quota recovery reconciler -----
+	// ----- §12.4 storage-quota recovery reconciler -----
 	// Probes Redis reachability; on a recovery edge it writes each
 	// tenant's storage_bytes_used counter back to Redis from the
 	// authoritative SUM(artifact_size_bytes) in Postgres so the Lua fast
@@ -1182,9 +1181,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// ----- §11.2 delegation tree budget checkpoint + reconstruction -----
 	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
 	// active tree's Redis dlg:* counters to the delegation_tree_budget
-	// table (§11.2 line 44); on a Redis-recovery edge it reconstructs each
+	// table (§11.2); on a Redis-recovery edge it reconstructs each
 	// checkpointed tree's counters to max(postgres_checkpoint, live) per
-	// axis before new delegations resume (§11.2 line 48 / §12.4 line 218),
+	// axis before new delegations resume (§11.2 / §12.4),
 	// moving a tree whose checkpoint is stale and whose live state cannot
 	// be enumerated to awaiting_client_action. Active only when the
 	// delegation Redis counters, the Postgres pool, and the SessionStore
@@ -1212,10 +1211,10 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 
 	// ----- §11.2 token-usage checkpoint + reconcile loop -----
 	// On the quotaSyncIntervalSeconds cadence the reconciler persists each
-	// active window total to token_usage_checkpoint (§11.2 line 44); on a
+	// active window total to token_usage_checkpoint (§11.2); on a
 	// Redis-recovery edge it restores every still-current counter to
 	// MAX(redis_current, postgres_checkpoint) before the next checkpoint
-	// (§11.2 line 48). The same Service backs the §24.6 operator reconcile
+	// (§11.2). The same Service backs the §24.6 operator reconcile
 	// and the session-completion final write wired above. F-11.2.4.
 	if w.quotaCheckpointSvc != nil {
 		quotaCheckpointReconciler := &quotacheckpoint.Reconciler{
@@ -1263,7 +1262,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 		}(w.quotaFailOpenAccum)
 	}
 
-	// spec: §12.4 line 268 — in the in_memory_reconciled mode, drive the
+	// spec: §12.4 — in the in_memory_reconciled mode, drive the
 	// per-replica budget-slice reconcile loop ("reconciles with Postgres
 	// periodically (default: every 30s)") and the final flush on shutdown.
 	// The Redis checkpoint Reconciler above does not run in this mode
@@ -1312,7 +1311,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// monotonic ordering guarantee.
 	go w.billingPipeline.RunFlusher(w.watchdogCtx)
 
-	// ----- §11 line 144 billing failover Tier 1 per-tenant flusher -----
+	// ----- §11 billing failover Tier 1 per-tenant flusher -----
 	// When the Tier 1 stream is Redis-backed, a per-tenant flusher
 	// goroutine drains each tenant's billing stream back into Postgres
 	// after a transient Postgres outage and runs the startup
@@ -1328,7 +1327,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 		log.Printf("lenny-gateway: §11.2.1 billing failover Tier 1 per-tenant flusher started (flush every %s)", flushInterval)
 	}
 
-	// ----- §12.3 lines 115-125 Postgres write-IOPS sampler -----
+	// ----- §12.3 Postgres write-IOPS sampler -----
 	// Periodically differentiates the pg_stat_database row-write total
 	// into a sustained write-IOPS rate and publishes
 	// lenny_postgres_write_iops so the §16.5 PostgresWriteSaturation
@@ -1337,7 +1336,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	if w.pgPool != nil {
 		pool := w.pgPool
 		sampler := pgwritemetrics.New(func(ctx context.Context) (uint64, error) {
-			// §12.3 line 62 write sources are row-level inserts/updates/
+			// §12.3 write sources are row-level inserts/updates/
 			// deletes; pg_stat_database aggregates them per database.
 			var n int64
 			if err := pool.QueryRow(ctx,
@@ -1359,7 +1358,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// DELETE is idempotent, so running it on every replica is safe (a
 	// replica that loses the race prunes zero rows). Best-effort: a
 	// per-tenant failure is logged and the sweep continues.
-	// spec: §11.2.1 line 151. F-11.2.15.
+	// spec: §11.2.1. F-11.2.15.
 	billingPruner := billingretention.New(w.billing, tenantsLister{w.tenants}, billingretention.Options{
 		RetentionDays: *billingRetentionDays,
 		Clock:         clockinject.Now,
@@ -1429,7 +1428,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// replica (not only the one with --agent-namespace) because the
 	// freshness signal is platform-wide and the read path against the
 	// session store is cheap.
-	// spec: §4.4 line 256.
+	// spec: §4.4.
 	freshnessReaper := &checkpointer.FreshnessReaper{
 		Tenants:  tenantsLister{w.tenants},
 		Sessions: w.sessions,
@@ -1485,7 +1484,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// replica serves no proxy traffic against a retained revoked lease with
 	// an incomplete deny list while /healthz stays live throughout.
 	//
-	// spec: §4.9 lines 1692-1697.
+	// spec: §4.9.
 	go w.runCredentialDenyListRebuild()
 
 	// ----- §11.5 idempotency-key TTL garbage collection -----
@@ -1526,7 +1525,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// backfill on an upgraded deployment does not block the /healthz and /readyz
 	// listeners, mirroring the deny-list rebuild above.
 	//
-	// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+	// spec: §4.9 — a deny-list entry expires when the credential's
 	// natural lease TTL lapses.
 	w.startCredentialLeaseExpiresAtBackfill()
 
@@ -1545,7 +1544,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers() {
 	// list. Iterating each replica's own list bounds every replica's list
 	// within its lifetime.
 	//
-	// spec: §4.9 line 1671 — a deny-list entry expires when the
+	// spec: §4.9 — a deny-list entry expires when the
 	// credential's natural lease TTL lapses.
 	if w.llmLeases != nil && w.credDeny != nil {
 		gcInterval := time.Duration(*credentialLeaseGCIntervalSeconds) * time.Second
@@ -1569,7 +1568,7 @@ type credentialLeaseSweepMetrics interface {
 // store error (a failing tick leaves the deny entry in place and retries
 // next interval). It records the swept-row count on metrics.
 //
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // natural lease TTL lapses.
 func runCredentialLeaseSweepLoop(ctx context.Context, leases leaseSweeper, deny denyReconciler, metrics credentialLeaseSweepMetrics, interval time.Duration, now func() time.Time) {
 	ticker := time.NewTicker(interval)
@@ -1621,7 +1620,7 @@ type denyReconciler interface {
 // CREDENTIAL_REVOKED bypass. It returns the number of expired lease rows
 // removed and the number of deny entries expired.
 //
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // natural lease TTL lapses.
 func sweepExpiredCredentialLeases(ctx context.Context, leases leaseSweeper, deny denyReconciler, now time.Time) (swept int, denyRemoved int, err error) {
 	swept, err = leases.DeleteExpired(ctx, now)
@@ -1655,7 +1654,7 @@ type expiresAtBackfiller interface {
 // deny-list entry. It is a no-op on the in-memory store, which keeps ExpiresAt
 // on the struct. It returns whether the pass was launched.
 //
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // natural lease TTL lapses.
 func (w *gatewayWiring) startCredentialLeaseExpiresAtBackfill() bool {
 	backfiller, ok := w.llmLeases.(expiresAtBackfiller)
@@ -1672,7 +1671,7 @@ func (w *gatewayWiring) startCredentialLeaseExpiresAtBackfill() bool {
 // transient boot-time fault leaves only pre-migration rows for the next
 // restart's pass to converge rather than opening a security gap.
 //
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // natural lease TTL lapses.
 func runCredentialLeaseExpiresAtBackfill(ctx context.Context, backfiller expiresAtBackfiller) {
 	filled, deleted, err := backfiller.BackfillExpiresAt(ctx)
@@ -1719,7 +1718,7 @@ type denyResetter interface {
 // errors, so a transient Postgres or KMS fault over-approximates the deny list
 // rather than dropping a still-revoked credential.
 //
-// spec: §4.9 lines 1692-1697 (rebuild union); :1694-1695 (active-lease bound).
+// spec: §4.9; :1694-1695 (active-lease bound).
 func rebuildCredentialDenyListKeys(ctx context.Context, pools revokedPoolLister, users revokedUserLister, leases leaseCounter, now time.Time) ([]credential.CredentialKey, error) {
 	revokedPools, err := pools.RevokedCredentials(ctx)
 	if err != nil {
@@ -1744,7 +1743,7 @@ func rebuildCredentialDenyListKeys(ctx context.Context, pools revokedPoolLister,
 			CredentialRef: ru.CredentialRef,
 		})
 	}
-	// spec: §4.9 lines 1694-1695 — retain only keys with an active lease;
+	// spec: §4.9 — retain only keys with an active lease;
 	// fail closed by keeping the key when the existence query errors.
 	active := keys[:0]
 	for _, k := range keys {
@@ -1761,7 +1760,7 @@ func rebuildCredentialDenyListKeys(ctx context.Context, pools revokedPoolLister,
 // and flipping credDenyRebuilt so /readyz admits the replica once its deny list
 // is complete.
 //
-// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+// spec: §4.9; §10.4 readiness precedence.
 func (w *gatewayWiring) runCredentialDenyListRebuild() {
 	rebuildCredentialDenyList(w.watchdogCtx, w.credentialPools, w.credentials, w.llmLeases,
 		w.credDeny, func() { w.credDenyRebuilt.Store(true) }, clockinject.Now)
@@ -1776,7 +1775,7 @@ func (w *gatewayWiring) runCredentialDenyListRebuild() {
 // retained revoked lease resolvable with a dropped store's deny entries. The
 // loop exits on ctx cancellation.
 //
-// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+// spec: §4.9; §10.4 readiness precedence.
 func rebuildCredentialDenyList(ctx context.Context, pools revokedPoolLister, users revokedUserLister, leases leaseCounter, deny denyResetter, committed func(), now func() time.Time) {
 	const (
 		initialBackoff = time.Second

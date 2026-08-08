@@ -65,7 +65,7 @@ func newLeaseDenialAdmin(t *testing.T, clearer admin.LeaseDenialClearer) (*admin
 
 const denialPath = "/v1/admin/trees/root-1/subtrees/sub-9/extension-denial"
 
-// spec: §8.6 line 735; §15.1 line 868 — platform-admin clears a subtree
+// spec: §8.6; §15.1 — platform-admin clears a subtree
 // denial; the handler returns 204, forwards both path ids to the
 // clearer, and records the §10.6 admin audit row.
 func TestClearExtensionDenial_PlatformAdmin_Spec15_1(t *testing.T) {
@@ -90,7 +90,7 @@ func TestClearExtensionDenial_PlatformAdmin_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — the endpoint admits tenant-admin too.
+// spec: §15.1 — the endpoint admits tenant-admin too.
 func TestClearExtensionDenial_TenantAdminAllowed_Spec15_1(t *testing.T) {
 	clearer := &fakeLeaseDenials{found: true}
 	router, _ := newLeaseDenialAdmin(t, clearer)
@@ -102,7 +102,7 @@ func TestClearExtensionDenial_TenantAdminAllowed_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — a plain user (no admin role) is rejected with
+// spec: §15.1 — a plain user (no admin role) is rejected with
 // 403 before the clearer is touched.
 func TestClearExtensionDenial_NonAdminForbidden_Spec15_1(t *testing.T) {
 	clearer := &fakeLeaseDenials{found: true}
@@ -118,7 +118,7 @@ func TestClearExtensionDenial_NonAdminForbidden_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — an unknown tree returns 404 (found=false), and
+// spec: §15.1 — an unknown tree returns 404 (found=false), and
 // no audit row is emitted for a no-op clear.
 func TestClearExtensionDenial_UnknownTree404_Spec15_1(t *testing.T) {
 	clearer := &fakeLeaseDenials{found: false}
@@ -134,7 +134,7 @@ func TestClearExtensionDenial_UnknownTree404_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — a storage failure surfaces as 500.
+// spec: §15.1 — a storage failure surfaces as 500.
 func TestClearExtensionDenial_StorageError500_Spec15_1(t *testing.T) {
 	clearer := &fakeLeaseDenials{err: errors.New("postgres down")}
 	router, _ := newLeaseDenialAdmin(t, clearer)
@@ -146,7 +146,7 @@ func TestClearExtensionDenial_StorageError500_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — when no LeaseDenialClearer is wired the route is
+// spec: §15.1 — when no LeaseDenialClearer is wired the route is
 // not registered, so the mux answers 404 (the gateway runs no
 // GatewayControl lease-extension control plane).
 func TestClearExtensionDenial_Unwired404(t *testing.T) {
@@ -161,7 +161,7 @@ func TestClearExtensionDenial_Unwired404(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 869 (ADM-4) — a tenant-admin of one
+// spec: §10.2; §15.1 — a tenant-admin of one
 // tenant cannot clear a tree owned by another tenant. The resolver maps
 // root-1 to acme, so the globex tenant-admin is rejected 403 FORBIDDEN
 // and the durable clearer is never called. Fails pre-fix, where the
@@ -187,7 +187,7 @@ func TestClearExtensionDenial_ForeignTenantForbidden_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 869 (ADM-4) — the owning tenant-admin
+// spec: §10.2; §15.1 — the owning tenant-admin
 // (acme owns root-1) still clears its own tree: 204, the clearer runs,
 // and the audit row is emitted. This pins that the confinement does not
 // over-reject the legitimate own-tenant caller.
@@ -211,7 +211,7 @@ func TestClearExtensionDenial_OwningTenantAllowed_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261 (ADM-4) — fail closed when the tenant resolver is
+// spec: §10.2 — fail closed when the tenant resolver is
 // unwired: a non-platform-admin caller is rejected 403 FORBIDDEN so a
 // misconfigured gateway cannot reopen the cross-tenant clear, while the
 // clearer is never reached.
@@ -237,7 +237,7 @@ func TestClearExtensionDenial_NilResolverFailsClosed_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261 (ADM-4) — a platform-admin still clears across
+// spec: §10.2 — a platform-admin still clears across
 // tenants even when the tree is owned by another tenant; the resolver
 // confinement applies only to non-platform-admin callers. root-1 is
 // owned by acme, but the platform-admin (tenant=platform) succeeds.
@@ -258,7 +258,7 @@ func TestClearExtensionDenial_PlatformAdminCrossTenant_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 868 (ADM-4) — a non-platform-admin
+// spec: §10.2; §15.1 — a non-platform-admin
 // caller naming a tree the resolver does not know gets 404
 // RESOURCE_NOT_FOUND before the clear, so an unknown tree is reported
 // rather than confirming or denying ownership. The clearer is never
@@ -283,7 +283,7 @@ func TestClearExtensionDenial_ResolverUnknownTree404_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261 (ADM-4) — a resolver storage error on the
+// spec: §10.2 — a resolver storage error on the
 // confinement lookup surfaces as 500 and the clear does not run, so a
 // transient resolver outage fails closed rather than skipping the
 // cross-tenant check.

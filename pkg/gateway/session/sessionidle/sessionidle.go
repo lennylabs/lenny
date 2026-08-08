@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package sessionidle implements the gateway side of the §11.3 line 199 /
+// Package sessionidle implements the gateway side of the §11.3 /
 // §6.2 `maxClientIdleSeconds` control: the per-session idle-cap resolver and
 // the activity stamper that advances `last_agent_activity_at` on qualifying
 // agent events.
@@ -26,7 +26,7 @@
 // carries no pause predicate.
 //
 // spec: §6.2 (maxClientIdleSeconds clock); §9.2 (elicitation-wait idle
-// clock); §11.3 line 199 (max client idle row). F-11.3.7 / F-9.2.15.
+// clock); §11.3. F-11.3.7 / F-9.2.15.
 package sessionidle
 
 import (
@@ -79,7 +79,7 @@ func NewResolver(runtimes runtimestore.Store, pools poolstore.Store) *Resolver {
 //     `sess.Timeouts.MaxIdleSeconds` at create time (F-27.6.1), tightens the
 //     resolved cap min-wins.
 //
-// spec: §11.3 line 199 (max client idle row); §6.2 (maxClientIdleSeconds
+// spec: §11.3; §6.2 (maxClientIdleSeconds
 // clock default); §27.6 (playground idle override). F-11.3.7.
 func (r *Resolver) EffectiveMaxIdleSeconds(ctx context.Context, sess sessionstore.Session) int {
 	cap := r.policyIdleSeconds(ctx, sess)
@@ -90,7 +90,7 @@ func (r *Resolver) EffectiveMaxIdleSeconds(ctx context.Context, sess sessionstor
 		// watchdog's platform default in force.
 		cap = r.age.EffectiveMaxSessionAgeSeconds(ctx, sess)
 	}
-	// spec: §27.6 line 201 — the playground idle override (landed on
+	// spec: §27.6 — the playground idle override (landed on
 	// Timeouts.MaxIdleSeconds at create time) tightens the bound min-wins.
 	if sess.Timeouts != nil && sess.Timeouts.MaxIdleSeconds > 0 {
 		cap = minPositive(cap, int(sess.Timeouts.MaxIdleSeconds))

@@ -54,7 +54,7 @@ func (f fakeKubectl) run(_ context.Context, args ...string) ([]byte, error) {
 	return nil, fmt.Errorf("unexpected kubectl args: %v", args)
 }
 
-// spec: §17.6 lines 671-697 — the detection phase parses RuntimeClasses,
+// spec: §17.6 — the detection phase parses RuntimeClasses,
 // Ready ClusterIssuers, Prometheus Operator CRDs, and the NetworkPolicy API
 // surface from kubectl output. F-17.6.9.
 func TestDetectParsesClusterCapabilities_spec_17_6_671(t *testing.T) {
@@ -138,7 +138,7 @@ func TestDetectUnreachableCluster_spec_17_6_671(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 689 — the TLS-strategy default keys off detection:
+// spec: §17.6 — the TLS-strategy default keys off detection:
 // cert-manager with a single Ready issuer skips the prompt; multiple Ready
 // issuers default to cert-manager but still prompt; no Ready issuer falls
 // back to bring-your-own.
@@ -219,7 +219,7 @@ func TestDetectionSummaryRendersFindings(t *testing.T) {
 	}
 }
 
-// spec: §17.9.2 line 1376 — the detection phase infers the §17.9.1
+// spec: §17.9.2 — the detection phase infers the §17.9.1
 // cluster-type dimension from node providerIDs and the OpenShift API
 // surface, and suggests the matching §17.9.2 catalog answer-file base.
 // F-17.9.8.
@@ -297,7 +297,7 @@ func TestDetectClusterTypeSuggestsAnswerFile_spec_17_9_2_1376(t *testing.T) {
 }
 
 // The detection summary surfaces the inferred cluster type and the
-// suggested catalog answer file so the operator sees the §17.9.2 line 1376
+// suggested catalog answer file so the operator sees the §17.9.2
 // auto-suggestion before any question. F-17.9.8.
 func TestDetectionSummaryShowsClusterTypeSuggestion(t *testing.T) {
 	d := clusterDetection{

@@ -38,7 +38,7 @@ const wsWriteTimeout = 30 * time.Second
 // handler (1 MiB).
 const wsMaxMessageBytes = 1 << 20
 
-// wsSubprotocol is the §27.3.1 line 142 MCP WebSocket sub-protocol the
+// wsSubprotocol is the §27.3.1 MCP WebSocket sub-protocol the
 // gateway negotiates. Browsers that cannot set an Authorization header on
 // the upgrade send `Sec-WebSocket-Protocol: lenny.mcp.v1, lenny.bearer.<token>`;
 // the gateway selects and echoes `lenny.mcp.v1` so the browser's
@@ -46,8 +46,7 @@ const wsMaxMessageBytes = 1 << 20
 // the request before this handler runs (see WebSocketBearerCarrier).
 const wsSubprotocol = "lenny.mcp.v1"
 
-// wsCloseBearerRevoked is the §27 Failure-modes WebSocket close code
-// (line 167) the gateway sends when an origin=playground bearer is
+// wsCloseBearerRevoked is the §27 Failure-modes WebSocket close code the gateway sends when an origin=playground bearer is
 // revoked mid-stream. The client (pkg/gateway/playground/ui/app.js)
 // special-cases 4401 to re-authenticate. spec: §27.3.1; §27.5.4.
 const wsCloseBearerRevoked = 4401
@@ -77,7 +76,7 @@ type WSPrincipal struct {
 // RevocationChecker reports whether a playground-origin bearer has been
 // revoked. The signature matches the auth middleware's
 // PlaygroundRevocationChecker so the gateway passes the same value to
-// both. spec: §27.6 line 204; §27.3.1 lines 95-97.
+// both. spec: §27.6; §27.3.1.
 type RevocationChecker interface {
 	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
 }
@@ -96,8 +95,7 @@ type wsAuthConfig struct {
 // origin=playground bearer, the WebSocket transport polls rev every
 // pollInterval and closes the connection with code 4401 once the bearer
 // is revoked. A non-positive pollInterval selects the package default.
-// Passing a nil extract or rev leaves the watch off. spec: §27.3.1 line
-// 167; §27.5.4.
+// Passing a nil extract or rev leaves the watch off. spec: §27.3.1; §27.5.4.
 func (s *Server) SetWebSocketAuth(extract func(*http.Request) (WSPrincipal, bool), rev RevocationChecker, pollInterval time.Duration) {
 	s.wsAuth = wsAuthConfig{principal: extract, revocations: rev, pollInterval: pollInterval}
 }
@@ -124,7 +122,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// JSON-RPC frames are small and the compression layer adds CPU on
 	// the hot dispatch path.
 	//
-	// §27.3.1 line 142 — when the browser offered the `lenny.mcp.v1`
+	// §27.3.1 — when the browser offered the `lenny.mcp.v1`
 	// sub-protocol (the carrier path that ferries the bearer through
 	// `Sec-WebSocket-Protocol` because a browser cannot set an
 	// Authorization header on the upgrade), the gateway MUST echo it
@@ -153,16 +151,16 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancelWatch()
 	s.startRevocationWatch(watchCtx, conn, r)
 
-	// §27.9 line 251 — when the connection carries an origin=playground
+	// §27.9 — when the connection carries an origin=playground
 	// bearer, every response frame is scrubbed of credential-bearing
 	// fields before it reaches the browser's raw-frame inspector, the
-	// same exclusion §16.4 line 376 applies to credential-sensitive
+	// same exclusion §16.4 applies to credential-sensitive
 	// payloads. A non-playground MCP client (a headless agent) is never
 	// redacted so it still receives the raw tool results it needs.
 	// F-27.9.1.
 	redactEgress := s.playgroundEgress(r)
 
-	// §15.2 line 1331 / §27.5 R2 — an attach_session tools/call upgrades to a
+	// §15.2 / §27.5 R2 — an attach_session tools/call upgrades to a
 	// long-lived server push of the session event stream over this socket
 	// (startWSAttach) instead of a single response frame. attachCancel stops
 	// the most recent attach goroutine; a new attach cancels the prior one and
@@ -189,7 +187,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			conn.Close(websocket.StatusUnsupportedData, "mcp frames must be text")
 			return
 		}
-		// §15.2 line 1289 — intercept attach_session before the generic
+		// §15.2 — intercept attach_session before the generic
 		// dispatch so the response is the live event push rather than the
 		// snapshot frame. The push goroutine writes concurrently with this
 		// read loop; nhooyr serializes the two writers on the connection.
@@ -234,7 +232,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // and the revocation gate agree on what "a playground connection" is.
 // When no extractor is wired (a deployment without the playground) the
 // gate is off and frames pass through; no playground bearer can reach the
-// handler in that configuration. spec: §27.3 origin claim; §27.9 line 251.
+// handler in that configuration. spec: §27.3 origin claim; §27.9.
 func (s *Server) playgroundEgress(r *http.Request) bool {
 	if s.wsAuth.principal == nil {
 		return false
@@ -252,7 +250,7 @@ func (s *Server) playgroundEgress(r *http.Request) bool {
 // code 4401, which unblocks the read loop. A transient store error is
 // treated as fail-open for the watch (the authoritative per-upgrade
 // check already ran in the auth middleware); the next tick retries.
-// spec: §27.3.1 line 167; §27.5.4; §27.6 line 204.
+// spec: §27.3.1; §27.5.4; §27.6.
 func (s *Server) startRevocationWatch(ctx context.Context, conn *websocket.Conn, r *http.Request) {
 	if s.wsAuth.principal == nil || s.wsAuth.revocations == nil {
 		return
@@ -314,7 +312,7 @@ func (s *Server) dispatchFrameBytes(ctx context.Context, data []byte) ([]byte, b
 
 	switch req.Method {
 	case "initialize":
-		// spec: §15.2 lines 1310-1315 — negotiate the version on the
+		// spec: §15.2 — negotiate the version on the
 		// WebSocket transport with the same rules as POST /mcp. The
 		// X-Lenny-Mcp-Version-Deprecated header is an HTTP-handshake
 		// signal and cannot be set on a frame after the upgrade, so the

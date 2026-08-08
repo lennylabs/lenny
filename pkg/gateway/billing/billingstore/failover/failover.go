@@ -45,17 +45,17 @@ import (
 // many events per gateway replica before Append starts rejecting.
 const DefaultWriteAheadBufferSize = 10_000
 
-// DefaultFlushInterval is the §12.3 line 76 billingFlushIntervalMs
+// DefaultFlushInterval is the §12.3 billingFlushIntervalMs
 // default expressed as a duration: how often the background flusher
 // re-attempts the primary store and drains the buffered batch.
 const DefaultFlushInterval = 500 * time.Millisecond
 
-// DefaultFlushBatchSize is the §12.3 line 76 billingFlushBatchSize
+// DefaultFlushBatchSize is the §12.3 billingFlushBatchSize
 // default: the maximum number of buffered events the flusher drains
 // into the primary store in a single multi-row replay batch.
 const DefaultFlushBatchSize = 50
 
-// DefaultFlushMaxPending is the §12.3 line 76 billingFlushMaxPending
+// DefaultFlushMaxPending is the §12.3 billingFlushMaxPending
 // default: when the Tier 2 buffer grows past this many events the
 // pipeline flushes immediately (out of band of the interval tick) and
 // emits the billing_flush_pressure metric.
@@ -93,7 +93,7 @@ type StreamTier interface {
 	// Postgres, so the GDPR erasure job purges the stream before
 	// completing.
 	//
-	// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+	// spec: §12.8, step 5.
 	PurgeUser(ctx context.Context, tenantID, userID string) (int, error)
 }
 
@@ -262,7 +262,7 @@ func (p *Pipeline) Append(ctx context.Context, e billingstore.Event) (billingsto
 		return billingstore.Event{}, err
 	}
 	p.setLastTier(TierBuffer)
-	// §12.3 line 76: once the buffer exceeds billingFlushMaxPending the
+	// §12.3: once the buffer exceeds billingFlushMaxPending the
 	// gateway flushes immediately and emits billing_flush_pressure. The
 	// flush is best-effort — if the primary is still down it drains
 	// nothing and the events stay buffered for the next cycle.
@@ -275,7 +275,7 @@ func (p *Pipeline) Append(ctx context.Context, e billingstore.Event) (billingsto
 	return provisional, nil
 }
 
-// SetFlushPressureHook installs (or replaces) the §12.3 line 76
+// SetFlushPressureHook installs (or replaces) the §12.3
 // billing_flush_pressure callback after construction. The gateway wires
 // gatewaymetrics.IncBillingFlushPressure here once the metric registry
 // exists, which is built after the Pipeline. Safe to call before any
@@ -306,7 +306,7 @@ func (p *Pipeline) Since(ctx context.Context, tenantID string, since uint64, lim
 // SinceFiltered implements billingstore.Store. Like Since it reads the
 // label-filtered events from the durable primary store; buffered
 // (not-yet-renumbered) events are intentionally excluded under the same
-// gap-then-replay contract. spec: §14 line 106; §15.1. F-14.1.13.
+// gap-then-replay contract. spec: §14; §15.1. F-14.1.13.
 func (p *Pipeline) SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]billingstore.Event, error) {
 	return p.primary.SinceFiltered(ctx, tenantID, since, limit, labelFilter)
 }
@@ -323,7 +323,7 @@ func (p *Pipeline) SessionTotals(ctx context.Context, tenantID, sessionID string
 // EnvironmentTotals implements billingstore.Store. Like SessionTotals it
 // reads from the durable primary: buffered (not-yet-flushed) events are
 // intentionally excluded until they are renumbered into Postgres in
-// sequence order. spec: §15.1 line 840; §11.2.1. F-15.1.3.
+// sequence order. spec: §15.1; §11.2.1. F-15.1.3.
 func (p *Pipeline) EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (billingstore.SessionUsage, error) {
 	return p.primary.EnvironmentTotals(ctx, tenantID, environmentID)
 }
@@ -357,7 +357,7 @@ func (p *Pipeline) PseudonymizeUser(ctx context.Context, tenantID, userID string
 // pseudonymizes rather than deletes, so this delegates to the primary
 // no-op and leaves the buffer untouched.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (p *Pipeline) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	return p.primary.DeleteByUser(ctx, tenantID, userID)
 }
@@ -371,7 +371,7 @@ func (p *Pipeline) DeleteByUser(ctx context.Context, tenantID, userID string) (i
 // would re-insert the raw user_id into Postgres, so the GDPR erasure job
 // purges the buffer in its store-deleting phase, before pseudonymization.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer purge), step 5.
+// spec: §12.8, step 5.
 func (p *Pipeline) PurgeStagedByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	streamPurged, err := p.stream.PurgeUser(ctx, tenantID, userID)
 	if err != nil {
@@ -398,7 +398,7 @@ func (p *Pipeline) PurgeStagedByUser(ctx context.Context, tenantID, userID strin
 // that races an outage does not later flush deleted-tenant rows. It
 // returns the total count removed across both.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	n, err := p.primary.DeleteByTenant(ctx, tenantID)
 	if err != nil {
@@ -425,7 +425,7 @@ func (p *Pipeline) DeleteByTenant(ctx context.Context, tenantID string) (int, er
 // retention sweep does not later flush rows it should have pruned. It
 // returns the total count removed across both.
 //
-// spec: §11.2.1 line 151. F-11.2.15.
+// spec: §11.2.1. F-11.2.15.
 func (p *Pipeline) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	n, err := p.primary.DeleteOlderThan(ctx, tenantID, cutoff)
 	if err != nil {

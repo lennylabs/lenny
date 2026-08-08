@@ -46,7 +46,7 @@ func findWarning(events []admin.AuditEvent, pool string) *admin.AuditEvent {
 }
 
 // spec: §5.2 (multi_turn permitted on service mode, registration-time
-// warning), §3.6 (service-mode conversationContinuity), §7.1 line 74.
+// warning), §3.6 (service-mode conversationContinuity), §7.1.
 // A multi_turn runtime bound to a service-mode pool is admitted but warns:
 // service mode preserves no cross-message conversation continuity. A one_shot
 // runtime on a service pool, and a multi_turn runtime on a session pool, both

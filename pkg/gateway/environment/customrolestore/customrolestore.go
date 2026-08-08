@@ -47,7 +47,7 @@ type CustomRole struct {
 // Store is the §10.2 custom-role registry contract. Every method is
 // tenant-scoped.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Custom roles are tenant-scoped definitions with
 // no user attribution, so DeleteByUser is a no-op; DeleteByTenant
@@ -148,7 +148,7 @@ func (m *Memory) Create(_ context.Context, r CustomRole) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if r.Version == 0 {
 		r.Version = 1
 	}
@@ -191,7 +191,7 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*C
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match precondition compares
 	// against the new value.
 	row.Version++

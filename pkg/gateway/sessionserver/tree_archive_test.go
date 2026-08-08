@@ -235,7 +235,7 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 }
 
 // orphanCapAuditSink captures session-lifecycle audit rows so the
-// §8.10 line 1103 fallback case can assert on the emitted event.
+// §8.10 fallback case can assert on the emitted event.
 type orphanCapAuditSink struct {
 	events []sessionserver.SessionLifecycleEvent
 }
@@ -455,7 +455,7 @@ func reattachedChildren(t *testing.T, ev *sessionevents.Event) []map[string]any 
 // when a child registered an outstanding `lenny/request_input`, the
 // parent's children_reattached event surfaces the request id so the
 // parent knows what to answer via lenny/send_message / inReplyTo.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
@@ -491,7 +491,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 // when the child has a pending tool-use or elicitation interaction
 // (and no request_input registration), the parent surfaces the
 // interaction id as the pending_request_id.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
@@ -528,7 +528,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *
 // TestResumeChildrenReattachedPendingRequestIDOldestFirst — when a
 // child has several pending interactions, the oldest one wins so the
 // resumed parent unblocks the longest-waiting request first.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
@@ -571,7 +571,7 @@ func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 // TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle — a
 // non-terminal child with no outstanding request omits the field
 // (the JSON encoder drops the empty string).
-// spec: §7.2 line 153 ("`null` if none"); F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)

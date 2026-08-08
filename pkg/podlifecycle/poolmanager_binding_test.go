@@ -16,7 +16,7 @@ import (
 // alternative backend (custom kubebuilder controllers, a multi-cluster
 // router) swaps in behind these interfaces with every consumer
 // untouched. The assignments fail to compile if a default type drifts
-// from its interface. spec: spec/04_system-components.md lines 333-363;
+// from its interface. spec: §4.6.1;
 // §17.1 row 9. F-17.1.11.
 func TestAgentSandboxIsTheDefaultPoolManager_spec_17_1(t *testing.T) {
 	var (

@@ -37,7 +37,7 @@ func decodeErr(t *testing.T, body []byte) struct {
 	return resp
 }
 
-// spec: §15.1 line 944, §25.2 lines 302-329 — every admin error carries
+// spec: §15.1, §25.2 — every admin error carries
 // the canonical envelope with code, category, message, and retryable.
 // The category/retryable pair is sourced from the shared §15.2.1
 // classifier. F-25.2.6.
@@ -82,7 +82,7 @@ func TestWriteErrorCanonicalEnvelope_spec_25_2_302(t *testing.T) {
 	}
 }
 
-// spec: §25.2 line 329 — a retryable 429/5xx admin error advertises a
+// spec: §25.2 — a retryable 429/5xx admin error advertises a
 // backoff via suggestedRetryAfter and the matching Retry-After header;
 // a permanent 4xx error advertises neither. F-25.2.6.
 func TestWriteErrorRetryAfter_spec_25_2_329(t *testing.T) {

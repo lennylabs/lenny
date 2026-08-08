@@ -14,7 +14,7 @@
 //
 // §4.2 delegation-lease design clarification:
 //
-// The §4.2 line 161 Session Manager bullet ("Delegation lease
+// The §4.2 Session Manager bullet ("Delegation lease
 // tracking") is realised in v1 by the child session row plus the
 // Redis budget keys ({root_session_id}:dlg:*), not by a separate
 // delegation_leases table. The lease lifecycle maps onto session
@@ -29,7 +29,7 @@
 //   - The lease's policy reference is the delegation_policies row
 //     resolved at issuance and recorded on the child via the §8.3
 //     effective policy carried through tracingContext and
-//     policy_enforcement_state (§4.2 line 158).
+//     policy_enforcement_state (§4.2).
 //   - The lease's remaining slice is the in-Redis budget under
 //     {root_session_id}:dlg:* — atomically reserved at every
 //     lenny/delegate_task call per §8.2.
@@ -37,7 +37,7 @@
 // A future iteration may extract a dedicated delegation_leases
 // table; the v1 invariant is "delegation lease == child session
 // row + Redis budget keys" with no separate row.
-// spec: §4.2 line 161.
+// spec: §4.2.
 package lease
 
 import (
@@ -70,7 +70,7 @@ type LeaseSlice struct {
 	// alongside MaxTreeSize and rejects a delegation that would push
 	// the tree over this cap with BUDGET_EXHAUSTED.
 	//
-	// spec: §8.2 line 127.
+	// spec: §8.2.
 	MaxTreeMemoryBytes int64
 
 	// MaxParallelChildren caps concurrent in-flight children of the
@@ -261,7 +261,7 @@ const (
 	// This is the v1 default and the spec-conformant behaviour when
 	// the field is absent.
 	//
-	// spec: §8.4 line 519.
+	// spec: §8.4.
 	ApprovalModePolicy ApprovalMode = "policy"
 
 	// ApprovalModeApproval is the v1-reserved, post-v1-deferred mode.
@@ -271,7 +271,7 @@ const (
 	// preserves the original mode so a back-fill or staged rollout is
 	// auditable.
 	//
-	// spec: §8.4 line 520.
+	// spec: §8.4.
 	ApprovalModeApproval ApprovalMode = "approval"
 
 	// ApprovalModeDeny short-circuits the delegation path before pod
@@ -280,7 +280,7 @@ const (
 	// lease out of delegation entirely, distinct from omitting the
 	// delegation tools or setting maxDepth=0.
 	//
-	// spec: §8.4 line 521.
+	// spec: §8.4.
 	ApprovalModeDeny ApprovalMode = "deny"
 )
 
@@ -322,7 +322,7 @@ func (e *InvalidApprovalModeError) Error() string {
 // so an auditor can tell whether a child session was approved via
 // ApprovalModePolicy or via the v1-aliased ApprovalModeApproval.
 //
-// spec: §8.4 lines 519-521. F-8.4.1, F-8.4.3.
+// spec: §8.4. F-8.4.1, F-8.4.3.
 func EffectiveApprovalMode(declared ApprovalMode) ApprovalMode {
 	switch declared {
 	case ApprovalModeDeny:

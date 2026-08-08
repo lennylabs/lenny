@@ -45,14 +45,14 @@ import (
 
 const (
 	// AdapterUID and AgentUID are the default non-root UIDs the adapter
-	// and runtime containers run as. §13.1 line 7 mandates distinct
+	// and runtime containers run as. §13.1 mandates distinct
 	// non-root identities but leaves the specific numbers to the
 	// implementation, so these are operator-tunable: a deployer whose
 	// runtime base image bakes a different non-root UID overrides them
 	// through the Inputs fields below (the controller resolves them from
 	// the same Helm value the lenny-pod-security and
 	// ephemeral-container-cred-guard webhooks read, so a built pod always
-	// passes the webhook UID checks). spec: §13.1 line 7. F-13.1.16.
+	// passes the webhook UID checks). spec: §13.1. F-13.1.16.
 	AdapterUID int64 = 65532
 	AgentUID   int64 = 65533
 	// CredReadersGID is the default lenny-cred-readers group — the §13.1
@@ -82,11 +82,11 @@ const (
 	preStopDrainMarginSeconds int64 = 10
 
 	// sdkDemoteTimeoutSeconds mirrors the adapter's DefaultDemoteTimeout
-	// (the §6.1 line 67 LENNY_DEMOTE_TIMEOUT_SECONDS default, 5s) the
+	// (the §6.1 LENNY_DEMOTE_TIMEOUT_SECONDS default, 5s) the
 	// adapter bounds its SIGTERM-time DemoteSDK teardown by.
 	sdkDemoteTimeoutSeconds int64 = 5
 
-	// sdkDemoteGraceMarginSeconds is the §6.1 line 67 "+5s" the grace
+	// sdkDemoteGraceMarginSeconds is the §6.1 the grace
 	// period of a preConnect pod must exceed the demote timeout by, so the
 	// kubelet does not SIGKILL the adapter before its bounded DemoteSDK (and
 	// the force-terminate fallback) completes.
@@ -102,10 +102,10 @@ const (
 	credentialMount = "/run/lenny"
 	tmpMount        = "/tmp"
 
-	// sessionsMount and artifactsMount are the §6.4 lines 380-381 in-pod
+	// sessionsMount and artifactsMount are the §6.4 in-pod
 	// paths for session files and artifacts. /sessions holds conversation
 	// logs and runtime state; /artifacts holds logs, outputs, and
-	// checkpoints. §13.1 line 10 lists both among the agent's writable
+	// checkpoints. §13.1 lists both among the agent's writable
 	// paths, so without these volumes a runtime write lands on the
 	// read-only root filesystem and fails with EROFS.
 	sessionsMount  = "/sessions"
@@ -114,7 +114,7 @@ const (
 	sessionsVolumeName  = "sessions"
 	artifactsVolumeName = "artifacts"
 
-	// sharedMount is the §6.4 line 409 /workspace/shared path: a separate
+	// sharedMount is the §6.4 /workspace/shared path: a separate
 	// emptyDir holding read-only assets shared across a concurrent-workspace
 	// pod's slots. It is mounted on every pod (empty when the Runtime
 	// declares no sharedAssets) so the runtime cannot use the path as
@@ -127,7 +127,7 @@ const (
 	// workspace emptyDir.
 	sharedVolumeName = "shared"
 
-	// tmpfsSizeLimit is the §6.4 line 413 recommended cap for the
+	// tmpfsSizeLimit is the §6.4 recommended cap for the
 	// memory-backed /sessions and /tmp tmpfs volumes (256Mi each). The cap
 	// gives a predictable OOM boundary instead of silent memory pressure:
 	// tmpfs usage charges against the pod memory limit, so an uncapped
@@ -135,7 +135,7 @@ const (
 	// container.
 	tmpfsSizeLimit = "256Mi"
 
-	// dshmMount is the in-pod /dev/shm path. spec: §6.4 line 420
+	// dshmMount is the in-pod /dev/shm path. spec: §6.4
 	// "/dev/shm is limited to 64MB." A memory-backed emptyDir with an
 	// explicit SizeLimit gives the cap a Lenny-controlled value rather
 	// than relying on the OCI runtime default.
@@ -180,10 +180,10 @@ const (
 	// platformMcpServer.socket and dials it to reach the platform tools
 	// (lenny/delegate_task, ...). It lives in the same kernel abstract
 	// namespace as the runtime socket, reachable across the pod's
-	// containers. spec: §9.1 line 8. F-9.1.1.
+	// containers. spec: §9.1. F-9.1.1.
 	PlatformMCPSocketName = "@lenny-platform-mcp"
 
-	// ReadinessGateSandboxReady is the §6.1 line 18 pod readiness gate
+	// ReadinessGateSandboxReady is the §6.1 pod readiness gate
 	// ("Marked 'idle and claimable' via readiness gate"). The pod spec
 	// declares the gate so the kubelet holds Pod.Ready False — and the pod
 	// un-claimable — until the WarmPoolController asserts the pod is warm.
@@ -193,8 +193,7 @@ const (
 	// Lenny-controlled claimability handoff to the gateway.
 	ReadinessGateSandboxReady corev1.PodConditionType = "lenny.dev/sandbox-ready"
 
-	// saTokenVolumeName, saTokenMountPath, and saTokenFile name the §6.1
-	// line 14 projected service-account token: an audience-bound,
+	// saTokenVolumeName, saTokenMountPath, and saTokenFile name the §6.1 projected service-account token: an audience-bound,
 	// short-TTL token the agent pod presents to the gateway (§10.3). The
 	// mount path is Lenny-namespaced so it does not collide with the
 	// kubelet's default kubernetes.io/serviceaccount mount.
@@ -263,13 +262,13 @@ type Inputs struct {
 	// builder starts the platform MCP server on PlatformMCPSocketName and
 	// points the adapter at this address; when empty, the platform MCP
 	// server is not started (no gateway link to forward to). Supplied as
-	// controller configuration. spec: §9.1 lines 14-31. F-9.1.1.
+	// controller configuration. spec: §9.1. F-9.1.1.
 	GatewayGRPCAddr string
 	// IsolationProfile is the §5.3 profile (standard, sandboxed, or
 	// microvm) that selects the RuntimeClass.
 	IsolationProfile string
 	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
-	// cluster-specific RuntimeClass name. spec: §17.5 line 3 — clusters
+	// cluster-specific RuntimeClass name. spec: §17.5 — clusters
 	// that ship gVisor as `runsc` or Kata as `kata-qemu` / `kata-fc`
 	// set this through the chart's `isolation.runtimeClassNames` Helm
 	// values so the controller does not require operators to rename
@@ -312,10 +311,10 @@ type Inputs struct {
 
 	// TerminationGraceSeconds is the §5.2
 	// SandboxTemplate.spec.terminationGracePeriodSeconds deployer
-	// override. spec: §5.2 line 516 — for concurrent-workspace pools the
+	// override. spec: §5.2 — for concurrent-workspace pools the
 	// deployer sets this to cover the per-slot checkpoint budget
 	// (`maxConcurrent × max_tiered_checkpoint_cap +
-	// checkpointBarrierAckTimeoutSeconds + 30`); §6.4 line 67 requires it
+	// checkpointBarrierAckTimeoutSeconds + 30`); §6.4 requires it
 	// to be at least `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it
 	// replaces the §4.6.1 120s default as the base grace period; the
 	// MaxTerminationGraceSeconds ceiling still clamps it down. A nil
@@ -325,13 +324,13 @@ type Inputs struct {
 	// PreConnect is the §5.1 capabilities.preConnect flag for the pod's
 	// runtime. When true the pod is SDK-warm: it may reach `sdk_connecting`,
 	// so its terminationGracePeriodSeconds is floored at
-	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` (§6.1 line 67) to give the adapter
+	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` (§6.1) to give the adapter
 	// time to run its bounded DemoteSDK teardown (and the force-terminate
 	// fallback) on SIGTERM before the kubelet sends SIGKILL. The floor is the
 	// §6.1 safety boundary against abandoning the SDK mid-connection.
 	PreConnect bool
 
-	// TopologySpreadConstraints are the §5.2 lines 631-636 spread
+	// TopologySpreadConstraints are the §5.2 spread
 	// constraints resolved for the pool (the PoolScalingController's zone
 	// and node defaults, or the deployer's per-pool override), carried
 	// down through Sandbox.spec. The builder stamps them onto the pod so
@@ -340,7 +339,7 @@ type Inputs struct {
 
 	// SATokenAudience is the §10.3 deployment-specific audience
 	// (global.saTokenAudience, formatted as lenny-gateway-<cluster-name>)
-	// for the §6.1 line 14 projected service-account token. When non-empty,
+	// for the §6.1 projected service-account token. When non-empty,
 	// the builder mounts an audience-bound, 900s-TTL projected token the
 	// agent pod presents to the gateway and disables the kubelet's default
 	// (cluster-audience) token automount. An empty value (test or
@@ -365,16 +364,16 @@ type Inputs struct {
 	// pod with no T4 injection.
 	WorkspaceTier string
 
-	// SharedAssetsArg is the §6.4 line 409 inline shared-asset set encoded
+	// SharedAssetsArg is the §6.4 inline shared-asset set encoded
 	// for the adapter's --shared-assets flag (sharedassets.Encode of the
 	// Runtime's sharedAssets). The adapter materializes these into
 	// /workspace/shared at warm time, before any slot is assigned. Empty
 	// leaves the shared volume mounted but empty — the runtime still cannot
 	// write it (read-only mount), so the scrub-space-prevention guarantee
-	// holds with or without configured assets. spec: §6.4 line 409 — F-6.4.3.
+	// holds with or without configured assets. spec: §6.4 — F-6.4.3.
 	SharedAssetsArg string
 
-	// WorkspaceSizeLimitBytes is the §4.4 line 255 per-pod workspace-size
+	// WorkspaceSizeLimitBytes is the §4.4 per-pod workspace-size
 	// hard limit resolved from the pool's SandboxTemplate. When set, the
 	// builder renders --workspace-size-limit-bytes onto the adapter so the
 	// adapter runs its pre-checkpoint workspace-size probe (stat the workspace
@@ -382,8 +381,7 @@ type Inputs struct {
 	// measured size exceeds the limit). A nil value renders no flag, which
 	// keeps the probe disabled exactly where the pool declares no limit; the
 	// size probe, the §10.1 storage reservation it feeds, and the
-	// permanent-error checkpoint arm are all inert without it. spec: §4.4 line
-	// 255.
+	// permanent-error checkpoint arm are all inert without it. spec: §4.4.
 	WorkspaceSizeLimitBytes *int64
 
 	// ObjectStoreCAConfigMap is the name of the §13.2 per-agent-namespace
@@ -398,7 +396,7 @@ type Inputs struct {
 	ObjectStoreCAConfigMap string
 
 	// DedicatedDNSClusterIP is the ClusterIP of the lenny-agent-dns
-	// Service in lenny-system. spec: §13.2 lines 470-490 (K8S-033) — when
+	// Service in lenny-system. spec: §13.2 — when
 	// non-empty the pod builder sets `dnsPolicy: None` and a `dnsConfig`
 	// pointing the pod's resolver at this address, because the
 	// agent-namespace NetworkPolicy blocks the kube-system kube-dns the
@@ -416,7 +414,7 @@ type Inputs struct {
 	ReleaseNamespace string
 
 	// Resources is the §5.2 resource class resolved to container CPU/memory
-	// requests and limits. spec: §6.4 line 413 — the memory limit gives the
+	// requests and limits. spec: §6.4 — the memory limit gives the
 	// pod a predictable OOM boundary that accounts for the memory-backed
 	// tmpfs volumes (/sessions, /tmp, /dev/shm) charging against the pod
 	// memory cgroup. The builder stamps it on every Lenny container (adapter
@@ -427,14 +425,14 @@ type Inputs struct {
 	// AdapterUID, AgentUID, and CredReadersGID override the non-root
 	// identities the adapter container, the runtime container, and the
 	// credential-tmpfs fsGroup use. A zero value selects the package
-	// default constant of the same name. §13.1 line 7 fixes only
+	// default constant of the same name. §13.1 fixes only
 	// "non-root and distinct"; the numbers are operator-tunable for a
 	// deployer whose runtime base image bakes a different non-root UID.
 	// The controller and the lenny-pod-security /
 	// ephemeral-container-cred-guard webhooks MUST resolve these from the
 	// same Helm value so a pod the controller builds passes the webhook
 	// UID checks; a partial override on one side rejects every agent pod.
-	// spec: §13.1 line 7. F-13.1.16.
+	// spec: §13.1. F-13.1.16.
 	AdapterUID     int64
 	AgentUID       int64
 	CredReadersGID int64
@@ -443,8 +441,8 @@ type Inputs struct {
 // adapterUID, agentUID, and credReadersGID resolve the pod's non-root
 // identities: the per-deployment override when set, else the package
 // default constant. A zero override is treated as unset because UID 0 is
-// root, which §13.1 line 7 forbids, so it can never be a legitimate
-// value. spec: §13.1 line 7. F-13.1.16.
+// root, which §13.1 forbids, so it can never be a legitimate
+// value. spec: §13.1. F-13.1.16.
 func (in Inputs) adapterUID() int64 {
 	if in.AdapterUID != 0 {
 		return in.AdapterUID
@@ -542,7 +540,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
-		// spec: §6.4 line 409 — the adapter populates /workspace/shared at
+		// spec: §6.4 — the adapter populates /workspace/shared at
 		// warm time, so its mount is read-write. The runtime container's is
 		// read-only, which is where the EROFS write boundary is enforced.
 		{Name: sharedVolumeName, MountPath: sharedMount},
@@ -554,14 +552,14 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
-		// spec: §6.4 line 409 — read-only on the runtime container: any write
+		// spec: §6.4 — read-only on the runtime container: any write
 		// the agent process attempts under /workspace/shared returns EROFS.
 		{Name: sharedVolumeName, MountPath: sharedMount, ReadOnly: true},
 	}
 
 	adapterArgs := []string{
 		fmt.Sprintf("--addr=:%d", adapterPort),
-		// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+		// spec: §6.4 — session-mode pods (maxConcurrentSessions=1)
 		// use the single `/workspace/current` cwd. The concurrent-workspace
 		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
 		// in v1 (tracked under F-6.4.2); when it lands, the builder will
@@ -620,7 +618,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
-	// spec: §6.4 line 413 — stamp the resolved §5.2 resource class on both
+	// spec: §6.4 — stamp the resolved §5.2 resource class on both
 	// Lenny containers before the test-only egress sidecar is injected.
 	applyResources(in, pod)
 	// spec: §10.3 — the adapter is the pod's gateway-facing process, so the
@@ -650,7 +648,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		{Name: sessionsVolumeName, MountPath: sessionsMount},
 		{Name: artifactsVolumeName, MountPath: artifactsMount},
 		{Name: dshmVolumeName, MountPath: dshmMount},
-		// spec: §6.4 line 409 — the embedded runtime is the adapter, so it
+		// spec: §6.4 — the embedded runtime is the adapter, so it
 		// populates /workspace/shared itself and mounts it read-write. The
 		// kernel-level EROFS boundary is a sidecar-model property (the agent
 		// and adapter are separate containers there); in the embedded model
@@ -662,7 +660,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 
 	embeddedArgs := []string{
 		fmt.Sprintf("--addr=:%d", adapterPort),
-		// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
+		// spec: §6.4 — session-mode pods (maxConcurrentSessions=1)
 		// use the single `/workspace/current` cwd. The concurrent-workspace
 		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
 		// in v1 (tracked under F-6.4.2); when it lands, the builder will
@@ -701,7 +699,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 		},
 	}
 	pod.Spec.Volumes = volumes
-	// spec: §6.4 line 413 — stamp the resolved §5.2 resource class on the
+	// spec: §6.4 — stamp the resolved §5.2 resource class on the
 	// single runtime container before the test-only egress sidecar.
 	applyResources(in, pod)
 	// spec: §10.3 — the embedded runtime is the pod's gateway-facing
@@ -717,7 +715,7 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 // applyResources stamps the §5.2 resource class (resolved to CPU/memory
 // requests and limits) onto every Lenny container in the pod. It runs
 // before injectEgressCaptureSidecar so the test-only egress sidecar is not
-// given the agent's resource budget. spec: §6.4 line 413 — the memory limit
+// given the agent's resource budget. spec: §6.4 — the memory limit
 // bounds the pod's combined agent-process-plus-tmpfs footprint with a
 // predictable OOM boundary. A nil Resources leaves containers unconstrained.
 func applyResources(in Inputs, pod *corev1.Pod) {
@@ -808,13 +806,13 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 	})
 }
 
-// sharedAssetsArgs returns the §6.4 line 409 adapter flags for the
+// sharedAssetsArgs returns the §6.4 adapter flags for the
 // /workspace/shared read-only asset tree. The --shared-assets-dir flag
 // is always set so the adapter ensures the directory at warm time (it is
 // mounted read-write on the adapter container, read-only on the runtime
 // container). --shared-assets carries the inline asset set only when the
 // Runtime declares any; an empty set leaves the directory mounted but
-// empty. spec: §6.4 line 409 — F-6.4.3.
+// empty. spec: §6.4 — F-6.4.3.
 func sharedAssetsArgs(in Inputs) []string {
 	args := []string{"--shared-assets-dir=" + sharedMount}
 	if in.SharedAssetsArg != "" {
@@ -828,8 +826,7 @@ func sharedAssetsArgs(in Inputs) []string {
 // GatewayControl address, the adapter binds the platform MCP socket and
 // forwards a type:agent runtime's platform tool calls to that gateway.
 // When no gateway address is configured the platform MCP server is not
-// started (there is no gateway link to forward to). spec: §9.1 lines
-// 8-31. F-9.1.1.
+// started (there is no gateway link to forward to). spec: §9.1. F-9.1.1.
 func platformMCPArgs(in Inputs) []string {
 	if in.GatewayGRPCAddr == "" {
 		return nil
@@ -855,14 +852,13 @@ func nonceOnlyArgs(in Inputs) []string {
 }
 
 // checkpointProbeArgs returns the §4.4 / §13.2 adapter flags for the
-// checkpoint upload path. --workspace-size-limit-bytes carries the §4.4
-// line 255 per-pod workspace-size limit so the adapter runs its
+// checkpoint upload path. --workspace-size-limit-bytes carries the §4.4 per-pod workspace-size limit so the adapter runs its
 // pre-checkpoint size probe; it is omitted when the pool declares no limit,
 // leaving the probe disabled. --objectstore-ca-bundle points the adapter at
 // the mounted §13.2 object-store CA trust bundle so it can complete the TLS
 // handshake to a self-managed object store; it is omitted when no CA
 // ConfigMap is configured (a cloud-managed endpoint chaining to a public CA).
-// spec: §4.4 line 255, §13.2.
+// spec: §4.4, §13.2.
 func checkpointProbeArgs(in Inputs) []string {
 	var args []string
 	if in.WorkspaceSizeLimitBytes != nil {
@@ -925,18 +921,18 @@ func podNameEnv() corev1.EnvVar {
 // podVolumes returns the §6.1 / §6.4 / §13.1 pod volumes: the
 // disk-backed workspace and artifacts emptyDirs, the memory-backed
 // credential, tmp, and sessions tmpfs volumes, and the §6.4 size-capped
-// /dev/shm volume. spec: §6.4 lines 376-383 (filesystem layout), 411-414
+// /dev/shm volume. spec: §6.4
 // (data-at-rest medium and tmpfs size caps).
 func podVolumes() []corev1.Volume {
 	dshmLimit := resource.MustParse(dshmSizeLimit)
 	tmpfsLimit := resource.MustParse(tmpfsSizeLimit)
 	return []corev1.Volume{
-		// spec: §6.4 line 414 — /workspace and /artifacts are disk-backed
+		// spec: §6.4 — /workspace and /artifacts are disk-backed
 		// emptyDirs (no Memory medium): logs, outputs, and checkpoints can
 		// exceed the pod memory budget.
 		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: artifactsVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-		// spec: §6.4 line 409 — /workspace/shared is a separate emptyDir so
+		// spec: §6.4 — /workspace/shared is a separate emptyDir so
 		// the read-only volumeMount on the runtime container enforces
 		// immutability at the kernel level. It is disk-backed: shared assets
 		// can exceed the pod memory budget, the same as the workspace volume.
@@ -944,7 +940,7 @@ func podVolumes() []corev1.Volume {
 		{Name: CredVolumeName, VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory},
 		}},
-		// spec: §6.4 lines 413, 380, 382 — /tmp and /sessions are
+		// spec: §6.4 — /tmp and /sessions are
 		// memory-backed (tmpfs) so their contents are guaranteed gone when
 		// the pod terminates, each capped at the recommended 256Mi to bound
 		// memory pressure.
@@ -954,7 +950,7 @@ func podVolumes() []corev1.Volume {
 		{Name: sessionsVolumeName, VolumeSource: corev1.VolumeSource{
 			EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory, SizeLimit: &tmpfsLimit},
 		}},
-		// spec: §6.4 line 420 "/dev/shm is limited to 64MB." A
+		// spec: §6.4 A
 		// memory-backed emptyDir with an explicit SizeLimit enforces the
 		// cap under Lenny's control rather than the OCI runtime default,
 		// which varies across container runtimes.
@@ -981,24 +977,24 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 			RuntimeClassName:              &runtimeClass,
 			RestartPolicy:                 corev1.RestartPolicyNever,
 			TerminationGracePeriodSeconds: ptr.To(terminationGrace(in)),
-			// spec: §5.2 lines 631-636 — stamp the resolved topology spread
+			// spec: §5.2 — stamp the resolved topology spread
 			// constraints so the scheduler distributes the pool's pods.
 			TopologySpreadConstraints: in.TopologySpreadConstraints,
-			// spec: §6.1 line 18 — the readiness gate lets the
+			// spec: §6.1 — the readiness gate lets the
 			// WarmPoolController gate claimability: Pod.Ready stays False
 			// (and the warming → idle transition, which keys off Pod.Ready,
 			// does not fire) until the controller flips this gate to True.
 			ReadinessGates: []corev1.PodReadinessGate{{ConditionType: ReadinessGateSandboxReady}},
 			// spec: §10.3 — the agent pod presents an audience-bound
 			// projected token, not the kubelet's default cluster-audience
-			// one; disable the automount so only the §6.1 line 14 projected
+			// one; disable the automount so only the §6.1 projected
 			// token (injected below when an audience is configured) is
 			// present.
 			AutomountServiceAccountToken: ptr.To(false),
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: ptr.To(true),
 				FSGroup:      ptr.To(in.credReadersGID()),
-				// spec: §13.1 line 25 — both the adapter UID and the agent
+				// spec: §13.1 — both the adapter UID and the agent
 				// UID are declared in the pod's
 				// spec.securityContext.supplementalGroups list, making
 				// lenny-cred-readers a shared group of which both
@@ -1019,7 +1015,7 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 	if in.ServiceAccountName != "" {
 		pod.Spec.ServiceAccountName = in.ServiceAccountName
 	}
-	// spec: §6.4 lines 416-419 — when the resolved Runtime is at
+	// spec: §6.4 — when the resolved Runtime is at
 	// `workspaceTier: T4`, the sandbox reconciler stamps the
 	// `lenny.dev/workspace-tier: t4` pod label that the
 	// lenny-t4-node-isolation admission webhook keys on, pins the pod to
@@ -1029,12 +1025,12 @@ func basePod(in Inputs, runtimeClass string) *corev1.Pod {
 	// rejects the pod with the §6.4 STR-003 message.
 	//
 	// The Runtime CRD's `workspaceTier` enum uses the uppercase `T4` form
-	// (§12.9 line 1025) — the lowercase `t4` is the pod label / node label
+	// (§12.9) — the lowercase `t4` is the pod label / node label
 	// value, not the tier-name comparison key.
 	if in.WorkspaceTier == WorkspaceTierT4 {
 		applyT4NodeIsolation(pod)
 	}
-	// spec: §17.2 lines 97-101 — Kata (microvm) pods MUST run on dedicated
+	// spec: §17.2 — Kata (microvm) pods MUST run on dedicated
 	// node pools enforced by hard scheduling constraints, not merely
 	// taints/tolerations. The RuntimeClass scheduling.nodeSelector
 	// (control 1, rendered by the chart) constrains the pod at admission,
@@ -1059,7 +1055,7 @@ const (
 )
 
 // applyDedicatedDNS points the agent pod's resolver at the dedicated
-// lenny-system CoreDNS instance. spec: §13.2 lines 470-490 (K8S-033) —
+// lenny-system CoreDNS instance. spec: §13.2 —
 // the agent-namespace NetworkPolicy routes DNS only to the dedicated
 // instance and blocks kube-system kube-dns, so a pod left at the
 // Kubernetes default ClusterFirst policy (resolver pointed at
@@ -1100,7 +1096,7 @@ func applyDedicatedDNS(in Inputs, pod *corev1.Pod) {
 const WorkspaceTierT4 = "T4"
 
 // applyT4NodeIsolation stamps the §6.4 T4 dedicated-node selector,
-// toleration, and pod label onto pod. spec: §6.4 lines 416-419.
+// toleration, and pod label onto pod. spec: §6.4.
 //
 // The injection is idempotent and additive: it preserves any
 // deployer-supplied nodeSelector entries (so a pool that pins a more
@@ -1132,7 +1128,7 @@ func applyT4NodeIsolation(pod *corev1.Pod) {
 }
 
 const (
-	// KataNodePoolLabelKey and KataNodePoolValue are the §17.2 line 99
+	// KataNodePoolLabelKey and KataNodePoolValue are the §17.2
 	// dedicated-node-pool label (`lenny.dev/node-pool: kata`). The chart
 	// stamps it on the Kata RuntimeClass's scheduling.nodeSelector
 	// (control 1) and on the Kata node pool's nodes; the controller
@@ -1142,8 +1138,7 @@ const (
 	KataNodePoolLabelKey = "lenny.dev/node-pool"
 	KataNodePoolValue    = "kata"
 
-	// KataIsolationTaintKey and KataIsolationTaintValue are the §17.2
-	// line 101 dedicated-node taint (`lenny.dev/isolation=kata:NoSchedule`).
+	// KataIsolationTaintKey and KataIsolationTaintValue are the §17.2 dedicated-node taint (`lenny.dev/isolation=kata:NoSchedule`).
 	// Kata node pools carry the taint so only pods with the matching
 	// toleration (control 3, injected below) can land on Kata-dedicated
 	// hardware, keeping non-Kata workloads off it even if the node-pool
@@ -1152,9 +1147,9 @@ const (
 	KataIsolationTaintValue = "kata"
 )
 
-// applyKataNodeIsolation stamps the §17.2 lines 99-101 hard node
+// applyKataNodeIsolation stamps the §17.2 hard node
 // affinity and dedicated-node toleration onto a Kata (microvm) pod.
-// spec: §17.2 lines 97-101.
+// spec: §17.2.
 //
 // Control 2 is a requiredDuringSchedulingIgnoredDuringExecution node
 // affinity matching `lenny.dev/node-pool: kata`: as a defense-in-depth
@@ -1235,7 +1230,7 @@ func stringsEqual(a, b []string) bool {
 	return true
 }
 
-// injectSATokenVolume adds the §6.1 line 14 / §10.3 projected
+// injectSATokenVolume adds the §6.1 / §10.3 projected
 // service-account token volume to the pod and mounts it read-only into the
 // container indices named in mountOn (the container that authenticates to
 // the gateway: the adapter in the sidecar model, the runtime in the
@@ -1280,7 +1275,7 @@ func containerSecurityContext(uid int64) *corev1.SecurityContext {
 		AllowPrivilegeEscalation: ptr.To(false),
 		ReadOnlyRootFilesystem:   ptr.To(true),
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		// spec: §6.4 line 420 "procfs and sysfs are masked/read-only."
+		// spec: §6.4
 		// DefaultProcMount keeps the kubelet's standard masked-/proc set
 		// (the /proc/kcore, /proc/sys, and similar paths are masked or
 		// read-only) rather than the Unmasked variant. Combined with the
@@ -1298,7 +1293,7 @@ func containerSecurityContext(uid int64) *corev1.SecurityContext {
 // "Disruption protection for agent pods".
 func terminationGrace(in Inputs) int64 {
 	grace := defaultTerminationGraceSeconds
-	// spec: §5.2 line 516 — the deployer-set base grace period (sized to
+	// spec: §5.2 — the deployer-set base grace period (sized to
 	// the pool's per-slot checkpoint budget) replaces the 120s default.
 	if in.TerminationGraceSeconds != nil && *in.TerminationGraceSeconds > 0 {
 		grace = *in.TerminationGraceSeconds
@@ -1307,7 +1302,7 @@ func terminationGrace(in Inputs) int64 {
 		*in.MaxTerminationGraceSeconds < grace {
 		grace = *in.MaxTerminationGraceSeconds
 	}
-	// spec: §6.1 line 67 — a preConnect (SDK-warm) pod may receive SIGTERM
+	// spec: §6.1 — a preConnect (SDK-warm) pod may receive SIGTERM
 	// while in `sdk_connecting`. Its grace period must be at least
 	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s` so the adapter can run its bounded
 	// DemoteSDK teardown (and the force-terminate fallback) before the

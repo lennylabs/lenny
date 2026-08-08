@@ -43,7 +43,7 @@ func (w *gatewayWiring) runServers() {
 	alertingOverrideCount := f.alertingOverrideCount
 	auditHardFailOnDrift := f.auditHardFailOnDrift
 
-	// spec: §16.1 lines 713/723 / §25.13 lines 4833–4840 — register the
+	// spec: §16.1 / §25.13 — register the
 	// bundled-alerting observability surface on the gateway's own metric
 	// registry (the one gwMetrics.Handler() serves at /metrics) so an
 	// operator's chart inputs and per-rule in-process eval latency become
@@ -66,7 +66,7 @@ func (w *gatewayWiring) runServers() {
 		alertingMx.SetBundledFormats(formats...)
 	}
 	if *alertingOverrideCount < 0 {
-		log.Fatalf("lenny-gateway: --alerting-override-count must be >= 0 (got %d) (§25.13 line 4834)", *alertingOverrideCount)
+		log.Fatalf("lenny-gateway: --alerting-override-count must be >= 0 (got %d) (§25.13)", *alertingOverrideCount)
 	}
 	alertingMx.SetOverrideCount(*alertingOverrideCount)
 
@@ -82,12 +82,12 @@ func (w *gatewayWiring) runServers() {
 	// "preserve state", so those alerts stay with Prometheus and never
 	// fire spuriously from the fallback.
 	//
-	// spec: §25.13 line 4676 — "The in-process alert state tracker
+	// spec: §25.13 — "The in-process alert state tracker
 	// (Section 25.3, Health API) evaluates these expressions against the
 	// in-process metric registry. This is the per-replica fallback used
 	// when Prometheus is unreachable." F-25.13.6.
 	//
-	// spec: §25.13 line 4798 — operators can suppress the in-process
+	// spec: §25.13 — operators can suppress the in-process
 	// tracker entirely via `gateway.healthTracker.useCompiledRules:
 	// false`. In that posture the per-replica health view falls back to
 	// dependency probes and circuit breaker state only. F-25.13.4.
@@ -101,7 +101,7 @@ func (w *gatewayWiring) runServers() {
 				OnRuleEvalDuration: alertingMx.ObserveRuleEvalDuration,
 			},
 		)
-		// spec: §25.17 line 5254 — expose the firing-alert set to the
+		// spec: §25.17 — expose the firing-alert set to the
 		// pool health resolver so GET /v1/admin/health/{pool} can report
 		// whether a warm-pool alert has resolved.
 		w.alertEvalPtr.Store(alertEvaluator)
@@ -113,7 +113,7 @@ func (w *gatewayWiring) runServers() {
 	stopCh := make(chan os.Signal, 1)
 	signal.Notify(stopCh, syscall.SIGTERM, syscall.SIGINT)
 
-	// spec: §11.7 item 2 lines 356-359 — periodic background integrity
+	// spec: §11.7 item 2 — periodic background integrity
 	// check. After the signal handler is installed, run the grant /
 	// trigger / erasure-guard re-verification and recent-chain sample on
 	// the resolved cadence. A detected drift logs a critical line and
@@ -131,7 +131,7 @@ func (w *gatewayWiring) runServers() {
 			// co-located topology, so DB and CtrlDB are the same pool. The
 			// split billing/audit-pool topology (§12.3) routes audit_log to
 			// w.billingAuditPool for the startup check while tenants state
-			// stays on w.pgPool. spec: §12.3 line 103, §12.8.
+			// stays on w.pgPool. spec: §12.3, §12.8.
 			CtrlDB: w.pgPool,
 			Cfg: integrity.PeriodicConfig{
 				Interval:        w.resolvedGrantCheckInterval,
@@ -164,7 +164,7 @@ func (w *gatewayWiring) runServers() {
 		go w.ocsfTranslator.Run(w.watchdogCtx)
 	}
 
-	// spec: §12.3 line 97 — start the SIEM outbox forwarder's background
+	// spec: §12.3 — start the SIEM outbox forwarder's background
 	// loop. It tails committed audit_log rows, delivers each to the SIEM
 	// after Postgres commits it, checkpoints the per-tenant delivery
 	// high-water mark in siem_delivery_state, and emits
@@ -175,7 +175,7 @@ func (w *gatewayWiring) runServers() {
 		go w.ocsfOutbox.Run(w.watchdogCtx)
 	}
 
-	// spec: §12.3 line 81 — drive the opt-in T2 audit batch buffer's
+	// spec: §12.3 — drive the opt-in T2 audit batch buffer's
 	// flush loop. It flushes buffered non-PII T2 audit events every
 	// flushIntervalMs or when the buffer reaches flushBatchSize, and
 	// flushes the remainder on shutdown. F-12.3.14.
@@ -230,7 +230,7 @@ func (w *gatewayWiring) runServers() {
 	// in the single-instance topology, so closeDDLPools closes each distinct
 	// pool once. F-11.2.10.
 	closeDDLPools(w.billingAuditDDLPool, w.primaryDDLPool)
-	// spec: §17.4 line 199 — stop the Source-Mode SQLite flush loop and
+	// spec: §17.4 — stop the Source-Mode SQLite flush loop and
 	// snapshot the session/metadata stores one final time so a clean
 	// shutdown (the documented Ctrl-C flow) loses no writes, then close
 	// the database. F-17.4.2.

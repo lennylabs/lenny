@@ -13,14 +13,14 @@ import (
 )
 
 // EventTypeDelegationExportFileScanRejected and ...FailedOpen are the
-// §11.7 lines 69-70 audit event types for the §8.7 file-export scan
+// §11.7 audit event types for the §8.7 file-export scan
 // path.
 const (
 	EventTypeDelegationExportFileScanRejected = "delegation.export_file_scan_rejected"
 	EventTypeDelegationExportScanFailedOpen   = "delegation.export_scan_failed_open"
 )
 
-// ExportScanMetrics is the §16.1 lines 80-81 metric surface the
+// ExportScanMetrics is the §16.1 metric surface the
 // ExportScanObserver records to. *gatewaymetrics.Metrics implements it.
 // A nil recorder disables metric emission. The interface lives here so
 // the policy layer does not import the gateway metrics package.
@@ -71,7 +71,7 @@ func (o *ExportScanObserver) WithBilling(billing *billingfanout.Emitter) *Export
 // The admitted, modified, and failed_closed outcomes record the metric
 // only: §11.7 defines no dedicated audit event for them (a fail-closed
 // rejection's caller-facing signal is the §15.1 EXPORT_FILE_SCAN_UNAVAILABLE
-// 503). spec: §11.7 lines 69-70; §16.1 lines 80-81; F-8.7.9; F-8.7.10.
+// 503). spec: §11.7; §16.1; F-8.7.9; F-8.7.10.
 func (o *ExportScanObserver) ExportFileScanned(ctx context.Context, ev interceptor.ExportScanEvent) {
 	if o.metrics != nil {
 		o.metrics.IncExportFileScan(ev.Pool, ev.TenantID, ev.PolicyName, ev.InterceptorRef, string(ev.Outcome))
@@ -97,7 +97,7 @@ func (o *ExportScanObserver) ExportFileScanned(ctx context.Context, ev intercept
 	if o.appender == nil {
 		return
 	}
-	// spec: §11.7 lines 119-122 — payload fields are policy_name,
+	// spec: §11.7 — payload fields are policy_name,
 	// interceptor_ref, file_path, file_size, and reason.
 	payload, _ := json.Marshal(map[string]any{
 		"policy_name":     ev.PolicyName,

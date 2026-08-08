@@ -16,7 +16,7 @@
 // buffered T2 events that have not yet been written to Postgres. This
 // is the documented, accepted data-loss tradeoff of batching, which is
 // why it is disabled by default and gated behind an explicit operator
-// opt-in (§12.3 lines 81-83).
+// opt-in (§12.3).
 package auditbatch
 
 import (
@@ -53,7 +53,7 @@ type Metrics interface {
 	FlushFailed(n int)
 }
 
-// Config pins the §12.3 lines 79-81 batching tunables. Zero fields are
+// Config pins the §12.3 batching tunables. Zero fields are
 // filled from DefaultConfig.
 type Config struct {
 	// FlushInterval is auditFlushIntervalMs (default 250ms): the buffer
@@ -64,7 +64,7 @@ type Config struct {
 	BatchSize int
 }
 
-// DefaultConfig returns the §12.3 lines 79-81 batching defaults.
+// DefaultConfig returns the §12.3 batching defaults.
 func DefaultConfig() Config {
 	return Config{FlushInterval: 250 * time.Millisecond, BatchSize: 100}
 }

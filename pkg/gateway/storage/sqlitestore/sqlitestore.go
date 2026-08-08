@@ -16,7 +16,7 @@
 // graceful shutdown. A store is registered by name and need only
 // implement Snapshotter.
 //
-// spec: §17.4 line 199 — "Embedded SQLite replaces Postgres for session
+// spec: §17.4 — "Embedded SQLite replaces Postgres for session
 // and metadata storage".
 package sqlitestore
 

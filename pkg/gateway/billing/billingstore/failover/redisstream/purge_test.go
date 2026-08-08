@@ -5,7 +5,7 @@
 // the target user within a tenant, leaving other users' and other
 // tenants' staged entries intact.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+// spec: §12.8, step 5.
 package redisstream
 
 import (

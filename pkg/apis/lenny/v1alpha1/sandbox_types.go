@@ -42,8 +42,7 @@ type SandboxSpec struct {
 
 	// ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
 	// under: `session` (a pod parameterized by the pool's sessionPolicy)
-	// or `service` (a claimless, request-routed pod). spec: §12.6 line
-	// 421-422 — the PodRegistry projects it as PodRecord.ExecutionMode.
+	// or `service` (a claimless, request-routed pod). spec: §12.6 — the PodRegistry projects it as PodRecord.ExecutionMode.
 	// The WarmPoolController denormalizes it from the pool's
 	// SandboxTemplate.spec.executionMode onto each Sandbox (the same
 	// copy-down as IsolationProfile) so the registry can project it
@@ -60,7 +59,7 @@ type SandboxSpec struct {
 
 	// ResourceClass is the §5.1/§5.2 resource class (small, medium,
 	// large, or a deployer-defined class) the pod's CPU/memory limits
-	// resolve from. spec: §12.6 line 422 — the PodRegistry PodSpec
+	// resolve from. spec: §12.6 — the PodRegistry PodSpec
 	// carries the per-pod resource limits, which this codebase models as
 	// a named resource class rather than raw quantities. A warm pod
 	// created by the WarmPoolController resolves its class from the
@@ -72,7 +71,7 @@ type SandboxSpec struct {
 	ResourceClass string `json:"resourceClass,omitempty"`
 
 	// WorkspacePlan is the §14 WorkspacePlan a §12.6 CreatePod pod was
-	// created with. spec: §12.6 line 422 — the PodSpec carries the
+	// created with. spec: §12.6 — the PodSpec carries the
 	// WorkspacePlan. It is empty for a warm pod (the WarmPoolController
 	// creates pods without a session, so the plan is materialized at
 	// session claim); the gateway-created-pod path (Tier 4+) stamps the
@@ -84,7 +83,7 @@ type SandboxSpec struct {
 	WorkspacePlan *apiextensionsv1.JSON `json:"workspacePlan,omitempty"`
 
 	// TopologySpreadConstraints distribute the pod across zones and
-	// nodes. spec: §5.2 lines 631-636 — the WarmPoolController copies the
+	// nodes. spec: §5.2 — the WarmPoolController copies the
 	// pool's SandboxTemplate.spec.topologySpreadConstraints onto each
 	// Sandbox it creates, and the Sandbox-to-Pod reconciler stamps them
 	// onto the agent pod. The PoolScalingController owns the defaults it

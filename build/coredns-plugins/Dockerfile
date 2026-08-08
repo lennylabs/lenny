@@ -1,6 +1,6 @@
 # Builds the lenny-coredns image: stock CoreDNS plus the coredns-ratelimit
 # and coredns-filter plugins the dedicated lenny-system instance requires
-# (spec §13.2 lines 498-536). The plugin set is defined by plugin.cfg in
+# (spec §13.2). The plugin set is defined by plugin.cfg in
 # this directory.
 ARG COREDNS_VERSION=v1.11.3
 

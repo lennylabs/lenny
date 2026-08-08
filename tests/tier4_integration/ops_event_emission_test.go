@@ -74,12 +74,10 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 	}
 }
 
-// spec: §25.3 line 687 ("Health service → health_status_changed") and
-// line 706 ("health_status_changed | Aggregate health transitioned |
-// Old status, new status, triggering component"). The health service
+// spec: §25.3. The health service
 // emits the operational event when the aggregate health verdict
 // transitions between Reports, and the event carries the old and new
-// aggregate status. §25.3 line 677 fixes the in-memory ring buffer as
+// aggregate status. §25.3 fixes the in-memory ring buffer as
 // always written regardless of Redis availability, and §25.3 exposes it
 // at GET /v1/admin/events/buffer; §16.6 fixes the CloudEvents type as
 // dev.lenny.<short_name>.
@@ -144,7 +142,7 @@ func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
 	}
 	// The transition is attributable to the Redis component going from
 	// healthy to unhealthy, so the payload's triggeringComponents must
-	// name it. spec: §25.3 line 706 ("triggering component").
+	// name it. spec: §25.3.
 	trig := gjsonStringSlice(t, ev.Event.Data, "triggeringComponents")
 	found := false
 	for _, name := range trig {

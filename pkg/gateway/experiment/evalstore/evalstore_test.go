@@ -222,7 +222,7 @@ func scorers(rs []evalstore.EvalResult) []string {
 	return out
 }
 
-// spec: §12.1 line 5 — eval results carry no user_id, so the
+// spec: §12.1 — eval results carry no user_id, so the
 // orchestrator walks the user's sessions and calls DeleteBySession.
 // DeleteByUser at this layer is a no-op that returns 0.
 func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
@@ -239,7 +239,7 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // eval result belonging to the tenant.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	m := evalstore.NewMemory(0, nil)

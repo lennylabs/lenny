@@ -9,7 +9,7 @@ import (
 
 // TestStartupWarningEmittedWhenUnvalidated verifies a deployment that
 // has not completed the Phase 14.5 gate (validated == false) emits the
-// verbatim §16.5 provisional-SLO warning. spec: §16.5 lines 609, 623.
+// verbatim §16.5 provisional-SLO warning. spec: §16.5.
 func TestStartupWarningEmittedWhenUnvalidated_spec_16_5_609(t *testing.T) {
 	msg, emit := StartupWarning(false)
 	if !emit {
@@ -33,7 +33,7 @@ func TestStartupWarningEmittedWhenUnvalidated_spec_16_5_609(t *testing.T) {
 
 // TestStartupWarningSuppressedWhenValidated verifies the warning is
 // suppressed once the Phase 14.5 automation has set slo.validated.
-// spec: §16.5 line 623.
+// spec: §16.5.
 func TestStartupWarningSuppressedWhenValidated_spec_16_5_623(t *testing.T) {
 	msg, emit := StartupWarning(true)
 	if emit {

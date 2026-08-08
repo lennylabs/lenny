@@ -12,8 +12,7 @@ import (
 // misconfiguration the gateway policy engine detects at session
 // creation. It carries the fields the §15.1 CLASSIFICATION_CONTROL_VIOLATION
 // error catalog entry expects in `details`: the tenant, the offending
-// tier, and a machine-readable reason. spec: §12.9 line 1048; §15.1 line
-// 1078.
+// tier, and a machine-readable reason. spec: §12.9; §15.1.
 type ClassificationError struct {
 	TenantID string
 	Tier     string
@@ -25,7 +24,7 @@ func (e *ClassificationError) Error() string {
 		e.TenantID, e.Tier, e.Reason)
 }
 
-// ValidateTenantClassification implements the §12.9 line 1048
+// ValidateTenantClassification implements the §12.9
 // requirement that "the gateway policy engine validates tenant
 // classification configuration at session creation." It rejects a
 // session whose tenant carries a workspaceTier outside the closed

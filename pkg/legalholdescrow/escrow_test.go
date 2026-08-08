@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §12.8 sub-step 2, line 883 — region resolution.
+// spec: §12.8 sub-step 2 — region resolution.
 func TestConfigResolve_spec_12_8(t *testing.T) {
 	cfg := Config{
 		Default: &RegionEscrow{Bucket: "escrow-default", Endpoint: "minio:9000"},
@@ -39,7 +39,7 @@ func TestConfigResolve_spec_12_8(t *testing.T) {
 		}
 	})
 	t.Run("scoped tenant with unconfigured region fails closed", func(t *testing.T) {
-		// §12.8 line 883: no fallback to the default for a residency-scoped
+		// §12.8: no fallback to the default for a residency-scoped
 		// tenant — routing EU evidence to a US default bucket is the
 		// cross-border transfer the spec forbids.
 		_, _, err := cfg.Resolve("ap-south")
@@ -49,7 +49,7 @@ func TestConfigResolve_spec_12_8(t *testing.T) {
 	})
 }
 
-// spec: §12.8 line 883 — a deployment with no escrow config fails closed.
+// spec: §12.8 — a deployment with no escrow config fails closed.
 func TestConfigResolveNoConfig_spec_12_8_883(t *testing.T) {
 	var cfg Config
 	if cfg.Configured() {
@@ -205,7 +205,7 @@ func TestMigrateHappyPath_spec_12_8(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 883 — region-unresolvable aborts before any write.
+// spec: §12.8 — region-unresolvable aborts before any write.
 func TestMigrateRegionUnresolvable_spec_12_8_883(t *testing.T) {
 	esc := &fakeEscrow{}
 	led := &fakeLedger{}

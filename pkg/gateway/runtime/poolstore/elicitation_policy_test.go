@@ -89,8 +89,7 @@ func TestValidateElicitationPolicy_spec_9_2(t *testing.T) {
 	}
 }
 
-// TestCreateRejectsURLModeWithoutDomain_spec_9_2_86 proves the §9.2 line
-// 86 admission rule fires at the store boundary so a misconfigured pool
+// TestCreateRejectsURLModeWithoutDomain_spec_9_2_86 proves the §9.2 admission rule fires at the store boundary so a misconfigured pool
 // never enters the registry. F-9.2.12.
 func TestCreateRejectsURLModeWithoutDomain_spec_9_2_86(t *testing.T) {
 	s := poolstore.NewMemory()

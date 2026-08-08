@@ -22,7 +22,7 @@ import (
 // TimeoutWarn)` followed by a structured log line and a metric / audit
 // emission, then returning nil to the RPC. Returning it (rather than
 // silently swallowing the warn case) is what gives the §5.1 disposition
-// an operationally observable surface. spec: §5.1 lines 89-91 — F-7.5.13.
+// an operationally observable surface. spec: §5.1 — F-7.5.13.
 var ErrSetupAggregateTimeoutWarn = errors.New("setup phase exceeded the aggregate cap (warn disposition)")
 
 // SetupCommandOutput is the structured record of one §7.5 setup command:
@@ -31,8 +31,7 @@ var ErrSetupAggregateTimeoutWarn = errors.New("setup phase exceeded the aggregat
 // per-stream budget. RunSetup populates one entry per executed command in
 // submission order so the gateway can persist the trail on the session
 // row and surface it through the §15.1 session envelope, the §11.7
-// audit log, and the §7.5 line 488 "rejection reason in the session's
-// setup output" surface. spec: §7.5 line 475 — F-7.5.4 / F-7.5.11.
+// audit log, and the §7.5 surface. spec: §7.5 — F-7.5.4 / F-7.5.11.
 type SetupCommandOutput struct {
 	Cmd       string
 	ExitCode  int32
@@ -46,7 +45,7 @@ type SetupCommandOutput struct {
 // command so a chatty setup command cannot blow the gRPC response message
 // size. The cap is conservative; the adapter truncates with the suffix
 // `\n... [truncated]` so a downstream reader can detect the truncation
-// out-of-band. spec: §7.5 line 475 — F-7.5.4.
+// out-of-band. spec: §7.5 — F-7.5.4.
 const SetupStreamCapBytes = 64 * 1024
 
 // SetupOptions carries the §5.1 runtime setupPolicy that bounds the
@@ -63,34 +62,34 @@ type SetupOptions struct {
 	// (proceed to runtime start despite the unfinished setup phase). When
 	// false RunSetup returns ErrSetupAggregateTimeoutWarn (non-fatal) on
 	// cap-exceed so the caller can emit the §5.1 warn observability
-	// before unwrapping to RPC success. spec: §5.1 lines 89-91 — F-7.5.13.
+	// before unwrapping to RPC success. spec: §5.1 — F-7.5.13.
 	FailOnAggregateTimeout bool
 
 	// Env, when non-nil, replaces the inherited process environment for
-	// each setup command. Callers wire the §7.5 line 479 minimal whitelist
+	// each setup command. Callers wire the §7.5 minimal whitelist
 	// via DefaultSetupEnv so a setup command does not see arbitrary
 	// adapter-process state (gateway gRPC addresses, the platform MCP
-	// socket path, OTLP endpoints, etc.). spec: §7.5 line 479 — F-7.5.8.
+	// socket path, OTLP endpoints, etc.). spec: §7.5 — F-7.5.8.
 	// A nil value preserves the legacy "inherit os.Environ()" behaviour
 	// for tests that have not been updated yet.
 	Env []string
 
-	// Shell selects the §7.5 line 490 execution mode: true wraps each
+	// Shell selects the §7.5 execution mode: true wraps each
 	// command in `/bin/sh -c` (the legacy behaviour); false splits the
 	// command string on whitespace and execs the argv directly, so shell
 	// metacharacters (backticks, pipes, redirects, `&&`, glob expansion,
 	// variable interpolation) are inert. Argv-mode is the most restrictive
 	// mode and is recommended alongside `allowlist` for multi-tenant
-	// deployments. spec: §7.5 line 490 — F-7.5.2.
+	// deployments. spec: §7.5 — F-7.5.2.
 	Shell bool
 }
 
-// DefaultSetupEnv returns the §7.5 line 479 minimal env whitelist a
+// DefaultSetupEnv returns the §7.5 minimal env whitelist a
 // setup command runs with: PATH, HOME, USER, LANG, LC_ALL, TMPDIR, and
 // PWD seeded to workdir. The list excludes platform-internal variables
 // (gateway addresses, manifest paths, OTLP endpoints, the runtime
 // nonce) that the adapter inherits at pod start so a setup command
-// cannot reach them. spec: §7.5 line 479 — F-7.5.8.
+// cannot reach them. spec: §7.5 — F-7.5.8.
 func DefaultSetupEnv(workdir string) []string {
 	env := []string{
 		"PATH=/usr/local/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -133,8 +132,7 @@ func RunSetup(ctx context.Context, workdir string, cmds []*adapterv1.SetupComman
 			return outputs, aggregateTimeoutResult(opts, i)
 		}
 		out, err := runSetupCommand(ctx, workdir, c, opts)
-		// Always record the per-command output: the §7.5 line 475 "Fully
-		// logged" requirement applies whether the command succeeded, was
+		// Always record the per-command output: the §7.5 requirement applies whether the command succeeded, was
 		// terminated by the per-command/aggregate cap, or exited non-zero.
 		// F-7.5.4.
 		if out.Cmd != "" || err != nil {
@@ -157,7 +155,7 @@ func RunSetup(ctx context.Context, workdir string, cmds []*adapterv1.SetupComman
 // fail returns a fatal error; warn returns ErrSetupAggregateTimeoutWarn
 // wrapped with the cap + command-index so callers can both detect the
 // warn case (errors.Is) and surface the diagnostic context in their
-// observability emit. spec: §5.1 lines 89-91 — F-7.5.13.
+// observability emit. spec: §5.1 — F-7.5.13.
 func aggregateTimeoutResult(opts SetupOptions, i int) error {
 	if opts.FailOnAggregateTimeout {
 		return fmt.Errorf("setup phase exceeded the aggregate cap of %s at command %d",
@@ -172,7 +170,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 		return SetupCommandOutput{}, errors.New("command is empty")
 	}
 	out := SetupCommandOutput{Cmd: c.GetCmd()}
-	// spec: §14 line 99 — an omitted per-command timeoutSeconds carries
+	// spec: §14 — an omitted per-command timeoutSeconds carries
 	// no independent time limit; the §5.1 setupPolicy.timeoutSeconds
 	// aggregate cap (encoded in ctx by RunSetup) is the only bound.
 	// F-7.5.6.
@@ -187,7 +185,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 		defer cancel()
 	}
 
-	// spec: §7.5 line 490 — when opts.Shell is true the command runs via
+	// spec: §7.5 — when opts.Shell is true the command runs via
 	// `/bin/sh -c` (legacy behaviour); when false the command string is
 	// split on whitespace and execed directly so shell metacharacters
 	// (pipes, redirects, backticks, `&&`, glob expansion, variable
@@ -200,7 +198,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
-	// spec: §7.5 line 477 ("Time-bounded") — each command runs in its
+	// spec: §7.5 — each command runs in its
 	// own process group so a per-command or aggregate-cap kill reaches
 	// every descendant (background jobs, nohup'd processes, deep forks)
 	// rather than only the shell. F-7.5.7.
@@ -209,7 +207,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 	// group rather than just the shell so the kill reaches descendants;
 	// without this override exec.CommandContext only signals the
 	// immediate process. cmd.WaitDelay bounds how long Wait waits for
-	// I/O drain after the SIGKILL before returning. spec: §7.5 line 477.
+	// I/O drain after the SIGKILL before returning. spec: §7.5.
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
@@ -218,7 +216,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 	}
 	cmd.WaitDelay = 5 * time.Second
 
-	// spec: §7.5 line 475 — capture stdout and stderr separately so the
+	// spec: §7.5 — capture stdout and stderr separately so the
 	// gateway can persist the full transcript on the session row and the
 	// §11.7 audit log distinguishes the two streams. The per-stream cap
 	// keeps a chatty command from blowing the gRPC response. F-7.5.4.
@@ -252,7 +250,7 @@ func runSetupCommand(ctx context.Context, workdir string, c *adapterv1.SetupComm
 // cappedBuffer is an io.Writer that retains at most cap bytes; further
 // writes are recorded as truncated. The truncated bytes are silently
 // dropped — the suffix is added at render time so the in-memory shape
-// stays bounded. spec: §7.5 line 475 — F-7.5.4.
+// stays bounded. spec: §7.5 — F-7.5.4.
 type cappedBuffer struct {
 	cap       int
 	buf       []byte
@@ -287,8 +285,7 @@ func (b *cappedBuffer) String() string {
 // in the argv survive as literal arguments and so cannot trigger pipes,
 // redirects, backtick substitution, variable interpolation, or glob
 // expansion. An empty argv-mode command is rejected with a typed error
-// so the caller surfaces the §7.5 line 488 rejection reason. spec: §7.5
-// line 490 — F-7.5.2.
+// so the caller surfaces the §7.5 rejection reason. spec: §7.5 — F-7.5.2.
 func buildSetupCmd(ctx context.Context, cmdLine string, shell bool) (*exec.Cmd, error) {
 	if shell {
 		return exec.CommandContext(ctx, "/bin/sh", "-c", cmdLine), nil

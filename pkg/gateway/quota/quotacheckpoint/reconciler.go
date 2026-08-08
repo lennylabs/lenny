@@ -8,18 +8,18 @@ import (
 )
 
 // DefaultInterval is the checkpoint cadence used when Interval is unset.
-// It matches the §11.2 line 44 quotaSyncIntervalSeconds default (30s);
+// It matches the §11.2 quotaSyncIntervalSeconds default (30s);
 // production threads the configured value.
 const DefaultInterval = 30 * time.Second
 
-// Reconciler drives the §11.2 periodic checkpoint and the §11.2 line 48
+// Reconciler drives the §11.2 periodic checkpoint and the §11.2
 // recovery reconstruction for the token-usage counters. It probes Redis
 // reachability on the checkpoint cadence: while Redis is reachable it
 // checkpoints every active window into Postgres, and on a down-to-up edge
 // it first reconstructs every checkpointed counter via the MAX rule before
 // the next checkpoint. It mirrors delegationbudget.Reconciler.
 //
-// spec: §11.2 lines 44, 48.
+// spec: §11.2.
 type Reconciler struct {
 	// Probe reports whether the Redis quota backend is reachable this tick.
 	// Required.

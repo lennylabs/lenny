@@ -71,8 +71,7 @@ func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string)
 // descendant's pod, not merely the directly-terminated parent's. Before
 // F-11.3.9 the cascade flipped each descendant row to cancelled but never
 // released the executor, so the descendant runtimes kept running until the
-// watchdog's maxSessionAge clock fired hours later. spec: §11.3 line 236; §11.4
-// line 258; §8.10 cascade.
+// watchdog's maxSessionAge clock fired hours later. spec: §11.3; §11.4; §8.10 cascade.
 func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	store := memstore.New()
 	exec := newCancelTrackingExecutor()
@@ -117,7 +116,7 @@ func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 // with the matching §6.2 disposition; a pod-backed executor (SessionReleaser)
 // records the disposition and then drains the pod, so it is reclaimed rather
 // than left resident for the next session. spec: §6.1 (one-session-only);
-// §6.2 lines 105-117; §11.4 line 258. F-6.1.25.
+// §6.2; §11.4. F-6.1.25.
 func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -156,7 +155,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 // TerminatedReason) on the Postgres session row. The gateway writes no
 // Sandbox.status field for the terminal disposition — the WarmPoolController is
 // the sole writer of Sandbox.status (§4.6.3) — so the fact lives on the session
-// row and is read through the session API (§7.2 line 230). F-6.2.12.
+// row and is read through the session API (§7.2). F-6.2.12.
 func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {

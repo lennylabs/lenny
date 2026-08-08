@@ -9,8 +9,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// TestEncodeSharedAssets_RoundTripsThroughAdapterDecode confirms the §6.4
-// line 409 wiring: the controller encodes a Runtime's inline sharedAssets
+// TestEncodeSharedAssets_RoundTripsThroughAdapterDecode confirms the §6.4 wiring: the controller encodes a Runtime's inline sharedAssets
 // into the form the adapter decodes, preserving path, content, and mode.
 func TestEncodeSharedAssets_RoundTripsThroughAdapterDecode_spec_6_4(t *testing.T) {
 	assets := []lennyv1.SharedAsset{

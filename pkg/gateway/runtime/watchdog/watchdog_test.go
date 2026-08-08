@@ -16,7 +16,7 @@ import (
 )
 
 // idleCapDisabled is a maxIdleTime far larger than any session age these
-// maxSessionAge / resolver tests exercise, so the §11.3 line 199 idle
+// maxSessionAge / resolver tests exercise, so the §11.3 idle
 // sweep never fires on their stale `running` rows. It lets a test isolate
 // the wall-clock maxSessionAge behaviour from the idle reclamation path
 // (the idle sweep is covered directly in idle_test.go). F-11.3.7.
@@ -99,7 +99,7 @@ func TestTickEmitsSessionCompletedBillingEvent(t *testing.T) {
 	}
 }
 
-// spec: §11.2 lines 87-88 — a watchdog-forced terminal billing event
+// spec: §11.2 — a watchdog-forced terminal billing event
 // auto-populates experiment_id/variant_id from the session's
 // experimentContext, just like the gateway-driven terminal path.
 // F-11.2.13.
@@ -486,7 +486,7 @@ func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, fromState sessio
 	f.fromStates = append(f.fromStates, fromState)
 }
 
-// spec: §5.2 line 519 + §6.2 — F-5.2.26: a session forced terminal by
+// spec: §5.2 + §6.2 — F-5.2.26: a session forced terminal by
 // the watchdog must run the gateway-side terminal pipeline so its
 // executor (which for concurrent-mode sessions releases the slot) is
 // released and a single set of signals fires.
@@ -547,7 +547,7 @@ func TestTickWithTerminalHookDoesNotDoubleBill_spec_5_2_519(t *testing.T) {
 // would bypass the recycle disposition for a handed-off running session.
 //
 // spec: §4.6 (durable binding, running-session handoff via §10.1 / executor
-// recycle); §6.2 (recycle disposition); §5.2 line 519 (slot release).
+// recycle); §6.2 (recycle disposition); §5.2.
 func TestTickExpiryInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	store := memstore.New()
 	hook := &fakeTerminalHook{}
@@ -588,7 +588,7 @@ func TestTickDoesNotArchiveAForcedRootSession(t *testing.T) {
 // TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables verifies that
 // every operator-tunable §11.3 timeout is backed by a documented Default*
 // constant and that the zero value of Config.MaxSuspendedPodHoldSeconds
-// falls through to the §11.3 line 233 default. spec: §11.3 lines 199, 218–221, 233.
+// falls through to the §11.3 default. spec: §11.3.
 // F-11.3.11 / F-11.3.17.
 func TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables(t *testing.T) {
 	for _, tc := range []struct {
@@ -618,21 +618,21 @@ func TestConfigWithDefaultsAppliesSpec_11_3_OperatorTunables(t *testing.T) {
 		})
 	}
 	if got := watchdog.DefaultMaxSuspendedPodHoldSeconds; got != 900 {
-		t.Errorf("DefaultMaxSuspendedPodHoldSeconds = %d, want 900 (§11.3 line 233)", got)
+		t.Errorf("DefaultMaxSuspendedPodHoldSeconds = %d, want 900 (§11.3)", got)
 	}
 }
 
 // fakeAgeResolver is a watchdog.SessionAgeResolver that returns a fixed
 // per-runtime maxSessionAge cap keyed by RuntimeRef, modelling the §5.1
 // limits / §5.2 pool lookup the production sessionage.Resolver performs.
-// A missing key returns 0 (no per-config cap). spec: §11.3 line 198. F-11.3.3.
+// A missing key returns 0 (no per-config cap). spec: §11.3. F-11.3.3.
 type fakeAgeResolver map[string]int
 
 func (f fakeAgeResolver) EffectiveMaxSessionAgeSeconds(_ context.Context, sess sessionstore.Session) int {
 	return f[sess.RuntimeRef]
 }
 
-// spec: §11.3 line 198 — the maxSessionAge sweep honours a deployer's
+// spec: §11.3 — the maxSessionAge sweep honours a deployer's
 // per-runtime / per-pool cap, expiring a tightly-capped runtime's session
 // before the platform default while leaving an uncapped runtime's session
 // bounded only by the default. F-11.3.3.
@@ -668,7 +668,7 @@ func TestMaxAgeHonorsPerRuntimeResolver_spec_11_3_198(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 198 — most-restrictive-wins: a per-session
+// spec: §11.3 — most-restrictive-wins: a per-session
 // retryPolicy.maxSessionAgeSeconds clamps below the resolver's per-runtime
 // cap, so the tighter per-session value governs the deadline. F-11.3.3.
 func TestPerSessionRetryPolicyClampsBelowResolverCap_spec_11_3_198(t *testing.T) {
@@ -692,7 +692,7 @@ func TestPerSessionRetryPolicyClampsBelowResolverCap_spec_11_3_198(t *testing.T)
 	}
 }
 
-// spec: §11.3 line 198 — a 0 resolver result (neither runtime nor pool
+// spec: §11.3 — a 0 resolver result (neither runtime nor pool
 // declares a cap) falls through to the platform default, preserving the
 // prior single-default behaviour. F-11.3.3.
 func TestResolverZeroLeavesPlatformDefault_spec_11_3_198(t *testing.T) {

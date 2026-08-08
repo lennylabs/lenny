@@ -53,7 +53,7 @@ func (e *releaseRecordingExecutor) dispositionOf(id string) (executor.Dispositio
 // recording the §6.2 cancelled disposition. Before F-11.3.1 the handler only
 // flipped each descendant row to cancelled and left the child agents running,
 // holding tokens and charging credential leases until the watchdog's
-// maxSessionAge clock fired. spec: §8.5; §11.3 line 236; §11.4 line 258.
+// maxSessionAge clock fired. spec: §8.5; §11.3; §11.4.
 func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 	store := memstore.New()
 	exec := &releaseRecordingExecutor{released: map[string]executor.Disposition{}}

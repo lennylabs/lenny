@@ -24,7 +24,7 @@ func TestTLSServerOptionAppliesMods_spec_10_3_321(t *testing.T) {
 		ran = true
 		// A real mod installs the §10.3 SPIFFE VerifyPeerCertificate hook;
 		// here we just confirm the mod observes the assembled config. The
-		// leaf is served via the §10.3 line 338 filesystem-watching
+		// leaf is served via the §10.3 filesystem-watching
 		// GetCertificate callback rather than a static Certificates slice.
 		if c.GetCertificate == nil {
 			t.Error("mod ran before the base GetCertificate callback was assembled")
