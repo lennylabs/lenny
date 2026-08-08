@@ -113,7 +113,7 @@ func WithLogger(logf func(format string, args ...any)) Option {
 	return func(c *config) { c.logger = logf }
 }
 
-// WithStreams overrides the §15.4.1 byte transport with explicit
+// WithStreams overrides the §28.5.3 byte transport with explicit
 // streams. It is intended for in-process testing; production runtimes
 // use the default stdin/stdout or socket transport.
 func WithStreams(r io.Reader, w io.Writer) Option {

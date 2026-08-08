@@ -78,7 +78,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// directUsageEchoLoop is a minimal §15.4.1 runtime loop for the
+// directUsageEchoLoop is a minimal §28.5.3 runtime loop for the
 // InProcessRuntime the wired adapter runs. StartSession only needs a runtime
 // to Start; the loop drains inbound frames until EOF so it exits cleanly on
 // teardown.

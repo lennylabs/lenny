@@ -84,7 +84,7 @@ func (h *delegateHandler) OnMessage(ctx context.Context, msg runtime.Message) (r
 	}
 
 	// 4. lenny/output — emit the child output to the parent or client.
-	//    The response below still signals turn completion (§15.4.1).
+	//    The response below still signals turn completion (§28.5.3).
 	if err := tools.Output(childParts); err != nil {
 		return delegationError(err), nil
 	}
@@ -110,7 +110,7 @@ func echoParts(in []runtime.MessagePart, seq uint64) []runtime.MessagePart {
 }
 
 // delegationError builds a Final Reply carrying a structured error so
-// the adapter records the failure without losing context (§15.4.1).
+// the adapter records the failure without losing context (§28.5.3).
 func delegationError(err error) runtime.Reply {
 	return runtime.Reply{
 		Error: &runtime.ResponseError{Code: "DELEGATION_FAILED", Message: err.Error()},

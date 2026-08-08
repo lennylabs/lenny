@@ -19,7 +19,7 @@ import (
 // MCPRuntime drives a §5.1 type: mcp runtime: a runtime whose agent
 // process IS an MCP server. The adapter starts that process and reaches
 // it as an MCP client (§9.1 "Direct MCP server access"), rather than
-// driving an agent binary over the §15.4.1 JSONL stdin/stdout protocol
+// driving an agent binary over the §28.5.3 JSONL stdin/stdout protocol
 // used for a type: agent runtime.
 //
 // MCPRuntime implements the RuntimeProcess interface so the §4.7
@@ -31,10 +31,10 @@ import (
 //
 //   - Start: spawn the agent's MCP-server process and perform the MCP
 //     `initialize` handshake over its stdio.
-//   - message: an MCP `tools/call`. The §15.4.1 message envelope names
+//   - message: an MCP `tools/call`. The §28.5.3 message envelope names
 //     the tool (`tool` field) and carries its arguments (`arguments`
 //     field); the adapter issues the call and surfaces the MCP result
-//     as a §15.4.1 `response` frame on the Output channel.
+//     as a §28.5.3 `response` frame on the Output channel.
 //   - Interrupt: close the MCP connection and signal the process
 //     (SIGTERM for a clean interrupt, SIGKILL for a hard one). A type:
 //     mcp runtime has no §15.4.3 CH-RUNTIMEOPS, so there is no
@@ -166,7 +166,7 @@ func (r *MCPRuntime) Start(ctx context.Context, _ string) error {
 	return nil
 }
 
-// mcpInboundMessage is the subset of a §15.4.1 `message` envelope the
+// mcpInboundMessage is the subset of a §28.5.3 `message` envelope the
 // type: mcp adapter path reads to build an MCP `tools/call`. The agent
 // of a type: mcp runtime is an MCP server, so the unit of work is a
 // tool call: the envelope names the tool and carries its arguments.
@@ -177,9 +177,9 @@ type mcpInboundMessage struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-// WriteEnvelope maps a §15.4.1 inbound message onto an MCP `tools/call`
+// WriteEnvelope maps a §28.5.3 inbound message onto an MCP `tools/call`
 // against the agent's MCP server and pushes the call's result onto the
-// Output channel as a §15.4.1 `response` frame. A non-`message`
+// Output channel as a §28.5.3 `response` frame. A non-`message`
 // envelope (a lifecycle frame) is ignored: a type: mcp runtime has no
 // JSONL lifecycle protocol.
 func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
@@ -221,7 +221,7 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	}
 }
 
-// Output streams the §15.4.1 `response` frames WriteEnvelope produces
+// Output streams the §28.5.3 `response` frames WriteEnvelope produces
 // from MCP tool-call results. The channel is closed by Close.
 func (r *MCPRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
 	r.mu.Lock()
@@ -331,7 +331,7 @@ func (r *MCPRuntime) InitializeResult() mcp.InitializeResult {
 	return r.initResult
 }
 
-// mcpResponseFrame builds the §15.4.1 `response` frame for an MCP
+// mcpResponseFrame builds the §28.5.3 `response` frame for an MCP
 // tools/call outcome. A failed call yields a response carrying an
 // `error` object; a successful call yields a single structured
 // MessagePart wrapping the MCP result, plus the MCP `content` blocks
@@ -361,7 +361,7 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 	return json.Marshal(frame)
 }
 
-// mcpResultParts converts an MCP tools/call result into a §15.4.1
+// mcpResultParts converts an MCP tools/call result into a §28.5.3
 // MessagePart array. An MCP tool result is `{content: [...], isError}`;
 // each text content block becomes a `text` MessagePart. A result that
 // does not follow that shape is wrapped verbatim in a single structured
@@ -374,7 +374,7 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 // consumer reading the persisted §8.8 TaskRecord still sees a value.
 // This honours the §15.5 item 7 forward-read contract: the producer's
 // declared revision crosses the MCP boundary without being silently
-// downgraded mid-flight. spec: §15.5 item 7; §15.4.1. F-15.5.13.
+// downgraded mid-flight. spec: §15.5 item 7; §28.5.3. F-15.5.13.
 func mcpResultParts(result json.RawMessage) []map[string]any {
 	if len(result) == 0 {
 		return []map[string]any{}

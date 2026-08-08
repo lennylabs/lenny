@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
 
-// canonicalSamples returns one MessagePart per canonical type in §15.4.1
+// canonicalSamples returns one MessagePart per canonical type in §28.5.3
 // "Canonical Type Registry (v1)". Each sample has every field the
 // fidelity matrix tracks populated with a distinctive value so the
 // per-field assertions can observe what survives translation.

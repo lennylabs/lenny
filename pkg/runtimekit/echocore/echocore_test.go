@@ -56,7 +56,7 @@ func TestEchoesAMessageAsAResponse(t *testing.T) {
 		t.Errorf("output = %+v, want the echoed input", resp.Output)
 	}
 	if resp.Output[0].SchemaVersion != 1 {
-		t.Errorf("schemaVersion = %d, want 1 (§15.4.1 producer obligation)", resp.Output[0].SchemaVersion)
+		t.Errorf("schemaVersion = %d, want 1 (§28.5.3 producer obligation)", resp.Output[0].SchemaVersion)
 	}
 	if !strings.Contains(resp.Output[0].Inline, "[echo seq=1]") {
 		t.Errorf("text part %q must carry the sequence prefix", resp.Output[0].Inline)

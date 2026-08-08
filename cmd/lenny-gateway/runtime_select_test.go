@@ -34,7 +34,7 @@ func TestResolveExecutorEchoSelectorWins_spec_17_4_262(t *testing.T) {
 }
 
 // spec: §17.4 — LENNY_AGENT_BINARY / --runtime-bin dispatches
-// to a child process speaking the §15.4.1 adapter protocol.
+// to a child process speaking the §28.5.3 adapter protocol.
 func TestResolveExecutorRuntimeBinary_spec_17_4_323(t *testing.T) {
 	exec, desc, err := resolveExecutor("/path/to/agent", "")
 	if err != nil {

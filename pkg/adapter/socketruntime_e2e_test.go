@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
 
-// embeddedEchoLoop is the real §15.4.1 echocore loop wired as an
+// embeddedEchoLoop is the real §28.5.3 echocore loop wired as an
 // embedded-runtime RuntimeLoop — the same loop cmd/runtimes/echo-embedded
 // runs in-process.
 func embeddedEchoLoop(ctx context.Context, in io.Reader, out io.Writer) error {
@@ -41,7 +41,7 @@ func buildRuntime(t *testing.T, pkg string) string {
 // TestSidecarSocketTransportDrivesTheEchoRuntime exercises the §4.7
 // sidecar transport end to end: the SocketRuntimeProcess binds the
 // abstract socket, spawns the real cmd/runtimes/echo binary with
-// LENNY_ADAPTER_SOCKET set, and round-trips a §15.4.1 message/response
+// LENNY_ADAPTER_SOCKET set, and round-trips a §28.5.3 message/response
 // over the socket. echo runs the same echocore loop the sidecar pod
 // runs; this proves the socket transport without a Kubernetes cluster.
 func TestSidecarSocketTransportDrivesTheEchoRuntime(t *testing.T) {
@@ -96,7 +96,7 @@ func TestSidecarSocketTransportDrivesTheEchoRuntime(t *testing.T) {
 
 // TestEmbeddedRuntimeDrivesTheEchoLoop exercises the §4.7 embedded
 // model end to end: an adapter.InProcessRuntime runs the echocore loop
-// in-process and round-trips a §15.4.1 message/response over the
+// in-process and round-trips a §28.5.3 message/response over the
 // in-memory pipe. This is the same loop the embedded pod container
 // runs.
 func TestEmbeddedRuntimeDrivesTheEchoLoop(t *testing.T) {

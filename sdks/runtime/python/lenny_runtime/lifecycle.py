@@ -241,7 +241,7 @@ class Lifecycle:
             self._host.log(f"lifecycle {event.type}")
 
     def _handle_terminate(self, frame: dict[str, Any]) -> None:
-        """Answer a §15.4.3 terminate event: emit a final §15.4.1
+        """Answer a §15.4.3 terminate event: emit a final §28.5.3
         response frame on stdout (carrying a DEADLINE_EXCEEDED error,
         per the §15.4.6 deadline-signal expectation), invoke
         on_terminate, and stop the frame loop so the runtime exits."""

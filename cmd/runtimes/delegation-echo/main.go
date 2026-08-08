@@ -28,7 +28,7 @@
 //  4. Calls `lenny/output` to emit the child's result parts to the
 //     parent/client.
 //
-// It then writes the §15.4.1 stdout `response` echoing the child's
+// It then writes the §28.5.3 stdout `response` echoing the child's
 // `TaskResult` output parts so the Basic-level `message`/`response`
 // round-trip contract is also satisfied.
 //
@@ -88,7 +88,7 @@ const (
 )
 
 func main() {
-	// §4.7: resolve the §15.4.1 transport. LENNY_ADAPTER_SOCKET selects
+	// §4.7: resolve the §28.5.3 transport. LENNY_ADAPTER_SOCKET selects
 	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
 	// The intra-pod MCP connections are separate Unix sockets resolved
 	// from the adapter manifest, unaffected by this choice.
@@ -244,7 +244,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 
 	if platform == nil {
 		// Basic-level fallback: no platform MCP server, so echo the
-		// inbound input parts directly (the §15.4.1 message/response
+		// inbound input parts directly (the §28.5.3 message/response
 		// round-trip contract).
 		return w.write(response{Type: "response", Output: echoParts(inbound.Input, n)})
 	}
@@ -252,7 +252,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64, platform *mcpClie
 	out, err := delegateAndEcho(platform, inbound.ID, inbound.Input, n)
 	if err != nil {
 		fmt.Fprintf(stderr, "delegation-echo: delegation flow failed: %v\n", err)
-		// §15.4.1 structured error reporting: emit a `response` carrying
+		// §28.5.3 structured error reporting: emit a `response` carrying
 		// the failure so the adapter maps the task to `failed` without
 		// losing the error context.
 		return w.write(response{
@@ -329,7 +329,7 @@ func delegateAndEcho(platform *mcpClient, messageID string, input []messagePart,
 
 	// 4. lenny/output — emit the child's result parts to the
 	//    parent/client (§8.5). The stdout `response` below still signals
-	//    task completion; per §15.4.1 its `output` array carries the
+	//    task completion; per §28.5.3 its `output` array carries the
 	//    same parts so a consumer reading either path sees the echo.
 	if _, err := platform.callTool("lenny/output", map[string]any{
 		"output": childParts,
@@ -381,7 +381,7 @@ func decodeTaskResults(raw json.RawMessage) ([]taskResult, error) {
 
 // echoParts stamps schemaVersion on every part and prefixes text parts
 // with the per-session sequence number so multi-message tests can
-// correlate. §15.4.1 producer obligation: schemaVersion MUST be set on
+// correlate. §28.5.3 producer obligation: schemaVersion MUST be set on
 // every emitted MessagePart.
 func echoParts(in []messagePart, seq uint64) []messagePart {
 	out := make([]messagePart, 0, len(in))
@@ -584,9 +584,9 @@ func (w *writer) write(v any) error {
 	return w.enc.Encode(v)
 }
 
-// messagePart mirrors the §15.4.1 MessagePart wire JSON, restricted to the
+// messagePart mirrors the §28.5.3 MessagePart wire JSON, restricted to the
 // fields delegation-echo reads or writes. SchemaVersion is mandatory per
-// §15.4.1; delegation-echo stamps v1.
+// §28.5.3; delegation-echo stamps v1.
 type messagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
@@ -598,7 +598,7 @@ type messagePart struct {
 	Status        string         `json:"status,omitempty"`
 }
 
-// responseError is the §15.4.1 optional `response.error` object and the
+// responseError is the §28.5.3 optional `response.error` object and the
 // §8.8 TaskResult.error object: both carry a code and a message.
 type responseError struct {
 	Code    string `json:"code"`

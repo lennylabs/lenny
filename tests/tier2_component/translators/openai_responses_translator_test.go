@@ -113,7 +113,7 @@ func TestLLMProxyTranslatorOpenAIResponses(t *testing.T) {
 			}
 
 			// The Responses API surfaces a top-level `id` field on the
-			// response envelope (§15.4.1's openai_responses fidelity
+			// response envelope (§15.4's openai_responses fidelity
 			// row marks it `[extended]` round-trip); the byte-passthrough
 			// check above already proves the id field is preserved on
 			// the wire. This sub-assertion pins the field's presence

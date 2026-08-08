@@ -5,5 +5,5 @@ The framing is stated in
 a link whose label names the retiring subsection and whose target the pass
 redirects.
 
-The envelope the carve-out keeps in place is cited as spec/15_external-api-surface.md#messageenvelope--unified-message-format in prose, which
+The envelope the carve-out keeps in place is cited as §15.4 in prose, which
 is the occurrence the sense register answers for.

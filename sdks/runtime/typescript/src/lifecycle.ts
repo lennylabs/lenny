@@ -238,7 +238,7 @@ export class Lifecycle {
   }
 
   // handleTerminate answers a §15.4.3 terminate event: it emits a final
-  // §15.4.1 response frame on stdout (carrying a DEADLINE_EXCEEDED
+  // §28.5.3 response frame on stdout (carrying a DEADLINE_EXCEEDED
   // error, per the §15.4.6 deadline-signal expectation), invokes
   // onTerminate, and stops the frame loop so the runtime exits.
   private async handleTerminate(

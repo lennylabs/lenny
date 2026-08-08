@@ -8,10 +8,10 @@ import (
 	"fmt"
 )
 
-// frameSlotID returns the `slotId` field of a §15.4.1 JSONL frame, or the
+// frameSlotID returns the `slotId` field of a §28.5.3 JSONL frame, or the
 // empty string when the frame does not parse as a JSON object or carries
 // no `slotId`. It is the demultiplexing key the Attach handler uses to
-// route a runtime output frame to the slot that owns it. spec: §15.4.1 — outbound frames carry slotId when maxConcurrentSessions > 1.
+// route a runtime output frame to the slot that owns it. spec: §28.5.3 — outbound frames carry slotId when maxConcurrentSessions > 1.
 func frameSlotID(line []byte) string {
 	var probe struct {
 		SlotID string `json:"slotId"`
@@ -22,13 +22,13 @@ func frameSlotID(line []byte) string {
 	return probe.SlotID
 }
 
-// stampSlotID injects slotID into an outbound §15.4.1 envelope before the
+// stampSlotID injects slotID into an outbound §28.5.3 envelope before the
 // adapter forwards it to the shared runtime, so the runtime's dispatch
 // loop and the per-slot demultiplexing both key on it. A frame that is
 // not a JSON object is returned unchanged so a non-envelope frame is not
 // dropped; a malformed object surfaces an error rather than being written
 // with no slotId, which would misroute it on a concurrent pod (fail
-// closed). spec: §6.4; §15.4.1 — inbound frames
+// closed). spec: §6.4; §28.5.3 — inbound frames
 // carry slotId when maxConcurrentSessions > 1.
 func stampSlotID(frame []byte, slotID string) ([]byte, error) {
 	trimmed := bytes.TrimSpace(frame)

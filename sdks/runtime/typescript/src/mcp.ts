@@ -29,7 +29,7 @@ const MCP_PROTOCOL_VERSION = "2025-03-26";
 const NONCE_PARAM_KEY = "_lennyNonce";
 
 // stampParts sets schemaVersion on every part that left it unset,
-// honoring the §15.4.1 producer obligation.
+// honoring the §28.5.3 producer obligation.
 function stampParts(parts: MessagePart[]): MessagePart[] {
   return parts.map((p) =>
     p.schemaVersion === undefined
@@ -267,7 +267,7 @@ export class Tools implements PlatformTools {
 
   // output invokes the §4.7 lenny/output platform tool, emitting output
   // parts incrementally to the parent or client. The stdout response
-  // frame is still required to signal turn completion (§15.4.1).
+  // frame is still required to signal turn completion (§28.5.3).
   async output(parts: MessagePart[]): Promise<void> {
     await this.platform.callTool("lenny/output", {
       output: stampParts(parts),

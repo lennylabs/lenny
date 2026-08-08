@@ -18,7 +18,7 @@ import (
 )
 
 // fromCapturingExecutor records the executor.Message values delivered to
-// each target so a test can assert the §15.4.1 from-object the gateway
+// each target so a test can assert the §15.4 from-object the gateway
 // stamps before delivery. F-13.5.11.
 type fromCapturingExecutor struct {
 	mu   sync.Mutex
@@ -63,7 +63,7 @@ func newMCPCapturingFrom(t *testing.T) (*mcp.Server, sessionstore.Store, *fromCa
 
 // TestSendMessageStampsAgentFrom_spec_13_5_11 — an inter-session
 // lenny/send_message from an authenticated sibling is delivered with the
-// gateway-set §15.4.1 from-object (kind `agent`, id = sending session) so
+// gateway-set §15.4 from-object (kind `agent`, id = sending session) so
 // the target can attribute the message. The gateway sets `from` from the
 // sender's identity; the caller never supplies it. F-13.5.11.
 func TestSendMessageStampsAgentFrom_spec_13_5_11(t *testing.T) {

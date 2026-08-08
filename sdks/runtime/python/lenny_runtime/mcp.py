@@ -34,7 +34,7 @@ NONCE_PARAM_KEY = "_lennyNonce"
 
 
 def _stamp_parts(parts: list[MessagePart]) -> list[dict[str, Any]]:
-    """Serialize parts to wire form, honoring the §15.4.1 producer
+    """Serialize parts to wire form, honoring the §28.5.3 producer
     obligation that every part carries a schema version."""
     return [p.to_wire() for p in parts]
 
@@ -251,7 +251,7 @@ class PlatformTools:
         output parts incrementally to the parent or client.
 
         The stdout response frame is still required to signal turn
-        completion (§15.4.1).
+        completion (§28.5.3).
         """
         self._platform.call_tool("lenny/output", {"output": _stamp_parts(parts)})
 

@@ -17,14 +17,14 @@
 //   - It is the binary the conformance harness (cmd/lenny-compliance/)
 //     exercises during its --level=basic battery.
 //
-// Transport (spec §4.7 deployment models): the §15.4.1 JSONL framing is
+// Transport (spec §4.7 deployment models): the §28.5.3 JSONL framing is
 // identical under both §4.7 sidecar transports; only the byte channel
 // differs. When LENNY_ADAPTER_SOCKET is set — the §4.7 sidecar pod
 // model, where the adapter runs in a separate container — echo dials
 // that abstract Unix socket and runs its loop over the connection.
 // Otherwise echo uses stdin/stdout, the §15.4 contract transport the
 // conformance harness and the contract tests drive directly. The
-// transport is selected by the shared runtimekit helper; the §15.4.1
+// transport is selected by the shared runtimekit helper; the §28.5.3
 // loop in pkg/runtimekit/echocore is identical for both.
 //
 // The same echocore loop runs in cmd/runtimes/echo-embedded under the

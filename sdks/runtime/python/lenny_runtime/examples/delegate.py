@@ -57,7 +57,7 @@ def _echo_parts(parts: list[MessagePart], seq: int) -> list[MessagePart]:
 
 def _delegation_error(err: object) -> Reply:
     """Build a final :class:`Reply` carrying a structured error so the
-    adapter records the failure without losing context (§15.4.1)."""
+    adapter records the failure without losing context (§28.5.3)."""
     return Reply(
         error=ResponseError(code="DELEGATION_FAILED", message=str(err)),
         final=True,
@@ -109,7 +109,7 @@ class DelegateHandler:
 
             # 4. lenny/output — emit the child output to the parent or
             #    client. The response below still signals turn
-            #    completion (§15.4.1).
+            #    completion (§28.5.3).
             platform.output(child_parts)
             return Reply(parts=child_parts, final=True)
         except Exception as err:  # noqa: BLE001 — surfaced as a Reply error

@@ -235,7 +235,7 @@ The bridge for the §9.1 GatewayControl platform tool surface.
 ### `externalapi/` — §15 external API surface
 
 The OpenAPI specification endpoint, canonical cursor pagination, the §15.2.1
-error classifier, the §15.4.1 output-part fidelity helper, the admin API router,
+error classifier, the §15.4 output-part fidelity helper, the admin API router,
 and the §17.6 initial-admin-token provisioner.
 
 `admin`, `admintoken`, `errorclassify`, `openapi`, `outputpartfidelity`,

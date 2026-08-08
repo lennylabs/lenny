@@ -16,7 +16,7 @@ import (
 
 // outFrame is the subset of an outbound JSONL frame the echo-concurrent
 // tests assert on: the discriminator, the slotId the front loop stamps,
-// and the echoed text parts. The §15.4.1 outbound schema carries slotId
+// and the echoed text parts. The §28.5.3 outbound schema carries slotId
 // alone for concurrent multiplexing, so the tests assert on slotId and
 // never on a cwd wire field (the per-slot cwd is an internal derivation
 // covered by TestSlotCwdDerivation).
@@ -75,12 +75,12 @@ func message(slotID, text string) string {
 // TestDemultiplexesTwoSlotsWithIsolatedSequences asserts the front loop
 // routes frames to per-slot echocore loops keyed on slotId, each with its
 // own sequence counter, and stamps the originating slotId onto every
-// response. This is the core §15.4.1 dispatch loop the concurrent-workspace
-// pod depends on. slotId is the only field the §15.4.1 outbound schema tags
+// response. This is the core §28.5.3 dispatch loop the concurrent-workspace
+// pod depends on. slotId is the only field the §28.5.3 outbound schema tags
 // for concurrent multiplexing; the per-slot cwd derivation is asserted
 // directly in TestSlotCwdDerivation rather than read off the wire.
 // spec: §5.2,
-// §15.4.1, §6.4.
+// §28.5.3, §6.4.
 func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 	// Interleave two slots: slot-01 gets two messages, slot-02 one. Each
 	// slot's sequence counter is independent, so slot-01's second response
@@ -132,7 +132,7 @@ func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
 // takes the single-session whole-pod path: the response carries no slotId,
 // so echo-concurrent also serves a maxConcurrentSessions: 1 pod, where
 // runtimes never see slotId.
-// spec: §15.4.1.
+// spec: §28.5.3.
 func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 	frames := responsesOnly(drive(t, message("", "solo")))
 	if len(frames) != 1 {
@@ -149,8 +149,8 @@ func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
 // TestHeartbeatAckIsNotSlotStamped asserts a per-slot heartbeat is
 // answered with a heartbeat_ack carrying no content payload: the front
 // loop does not stamp slotId onto the protocol-level ack, matching the
-// §15.4.1 heartbeat_ack schema.
-// spec: §15.4.1.
+// §28.5.3 heartbeat_ack schema.
+// spec: §28.5.3.
 func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 	in := `{"type":"heartbeat","ts":1,"slotId":"slot-01"}` + "\n"
 	frames := drive(t, in)
@@ -171,7 +171,7 @@ func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 
 // TestShutdownEndsEverySlot asserts a pod-level shutdown frame ends the
 // loop and is not echoed: a trailing message after shutdown produces no
-// further output. spec: §15.4.1.
+// further output. spec: §28.5.3.
 func TestShutdownEndsEverySlot(t *testing.T) {
 	var out bytes.Buffer
 	in := message("slot-01", "before") +
@@ -203,7 +203,7 @@ func TestMalformedFrameIsAProtocolError(t *testing.T) {
 }
 
 // TestEmptyInputExitsCleanly asserts EOF on empty input is a clean exit
-// with no error. spec: §15.4.1 (inbound EOF exits cleanly).
+// with no error. spec: §28.5.3 (inbound EOF exits cleanly).
 func TestEmptyInputExitsCleanly(t *testing.T) {
 	var out bytes.Buffer
 	if err := run(context.Background(), strings.NewReader(""), &out, io.Discard); err != nil {

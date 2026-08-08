@@ -185,7 +185,7 @@ ECHO_TARBALL ?= $(CURDIR)/bin/runtime-echo-embedded.tar
 # The genuine sidecar-model runtime tarball the custom-sidecar smoke leg
 # imports. runtime-echo (cmd/runtimes/echo) is the Basic-level sidecar
 # reference: it dials the abstract @lenny-runtime socket the stamped
-# lenny-adapter container binds and speaks §15.4.1 JSONL, unlike the
+# lenny-adapter container binds and speaks §28.5.3 JSONL, unlike the
 # embedded-model echo-embedded image `lenny up` seeds. The custom-sidecar leg
 # imports it so placement is proven runtime-agnostic rather than echo-only.
 SIDECAR_RUNTIME_TARBALL ?= $(CURDIR)/bin/runtime-echo.tar

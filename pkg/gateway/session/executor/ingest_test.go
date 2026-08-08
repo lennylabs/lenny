@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/degradation"
 )
 
-// spec: §15.4.1 — an unregistered unprefixed type is
+// spec: §28.5.3 — an unregistered unprefixed type is
 // collapsed to `text`, the original is preserved in
 // `annotations.originalType`, and an `unregistered_platform_type` warning
 // rides on the part (MED-018).
@@ -39,7 +39,7 @@ func TestIngestUnregisteredPlatformType_spec_15_4_1_1522(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a vendor-namespaced custom type still falls
+// spec: §28.5.3 — a vendor-namespaced custom type still falls
 // back to text with originalType, but does NOT earn the warning: it is a
 // deliberate extension, not an unrecognized platform type.
 func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
@@ -60,7 +60,7 @@ func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a canonical type passes through untouched with no
+// spec: §28.5.3 — a canonical type passes through untouched with no
 // annotations.
 func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
 	env := responseEnvelope{
@@ -82,7 +82,7 @@ func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a part stamped a schemaVersion ahead of
+// spec: §28.5.3 — a part stamped a schemaVersion ahead of
 // the gateway's known max raises a `schema_version_ahead` annotation on
 // the enclosing envelope, carrying knownVersion + encounteredVersion. The
 // part itself is still forward-read (MED-017).
@@ -110,7 +110,7 @@ func TestIngestSchemaVersionAhead_spec_15_4_1_1501(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — the Basic-level `{type:"response", text:"..."}`
+// spec: §28.5.3 — the Basic-level `{type:"response", text:"..."}`
 // shorthand ingests as a single v1 text part with no degradation.
 func TestIngestResponseTextShorthand_spec_15_4_1(t *testing.T) {
 	parts, envAnn := ingestResponse(responseEnvelope{Type: "response", Text: "hi"})

@@ -28,7 +28,11 @@ type Target struct {
 }
 
 // String renders the target in the fragment-link spelling, which is the
-// spelling a citation of an unnumbered heading is written in.
+// spelling a destination is written in wherever a path and an anchor are
+// what resolves it: a register entry, a failure that names one, and a
+// citation of a heading outside the specification. A bare citation of a
+// specification heading is written in the §-form instead, by
+// citationFor.
 func (t Target) String() string { return t.File + "#" + t.Anchor }
 
 // Move is one retired anchor's redirect: the anchor a heading was
@@ -82,10 +86,12 @@ func sectionDigits(number string) string { return strings.ReplaceAll(number, "."
 
 // retiresSection reports whether the map retires the anchor of the
 // section the number names, which is what makes a bare §X.Y citation of
-// it a citation the sense register resolves. A number the map does not
-// retire is judged against the sections the specification states: a
-// section a specification file of the tree still states a heading for
-// stands exactly as it is written, and one nothing states stops the run.
+// it a citation the sense register resolves. This is the whole
+// membership test for the citation class. A number the map does not
+// retire stands exactly as it is written, whether or not a specification
+// file of the tree still states a heading for it, because the map is the
+// record of what the reduction retired and nothing else retires a
+// section.
 func (m *moveMap) retiresSection(number string) bool {
 	return m.sections[sectionDigits(number)]
 }

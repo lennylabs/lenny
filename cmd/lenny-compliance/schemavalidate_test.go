@@ -38,7 +38,7 @@ func TestValidateJSONLFrame_spec_15_4_6_2405(t *testing.T) {
 
 // spec: §15.4.6 — every MessagePart the runtime emits validates
 // against schemas/messagepart.schema.json, including the required
-// schemaVersion the §15.4.1 producer contract mandates.
+// schemaVersion the §28.5.3 producer contract mandates.
 func TestValidateMessagePart_spec_15_4_6_2408(t *testing.T) {
 	cases := []struct {
 		name string

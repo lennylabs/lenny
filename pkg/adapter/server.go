@@ -37,7 +37,7 @@ const podNameEnvVar = "POD_NAME"
 
 // RuntimeKind selects which §5.1 runtime type the adapter drives. It
 // picks the adapter→runtime path: a type: agent runtime is driven over
-// the §15.4.1 JSONL stdin/stdout protocol; a type: mcp runtime's agent
+// the §28.5.3 JSONL stdin/stdout protocol; a type: mcp runtime's agent
 // is itself an MCP server, driven by the adapter as an MCP client
 // (§9.1). The Server's Runtime field is the RuntimeProcess for the
 // selected kind in both cases — only the implementation differs.
@@ -203,7 +203,7 @@ type Server struct {
 	scrubDone func()
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
-	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
+	// over the §28.5.3 JSONL stdin/stdout protocol. RuntimeKindMCP
 	// selects the type: mcp path, where the agent is an MCP server the
 	// adapter drives as an MCP client; wire Runtime with an *MCPRuntime.
 	RuntimeKind RuntimeKind
@@ -280,15 +280,15 @@ type Server struct {
 	// primary terminal-notification surfaces.
 	PostMortemDir string
 
-	// HeartbeatInterval is the §15.4.1 cadence at which the
+	// HeartbeatInterval is the §28.5.3 cadence at which the
 	// Attach loop sends a `{type:heartbeat,ts}` liveness ping to the
 	// runtime. Zero (the default) disables heartbeats — the in-process
 	// dev executor and tests that construct a bare Server send none.
 	// cmd/lenny-adapter sets it for the production sidecar so a hung
 	// runtime is detected by liveness probe, not only by stream close.
-	// spec: §15.4.1.
+	// spec: §28.5.3.
 	HeartbeatInterval time.Duration
-	// HeartbeatAckTimeout is the §15.4.1 window the runtime has
+	// HeartbeatAckTimeout is the §28.5.3 window the runtime has
 	// to answer a heartbeat with `heartbeat_ack`. When the window elapses
 	// with no ack the adapter considers the process hung and sends SIGTERM
 	// (RuntimeProcess.Interrupt with hard=false). Zero selects the spec

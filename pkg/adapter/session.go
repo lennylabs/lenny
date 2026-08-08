@@ -50,7 +50,7 @@ type RuntimeProcess interface {
 	// runtime's stdin.
 	WriteEnvelope(sessionID string, envelope []byte) error
 	// Output streams the runtime's output envelopes. Each value is one
-	// §15.4.1 JSONL frame the runtime wrote to stdout. The channel is
+	// §28.5.3 JSONL frame the runtime wrote to stdout. The channel is
 	// closed when the runtime's output ends; the context bounds the
 	// reader so a stalled consumer does not leak it.
 	Output(ctx context.Context, sessionID string) (<-chan []byte, error)
@@ -168,7 +168,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 }
 
 // SendMessage delivers a content message to the pod's runtime (§4.7).
-// The request carries a §15.4.1 message envelope already encoded by
+// The request carries a §28.5.3 message envelope already encoded by
 // the gateway; the adapter writes it verbatim to the runtime's stdin.
 // The runtime's response is surfaced asynchronously, so SendMessage
 // returns once the envelope is delivered.

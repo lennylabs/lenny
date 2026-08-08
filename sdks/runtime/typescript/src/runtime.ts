@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // This module is the §15.7 entry point of the TypeScript runtime-author
-// SDK. run wires up the §15.4.1 stdin/stdout framing, optionally dials
+// SDK. run wires up the §28.5.3 stdin/stdout framing, optionally dials
 // the manifest-advertised Unix sockets (platform MCP server, connector
 // MCP servers, lifecycle channel) with the §15.4.3 manifest-nonce
 // handshake, parses the §4.7 credential file, and drives the §15.4.2
@@ -70,7 +70,7 @@ export interface RunOptions {
   socketTransport?: boolean;
   // dialTimeoutMs bounds each Unix-socket dial. Defaults to 5000.
   dialTimeoutMs?: number;
-  // input and output override the §15.4.1 byte transport with explicit
+  // input and output override the §28.5.3 byte transport with explicit
   // streams. They are intended for in-process testing; production
   // runtimes use the default stdin/stdout or socket transport.
   input?: Readable;
@@ -121,7 +121,7 @@ function levelRank(level: IntegrationLevel): number {
 }
 
 // stampParts sets schemaVersion on every part that left it unset,
-// honoring the §15.4.1 producer obligation, and returns a non-empty
+// honoring the §28.5.3 producer obligation, and returns a non-empty
 // array so an empty Reply still serializes as output: [].
 function stampParts(parts: MessagePart[]): MessagePart[] {
   return parts.map((p) =>
@@ -131,7 +131,7 @@ function stampParts(parts: MessagePart[]): MessagePart[] {
   );
 }
 
-// run wires up the §15.4.1 stdin/stdout framing, dials the higher-level
+// run wires up the §28.5.3 stdin/stdout framing, dials the higher-level
 // channels for the configured integration level, parses the §4.7
 // credential file, and drives the §15.4.2 dispatch loop. It resolves
 // when the adapter closes the inbound stream or sends a shutdown frame.
@@ -159,7 +159,7 @@ class Session {
   private exitReason?: TerminationReason;
   private loopStopped = false;
 
-  // dispatchTail serializes message handling so the §15.4.1
+  // dispatchTail serializes message handling so the §15.4
   // coordinator-local FIFO contract holds: handlers run one at a time
   // in the order the loop read their frames.
   private dispatchTail: Promise<void> = Promise.resolve();
@@ -171,7 +171,7 @@ class Session {
 
   // run drives one runtime lifecycle: resolve the transport, load the
   // manifest and credentials, dial the higher-level channels for the
-  // configured level, then run the §15.4.1 frame loop.
+  // configured level, then run the §28.5.3 frame loop.
   async run(): Promise<void> {
     const transport = await this.openTransport();
     this.writer = new FrameWriter(transport.output);
@@ -224,11 +224,11 @@ class Session {
     }
   }
 
-  // loop is the §15.4.1 frame loop. It reads newline-delimited JSON and
+  // loop is the §28.5.3 frame loop. It reads newline-delimited JSON and
   // routes each frame by type: message frames are dispatched in FIFO
   // order, heartbeat frames are answered immediately, tool_result
   // frames are correlated, and a shutdown frame ends the loop. Unknown
-  // frame types are ignored for forward compatibility (§15.4.1).
+  // frame types are ignored for forward compatibility (§28.5.3).
   private async loop(input: Readable): Promise<void> {
     const reader = new LineReader(input);
     for (;;) {
@@ -277,7 +277,7 @@ class Session {
     }
   }
 
-  // enqueueMessage decodes one §15.4.1 message frame and chains its
+  // enqueueMessage decodes one §28.5.3 message frame and chains its
   // handler onto the dispatch tail so messages are processed one at a
   // time in arrival order.
   private enqueueMessage(line: string): void {
@@ -293,10 +293,10 @@ class Session {
     this.dispatchTail = this.dispatchTail.then(() => this.handleMessage(env));
   }
 
-  // handleMessage invokes onMessage for one decoded §15.4.1 message and
+  // handleMessage invokes onMessage for one decoded §28.5.3 message and
   // writes the resulting response frame. A handler rejection is
   // reported as a structured response error so the adapter records the
-  // failure without losing context (§15.4.1 error reporting via
+  // failure without losing context (§28.5.3 error reporting via
   // response).
   private async handleMessage(env: MessageEnvelope): Promise<void> {
     this.sequence += 1;
@@ -332,7 +332,7 @@ class Session {
     }
 
     // A turn marked streaming and not final defers the response frame.
-    // The §15.4.1 contract still requires a final response frame, so
+    // The §28.5.3 contract still requires a final response frame, so
     // the SDK emits it once the runtime returns a final Reply.
     if (reply.streaming && !reply.final) {
       return;
@@ -345,7 +345,7 @@ class Session {
     });
   }
 
-  // handleToolResult routes an inbound §15.4.1 tool_result frame to the
+  // handleToolResult routes an inbound §28.5.3 tool_result frame to the
   // pending tool_call that emitted the matching id.
   private handleToolResult(line: string): void {
     let tr: InboundToolResult;
@@ -364,7 +364,7 @@ class Session {
     }
   }
 
-  // handleShutdown decodes the §15.4.1 shutdown frame and records the
+  // handleShutdown decodes the §28.5.3 shutdown frame and records the
   // termination reason for run to apply after draining in-flight
   // handlers.
   private handleShutdown(line: string): void {
@@ -523,7 +523,7 @@ class Session {
     }
   }
 
-  // openTransport resolves the §15.4.1 transport. When explicit streams
+  // openTransport resolves the §28.5.3 transport. When explicit streams
   // were supplied it uses them; when socket transport is enabled and
   // LENNY_ADAPTER_SOCKET names a socket it dials that socket; otherwise
   // it returns process.stdin / process.stdout.

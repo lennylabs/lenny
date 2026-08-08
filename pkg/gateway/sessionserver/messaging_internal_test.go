@@ -184,7 +184,7 @@ func TestBusEmitterPublishesInboxCleared_spec_7_2_284(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — NewBusEmitter publishes message_expired onto the
+// spec: §15.4 — NewBusEmitter publishes message_expired onto the
 // sender session's SSE stream so a reconnecting sender replays it.
 func TestBusEmitterPublishesMessageExpired_spec_15_4_1(t *testing.T) {
 	bus := sessionevents.NewBus(16)

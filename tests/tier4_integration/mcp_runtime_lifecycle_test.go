@@ -8,7 +8,7 @@
 // the full §4.7 session lifecycle: the adapter Server selects the type:
 // mcp path via RuntimeKind, StartSession spawns the MCP-server agent
 // and performs the MCP initialize handshake, SendMessage maps a
-// §15.4.1 message onto an MCP tools/call, and Shutdown terminates the
+// §28.5.3 message onto an MCP tools/call, and Shutdown terminates the
 // runtime and releases the pod.
 //
 // The gateway-side type: mcp endpoints (/mcp/runtimes/{name}) are a
@@ -94,8 +94,8 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// SendMessage: a §15.4.1 message naming the `echo` tool maps onto an
-	// MCP tools/call; the result returns as a §15.4.1 response frame.
+	// SendMessage: a §28.5.3 message naming the `echo` tool maps onto an
+	// MCP tools/call; the result returns as a §28.5.3 response frame.
 	env, _ := json.Marshal(map[string]any{
 		"type":      "message",
 		"id":        "msg-1",

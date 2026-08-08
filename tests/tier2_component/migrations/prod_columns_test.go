@@ -359,7 +359,7 @@ var prodMigrationSchema = []struct {
 		"ext_file_export_files", "ext_file_export_bytes", "updated_at",
 	}},
 	// 0131 / 0132 add the §15.5 item 7 schema_version column to the
-	// session_messages MessageEnvelope rows (§15.4.1) and the
+	// session_messages MessageEnvelope rows (§15.4) and the
 	// session_checkpoints checkpoint-metadata catalog.
 	{migration: "0131", table: "session_messages", columns: []string{"schema_version"}},
 	{migration: "0132", table: "session_checkpoints", columns: []string{"schema_version"}},

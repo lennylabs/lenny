@@ -7,7 +7,7 @@ It echoes every inbound message back, prefixing text parts with a
 per-session sequence number.
 
 The handler implements the three §15.7 :class:`Handler` methods. The SDK
-drives the §15.4.1 stdin/stdout protocol around it: it reads the inbound
+drives the §28.5.3 stdin/stdout protocol around it: it reads the inbound
 message frames, invokes :meth:`on_message`, serializes the returned
 :class:`Reply` into a response frame, answers heartbeats, and exits on
 shutdown. A runtime author writing a real agent replaces the body of

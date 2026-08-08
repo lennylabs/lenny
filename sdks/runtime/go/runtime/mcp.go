@@ -175,7 +175,7 @@ func (t *Tools) DiscoverAgents(query map[string]any) (json.RawMessage, error) {
 
 // Output invokes the §4.7 lenny/output platform tool, emitting output
 // parts incrementally to the parent or client. The stdout response
-// frame is still required to signal turn completion (§15.4.1).
+// frame is still required to signal turn completion (§28.5.3).
 func (t *Tools) Output(parts []MessagePart) error {
 	if t == nil || t.platform == nil {
 		return errors.New("output requires the platform MCP server (Standard level)")

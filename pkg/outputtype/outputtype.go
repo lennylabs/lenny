@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package outputtype encodes the §15.4.1 canonical MessagePart type
+// Package outputtype encodes the §28.5.3 canonical MessagePart type
 // registry (v1) and the ingress classification rule the gateway applies
 // to a runtime's emitted `type` string.
 //
@@ -13,25 +13,25 @@
 // warning annotation at ingress so a type added in a later minor release
 // is forward-compatible across gateways that pre-date it.
 //
-// spec: §15.4.1 — Canonical Type Registry (v1) and the
+// spec: §28.5.3 — Canonical Type Registry (v1) and the
 // namespace convention for third-party types.
 package outputtype
 
 import "strings"
 
-// MaxKnownSchemaVersion is the highest §15.4.1 MessagePart schemaVersion
+// MaxKnownSchemaVersion is the highest §28.5.3 MessagePart schemaVersion
 // the v1 gateway understands. A part stamped above this triggers the
 // `schema_version_ahead` live-consumer degradation signal: the gateway
 // forward-reads the fields it knows and annotates the enclosing envelope.
 //
-// spec: §15.4.1.
+// spec: §28.5.3.
 const MaxKnownSchemaVersion = 1
 
-// Canonical lists the §15.4.1 v1 registry types in registry order. A
+// Canonical lists the §28.5.3 v1 registry types in registry order. A
 // producer may emit any of these and the gateway translates them per the
 // per-adapter fidelity matrix without a fallback.
 //
-// spec: §15.4.1 — Canonical Type Registry (v1).
+// spec: §28.5.3 — Canonical Type Registry (v1).
 var Canonical = []string{
 	"text",
 	"code",
@@ -49,7 +49,7 @@ var Canonical = []string{
 // type carries (`x-<vendor>/<typeName>`). A type bearing it is a
 // deliberate extension, so ingress does not warn on it.
 //
-// spec: §15.4.1 — "all vendor- or community-defined custom
+// spec: §28.5.3 — "all vendor- or community-defined custom
 // types MUST use a reverse-DNS namespace prefix in the form `x-<vendor>/`".
 const vendorPrefix = "x-"
 
@@ -71,7 +71,7 @@ func IsCanonical(t string) bool {
 // third-party namespace. A bare `x-foo` with no slash is not a valid
 // namespaced type and is treated as an unregistered unprefixed name.
 //
-// spec: §15.4.1.
+// spec: §28.5.3.
 func IsVendorNamespaced(t string) bool {
 	if !strings.HasPrefix(t, vendorPrefix) {
 		return false
@@ -81,14 +81,14 @@ func IsVendorNamespaced(t string) bool {
 	return slash > 0 && slash < len(rest)-1
 }
 
-// Unregistered reports whether t triggers the §15.4.1
+// Unregistered reports whether t triggers the §28.5.3
 // `unregistered_platform_type` warning at ingress: an unprefixed name
 // that is not in the v1 registry. Registered types and properly
 // vendor-namespaced types do not warn. An empty type is not classified
 // as unregistered — the producer omitted the field and the part defaults
 // to `text` elsewhere.
 //
-// spec: §15.4.1.
+// spec: §28.5.3.
 func Unregistered(t string) bool {
 	if t == "" || IsCanonical(t) || IsVendorNamespaced(t) {
 		return false

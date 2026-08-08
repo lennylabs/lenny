@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// AdapterTools is the §15.4.1 adapter-local tool surface available at
+// AdapterTools is the §28.5.3 adapter-local tool surface available at
 // every integration level. It emits a stdout tool_call frame and blocks
 // until the matching tool_result frame arrives on stdin, correlating by
 // id. Unlike the platform MCP tools (which require Standard level),
@@ -34,7 +34,7 @@ type ToolResult struct {
 	IsError bool
 }
 
-// ToolCall emits a §15.4.1 tool_call frame for the named adapter-local
+// ToolCall emits a §28.5.3 tool_call frame for the named adapter-local
 // tool and blocks until the correlated tool_result arrives. ctx bounds
 // the wait. The id is generated and unique within the process.
 func (a *AdapterTools) ToolCall(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
@@ -73,7 +73,7 @@ func (a *AdapterTools) ToolCall(ctx context.Context, name string, arguments map[
 	}
 }
 
-// ReadFile invokes the §15.4.1 read_file adapter-local tool. The path is
+// ReadFile invokes the §28.5.3 read_file adapter-local tool. The path is
 // confined to the pod workspace by the adapter; a path resolving
 // outside /workspace returns an error result.
 func (a *AdapterTools) ReadFile(ctx context.Context, path string) (string, error) {
@@ -84,7 +84,7 @@ func (a *AdapterTools) ReadFile(ctx context.Context, path string) (string, error
 	return firstInline(tr)
 }
 
-// WriteFile invokes the §15.4.1 write_file adapter-local tool, creating
+// WriteFile invokes the §28.5.3 write_file adapter-local tool, creating
 // or overwriting a workspace file with UTF-8 content.
 func (a *AdapterTools) WriteFile(ctx context.Context, path, content string) error {
 	tr, err := a.ToolCall(ctx, "write_file", map[string]any{"path": path, "content": content})
@@ -94,7 +94,7 @@ func (a *AdapterTools) WriteFile(ctx context.Context, path, content string) erro
 	return toolError(tr, "write_file")
 }
 
-// ListDir invokes the §15.4.1 list_dir adapter-local tool and returns
+// ListDir invokes the §28.5.3 list_dir adapter-local tool and returns
 // the directory entries the adapter reports.
 func (a *AdapterTools) ListDir(ctx context.Context, path string) ([]MessagePart, error) {
 	tr, err := a.ToolCall(ctx, "list_dir", map[string]any{"path": path})
@@ -107,7 +107,7 @@ func (a *AdapterTools) ListDir(ctx context.Context, path string) ([]MessagePart,
 	return tr.Content, nil
 }
 
-// DeleteFile invokes the §15.4.1 delete_file adapter-local tool.
+// DeleteFile invokes the §28.5.3 delete_file adapter-local tool.
 func (a *AdapterTools) DeleteFile(ctx context.Context, path string) error {
 	tr, err := a.ToolCall(ctx, "delete_file", map[string]any{"path": path})
 	if err != nil {
@@ -142,7 +142,7 @@ func toolError(tr ToolResult, tool string) error {
 	return fmt.Errorf("%s: %s", tool, msg)
 }
 
-// newCallID generates a unique §15.4.1 tool_call id with the
+// newCallID generates a unique §28.5.3 tool_call id with the
 // recommended tc_ prefix.
 func newCallID() string {
 	var b [8]byte
@@ -150,7 +150,7 @@ func newCallID() string {
 	return "tc_" + hex.EncodeToString(b[:])
 }
 
-// AdapterToolsFrom returns the §15.4.1 adapter-local tool surface
+// AdapterToolsFrom returns the §28.5.3 adapter-local tool surface
 // carried on ctx. It is non-nil inside OnMessage at every integration
 // level. Handlers use it to call read_file, write_file, list_dir, and
 // delete_file, or to emit an arbitrary tool_call.

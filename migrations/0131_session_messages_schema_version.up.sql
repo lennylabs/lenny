@@ -1,6 +1,6 @@
 -- §15.5 item 7 requires every Postgres-persisted record type to carry a
 -- `schemaVersion` integer field (starting at 1) that identifies the schema
--- revision used to write the record. §15.4.1 names this table
+-- revision used to write the record. §15.4 names this table
 -- explicitly:
 --
 --   "Every `MessageEnvelope` persisted to the `session_messages` table

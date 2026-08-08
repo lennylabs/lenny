@@ -57,7 +57,7 @@ const (
 )
 
 func main() {
-	// §4.7: resolve the §15.4.1 transport. LENNY_ADAPTER_SOCKET selects
+	// §4.7: resolve the §28.5.3 transport. LENNY_ADAPTER_SOCKET selects
 	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
 	// The Full-level lifecycle channel is a separate Unix socket
 	// resolved from the adapter manifest, unaffected by this choice.
@@ -413,7 +413,7 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 				MimeTyp:       p.MimeTyp,
 			})
 		} else {
-			// §15.4.1: stamp the producer schemaVersion even when
+			// §28.5.3: stamp the producer schemaVersion even when
 			// echoing an input part verbatim, so every emitted MessagePart
 			// satisfies the required field. 15.4-MED-021.
 			p.SchemaVersion = messagePartSchemaVersion
@@ -444,7 +444,7 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 }
 
 type messagePart struct {
-	// SchemaVersion is the §15.4.1 producer obligation: a
+	// SchemaVersion is the §28.5.3 producer obligation: a
 	// producer MUST set schemaVersion to the highest version required by
 	// the fields it emits. messagepart.schema.json:66 makes it required, so
 	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
@@ -459,7 +459,7 @@ type messagePart struct {
 	Status        string         `json:"status,omitempty"`
 }
 
-// messagePartSchemaVersion is the §15.4.1 MessagePart schema revision this
+// messagePartSchemaVersion is the §28.5.3 MessagePart schema revision this
 // reference runtime emits. v1 text/blob parts require version 1.
 const messagePartSchemaVersion = 1
 

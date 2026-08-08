@@ -78,7 +78,7 @@ func TestAnnotationKeysAreDistinct_spec_15_5_2469(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — `blob_ref_unresolvable` carries
+// spec: §28.5.3 — `blob_ref_unresolvable` carries
 // `partId`, `ref`, and `reason`.
 func TestBlobRefUnresolvableFieldShape_spec_15_4_1(t *testing.T) {
 	body := degradation.BlobRefUnresolvable("part_7", "lenny-blob://acme/sess/part_7", "blob expired")
@@ -96,7 +96,7 @@ func TestBlobRefUnresolvableFieldShape_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — `unregistered_platform_type` carries
+// spec: §28.5.3 — `unregistered_platform_type` carries
 // the unrecognized type string.
 func TestUnregisteredPlatformTypeFieldShape_spec_15_4_1(t *testing.T) {
 	body := degradation.UnregisteredPlatformType("heatmap")
@@ -105,7 +105,7 @@ func TestUnregisteredPlatformTypeFieldShape_spec_15_4_1(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 / §15.5 — the §15.4.1 ingress annotations are distinct
+// spec: §28.5.3 / §15.5 — the §28.5.3 ingress annotations are distinct
 // from the §15.5 schemaVersion-family keys and from each other.
 func TestNonCatalogAnnotationKeysAreDistinct_spec_15_4_1(t *testing.T) {
 	keys := map[string]struct{}{

@@ -692,7 +692,7 @@ func checkConnectorMCPReachability(binary string, _ time.Duration, _ bool) (stri
 // checkToolResultCorrelation verifies the §15.4.6 "tool_call /
 // tool_result correlation" category. For Standard-level runtimes the
 // stdin/stdout `tool_call` channel carries adapter-local tools only —
-// platform tools go over MCP (§15.4.1 tool access by level). A runtime
+// platform tools go over MCP (§28.5.3 tool access by level). A runtime
 // that emits no `tool_call` (delegation-echo uses no adapter-local
 // tools) satisfies the category vacuously; a runtime that does emit a
 // `tool_call` must give it a unique `id` and read the matching

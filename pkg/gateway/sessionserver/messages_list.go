@@ -14,14 +14,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// messageFrom is the §15.4.1 MessageEnvelope `from` attribution surfaced
+// messageFrom is the §15.4 MessageEnvelope `from` attribution surfaced
 // on each MessageDAG node. The transcript store records the message
 // `role`; the gateway derives the canonical `{kind, id}` object from it
 // using the same conventions the executor stamps at delivery time
 // (`client`/`client_{opaque}` for a client turn, `agent`/`sess_{id}` for
 // an agent response, `system`/`lenny-gateway` for a platform message).
 //
-// spec: §15.4.1.
+// spec: §15.4.
 type messageFrom struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id,omitempty"`
@@ -39,14 +39,14 @@ type messageDelivery struct {
 	DeliveredAt string `json:"deliveredAt,omitempty"`
 }
 
-// messageNode is one §15.4.1 MessageDAG node returned by
+// messageNode is one §15.4 MessageDAG node returned by
 // GET /v1/sessions/{id}/messages. In v1 there is one implicit thread per
 // session (`threadId` absent on every row) and the transcript-write path
 // records no parent edge, so `threadId` and `inReplyTo` are empty; the
 // fields are carried so the DAG model is forward-compatible without a
 // schema change.
 //
-// spec: §15.4.1.
+// spec: §15.4.
 type messageNode struct {
 	ID            string          `json:"id"`
 	Seq           uint64          `json:"seq"`
@@ -60,7 +60,7 @@ type messageNode struct {
 	Delivery      messageDelivery `json:"delivery"`
 }
 
-// handleMessagesList implements GET /v1/sessions/{id}/messages per §15.1: the §15.4.1 MessageDAG over the durable session_messages
+// handleMessagesList implements GET /v1/sessions/{id}/messages per §15.1: the §15.4 MessageDAG over the durable session_messages
 // store, listing the messages sent to and from a session with their
 // delivery state. The view shares the session_messages backing with
 // GET /v1/sessions/{id}/transcript (the transcript is the linearized
@@ -69,7 +69,7 @@ type messageNode struct {
 //
 // It supports the canonical §15.1 `{items, cursor, hasMore}` envelope
 // with opaque cursors, the spec-named `?since=` (coordinator-local seq)
-// and `?threadId=` filters (§15.4.1), and [1, 200] limit
+// and `?threadId=` filters (§15.4), and [1, 200] limit
 // clamping. A `derive_failure` audit row, a missing/cross-tenant
 // session, or a gateway with no transcript store wired returns
 // 404 RESOURCE_NOT_FOUND per §15.1.
@@ -110,7 +110,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	// Resolve the start cursor: the opaque cursor tiebreak wins (canonical
 	// form); the spec-named `?since=` seq is the convenience filter for
 	// clients that track the coordinator-local sequence directly. spec:
-	// §15.4.1.
+	// §15.4.
 	afterSeq := uint64(0)
 	if params.Cursor.Tiebreak != "" {
 		if n, err := strconv.ParseUint(params.Cursor.Tiebreak, 10, 64); err == nil {
@@ -127,7 +127,7 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 		afterSeq = n
 	}
 
-	// spec: §15.4.1 — v1 has one implicit unlabeled
+	// spec: §15.4 — v1 has one implicit unlabeled
 	// thread per session, so every recorded node carries an empty
 	// threadId. A `?threadId=` filter naming a concrete thread therefore
 	// matches nothing; an absent/empty filter returns the implicit thread.
@@ -168,10 +168,10 @@ func (s *Server) handleMessagesList(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(envelope)
 }
 
-// toMessageNode projects a recorded transcript entry onto a §15.4.1
+// toMessageNode projects a recorded transcript entry onto a §15.4
 // MessageDAG node. The `from` attribution is derived from the role; the
 // delivery state is `delivered` (a recorded message was delivered before
-// it was transcribed). spec: §15.4.1.
+// it was transcribed). spec: §15.4.
 func toMessageNode(e transcriptstore.Entry, sessionID string) messageNode {
 	node := messageNode{
 		ID:            e.ID,
@@ -190,7 +190,7 @@ func toMessageNode(e transcriptstore.Entry, sessionID string) messageNode {
 	return node
 }
 
-// deriveMessageFrom maps a §7.2 transcript role to the §15.4.1 `from`
+// deriveMessageFrom maps a §7.2 transcript role to the §15.4 `from`
 // object, mirroring the identities the executor stamps at delivery time.
 // An assistant response is attributed to this session's agent; a system
 // message to the gateway; a user turn to the gateway client.
@@ -200,7 +200,7 @@ func toMessageNode(e transcriptstore.Entry, sessionID string) messageNode {
 // a `client` id is `client_{opaque}` (the transcript-reconstruction path
 // has no per-message client identifier, so it uses a stable sentinel).
 //
-// spec: §15.4.1.
+// spec: §15.4.
 func deriveMessageFrom(role, sessionID string) messageFrom {
 	switch role {
 	case "assistant":

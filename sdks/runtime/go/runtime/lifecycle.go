@@ -277,7 +277,7 @@ func (lc *Lifecycle) handleDeadline(ev LifecycleEvent, s *session) {
 }
 
 // handleTerminate answers a §15.4.3 terminate event: it emits a final
-// §15.4.1 response frame on stdout (carrying a DEADLINE_EXCEEDED error,
+// §28.5.3 response frame on stdout (carrying a DEADLINE_EXCEEDED error,
 // per the §15.4.6 deadline-signal expectation), invokes OnTerminate,
 // and cancels the frame loop so the runtime exits cleanly.
 func (lc *Lifecycle) handleTerminate(ctx context.Context, line []byte, s *session) {

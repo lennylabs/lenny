@@ -14,15 +14,4 @@
 # being absorbed here. The file empties as the citations are retired.
 kind: line-citation-resolution-baseline
 version: 1
-files:
-    - path: charts/lenny/values.schema.json
-      citations:
-        - §17.6 line 365
-        - §17.9.1 line 1351
-        - §17.9.1 line 1354
-    - path: pkg/gateway/mcpfabric/mcptools/generated_schemas.go
-      citations:
-        - §15.2.1 rule 4 line 1386
-    - path: schemas/ocsf-mapping.yaml
-      citations:
-        - 11_security-trust-model.md line 414 (OCSF mapping mirror)
+files: []

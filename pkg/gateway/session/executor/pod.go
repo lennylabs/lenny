@@ -88,7 +88,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	// concurrent-pool bind (SlotID != "") stamps the slotId on every
 	// outbound envelope so the reconciled adapter and runtime key on it,
 	// while an exclusive session-mode bind leaves it empty. spec: §7.2
-	// (per-slot routing), §15.4.1 (slotId multiplexing).
+	// (per-slot routing), §28.5.3 (slotId multiplexing).
 	var tenantID, slotID string
 	if bind, ok := e.registry.Get(sessionID); ok {
 		tenantID = bind.TenantID
@@ -150,7 +150,7 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	// onto the Attach stream so the reconciled adapter and the runtime's
 	// dispatch loop key on it; an exclusive session-mode bind leaves it empty
 	// and the single-session path emits no slotId. spec: §7.2 (per-slot
-	// routing), §15.4.1 (slotId multiplexing).
+	// routing), §28.5.3 (slotId multiplexing).
 	s, err := bind.Adapter.Attach(ctx, sessionID, bind.SlotID)
 	if err != nil {
 		return nil, fmt.Errorf("podexec: open attach stream: %w", err)
@@ -219,7 +219,7 @@ func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionI
 	}
 }
 
-// toolCallFrame is the subset of the §15.4.1 tool_call frame the
+// toolCallFrame is the subset of the §28.5.3 tool_call frame the
 // executor inspects to decide whether the call needs user approval.
 type toolCallFrame struct {
 	Type             string          `json:"type"`
@@ -230,7 +230,7 @@ type toolCallFrame struct {
 	SlotID           string          `json:"slotId,omitempty"`
 }
 
-// toolResultFrame is the §15.4.1 tool_result the executor writes back to
+// toolResultFrame is the §28.5.3 tool_result the executor writes back to
 // the runtime on a denial (isError:true) so the blocked tool call
 // returns the deny reason rather than executing.
 type toolResultFrame struct {

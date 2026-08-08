@@ -192,7 +192,7 @@ func (c *Coordinator) InboxLen(ctx context.Context, tenantID, sessionID string) 
 // (external-client sources) are drained without an event, since there is
 // no sender stream to notify.
 //
-// spec: §7.2; §7.3; §15.4.1 reason target_terminated.
+// spec: §7.2; §7.3; §15.4 reason target_terminated.
 func (c *Coordinator) DrainOnTerminal(ctx context.Context, tenantID, sessionID string) (drained int, err error) {
 	if c == nil {
 		return 0, nil
@@ -251,7 +251,7 @@ func (c *Coordinator) ClearInboxOnAcquire(ctx context.Context, tenantID, session
 // sender's stream. It is the periodic-sweeper hook a recovering session
 // runs while it waits to resume.
 //
-// spec: §7.2; §15.4.1 reason dlq_ttl_expired.
+// spec: §7.2; §15.4 reason dlq_ttl_expired.
 func (c *Coordinator) SweepExpired(ctx context.Context, tenantID, sessionID string) (expired int, err error) {
 	if c == nil {
 		return 0, nil

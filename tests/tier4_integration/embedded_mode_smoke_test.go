@@ -80,7 +80,7 @@ import (
 // spec: §17.4 (the in-cluster control plane on the cross-platform
 // substrate), §4.7 (the in-cluster gateway dials the agent pod's in-cluster
 // IP over the adapter boundary), §5.2 (the PoolWarmingUp initial-fill
-// window), §15.4 (the synchronous send_message delivery_receipt), §15.4.1
+// window), §15.4 (the synchronous send_message delivery_receipt), §28.5.3
 // (the echo contract), §26 (the echo runtime `lenny up` runs out of the
 // box) — exercises the embedded quick-start: bring the stack up, assert the
 // embedded Kubernetes substrate is healthy (the real-Kubernetes path rather
@@ -218,16 +218,16 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	// running session the gateway returns the §15.4 synchronous
 	// delivery_receipt with status `delivered`, and the credential-free echo
 	// runtime (the §26 runtime `lenny up` runs out of the box) echoes the
-	// input back over the §15.4.1 contract. Session creation alone proves
+	// input back over the §28.5.3 contract. Session creation alone proves
 	// placement; this proves the placed pod accepts and answers a turn end to
-	// end over the §4.7 adapter boundary. spec: §15.4, §15.4.1, §17.4, §26,
+	// end over the §4.7 adapter boundary. spec: §15.4, §28.5.3, §17.4, §26,
 	// §4.7.
 	sendPromptToPlacedSession(t, bin, home, sid)
 
 	// Custom-sidecar-runtime leg (S5/C2): the in-cluster control plane places
 	// any runtime over the §4.7 boundary, not echo alone. The leg imports a
 	// genuine sidecar-model runtime image (runtime-echo, which dials the
-	// abstract @lenny-runtime socket and speaks §15.4.1 JSONL, the contract the
+	// abstract @lenny-runtime socket and speaks §28.5.3 JSONL, the contract the
 	// stamped lenny-adapter container bridges), registers it through the §17.4
 	// walkthrough (lenny-ctl runtime publish writes the registry record; lenny
 	// runtime apply materializes its Runtime, SandboxTemplate, and
@@ -237,7 +237,7 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	// image is a docker-save artifact (the Makefile stages it and points
 	// LENNY_SIDECAR_RUNTIME_TARBALL at it), so where it is unstaged the leg
 	// states the dependency and skips per the test-coverage tier-5/6 escape
-	// hatch. spec: §17.4, §4.7, §15.4.1.
+	// hatch. spec: §17.4, §4.7, §28.5.3.
 	customSidecarRuntimeLeg(t, bin, home)
 
 	// Warm-up persisted-substrate leg (S8). A non-`--purge` `lenny down`
@@ -339,7 +339,7 @@ func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 // contract is that every send_message call returns a synchronous
 // delivery_receipt; against a running session the status is `delivered`, so
 // the CLI exits 0 and prints the receipt (and, for the echo runtime, the
-// echoed response parts per §15.4.1) to stdout. This is the difference
+// echoed response parts per §28.5.3) to stdout. This is the difference
 // between a placed pod and a working session: a non-zero exit means the
 // running session did not accept the turn (an unavailable inbox or a failed
 // §4.7 callback to the pod), and an empty reply means the synchronous
@@ -350,7 +350,7 @@ func newSessionToleratingWarmup(t *testing.T, bin, home, rt string) string {
 // output the spec does not pin; a delivered receipt against the real placed
 // echo pod is the faithful proof that the auto-seeded credential-free
 // runtime processes a turn out of the box. spec: §15.4 (synchronous
-// delivery_receipt), §15.4.1 (the echo contract), §17.4 / §26 (echo runs
+// delivery_receipt), §28.5.3 (the echo contract), §17.4 / §26 (echo runs
 // out of the box), §4.7.
 func sendPromptToPlacedSession(t *testing.T, bin, home, sid string) {
 	t.Helper()
@@ -472,7 +472,7 @@ const customRuntimeName = "my-agent"
 // control plane places it with the stamped lenny-adapter sidecar, proving
 // placement is runtime-agnostic rather than echo-only. The image it imports is
 // runtime-echo (cmd/runtimes/echo), the Basic-level sidecar reference runtime
-// that dials the abstract @lenny-runtime socket and speaks the §15.4.1 JSONL
+// that dials the abstract @lenny-runtime socket and speaks the §28.5.3 JSONL
 // protocol the stamped lenny-adapter container bridges. It is distinct from the
 // runtime-echo-embedded image `lenny up` seeds, which is the §4.7 embedded
 // model (it links the adapter as a library and serves the gRPC contract
@@ -499,7 +499,7 @@ const customRuntimeName = "my-agent"
 //
 // spec: §17.4 (the custom-runtime walkthrough; a sidecar-model runtime runs
 // with the stamped lenny-adapter container), §4.7 (the adapter sidecar and the
-// sidecar deployment model), §15.4.1 (the JSONL contract the runtime container
+// sidecar deployment model), §28.5.3 (the JSONL contract the runtime container
 // speaks to the adapter), §5.2 (the applied SandboxWarmPool warms a pod), §5.3
 // (the applied Runtime is digest-pinned).
 func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
@@ -568,7 +568,7 @@ func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
 	// apply` verb (S16). The file declares the sidecar deployment model with the
 	// genuine sidecar-model image, so the controller stamps the lenny-adapter
 	// sidecar onto the placed pod and the runtime container bridges it over the
-	// §15.4.1 JSONL channel.
+	// §28.5.3 JSONL channel.
 	crdFile := filepath.Join(t.TempDir(), "runtime-crds.yaml")
 	body := "apiVersion: lenny.dev/v1alpha1\n" +
 		"kind: Runtime\n" +

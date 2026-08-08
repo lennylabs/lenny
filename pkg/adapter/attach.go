@@ -61,7 +61,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	if err != nil {
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
 	}
-	// spec: §15.4.1 — the single pod-global runtime serves every
+	// spec: §28.5.3 — the single pod-global runtime serves every
 	// slot over one connection, so its output stream interleaves frames for
 	// all slots tagged by slotId. Demultiplex by slotId so this Attach
 	// stream sees only its slot's frames; a no-slotId frame serves the
@@ -72,7 +72,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		out = demuxSlotOutput(ctx, rawOut, slotID)
 	}
 
-	// spec: §15.4.1 — the adapter probes runtime liveness
+	// spec: §28.5.3 — the adapter probes runtime liveness
 	// with periodic heartbeats and SIGTERMs a process that misses the ack
 	// deadline. Disabled (hbHung == nil) unless HeartbeatInterval is set.
 	hb := s.startHeartbeat(ctx, sessionID, rt)
@@ -97,14 +97,14 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				// The runtime's output ended; the session is done.
 				return nil
 			}
-			// spec: §15.4.1 — heartbeat_ack is protocol-level
+			// spec: §28.5.3 — heartbeat_ack is protocol-level
 			// with no content payload; it answers the adapter's liveness
 			// probe and is never relayed to the gateway.
 			if hb != nil && jsonlFrameType(line) == "heartbeat_ack" {
 				hb.ack()
 				continue
 			}
-			// spec: §15.4.1 — set_tracing_context is an outbound
+			// spec: §28.5.3 — set_tracing_context is an outbound
 			// protocol frame the adapter consumes (it registers the
 			// tracing identifiers with the gateway for delegation
 			// propagation) and never relays as content. Available at all
@@ -115,7 +115,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				s.handleSetTracingContext(ctx, sessionID, line)
 				continue
 			}
-			// §15.4.1: an adapter-local tool_call is answered by the
+			// §28.5.3: an adapter-local tool_call is answered by the
 			// adapter itself and never relayed to the gateway. A relayed
 			// platform/connector tool_call is traced gateway-side as
 			// mcp.external_tool_call; the adapter-local dispatch below is
@@ -139,12 +139,12 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			}
 			return err
 		case <-hbHung:
-			// spec: §15.4.1 — the runtime missed the heartbeat
+			// spec: §28.5.3 — the runtime missed the heartbeat
 			// ack deadline. The adapter SIGTERMs the hung process and ends
 			// the stream with DeadlineExceeded so the gateway sees the
 			// unresponsive-agent escalation rather than a clean close.
 			s.onHeartbeatHung(ctx, sessionID, rt)
-			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; sent SIGTERM (§15.4.1)")
+			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; sent SIGTERM (§28.5.3)")
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -250,7 +250,7 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 // writeSlotEnvelope stamps the slot's slotId onto an outbound envelope and
 // forwards it to the shared runtime over the single connection. On the
 // single-session base path (slotID == "") the envelope is written verbatim,
-// preserving the one-runtime-per-pod whole-pod behavior. spec: §6.4; §15.4.1 — inbound frames carry slotId when
+// preserving the one-runtime-per-pod whole-pod behavior. spec: §6.4; §28.5.3 — inbound frames carry slotId when
 // maxConcurrentSessions > 1.
 func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID, slotID string, envelope []byte) error {
 	if s.useSlot(slotID) {
@@ -271,7 +271,7 @@ func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID, slotID string, 
 // slot. Protocol-level frames the adapter consumes per session
 // (heartbeat_ack) carry no slotId; they pass through so each slot's
 // heartbeat monitor still sees its ack on a no-slotId frame. ctx bounds the
-// filter goroutine so a stalled consumer does not leak it. spec: §15.4.1.
+// filter goroutine so a stalled consumer does not leak it. spec: §28.5.3.
 func demuxSlotOutput(ctx context.Context, in <-chan []byte, slotID string) <-chan []byte {
 	out := make(chan []byte)
 	go func() {

@@ -11,7 +11,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// echoLoop is the §15.4.1 in-process loop the SDK-warm reference runtime
+// echoLoop is the §28.5.3 in-process loop the SDK-warm reference runtime
 // drives: it echoes each inbound line back verbatim until EOF.
 func sdkWarmEchoLoop(_ context.Context, in io.Reader, out io.Writer) error {
 	buf := make([]byte, 4096)

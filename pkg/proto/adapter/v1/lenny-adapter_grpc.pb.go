@@ -113,7 +113,7 @@ type AdapterClient interface {
 	// running session (spec §4.7 RPC table: "Connect client stream to running
 	// session"). The gateway streams client-to-agent envelopes in; the adapter
 	// streams the agent's response, tool-call, and status envelopes back.
-	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// Envelope payloads are §28.5.3 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
 	Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachRequest, AttachResponse], error)
 	// AssignCredentials pushes a per-session credential lease map to the
@@ -558,7 +558,7 @@ type AdapterServer interface {
 	// running session (spec §4.7 RPC table: "Connect client stream to running
 	// session"). The gateway streams client-to-agent envelopes in; the adapter
 	// streams the agent's response, tool-call, and status envelopes back.
-	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// Envelope payloads are §28.5.3 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
 	Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error
 	// AssignCredentials pushes a per-session credential lease map to the

@@ -32,7 +32,7 @@ func slotError(slotID string, err error) error {
 	return fmt.Errorf("slot %q: %w", slotID, err)
 }
 
-// slotWorker runs one slot's §15.4.1 echo loop. It feeds inbound frames
+// slotWorker runs one slot's §28.5.3 echo loop. It feeds inbound frames
 // to an independent echocore.Run over a pipe, so each slot keeps its own
 // sequence counter and its message/heartbeat/shutdown handling is the
 // shared echocore behavior unchanged. Outbound frames are stamped with
@@ -54,7 +54,7 @@ type slotWorker struct {
 // (/workspace/slots/{slotId}/current/ per spec §6.4). It is an
 // internal filesystem derivation the runtime would use for per-slot file
 // operations; an echo runtime performs none, so the derivation is not
-// plumbed onto the wire. The §15.4.1 outbound frame schema carries slotId
+// plumbed onto the wire. The §28.5.3 outbound frame schema carries slotId
 // alone for concurrent multiplexing, never cwd.
 //
 // spec: §6.4 — per-slot cwd /workspace/slots/{slotId}/current/;
@@ -130,7 +130,7 @@ func slotCwd(slotID string) string {
 // every outbound JSONL frame echocore emits for a non-empty slot. echocore
 // writes one JSON object per Write call (its json.Encoder.Encode), so
 // slotWriter parses the object, injects slotId, and forwards the
-// re-encoded frame. slotId is the only field the §15.4.1 outbound schema
+// re-encoded frame. slotId is the only field the §28.5.3 outbound schema
 // tags for concurrent multiplexing, so it is the only field stamped. The
 // empty default session forwards frames unchanged.
 type slotWriter struct {
@@ -143,7 +143,7 @@ type slotWriter struct {
 // encoder contract), so a single Write maps to a single frame.
 func (s *slotWriter) Write(p []byte) (int, error) {
 	if s.slotID == "" {
-		// Whole-pod default session: no slotId on the wire (§15.4.1 — runtimes on a maxConcurrentSessions: 1 pod never see it).
+		// Whole-pod default session: no slotId on the wire (§28.5.3 — runtimes on a maxConcurrentSessions: 1 pod never see it).
 		if err := s.out.writeFrame(p); err != nil {
 			return 0, err
 		}
@@ -160,7 +160,7 @@ func (s *slotWriter) Write(p []byte) (int, error) {
 }
 
 // stamp injects the slotId into a single outbound JSONL frame. It decodes
-// the object, sets slotId on every frame the §15.4.1 wire schema tags with
+// the object, sets slotId on every frame the §28.5.3 wire schema tags with
 // it (response, tool_call), and re-encodes. A `heartbeat_ack` carries no
 // content payload per the schema and is forwarded unchanged. A frame that
 // is not a JSON object is forwarded unchanged so a future non-object frame
@@ -168,7 +168,7 @@ func (s *slotWriter) Write(p []byte) (int, error) {
 // multiplexing; the per-slot cwd is an internal derivation (slotCwd) the
 // runtime never emits on the wire.
 //
-// spec: §15.4.1.
+// spec: §28.5.3.
 func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 	trimmed := bytes.TrimSpace(frame)
 	if len(trimmed) == 0 || trimmed[0] != '{' {

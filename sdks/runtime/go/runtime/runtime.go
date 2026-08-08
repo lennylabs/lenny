@@ -2,7 +2,7 @@
 
 // Package runtime is the Lenny Go runtime-author SDK. It lets a
 // developer write a Lenny agent runtime in Go by implementing the
-// Handler interface and calling Run; the SDK drives the §15.4.1 adapter
+// Handler interface and calling Run; the SDK drives the §28.5.3 adapter
 // binary protocol, the §15.4.2 RPC lifecycle state machine, the §8.5
 // platform MCP tool helpers, and the Full-level CH-RUNTIMEOPS.
 //
@@ -50,7 +50,7 @@
 //
 // # Transport
 //
-// The §15.4.1 JSON Lines framing is identical under both §4.7 deployment
+// The §28.5.3 JSON Lines framing is identical under both §4.7 deployment
 // models; only the byte transport differs. By default Run reads os.Stdin
 // and writes os.Stdout. When the adapter runs as a separate container it
 // sets LENNY_ADAPTER_SOCKET to an abstract Unix socket name; Run dials
@@ -73,7 +73,7 @@ import (
 
 // Handler is the single interface a runtime author implements. The SDK
 // invokes OnCreate once before the first message, OnMessage for every
-// inbound §15.4.1 message frame, and OnTerminate once when the adapter
+// inbound §28.5.3 message frame, and OnTerminate once when the adapter
 // closes stdin or sends a shutdown frame.
 //
 // Each session has exactly one execution (§5.2, §7.2), so OnCreate is
@@ -109,7 +109,7 @@ func ErrIsProtocol(err error) bool {
 	return errors.As(err, &pe)
 }
 
-// maxFrameBytes caps an inbound JSON Lines frame at the §15.4.1
+// maxFrameBytes caps an inbound JSON Lines frame at the §28.5.3
 // MessagePart hard limit. A larger frame is a protocol error.
 const maxFrameBytes = 50 * 1024 * 1024
 
@@ -128,7 +128,7 @@ const defaultManifestPath = "/run/lenny/adapter-manifest.json"
 // defaultCredentialsPath is the §4.7 runtime credential file path.
 const defaultCredentialsPath = "/run/lenny/credentials.json"
 
-// Run wires up the §15.4.1 stdin/stdout framing, optionally dials the
+// Run wires up the §28.5.3 stdin/stdout framing, optionally dials the
 // manifest-advertised abstract Unix sockets (platform MCP server,
 // connector MCP servers, CH-RUNTIMEOPS) with the §15.4.3
 // manifest-nonce handshake, parses the §4.7 credential file, and drives
@@ -210,7 +210,7 @@ func newSession(h Handler, cfg config) *session {
 
 // run drives one runtime lifecycle: resolve the transport, load the
 // manifest and credentials, dial the higher-level channels for the
-// configured level, then run the §15.4.1 frame loop.
+// configured level, then run the §28.5.3 frame loop.
 func (s *session) run(ctx context.Context) error {
 	s.state.Store(int32(stateInit))
 
@@ -262,11 +262,11 @@ func (s *session) run(ctx context.Context) error {
 	}
 
 	// The dispatch worker processes message frames one at a time, in the
-	// order the loop reads them: this is the §15.4.1 coordinator-local
+	// order the loop reads them: this is the §15.4 coordinator-local
 	// FIFO contract for the session's stdin. The loop
 	// itself keeps reading while a handler is in flight, so a
 	// tool_result correlated to a tool_call the handler emits, and
-	// heartbeats, are still serviced (§15.4.1 interleaved delivery).
+	// heartbeats, are still serviced (§28.5.3 interleaved delivery).
 	messages := make(chan *MessageEnvelope, 64)
 	workerDone := make(chan struct{})
 	go func() {
@@ -365,12 +365,12 @@ func (s *session) closeChannels() {
 	}
 }
 
-// loop is the §15.4.1 frame loop. It reads newline-delimited JSON from
+// loop is the §28.5.3 frame loop. It reads newline-delimited JSON from
 // in and routes each frame by type: message frames go to the dispatch
 // worker through messages (preserving FIFO), heartbeat and tool_result
 // frames are serviced inline so an in-flight handler is not blocked,
 // and a shutdown frame ends the loop. Unknown frame types are ignored
-// for forward compatibility (§15.4.1). It returns when in reaches EOF,
+// for forward compatibility (§28.5.3). It returns when in reaches EOF,
 // a shutdown frame arrives, or an unrecoverable error occurs.
 func (s *session) loop(ctx context.Context, in io.Reader, cancel context.CancelFunc, messages chan<- *MessageEnvelope) error {
 	scanner := bufio.NewScanner(in)
@@ -420,7 +420,7 @@ func (s *session) loop(ctx context.Context, in io.Reader, cancel context.CancelF
 	return nil
 }
 
-// decodeMessage decodes one §15.4.1 message frame. A malformed frame is
+// decodeMessage decodes one §28.5.3 message frame. A malformed frame is
 // a non-recoverable protocol error.
 func decodeMessage(line []byte) (*MessageEnvelope, error) {
 	var env MessageEnvelope
@@ -430,11 +430,11 @@ func decodeMessage(line []byte) (*MessageEnvelope, error) {
 	return &env, nil
 }
 
-// handleMessage invokes OnMessage for one decoded §15.4.1 message and
+// handleMessage invokes OnMessage for one decoded §28.5.3 message and
 // writes the resulting response frame. It runs on the dispatch worker
 // goroutine, one message at a time. A handler error is reported as a
 // structured response error so the adapter records the failure without
-// losing context (§15.4.1 error reporting via response). A write error
+// losing context (§28.5.3 error reporting via response). A write error
 // is logged; the SDK continues since the adapter has likely closed the
 // transport.
 func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
@@ -445,11 +445,11 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 		Sequence:  s.seq.Add(1),
 	}
 
-	// §15.4.1 adapter-local tools are reachable for the duration of the
+	// §28.5.3 adapter-local tools are reachable for the duration of the
 	// turn. The slot id from the inbound envelope is threaded onto every
 	// tool_call so a runtime on a pool with maxConcurrentSessions > 1
 	// stays correlated to the originating slot.
-	// spec: §15.4.1 (slotId present only when maxConcurrentSessions > 1)
+	// spec: §28.5.3 (slotId present only when maxConcurrentSessions > 1)
 	mctx := context.WithValue(s.withSessionContext(ctx), ctxKeyAdapterTools, &AdapterTools{
 		w:       s.w,
 		timeout: s.cfg.dialTimeout,
@@ -471,7 +471,7 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 
 	// A turn marked Streaming and not Final defers the response frame —
 	// the runtime emits the terminal Reply on a later turn or via the
-	// lenny/output platform MCP tool. The §15.4.1 contract still requires
+	// lenny/output platform MCP tool. The §28.5.3 contract still requires
 	// a final response frame, so the SDK emits it once the runtime
 	// returns a Final Reply.
 	if reply.Streaming && !reply.Final {
@@ -487,9 +487,9 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 	}
 }
 
-// handleToolResult routes an inbound §15.4.1 tool_result frame to the
+// handleToolResult routes an inbound §28.5.3 tool_result frame to the
 // pending stdout tool_call that emitted the matching id. A result with
-// no pending call is dropped and logged (§15.4.1 correlation rule).
+// no pending call is dropped and logged (§28.5.3 correlation rule).
 func (s *session) handleToolResult(line []byte) {
 	var tr inboundToolResult
 	if err := json.Unmarshal(line, &tr); err != nil {
@@ -501,7 +501,7 @@ func (s *session) handleToolResult(line []byte) {
 	}
 }
 
-// handleShutdown decodes the §15.4.1 shutdown frame, records the
+// handleShutdown decodes the §28.5.3 shutdown frame, records the
 // termination reason for run to apply after draining in-flight
 // handlers, and returns nil to end the frame loop for a clean exit.
 func (s *session) handleShutdown(_ context.Context, line []byte, cancel context.CancelFunc) error {
@@ -622,7 +622,7 @@ func (s *session) manifestTaskID() string {
 }
 
 // stampParts sets SchemaVersion on every part that left it zero,
-// honoring the §15.4.1 producer obligation, and returns a non-nil slice
+// honoring the §28.5.3 producer obligation, and returns a non-nil slice
 // so an empty Reply still serializes as output: [].
 func stampParts(parts []MessagePart) []MessagePart {
 	out := make([]MessagePart, len(parts))
@@ -637,9 +637,9 @@ func stampParts(parts []MessagePart) []MessagePart {
 
 // --- frame writer ------------------------------------------------------
 
-// frameWriter serializes §15.4.1 outbound frames. Every write is
+// frameWriter serializes §28.5.3 outbound frames. Every write is
 // followed by a flush before the next inbound read, honoring the
-// §15.4.1 stdout-flushing requirement. It also correlates outbound
+// §28.5.3 stdout-flushing requirement. It also correlates outbound
 // tool_call frames with inbound tool_result frames.
 type frameWriter struct {
 	mu  sync.Mutex
@@ -669,7 +669,7 @@ func (w *frameWriter) write(v any) error {
 	return nil
 }
 
-// registerToolCall records a pending §15.4.1 tool_call id and returns
+// registerToolCall records a pending §28.5.3 tool_call id and returns
 // the channel its tool_result will arrive on.
 func (w *frameWriter) registerToolCall(id string) chan inboundToolResult {
 	ch := make(chan inboundToolResult, 1)
@@ -704,7 +704,7 @@ func (w *frameWriter) cancelToolCall(id string) {
 
 // --- transport ---------------------------------------------------------
 
-// transport is the resolved §15.4.1 byte transport.
+// transport is the resolved §28.5.3 byte transport.
 type transport struct {
 	Reader io.Reader
 	Writer io.Writer
@@ -719,7 +719,7 @@ func (t *transport) Close() error {
 	return t.closer.Close()
 }
 
-// openTransport resolves the §15.4.1 transport. When socket transport is
+// openTransport resolves the §28.5.3 transport. When socket transport is
 // enabled and LENNY_ADAPTER_SOCKET names an adapter socket, it dials
 // that abstract Unix socket; otherwise it returns os.Stdin/os.Stdout.
 func (c config) openTransport(ctx context.Context) (*transport, error) {

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-// Package echocore is the Basic-level §15.4.1 echo loop, factored out
+// Package echocore is the Basic-level §28.5.3 echo loop, factored out
 // of cmd/runtimes/echo so it can run under either §4.7 deployment
 // model from a single implementation.
 //
-// The loop is the §15.4.1 contract: a `message` is echoed back as a
+// The loop is the §28.5.3 contract: a `message` is echoed back as a
 // `response` carrying the same input parts (text parts prefixed with a
 // per-loop sequence number so multi-message tests can correlate), a
 // `heartbeat` is answered with `heartbeat_ack`, a `shutdown` triggers a
@@ -14,7 +14,7 @@
 // to the byte transport behind them. The sidecar reference runtime
 // (cmd/runtimes/echo) supplies a stdin/stdout or abstract-socket
 // transport; the embedded reference runtime (cmd/runtimes/echo-embedded)
-// supplies the adapter's in-process pipe. The §15.4.1 framing is
+// supplies the adapter's in-process pipe. The §28.5.3 framing is
 // identical in every case.
 package echocore
 
@@ -36,11 +36,11 @@ type ProtocolError struct{ Msg string }
 // Error implements error.
 func (e ProtocolError) Error() string { return "protocol error: " + e.Msg }
 
-// MaxFrameBytes caps an inbound JSONL frame at the §15.4.1 MessagePart
+// MaxFrameBytes caps an inbound JSONL frame at the §28.5.3 MessagePart
 // hard limit; a larger frame is a protocol error.
 const MaxFrameBytes = 50 * 1024 * 1024
 
-// Run drives the §15.4.1 echo loop until in reaches EOF, a shutdown
+// Run drives the §28.5.3 echo loop until in reaches EOF, a shutdown
 // frame arrives, or an unrecoverable error occurs. ctx lets shutdown
 // propagate to any goroutine work; the synchronous loop itself returns
 // promptly. Diagnostic lines for unknown frame types are written to
@@ -118,7 +118,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64) error {
 	n := seq.Add(1)
 	out := make([]messagePart, 0, len(inbound.Input))
 	for _, p := range inbound.Input {
-		// §15.4.1 producer obligation: schemaVersion is set on every
+		// §28.5.3 producer obligation: schemaVersion is set on every
 		// emitted MessagePart.
 		if p.SchemaVersion == 0 {
 			p.SchemaVersion = 1
@@ -160,7 +160,7 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 	return nil
 }
 
-// messagePart mirrors the §15.4.1 MessagePart wire JSON, restricted to the
+// messagePart mirrors the §28.5.3 MessagePart wire JSON, restricted to the
 // fields Basic-level echo reads or writes. schemaVersion is mandatory.
 type messagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`

@@ -73,7 +73,7 @@ func loadSchemas() error {
 	return schemaErr
 }
 
-// validateJSONLFrame validates one raw §15.4.1 stdin/stdout frame against
+// validateJSONLFrame validates one raw §28.5.3 stdin/stdout frame against
 // schemas/lenny-adapter-jsonl.schema.json. spec: §15.4.6.
 func validateJSONLFrame(raw []byte) error {
 	if err := loadSchemas(); err != nil {

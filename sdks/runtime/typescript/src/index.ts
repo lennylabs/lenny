@@ -3,7 +3,7 @@
 // Package @lennylabs/runtime-sdk is the Lenny TypeScript runtime-author
 // SDK. It lets a developer write a Lenny agent runtime in TypeScript or
 // JavaScript by implementing the Handler interface and calling run; the
-// SDK drives the §15.4.1 adapter binary protocol, the §15.4.2 RPC
+// SDK drives the §28.5.3 adapter binary protocol, the §15.4.2 RPC
 // lifecycle state machine, the §8.5 platform MCP tool helpers, and the
 // Full-level lifecycle channel.
 //

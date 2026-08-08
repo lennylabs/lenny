@@ -9,7 +9,7 @@ import (
 )
 
 // OpenResponseItem is one item in the Open Responses output array.
-// Per §15.4.1 fidelity matrix, the output item carries:
+// Per §15.4 fidelity matrix, the output item carries:
 //
 //   - Type: a content type (output_text, output_image, output_file)
 //     derived from MessagePart.type (lossy).
@@ -39,7 +39,7 @@ type openResponsesFileBlock struct {
 }
 
 // TranslateOpenResponses converts a MessagePart to a single Open
-// Responses output item per the §15.4.1 fidelity matrix.
+// Responses output item per the §15.4 fidelity matrix.
 //
 // Type collapse:
 //

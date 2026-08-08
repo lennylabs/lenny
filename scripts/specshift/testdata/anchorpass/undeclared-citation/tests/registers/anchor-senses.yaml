@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
 # A well-formed register that resolves both occurrences of the sibling
-# carrier. The other carrier cites a section neither the specification
-# states a heading for nor the anchor-move map carries a successor for,
-# so the run stops at it and leaves the sibling it would otherwise have
-# rewritten byte-identical.
+# carrier. The other carrier cites a section no specification file of
+# the tree states a heading for, which the anchor-move map retires no
+# anchor for either, so it is outside the citation class and needs no
+# entry. The run redirects the sibling and leaves it as it is written.
 kind: anchor-senses
 version: 1
 entries:

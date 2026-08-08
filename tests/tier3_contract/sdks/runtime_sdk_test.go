@@ -4,7 +4,7 @@
 
 // Tier-3 SDK contract suite for the Lenny runtime-author SDKs in Go
 // (sdks/runtime/go), Python (sdks/runtime/python), and TypeScript
-// (sdks/runtime/typescript). Each SDK wraps the §15.4.1 adapter binary
+// (sdks/runtime/typescript). Each SDK wraps the §28.5.3 adapter binary
 // protocol, the §15.4.3 intra-pod MCP integration, the §8.5 platform
 // MCP tool surface, and the Full-level lifecycle channel.
 //
@@ -251,7 +251,7 @@ func checkDetail(report complianceReport, name string) string {
 // JSON Lines framing, message/response round trip, heartbeat ack,
 // shutdown within the deadline, unknown-type tolerance, and sequential
 // messages. A failed check means the SDK protocol loop does not honor
-// the §15.4.1 contract.
+// the §28.5.3 contract.
 func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/echo")
@@ -263,7 +263,7 @@ func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 // diagnosis: the Python SDK echo runtime
 // (sdks/runtime/python, lenny_runtime.examples.echo) must clear every
 // Basic-level lenny-compliance check. A failed check means the Python
-// SDK §15.4.1 frame loop does not honor the contract. The test skips
+// SDK §28.5.3 frame loop does not honor the contract. The test skips
 // when python3 is not on PATH.
 func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
 	python := requireTool(t, "python3")
@@ -277,7 +277,7 @@ func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
 // diagnosis: the TypeScript SDK echo runtime
 // (sdks/runtime/typescript, examples/echo) must clear every Basic-level
 // lenny-compliance check. A failed check means the TypeScript SDK
-// §15.4.1 frame loop does not honor the contract. The test skips when
+// §28.5.3 frame loop does not honor the contract. The test skips when
 // the Node toolchain is not on PATH.
 func TestRuntimeSDKAdapterBinaryProtocolTypeScript(t *testing.T) {
 	node := requireTool(t, "node")
@@ -370,7 +370,7 @@ func TestRuntimeSDKLifecycleFullLevelInterpreted(t *testing.T) {
 }
 
 // spec: 15.4.1, 15.7 (runtime SDK workspace helpers)
-// diagnosis: each SDK exposes the §15.4.1 adapter-local tool helpers
+// diagnosis: each SDK exposes the §28.5.3 adapter-local tool helpers
 // (read_file, write_file, list_dir, delete_file). The lenny-compliance
 // harness does not ship an adversarial path-traversal corpus that
 // drives the helpers; the helpers ship in every SDK and are exercised
@@ -389,7 +389,7 @@ func TestRuntimeSDKDelegationTools(t *testing.T) {
 }
 
 // spec: 15.4.1, 15.7 (runtime SDK heartbeat handling)
-// diagnosis: each SDK answers a §15.4.1 heartbeat with heartbeat_ack
+// diagnosis: each SDK answers a §28.5.3 heartbeat with heartbeat_ack
 // without runtime-author intervention. The Basic-level heartbeat check
 // in lenny-compliance asserts this for the Go SDK; a failure means the
 // SDK loop drops the heartbeat frame. The Python and TypeScript SDKs
@@ -404,7 +404,7 @@ func TestRuntimeSDKHeartbeatHandling(t *testing.T) {
 }
 
 // spec: 15.4.1, 15.7 (runtime SDK graceful shutdown)
-// diagnosis: each SDK exits cleanly within deadline_ms of a §15.4.1
+// diagnosis: each SDK exits cleanly within deadline_ms of a §28.5.3
 // shutdown frame. The Basic-level shutdown check in lenny-compliance
 // asserts this for the Go SDK; a failure means the SDK loop does not
 // honor the shutdown deadline. The Python and TypeScript SDKs are

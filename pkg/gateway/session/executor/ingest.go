@@ -20,7 +20,7 @@ import (
 // frame). Part-scoped `unregistered_platform_type` warnings ride on each
 // part's own Annotations.
 //
-// spec: §15.4.1 (the adapter↔binary `response` frame); §15.4 (Internal
+// spec: §28.5.3 (the adapter↔binary `response` frame); §15.4 (Internal
 // MessagePart Format — live-consumer forward-read and the canonical
 // type-registry fallback).
 func ingestResponse(env responseEnvelope) ([]MessagePart, map[string]any) {
@@ -69,14 +69,14 @@ func mergeAnnotations(dst, src map[string]any) map[string]any {
 }
 
 // ingestPart projects one wire MessagePart onto the gateway model and
-// applies the §15.4.1 canonical type-registry rule. A non-canonical type
+// applies the §28.5.3 canonical type-registry rule. A non-canonical type
 // (vendor-namespaced or unregistered) collapses to `text` with the
 // original preserved in `annotations.originalType`; an unregistered
 // unprefixed type additionally earns the `unregistered_platform_type`
 // warning so a gateway that pre-dates a newly registered type still
 // passes it through visibly. A missing schemaVersion defaults to 1.
 //
-// spec: §15.4.1.
+// spec: §28.5.3.
 func ingestPart(p wireMessagePart) MessagePart {
 	sv := p.SchemaVersion
 	if sv <= 0 {

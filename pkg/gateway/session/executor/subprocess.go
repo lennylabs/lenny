@@ -19,7 +19,7 @@ import (
 )
 
 // SubprocessExecutor runs a §15.4 Basic-level runtime binary as a
-// child process and speaks the §15.4.1 adapter JSONL protocol over
+// child process and speaks the §28.5.3 adapter JSONL protocol over
 // the process's stdin/stdout. It is the bridge between the gateway's
 // in-process Executor abstraction and a real runtime binary
 // (cmd/runtimes/echo and any Basic-level adapter built against the
@@ -71,10 +71,10 @@ type subprocessSession struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
 	// stderr captures the runtime's stderr tail so a non-zero exit can be
-	// folded into a §15.4.1 RUNTIME_CRASH error.
+	// folded into a §28.5.3 RUNTIME_CRASH error.
 	stderr *capBuffer
 
-	// waitOnce memoizes cmd.Wait so the §15.4.1 RUNTIME_CRASH probe in
+	// waitOnce memoizes cmd.Wait so the §28.5.3 RUNTIME_CRASH probe in
 	// readResponse and the teardown in Close can both read the exit
 	// status without double-waiting the process.
 	waitOnce sync.Once
@@ -133,7 +133,7 @@ func exitCodeOf(err error) (code int, ok bool) {
 }
 
 // Send implements Executor. It lazily spawns the child process for
-// sessionID, writes one §15.4.1 message envelope per Message, and
+// sessionID, writes one §28.5.3 message envelope per Message, and
 // collects the response envelopes.
 func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
 	sess, err := e.session(sessionID)
@@ -180,7 +180,7 @@ func (e *SubprocessExecutor) Start(_ context.Context, sessionID string) error {
 	return err
 }
 
-// WriteEnvelope writes a pre-encoded §15.4.1 message envelope to the
+// WriteEnvelope writes a pre-encoded §28.5.3 message envelope to the
 // session's runtime stdin, terminated by a newline. The session must
 // already be started; WriteEnvelope does not spawn the process. It is
 // the raw-delivery path the §4.7 adapter's SendMessage uses, where the
@@ -225,7 +225,7 @@ func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard
 }
 
 // Output streams every line the session's runtime writes to stdout as
-// a channel of §15.4.1 JSONL frames. The channel closes when the
+// a channel of §28.5.3 JSONL frames. The channel closes when the
 // runtime's stdout reaches EOF; ctx cancellation stops the reader so a
 // consumer that stops draining does not leak the goroutine. Output
 // must be consumed by a single caller — the adapter's Attach stream —
@@ -281,7 +281,7 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 			ch <- result{err: fmt.Errorf("executor: read from runtime: %w", err)}
 			return
 		}
-		// spec: §15.4.1 — the runtime closed stdout before
+		// spec: §28.5.3 — the runtime closed stdout before
 		// emitting a `response`. If it exited non-zero, synthesize a
 		// RUNTIME_CRASH from the exit code and the captured stderr; a
 		// clean (code 0) exit with no response is a protocol error, not a
@@ -321,7 +321,7 @@ func (e *SubprocessExecutor) session(sessionID string) (*subprocessSession, erro
 		return nil, fmt.Errorf("executor: stdout pipe: %w", err)
 	}
 	// Capture stderr so a non-zero exit without a `response` can be turned
-	// into a §15.4.1 RUNTIME_CRASH carrying the runtime's diagnostics.
+	// into a §28.5.3 RUNTIME_CRASH carrying the runtime's diagnostics.
 	stderr := &capBuffer{cap: maxStderrCapture}
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -365,7 +365,7 @@ func (e *SubprocessExecutor) Close(_ context.Context, sessionID string) error {
 	return nil
 }
 
-// ----- §15.4.1 wire types -----
+// ----- §28.5.3 wire types -----
 
 type messageEnvelope struct {
 	SchemaVersion int               `json:"schemaVersion"`
@@ -378,7 +378,7 @@ type messageEnvelope struct {
 	// concurrent-pool pod (maxConcurrentSessions > 1); an exclusive
 	// session-mode bind leaves it empty so the single-session path emits no
 	// slotId and the runtime never sees one. spec: §7.2 (per-slot routing),
-	// §15.4.1 (slotId multiplexing).
+	// §28.5.3 (slotId multiplexing).
 	SlotID string `json:"slotId,omitempty"`
 }
 
@@ -387,12 +387,12 @@ type fromBlock struct {
 	ID   string `json:"id"`
 }
 
-// resolveFromBlock returns the §15.4.1 from-object for an outbound
+// resolveFromBlock returns the §15.4 from-object for an outbound
 // message. A message carrying an explicit From (an inter-session
 // lenny/send_message whose sender the gateway authenticated) is stamped
 // verbatim; a message with no attribution defaults to the gateway-client
 // identity used for top-level client turns. The runtime never supplies
-// `from`; the gateway is authoritative. spec: §15.4.1.
+// `from`; the gateway is authoritative. spec: §15.4.
 // F-13.5.11.
 func resolveFromBlock(m Message) fromBlock {
 	if m.From.Kind != "" {
@@ -415,7 +415,7 @@ type responseEnvelope struct {
 	Output []wireMessagePart `json:"output,omitempty"`
 }
 
-// newMessageID returns a §15.4.1-shaped message id. The schema
+// newMessageID returns a §15.4-shaped message id. The schema
 // pattern is `^msg_[0-9A-HJKMNP-TV-Z]{26}$` (Crockford base32, ULID
 // style). The minimal executor generates 26 Crockford-base32
 // characters from 130 random bits.

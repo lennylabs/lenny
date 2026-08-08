@@ -141,7 +141,7 @@ func TestCoordinator_DrainOnTerminal_SkipsEmptySender_spec_7_2_343(t *testing.T)
 	}
 }
 
-// spec: §7.2 / §15.4.1 — SweepExpired emits
+// spec: §7.2 / §15.4 — SweepExpired emits
 // message_expired(dlq_ttl_expired) for each expired DLQ entry.
 func TestCoordinator_SweepExpired_spec_7_2_341(t *testing.T) {
 	em := &recordingEmitter{}

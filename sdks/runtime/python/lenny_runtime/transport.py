@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-"""§15.4.1 byte-transport plumbing.
+"""§28.5.3 byte-transport plumbing.
 
 This module holds the line reader over a binary stream, the frame
 writer that flushes after every write, and a Unix-socket dial helper
@@ -16,13 +16,13 @@ import threading
 import time
 from typing import Any, BinaryIO, Protocol
 
-# MAX_FRAME_BYTES caps an inbound JSON Lines frame at the §15.4.1
+# MAX_FRAME_BYTES caps an inbound JSON Lines frame at the §28.5.3
 # MessagePart hard limit. A larger frame is a protocol error.
 MAX_FRAME_BYTES = 50 * 1024 * 1024
 
 
 class ByteSource(Protocol):
-    """Read side of a §15.4.1 byte transport.
+    """Read side of a §28.5.3 byte transport.
 
     ``readsome`` returns whatever bytes are available, blocking only
     until at least one byte arrives, and an empty result at end of
@@ -38,7 +38,7 @@ class ByteSource(Protocol):
 
 
 class ByteSink(Protocol):
-    """Write side of a §15.4.1 byte transport."""
+    """Write side of a §28.5.3 byte transport."""
 
     def write(self, data: bytes) -> int:
         """Write ``data`` and return the count written."""
@@ -73,7 +73,7 @@ class StdioSource:
 
 
 class SocketStream:
-    """Adapts a connected socket to the §15.4.1 byte-transport surface.
+    """Adapts a connected socket to the §28.5.3 byte-transport surface.
 
     The Unix-socket transport for the §4.7 sidecar deployment model and
     the §15.4.3 intra-pod channels are byte streams; this wrapper lets
@@ -102,10 +102,10 @@ class SocketStream:
 
 
 class FrameWriter:
-    """Serializes §15.4.1 outbound frames.
+    """Serializes §28.5.3 outbound frames.
 
     Every write is a single JSON object followed by a newline and an
-    explicit flush, honoring the §15.4.1 stdout-flushing requirement. A
+    explicit flush, honoring the §28.5.3 stdout-flushing requirement. A
     lock serializes writes so two threads cannot interleave a frame.
     """
 
@@ -125,7 +125,7 @@ class LineReader:
     """Reads newline-delimited frames from a :class:`ByteSource`.
 
     It buffers partial reads and yields one frame per newline, dropping
-    the trailing newline. The §15.4.1 frame loop consumes it.
+    the trailing newline. The §28.5.3 frame loop consumes it.
     """
 
     def __init__(self, source: ByteSource) -> None:
@@ -136,7 +136,7 @@ class LineReader:
     def next(self) -> str | None:
         """Return the next frame, or None at end of stream.
 
-        Raises :class:`ValueError` when a frame exceeds the §15.4.1
+        Raises :class:`ValueError` when a frame exceeds the §28.5.3
         size limit.
         """
         while True:

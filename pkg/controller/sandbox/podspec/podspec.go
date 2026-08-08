@@ -13,7 +13,7 @@
 //     binds an abstract Unix socket; the runtime container dials it,
 //     discovering the socket name from the LENNY_ADAPTER_SOCKET
 //     environment variable. The two containers share the pod network
-//     namespace, so the abstract socket carries the §15.4.1 JSONL
+//     namespace, so the abstract socket carries the §28.5.3 JSONL
 //     protocol with no shared filesystem path. The manifest emptyDir
 //     (/run/lenny) is mounted read-only into the runtime container and
 //     read-write into the adapter container; the workspace emptyDir

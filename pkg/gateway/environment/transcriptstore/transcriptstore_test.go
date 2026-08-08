@@ -135,7 +135,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 // zero-value caller field is normalized to the v1 baseline, and an explicit
 // version is preserved verbatim.
 //
-// spec: §15.4.1 — "Every MessageEnvelope persisted to the
+// spec: §15.4 — "Every MessageEnvelope persisted to the
 // session_messages table carries this field"; §15.5 item 7 — integer
 // "starting at 1".
 func TestAppendStampsSchemaVersion_spec_15_4_1_1694(t *testing.T) {

@@ -62,7 +62,7 @@ func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries 
 			if ts.IsZero() {
 				ts = time.Now().UTC()
 			}
-			// The gateway owns schema_version per §15.4.1;
+			// The gateway owns schema_version per §15.4;
 			// normalize a zero-value caller field to the v1 baseline.
 			schemaVer := e.SchemaVersion
 			if schemaVer == 0 {

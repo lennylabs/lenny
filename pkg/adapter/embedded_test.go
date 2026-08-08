@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 )
 
-// echoLoop is a minimal §15.4.1 loop for the embedded-runtime tests: it
+// echoLoop is a minimal §28.5.3 loop for the embedded-runtime tests: it
 // echoes every newline-delimited inbound frame back on out and returns
 // when in reaches EOF.
 func echoLoop(_ context.Context, in io.Reader, out io.Writer) error {

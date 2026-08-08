@@ -36,7 +36,7 @@
 //
 // spec: §5.2 (concurrent sessions: slotId multiplexing over stdin, dispatch
 // loop keyed on slotId, acknowledgeProcessLevelIsolation), §6.4 (per-slot
-// filesystem layout /workspace/slots/{slotId}/, per-slot cwd), §15.4.1
+// filesystem layout /workspace/slots/{slotId}/, per-slot cwd), §28.5.3
 // (single stdin channel carrying slotId when maxConcurrentSessions > 1).
 package tier4_integration_test
 
@@ -209,7 +209,7 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 // originating slotId onto every response, so the tag the stream observes is
 // the runtime's, carried back across the adapter unchanged.
 //
-// spec: §15.4.1 — single stdin channel, dispatch loop keyed on
+// spec: §28.5.3 — single stdin channel, dispatch loop keyed on
 // slotId; §6.4 — adapter sets the slot's cwd when dispatching.
 func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, slots []slot) {
 	t.Helper()
@@ -262,7 +262,7 @@ func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, 
 	}
 }
 
-// slotResponse is the subset of a §15.4.1 outbound `response` frame this
+// slotResponse is the subset of a §28.5.3 outbound `response` frame this
 // flow asserts on: the discriminator, the slotId the runtime stamps and the
 // adapter carries back, and the echoed text parts.
 type slotResponse struct {

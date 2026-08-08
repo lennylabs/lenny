@@ -23,26 +23,49 @@ import (
 // after.
 //
 // The index is also what decides the spelling a redirected citation is
-// written in, which is the §-form for a numbered specification heading
-// and the file-and-anchor form for every other heading.
+// written in, which is the §-form for a heading of the specification and
+// the file-and-anchor form for every other heading. A specification
+// heading that carries no number of its own is cited by the number of
+// the numbered heading that encloses it, so the index records that
+// enclosing number beside each anchor.
 //
 // The index covers every markdown document of the class read domain,
 // because a fragment link addresses a heading in the document it names,
 // whichever document that is.
+// The index carries no register of which section numbers the
+// specification states. Whether a section still exists decides nothing
+// here: the anchor-move map is what records the retirement this pass
+// migrates, and a citation the map does not name is a citation the
+// reduction did not invalidate whether or not the tree still numbers a
+// heading for it.
 type headings struct {
-	byFile map[string]map[string]citation.Heading
-	// sections holds every section number the specification files of the
-	// tree state in a heading. It is what decides whether a bare §X.Y
-	// citation the anchor-move map carries no successor for names a
-	// section that still exists, so a citation of a section the
-	// reduction removed the heading of stops the run rather than
-	// standing as a canonical-looking pointer at nothing.
+	byFile map[string]map[string]destination
+}
+
+// destination is one anchor's entry in the index: the heading the anchor
+// addresses, and the number of the nearest numbered heading that
+// encloses it.
+//
+// The enclosing number is read while the document is walked, because the
+// walk is the only place the order of the headings is known. An anchor
+// alone states nothing about what surrounds it, and the map from anchor
+// to heading the index is keyed by has already lost the order.
+type destination struct {
+	heading citation.Heading
+	// section is the number of the nearest preceding heading that
+	// carries a number and sits at a shallower level, which is the
+	// section the heading is written inside. It is empty when no heading
+	// of the document encloses this one, such as for the level-one title
+	// a document opens with, or for a heading that stands above the
+	// document's first numbered one.
 	//
-	// Every heading level is read, including the level-one title that
-	// states a specification file's own number, because that is a number
-	// this pass writes as a citation itself. A section index that
-	// dropped it would abort on the pass's own output.
-	sections map[string]bool
+	// The level test is what makes this the enclosing section rather than
+	// the nearest number written above. In spec/15 the carve-out heading
+	// `#### Translation Fidelity Matrix` follows `#### 15.4.1`, which is
+	// its sibling rather than its parent: the section it is written
+	// inside is `### 15.4`, and that is the number a citation of it
+	// names.
+	section string
 }
 
 // explicitAnchorExpr reads the kramdown attribute that gives a heading
@@ -70,7 +93,7 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	if err != nil {
 		return nil, fmt.Errorf("index the headings of the tree: %w", err)
 	}
-	h := &headings{byFile: map[string]map[string]citation.Heading{}, sections: map[string]bool{}}
+	h := &headings{byFile: map[string]map[string]destination{}}
 	for _, target := range domain {
 		if filepath.Ext(target) != ".md" {
 			continue
@@ -83,17 +106,6 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 			return nil, fmt.Errorf("read %s to index its headings: %w", target, err)
 		}
 		h.byFile[target] = index(string(content))
-		if !citation.IsSpecFile(target) {
-			continue
-		}
-		// A §X.Y token names a section of the specification, so only a
-		// specification file states one, which is the same predicate the
-		// citation resolver and the per-file ratchet read.
-		for _, heading := range citation.AllHeadings(string(content)) {
-			if heading.Number != "" {
-				h.sections[heading.Number] = true
-			}
-		}
 	}
 	if len(h.byFile) == 0 {
 		return nil, fmt.Errorf("index the headings of the tree: no markdown document in the read domain")
@@ -129,26 +141,44 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 // reduction left alone. An attribute standing above the document's first
 // heading addresses no heading at all, so it declares nothing rather
 // than binding to a heading with no number and no line.
-func index(content string) map[string]citation.Heading {
-	out := map[string]citation.Heading{}
-	claim := func(a string, h citation.Heading) {
+//
+// The walk also carries the numbered headings that are open at each
+// line, so every anchor is indexed with the section it is written
+// inside. The stack holds the numbered headings alone and is popped by
+// level, so a heading carrying no number closes the deeper headings it
+// follows without ever standing as an enclosing section itself. That is
+// the same reading of the levels a section's range is computed with.
+func index(content string) map[string]destination {
+	out := map[string]destination{}
+	claim := func(a string, d destination) {
 		if _, taken := out[a]; taken || a == "" {
 			return
 		}
-		out[a] = h
+		out[a] = d
 	}
 	headingAt := map[int]citation.Heading{}
 	for _, h := range citation.AllHeadings(content) {
 		headingAt[h.Line] = h
 	}
-	var last citation.Heading
+	var open []citation.Heading
+	var last destination
 	seen := false
 	for _, line := range citation.ProseLines(content) {
 		if h, ok := headingAt[line.Number]; ok {
-			last, seen = h, true
-			claim(slug(h.Title), h)
+			for len(open) > 0 && open[len(open)-1].Level >= h.Level {
+				open = open[:len(open)-1]
+			}
+			d := destination{heading: h}
+			if len(open) > 0 {
+				d.section = open[len(open)-1].Number
+			}
+			if h.Number != "" {
+				open = append(open, h)
+			}
+			last, seen = d, true
+			claim(slug(h.Title), d)
 			for _, m := range explicitAnchorExpr.FindAllStringSubmatch(h.Title, -1) {
-				claim(m[1], h)
+				claim(m[1], d)
 			}
 			continue
 		}
@@ -180,46 +210,74 @@ func slug(title string) string {
 
 // lookup returns the heading a target addresses.
 func (h *headings) lookup(t Target) (citation.Heading, bool) {
-	heading, ok := h.byFile[t.File][t.Anchor]
-	return heading, ok
+	d, ok := h.byFile[t.File][t.Anchor]
+	return d.heading, ok
 }
 
 // citationFor returns the text a bare section citation of the target is
 // rewritten to.
 //
-// A numbered heading of the specification is cited by its number, which
-// is the anchor citation form the migration establishes. That covers the
-// level-one title a specification file opens with, which states the
-// file's own section number, so a citation resolved to it keeps the
-// §-form rather than moving off it into a fragment link. Every other
-// heading is cited by the file and anchor that address it.
+// A bare citation and a fragment link name the same heading in two
+// different forms, and each keeps its own. A link's destination is a
+// path and an anchor, which is what a renderer resolves, so a redirected
+// link is written by linkTarget as the path from the citing page to the
+// successor's file with the successor's anchor on it. A bare citation is
+// a §X.Y token standing inside a sentence, and a sentence carrying a
+// file path where a section number belongs stops reading as prose:
+// "returns a spec/15_external-api-surface.md#messageenvelope-shaped
+// message id" is neither a citation nor a link. The two forms are
+// therefore rendered by two functions, and this one never produces the
+// link form for a heading of the specification.
 //
-// The §-form is held to a specification file because a §X.Y token names
-// a section of the specification, so writing it against a heading a
-// documentation or a testing page numbers the same way would land a
-// citation of a section no specification file declares. Nothing over the
-// anchor classes would report it, because the fragment-link gate reads
-// links alone and the citation resolver matches the retired
-// line-citation form alone.
+// A heading of the specification is cited by a section number. When the
+// heading carries a number of its own, that number is the citation. That
+// covers the level-one title a specification file opens with, which
+// states the file's own section number, so a citation resolved to it
+// keeps the §-form.
 //
-// A heading that carries no number, such as the message-format heading a
-// carve-out keeps in place, has no number to cite either.
+// A heading that carries no number of its own, such as the message-format
+// heading a carve-out keeps in place, is still written inside a numbered
+// section, and that section is what a bare citation of it names. The
+// carve-out headings of spec/15 sit under `## 15.4`, so a citation
+// resolving to either is written §15.4. This is the rule §29.1 fixes for
+// specification prose: a citation names the surviving parent rather than
+// the retired anchor.
+//
+// A specification destination with no enclosing numbered heading at all
+// fails the run rather than falling back to the path form. There is no
+// number to write, and the two candidates for carrying on are both
+// worse: writing the path puts a link into a sentence, which is the
+// defect this rule replaced, and leaving the citation as it stands
+// would exit zero over a citation of an anchor the map retired. Failing
+// names the destination and the register entry that chose it, so the
+// change that seeded it either points the entry at a numbered heading
+// or corrects the site by hand. Every specification heading the tree
+// carries today sits under the level-one title that states the file's
+// number, so the case is a defect in the register rather than a shape
+// the specification is written in.
+//
+// A heading outside the specification is cited by the file and anchor
+// that address it, because a §X.Y token names a section of the
+// specification: writing the §-form against a heading a documentation or
+// a testing page numbers the same way would land a citation of a section
+// no specification file declares. Nothing over the anchor classes would
+// report it, because the fragment-link gate reads links alone and the
+// citation resolver matches the retired line-citation form alone.
 func (h *headings) citationFor(t Target) (string, error) {
-	heading, ok := h.lookup(t)
+	d, ok := h.byFile[t.File][t.Anchor]
 	if !ok {
 		return "", fmt.Errorf("no heading of the tree is addressed by %s", t)
 	}
-	if citation.IsSpecFile(t.File) && heading.Number != "" {
-		return "§" + heading.Number, nil
+	if !citation.IsSpecFile(t.File) {
+		return t.String(), nil
 	}
-	return t.String(), nil
-}
-
-// declaresSection reports whether a specification file of the tree
-// states the section number in a heading, which is what makes a bare
-// citation of it a reference the reduction left alone.
-func (h *headings) declaresSection(number string) bool {
-	return h.sections[number]
+	if d.heading.Number != "" {
+		return "§" + d.heading.Number, nil
+	}
+	if d.section == "" {
+		return "", fmt.Errorf("%s addresses a heading that carries no number and sits under no numbered heading, so a bare citation of it has no section to name", t)
+	}
+	return "§" + d.section, nil
 }
 
 // carries reports whether the tree carries the markdown document.

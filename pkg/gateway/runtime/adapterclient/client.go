@@ -414,11 +414,11 @@ func (c *Client) runSetup(ctx context.Context, sessionID, slotID string, setupCo
 	return resp.GetOutputs(), nil
 }
 
-// SendMessage forwards a pre-encoded §15.4.1 message envelope to the
+// SendMessage forwards a pre-encoded §28.5.3 message envelope to the
 // pod's runtime. slotID stamps the §6.4 slot the gateway resolved for
 // the session onto the request so the reconciled adapter routes the
 // envelope to that slot's runtime stream; an empty slotID (the exclusive
-// session-mode bind) tags none. spec: §7.2 (per-slot routing), §15.4.1
+// session-mode bind) tags none. spec: §7.2 (per-slot routing), §28.5.3
 // (slotId multiplexing).
 func (c *Client) SendMessage(ctx context.Context, sessionID, slotID string, envelope []byte) error {
 	req := &adapterv1.SendMessageRequest{
@@ -832,7 +832,7 @@ type AttachStream struct {
 // the session onto the binding frame and every subsequent Send frame;
 // an empty slotID (the exclusive session-mode bind) emits no slotId so
 // a single-session pod's runtime never sees one. The caller closes the
-// stream by cancelling ctx. spec: §7.2 (per-slot routing), §15.4.1
+// stream by cancelling ctx. spec: §7.2 (per-slot routing), §28.5.3
 // (slotId multiplexing).
 func (c *Client) Attach(ctx context.Context, sessionID, slotID string) (*AttachStream, error) {
 	stream, err := c.rpc.Attach(ctx)
@@ -851,7 +851,7 @@ func (c *Client) Attach(ctx context.Context, sessionID, slotID string) (*AttachS
 	return &AttachStream{stream: stream, sessionID: sessionID, slotID: slotID}, nil
 }
 
-// Send forwards a §15.4.1 client-to-agent envelope to the agent. A
+// Send forwards a §28.5.3 client-to-agent envelope to the agent. A
 // concurrent-pool stream stamps the resolved slotId on the frame.
 func (a *AttachStream) Send(envelope []byte) error {
 	req := &adapterv1.AttachRequest{
@@ -864,7 +864,7 @@ func (a *AttachStream) Send(envelope []byte) error {
 	return a.stream.Send(req)
 }
 
-// Recv returns the next §15.4.1 agent-to-gateway envelope. It returns
+// Recv returns the next §28.5.3 agent-to-gateway envelope. It returns
 // io.EOF once the runtime's output stream ends.
 func (a *AttachStream) Recv() ([]byte, error) {
 	msg, err := a.stream.Recv()

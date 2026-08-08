@@ -13,7 +13,7 @@ import (
 // agent loop at warm time and be pointed at a session's workspace
 // (ConfigureWorkspace) rather than started from cold (StartSession).
 //
-// For the echo reference runtime the "SDK" is the in-process §15.4.1 loop:
+// For the echo reference runtime the "SDK" is the in-process §28.5.3 loop:
 // PreConnect marks it warm, ConfigureWorkspace binds the warm loop to the
 // session's cwd (equivalent to Start), and DemoteSDK tears the loop down
 // so a subsequent StartSession runs the pod-warm path. A real agent SDK

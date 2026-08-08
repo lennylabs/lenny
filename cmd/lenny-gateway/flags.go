@@ -415,7 +415,7 @@ func (f *gatewayFlags) registerCoreFlags() {
 	f.jwksPublish = flag.Bool("jwks-publish", envFlagDefault("LENNY_JWKS_PUBLISH", false),
 		"§10.3 publish the gateway's JWT signing keys as a JWK Set at /.well-known/jwks.json. Defaults off (F-10.2.14): the v1 JWT backend is HMAC and the published entries carry `kty: oct` with no `k` field — verifiers cannot use them to validate signatures, so the endpoint advertises only the kid/alg of the current and previous keys. Set to true to opt into the metadata advertisement, or once an asymmetric signing backend lands (so the document carries usable public-key material). Override via LENNY_JWKS_PUBLISH.")
 	f.runtimeBin = flag.String("runtime-bin", os.Getenv("LENNY_AGENT_BINARY"),
-		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §15.4.1 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
+		"path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §28.5.3 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.")
 	f.agentRuntime = flag.String("agent-runtime", os.Getenv("LENNY_AGENT_RUNTIME"),
 		"§17.4 zero-credential runtime selector. \"echo\" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is \"echo\"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.")
 	f.postgresDSN = flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),

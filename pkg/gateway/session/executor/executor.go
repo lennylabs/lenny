@@ -30,11 +30,11 @@ var (
 	ErrUnsupported = errors.New("executor: operation not supported")
 )
 
-// Message captures the §7.2 / §15.4.1 inbound message envelope.
+// Message captures the §7.2 / §15.4 inbound message envelope.
 // Implementations of Executor receive a slice of Messages and emit
 // a slice of MessageParts.
 type Message struct {
-	// ID is the §15.4.1 stable message identifier. Gateway-assigned
+	// ID is the §15.4 stable message identifier. Gateway-assigned
 	// when the sender omits it.
 	ID string
 
@@ -42,10 +42,10 @@ type Message struct {
 	Role string
 
 	// Content is the message text. Production extends this with
-	// multi-part content (image, file ref) per §15.4.1 MessagePart.
+	// multi-part content (image, file ref) per §28.5.3 MessagePart.
 	Content string
 
-	// From is the §15.4.1 from-object the gateway stamps onto the
+	// From is the §15.4 from-object the gateway stamps onto the
 	// delivered envelope. The zero value defers to the executor's
 	// default gateway-client identity (a top-level client turn). An
 	// inter-session lenny/send_message sets it to the authenticated
@@ -54,14 +54,14 @@ type Message struct {
 	From MessageFrom
 }
 
-// MessageFrom is the §15.4.1 MessageEnvelope `from` attribution the
+// MessageFrom is the §15.4 MessageEnvelope `from` attribution the
 // gateway injects before delivering a message to the runtime. Kind is
 // the closed enum (`client`, `agent`, `system`, `external`); ID is the
 // kind-specific identifier (for an inter-session message, the sending
 // session id under kind `agent`). The zero value carries no attribution
 // and the executor stamps its default gateway-client identity.
 //
-// spec: §15.4.1 — `from` is adapter-injected and the
+// spec: §15.4 — `from` is adapter-injected and the
 // runtime never supplies it; §13.5 mitigation 6 — `from` is always set
 // by the gateway from the calling session's authenticated identity.
 // F-13.5.11.
@@ -70,9 +70,9 @@ type MessageFrom struct {
 	ID   string
 }
 
-// MessagePart is the §15.4.1 outbound response envelope.
+// MessagePart is the §28.5.3 outbound response envelope.
 type MessagePart struct {
-	// Type is the §15.4.1 content type: `text`, `tool_call`,
+	// Type is the §28.5.3 content type: `text`, `tool_call`,
 	// `tool_result`, etc. The minimal echo executor emits only
 	// `text`. An unregistered unprefixed type is collapsed to `text`
 	// at ingress, with the original preserved in Annotations.
@@ -85,19 +85,19 @@ type MessagePart struct {
 	// is bound by a blob.
 	Ref string `json:"ref,omitempty"`
 
-	// SchemaVersion is the §15.4.1 per-part MessagePart schema revision
+	// SchemaVersion is the §28.5.3 per-part MessagePart schema revision
 	// (default 1). Ingest defaults a missing or non-positive value to
 	// 1 so a durable consumer always reads a value.
 	SchemaVersion int `json:"schemaVersion,omitempty"`
 
-	// Annotations is the §15.4.1 open metadata map. Ingest stamps
+	// Annotations is the §28.5.3 open metadata map. Ingest stamps
 	// `originalType` and the `unregistered_platform_type` warning here
 	// when a part's type falls through the canonical-registry fallback.
 	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 // Response is the result of an Executor.Send: the runtime's output parts
-// plus the §15.4.1 degradation annotations the gateway, as a live
+// plus the §28.5.3 degradation annotations the gateway, as a live
 // consumer, surfaced on the enclosing MessageEnvelope while ingesting the
 // runtime's `response` frame. Annotations carries the envelope-scoped
 // kinds — `schema_version_ahead` (a part stamped a schemaVersion ahead of
@@ -119,7 +119,7 @@ type Response struct {
 type Executor interface {
 	// Send delivers the messages to the executor's session context
 	// and returns the runtime's Response (output parts plus any
-	// envelope-level §15.4.1 degradation annotations). Implementations
+	// envelope-level §28.5.3 degradation annotations). Implementations
 	// must not retain the supplied slice after returning.
 	Send(ctx context.Context, sessionID string, messages []Message) (Response, error)
 

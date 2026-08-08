@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.5 item 7 + §15.4.1 — `schemaVersion` on every
+// spec: §15.5 item 7 + §28.5.3 — `schemaVersion` on every
 // translated `MessagePart` is preserved from the upstream MCP content
 // block when the producer set one. A durable consumer reading a §8.8
 // TaskRecord that the gateway projected through MCP sees the original
@@ -94,7 +94,7 @@ func TestMCPResultPartsRejectsBadSchemaVersion_spec_15_5_2452(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — an empty result yields an empty part list rather
+// spec: §28.5.3 — an empty result yields an empty part list rather
 // than a single placeholder. F-15.5.13.
 func TestMCPResultPartsEmptyResult(t *testing.T) {
 	if got := mcpResultParts(nil); len(got) != 0 {
@@ -102,7 +102,7 @@ func TestMCPResultPartsEmptyResult(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a non-tool-result JSON value (e.g. a string) is
+// spec: §28.5.3 — a non-tool-result JSON value (e.g. a string) is
 // wrapped verbatim as a single structured `application/json` part
 // with schemaVersion 1 so no information is lost. F-15.5.13.
 func TestMCPResultPartsWrapsNonToolResult(t *testing.T) {

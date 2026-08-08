@@ -3,7 +3,7 @@
 """Wire and convenience types the runtime-author SDK surfaces.
 
 The wire-level dataclasses (:class:`MessagePart`, :class:`MessageEnvelope`)
-mirror the §15.4.1 adapter binary protocol. The convenience dataclasses
+mirror the §28.5.3 adapter binary protocol. The convenience dataclasses
 (:class:`CreateRequest`, :class:`Message`, :class:`Reply`,
 :class:`CredentialBundle`, :class:`AdapterManifest`,
 :class:`WorkspacePlan`) are §15.7 wrappers the SDK materializes from the
@@ -17,13 +17,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
-# revision (§15.4.1). Producers stamp it on every emitted MessagePart.
+# revision (§28.5.3). Producers stamp it on every emitted MessagePart.
 SCHEMA_VERSION = 1
 
 
 @dataclass
 class MessagePart:
-    """§15.4.1 internal content model.
+    """§28.5.3 internal content model.
 
     A part either carries bytes inline or references blob storage;
     ``inline`` and ``ref`` are mutually exclusive. Basic-level runtimes
@@ -55,7 +55,7 @@ class MessagePart:
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> MessagePart:
-        """Build a MessagePart from a §15.4.1 wire object."""
+        """Build a MessagePart from a §28.5.3 wire object."""
         nested = raw.get("parts")
         return cls(
             type=str(raw.get("type", "")),
@@ -70,7 +70,7 @@ class MessagePart:
         )
 
     def to_wire(self) -> dict[str, Any]:
-        """Serialize the part to its §15.4.1 wire form.
+        """Serialize the part to its §28.5.3 wire form.
 
         Fields left unset are omitted so the frame stays minimal. The
         SDK stamps ``schema_version`` before this is called.
@@ -103,7 +103,7 @@ def text(s: str) -> MessagePart:
 
 @dataclass
 class MessageFrom:
-    """§15.4.1 ``from`` object.
+    """§15.4 ``from`` object.
 
     ``kind`` is one of client, agent, system, or external. The adapter
     injects both fields; runtimes never supply them.
@@ -115,7 +115,7 @@ class MessageFrom:
 
 @dataclass
 class MessageEnvelope:
-    """§15.4.1 unified inbound message format.
+    """§15.4 unified inbound message format.
 
     The adapter populates ``from_``, and the gateway populates
     ``schema_version`` and ``id`` when omitted. Basic-level handlers
@@ -142,7 +142,7 @@ class MessageEnvelope:
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> MessageEnvelope:
-        """Build a MessageEnvelope from a §15.4.1 message frame."""
+        """Build a MessageEnvelope from a §15.4 message frame."""
         sender = raw.get("from")
         annotations_raw = raw.get("annotations")
         annotations: dict[str, Any] = (
@@ -170,14 +170,14 @@ class MessageEnvelope:
 
 @dataclass
 class ResponseError:
-    """Optional §15.4.1 ``response.error`` object and §8.8
+    """Optional §28.5.3 ``response.error`` object and §8.8
     ``TaskResult.error`` object. Both carry a code and a message."""
 
     code: str
     message: str = ""
 
     def to_wire(self) -> dict[str, Any]:
-        """Serialize the error to its §15.4.1 wire form."""
+        """Serialize the error to its §28.5.3 wire form."""
         return {"code": self.code, "message": self.message}
 
 
@@ -244,7 +244,7 @@ class SocketRef:
 
 @dataclass
 class AdapterLocalTool:
-    """One §15.4.1 adapter-local tool entry: a name, a human-readable
+    """One §28.5.3 adapter-local tool entry: a name, a human-readable
     description, and a JSON Schema for its arguments."""
 
     name: str
@@ -279,7 +279,7 @@ class AdapterManifest:
     connector_servers: list[ConnectorServerRef] = field(default_factory=list)
     # lifecycle_channel names the Full-level lifecycle channel socket.
     lifecycle_channel: SocketRef | None = None
-    # adapter_local_tools enumerates the §15.4.1 adapter-local tools the
+    # adapter_local_tools enumerates the §28.5.3 adapter-local tools the
     # runtime may invoke via stdout tool_call frames.
     adapter_local_tools: list[AdapterLocalTool] = field(default_factory=list)
     # runtime_options is the effective caller options map.
@@ -339,7 +339,7 @@ class WorkspacePlan:
 class TerminationReason:
     """Reason passed to :meth:`Handler.on_terminate`.
 
-    The SDK populates it from the §15.4.1 shutdown frame or the
+    The SDK populates it from the §28.5.3 shutdown frame or the
     lifecycle-channel terminate event.
     """
 
@@ -383,12 +383,12 @@ class CreateRequest:
 @dataclass
 class Message:
     """§15.7 per-turn envelope handed to :meth:`Handler.on_message` for
-    every §15.4.1 message frame.
+    every §28.5.3 message frame.
 
     Fields other than ``envelope`` are SDK-derived conveniences.
     """
 
-    # envelope is the canonical §15.4.1 MessageEnvelope. All message
+    # envelope is the canonical §15.4 MessageEnvelope. All message
     # semantics live on this field.
     envelope: MessageEnvelope
     # session_id is the session the message was delivered to.
@@ -409,7 +409,7 @@ class Message:
 class Reply:
     """Value :meth:`Handler.on_message` returns.
 
-    The SDK serializes it into the stdout §15.4.1 response frame:
+    The SDK serializes it into the stdout §28.5.3 response frame:
     ``parts`` becomes ``output``.
     """
 

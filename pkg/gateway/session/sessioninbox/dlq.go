@@ -151,7 +151,7 @@ return expired
 // and returns them so the caller emits a `message_expired` event with
 // `reason: "dlq_ttl_expired"` on each sender's stream.
 //
-// spec: §7.2; §15.4.1 message_expired reason
+// spec: §7.2; §15.4 message_expired reason
 // `dlq_ttl_expired`.
 func (d *DLQ) SweepExpired(ctx context.Context, tenantID, sessionID string, now time.Time) ([]Message, error) {
 	res, err := sweepExpiredScript.Run(ctx, d.client,

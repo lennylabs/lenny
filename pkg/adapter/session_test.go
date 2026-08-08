@@ -18,7 +18,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// fakeRuntime is the test double for RuntimeProcess. The §15.4.1
+// fakeRuntime is the test double for RuntimeProcess. The §28.5.3
 // heartbeat monitor writes frames and may interrupt from a background
 // goroutine while a test reads the recorded slices, so the recording
 // fields are guarded by mu; use the *Snapshot accessors from a test that

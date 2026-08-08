@@ -967,9 +967,9 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 // completed child: the child's final emitted part (the last non-caller
 // turn of its transcript, mirroring the §8.8 projection) plus every deliverable
 // `lenny-blob://` artifact the child catalogued. Both arrays are always
-// present (possibly empty) when output is set, per the §8.8 / §15.4.1
+// present (possibly empty) when output is set, per the §8.8 / §28.5.3
 // contract.
-// spec: §8.8; §15.4.1. F-8.8.2.
+// spec: §8.8; §28.5.3. F-8.8.2.
 func (s *Server) buildTaskOutput(ctx context.Context, sess sessionstore.Session) *sessionrecord.Output {
 	out := &sessionrecord.Output{Parts: []sessionrecord.MessagePart{}, ArtifactRefs: []string{}}
 	if s.transcripts != nil {

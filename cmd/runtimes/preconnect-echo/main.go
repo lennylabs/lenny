@@ -8,7 +8,7 @@
 // The §6.1 SDK-warm model pre-connects the agent process during the warm
 // phase so the first prompt does not pay SDK cold-start latency. This
 // binary shows the wiring a first-party Go runtime uses: build an
-// adapter.Server, attach an adapter.SDKWarmInProcessRuntime (the §15.4.1
+// adapter.Server, attach an adapter.SDKWarmInProcessRuntime (the §28.5.3
 // echo loop with the SDK-warm PreConnect / ConfigureWorkspace / DemoteSDK
 // methods), call adapter.Server.PreConnect once the server is up, and
 // serve adapter.NewGRPCServer. The gateway then either points the
@@ -150,7 +150,7 @@ func main() {
 	}
 }
 
-// echoLoop is the §15.4.1 echo handler the adapter drives in-process.
+// echoLoop is the §28.5.3 echo handler the adapter drives in-process.
 func echoLoop(ctx context.Context, in io.Reader, out io.Writer) error {
 	return echocore.Run(ctx, in, out, os.Stderr)
 }

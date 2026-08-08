@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §15.4.1 — frameSlotID reads the demultiplexing key off a
+// spec: §28.5.3 — frameSlotID reads the demultiplexing key off a
 // runtime output frame. A frame with no slotId, or one that does not parse
 // as a JSON object, yields the empty string so the Attach base path
 // delivers it to every stream rather than dropping it.
@@ -34,7 +34,7 @@ func TestFrameSlotID(t *testing.T) {
 	}
 }
 
-// spec: §6.4; §15.4.1 — stampSlotID injects slotId
+// spec: §6.4; §28.5.3 — stampSlotID injects slotId
 // onto an inbound envelope so the shared runtime routes it to the slot's
 // cwd. A non-object frame is forwarded unchanged so a non-envelope frame is
 // not dropped.
@@ -65,7 +65,7 @@ func TestStampSlotID(t *testing.T) {
 	}
 }
 
-// spec: §6.4; §15.4.1 — a malformed JSON object fails closed:
+// spec: §6.4; §28.5.3 — a malformed JSON object fails closed:
 // stampSlotID returns an error rather than writing an envelope with no
 // slotId, which would misroute it to a sibling slot on a concurrent pod.
 func TestStampSlotIDFailsClosedOnMalformedObject(t *testing.T) {
@@ -74,7 +74,7 @@ func TestStampSlotIDFailsClosedOnMalformedObject(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — demuxSlotOutput keeps a slot's own frames and a
+// spec: §28.5.3 — demuxSlotOutput keeps a slot's own frames and a
 // no-slotId protocol frame, and drops a sibling slot's frame, so a per-slot
 // Attach stream sees only its slot's output.
 func TestDemuxSlotOutput(t *testing.T) {
@@ -114,7 +114,7 @@ func TestDemuxSlotOutput(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — demuxSlotOutput stops on ctx cancellation so a
+// spec: §28.5.3 — demuxSlotOutput stops on ctx cancellation so a
 // closed Attach stream does not leak the filter goroutine.
 func TestDemuxSlotOutputStopsOnContextCancel(t *testing.T) {
 	in := make(chan []byte) // unbuffered: a send would block without a reader

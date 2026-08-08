@@ -218,7 +218,7 @@ The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-
 2. Adapter binary boots, registers with the gateway, and signals READY.
 3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/current/`; runs any `setupCommands`; emits `session.created`.
 4. On first `message`: adapter invokes `claude --no-tty --print --session-id=<id>` and pipes the message to stdin. All subsequent messages for the session reuse the same `claude` process (multi-turn).
-5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)); tool results are injected back via `tool_result`.
+5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§28.5.3](28_communication-channels.md#2853-intra-pod)); tool results are injected back via `tool_result`.
 6. On session termination: adapter sends SIGTERM to `claude`; waits up to 5s for graceful shutdown; force-kills on timeout. Any files written under `/workspace/output/` are sealed as session artifacts.
 
 **Setup-time image entrypoint:** `/usr/local/bin/lenny-claude-code-adapter` (the adapter binary; NOT the `claude` CLI directly). The adapter owns lifecycle and delegates message handling to `claude`.

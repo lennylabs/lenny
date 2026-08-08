@@ -502,7 +502,7 @@ func TestFidelityMatrix(t *testing.T) {
 }
 
 // fidelitySamples returns one MessagePart per canonical type in the
-// §15.4.1 Canonical Type Registry, each carrying every field the
+// §28.5.3 Canonical Type Registry, each carrying every field the
 // fidelity matrix tracks so per-field assertions can observe what
 // survives translation.
 func fidelitySamples() []runtime.MessagePart {

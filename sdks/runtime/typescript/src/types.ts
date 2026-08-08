@@ -2,7 +2,7 @@
 
 // This file holds the wire and convenience types the runtime-author SDK
 // surfaces. The wire-level types (MessagePart, MessageEnvelope, the
-// inbound and outbound frame types) mirror the §15.4.1 adapter binary
+// inbound and outbound frame types) mirror the §28.5.3 adapter binary
 // protocol. The convenience types (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
 // the SDK materializes from the manifest, the credential file, and the
@@ -10,10 +10,10 @@
 // wire types.
 
 // SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
-// revision (§15.4.1). Producers stamp it on every emitted MessagePart.
+// revision (§28.5.3). Producers stamp it on every emitted MessagePart.
 export const SCHEMA_VERSION = 1;
 
-// MessagePart is the §15.4.1 internal content model. A part either
+// MessagePart is the §28.5.3 internal content model. A part either
 // carries bytes inline or references blob storage; inline and ref are
 // mutually exclusive. Basic-level runtimes need only set type and
 // inline; the SDK stamps schemaVersion when it is unset.
@@ -25,7 +25,7 @@ export interface MessagePart {
   // id is a stable part identifier. The adapter generates one when a
   // runtime omits it.
   id?: string;
-  // type is an open string from the §15.4.1 canonical type registry
+  // type is an open string from the §28.5.3 canonical type registry
   // (text, code, image, error, etc.) or an x-<vendor>/ custom type.
   type: string;
   // mimeType handles the encoding of the part content. Defaults to
@@ -48,7 +48,7 @@ export function text(s: string): MessagePart {
   return { schemaVersion: SCHEMA_VERSION, type: "text", inline: s };
 }
 
-// MessageFrom is the §15.4.1 from object. kind is one of client, agent,
+// MessageFrom is the §15.4 from object. kind is one of client, agent,
 // system, or external. The adapter injects both fields; runtimes never
 // supply them.
 export interface MessageFrom {
@@ -56,7 +56,7 @@ export interface MessageFrom {
   id: string;
 }
 
-// MessageEnvelope is the §15.4.1 unified inbound message format. The
+// MessageEnvelope is the §15.4 unified inbound message format. The
 // adapter populates from, and the gateway populates schemaVersion and
 // id when omitted. Basic-level handlers typically read only input.
 export interface MessageEnvelope {
@@ -72,7 +72,7 @@ export interface MessageEnvelope {
   input?: MessagePart[];
 }
 
-// ResponseError is the optional §15.4.1 response.error object and the
+// ResponseError is the optional §28.5.3 response.error object and the
 // §8.8 TaskResult.error object. Both carry a code and a message.
 export interface ResponseError {
   code: string;
@@ -117,7 +117,7 @@ export interface SocketRef {
   socket: string;
 }
 
-// AdapterLocalTool is one §15.4.1 adapter-local tool entry: a name, a
+// AdapterLocalTool is one §28.5.3 adapter-local tool entry: a name, a
 // human-readable description, and a JSON Schema for its arguments.
 export interface AdapterLocalTool {
   name: string;
@@ -149,7 +149,7 @@ export interface AdapterManifest {
   connectorServers?: ConnectorServerRef[];
   // runtimeOps names the Full-level lifecycle channel socket.
   runtimeOps?: SocketRef;
-  // adapterLocalTools enumerates the §15.4.1 adapter-local tools the
+  // adapterLocalTools enumerates the §28.5.3 adapter-local tools the
   // runtime may invoke via stdout tool_call frames.
   adapterLocalTools?: AdapterLocalTool[];
   // runtimeOptions is the effective caller options map.
@@ -168,7 +168,7 @@ export interface WorkspacePlan {
 }
 
 // TerminationReason is the reason passed to Handler.onTerminate. The
-// SDK populates it from the §15.4.1 shutdown frame or the
+// SDK populates it from the §28.5.3 shutdown frame or the
 // lifecycle-channel terminate event.
 export interface TerminationReason {
   // reason is the adapter-supplied reason string (drain, deadline,
@@ -205,10 +205,10 @@ export interface CreateRequest {
 }
 
 // Message is the §15.7 per-turn envelope handed to Handler.onMessage
-// for every §15.4.1 message frame. Fields other than envelope are
+// for every §28.5.3 message frame. Fields other than envelope are
 // SDK-derived conveniences.
 export interface Message {
-  // envelope is the canonical §15.4.1 MessageEnvelope. All message
+  // envelope is the canonical §15.4 MessageEnvelope. All message
   // semantics live on this field.
   envelope: MessageEnvelope;
   // sessionId is the session the message was delivered to.
@@ -226,7 +226,7 @@ export interface Message {
 }
 
 // Reply is the value Handler.onMessage returns. The SDK serializes it
-// into the stdout §15.4.1 response frame: parts becomes output.
+// into the stdout §28.5.3 response frame: parts becomes output.
 export interface Reply {
   // parts is the MessagePart array the runtime emits for this turn.
   // Undefined or empty is valid when output was already emitted via
@@ -251,7 +251,7 @@ export function textReply(s: string): Reply {
 
 // Handler is the single interface a runtime author implements. The SDK
 // invokes onCreate once before the first message of a task, onMessage
-// for every inbound §15.4.1 message frame, and onTerminate once when
+// for every inbound §28.5.3 message frame, and onTerminate once when
 // the adapter closes stdin or sends a shutdown frame.
 export interface Handler {
   // onCreate receives the task-scoped context snapshot before the
@@ -267,11 +267,11 @@ export interface Handler {
 }
 
 // HandlerTools is the SDK surface passed to Handler.onMessage. It
-// carries the §15.4.1 adapter-local tool helpers (available at every
+// carries the §28.5.3 adapter-local tool helpers (available at every
 // level), the §8.5 platform MCP tool helpers (Standard level and
 // above), and the current §4.7 credential bundle.
 export interface HandlerTools {
-  // adapter is the §15.4.1 adapter-local tool surface. It is present
+  // adapter is the §28.5.3 adapter-local tool surface. It is present
   // at every integration level.
   adapter: AdapterTools;
   // platform is the §8.5 platform MCP tool surface, present only when
@@ -287,7 +287,7 @@ export interface HandlerTools {
 // re-declared here as forward interface references so types.ts has no
 // import cycle. The concrete classes implement these interfaces.
 
-// AdapterTools is the §15.4.1 adapter-local tool surface.
+// AdapterTools is the §28.5.3 adapter-local tool surface.
 export interface AdapterTools {
   toolCall(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   readFile(path: string): Promise<string>;

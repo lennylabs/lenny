@@ -27,7 +27,7 @@ func writeRuntimeScript(t *testing.T, body string) string {
 	return path
 }
 
-// spec: §15.4.1 — a runtime that exits non-zero without
+// spec: §28.5.3 — a runtime that exits non-zero without
 // emitting a `response` is reported as a synthesized RUNTIME_CRASH
 // carrying the exit code and stderr (MED-016).
 func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
@@ -60,7 +60,7 @@ func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T
 	}
 }
 
-// spec: §15.4.1 — a CLEAN (code 0) exit without a response is a
+// spec: §28.5.3 — a CLEAN (code 0) exit without a response is a
 // protocol error, not a crash: the gateway must not mislabel it
 // RUNTIME_CRASH.
 func TestSubprocessExecutorCleanExitNoResponseIsNotCrash_spec_15_4_1_1889(t *testing.T) {

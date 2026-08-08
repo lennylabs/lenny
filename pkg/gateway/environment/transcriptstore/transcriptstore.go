@@ -24,7 +24,7 @@ import (
 // SchemaVersion is the §15.5 item 7 schema revision the gateway stamps on
 // every MessageEnvelope it persists to session_messages. v1 writers use 1.
 //
-// spec: §15.4.1 — "Every MessageEnvelope persisted to the
+// spec: §15.4 — "Every MessageEnvelope persisted to the
 // session_messages table carries this field ... the gateway writes it at
 // inbox-enqueue time and it is immutable once written." §15.5 item 7 — the
 // field is an integer "starting at 1".
@@ -32,7 +32,7 @@ const SchemaVersion = 1
 
 // Entry is one transcript line.
 type Entry struct {
-	// ID is the stable per-message identifier the §15.4.1 MessageDAG
+	// ID is the stable per-message identifier the §15.4 MessageDAG
 	// view (`GET /v1/sessions/{id}/messages`) returns as the message
 	// node id. It is the durable session_messages.id row UUID. The
 	// Memory store generates one at append time; the Postgres store
@@ -56,10 +56,10 @@ type Entry struct {
 	// Timestamp is the UTC instant the entry was recorded.
 	Timestamp time.Time `json:"timestamp"`
 
-	// SchemaVersion is the §15.4.1 MessageEnvelope schema revision the
+	// SchemaVersion is the §15.4 MessageEnvelope schema revision the
 	// gateway stamps at persist time. Zero on input is normalized to
 	// SchemaVersion (1) by the store; callers do not set it (the gateway
-	// owns it per §15.4.1, "Runtimes MUST NOT set it").
+	// owns it per §15.4, "Runtimes MUST NOT set it").
 	SchemaVersion int `json:"schemaVersion"`
 }
 
@@ -131,9 +131,9 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		if e.SchemaVersion == 0 {
 			e.SchemaVersion = SchemaVersion
 		}
-		// Assign a stable message-node id so the §15.4.1 MessageDAG view
+		// Assign a stable message-node id so the §15.4 MessageDAG view
 		// has a durable identifier, mirroring the Postgres
-		// session_messages.id UUID column. spec: §15.4.1.
+		// session_messages.id UUID column. spec: §15.4.
 		if e.ID == "" {
 			e.ID = uuid.NewString()
 		}

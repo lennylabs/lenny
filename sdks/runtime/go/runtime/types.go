@@ -4,7 +4,7 @@ package runtime
 
 // This file holds the wire and convenience types the runtime-author SDK
 // surfaces. The wire-level structs (MessagePart, MessageEnvelope, the
-// inbound and outbound frame types) mirror the §15.4.1 adapter binary
+// inbound and outbound frame types) mirror the §28.5.3 adapter binary
 // protocol. The convenience structs (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
 // the SDK materializes from the manifest, the credential file, and the
@@ -12,10 +12,10 @@ package runtime
 // wire types.
 
 // schemaVersion is the current MessagePart and MessageEnvelope schema
-// revision (§15.4.1). Producers stamp it on every emitted MessagePart.
+// revision (§28.5.3). Producers stamp it on every emitted MessagePart.
 const schemaVersion = 1
 
-// MessagePart is the §15.4.1 internal content model. A part either
+// MessagePart is the §28.5.3 internal content model. A part either
 // carries bytes inline or references blob storage; Inline and Ref are
 // mutually exclusive. Basic-level runtimes need only set Type and
 // Inline; the SDK stamps SchemaVersion when it is unset.
@@ -26,7 +26,7 @@ type MessagePart struct {
 	// ID is a stable part identifier. The adapter generates one when a
 	// runtime omits it.
 	ID string `json:"id,omitempty"`
-	// Type is an open string from the §15.4.1 canonical type registry
+	// Type is an open string from the §28.5.3 canonical type registry
 	// (text, code, image, error, etc.) or an x-<vendor>/ custom type.
 	Type string `json:"type"`
 	// MimeType handles the encoding of the part content. Defaults to
@@ -49,7 +49,7 @@ func Text(s string) MessagePart {
 	return MessagePart{SchemaVersion: schemaVersion, Type: "text", Inline: s}
 }
 
-// MessageEnvelope is the §15.4.1 unified inbound message format. The
+// MessageEnvelope is the §15.4 unified inbound message format. The
 // adapter populates From, and the gateway populates SchemaVersion and ID
 // when omitted. Basic-level handlers typically read only Input.
 //
@@ -73,7 +73,7 @@ type MessageEnvelope struct {
 	Annotations     map[string]any `json:"annotations,omitempty"`
 }
 
-// MessageFrom is the §15.4.1 from object. Kind is one of client, agent,
+// MessageFrom is the §15.4 from object. Kind is one of client, agent,
 // system, or external. The adapter injects both fields; runtimes never
 // supply them.
 type MessageFrom struct {
@@ -81,7 +81,7 @@ type MessageFrom struct {
 	ID   string `json:"id"`
 }
 
-// ResponseError is the optional §15.4.1 response.error object and the
+// ResponseError is the optional §28.5.3 response.error object and the
 // §8.8 TaskResult.error object. Both carry a code and a message.
 type ResponseError struct {
 	Code    string `json:"code"`
@@ -134,7 +134,7 @@ type AdapterManifest struct {
 	ConnectorServers []ConnectorServerRef `json:"connectorServers,omitempty"`
 	// RuntimeOps names the Full-level CH-RUNTIMEOPS socket.
 	RuntimeOps *SocketRef `json:"runtimeOps,omitempty"`
-	// AdapterLocalTools enumerates the §15.4.1 adapter-local tools the
+	// AdapterLocalTools enumerates the §28.5.3 adapter-local tools the
 	// runtime may invoke via stdout tool_call frames.
 	AdapterLocalTools []AdapterLocalTool `json:"adapterLocalTools,omitempty"`
 	// RuntimeOptions is the effective caller options map.
@@ -159,7 +159,7 @@ type SocketRef struct {
 	Socket string `json:"socket"`
 }
 
-// AdapterLocalTool is one §15.4.1 adapter-local tool entry: a name, a
+// AdapterLocalTool is one §28.5.3 adapter-local tool entry: a name, a
 // human-readable description, and a JSON Schema for its arguments.
 type AdapterLocalTool struct {
 	Name        string         `json:"name"`
@@ -178,7 +178,7 @@ type WorkspacePlan struct {
 }
 
 // TerminationReason is the reason passed to Handler.OnTerminate. The SDK
-// populates it from the §15.4.1 shutdown frame or the CH-RUNTIMEOPS
+// populates it from the §28.5.3 shutdown frame or the CH-RUNTIMEOPS
 // terminate event.
 type TerminationReason struct {
 	// Reason is the adapter-supplied reason string (drain, deadline,
@@ -218,10 +218,10 @@ type CreateRequest struct {
 }
 
 // Message is the §15.7 per-turn envelope handed to Handler.OnMessage for
-// every §15.4.1 message frame. Fields other than Envelope are SDK-derived
+// every §28.5.3 message frame. Fields other than Envelope are SDK-derived
 // conveniences.
 type Message struct {
-	// Envelope is the canonical §15.4.1 MessageEnvelope. All message
+	// Envelope is the canonical §15.4 MessageEnvelope. All message
 	// semantics live on this field.
 	Envelope *MessageEnvelope `json:"envelope"`
 	// SessionID is the session the message was delivered to.
@@ -242,7 +242,7 @@ type Message struct {
 }
 
 // Reply is the value Handler.OnMessage returns. The SDK serializes it
-// into the stdout §15.4.1 response frame: Parts becomes output.
+// into the stdout §28.5.3 response frame: Parts becomes output.
 type Reply struct {
 	// Parts is the MessagePart array the runtime emits for this turn.
 	// Nil or empty is valid when output was already emitted via the
@@ -265,31 +265,31 @@ func TextReply(s string) Reply {
 	return Reply{Parts: []MessagePart{Text(s)}, Final: true}
 }
 
-// --- §15.4.1 wire frame types ------------------------------------------
+// --- §28.5.3 wire frame types ------------------------------------------
 
 // frameType peeks the type discriminator of an inbound frame.
 type frameType struct {
 	Type string `json:"type"`
 }
 
-// inboundMessage is the §15.4.1 inbound message frame. It is the
+// inboundMessage is the §28.5.3 inbound message frame. It is the
 // MessageEnvelope with an explicit type discriminator.
 type inboundMessage = MessageEnvelope
 
-// inboundHeartbeat is the §15.4.1 heartbeat frame.
+// inboundHeartbeat is the §28.5.3 heartbeat frame.
 type inboundHeartbeat struct {
 	Type string `json:"type"`
 	TS   int64  `json:"ts"`
 }
 
-// inboundShutdown is the §15.4.1 shutdown frame.
+// inboundShutdown is the §28.5.3 shutdown frame.
 type inboundShutdown struct {
 	Type       string `json:"type"`
 	Reason     string `json:"reason"`
 	DeadlineMS int    `json:"deadline_ms"`
 }
 
-// inboundToolResult is the §15.4.1 tool_result frame.
+// inboundToolResult is the §28.5.3 tool_result frame.
 type inboundToolResult struct {
 	Type    string        `json:"type"`
 	ID      string        `json:"id"`
@@ -298,7 +298,7 @@ type inboundToolResult struct {
 	SlotID  string        `json:"slotId,omitempty"`
 }
 
-// outboundResponse is the §15.4.1 outbound response frame.
+// outboundResponse is the §28.5.3 outbound response frame.
 type outboundResponse struct {
 	Type   string         `json:"type"`
 	Output []MessagePart  `json:"output"`
@@ -306,12 +306,12 @@ type outboundResponse struct {
 	SlotID string         `json:"slotId,omitempty"`
 }
 
-// outboundHeartbeatAck is the §15.4.1 heartbeat_ack frame.
+// outboundHeartbeatAck is the §28.5.3 heartbeat_ack frame.
 type outboundHeartbeatAck struct {
 	Type string `json:"type"`
 }
 
-// outboundToolCall is the §15.4.1 tool_call frame.
+// outboundToolCall is the §28.5.3 tool_call frame.
 type outboundToolCall struct {
 	Type      string         `json:"type"`
 	ID        string         `json:"id"`
@@ -320,14 +320,14 @@ type outboundToolCall struct {
 	SlotID    string         `json:"slotId,omitempty"`
 }
 
-// outboundStatus is the §15.4.1 optional status frame.
+// outboundStatus is the §28.5.3 optional status frame.
 type outboundStatus struct {
 	Type    string `json:"type"`
 	State   string `json:"state,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
-// outboundTracingContext is the §15.4.1 set_tracing_context frame.
+// outboundTracingContext is the §28.5.3 set_tracing_context frame.
 type outboundTracingContext struct {
 	Type    string         `json:"type"`
 	Context map[string]any `json:"context"`

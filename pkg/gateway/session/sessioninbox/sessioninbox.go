@@ -25,7 +25,7 @@
 // sorted set keyed `t:{tenant_id}:session:{session_id}:dlq`, scored by
 // expiry timestamp.
 //
-// spec: §7.2; §12.4 (Redis key prefixes); §15.4.1 (delivery receipt /
+// spec: §7.2; §12.4 (Redis key prefixes); §15.4 (delivery receipt /
 // message_expired schemas).
 package sessioninbox
 
@@ -48,10 +48,10 @@ const DefaultMaxInboxSize = 500
 // Message is one buffered inter-session message. The payload is the
 // opaque serialized §15.4 MessageEnvelope; the inbox/DLQ never inspect
 // it. MessageID and SenderSessionID are carried out-of-band so the
-// gateway can route the §15.4.1 `message_expired` event back to the
+// gateway can route the §15.4 `message_expired` event back to the
 // sender's stream without decoding the payload.
 //
-// spec: §7.2; §15.4.1 message_expired
+// spec: §7.2; §15.4 message_expired
 // schema (messageId, sender routing).
 type Message struct {
 	// MessageID is the §15.4 message id (sender-supplied or

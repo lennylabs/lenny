@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// spec: §15.4.1 — the inbound heartbeat frame is
+// spec: §28.5.3 — the inbound heartbeat frame is
 // {"type":"heartbeat","ts":<unix epoch seconds>}.
 func TestHeartbeatMonitorFrameIsValid_spec_15_4_1_1823(t *testing.T) {
 	m := newHeartbeatMonitor(time.Second, time.Second, func([]byte) error { return nil })
@@ -30,7 +30,7 @@ func TestHeartbeatMonitorFrameIsValid_spec_15_4_1_1823(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — when no ack arrives within the window the
+// spec: §28.5.3 — when no ack arrives within the window the
 // adapter considers the process hung; the monitor closes its hung
 // channel after sending at least one heartbeat.
 func TestHeartbeatMonitorFiresHungWithoutAck_spec_15_4_1_1826(t *testing.T) {
@@ -53,7 +53,7 @@ func TestHeartbeatMonitorFiresHungWithoutAck_spec_15_4_1_1826(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — an acked runtime is not declared hung. The
+// spec: §28.5.3 — an acked runtime is not declared hung. The
 // monitor keeps probing while every beat is answered.
 func TestHeartbeatMonitorAckPreventsHung_spec_15_4_1_1826(t *testing.T) {
 	beat := make(chan struct{}, 8)
@@ -102,7 +102,7 @@ func TestHeartbeatMonitorStopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// A non-positive ack timeout falls back to the §15.4.1 default.
+// A non-positive ack timeout falls back to the §28.5.3 default.
 func TestNewHeartbeatMonitorDefaultsAckTimeout_spec_15_4_1_1826(t *testing.T) {
 	m := newHeartbeatMonitor(time.Second, 0, func([]byte) error { return nil })
 	if m.ackTimeout != defaultHeartbeatAckTimeout {

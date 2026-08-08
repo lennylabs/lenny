@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// This module implements the §15.4.1 adapter-local tool surface. An
+// This module implements the §28.5.3 adapter-local tool surface. An
 // adapter-local tool call emits a stdout tool_call frame and resolves
 // when the matching tool_result frame arrives on stdin, correlating by
 // id. Unlike the platform MCP tools (which require Standard level),
@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import type { FrameWriter } from "./transport.js";
 import type { AdapterTools, MessagePart, ToolResult } from "./types.js";
 
-// InboundToolResult is the decoded §15.4.1 tool_result frame.
+// InboundToolResult is the decoded §28.5.3 tool_result frame.
 export interface InboundToolResult {
   type: string;
   id: string;
@@ -27,8 +27,8 @@ interface PendingToolCall {
   reject(err: Error): void;
 }
 
-// ToolCallRegistry correlates outbound §15.4.1 tool_call frames with
-// inbound tool_result frames. The §15.4.1 frame loop delivers a
+// ToolCallRegistry correlates outbound §28.5.3 tool_call frames with
+// inbound tool_result frames. The §28.5.3 frame loop delivers a
 // tool_result here; an AdapterTools call registers and awaits one.
 export class ToolCallRegistry {
   private readonly pending = new Map<string, PendingToolCall>();
@@ -63,7 +63,7 @@ export class ToolCallRegistry {
     }
   }
 
-  // rejectAll fails every pending call. The §15.4.1 frame loop calls it
+  // rejectAll fails every pending call. The §28.5.3 frame loop calls it
   // when the inbound stream closes so no caller waits forever.
   rejectAll(err: Error): void {
     for (const [id, entry] of this.pending) {
@@ -73,7 +73,7 @@ export class ToolCallRegistry {
   }
 }
 
-// newCallId generates a unique §15.4.1 tool_call id with the
+// newCallId generates a unique §28.5.3 tool_call id with the
 // recommended tc_ prefix.
 function newCallId(): string {
   return "tc_" + randomBytes(8).toString("hex");
@@ -103,7 +103,7 @@ function toolError(tr: ToolResult, tool: string): void {
   throw new Error(`${tool}: ${msg}`);
 }
 
-// AdapterToolset is the §15.4.1 adapter-local tool surface available at
+// AdapterToolset is the §28.5.3 adapter-local tool surface available at
 // every integration level. It emits a stdout tool_call frame and
 // resolves once the matching tool_result frame arrives on stdin.
 export class AdapterToolset implements AdapterTools {
@@ -114,7 +114,7 @@ export class AdapterToolset implements AdapterTools {
     private readonly slotId: string | undefined,
   ) {}
 
-  // toolCall emits a §15.4.1 tool_call frame for the named
+  // toolCall emits a §28.5.3 tool_call frame for the named
   // adapter-local tool and resolves once the correlated tool_result
   // arrives. The id is generated and unique within the process.
   async toolCall(
@@ -163,7 +163,7 @@ export class AdapterToolset implements AdapterTools {
     }
   }
 
-  // readFile invokes the §15.4.1 read_file adapter-local tool. The path
+  // readFile invokes the §28.5.3 read_file adapter-local tool. The path
   // is confined to the pod workspace by the adapter; a path resolving
   // outside /workspace returns an error result.
   async readFile(path: string): Promise<string> {
@@ -171,14 +171,14 @@ export class AdapterToolset implements AdapterTools {
     return firstInline(tr);
   }
 
-  // writeFile invokes the §15.4.1 write_file adapter-local tool,
+  // writeFile invokes the §28.5.3 write_file adapter-local tool,
   // creating or overwriting a workspace file with UTF-8 content.
   async writeFile(path: string, content: string): Promise<void> {
     const tr = await this.toolCall("write_file", { path, content });
     toolError(tr, "write_file");
   }
 
-  // listDir invokes the §15.4.1 list_dir adapter-local tool and returns
+  // listDir invokes the §28.5.3 list_dir adapter-local tool and returns
   // the directory entries the adapter reports.
   async listDir(path: string): Promise<MessagePart[]> {
     const tr = await this.toolCall("list_dir", { path });
@@ -186,7 +186,7 @@ export class AdapterToolset implements AdapterTools {
     return tr.content;
   }
 
-  // deleteFile invokes the §15.4.1 delete_file adapter-local tool.
+  // deleteFile invokes the §28.5.3 delete_file adapter-local tool.
   async deleteFile(path: string): Promise<void> {
     const tr = await this.toolCall("delete_file", { path });
     toolError(tr, "delete_file");

@@ -468,7 +468,7 @@ func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verb
 		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
 	}
 	if len(resp.Output) == 0 {
-		// spec: §15.4.1 — the Basic shorthand {type:response,text:"..."}
+		// spec: §28.5.3 — the Basic shorthand {type:response,text:"..."}
 		// emits no MessagePart array; the adapter normalizes it. There is
 		// nothing to validate against the MessagePart schema.
 		return "no MessageParts emitted (text shorthand)", nil
@@ -482,7 +482,7 @@ func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verb
 }
 
 // checkResponseErrorCodeCatalog runs the proto-generated error-code
-// assertion against the runtime's response. The §15.4.1 JSONL schema models
+// assertion against the runtime's response. The §28.5.3 JSONL schema models
 // `error.code` as an open string; the closed catalog is the
 // schemas/lenny-adapter.proto Error.ErrorCode enum (the §15.1 catalog), so a
 // runtime that fails a task with an out-of-catalog code is non-conformant in

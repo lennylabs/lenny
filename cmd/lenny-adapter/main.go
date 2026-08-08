@@ -11,7 +11,7 @@
 // development.
 //
 // The adapter drives the runtime over one of two §4.7 sidecar-model
-// transports, both carrying the identical §15.4.1 JSONL framing:
+// transports, both carrying the identical §28.5.3 JSONL framing:
 //
 //   - --runtime-socket: the adapter binds an abstract Unix socket and
 //     the runtime container dials it. This is the §4.7 deployment model:
@@ -182,10 +182,10 @@ func main() {
 		"§10.1 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
 	heartbeatIntervalSec := flag.Int("heartbeat-interval-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_INTERVAL_SECONDS", 30),
-		"§15.4.1 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
+		"§28.5.3 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
-		"§15.4.1 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
+		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
 	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
 		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
 		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
@@ -295,7 +295,7 @@ func main() {
 	// returns to receive the AdapterTerminating event.
 	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
 	adapterSrv.PostMortemDir = *postMortemDir
-	// spec: §15.4.1 — production sidecar probes runtime
+	// spec: §28.5.3 — production sidecar probes runtime
 	// liveness with heartbeats and SIGTERMs a process that misses the ack
 	// window. A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second

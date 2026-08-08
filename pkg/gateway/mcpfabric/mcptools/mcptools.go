@@ -120,7 +120,7 @@ func errInvalidArgs(err error) error {
 	return mcp.NewToolError("VALIDATION_ERROR", fmt.Sprintf("invalid arguments: %v", err), nil)
 }
 
-// maxMessagePartBytes is the §15.4.1 hard ceiling: a single
+// maxMessagePartBytes is the §28.5.3 hard ceiling: a single
 // MessagePart above 50 MB is rejected at ingress. The gate measures the
 // marshaled part (inline payload plus envelope) so a base64-inlined blob
 // that exceeds the cap is refused before it reaches the event stream.
@@ -140,7 +140,7 @@ var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
 	sessionrecord.MessageContentJSONSchema,
 ))
 
-// validateMessagePart enforces the two §15.4.1 MessagePart
+// validateMessagePart enforces the two §28.5.3 MessagePart
 // ingress invariants on one `lenny/output` part: `inline` and `ref` are
 // mutually exclusive (both set → `400 MESSAGEPART_INLINE_REF_CONFLICT`),
 // and a part larger than 50 MB is rejected (`413 MESSAGEPART_TOO_LARGE`).
@@ -963,12 +963,12 @@ type taskHandle struct {
 	Depth int `json:"depth"`
 }
 
-// senderFrom builds the §15.4.1 from-object for a delivered
+// senderFrom builds the §15.4 from-object for a delivered
 // lenny/send_message. An authenticated inter-session sender is attributed
 // as kind `agent` with its session id; an unattributed send (no principal
 // session binding and no fromSessionId) returns the zero value so the
 // executor stamps its default gateway-client identity. The gateway always
-// sets `from` — a caller cannot. spec: §15.4.1; §13.5
+// sets `from` — a caller cannot. spec: §15.4; §13.5
 // mitigation 6. F-13.5.11.
 func senderFrom(senderID string) executor.MessageFrom {
 	if senderID == "" {

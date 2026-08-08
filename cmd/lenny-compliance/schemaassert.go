@@ -20,7 +20,7 @@ import (
 // report "cites the specific schema assertion that failed".
 //
 // The two JSON Schemas are consumed in schemavalidate.go. This file covers
-// the third artifact, schemas/lenny-adapter.proto. The §15.4.1 JSONL schema
+// the third artifact, schemas/lenny-adapter.proto. The §28.5.3 JSONL schema
 // deliberately models a response's `error.code` as an open string
 // (`{"type":"string"}`), because the closed catalog lives on the gRPC side:
 // the proto `Error.ErrorCode` enum is the authoritative §15.1 error-code set

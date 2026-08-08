@@ -13,7 +13,7 @@
 //
 //   - Each inbound frame's optional `slotId` field selects a slot. Frames
 //     for distinct slotIds are demultiplexed to mutex-guarded per-slot
-//     state, each slot with its own §15.4.1 echo loop and its own
+//     state, each slot with its own §28.5.3 echo loop and its own
 //     sequence counter, so slot 01 and slot 02 never share output ordering.
 //   - When slotId is present the slot's cwd derives from slotId as
 //     /workspace/slots/{slotId}/current/, and outbound frames echo the
@@ -40,7 +40,7 @@
 // Exit codes (spec §15.4): 0 success, 1 runtime error, 2 protocol error
 // (malformed inbound JSONL), 137 SIGKILL (set by the OS).
 //
-// spec: §5.2, §15.4.1, §6.4.
+// spec: §5.2, §28.5.3, §6.4.
 package main
 
 import (

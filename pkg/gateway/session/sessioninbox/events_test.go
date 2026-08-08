@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §15.4.1 — the message_expired envelope carries
+// spec: §15.4 — the message_expired envelope carries
 // schemaVersion, type, messageId, targetSessionId, reason, expiredAt.
 func TestNewMessageExpiredEvent_Schema_spec_15_4_1(t *testing.T) {
 	now := time.Date(2026, 5, 30, 12, 34, 56, 0, time.UTC)

@@ -159,7 +159,7 @@ type MessagePayload struct {
 	Role string `json:"role,omitempty"`
 
 	// Content is the §15.4 `MessageEnvelope.input` union: a bare string
-	// or a §15.4.1 `MessagePart[]` array. A bare string is sugar for a
+	// or a §28.5.3 `MessagePart[]` array. A bare string is sugar for a
 	// single text part. The identical union is accepted by the MCP
 	// `lenny/send_message` `message` argument, so the two surfaces are
 	// parallel representations of the one §15.4 message-send contract
@@ -503,7 +503,7 @@ type deliveryOutcome struct {
 // not-ready rejection. It writes the §15.1 error envelope and returns
 // ok=false on an executor failure or a classifier rejection that ends the
 // request; otherwise it returns the deliveryOutcome the receipt echoes.
-// spec: §7.2 paths 1-7, §4.8, §15.1, §15.2.1, §15.4.1. F-7.2.5, F-MS4.
+// spec: §7.2 paths 1-7, §4.8, §15.1, §15.2.1, §15.4. F-7.2.5, F-MS4.
 func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, span trace.Span, row sessionstore.Session, tenantID string, req MessageRequest, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	// spec: §7.2 paths 1-7 — select the delivery path
 	// for the non-reply messages. Path 1 (inReplyTo) was resolved
@@ -697,10 +697,10 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 // ok=false so the caller ends the request. This is the shared response-recording
 // body reused by the direct-delivery (ActionDeliver) and the §7.2 path-6
 // resume-and-deliver (ActionResumeAndDeliver) cases so the two do not duplicate
-// it. spec: §4.8, §15.1, §15.4.1, §6.3, §7.2 path 6.
+// it. spec: §4.8, §15.1, §28.5.3, §6.3, §7.2 path 6.
 func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session, msgs []executor.Message, o executor.Response) ([]executor.MessagePart, bool) {
 	out := o.Parts
-	// respAnnotations carries the §15.4.1 envelope-level degradation
+	// respAnnotations carries the §28.5.3 envelope-level degradation
 	// annotations (schema_version_ahead, blob_ref_unresolvable) the
 	// executor, as a live consumer, surfaced while ingesting the
 	// runtime's response. They are published on the session event stream
@@ -759,7 +759,7 @@ func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request,
 		// only the first event per session triggers the histogram.
 		s.recordTTFTOnce(row, "response")
 	}
-	// spec: §15.4.1 — when the gateway forward-read
+	// spec: §28.5.3 — when the gateway forward-read
 	// a response part it did not fully understand (a schemaVersion
 	// ahead of its known max, or an unresolvable ref), it surfaces
 	// the degradation annotation so the subscriber is informed the

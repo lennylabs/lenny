@@ -49,7 +49,7 @@ func repoRootForTest() string {
 	return wd
 }
 
-// messageEnvelope builds a §15.4.1 `message` envelope that the type:
+// messageEnvelope builds a §28.5.3 `message` envelope that the type:
 // mcp adapter path maps onto an MCP tools/call: it names the tool and
 // carries the call arguments.
 func messageEnvelope(id, tool string, args map[string]any) []byte {
@@ -109,8 +109,8 @@ func TestMCPRuntimeMessageMapsToToolCall(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// A §15.4.1 message naming the `echo` tool maps onto an MCP
-	// tools/call; the result comes back as a §15.4.1 `response` frame.
+	// A §28.5.3 message naming the `echo` tool maps onto an MCP
+	// tools/call; the result comes back as a §28.5.3 `response` frame.
 	env := messageEnvelope("msg-1", "echo", map[string]any{"text": "hello mcp"})
 	if err := rt.WriteEnvelope("sess-1", env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
@@ -271,7 +271,7 @@ func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// SendMessage delivers a §15.4.1 message; the type: mcp path maps it
+	// SendMessage delivers a §28.5.3 message; the type: mcp path maps it
 	// onto an MCP tools/call against the agent's MCP server.
 	env := messageEnvelope("msg-1", "echo", map[string]any{"text": "round trip"})
 	if _, err := s.SendMessage(ctx, &adapterv1.SendMessageRequest{

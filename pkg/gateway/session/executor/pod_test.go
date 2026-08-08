@@ -22,7 +22,7 @@ import (
 )
 
 // respondingRuntime is an adapter.RuntimeProcess that replies to every
-// written envelope with a §15.4.1 response frame on its output stream.
+// written envelope with a §28.5.3 response frame on its output stream.
 type respondingRuntime struct {
 	out chan []byte
 }

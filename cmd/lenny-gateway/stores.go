@@ -1735,7 +1735,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 	// §17.4 local-dev runtime selection: LENNY_AGENT_RUNTIME=echo forces
 	// the built-in echo executor (zero-credential mode), --runtime-bin /
 	// LENNY_AGENT_BINARY dispatches to a child process speaking the
-	// §15.4.1 adapter protocol, and the default is the in-process echo
+	// §28.5.3 adapter protocol, and the default is the in-process echo
 	// executor. The --agent-namespace branch below replaces this with a
 	// PodExecutor when the gateway places sessions on warm pods.
 	// F-17.4.15.

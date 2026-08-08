@@ -125,7 +125,7 @@ func TestRunNilHandler(t *testing.T) {
 }
 
 // TestMessageRoundTrip confirms a message frame produces a response
-// frame carrying the echoed parts (§15.4.1 message/response).
+// frame carrying the echoed parts (§28.5.3 message/response).
 func TestMessageRoundTrip(t *testing.T) {
 	h := &echoHandler{}
 	frames := runSDK(t, h, []string{
@@ -145,7 +145,7 @@ func TestMessageRoundTrip(t *testing.T) {
 	if part["inline"] != "ping" {
 		t.Fatalf("echoed inline = %v, want ping", part["inline"])
 	}
-	// §15.4.1 producer obligation: schemaVersion is stamped.
+	// §28.5.3 producer obligation: schemaVersion is stamped.
 	if part["schemaVersion"] != float64(1) {
 		t.Fatalf("schemaVersion = %v, want 1", part["schemaVersion"])
 	}
@@ -158,7 +158,7 @@ func TestMessageRoundTrip(t *testing.T) {
 }
 
 // TestHeartbeatAck confirms a heartbeat frame is answered with a
-// heartbeat_ack within the loop (§15.4.1 heartbeat).
+// heartbeat_ack within the loop (§28.5.3 heartbeat).
 func TestHeartbeatAck(t *testing.T) {
 	frames := runSDK(t, &echoHandler{}, []string{`{"type":"heartbeat","ts":1717430400}`})
 	if len(frames) != 1 || frames[0]["type"] != "heartbeat_ack" {
@@ -167,7 +167,7 @@ func TestHeartbeatAck(t *testing.T) {
 }
 
 // TestUnknownTypeIgnored confirms an unknown frame type is dropped and
-// the loop keeps running (§15.4.1 forward compatibility).
+// the loop keeps running (§28.5.3 forward compatibility).
 func TestUnknownTypeIgnored(t *testing.T) {
 	frames := runSDK(t, &echoHandler{}, []string{
 		`{"type":"some_future_frame","x":1}`,
@@ -179,7 +179,7 @@ func TestUnknownTypeIgnored(t *testing.T) {
 }
 
 // TestShutdownInvokesTerminate confirms a shutdown frame ends the loop
-// and OnTerminate sees the shutdown reason (§15.4.1 shutdown).
+// and OnTerminate sees the shutdown reason (§28.5.3 shutdown).
 func TestShutdownInvokesTerminate(t *testing.T) {
 	h := &echoHandler{}
 	runSDK(t, h, []string{`{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
@@ -226,7 +226,7 @@ func TestSequentialMessages(t *testing.T) {
 }
 
 // TestHandlerErrorReportedAsResponseError confirms an OnMessage error
-// becomes a structured response error (§15.4.1 error via response).
+// becomes a structured response error (§28.5.3 error via response).
 func TestHandlerErrorReportedAsResponseError(t *testing.T) {
 	h := &echoHandler{replyErr: errors.New("boom")}
 	frames := runSDK(t, h, []string{
@@ -287,7 +287,7 @@ func TestShorthandPartsAreCanonical(t *testing.T) {
 	}
 }
 
-// TestMessageEnvelopeAnnotationsRoundTrip asserts the §15.4.1 wire
+// TestMessageEnvelopeAnnotationsRoundTrip asserts the §28.5.3 wire
 // MessageEnvelope carries the §15.5 degradation-annotation
 // map verbatim. A runtime author reading
 // `env.Annotations[degradation.AnnotationSchemaVersionAhead]` must
@@ -339,7 +339,7 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 // catalog is opt-in: an unannotated envelope must not appear with an
 // empty `annotations: {}` object.
 //
-// spec: §15.4.1 / §15.5. F-15.5.5.
+// spec: §28.5.3 / §15.5. F-15.5.5.
 func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
 	env := MessageEnvelope{Type: "message", ID: "m1"}
 	out, err := json.Marshal(env)

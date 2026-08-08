@@ -160,7 +160,7 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	srv.SessionScrubReporter = reporter
 
 	// One real runtime process per pod serves every slot, multiplexed on
-	// slotId over the single connection (§5.2, §15.4.1).
+	// slotId over the single connection (§5.2, §28.5.3).
 	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)

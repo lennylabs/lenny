@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+#
+# A well-formed register that resolves both occurrences of the sibling
+# carrier and records nothing for the carrier that cites the retired
+# anchor beside a number nothing retires. The run stops at that citation
+# and leaves the sibling it would otherwise have rewritten
+# byte-identical.
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

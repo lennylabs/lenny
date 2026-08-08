@@ -3,7 +3,7 @@
 // Package runtimekit provides the transport selection a §4.7 reference
 // runtime uses to run under either deployment model.
 //
-// A §15.4.1 runtime exchanges newline-delimited JSON frames with the
+// A §28.5.3 runtime exchanges newline-delimited JSON frames with the
 // adapter. The framing is identical in both deployment models; only the
 // byte transport differs:
 //
@@ -50,7 +50,7 @@ const SocketEnvVar = "LENNY_ADAPTER_SOCKET"
 // process may still race the listener; a bounded retry absorbs that.
 const dialTimeout = 5 * time.Second
 
-// Transport is a resolved §15.4.1 byte transport: an io.Reader for
+// Transport is a resolved §28.5.3 byte transport: an io.Reader for
 // inbound frames, an io.Writer for outbound frames, and a Close that
 // releases the underlying connection. For the stdin/stdout transport
 // Close is a no-op; for the socket transport it closes the connection.
@@ -76,7 +76,7 @@ func (t *Transport) Close() error {
 	return t.closer.Close()
 }
 
-// Open resolves the §15.4.1 transport from the process environment. When
+// Open resolves the §28.5.3 transport from the process environment. When
 // SocketEnvVar names an adapter socket it dials that socket and returns
 // a socket-backed Transport; otherwise it returns a Transport over
 // os.Stdin and os.Stdout. ctx bounds the socket dial.

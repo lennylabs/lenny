@@ -7481,6 +7481,114 @@ func TestAnchorPassResolvesACitationOfCarvedOutMaterialToTheSurvivingHeading(t *
 	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
 }
 
+// TestAnchorPassCitesAnUnnumberedSpecificationHeadingByItsEnclosingSection
+// pins the form a bare citation takes when the heading it resolves to
+// carries no number of its own. The carve-out heading the envelope is
+// defined under sits inside §15.4, so the citation is written §15.4.
+//
+// Writing the file and anchor that address the heading is the fragment
+// link's form, and a sentence that carries one where a section number
+// belongs stops reading as prose: the comment would state that the
+// message id is "spec/15_external-api-surface.md#messageenvelope--unified-message-format-shaped".
+// A citation of an unnumbered heading names the section it is written
+// inside, which is the rule the specification's own prose follows.
+//
+// spec: §28.1 (N8, the citation rule: a citation names the heading that
+// defines the material it cites)
+func TestAnchorPassCitesAnUnnumberedSpecificationHeadingByItsEnclosingSection(t *testing.T) {
+	t.Parallel()
+	const carrier = "sdks/runtime/go/runtime/types.go"
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(carrier)))
+	if !strings.Contains(after, "// spec: §15.4 (the envelope and its fields)") {
+		t.Errorf("%s does not cite the section the carve-out heading sits inside:\n%s", carrier, after)
+	}
+	if strings.Contains(after, "spec/15_external-api-surface.md#") {
+		t.Errorf("%s carries a file path where the citation names a section:\n%s", carrier, after)
+	}
+}
+
+// TestAnchorPassCitesANumberedSpecificationHeadingByItsNumber pins the
+// majority case of the citation class, which is a destination whose
+// heading states a number of its own. The citation is written as that
+// number, on both sides of the specification directory, and no path
+// reaches the prose.
+//
+// spec: §28.1 (N8, the citation rule: a citation names the heading that
+// defines the material it cites)
+func TestAnchorPassCitesANumberedSpecificationHeadingByItsNumber(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	for _, target := range []string{
+		"spec/07_session-lifecycle.md",
+		"sdks/runtime/go/runtime/types.go",
+	} {
+		t.Run(target, func(t *testing.T) {
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+			if !strings.Contains(after, "§28.5.1") {
+				t.Errorf("%s does not cite the numbered heading the material moved to:\n%s", target, after)
+			}
+			if strings.Contains(after, "spec/28_communication-channels.md#2851-ch-adapterbinary") {
+				t.Errorf("%s cites the numbered heading by its file and anchor:\n%s", target, after)
+			}
+		})
+	}
+}
+
+// TestAnchorPassRedirectsALinkIntoAnUnnumberedHeadingAsAPathAndAnchor
+// pins that the citation form and the link form stay apart. A link and a
+// bare citation in the same tree name the same unnumbered carve-out
+// heading: the citation is written as the enclosing section number,
+// while the link keeps the path and anchor a renderer resolves. Writing
+// the section number into the link's destination would resolve nowhere.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassRedirectsALinkIntoAnUnnumberedHeadingAsAPathAndAnchor(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash("spec/15_external-api-surface.md")))
+	if !strings.Contains(after, "[the message format](#messageenvelope--unified-message-format)") {
+		t.Errorf("the link into the carve-out heading is not written as an anchor:\n%s", after)
+	}
+	if strings.Contains(after, "](§") {
+		t.Errorf("a link destination is written in the section-citation form:\n%s", after)
+	}
+}
+
+// TestAnchorPassFailsACitationDestinationNoNumberedHeadingEncloses pins
+// the fail-closed end of the citation form. A destination inside the
+// specification whose heading carries no number and sits under no
+// numbered heading gives a bare citation no section to name, so the run
+// stops and leaves the tree byte-identical.
+//
+// Falling back to the file and anchor there is what put a fragment link
+// into the prose of every site a trial application reached, and leaving the citation as it stands would exit
+// zero over a citation of an anchor the map retires. The failure names
+// the destination, so the change that seeded the entry either points it
+// at a numbered heading or corrects the site by hand.
+//
+// spec: §28.1 (N8, the citation rule: a citation whose destination is
+// unresolved is reported rather than redirected against a guess)
+func TestAnchorPassFailsACitationDestinationNoNumberedHeadingEncloses(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/unnumbered-destination")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass ran with a destination no numbered heading encloses")
+	}
+	if !strings.Contains(err.Error(), "spec/29_glossary.md#envelope-terms") || !strings.Contains(err.Error(), "no section to name") {
+		t.Errorf("the failure does not name the destination and why it resolves to no section: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
 // TestAnchorPassResolvesBareCitationsCarriedOnBothSidesOfTheSpecificationDirectory
 // pins that the sense register decides citations on both sides of the
 // specification directory in one run. A specification file and a code
@@ -7503,8 +7611,8 @@ func TestAnchorPassResolvesBareCitationsCarriedOnBothSidesOfTheSpecificationDire
 	} {
 		t.Run(target, func(t *testing.T) {
 			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
-			if strings.Contains(after, "§15.4.1") {
-				t.Errorf("%s still cites the retired §15.4.1 after the anchor pass:\n%s", target, after)
+			if strings.Contains(after, "§28.5.3") {
+				t.Errorf("%s still cites the retired §28.5.3 after the anchor pass:\n%s", target, after)
 			}
 			if !strings.Contains(after, "§28.5.1") {
 				t.Errorf("%s carries no citation of the heading the material moved to:\n%s", target, after)
@@ -7570,12 +7678,12 @@ func TestAnchorPassRedirectsALinkFromARootLevelCarrierWithoutLeavingTheRoot(t *t
 // TestAnchorPassLeavesACitationOfASectionTheSpecificationStillDeclares
 // pins the surviving half of the bare-citation class. One carrier holds
 // two §-form citations of sections a specification file of the tree
-// still declares and the anchor-move map retires no anchor for. Neither
-// is a reference the reduction invalidated, so the pass leaves both as
-// they are written, reports no work over the carrier, and runs to
-// completion with no entry of the sense register recording either, while
-// the sibling carrier whose citations do name a retired anchor is
-// redirected in the same run.
+// still declares and the anchor-move map retires no anchor for. The map
+// is what decides that neither is a reference the reduction
+// invalidated, so the pass leaves both as they are written, reports no
+// work over the carrier, and runs to completion with no entry of the
+// sense register recording either, while the sibling carrier whose
+// citations do name a retired anchor is redirected in the same run.
 //
 // spec: §28.1 (N8, the citation rule: a citation of a section that still
 // exists names the heading that defines its material)
@@ -7595,43 +7703,140 @@ func TestAnchorPassLeavesACitationOfASectionTheSpecificationStillDeclares(t *tes
 	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
 }
 
-// TestAnchorPassAbortsAtACitationOfASectionNoSpecificationFileStates
-// pins the fail-closed half of the bare-citation class at the site the
-// anchor-move map does not answer for. A citation names a section no
-// specification file of the tree states a heading for and no map entry
-// carries a successor for, which is what a citation into an anchor the
-// reduction retired looks like when the hand-seeded map omits it. The
-// run stops non-zero before any write, names the file and the line, and
-// leaves every carrier byte-identical, including the sibling whose own
-// occurrences the sense register resolves.
+// TestAnchorPassLeavesACitationOfASectionNoSpecificationFileStates pins
+// the population of the bare-citation class at the site the anchor-move
+// map does not answer for. A citation names a section no specification
+// file of the tree states a heading for, and the map retires no anchor
+// for it either. Nothing retired that section, so the citation is not a
+// reference this reduction invalidated: the pass leaves it exactly as it
+// is written, reports no work over its carrier, and runs to completion
+// while the sibling carrier whose citations the map does retire is
+// redirected in the same run.
 //
-// The citation class carries its own proof because no gate over the
-// anchor classes reads a §X.Y token: the fragment-link gate reads links
-// alone, and the citation resolver and the per-file ratchet match the
-// retired line-citation form alone. Deciding the class by the map alone
-// would pass the citation over and exit zero, which reads as the
-// completed migration it is not, and the change that empties the map
-// would then destroy the record of what the run should have done.
+// Reading the absence of a section number from the tree as evidence of a
+// retirement would claim every § token the specification's own numbering
+// does not answer for, which the tree carries in bulk, and stop the
+// migration on a population the pass has no successor for.
+//
+// The fail-closed rules the class rests on are pinned elsewhere and are
+// not weakened by this one: a citation naming an anchor the map does
+// retire, with no entry in the sense register, still aborts
+// (TestAnchorPassAbortsAtACitationTheSenseRegisterDoesNotRecord and
+// TestAnchorPassAbortsAtARetiredCitationBesideOneNothingRetires), and a
+// register entry whose destination heading no document declares still
+// aborts (TestAnchorPassFailsAMoveWhoseSuccessorHeadingDoesNotExist).
+//
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the map
+// the change ships)
+func TestAnchorPassLeavesACitationOfASectionNoSpecificationFileStates(t *testing.T) {
+	t.Parallel()
+	const carrier = "pkg/carrier/flow.go"
+	root := anchorTree(t, "undeclared-citation")
+	before := treeSnapshot(t, root)
+	diff := applyAnchorPass(t, root, "tree.json")
+	if membership(diff.Paths())[carrier] {
+		t.Errorf("the applied diff names %s, whose citation the anchor-move map retires no anchor for", carrier)
+	}
+	after := treeSnapshot(t, root)
+	if after[carrier] != before[carrier] {
+		t.Errorf("%s was rewritten:\n%s", carrier, after[carrier])
+	}
+	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
+}
+
+// TestAnchorPassLeavesACitationOfALennySectionTheTreeDoesNotCarry pins
+// the same rule at the form the tree carries most of: a §X.Y token
+// written in this specification's own numbering, naming a number no
+// specification file states a heading for. Two of them sit in one
+// carrier. Neither names an anchor the map retires, so both stand as
+// they are written while the sibling carrier is redirected in the same
+// run.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the map
+// the change ships)
+func TestAnchorPassLeavesACitationOfALennySectionTheTreeDoesNotCarry(t *testing.T) {
+	t.Parallel()
+	const carrier = "pkg/carrier/flow.go"
+	root := anchorTree(t, "unretired-citation")
+	before := treeSnapshot(t, root)
+	diff := applyAnchorPass(t, root, "tree.json")
+	if membership(diff.Paths())[carrier] {
+		t.Errorf("the applied diff names %s, whose citations the anchor-move map retires no anchor for", carrier)
+	}
+	after := treeSnapshot(t, root)
+	if after[carrier] != before[carrier] {
+		t.Errorf("%s was rewritten:\n%s", carrier, after[carrier])
+	}
+	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
+}
+
+// TestAnchorPassLeavesARegulatoryCitationAloneEntirely pins the rule at
+// the § tokens that address another document altogether. The compliance
+// material of the tree cites 45 CFR parts in the same §-form, and the
+// matcher cannot tell a part number from a section number by spelling.
+// The anchor-move map retires no anchor for either of them, so both
+// stand exactly as they are written and the carrier is not in the diff.
+//
+// A pass that claimed a § token by the absence of a matching
+// specification heading would claim every one of these and abort the
+// migration on references it has no business rewriting at all.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the map
+// the change ships)
+func TestAnchorPassLeavesARegulatoryCitationAloneEntirely(t *testing.T) {
+	t.Parallel()
+	const carrier = "pkg/carrier/compliance.go"
+	root := anchorTree(t, "unretired-citation")
+	before := treeSnapshot(t, root)
+	diff := applyAnchorPass(t, root, "tree.json")
+	if membership(diff.Paths())[carrier] {
+		t.Errorf("the applied diff names %s, which cites 45 CFR rather than this specification", carrier)
+	}
+	after := treeSnapshot(t, root)
+	if after[carrier] != before[carrier] {
+		t.Errorf("%s was rewritten:\n%s", carrier, after[carrier])
+	}
+	if !strings.Contains(after[carrier], "§164.312") || !strings.Contains(after[carrier], "§164.530") {
+		t.Errorf("%s no longer carries both regulatory citations:\n%s", carrier, after[carrier])
+	}
+}
+
+// TestAnchorPassAbortsAtARetiredCitationBesideOneNothingRetires pins
+// that narrowing the class to what the anchor-move map retires leaves
+// the fail-closed rule intact where it applies. One carrier holds a
+// citation of a number nothing retires and, below it, a citation of an
+// anchor the map does retire whose occurrence the sense register does
+// not record. The run stops non-zero before any write, names the file
+// and the line of the retired citation, and leaves every carrier
+// byte-identical, including the sibling whose own occurrences the
+// register resolves.
+//
+// The abort names occurrence 1, because the citation nothing retires is
+// outside the class and takes no occurrence number. A pass that counted
+// it would key the register's entries to the wrong sites.
 //
 // spec: §28.1 (N8, the citation rule: a citation whose destination is
-// unresolved is reported rather than left naming a section that is gone)
-func TestAnchorPassAbortsAtACitationOfASectionNoSpecificationFileStates(t *testing.T) {
+// unresolved is reported rather than redirected against a guess)
+func TestAnchorPassAbortsAtARetiredCitationBesideOneNothingRetires(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "fail/undeclared-citation")
+	root := anchorTree(t, "fail/unretired-beside-retired")
 	before := treeSnapshot(t, root)
 	_, err := applyAnchorPassErr(t, root, "tree.json")
 	if err == nil {
-		t.Fatal("the anchor pass returned no error at a citation of a section no specification file states")
+		t.Fatal("the anchor pass returned no error at a retired citation the sense register does not record")
 	}
 	abort, ok := pass.AsAbort(err)
 	if !ok {
 		t.Fatalf("the failure is not a fail-closed abort: %v", err)
 	}
-	if abort.Path != "pkg/carrier/flow.go" || abort.Line != 7 {
-		t.Errorf("the abort names %s line %d, want pkg/carrier/flow.go line 7", abort.Path, abort.Line)
+	if abort.Path != "pkg/carrier/flow.go" || abort.Line != 13 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/flow.go line 13", abort.Path, abort.Line)
 	}
-	if !strings.Contains(abort.Reason, "15.9.9") {
-		t.Errorf("the abort does not name the cited section: %v", abort)
+	if !strings.Contains(abort.Reason, "15.4.1") || !strings.Contains(abort.Reason, "anchor-senses.yaml") {
+		t.Errorf("the abort names neither the citation nor the sense register: %v", abort)
+	}
+	if !strings.Contains(abort.Reason, "occurrence 1") {
+		t.Errorf("the citation nothing retires took an occurrence number: %v", abort)
 	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
 		t.Error("the aborted run wrote to the tree")
@@ -7757,19 +7962,14 @@ func TestAnchorPassCitesALevelOneSpecificationTitleByItsSectionNumber(t *testing
 }
 
 // TestAnchorPassLeavesTheCitationItWroteForALevelOneTitleStanding pins
-// the heading levels a citation is judged live against, which are every
-// level a specification file states a number in. The pass writes a
+// that the pass is idempotent over its own output. The pass writes a
 // citation of a file that states its number only in its level-one title,
-// so a second run over its own output reads that citation as naming a
-// section the specification states and leaves it exactly as it stands,
-// reporting no work.
+// which is a section number the anchor-move map retires no anchor for,
+// so a second run reads it as outside the citation class and leaves it
+// exactly as it stands, reporting no work.
 //
-// Judging a citation against the level-two-and-deeper section index
-// alone would stop the second run at the citation the first run wrote,
-// which is a pass that fails closed on its own output.
-//
-// spec: §28.1 (N8, the citation rule: a citation of a section that still
-// exists names the heading that defines its material)
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the map
+// the change ships)
 func TestAnchorPassLeavesTheCitationItWroteForALevelOneTitleStanding(t *testing.T) {
 	t.Parallel()
 	const carrier = "pkg/carrier/audit.go"

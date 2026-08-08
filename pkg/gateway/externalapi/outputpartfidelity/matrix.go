@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package outputpartfidelity encodes the §15.4.1 Translation Fidelity
+// Package outputpartfidelity encodes the §15.4 Translation Fidelity
 // Matrix and ships per-MessagePart translators for the OpenAI Chat
 // Completions and Open Responses wire forms. The package is the data
 // model behind the §12.10 fidelity-matrix conformance test: it lets a
@@ -13,13 +13,13 @@
 //   - Open Responses (`POST /v1/responses`), which is the dialect
 //     the OpenAI Responses API also serves.
 //
-// MCP, REST, and A2A fidelity rows live in §15.4.1 but are out of
+// MCP, REST, and A2A fidelity rows live in §15.4 but are out of
 // scope for the v1 conformance test surface: REST is `[exact]` on every
 // field by construction; A2A is post-V1; MCP is exercised by separate
 // tier-3 contract suites against the MCP fabric.
 package outputpartfidelity
 
-// FidelityTag is the §15.4.1 classification of how a single
+// FidelityTag is the §15.4 classification of how a single
 // `MessagePart` field survives translation to an external wire format.
 type FidelityTag string
 
@@ -75,7 +75,7 @@ const (
 	FieldProtocolHints Field = "protocolHints"
 )
 
-// Matrix returns the §15.4.1 fidelity tag for the (adapter, field)
+// Matrix returns the §15.4 fidelity tag for the (adapter, field)
 // pair. The map is hand-transcribed from the spec table and is the
 // single source of truth for the §12.10 conformance assertion.
 //
@@ -112,7 +112,7 @@ func Fields() []Field {
 	}
 }
 
-// matrixData is the per-(adapter, field) fidelity table from §15.4.1
+// matrixData is the per-(adapter, field) fidelity table from §15.4
 // "Translation Fidelity Matrix".
 var matrixData = map[Adapter]map[Field]FidelityTag{
 	AdapterOpenAICompletions: {

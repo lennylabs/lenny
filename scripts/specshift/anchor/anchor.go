@@ -11,17 +11,26 @@
 // whether it is written as a fragment link or as a bare §X.Y citation of
 // the section that anchor addressed.
 //
-// What a reference the map does not name means then differs by class,
-// because the two classes are not watched by the same gate. A fragment
-// link that resolves nowhere is reported by the fragment-link gate and
-// corrected by the hand enumeration that gate reports, so a link the map
-// does not name stands as it is written and this pass leaves it to that
-// gate. No gate reads a §X.Y token at all, so the citation class carries
-// its own proof: a citation of a section a specification file of the
-// tree still states a heading for stands as written, and a citation of a
-// section neither the specification states nor the map carries a
-// successor for stops the run non-zero before any write, naming the file
-// and the line.
+// A reference the map does not name is outside the pass in both
+// classes. The map is the whole record of what the reduction retired, so
+// a reference it does not name is a reference the reduction did not
+// invalidate, whatever else may be wrong with it. A fragment link that
+// resolves nowhere is reported by the fragment-link gate and corrected
+// by the hand enumeration that gate reports. A bare citation of a
+// section no specification file of the tree states a heading for is
+// likewise left standing: nothing retired that section, so the pass has
+// no successor for it and no basis to claim it, and the tree carries
+// such citations in bulk, including §-numbered references into other
+// documents entirely such as the 45 CFR parts the compliance sections
+// cite. Claiming them would stop the migration on a population it was
+// never given.
+//
+// The two fail-closed aborts sit inside the population the map defines,
+// and neither is traded away to reach that narrowing. A citation naming
+// an anchor the map retires with no entry in the sense register stops
+// the run non-zero before any write, naming the file and the line. A map
+// entry or a sense entry whose destination heading no document of the
+// tree declares stops the run the same way.
 //
 // An intra-repo markdown fragment link is resolved by the map itself,
 // because the link names the retired anchor and the map carries one
@@ -222,10 +231,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	var aborts []*pass.Abort
 	citations := 0
 	for _, s := range sites {
-		if s.unmapped {
-			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unmappedReason(s)})
-			continue
-		}
 		if s.kind == linkSite {
 			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, s.successor)})
 			continue
@@ -251,16 +256,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 		return nil, err
 	}
 	return edits, nil
-}
-
-// unmappedReason states why a citation of a section the specification no
-// longer states a heading for stops the run. The anchor-move map carries
-// no successor for it, so the run has nothing to redirect it to, and
-// leaving it standing would report the zero work of a completed
-// migration over a citation of a heading that is gone.
-func unmappedReason(s site) string {
-	return fmt.Sprintf("the citation of §%s names a section no specification file of the tree states a heading for, and the anchor-move map carries no successor for it",
-		s.section)
 }
 
 // unresolvedReason states why a citation the sense register does not

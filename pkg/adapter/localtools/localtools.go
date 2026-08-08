@@ -2,7 +2,7 @@
 
 // Package localtools implements the §15 adapter-local tools — the
 // read_file, write_file, list_dir, and delete_file operations the
-// adapter serves to the runtime over the §15.4.1 tool_call binary
+// adapter serves to the runtime over the §28.5.3 tool_call binary
 // protocol. Every operation is confined to the pod's workspace volume:
 // a path that resolves outside the workspace is rejected.
 package localtools
@@ -80,7 +80,7 @@ var toolHandlers = map[string]handler{
 }
 
 // IsLocalTool reports whether name is a built-in adapter-local tool.
-// The §15.4.1 tool_call dispatcher uses it to tell an adapter-local
+// The §28.5.3 tool_call dispatcher uses it to tell an adapter-local
 // call apart from a platform MCP tool call (lenny/...).
 func IsLocalTool(name string) bool {
 	_, ok := toolHandlers[name]

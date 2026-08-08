@@ -13,15 +13,15 @@ import (
 	"time"
 )
 
-// maxJSONLFrameBytes is the largest single §15.4.1 JSONL frame the
-// sidecar scanner admits. It matches the §15.4.1 50 MB
+// maxJSONLFrameBytes is the largest single §28.5.3 JSONL frame the
+// sidecar scanner admits. It matches the §28.5.3 50 MB
 // MessagePart ceiling so a legal large part frames before the gateway's
-// ingress check runs. spec: §15.4.1. F-15.4.1 (15.4-INFO-031).
+// ingress check runs. spec: §28.5.3. F-15.4.1 (15.4-INFO-031).
 const maxJSONLFrameBytes = 50 * 1024 * 1024
 
 // SocketRuntimeProcess is the §4.7 sidecar-model RuntimeProcess: the
 // adapter listens on an abstract Unix socket and the runtime — running
-// in a separate pod container — dials it and exchanges §15.4.1 JSONL
+// in a separate pod container — dials it and exchanges §28.5.3 JSONL
 // frames over the connection. It is the socket counterpart of the
 // stdin/stdout SubprocessExecutor: the JSONL framing is identical, only
 // the byte transport differs.
@@ -54,7 +54,7 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // are torn down only when the last active session is released, so a
 // per-slot teardown of one slot leaves sibling slots running over the same
 // connection (spec/05:534 — "Slots fail independently"; spec/05:537 —
-// per-slot teardown and release). A clean Interrupt is the §15.4.1 heartbeat-hung SIGTERM for one slot; it ends only that slot when
+// per-slot teardown and release). A clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it ends only that slot when
 // siblings remain active.
 type SocketRuntimeProcess struct {
 	listener net.Listener
@@ -85,7 +85,7 @@ type SocketRuntimeProcess struct {
 // drains feed into out, so one slow per-slot Attach stream never blocks the
 // reader from delivering a sibling slot's frames. done closes the pump and
 // out when the consumer's Output context is cancelled or the runtime
-// connection closes. spec: §15.4.1.
+// connection closes. spec: §28.5.3.
 type subscriber struct {
 	feed chan []byte
 	out  chan []byte
@@ -94,7 +94,7 @@ type subscriber struct {
 	// when the fan-out reader hits EOF (a per-slot Close or Interrupt that
 	// closes the shared connection), and unsubscribe on the Output context's
 	// cancellation — resolve to a single close(done) rather than racing into
-	// a double close. spec: §15.4.1.
+	// a double close. spec: §28.5.3.
 	closeOnce sync.Once
 }
 
@@ -206,10 +206,10 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	}
 
 	scanner := bufio.NewScanner(conn)
-	// spec: §15.4.1 — a single MessagePart may be up to 50 MB.
+	// spec: §28.5.3 — a single MessagePart may be up to 50 MB.
 	// The sidecar scanner must admit a frame at that ceiling; a 16 MB cap
 	// would fail framing on a legal 17–50 MB part before it reached the
-	// gateway's §15.4.1 ingress validation. Matches echocore and the
+	// gateway's §28.5.3 ingress validation. Matches echocore and the
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
 
@@ -222,18 +222,18 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 
 	// One reader goroutine over the single connection fans every frame out
 	// to all subscribers, so concurrent per-slot Attach streams each see
-	// the runtime's full output and demultiplex by slotId. spec: §15.4.1.
+	// the runtime's full output and demultiplex by slotId. spec: §28.5.3.
 	go p.fanOut(scanner)
 	return nil
 }
 
-// fanOut reads every §15.4.1 JSONL frame the runtime writes and broadcasts
+// fanOut reads every §28.5.3 JSONL frame the runtime writes and broadcasts
 // it to all registered Output subscribers. It closes each subscriber
 // channel when the runtime closes the connection, so a per-slot Attach
 // stream observes the EOF. Each subscriber owns its own buffered intake
 // (subscriber.feed), so a slow or dead consumer on one slot's Attach
 // stream never head-of-line-blocks the reader from delivering a sibling
-// slot's frames. spec: §15.4.1.
+// slot's frames. spec: §28.5.3.
 func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner) {
 	defer p.closeSubscribers()
 	for scanner.Scan() {
@@ -313,11 +313,11 @@ func (p *SocketRuntimeProcess) spawn(path string) error {
 	return nil
 }
 
-// WriteEnvelope forwards a pre-encoded §15.4.1 message envelope to the
+// WriteEnvelope forwards a pre-encoded §28.5.3 message envelope to the
 // runtime over the single connection, terminated by a newline. The
 // envelope already carries its slotId (stamped by the Attach handler on a
 // concurrent pod), so WriteEnvelope is session-agnostic: every slot's
-// frames share the one connection. spec: §15.4.1.
+// frames share the one connection. spec: §28.5.3.
 func (p *SocketRuntimeProcess) WriteEnvelope(_ string, envelope []byte) error {
 	p.mu.Lock()
 	conn := p.conn
@@ -332,7 +332,7 @@ func (p *SocketRuntimeProcess) WriteEnvelope(_ string, envelope []byte) error {
 }
 
 // Output subscribes to the runtime's output. It returns a channel carrying
-// every §15.4.1 JSONL frame the runtime writes on the single connection;
+// every §28.5.3 JSONL frame the runtime writes on the single connection;
 // the Attach handler demultiplexes by slotId so each per-slot stream keeps
 // only its slot's frames (spec/15:1459). The channel closes when the
 // runtime closes the connection, and ctx cancellation unsubscribes so a
@@ -358,7 +358,7 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 
 // unsubscribe removes a subscriber and stops its pump. close() is
 // idempotent, so a concurrent closeSubscribers (on EOF) and a ctx-cancel
-// unsubscribe both resolve to a single out-channel close. spec: §15.4.1.
+// unsubscribe both resolve to a single out-channel close. spec: §28.5.3.
 func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
 	p.mu.Lock()
 	delete(p.subscribers, sub)
@@ -388,7 +388,7 @@ func (p *SocketRuntimeProcess) releaseActiveLocked(sessionID string) (last bool)
 // Interrupt signals the runtime for one slot. The §4.7 sidecar model has
 // no host process to signal when the runtime runs in a separate container,
 // so the slot-independent teardown (spec/05:534) is achieved by scoping
-// the interrupt to the named session: a clean interrupt (the §15.4.1 heartbeat-hung SIGTERM) on one slot while siblings remain active is
+// the interrupt to the named session: a clean interrupt (the §28.5.3 heartbeat-hung SIGTERM) on one slot while siblings remain active is
 // a no-op on the shared connection, because closing it would EOF every
 // sibling's stream and contradict spec/05:536 ("Other slots continue
 // unaffected"). Only when the named session is the last active one does

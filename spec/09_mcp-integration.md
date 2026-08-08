@@ -21,7 +21,7 @@ The platform MCP server (available to `type: agent` runtimes via the adapter man
 | `lenny/await_children`      | Wait for children (streaming, unblocks on `input_required`)   | [§8.5](08_recursive-delegation.md#85-delegation-tools)    |
 | `lenny/cancel_child`        | Cancel a child and its descendants                            |         |
 | `lenny/discover_agents`     | List available delegation targets (policy-scoped)             | [§8.5](08_recursive-delegation.md#85-delegation-tools)    |
-| `lenny/output`              | Emit output parts to the parent/client                        | [§15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol) |
+| `lenny/output`              | Emit output parts to the parent/client                        | [§28.5.3](28_communication-channels.md#2853-intra-pod) |
 | `lenny/request_elicitation` | Request human input via the elicitation chain                 | [§9.2](#92-elicitation-chain)    |
 | `lenny/memory_write`        | Write to the memory store (see [Section 9.4](#94-memory-store))                   | [§9.4](#94-memory-store)    |
 | `lenny/memory_query`        | Query the memory store                                        | [§9.4](#94-memory-store)    |

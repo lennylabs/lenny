@@ -432,7 +432,7 @@
       "MessagePart": {
         "type": "object",
         "required": ["type"],
-        "description": "§15.4.1 content part. `type` is an open string; `inline` and `ref` are mutually exclusive per the resolution protocol.",
+        "description": "§28.5.3 content part. `type` is an open string; `inline` and `ref` are mutually exclusive per the resolution protocol.",
         "properties": {
           "type":          { "type": "string" },
           "mimeType":      { "type": "string" },
@@ -443,10 +443,10 @@
         }
       },
       "MessageContent": {
-        "description": "§15.4 MessageEnvelope.input union: a bare string (sugar for a single text MessagePart) or a §15.4.1 MessagePart[] array. The identical union is accepted by the MCP lenny/send_message message argument under the §15.2.1 REST/MCP parity rule.",
+        "description": "§15.4 MessageEnvelope.input union: a bare string (sugar for a single text MessagePart) or a §28.5.3 MessagePart[] array. The identical union is accepted by the MCP lenny/send_message message argument under the §15.2.1 REST/MCP parity rule.",
         "oneOf": [
           { "type": "string", "description": "§15.4 bare-string shorthand: sugar for a single text MessagePart." },
-          { "type": "array", "description": "§15.4.1 MessagePart[] structured content.", "items": { "$ref": "#/components/schemas/MessagePart" } }
+          { "type": "array", "description": "§28.5.3 MessagePart[] structured content.", "items": { "$ref": "#/components/schemas/MessagePart" } }
         ]
       },
       "MessagePayload": {

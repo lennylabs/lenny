@@ -143,7 +143,7 @@ func TestDelegateTaskRejectsMissingTarget_spec_8_2(t *testing.T) {
 
 // TestDelegateTaskFlattensMultipartInput asserts a multi-part MessagePart[]
 // `task.input` is concatenated in order (text parts only) and delivered to
-// the child as its first message. spec: §8.2; §15.4.1. F-8.2.1.
+// the child as its first message. spec: §8.2; §28.5.3. F-8.2.1.
 func TestDelegateTaskFlattensMultipartInput_spec_8_2(t *testing.T) {
 	rec := newRecordingExecutor()
 	srv, _ := newMCPForDelegate(t, rec, nil)

@@ -358,7 +358,7 @@ No rebuild of the Lenny platform is required — `lenny up` runs the released `l
 make run LENNY_AGENT_BINARY=/path/to/my-agent-binary
 ```
 
-Use Source Mode when you need to modify the gateway or controller source alongside your runtime. The controller-sim spawns the specified binary as a single agent container. The binary must implement the stdin/stdout JSON Lines protocol ([Section 15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)). No runtime registration is required in Source Mode — the binary is used directly.
+Use Source Mode when you need to modify the gateway or controller source alongside your runtime. The controller-sim spawns the specified binary as a single agent container. The binary must implement the stdin/stdout JSON Lines protocol ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). No runtime registration is required in Source Mode — the binary is used directly.
 
 **Compose Mode (`docker compose up`) — register a custom runtime and point to your binary:**
 

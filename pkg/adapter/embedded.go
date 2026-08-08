@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-// RuntimeLoop is the §15.4.1 JSONL processing loop a first-party runtime
+// RuntimeLoop is the §28.5.3 JSONL processing loop a first-party runtime
 // implements for the §4.7 embedded deployment model. It is the same
 // stdin/stdout contract a sidecar runtime implements, expressed as a
 // function: in carries inbound frames (adapter → runtime), out carries
@@ -24,7 +24,7 @@ import (
 type RuntimeLoop func(ctx context.Context, in io.Reader, out io.Writer) error
 
 // InProcessRuntime is the §4.7 embedded-model RuntimeProcess: the
-// runtime logic runs in the adapter's own process, and the §15.4.1
+// runtime logic runs in the adapter's own process, and the §28.5.3
 // JSONL frames travel over an in-memory pipe instead of a socket or the
 // runtime's stdin/stdout. It is the third transport behind the
 // RuntimeProcess contract, beside the stdin/stdout SubprocessExecutor
@@ -52,7 +52,7 @@ type InProcessRuntime struct {
 }
 
 // NewInProcessRuntime returns an embedded-model RuntimeProcess that runs
-// loop in-process. loop is the runtime's §15.4.1 JSONL handler.
+// loop in-process. loop is the runtime's §28.5.3 JSONL handler.
 func NewInProcessRuntime(loop RuntimeLoop) *InProcessRuntime {
 	return &InProcessRuntime{loop: loop}
 }
@@ -88,7 +88,7 @@ func (r *InProcessRuntime) Start(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// WriteEnvelope forwards a pre-encoded §15.4.1 message envelope to the
+// WriteEnvelope forwards a pre-encoded §28.5.3 message envelope to the
 // runtime loop over the in-memory pipe, terminated by a newline.
 func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
 	r.mu.Lock()
@@ -107,7 +107,7 @@ func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	return nil
 }
 
-// Output streams every §15.4.1 JSONL frame the runtime loop writes. The
+// Output streams every §28.5.3 JSONL frame the runtime loop writes. The
 // channel closes when the loop returns; ctx cancellation stops the
 // reader so a stalled consumer does not leak the goroutine.
 func (r *InProcessRuntime) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {

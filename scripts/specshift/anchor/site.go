@@ -24,8 +24,7 @@ const (
 	linkSite siteKind = "link"
 	// citationSite is a bare section citation of the §X.Y form, in a
 	// comment or in prose, naming a section whose anchor the anchor-move
-	// map retires, or one no specification file of the tree states a
-	// heading for and the map carries no successor for either.
+	// map retires.
 	citationSite siteKind = "citation"
 )
 
@@ -47,11 +46,6 @@ type site struct {
 	// site to. It is read while the site is found, because the map is
 	// what carries the redirect.
 	successor Target
-	// unmapped records a citation of a section no specification file of
-	// the tree states and the anchor-move map carries no successor for.
-	// The site is unresolvable rather than rewritable, so it stops the
-	// run naming the file and the line.
-	unmapped bool
 }
 
 // linkExpr matches a markdown link, with the fragment its destination
@@ -92,19 +86,35 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // carry are outside that population, and rewriting one would judge a
 // reference the pass cannot check.
 //
-// A bare citation is decided two-sidedly, because no gate over the
-// anchor classes reads a §X.Y token: the fragment-link gate reads links
-// alone, and the citation resolver and the per-file ratchet match the
-// retired line-citation form alone. A citation of a section the map
-// retires the anchor of is a site the sense register resolves one
-// occurrence at a time, because a reduction carves material out of the
-// anchor it moves. A citation of a section a specification file of the
-// tree still states a heading for stands as written. A citation of a
-// section neither states is a citation of a heading that is gone with no
-// successor to send it to, so it stops the run naming the file and the
-// line. Deciding the class by the map alone would leave such a citation
-// standing while the run exited zero, and the change that empties the
-// map would then destroy the record of what the run should have done.
+// The anchor-move map decides the population of the citation class the
+// same way, because retirement is the thing the map records and the only
+// thing this pass migrates. A citation of a section the map retires the
+// anchor of is a site the sense register resolves one occurrence at a
+// time, because a reduction carves material out of the anchor it moves.
+// Every other citation stands exactly as it is written.
+//
+// A citation of a section no specification file of the tree states a
+// heading for is not evidence of a retired anchor, because nothing
+// retired it: the map is the whole record of what this reduction
+// retired, and a number absent from both is a number this specification
+// never carried or stopped carrying in some earlier change this pass was
+// not given the successors for. The tree holds such citations in bulk,
+// including §-numbered references into other documents entirely, such as
+// the 45 CFR parts the compliance sections cite. Claiming them here
+// would stop the migration on a population the pass has no successor
+// for and cannot acquire one for, and correcting them is the separate
+// hand enumeration the citation resolver and the per-file ratchet
+// report.
+//
+// Narrowing the class to what the map retires leaves both fail-closed
+// aborts standing, and neither may be traded away to widen it again. A
+// citation naming an anchor the map retires with no entry in the sense
+// register stops the run naming the file and the line, rather than being
+// sent to the map's single successor. A map entry whose successor
+// heading no document of the tree declares stops the run before any file
+// is written. Those two are what hold the migration to a record of what
+// it should have done; the absence of a section number from the tree
+// never was.
 //
 // A citation written inside a markdown link is not read as a bare
 // citation, whether or not that link's destination carries a fragment.
@@ -150,21 +160,16 @@ func findSites(target, text string, tree *headings, moves *moveMap) []site {
 			continue
 		}
 		number := text[m[2]:m[3]]
-		s := site{
+		if !moves.retiresSection(number) {
+			continue
+		}
+		out = append(out, site{
 			kind:    citationSite,
 			start:   m[0],
 			end:     m[1],
 			line:    lineOf(text, m[0]),
 			section: number,
-		}
-		switch {
-		case moves.retiresSection(number):
-		case tree.declaresSection(number):
-			continue
-		default:
-			s.unmapped = true
-		}
-		out = append(out, s)
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].start < out[j].start })
 	return out

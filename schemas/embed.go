@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package schemas embeds the machine-readable wire contracts the spec
-// designates as authoritative (§15.4.1) so a portable
+// designates as authoritative (§28.5.3) so a portable
 // binary can validate frames without a checkout of the source tree. The
 // §15.4.6 conformance harness (cmd/lenny-compliance) and
 // `lenny runtime validate` run against third-party runtimes in their own

@@ -17,7 +17,7 @@ import (
 //     selectable explicitly in Compose Mode and the default in Source
 //     Mode.
 //  2. a non-empty runtimeBin (--runtime-bin / LENNY_AGENT_BINARY)
-//     dispatches each message to a child process speaking the §15.4.1
+//     dispatches each message to a child process speaking the §28.5.3
 //     adapter protocol — the §17.4 custom-runtime override.
 //  3. otherwise the built-in echo executor, the Source Mode default.
 //

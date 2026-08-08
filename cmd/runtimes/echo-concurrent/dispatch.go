@@ -28,11 +28,11 @@ func (e protocolError) Error() string { return "protocol error: " + e.msg }
 // Each inbound frame's optional slotId selects a slot. The front loop
 // demultiplexes frames to per-slot workers keyed on slotId; a frame with
 // no slotId routes to the default whole-pod session (the empty-string
-// key). Every worker runs an independent §15.4.1 echocore loop, so the
+// key). Every worker runs an independent §28.5.3 echocore loop, so the
 // per-frame message/heartbeat/shutdown behavior is reused unchanged and
 // each slot keeps its own sequence counter.
 //
-// spec: §5.2, §15.4.1 — dispatch loop keyed on slotId
+// spec: §5.2, §28.5.3 — dispatch loop keyed on slotId
 // over a single stdin channel.
 func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -69,7 +69,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 		// A shutdown frame ends the loop for the whole pod. Forward it to
 		// every active slot so each echocore loop exits cleanly, then let
 		// the deferred drain wait for the workers. A shutdown carrying a
-		// slotId still tears the whole pod down: the §15.4.1 shutdown is a
+		// slotId still tears the whole pod down: the §28.5.3 shutdown is a
 		// pod-level signal.
 		if env.Type == "shutdown" {
 			d.broadcast(line)

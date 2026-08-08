@@ -19,7 +19,7 @@ import (
 // persisted to the target stream and replayable within the §7.2 replay
 // window like any other SessionEvent.
 //
-// spec: §7.2; §15.4.1 (message_expired).
+// spec: §7.2; §15.4 (message_expired).
 type busEmitter struct {
 	bus *sessionevents.Bus
 	now func() time.Time
@@ -39,7 +39,7 @@ func NewBusEmitter(bus *sessionevents.Bus, now func() time.Time) sessioninbox.Em
 	return &busEmitter{bus: bus, now: now}
 }
 
-// MessageExpired publishes the §15.4.1 message_expired event on the
+// MessageExpired publishes the §15.4 message_expired event on the
 // sender session's event stream.
 func (e *busEmitter) MessageExpired(tenantID, senderSessionID string, ev sessioninbox.MessageExpiredEvent) {
 	e.publish(tenantID, senderSessionID, sessioninbox.EventMessageExpired, ev)
@@ -68,7 +68,7 @@ func (e *busEmitter) publish(tenantID, sessionID, eventType string, payload any)
 // rather than failing the terminal transition. No-op when messaging is
 // not wired.
 //
-// spec: §7.2; §7.3; §15.4.1 reason target_terminated.
+// spec: §7.2; §7.3; §15.4 reason target_terminated.
 // F-7.3.12.
 func (s *Server) drainMessagingOnTerminal(ctx context.Context, sess sessionstore.Session) {
 	if s.messaging == nil {

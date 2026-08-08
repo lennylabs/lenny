@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// defaultHeartbeatAckTimeout is the §15.4.1 window the runtime
+// defaultHeartbeatAckTimeout is the §28.5.3 window the runtime
 // has to answer a heartbeat before the adapter treats it as hung and
-// sends SIGTERM. spec: §15.4.1.
+// sends SIGTERM. spec: §28.5.3.
 const defaultHeartbeatAckTimeout = 10 * time.Second
 
-// jsonlFrameType returns the top-level `type` discriminant of a §15.4.1
+// jsonlFrameType returns the top-level `type` discriminant of a §28.5.3
 // JSONL frame, or the empty string when the frame does not parse as a
 // JSON object with a string `type`. It is the cheap classifier the
 // Attach loop uses to recognize protocol-level frames (`heartbeat_ack`,
@@ -31,12 +31,12 @@ func jsonlFrameType(line []byte) string {
 	return probe.Type
 }
 
-// heartbeatMonitor implements the §15.4.1 adapter-side liveness probe:
+// heartbeatMonitor implements the §28.5.3 adapter-side liveness probe:
 // it sends a `{type:heartbeat,ts}` frame to the runtime every interval
 // and expects a `heartbeat_ack` within ackTimeout. When an ack does not
 // arrive in time the runtime is considered hung and onHung fires once
 // (the Attach loop SIGTERMs the runtime and ends the stream). spec:
-// §15.4.1.
+// §28.5.3.
 type heartbeatMonitor struct {
 	interval   time.Duration
 	ackTimeout time.Duration
@@ -57,7 +57,7 @@ type heartbeatMonitor struct {
 
 // newHeartbeatMonitor builds a monitor for one Attach session. interval
 // must be > 0 (the caller gates on s.HeartbeatInterval); ackTimeout falls
-// back to the §15.4.1 10s default when non-positive.
+// back to the §28.5.3 10s default when non-positive.
 func newHeartbeatMonitor(interval, ackTimeout time.Duration, write func([]byte) error) *heartbeatMonitor {
 	if ackTimeout <= 0 {
 		ackTimeout = defaultHeartbeatAckTimeout
@@ -72,7 +72,7 @@ func newHeartbeatMonitor(interval, ackTimeout time.Duration, write func([]byte) 
 	}
 }
 
-// frame builds the §15.4.1 inbound heartbeat
+// frame builds the §28.5.3 inbound heartbeat
 // `{"type":"heartbeat","ts":<unix>}`.
 func (m *heartbeatMonitor) frame() []byte {
 	return []byte(`{"type":"heartbeat","ts":` + strconv.FormatInt(m.nowUnix(), 10) + `}`)
@@ -132,7 +132,7 @@ func (m *heartbeatMonitor) run(ctx context.Context) {
 				}
 			}
 		case <-ackTimer.C:
-			// spec: §15.4.1 — no ack within the window; the
+			// spec: §28.5.3 — no ack within the window; the
 			// process is hung. Signal the Attach loop once.
 			m.hungOnce.Do(func() { close(m.hung) })
 			return
@@ -140,11 +140,11 @@ func (m *heartbeatMonitor) run(ctx context.Context) {
 	}
 }
 
-// startHeartbeat launches the §15.4.1 heartbeat monitor for an Attach
+// startHeartbeat launches the §28.5.3 heartbeat monitor for an Attach
 // session when s.HeartbeatInterval is configured, returning the monitor
 // (nil when heartbeats are disabled). The monitor goroutine exits when
 // ctx is cancelled — the Attach RPC's stream context — so it is bounded
-// by the session it probes. spec: §15.4.1.
+// by the session it probes. spec: §28.5.3.
 func (s *Server) startHeartbeat(ctx context.Context, sessionID string, rt RuntimeProcess) *heartbeatMonitor {
 	if s.HeartbeatInterval <= 0 {
 		return nil
@@ -156,12 +156,12 @@ func (s *Server) startHeartbeat(ctx context.Context, sessionID string, rt Runtim
 	return mon
 }
 
-// onHeartbeatHung performs the §15.4.1 unresponsive-agent
+// onHeartbeatHung performs the §28.5.3 unresponsive-agent
 // escalation: it sends SIGTERM (the clean Interrupt) to the hung runtime
 // and logs the escalation. The Attach loop calls it once when the
 // monitor's hung channel closes, then ends the stream.
 func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string, rt RuntimeProcess) {
-	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; sending SIGTERM (§15.4.1)", sessionID)
+	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; sending SIGTERM (§28.5.3)", sessionID)
 	if err := rt.Interrupt(ctx, sessionID, false); err != nil {
 		log.Printf("lenny-adapter: SIGTERM of hung runtime for session %s failed: %v", sessionID, err)
 	}

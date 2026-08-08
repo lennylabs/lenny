@@ -5,7 +5,7 @@
 // Tier-10 conformance case for the concurrent-workspace per-slot dispatch
 // loop. A pool whose sessionPolicy.maxConcurrentSessions is above 1
 // multiplexes simultaneous sessions onto one pod, each in its own slot,
-// over a single runtime process. The §15.4.1 contract requires a runtime
+// over a single runtime process. The §28.5.3 contract requires a runtime
 // serving such a pool to implement a dispatch loop keyed on slotId: every
 // inbound frame carries a slotId, the runtime derives each slot's cwd as
 // /workspace/slots/{slotId}/current/, and every outbound frame echoes the
@@ -55,7 +55,7 @@ import (
 
 // concurrentFrame is the subset of an outbound JSONL frame the
 // concurrent-slot conformance case reads: the discriminator, the slotId
-// the dispatch loop stamps, and the echoed text parts. The §15.4.1
+// the dispatch loop stamps, and the echoed text parts. The §28.5.3
 // outbound schema carries slotId alone for concurrent multiplexing, so
 // the case asserts on slotId and never on a cwd wire field; the per-slot
 // cwd is an internal derivation read from the runtime's stderr diagnostic.
@@ -150,7 +150,7 @@ func inlineText(f concurrentFrame) string {
 //	either a slot's response is not tagged with its slotId, the per-slot
 //	cwd is no longer derived as /workspace/slots/{slotId}/current/, or a
 //	no-slotId frame no longer falls through to the whole-pod path. The
-//	§15.4.1 concurrent-session dispatch loop regressed and a
+//	§28.5.3 concurrent-session dispatch loop regressed and a
 //	maxConcurrentSessions > 1 pod can no longer serve a second slot over
 //	one runtime process.
 func TestConcurrentSlotDispatchConformance(t *testing.T) {
@@ -192,7 +192,7 @@ func TestConcurrentSlotDispatchConformance(t *testing.T) {
 	// seq=1 then seq=2; slot-02's single response is an independent seq=1,
 	// not seq=3, proving the dispatch loop does not share a counter across
 	// slots. A shared counter would let one slot observe another slot's
-	// ordering, breaking the per-slot stream isolation §15.4.1 promises.
+	// ordering, breaking the per-slot stream isolation §28.5.3 promises.
 	if len(bySlot[slot01]) == 2 {
 		if got := inlineText(bySlot[slot01][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a1") {
 			t.Errorf("slot-01 first response = %q, want a seq=1 echo of a1", got)

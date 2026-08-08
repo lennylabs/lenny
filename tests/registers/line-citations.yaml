@@ -23,8 +23,6 @@ files:
       count: 2
     - path: charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml
       count: 2
-    - path: charts/lenny/values.schema.json
-      count: 7
     - path: pkg/embedded/crds/lenny.dev_runtimes.yaml
       count: 2
     - path: pkg/embedded/crds/lenny.dev_sandboxclaims.yaml
@@ -35,7 +33,3 @@ files:
       count: 2
     - path: pkg/embedded/crds/lenny.dev_sandboxwarmpools.yaml
       count: 2
-    - path: pkg/gateway/mcpfabric/mcptools/generated_schemas.go
-      count: 9
-    - path: schemas/ocsf-mapping.yaml
-      count: 1

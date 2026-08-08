@@ -43,7 +43,7 @@ function echoParts(input: MessagePart[], seq: number): MessagePart[] {
 }
 
 // delegationError builds a final Reply carrying a structured error so
-// the adapter records the failure without losing context (§15.4.1).
+// the adapter records the failure without losing context (§28.5.3).
 function delegationError(err: unknown): Reply {
   return {
     error: {
@@ -96,7 +96,7 @@ class DelegateHandler implements Handler {
 
       // 4. lenny/output — emit the child output to the parent or
       //    client. The response below still signals turn completion
-      //    (§15.4.1).
+      //    (§28.5.3).
       await platform.output(childParts);
       return { parts: childParts, final: true };
     } catch (err) {

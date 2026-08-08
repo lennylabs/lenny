@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §15.4.1 — RuntimeCrash synthesizes a RUNTIME_CRASH
+// spec: §28.5.3 — RuntimeCrash synthesizes a RUNTIME_CRASH
 // error from a non-zero exit code and stderr; §8.8 classify
 // it TRANSIENT.
 func TestRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
@@ -34,7 +34,7 @@ func TestRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a runtime that emits no stderr still
+// spec: §28.5.3 — a runtime that emits no stderr still
 // produces a RUNTIME_CRASH naming the exit code, and an oversized stderr
 // dump is capped to its tail.
 func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
@@ -55,7 +55,7 @@ func TestRuntimeCrashBounds_spec_15_4_1_1889(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 — a `text` MessagePart guarantees type,
+// spec: §28.5.3 — a `text` MessagePart guarantees type,
 // inline, mimeType (text/plain) and carries its own schemaVersion.
 func TestTextPart_spec_15_4_1(t *testing.T) {
 	p := TextPart("hello")

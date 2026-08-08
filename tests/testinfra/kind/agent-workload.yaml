@@ -110,7 +110,7 @@ spec:
 ---
 # §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
 # image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ works.
-# cred-shell-echo is a stdin/stdout §15.4.1 binary (it does not link the
+# cred-shell-echo is a stdin/stdout §28.5.3 binary (it does not link the
 # adapter), so the §4.7 sidecar deployment model is the correct fit: the
 # lenny-adapter sidecar serves the gRPC contract and bridges to
 # cred-shell-echo over the abstract Unix socket. Production installs reject
@@ -170,7 +170,7 @@ spec:
   deploymentModel: sidecar
 ---
 # §5.2 slotId dispatch-loop reference runtime. cmd/runtimes/echo-concurrent
-# is a stdin/stdout §15.4.1 binary that demultiplexes several simultaneous
+# is a stdin/stdout §28.5.3 binary that demultiplexes several simultaneous
 # slots over the single connection, keyed on the inbound frame's slotId, so
 # the §4.7 sidecar deployment model bridges it over the abstract Unix
 # socket the same way echo-runtime-sidecar does. Backs concurrent-echo-pool

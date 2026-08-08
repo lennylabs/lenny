@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-"""§15.4.1 adapter-local tool surface.
+"""§28.5.3 adapter-local tool surface.
 
 An adapter-local tool call emits a stdout ``tool_call`` frame and blocks
 until the matching ``tool_result`` frame arrives on stdin, correlating
@@ -31,10 +31,10 @@ class _Pending:
 
 
 class ToolCallRegistry:
-    """Correlates outbound §15.4.1 ``tool_call`` frames with inbound
+    """Correlates outbound §28.5.3 ``tool_call`` frames with inbound
     ``tool_result`` frames.
 
-    The §15.4.1 frame loop delivers a ``tool_result`` here; an
+    The §28.5.3 frame loop delivers a ``tool_result`` here; an
     :class:`AdapterToolset` call registers and waits for one.
     """
 
@@ -77,7 +77,7 @@ class ToolCallRegistry:
     def reject_all(self, err: Exception) -> None:
         """Fail every pending call.
 
-        The §15.4.1 frame loop calls it when the inbound stream closes
+        The §28.5.3 frame loop calls it when the inbound stream closes
         so no caller waits forever.
         """
         with self._lock:
@@ -89,7 +89,7 @@ class ToolCallRegistry:
 
 
 def _new_call_id() -> str:
-    """Generate a unique §15.4.1 ``tool_call`` id with the recommended
+    """Generate a unique §28.5.3 ``tool_call`` id with the recommended
     ``tc_`` prefix."""
     return "tc_" + secrets.token_hex(8)
 
@@ -109,7 +109,7 @@ def _tool_error(result: ToolResult, tool: str) -> None:
 
 
 class AdapterToolset:
-    """§15.4.1 adapter-local tool surface available at every integration
+    """§28.5.3 adapter-local tool surface available at every integration
     level.
 
     It emits a stdout ``tool_call`` frame and blocks until the matching
@@ -129,7 +129,7 @@ class AdapterToolset:
         self._slot_id = slot_id
 
     def tool_call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        """Emit a §15.4.1 ``tool_call`` frame for the named
+        """Emit a §28.5.3 ``tool_call`` frame for the named
         adapter-local tool and block until the correlated
         ``tool_result`` arrives.
 
@@ -164,7 +164,7 @@ class AdapterToolset:
         return pending.result
 
     def read_file(self, path: str) -> str:
-        """Invoke the §15.4.1 ``read_file`` adapter-local tool.
+        """Invoke the §28.5.3 ``read_file`` adapter-local tool.
 
         The path is confined to the pod workspace by the adapter; a path
         resolving outside /workspace returns an error result.
@@ -176,19 +176,19 @@ class AdapterToolset:
         return result.content[0].inline or ""
 
     def write_file(self, path: str, content: str) -> None:
-        """Invoke the §15.4.1 ``write_file`` adapter-local tool, creating
+        """Invoke the §28.5.3 ``write_file`` adapter-local tool, creating
         or overwriting a workspace file with UTF-8 content."""
         result = self.tool_call("write_file", {"path": path, "content": content})
         _tool_error(result, "write_file")
 
     def list_dir(self, path: str) -> list[MessagePart]:
-        """Invoke the §15.4.1 ``list_dir`` adapter-local tool and return
+        """Invoke the §28.5.3 ``list_dir`` adapter-local tool and return
         the directory entries the adapter reports."""
         result = self.tool_call("list_dir", {"path": path})
         _tool_error(result, "list_dir")
         return result.content
 
     def delete_file(self, path: str) -> None:
-        """Invoke the §15.4.1 ``delete_file`` adapter-local tool."""
+        """Invoke the §28.5.3 ``delete_file`` adapter-local tool."""
         result = self.tool_call("delete_file", {"path": path})
         _tool_error(result, "delete_file")

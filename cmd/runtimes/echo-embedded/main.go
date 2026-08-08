@@ -2,7 +2,7 @@
 
 // Command echo-embedded is the Basic-level reference runtime for the
 // §4.7 embedded deployment model. It is the embedded counterpart of
-// cmd/runtimes/echo: the same §15.4.1 echo loop (pkg/runtimekit/echocore),
+// cmd/runtimes/echo: the same §28.5.3 echo loop (pkg/runtimekit/echocore),
 // the same observable behaviour, packaged as a single binary that links
 // the §4.7 adapter as a library and serves the adapter gRPC contract to
 // the gateway itself.
@@ -11,7 +11,7 @@
 //
 //   - sidecar (cmd/runtimes/echo): the adapter runs as a separate
 //     container and bridges the runtime over an abstract Unix socket.
-//     The runtime author implements only the §15.4.1 JSONL protocol.
+//     The runtime author implements only the §28.5.3 JSONL protocol.
 //   - embedded (this binary): a first-party runtime image links the
 //     adapter and serves the gRPC contract directly. One process, one
 //     container, no adapter↔runtime socket and no SO_PEERCRED or
@@ -20,7 +20,7 @@
 //
 // echo-embedded shows the wiring a first-party Go runtime uses for the
 // embedded model: build an adapter.Server, attach an
-// adapter.InProcessRuntime whose loop is the runtime's §15.4.1 handler,
+// adapter.InProcessRuntime whose loop is the runtime's §28.5.3 handler,
 // and serve adapter.NewGRPCServer. The gateway speaks the identical
 // adapter gRPC contract to this binary as it does to a sidecar adapter.
 //
@@ -139,7 +139,7 @@ func main() {
 	defer func() { _ = gwCloser.Close() }()
 	// §4.7 embedded model: the runtime logic runs in this process. The
 	// adapter drives it through an in-process pipe instead of a socket
-	// or a child process's stdin/stdout — the §15.4.1 framing is the
+	// or a child process's stdin/stdout — the §28.5.3 framing is the
 	// same, only the transport differs.
 	adapterSrv.Runtime = adapter.NewInProcessRuntime(echoLoop)
 
@@ -163,7 +163,7 @@ func main() {
 	}
 }
 
-// echoLoop is the §15.4.1 echo handler the adapter drives in-process.
+// echoLoop is the §28.5.3 echo handler the adapter drives in-process.
 // It is the same echocore loop cmd/runtimes/echo runs over a socket or
 // stdin/stdout; here it runs over the adapter's in-memory pipe.
 func echoLoop(ctx context.Context, in io.Reader, out io.Writer) error {

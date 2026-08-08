@@ -76,7 +76,7 @@ import (
 const ssNS = "lenny-agents"
 
 // ssRespondingRuntime is an adapter.RuntimeProcess that replies to every
-// written envelope with a §15.4.1 response frame, so the single-shot
+// written envelope with a §28.5.3 response frame, so the single-shot
 // dispatch (exec.Send) returns a 200 rather than blocking on empty output.
 type ssRespondingRuntime struct{ out chan []byte }
 

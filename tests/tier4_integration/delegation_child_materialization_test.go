@@ -95,7 +95,7 @@ const (
 func materializeFixedClock() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 // materializeRespondingRuntime is an adapter.RuntimeProcess that replies to
-// every written envelope with a §15.4.1 response frame, so the PodExecutor
+// every written envelope with a §28.5.3 response frame, so the PodExecutor
 // Attach round-trip against a materialized child returns a concrete response
 // rather than blocking. It mirrors the executor package's respondingRuntime.
 type materializeRespondingRuntime struct{ out chan []byte }

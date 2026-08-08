@@ -4,7 +4,7 @@
 
 This package lets a developer write a Lenny agent runtime in Python by
 implementing the :class:`Handler` protocol and calling :func:`run`; the
-SDK drives the §15.4.1 adapter binary protocol, the §15.4.2 RPC
+SDK drives the §28.5.3 adapter binary protocol, the §15.4.2 RPC
 lifecycle state machine, the §8.5 platform MCP tool helpers, and the
 Full-level lifecycle channel.
 
