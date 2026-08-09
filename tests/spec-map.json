@@ -1508,6 +1508,143 @@
       ],
       "blocked_until_phase": "4"
     },
+    "10.1.1": {
+      "title": "Stateless Replicas and Per-Session Coordination",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier2_component/coordination/...",
+        "tests/tier2_component/stores/coordleasestore_test.go",
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers the stateless-replica correctness rule and the Redis lease, Postgres fallback, and generation-counter mechanisms that make one replica the coordinator of a session."
+    },
+    "10.1.2": {
+      "title": "Coordinator Handoff Protocol",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
+        "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers the ordered handoff sequence: the pre-CAS session read and cache priming, the compare-and-swap generation increment, the fence announcement precondition, and the begin-coordination step."
+    },
+    "10.1.3": {
+      "title": "Dual-Store Unavailability",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier2_component/coordination/...",
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers the degraded mode when Redis and Postgres are both unreachable: existing sessions continue, new sessions are rejected, handoffs freeze, and the duration bound and client notification apply."
+    },
+    "10.1.4": {
+      "title": "Coordinator-Loss Detection and Hold State",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers keepalive-based coordinator-loss detection, adapter hold state and its timeout, orphan session reconciliation against the pod-state mirror, and whole-pod connection loss on multi-slot pools."
+    },
+    "10.1.5": {
+      "title": "Stale Replica Behavior",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
+        "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers what a preempted replica must do on a generation-stale rejection: stop in-flight RPCs, clear local session state, back off before re-checking, and emit the preemption log and counter."
+    },
+    "10.1.6": {
+      "title": "Autoscaling Metrics and HPA Policy",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier7b_load_kind/scenarios/gateway_capacity_calibration",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1",
+        "17.8"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers the custom metrics pipeline and its latency budget, the HPA metric roles, the KEDA and Prometheus Adapter paths, and the scale-up and scale-down policies."
+    },
+    "10.1.7": {
+      "title": "preStop Hook Drain",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier7a_load_local/prestop_no_double_checkpoint_test.go",
+        "tests/tier7a_load_local/checkpoint_grant_window_test.go",
+        "tests/tier3_contract/checkpoint_stream/...",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1",
+        "4.4",
+        "12.5"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers the staged drain: readiness flip, the tiered checkpoint cap and its fallbacks, the CRD grace-floor and BarrierAck-floor validation rules, the partial manifest and chunked-object model, reassembly on resume, cleanup, stream drain, and the SIGKILL deadline."
+    },
+    "10.1.8": {
+      "title": "Rolling Updates and the CheckpointBarrier Protocol",
+      "spec_file": "spec/10_gateway-internals.md",
+      "tests": [
+        "tests/tier3_contract/adapter_checkpointbarrier/...",
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+      ],
+      "packages": [
+        "pkg/gateway"
+      ],
+      "depends_on_sections": [
+        "10.1"
+      ],
+      "blocked_until_phase": "4",
+      "notes": "Covers long-running sessions under rolling updates and the barrier protocol that bounds the interruption window: barrier signal, pod quiescence, checkpoint flush, the BarrierAck-timeout partial-capture path, and handoff re-adoption without resume deduplication."
+    },
     "10.2": {
       "title": "Authentication",
       "spec_file": "spec/10_gateway-internals.md",
@@ -2309,6 +2446,145 @@
         "pkg/admission/labelimmutability"
       ],
       "blocked_until_phase": "3.5"
+    },
+    "13.2.1": {
+      "title": "CNI Requirement and Default-Deny Baseline",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/network_policy_test.go"
+      ],
+      "packages": [
+        "pkg/preflight"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/agent-network-policies.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the NetworkPolicy enforcement requirement on the cluster CNI and the default-deny policy applied to every agent namespace."
+    },
+    "13.2.2": {
+      "title": "Agent Pod Allow-List Policies",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/network_policy_test.go",
+        "tests/tier9_security/agent_egress_test.go"
+      ],
+      "packages": [
+        "pkg/controller/warmpool"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/agent-network-policies.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the policies that reopen specific paths for agent pods: gateway-to-pod ingress, pod-to-gateway and DNS, the proxy-mode LLM egress supplement, the conditional OTLP collector egress, and the object-store egress for checkpoint transfer."
+    },
+    "13.2.3": {
+      "title": "Checkpoint Capability Model",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodReachesObjectStoreButNoOtherLennySystemPort_spec_13_2",
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodTrustsObjectStoreCA_spec_13_2",
+        "tests/tier6_e2e_cloud/agent_objectstore_egress_test.go::TestAgentPodObjectStoreEgressIsPortScoped_spec_13_2"
+      ],
+      "packages": [
+        "pkg/gateway/checkpoint",
+        "pkg/admission/labelimmutability"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/agent-network-policies.yaml",
+        "charts/lenny/templates/agent-objectstore-ca.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2",
+        "12.5"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the scoped, short-lived capabilities the gateway mints for checkpoint chunk transfer and the trust anchors and admission controls that bound what an agent pod can reach in the object store."
+    },
+    "13.2.4": {
+      "title": "`lenny-system` Namespace NetworkPolicies",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/network_policy_test.go",
+        "tests/tier5_e2e_kind/ingress_test.go"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/system-network-policies.yaml",
+        "charts/lenny/templates/ops-network-policies.yaml",
+        "charts/lenny/templates/gateway-ingress.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the default-deny policy for the platform namespace, the component-specific allow-lists the chart renders, and the gateway ingress path from the Ingress controller."
+    },
+    "13.2.5": {
+      "title": "Gateway Egress to Upstream LLM Providers",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/agent_egress_test.go",
+        "tests/tier9_security/network_policy_test.go"
+      ],
+      "packages": [
+        "pkg/gateway",
+        "pkg/preflight"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/gateway-llm-upstream-egress.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the gateway pod's outbound path for proxy-mode credential pools, the shared private-range exclusion list, the application-layer SSRF requirement, and the default egress scope caveat."
+    },
+    "13.2.6": {
+      "title": "Per-Pool Egress Relaxation and `egressProfile`",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/agent_egress_test.go"
+      ],
+      "packages": [
+        "pkg/controller/warmpool",
+        "pkg/admission/pool_config_validator"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/agent-network-policies.yaml",
+        "charts/lenny/templates/credentialpool-egress-guard.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the supplemental policies that widen a pool's egress and the egressProfile enum values that name each permitted scope."
+    },
+    "13.2.7": {
+      "title": "DNS Exfiltration Mitigation and the Dedicated CoreDNS Instance",
+      "spec_file": "spec/13_security-model.md",
+      "tests": [
+        "tests/tier9_security/agent_egress_test.go",
+        "tests/tier9_security/network_policy_test.go"
+      ],
+      "packages": [
+        "pkg/controller/warmpool"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/coredns-configmap.yaml",
+        "charts/lenny/templates/coredns-deployment.yaml",
+        "charts/lenny/templates/coredns-service.yaml"
+      ],
+      "depends_on_sections": [
+        "13.2"
+      ],
+      "blocked_until_phase": "3.5",
+      "notes": "Covers the dedicated CoreDNS resolver for agent namespaces, the pod DNS configuration that forces its use, its high-availability requirements, and the reference Corefile with its rate-limit and filter plugins."
     },
     "13.3": {
       "title": "Credential Flow",

@@ -31,6 +31,8 @@ The admission webhook ([§10.2](10_gateway-internals.md#102-authentication)) rej
 
 ### 13.2 Network Isolation
 
+#### 13.2.1 CNI Requirement and Default-Deny Baseline
+
 **Minimum CNI requirement:** The cluster CNI must support NetworkPolicy enforcement including egress rules. This can be achieved with Calico or Cilium as the primary CNI, or by running the cloud provider's native CNI plugin (e.g., AWS VPC CNI, Azure CNI) augmented with Calico in policy-only mode. The latter is the recommended approach on managed Kubernetes services (EKS, AKS, GKE) as it preserves native cloud networking while adding the required policy enforcement.
 
 **Default-deny policy (applied to every agent namespace — `lenny-agents`, `lenny-agents-kata`, and any future additions):**
@@ -47,6 +49,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ```
+
+#### 13.2.2 Agent Pod Allow-List Policies
 
 **Allow gateway-to-pod (applied to all agent pods in every agent namespace):**
 
@@ -182,6 +186,8 @@ spec:
 
 Pods in pools that write checkpoints need egress to object storage so the agent pod can `PUT` checkpoint chunks and, on resume, `GET` them back. This supplemental policy grants that egress against gateway-minted presigned capabilities only; the pod never holds an object-store credential.
 
+#### 13.2.3 Checkpoint Capability Model
+
 **Checkpoint capability model.**
 
 - The gateway mints one presigned URL per chunk. An upload capability names one HTTP method (`PUT`), one object key under `/{tenant_id}/checkpoints/{session_id}/{checkpoint_id}/`, and one exact `Content-Length`. A restore capability names one HTTP method (`GET`) and one object key under the same prefix. Both expire after `checkpointCapabilityTTLSeconds` (default 30).
@@ -235,6 +241,8 @@ spec:
 > 2. **Mutation guard:** `UPDATE` requests that add or change the `lenny.dev/managed` label on an existing pod are denied unconditionally (the label is immutable post-creation).
 >
 > The webhook is scoped to agent namespaces only (`namespaceSelector` matching `.Values.agentNamespaces`). It is deployed with `replicas: 2` and a PodDisruptionBudget (`minAvailable: 1`) matching the admission controller HA requirements in [Section 17.2](17_deployment-topology.md#172-namespace-layout). The admission policy manifest is included in the Helm chart under `templates/admission-policies/label-immutability-webhook.yaml` and is listed as a check in the `lenny-preflight` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)).
+
+#### 13.2.4 `lenny-system` Namespace NetworkPolicies
 
 **`lenny-system` namespace NetworkPolicies (NET-017):**
 
@@ -372,6 +380,8 @@ spec:
 >
 > The `gateway.interceptorGRPCPort` Helm value (default: `50053`) defines the port the Helm-rendered NetworkPolicy rules allow. Individual interceptor registrations may bind on different ports; deployers should ensure their interceptor pods listen on this port (or override the Helm value to match). Note that this value governs the NetworkPolicy port allowance only — the actual gRPC endpoint address used by the gateway to call each interceptor is specified in the interceptor registration configuration, not in this NetworkPolicy.
 
+#### 13.2.5 Gateway Egress to Upstream LLM Providers
+
 **Gateway pod egress to upstream LLM providers (NET-046).** Any deployment that runs proxy-mode credential pools performs outbound LLM calls directly from the gateway process (the native Go translator, [§4.9](04_system-components.md#49-credential-leasing-service) LLM Reverse Proxy). Every outbound LLM request is constrained by the gateway pod's egress NetworkPolicy. Without an explicit allowlist, a compromised gateway process could attempt to reach arbitrary destinations, defeating the point of running it in a confined container.
 
 The Helm chart renders `allow-gateway-egress-llm-upstream` whenever `credentialPools[*].deliveryMode: proxy` is present in the rendered configuration. The policy enumerates upstream provider CIDRs that the pods actually reference via `credentialPools[*].provider`. Kubernetes `NetworkPolicy` only matches by `ipBlock` (CIDR) or pod/namespace selectors — it does **not** resolve DNS names — so the chart accepts CIDR entries only; the `lenny-preflight` Job resolves the configured provider endpoints to CIDRs at render time and fails the install with a clear error if any entry in `egressCIDRs.llmProviders` is not a valid CIDR (resolving hostnames is the operator's responsibility):
@@ -470,6 +480,8 @@ There is no separate forward-HTTP-proxy between the gateway and upstream provide
 
 > **Note:** `lenny-system` components use `kube-system` CoreDNS for their own DNS resolution (not the dedicated agent CoreDNS instance). The dedicated CoreDNS in `lenny-system` serves agent namespaces only. Cloud metadata endpoint blocking is achieved through two complementary mechanisms depending on policy type: (a) the base `allow-pod-egress-base` policy is an **allowlist-only** policy (gateway gRPC + DNS only) — it contains no broad CIDR rules and therefore **implicitly** blocks IMDS because those addresses are not in the allowlist; (b) supplemental policies that include broad CIDR rules (such as the `internet` profile's `0.0.0.0/0` rule) carry **explicit `except` clauses** for IMDS addresses to prevent IMDS access even when broad egress is granted. The blocked IMDS addresses are: `169.254.169.254/32` (AWS/GCP/Azure IPv4 IMDS), `fd00:ec2::254/128` (AWS IPv6 IMDS), and `100.100.100.200/32` (Alibaba Cloud IMDS). See NET-002 hardening note below for the supplemental policy `except` clause details.
 
+#### 13.2.6 Per-Pool Egress Relaxation and `egressProfile`
+
 **Per-pool egress relaxation:** Pools that need internet access (e.g., for LLM API calls) get additional NetworkPolicy resources allowing egress to specific CIDR ranges or services. These policies are **pre-created** by the Helm chart (or deployer) using label selectors that match pool labels (e.g., `lenny.dev/pool: <pool-name>`, `lenny.dev/egress-profile: restricted`). The warm pool controller does NOT create or modify NetworkPolicies — it only labels pods with the appropriate pool and egress-profile labels so that the pre-created policies take effect. This avoids granting the controller RBAC permissions for NetworkPolicy resources.
 
 **`egressProfile` enum:**
@@ -497,6 +509,8 @@ There is no separate forward-HTTP-proxy between the gateway and upstream provide
 > 1. **Preflight validation:** The `lenny-preflight` Job reads the cluster's actual pod and service CIDRs (from node `spec.podCIDR` aggregation and the `kubernetes` Service ClusterIP range) and fails the Helm install/upgrade if `egressCIDRs.excludeClusterPodCIDR` or `egressCIDRs.excludeClusterServiceCIDR` do not match, emitting: `"internet egress CIDR exclusion mismatch: excludeClusterPodCIDR is '<configured>' but cluster reports '<actual>'. Re-run with the correct CIDR to prevent lateral movement."` This check also fires when `internet` pools are present and either exclusion value is absent entirely. The same preflight audit also validates the gateway `allow-gateway-egress-llm-upstream` rule and the `lenny-ops-egress` webhook rule (§25.4): both `lenny-system` surfaces that render `cidr: 0.0.0.0/0` with an `except` block MUST carry the discovered cluster pod and service CIDRs (NET-065). A missing cluster CIDR on `lenny-ops-egress` is a fail-closed install error because the webhook surface dials tenant-influenced URLs and omitting the exclusion would permit a compromised operability-plane pod to reach in-cluster pod IPs on clusters with non-RFC1918 pod CIDRs.
 >
 > 2. **Continuous drift detection:** The WarmPoolController includes a goroutine that re-reads cluster CIDRs every 5 minutes and compares them against the installed NetworkPolicy `except` blocks for the `internet` egress profile, the gateway `allow-gateway-egress-llm-upstream` rule, and the `lenny-ops-egress` webhook rule. On drift, it increments `lenny_network_policy_cidr_drift_total` (counter, labeled `policy: internet|gateway-llm-upstream|ops-egress`, `field: pod_cidr|service_cidr`) and fires a `NetworkPolicyCIDRDrift` critical alert. The controller does **not** auto-patch NetworkPolicies (this would require NetworkPolicy write RBAC, currently avoided by design). The operator must re-run `helm upgrade` with the corrected CIDR values to re-sync. Additionally, the broad-internet CIDR rules in the `internet` profile (and any other supplemental policy containing broad CIDR rules) include `except` entries for all cloud instance metadata service (IMDS) addresses: `169.254.169.254/32` (AWS/GCP/Azure IPv4 IMDS), `fd00:ec2::254/128` (AWS IPv6 IMDS), and `100.100.100.200/32` (Alibaba Cloud IMDS). Because Kubernetes `NetworkPolicySpec.egress[].to[].ipBlock` forbids cross-family `except` entries (NET-062), the chart emits two parallel `ipBlock` peers per rule — one with `cidr: 0.0.0.0/0` carrying the IPv4 IMDS entries (`169.254.169.254/32`, `100.100.100.200/32`) and one with `cidr: ::/0` carrying the IPv6 IMDS entry (`fd00:ec2::254/128`). The `egressCIDRs.excludeIMDS` value remains a single list; the Helm template partitions it by address family at render time, matching the `excludePrivate` split described under NET-057 above. The base `allow-pod-egress-base` policy does NOT use `except` clauses — it is an allowlist-only policy (gateway gRPC + DNS only) that implicitly blocks IMDS because those addresses are not allowlisted. Supplemental policies that contain broad CIDR rules DO carry these explicit `except` blocks. This ensures that even if a pod is granted broad internet egress, it cannot reach node IAM credentials via link-local IMDS endpoints. The Helm values expose `egressCIDRs.excludeIMDS` (default: `["169.254.169.254/32", "fd00:ec2::254/128", "100.100.100.200/32"]`) so deployers can extend the list for additional cloud providers; new entries are automatically placed into the family-matching peer. Furthermore, the `internet` profile **requires** a sandboxed isolation profile (`sandboxed` or `microvm`) — pools with `isolationProfile: standard` (runc) cannot use the `internet` egress profile. The warm pool controller rejects pool configurations that combine `standard` isolation with `internet` egress at validation time.
+
+#### 13.2.7 DNS Exfiltration Mitigation and the Dedicated CoreDNS Instance
 
 **DNS exfiltration mitigation:** A dedicated **CoreDNS instance** runs in `lenny-system` (labeled `lenny.dev/component: coredns`) and serves as the DNS resolver for all agent namespaces by default. The `allow-pod-egress-base` NetworkPolicy above routes DNS traffic exclusively to this instance — agent pods cannot reach `kube-system` DNS directly.
 

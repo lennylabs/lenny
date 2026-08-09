@@ -148,7 +148,7 @@ kubectl -n lenny-system get configmap lenny-deployment-phase-stamp -o jsonpath='
 
 ### Step 5 — Post-incident drift-snapshot refresh
 
-Per the [drift-snapshot-refresh](#) tail-of-every-hotfix-runbook convention described in §17.7, call:
+Per the [drift-snapshot-refresh](#step-5--post-incident-drift-snapshot-refresh) tail-of-every-hotfix-runbook convention described in §17.7, call:
 
 <!-- access: api method=POST path=/v1/admin/drift/snapshot/refresh -->
 ```

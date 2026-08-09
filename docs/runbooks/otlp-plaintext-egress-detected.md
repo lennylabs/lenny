@@ -76,4 +76,4 @@ The alert clears and `lenny_otlp_export_tls_handshake_total{result="plaintext"}`
 
 Page security when the plaintext stream cannot be quenched within one evaluation window. Treat any persistent plaintext OTLP egress as a confidentiality incident.
 
-Cross-reference: [§13.2](../../spec/13_security-model.md#132-network-policy), [§16.4](../../spec/16_observability.md#164-logging).
+Cross-reference: [§13.2](../../spec/13_security-model.md#132-network-isolation), [§16.4](../../spec/16_observability.md#164-logging).

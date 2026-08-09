@@ -1,3 +1,7 @@
+> **Point-in-time record.** This document is a point-in-time reading of the working tree at
+> `fcda83e3`. Sections 28 and 29 of the specification supersede it for all current behavior.
+> The body below is unchanged from that reading and is not maintained.
+
 # Gateway, agent pod, adapter, and runtime communication
 
 A reference for how the gateway, the agent pod, the adapter container, the runtime container, and the
