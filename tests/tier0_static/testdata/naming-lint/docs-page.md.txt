@@ -1,0 +1,4 @@
+# Adapter contract
+
+The adapter answers a checkpoint request on the control channel and reports the
+result to the gateway.

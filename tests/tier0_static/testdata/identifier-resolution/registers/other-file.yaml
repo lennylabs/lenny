@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# A register whose one entry names a file the tree does not carry, so no
+# occurrence in the tree is excused by it.
+kind: identifier-senses
+version: 1
+entries:
+  - file: docs/reference/unrelated.md
+    occurrence: 1
+    not-a-channel: true

@@ -1,0 +1,12 @@
+**AWS S3:**
+```
+aws s3api put-bucket-lifecycle-configuration --bucket <bucket> --lifecycle-configuration file://lenny-lifecycle.json
+```
+
+**GCP Cloud Storage:**
+```
+gcloud storage buckets update gs://<bucket> --lifecycle-file=lenny-lifecycle.json
+```
+
+Azure Blob versioning and lifecycle management are configured through Storage
+Account policies, and the control plane reads none of them.

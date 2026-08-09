@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+// RuntimeOps opens the channel over the unix socket at
+// @lenny-runtime-ops.
+func RuntimeOps() error { return nil }

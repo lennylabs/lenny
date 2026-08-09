@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+// LifecycleChannel opens the channel over the unix socket at
+// @lenny-runtime-ops.
+func LifecycleChannel() error { return nil }

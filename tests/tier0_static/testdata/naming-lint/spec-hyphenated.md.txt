@@ -1,0 +1,4 @@
+## 18.9 Build phase
+
+The phase wires the lifecycle-channel handler into the adapter before the runtime
+container starts.

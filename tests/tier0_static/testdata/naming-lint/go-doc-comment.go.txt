@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+
+package example
+
+// Handler answers the messages the gateway writes on the lifecycle channel
+// of the agent pod.
+func Handler() {
+	// The retry budget below is exhausted before the control channel is
+	// reopened, which is an implementation note rather than a doc comment.
+	_ = 0
+}

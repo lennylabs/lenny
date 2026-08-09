@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package example;
+
+// Frame is one message the adapter answers on the control
+// channel the gateway opens to the agent pod.
+message Frame {
+  string id = 1;
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Adapter manifest",
+  "type": "object",
+  "properties": {
+    "socketPath": {
+      "type": "string",
+      "description": "Path of the lifecycle channel socket inside the agent pod."
+    }
+  }
+}

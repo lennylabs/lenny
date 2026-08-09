@@ -1,0 +1,6 @@
+kind: identifier-senses
+version: 1
+entries:
+  - file: spec/17_deployment-topology.md
+   occurrence: 1
+      not-a-channel: true

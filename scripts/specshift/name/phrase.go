@@ -65,6 +65,46 @@ func FindReservedPhrases(content string) []int {
 	return lines
 }
 
+// Site is one bare reserved noun phrase of a carrier, given as the
+// source line it opens on and the text it covers with the continuation
+// join rendered as a space.
+type Site struct {
+	// Line is the 1-based source line the phrase opens on.
+	Line int
+	// Text is the phrase as it stands, so a report names the site's own
+	// words rather than a specimen written in the reporting source.
+	Text string
+}
+
+// Sites returns every reserved-phrase site one carrier holds, in source
+// order.
+//
+// It is the population the naming lint reports, and it is the one the
+// name pass writes: the matcher, the continuation join, the
+// markdown-anchor-identifier exclusion, and the doc-comment position
+// rule of a Go carrier are all read from here rather than re-derived by
+// the caller. A lint that re-derived any of them would report a site the
+// pass cannot write, or pass over one the pass aborts at.
+//
+// The string literals the pinned-literal register resolves are outside
+// this answer, because the position the prohibition governs in a Go
+// carrier is the doc comment and a pinned literal holds a copy of
+// specification prose the lint already reads at its source. A caller
+// that has to enumerate the sites the pass rewrites in such a carrier,
+// occurrence numbering included, drives the pass rather than this
+// function.
+func Sites(target, content string) ([]Site, error) {
+	found, err := findSites(target, content, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Site, 0, len(found))
+	for _, s := range found {
+		out = append(out, Site{Line: s.line, Text: s.text})
+	}
+	return out, nil
+}
+
 // site is one occurrence of a reserved noun phrase, given as a byte span
 // of the source together with the line it opens on and the text it
 // covers with the continuation join rendered as a space.

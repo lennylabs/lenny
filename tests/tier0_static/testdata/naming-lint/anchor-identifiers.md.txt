@@ -1,0 +1,8 @@
+### Channel Identifiers
+{: #lifecycle-channel }
+
+The canonical names of the communication channels. See
+[CH-RUNTIMEOPS messages](#lifecycle-channel-messages) below.
+
+### Messages
+{: #lifecycle-channel-messages }

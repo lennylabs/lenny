@@ -1,0 +1,7 @@
+kind: identifier-senses
+version: 1
+entries:
+  - file: spec/17_deployment-topology.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+    not-a-channel: true

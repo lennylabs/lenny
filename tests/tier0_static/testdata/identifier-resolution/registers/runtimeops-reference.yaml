@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence denotes the runtime-ops channel, so the identifier is
+# written at the canonical spelling in one carrier and at the retired one
+# here.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/gateway/client.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
