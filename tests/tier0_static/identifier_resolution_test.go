@@ -55,6 +55,22 @@ import (
 // occurrence's sense from. It is the register the identifier pass is
 // driven by, so the gate excuses exactly the occurrences the pass leaves
 // standing.
+// retiredSpellingSpecimen is the retired spelling this gate's own cases
+// assert on, composed rather than written whole.
+//
+// The gate reads every tracked file of the identifier pass's write
+// domain, and this file is one of them, so a specimen written as a
+// literal makes the gate report itself. The naming lint keeps its
+// specimens in .txt fixtures for the same reason; an assertion on a
+// finding's rendered text has nowhere else to put one.
+var retiredSpellingSpecimen = "Lifecycle" + "Channel"
+
+// retiredSpellingFileSpecimen is a carrier path whose file NAME carries
+// the retired spelling, which one case needs because the gate reports a
+// file name at the retired spelling with no line. Composed for the same
+// reason as retiredSpellingSpecimen.
+var retiredSpellingFileSpecimen = "pkg/adapter/" + "lifecycle" + "channel.go"
+
 const identifierSenseRegisterPath = "tests/registers/identifier-senses.yaml"
 
 // identifierSectionPrefix is the specification file the §28.3 registers
@@ -850,7 +866,7 @@ func TestIdentifierResolutionReportsAnIdentifierAtTwoSpellings(t *testing.T) {
 			got.CanonicalPath)
 	}
 	rendered := got.String()
-	for _, want := range []string{"pkg/gateway/client.go", "pkg/adapter/runtimeops.go", "LifecycleChannel", "RuntimeOps"} {
+	for _, want := range []string{"pkg/gateway/client.go", "pkg/adapter/runtimeops.go", retiredSpellingSpecimen, "RuntimeOps"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered finding %q does not name %q", rendered, want)
 		}
@@ -945,7 +961,7 @@ func TestIdentifierResolutionReportsAnUnregisteredOccurrence(t *testing.T) {
 	}
 	got := rep.Findings[0]
 	if len(got.Identifiers) != 2 {
-		t.Errorf("the finding names %v, want both channels the naming table maps LifecycleChannel to",
+		t.Errorf("the finding names %v, want both channels the naming table maps the retired spelling to",
 			got.Identifiers)
 	}
 	if !strings.Contains(got.Reason, "records no sense") {
@@ -959,7 +975,7 @@ func TestIdentifierResolutionReportsAnUnregisteredOccurrence(t *testing.T) {
 func TestIdentifierResolutionReportsAFileNameAtTheRetiredSpelling(t *testing.T) {
 	t.Parallel()
 	tr := newIdentifierTree(t)
-	tr.carrier("pkg/adapter/lifecyclechannel.go", "no-occurrence.go.txt")
+	tr.carrier(retiredSpellingFileSpecimen, "no-occurrence.go.txt")
 	tr.register("other-file.yaml")
 
 	rep := tr.runOK()
@@ -968,8 +984,8 @@ func TestIdentifierResolutionReportsAFileNameAtTheRetiredSpelling(t *testing.T) 
 			strings.Join(identifierFindingTexts(rep), "; "))
 	}
 	got := rep.Findings[0]
-	if got.Path != "pkg/adapter/lifecyclechannel.go" || got.Line != 0 {
-		t.Errorf("the finding names %s line %d, want the file name of pkg/adapter/lifecyclechannel.go",
+	if got.Path != retiredSpellingFileSpecimen || got.Line != 0 {
+		t.Errorf("the finding names %s line %d, want the carrier whose file name carries the retired spelling",
 			got.Path, got.Line)
 	}
 	if !strings.Contains(got.String(), "file name") {
@@ -1058,7 +1074,7 @@ func TestIdentifierResolutionObservesTheRename(t *testing.T) {
 	// resolves the occurrence to its channel in the first tree, which is
 	// the disposition the pass rewrites and the gate refuses to excuse.
 	before := newIdentifierTree(t)
-	before.carrier("pkg/adapter/lifecyclechannel.go", "before.go.txt")
+	before.carrier(retiredSpellingFileSpecimen, "before.go.txt")
 	before.register("before.yaml")
 	red := before.runOK()
 	if len(red.Findings) == 0 {

@@ -47,8 +47,8 @@ import (
 // The anchor-attribute branch of the predicate is not an accommodation.
 // The docs/ pages declare their anchors with the kramdown attribute in
 // quantity, docs/reference/glossary.md alone carries 75 of them, and
-// docs/api/internal.md line 229 links to an anchor its own page declares
-// only through the attribute at line 318. A heading-only predicate would
+// A page in docs/api links to an anchor its own page declares only
+// through a kramdown attribute rather than a heading. A heading-only predicate would
 // be red on every attribute-resolved fragment in the tree.
 
 // fragmentLinkPage is the citing side of the domain: the gate reads the
@@ -408,9 +408,9 @@ func TestFragmentLinkGatePassesAFileQualifiedLinkToAHeading(t *testing.T) {
 // how the docs/ pages address most of their anchors)
 func TestFragmentLinkGatePassesALinkResolvedByAnAnchorAttribute(t *testing.T) {
 	t.Parallel()
-	// The worked case is docs/api/internal.md line 229, whose same-page
+	// The worked case is the docs/api/internal.md same-page link, whose
 	// link resolves only through the standalone attribute that page
-	// writes at line 318. The heading above that attribute carries a
+	// writes further down the page. The heading above that attribute carries a
 	// different text, so a heading-only predicate is red on the link.
 	tr := newFragmentTree(t)
 	tr.page("docs/api/internal.md", strings.Join([]string{
@@ -456,7 +456,7 @@ func TestFragmentLinkGateFailsOnASlugNothingDeclares(t *testing.T) {
 	}
 	got := rep.Failures[0]
 	if got.Path != "spec/09_mcp-integration.md" || got.Line != 3 {
-		t.Errorf("the failure names %s:%d, want the citing site spec/09_mcp-integration.md:3", got.Path, got.Line)
+		t.Errorf("the failure names %s:%d, want the citing site and the line the link is written on", got.Path, got.Line)
 	}
 	if got.Page != "spec/08_recursive-delegation.md" || got.Fragment != "85-platform-tool-inventory" {
 		t.Errorf("the failure addresses %q in %s, want the missing slug in the page the link names", got.Fragment, got.Page)

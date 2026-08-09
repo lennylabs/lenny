@@ -199,8 +199,8 @@ func TestNamingLintFailsABareReservedNounPhraseInSpecProse(t *testing.T) {
 
 	tr := newNamingLintTree(t)
 	tr.clean()
-	tr.fixture("spec/04_execution-model.md", "spec-space-separated.md.txt")
-	assertNamingLintSites(t, runNamingLint(t, tr.lint()), "spec/04_execution-model.md line 3")
+	tr.fixture("docs/fixture-alpha.md", "spec-space-separated.md.txt")
+	assertNamingLintSites(t, runNamingLint(t, tr.lint()), "docs/fixture-alpha.md line 3")
 }
 
 // TestNamingLintFailsTheHyphenatedCompoundSpelling pins the second
@@ -215,8 +215,8 @@ func TestNamingLintFailsTheHyphenatedCompoundSpelling(t *testing.T) {
 
 	tr := newNamingLintTree(t)
 	tr.clean()
-	tr.fixture("spec/18_build-sequence.md", "spec-hyphenated.md.txt")
-	assertNamingLintSites(t, runNamingLint(t, tr.lint()), "spec/18_build-sequence.md line 3")
+	tr.fixture("docs/fixture-beta.md", "spec-hyphenated.md.txt")
+	assertNamingLintSites(t, runNamingLint(t, tr.lint()), "docs/fixture-beta.md line 3")
 }
 
 // TestNamingLintFailsAPhraseWrappedAcrossTwoCommentLines pins the
@@ -410,7 +410,7 @@ func TestNamingLintFailsRatherThanReportingZeroSitesOnASeededTree(t *testing.T) 
 
 	tr := newNamingLintTree(t)
 	tr.clean()
-	tr.fixture("spec/04_execution-model.md", "spec-space-separated.md.txt")
+	tr.fixture("docs/fixture-alpha.md", "spec-space-separated.md.txt")
 	rep := runNamingLint(t, tr.lint())
 	if len(rep.Sites) == 0 {
 		t.Fatalf("the run reported no site over a tree seeded with a known violation, so it read no site the tree carries")
