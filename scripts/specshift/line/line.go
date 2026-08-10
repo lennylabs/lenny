@@ -6,10 +6,16 @@
 // A citation in an ordinary carrier is converted to a single anchor
 // citation: the section the citation names, with the qualifier it
 // carries, and with no line number and no orphan integer left behind.
-// The whole citation is replaced, in every spelling and across a
-// continuation join, because a conversion that consumed the head alone
-// would leave the remaining members standing as integers the resolver
-// does not read and the ratchet does not count.
+// What the anchor is written over is the citation's
+// reference-and-members run, in every spelling and across a continuation
+// join. That run is replaced whole rather than at its head, because a
+// conversion that consumed the head alone would leave the remaining
+// members standing as integers the resolver does not read and the
+// ratchet does not count. It ends at the last member, so a delimited
+// phrase written behind that member stays in the carrier: such a phrase
+// is the sentence's own words as often as it is a gloss on the pointer,
+// and the pass keeps what it cannot classify rather than deleting it.
+// The served strip writes over the same run.
 //
 // A citation in a served client artifact is stripped rather than
 // converted, because the text of those artifacts is what a client reads
@@ -241,7 +247,18 @@ func plan(sections *citation.Resolver, path, text string, found []citation.Citat
 			aborts = append(aborts, abortAt(path, c, err))
 			continue
 		}
-		edits = append(edits, edit{start: c.Offset, end: c.Offset + len(c.Raw), text: anchor})
+		// The anchor is written over the reference-and-members run rather
+		// than over the whole citation, so a delimited phrase standing
+		// behind the last member is left where the carrier wrote it. The
+		// grammar still consumes that phrase, so the citation is read,
+		// keyed, resolved, and counted whole; what narrows here is the
+		// span the conversion writes. glossExpr states why the phrase is
+		// kept rather than classified.
+		//
+		// The bound the next site is planned inside stays at the end of
+		// the whole citation, so a served strip widening leftwards cannot
+		// reach back into the phrase this conversion left standing.
+		edits = append(edits, edit{start: c.Offset, end: pointerEnd(c), text: anchor})
 		planned = c.Offset + len(c.Raw)
 	}
 	if len(aborts) > 0 {
@@ -273,8 +290,8 @@ func fileTies(path, after string, strips []strip) error {
 // text is required to carry none. A citation standing in it is one the
 // replacement itself composed, out of the anchor the conversion emitted
 // and the carrier text beside the citation it replaced. Two spellings
-// compose that way: a citation whose gloss closes on a trailing colon,
-// whose anchor then stands directly against that colon and reads
+// compose that way: a citation whose last member closes on a trailing
+// colon, whose anchor then stands directly against that colon and reads
 // the integer opening the next comment line as a member; and a citation
 // followed by a separator word and a further parenthesized reference,
 // whose anchor and qualifier then absorb the words behind the separator
@@ -344,6 +361,22 @@ func (r *Rewriter) sections(ctx context.Context) (*citation.Resolver, error) {
 	}
 	r.resolver = resolver
 	return resolver, nil
+}
+
+// pointerEnd returns the source offset just past a citation's
+// reference-and-members run, which is the span both the conversion and
+// the served strip write over. It is the one place the pass reads that
+// end, so the two rewrites cannot drift apart on which bytes they own.
+//
+// Find states the run inside the citation's own span, so the clamp
+// changes nothing on a citation the grammar produced. It is here because
+// a run reported past the citation would have the rewrite delete the
+// carrier's text beyond it, and a run reported ahead of the citation's
+// start would have it delete text before it; held to the span, the worst
+// a defect there produces is a citation the rewrite leaves standing,
+// which the reformed post-condition reports and the run aborts on.
+func pointerEnd(c citation.Citation) int {
+	return min(max(c.MembersEnd, c.Offset), c.Offset+len(c.Raw))
 }
 
 // edit is one replacement in a file, given as a byte span and the text

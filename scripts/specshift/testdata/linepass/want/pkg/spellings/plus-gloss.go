@@ -6,5 +6,5 @@ package spellings
 
 // claim returns the sandbox claim.
 //
-// spec: §4.8
+// spec: §4.8 ("the plan is versioned")
 func claim() string { return "claim" }

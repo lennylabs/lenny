@@ -1147,6 +1147,7 @@ func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
 	t.Parallel()
 	const unnamedTree = "no line pass case assembles"
 	assertFixtureDirHolds(t, fixtureLinePass, unnamedTree, []string{
+		"delimited",
 		"embedded",
 		"fail",
 		"registers",
@@ -1165,6 +1166,7 @@ func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
 		"unknown-file",
 	})
 	assertFixtureDirHolds(t, filepath.Join(fixtureLinePass, "registers"), "no line pass case loads", []string{
+		"delimited.yaml",
 		"embedded.yaml",
 		"fail-many-sites.yaml",
 		"fail-reformed-colon.yaml",
@@ -4401,6 +4403,122 @@ func TestLinePassKeepsTheWordsBehindACitationEmbeddedInASentence(t *testing.T) {
 	}
 }
 
+// assertOnlyThePointerRunWasRewritten holds a conversion to the bytes
+// the citation's pointer occupied. It rebuilds the carrier by replacing
+// each citation's reference-and-members run with the anchor of the
+// section it names, and requires the rewritten file to be exactly that
+// text, so every other byte of the carrier stands where it was written,
+// the delimited run behind the last member included. It then requires
+// the retired form to be gone, so those bytes survive by the conversion
+// writing over the pointer alone rather than by the site being skipped.
+//
+// The end of the run is derived from the last member's own text rather
+// than read from the citation, so the case does not restate the field it
+// checks. The carriers are written so that text stands once inside the
+// citation, which is asserted rather than assumed.
+func assertOnlyThePointerRunWasRewritten(t *testing.T, root, carriers, target string) {
+	t.Helper()
+	before := readFixtureFile(t, filepath.Join(fixtureLinePass, carriers, target))
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	var rebuilt strings.Builder
+	at := 0
+	for _, c := range citation.Find(before) {
+		if c.Qualifier != "" {
+			t.Fatalf("%s carries a qualifier, which the rebuilt anchor does not state", target)
+		}
+		last := c.Members[len(c.Members)-1].Text
+		if strings.Count(c.Raw, last) != 1 {
+			t.Fatalf("%s writes the member %q more than once inside its citation, so the run's end is not derivable", target, last)
+		}
+		rebuilt.WriteString(before[at:c.Offset])
+		rebuilt.WriteString(c.Ref())
+		at = c.Offset + strings.Index(c.Raw, last) + len(last)
+	}
+	rebuilt.WriteString(before[at:])
+	if want := rebuilt.String(); after != want {
+		t.Errorf("%s after the line pass is\n%s\nwant\n%s", target, after, want)
+	}
+	if left := citation.Find(after); len(left) > 0 {
+		t.Errorf("%s still carries %v", target, left)
+	}
+}
+
+// TestLinePassKeepsTheDelimitedRunBehindACitationsLastMember pins what a
+// conversion writes over, which is the citation's reference-and-members
+// run rather than the whole citation. A delimited phrase standing behind
+// the last member is the carrier's own words as often as it is a gloss
+// on the pointer, and neither the delimiter nor the position tells the
+// two apart, so the conversion leaves it where it was written.
+//
+// The carriers are copied from the sites the deletion produced. Each
+// deletion took content the anchor does not carry and no gate reported
+// it: the citation was counted, resolved, and retired exactly as
+// intended, and the accounting balanced. The cases are one per kind of
+// run that was deleted, which are a quoted specification value the
+// declaration is named for, the same run closing on a continuation line,
+// a lettered sub-case list, a sub-case written against the member's last
+// digit, and a requirement identifier. A sixth carrier names a second
+// section inside the run it keeps, which the accounting identity has to
+// count as a free anchor on both sides: counting it out of the before
+// side alone reports the conversion as emitting one anchor too many and
+// aborts the run over text no rewrite touched.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names, and the carrier's own
+// text is left where it was written)
+func TestLinePassKeepsTheDelimitedRunBehindACitationsLastMember(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "delimited")
+	applyLinePass(t, root, "delimited.yaml")
+	for _, tc := range []struct {
+		run    string
+		target string
+		want   string
+	}{
+		{
+			"a quoted specification value the declaration is named for",
+			"pkg/carrier/delimited.go",
+			`// sdkDemoteGraceMarginSeconds is the §6.1 "+5s" the grace period`,
+		},
+		{
+			"a quoted specification term closing on the continuation line",
+			"pkg/carrier/delimited.go",
+			"// (tenantID, sessionID) — the §10.1 \"last successful full\n" +
+				"// checkpoint\" the resume path falls back to when reassembly of the",
+		},
+		{
+			"a lettered sub-case list",
+			"pkg/carrier/delimited.go",
+			"// spec: §4.2 (a), (b), (c) — TestRLSPlatformAdminAllSentinel",
+		},
+		{
+			"a sub-case written against the member's last digit",
+			"pkg/carrier/delimited.go",
+			"// §13.3(e): the subject's narrowed operability-tool set is the",
+		},
+		{
+			"a requirement identifier",
+			"compose/delimited.yaml",
+			"# §13.2 (NET-002) — the internet egress profile. Pods stamped",
+		},
+		{
+			"a gloss naming a second section",
+			"pkg/carrier/delimited.go",
+			"// spec: §4.9 (orphaned-object counter, which the §4.8 sweep\n// rule reads)",
+		},
+	} {
+		t.Run(tc.run, func(t *testing.T) {
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(tc.target)))
+			if !strings.Contains(after, tc.want) {
+				t.Errorf("%s after the line pass does not read as %q:\n%s", tc.target, tc.want, after)
+			}
+		})
+	}
+	for _, target := range []string{"pkg/carrier/delimited.go", "compose/delimited.yaml"} {
+		assertOnlyThePointerRunWasRewritten(t, root, "delimited", target)
+	}
+}
+
 // TestLinePassConvertsAWrappedCitationInEveryPositionAndDialect pins the
 // conversion of a citation wrapped across two comment lines, which the
 // continuation join reads as one citation. The cases are one per wrap
@@ -4505,14 +4623,13 @@ func TestLinePassStripsTwoAdjacentServedCitationsWithoutCuttingACharacter(t *tes
 }
 
 // TestLinePassLeavesTheServedTextAStrippedCitationIntroduced pins what a
-// served strip removes. A conversion replaces the whole citation because
-// the anchor it writes says what the citation said. A strip writes
-// nothing in its place, and the served artifact is the client contract,
-// so what it removes is the reference-and-members run alone: the gloss
-// written against the last member is the description's own prose, and
-// removing it with the pointer empties or truncates the description a
-// client reads. The punctuation that introduced the text, including the
-// dash of a citation opening a bracketed clause, goes with the pointer.
+// served strip removes, which is the reference-and-members run alone.
+// The delimited run written behind the last member is the description's
+// own prose, and removing it with the pointer empties or truncates the
+// description a client reads. What separates the strip from the
+// conversion over the same run is that it writes nothing in the run's
+// place and widens over the punctuation that introduced the citation,
+// including the dash of a citation opening a bracketed clause.
 //
 // spec: §28.1 (N8, the citation rule: a citation in a served client
 // artifact is stripped from the text a client reads)
@@ -4833,7 +4950,7 @@ func TestLinePassReportsEveryUnconvertibleSiteInOneRun(t *testing.T) {
 // the carrier's own prose. Each spelling is reported for hand
 // correction instead, and the tree is left byte-identical.
 //
-// The cases are one per composing spelling: a gloss closing on a
+// The cases are one per composing spelling: a last member closing on a
 // trailing colon, whose anchor then stands against that colon and
 // reads the integer opening the next comment line as a member; and a
 // separator word followed by a parenthesized reference on the next
@@ -4858,10 +4975,10 @@ func TestLinePassFailsAConversionThatComposesTheRetiredFormAgain(t *testing.T) {
 		composed string
 	}{
 		{
-			spelling: "a gloss closing on a trailing colon",
+			spelling: "a last member closing on a trailing colon",
 			carriers: "fail/reformed-colon",
 			register: "fail-reformed-colon.yaml",
-			target:   "pkg/carrier/gloss.go",
+			target:   "pkg/carrier/colon.go",
 			composed: "§4.6: 1",
 		},
 		{

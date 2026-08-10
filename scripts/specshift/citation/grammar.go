@@ -39,11 +39,11 @@ const sp = "[ \t\x1f]"
 // gloss whose opening delimiter sat behind a consumed continuation would take
 // the whole of the following comment line whenever that line opens with a
 // parenthesis, a quote, or a backtick, even though nothing of the citation was
-// wrapped, so the citation text a register is keyed by would carry a sentence's
-// own code span or parenthetical and the anchor the pass writes in its place
-// would delete the newline, the carrier's comment marker, and that fragment. In
-// the # dialect that removal also stops the following text being a comment. A
-// gloss therefore opens on the line its member sits on.
+// wrapped. The citation text a register is keyed by would then carry a
+// sentence's own code span or parenthetical, so the key would drift with prose
+// the citation never pointed at, and the scan would resume past that fragment,
+// where a citation written inside it is never returned, never resolved, and
+// never counted. A gloss therefore opens on the line its member sits on.
 //
 // A gloss is bounded by the delimiter that closes it, so its body still admits
 // the join byte and a gloss opened on its member's line closes on the
@@ -193,10 +193,59 @@ var keywordExpr = regexp.MustCompile(`^lines?` + sp + `+`)
 // memberExpr matches one member.
 var memberExpr = regexp.MustCompile(`^` + memberBody)
 
-// glossExpr matches the short trailing gloss naming what the cited line says,
-// written as a parenthesized phrase or as a fragment in double quotes, single
-// quotes, or backticks. The gloss is consumed with its member rather than
-// terminating the match.
+// glossExpr matches the delimited run written behind a member: a parenthesized
+// phrase, or a fragment in double quotes, single quotes, or backticks. The run
+// is consumed with its member rather than terminating the match, so the member
+// list continues past it and the citation is read, keyed, resolved, and counted
+// whole.
+//
+// Consuming the run and replacing it are separate decisions. What a rewrite
+// writes over is the citation's reference-and-members run, which ends at the
+// last member's own text, so the delimited run behind that member is kept.
+// Citation.MembersEnd is that end, and it is the span the line pass converts
+// and the span a served strip removes. Offset+len(Raw) is the span the grammar
+// read, and nothing writes over it.
+//
+// The two spans are separate because a delimited run in this position is not
+// reliably a gloss. A gloss is text about the cited line, which the anchor
+// beside it makes redundant: a citation carrying the parenthetical
+// `(durable checkpoint)` keeps reading as its section reference with that
+// parenthetical behind it, and a section reference carrying a parenthesized
+// phrase with no line number involved is an idiom the tree already holds by the
+// thousand. The same position carries other things. It carries the sentence's
+// own object, as in a declaration named for the `"+5s"` margin the spec states,
+// where deleting the run leaves the sentence with no noun. It carries a
+// requirement identifier, which is the only greppable tie between a rule and
+// the code that implements it. It carries a lettered or numbered sub-case,
+// which is what says which of a section's obligations the code implements. It
+// carries a quoted spec term or a spec value a constant encodes, and a metric
+// name or an error code a declaration is named for.
+//
+// Position does not tell those apart from a gloss. A run standing in pointer
+// annotation position, behind `spec:` and nothing else, is a requirement
+// identifier or a sub-case or a code literal about a quarter of the time in
+// this tree, and a run in double quotes or backticks is the sentence's own
+// object far more often than it is a gloss. The delimiter does not tell them
+// apart either. A content test would have to enumerate what a gloss looks like,
+// which is the enumeration failure the qualifier commentary above rejects: each
+// enumeration misses the next spelling, and here every miss is a deletion.
+//
+// The two ways of being wrong are not equally bad, and the rule takes the
+// cheaper one. Keeping a run that was a gloss leaves a phrase standing that the
+// anchor beside it partly implies, which costs a reader a few redundant words
+// in a comment and produces text the tree already reads as ordinary. Deleting a
+// run that was not a gloss takes the carrier's own words out of a comment
+// nobody re-reads, and no gate reports it: the citation was counted, resolved,
+// and retired exactly as intended, the accounting balances, and nothing holds
+// the deleted words to recover them from. So every delimited run is kept, at
+// every site, without the rule asking which kind it is.
+//
+// Do not narrow this back. Folding the run into the span a rewrite replaces,
+// whether for one delimiter, for the annotation position alone, or behind any
+// test of what the run contains, reinstates the deletion at every site the test
+// misreads, and the misreads are silent. The asymmetry above holds at every
+// threshold such a test could take, so no signal buys anything the flat rule
+// does not already give.
 //
 // Every alternative commits to a delimiter, so every alternative says where it
 // ends. A bare word or two standing behind a member is not a gloss alternative,
@@ -206,17 +255,10 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // a citation embedded in a sentence are the same bytes at that position, which
 // are a member, a space, and a word, and the two readings are told apart by
 // where the citation sits in its comment and by what stands ahead of it. The
-// grammar sees neither. The fixtures under testdata/citations carry one of each
+// grammar sees neither. Refusing the bare word keeps it out of the citation's
+// text as well as out of the replaced span, so the register key names the
+// pointer alone. The fixtures under testdata/citations carry one of each
 // reading against the same member spelling.
-//
-// The two ways of being wrong are not equally bad. Reading a gloss as prose
-// leaves a word standing that the anchor beside it already implies, which costs
-// a reader one redundant word in a comment. Reading prose as a gloss puts the
-// sentence's own words inside the span the pass replaces, and the conversion to
-// a single anchor deletes them from a comment nobody re-reads, so the sentence
-// is left saying something else and no gate reports it: the citation was
-// counted, resolved, and retired exactly as intended. The migration takes the
-// redundant word.
 //
 // Refusing the bare word ends the member list wherever a bare word stands
 // between two members of one citation, and where a bare word stands ahead of a

@@ -4,5 +4,5 @@
 kind: line-citation-count-baseline
 version: 1
 files:
-    - path: pkg/carrier/gloss.go
+    - path: pkg/carrier/colon.go
       count: 1

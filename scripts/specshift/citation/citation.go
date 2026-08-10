@@ -109,11 +109,13 @@ type Citation struct {
 	// Offset+len(Raw) when the last member carries no trailing gloss, and it
 	// sits behind the parenthesis a head opened when the citation closed one.
 	//
-	// A caller that replaces the whole citation, which is what a conversion to
-	// a single anchor does, spans Offset to Offset+len(Raw) and does not read
-	// this. A caller that removes the pointer while leaving the carrier's own
-	// text standing spans Offset to MembersEnd, because the trailing gloss is
-	// prose the carrier wrote rather than part of the pointer.
+	// This is the span every rewrite writes over. A conversion to a single
+	// anchor and a served strip both replace Offset to MembersEnd, because the
+	// delimited run the grammar consumed behind the last member is the
+	// carrier's own prose as often as it is a gloss on the pointer and nothing
+	// in the text tells the two apart, so it is kept in both. Offset to
+	// Offset+len(Raw) is the span the citation was read and keyed over rather
+	// than a span to write over; glossExpr states why.
 	MembersEnd int
 
 	// Unbalanced reports that the head opened a parenthesis of the carrier's

@@ -331,15 +331,16 @@ type strip struct {
 // the doc comment of the field the tag annotates. Every other served tie
 // is decided by the caller against the rewritten file.
 //
-// What the strip removes is the citation's reference-and-members run
-// rather than the whole citation. A conversion replaces the whole
-// citation because the anchor it writes says what the citation said. A
-// strip writes nothing in its place, and the served text is the client
-// contract, so the gloss written against the last member has to stay: a
-// gloss is the description's own prose in every served dialect, and
-// removing it with the pointer empties or truncates the description a
-// client reads. The span is held inside bounds so it cannot reach the
-// citation written beside it.
+// What the strip removes is the citation's reference-and-members run,
+// which is the same run the conversion writes its anchor over. The
+// delimited phrase written behind the last member stays in both, and in
+// a served artifact the reason is at its plainest: the served text is
+// the client contract, the phrase is the description's own prose in
+// every served dialect, and removing it with the pointer empties or
+// truncates the description a client reads. What distinguishes the strip
+// is that it writes nothing in the run's place and widens over the
+// punctuation that introduced the citation. The span is held inside
+// bounds so it cannot reach the citation written beside it.
 func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans, within span) (edit, strip, error) {
 	number, err := anchorNumber(sections, c)
 	if err != nil {
@@ -351,7 +352,7 @@ func stripSite(sections *citation.Resolver, text string, c citation.Citation, se
 			"stripping the served citation would delete the site's only tie, because the doc comment over its declaration names no §%s", number,
 		)
 	}
-	start, end := stripSpan(text, c.Offset, c.MembersEnd)
+	start, end := stripSpan(text, c.Offset, pointerEnd(c))
 	return within.clamp(start, end), record, nil
 }
 
