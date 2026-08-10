@@ -115,7 +115,7 @@ func TestMemoryCRUD(t *testing.T) {
 	}
 }
 
-// spec: §8.3 — the cooldown resolver reports the
+// spec: §8.3 (SEC-013) — the cooldown resolver reports the
 // server-minted transition timestamp and the cooldown seconds recorded
 // at the transition for a weakened interceptor, and reports "no
 // cooldown" for a clean or unknown interceptor.

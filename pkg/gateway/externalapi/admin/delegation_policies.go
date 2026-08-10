@@ -333,7 +333,7 @@ func (r *Router) applyDelegationPolicyUpdate(p *delegationpolicystore.Delegation
 	p.ContentPolicy = toContentPolicy(body.ContentPolicy)
 	p.AllowSelfRecursion = body.AllowSelfRecursion
 	delegationpolicystore.ApplyDefaults(p)
-	// spec: §8.3 — server-mint the
+	// spec: §8.3 (F-8.7.12 / F-13.5.7) — server-mint the
 	// scanExportedFiles weakening transition timestamp so the
 	// gateway can enforce INTERCEPTOR_WEAKENING_COOLDOWN at
 	// `delegate_task` time. A `true → false` flip stamps the

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 )
 
-// spec: §10.3 — the gateway accepts an interceptor
+// spec: §10.3 (NET-063) — the gateway accepts an interceptor
 // certificate whose SPIFFE URI carries the configured trust domain and a
 // namespace in the gateway.interceptorNamespaces allowlist.
 func TestInterceptorPeerVerifierAcceptsAllowedNamespace_spec_10_3_328(t *testing.T) {

@@ -1771,7 +1771,7 @@ func TestDelegateSpawnedAuditRecordsDefaultApprovalMode_spec_8_4(t *testing.T) {
 	}
 }
 
-// spec: §8.3. The §8.3 cluster-scoped
+// spec: §8.3 (F-8.7.12 / F-13.5.7). The §8.3 cluster-scoped
 // `gateway.interceptorWeakeningCooldownSeconds` window opens when an
 // admin flips a DelegationPolicy's `scanExportedFiles` from true to
 // false. Every `delegate_task` whose effective DelegationPolicy

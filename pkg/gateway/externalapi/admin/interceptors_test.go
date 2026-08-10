@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 )
 
-// spec: §4.8 / §8.3 — the admin
+// spec: §4.8 / §8.3 (SEC-013) — the admin
 // external-interceptor registry CRUD and the fail-policy weakening
 // cooldown control. F-4.8.17.
 

@@ -354,7 +354,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// transition and at each built-in eval submission.
 		RecordSessionTerminal: gwMetrics.RecordSessionTerminal,
 		ObserveEvalScore:      gwMetrics.ObserveEvalScore,
-		// §10.7 — the per-tenant targeting
+		// §10.7 (SCL-023) — the per-tenant targeting
 		// circuit-breaker open/closed gauge.
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,

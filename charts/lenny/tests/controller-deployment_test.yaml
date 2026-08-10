@@ -43,7 +43,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-grpc-addr=lenny-gateway.NAMESPACE.svc:50051
 
-  # spec: §10.3 — when set the controller stamps the
+  # spec: §10.3 (NET-064) — when set the controller stamps the
   # audience-bound projected SA token on every warm pod. F-10.3.5.
   - it: passes --sa-token-audience when global.saTokenAudience is set
     documentSelector:

@@ -317,7 +317,7 @@ func (s *Server) buildExternalEvaluator(ctx context.Context, row *sessionstore.S
 		Runtime:   row.RuntimeRef,
 	})
 	knownIDs := knownExperimentIDs(candidates)
-	// spec: §10.7 — the per-tenant targeting
+	// spec: §10.7 (SCL-023) — the per-tenant targeting
 	// circuit-breaker thresholds resolved from the tenant config.
 	breakerParams := targetingBreakerParams{
 		threshold: cfg.BreakerFailureThreshold(),

@@ -120,7 +120,7 @@ func clientReloader(t *testing.T, c *ca) *certreload.Reloader {
 	return r
 }
 
-// spec: §10.3 — a correctly-issued in-cluster
+// spec: §10.3 (NET-063) — a correctly-issued in-cluster
 // interceptor certificate (CA-chained, DNS SAN covering the pinned
 // ServerName, SPIFFE URI in an allowed namespace) completes the
 // handshake and records a `success` outcome on the §16.1 histogram.

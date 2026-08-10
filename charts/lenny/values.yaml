@@ -3820,7 +3820,7 @@ storage:
   #       escrowKekId: "" # platform:legal_hold_escrow:<region> KEK id
   regions: {}
 
-  # t4KmsProbeInterval is the §12.5 cadence in seconds
+  # t4KmsProbeInterval is the §12.5 (STO-021) cadence in seconds
   # for the leader-elected continuous T4 KMS availability probe. Each
   # cycle re-runs a zero-byte encrypt/decrypt round-trip against every
   # workspaceTier: T4 tenant's tenant:{tenant_id} key so silent

@@ -217,7 +217,7 @@ metadata:
   labels:
     {{- include "lenny.labels" $ | nindent 4 }}
 spec:
-  # §13.2 — the internet egress profile. Pods stamped
+  # §13.2 (NET-002) — the internet egress profile. Pods stamped
   # lenny.dev/egress-profile: internet reach the broad public internet,
   # rendered as two parallel ipBlock peers (one per address family,
   # NET-062) whose except blocks remove cluster pod/service CIDRs, RFC1918

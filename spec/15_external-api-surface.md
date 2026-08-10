@@ -546,7 +546,7 @@ The `SessionEventKind` enum above is **closed** — the gateway will never dispa
 | Kind            | Constant                  | `SessionEvent.Payload` schema                                                                                                                         | Fires when                                                                                                                  |
 | --------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `state_change`  | `SessionEventStateChange` | `{ "from": "<state>", "to": "<state>", "subState": "<input_required\|suspended\|...>?" }` — states and sub-states enumerated in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). | The session transitions between top-level states or between `running` sub-states (`input_required`, `suspended`, etc.). One event per transition. |
-| `output`        | `SessionEventOutput`      | `MessagePart[]` — the canonical output array defined in the `MessagePart` schema (see "Internal `MessagePart` Format" below).                           | The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent` (or is batched per adapter-declared policy). |
+| `output`        | `SessionEventOutput`      | `MessagePart[]` — the canonical output array defined in the `MessagePart` schema (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format").                           | The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent` (or is batched per adapter-declared policy). |
 | `elicitation`   | `SessionEventElicitation` | `MessageEnvelope` with `type: "message"` carrying the `lenny/request_elicitation` payload ([Section 9.2](09_mcp-integration.md#92-elicitation-chain)); adapters that also surface `lenny/request_input` MAY carry it under this kind. | The runtime calls `lenny/request_elicitation` or `lenny/request_input` and the elicitation chain surfaces the request to the adapter. |
 | `tool_use`      | `SessionEventToolUse`     | `{ "toolCallId": "...", "tool": "...", "arguments": {...}, "phase": "requested\|approved\|denied\|completed", "result": MessagePart[]? }` — the adapter-facing projection of the `lenny/tool_call` lifecycle ([Section 9](09_mcp-integration.md)). | A tool call enters a new lifecycle phase (requested, approved/denied, completed). One event per phase transition.            |
 | `error`         | `SessionEventError`       | `{ "code": "<ErrorCode>", "category": "TRANSIENT\|PERMANENT\|POLICY\|UPSTREAM", "message": "...", "retryable": bool, "details": {...}? }` — the shared error taxonomy from [Section 15.2.1](#1521-restmcp-consistency-contract) item 3. | A non-terminal error surfaces mid-session (validation, policy, upstream degradation) that the adapter should reflect to the client. |
@@ -1481,7 +1481,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `heartbeat`   | Periodic liveness ping; agent must respond                                                                                                                          |
 | `shutdown`    | Graceful shutdown with no new task                                                                                                                                  |
 
-The `message` type carries an `input` field containing a `MessagePart[]` array (see Internal `MessagePart` Format below), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
+The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
 
 **Outbound messages (agent binary → adapter via stdout):**
 
@@ -1613,7 +1613,7 @@ The adapter populates `from.kind` and `from.id` from execution context before de
 
 - `requestId` in `lenny/request_input` — generated by the gateway; runtime only supplies `parts`
 
-**`slotId`** — optional string; present only on pods whose pool sets `sessionPolicy.maxConcurrentSessions > 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). Identifies the concurrent slot this message is addressed to. Messages on pods serving one session at a time never carry `slotId`. See the `slotId` multiplexing note in the Protocol Reference.
+**`slotId`** — optional string; present only on pods whose pool sets `sessionPolicy.maxConcurrentSessions > 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). Identifies the concurrent slot this message is addressed to. Messages on pods serving one session at a time never carry `slotId`. See the `slotId` multiplexing note in [§28.5.3](28_communication-channels.md#2853-intra-pod).
 
 **`delivery`** — optional closed enum controlling interrupt behaviour. Defined values:
 
@@ -2032,7 +2032,8 @@ Runtime-author information is distributed across this specification. The followi
 **Basic-level (get a runtime working):**
 
 1. **[Section 15.4.4](#1544-sample-echo-runtime)** — Sample Echo Runtime. Copy this pseudocode as your starting point.
-2. **[Section 28.5.3](28_communication-channels.md#2853-intra-pod)** — Adapter↔Binary Protocol. The stdin/stdout JSON Lines contract, message types, `MessagePart` format, and simplified response shorthand.
+2. **[Section 28.5.3](28_communication-channels.md#2853-intra-pod)** — the message types, the `MessagePart` format, and the simplified response shorthand,
+   with **[Section 15.4.1](#1541-adapterbinary-protocol)** for the stdin/stdout JSON Lines framing and the stdout flushing requirement, which stays here.
 3. **[Section 15.4.2](#1542-rpc-lifecycle-state-machine)** — RPC Lifecycle State Machine. Read for context: the adapter (not your binary) owns this state machine. Knowing it helps you understand when your binary will start receiving messages (`ACTIVE`), and that `shutdown` arrives only during `DRAINING` — your binary never drives these transitions.
 4. **[Section 15.4.3](#1543-runtime-integration-levels)** — Runtime Integration Levels. Level definitions and the capability comparison matrix — confirms what Basic-level runtimes can skip.
 5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/current/`, `/tmp/`, `/artifacts/`).
@@ -2222,7 +2223,7 @@ type Handler interface {
 func Run(h Handler, opts ...Option) error
 ```
 
-**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§28.5.3](28_communication-channels.md#2853-intra-pod) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the manifest, stdin framing, and credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
+**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the manifest, stdin framing, and credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
 
 ```go
 // CreateRequest is the snapshot of task-scoped context handed to
@@ -2300,7 +2301,7 @@ type CreateRequest struct {
 // are SDK-derived conveniences — the wire contract is in §28.5.3.
 type Message struct {
     // Envelope is the canonical MessageEnvelope as defined in
-    // [§28.5.3](28_communication-channels.md#2853-intra-pod) "`MessageEnvelope` — Unified
+    // [§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified
     // Message Format". All message semantics (from, delivery, threadId,
     // inReplyTo, delegationDepth, slotId, input MessagePart[]) live on this
     // field. Basic-level handlers typically only read `Envelope.Input`.
@@ -2322,7 +2323,7 @@ type Message struct {
     // counter that orders messages as the SDK observed them on stdin.
     // Distinct from `MessageEnvelope.id` (which is globally unique) and
     // from the coordinator-local sequence number persisted server-side
-    // ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Ordering guarantee"):
+    // ([§15.4](#messageenvelope--unified-message-format) "Ordering guarantee"):
     // Sequence is a local per-process counter suitable for logging and
     // in-handler ordering only.
     Sequence uint64 `json:"sequence"`

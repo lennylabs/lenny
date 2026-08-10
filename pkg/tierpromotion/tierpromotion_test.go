@@ -386,7 +386,7 @@ func TestValidateInputsSkipsPhase135BelowTier3_spec_17_8_3(t *testing.T) {
 	}
 }
 
-// spec: §17.8.2 — F-17.8.13. The KEDA path's
+// spec: §17.8.2 (SCL-036) — F-17.8.13. The KEDA path's
 // pipeline-lag is 20s; raising maxSessionsPerReplica without raising
 // minReplicas at Tier 3 must trip the burst-absorption check below the
 // §17.8.2 carve-out of 5.
@@ -440,7 +440,7 @@ func TestValidateInputsRejectsHPATier3UnderfloorMinReplicas_spec_17_8_2_991(t *t
 	}
 }
 
-// spec: §17.8.2 — F-17.8.13. A zero
+// spec: §17.8.2 (SCL-036) — F-17.8.13. A zero
 // maxSessionsPerReplica is a malformed deployment; the gate refuses to
 // run the formula and reports the missing input.
 func TestValidateInputsRejectsZeroMaxSessions_spec_17_8_2_950(t *testing.T) {

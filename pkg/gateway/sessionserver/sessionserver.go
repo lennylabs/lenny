@@ -1995,7 +1995,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		// (runc) when no explicit default isolation profile is configured.
 		s.defaultIsoProf = isolation.DefaultForMode(s.devMode)
 	}
-	// spec: §10.7 — the per-tenant targeting
+	// spec: §10.7 (SCL-023) — the per-tenant targeting
 	// circuit breaker shares the server clock so tests drive the open /
 	// half-open transitions deterministically.
 	s.targetingBreaker = newTargetingBreaker(s.clock, opts.SetExperimentTargetingCircuitOpen)

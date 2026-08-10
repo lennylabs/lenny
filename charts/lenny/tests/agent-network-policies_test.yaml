@@ -208,7 +208,7 @@ tests:
       - notExists:
           path: spec.egress
 
-  # spec: §13.2 — the internet profile with two parallel
+  # spec: §13.2 (NET-002) — the internet profile with two parallel
   # ipBlock peers and family-partitioned except blocks. F-13.2.11.
   - it: renders the internet egress profile policy with family-partitioned except blocks
     set:

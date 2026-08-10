@@ -526,7 +526,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 // store blip must fail closed rather than admit injection against the
 // un-overlaid (injection-on) base runtime and must record the granular
 // cause in both logs and metrics.
-// spec: §5.1, §15.1 (SERVICE_UNAVAILABLE).
+// spec: §5.1 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
 func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
 	store := memstore.New()
 	overrides := transientOverrideStore{

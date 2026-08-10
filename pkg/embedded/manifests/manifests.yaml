@@ -186,7 +186,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "0.1.0"
 spec:
-  # §13.2 — the internet egress profile. Pods stamped
+  # §13.2 (NET-002) — the internet egress profile. Pods stamped
   # lenny.dev/egress-profile: internet reach the broad public internet,
   # rendered as two parallel ipBlock peers (one per address family,
   # NET-062) whose except blocks remove cluster pod/service CIDRs, RFC1918
@@ -3947,14 +3947,14 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "0.1.0"
     lenny.dev/component: gateway
-  # spec: §10.3. The lenny-preflight Job
+  # spec: §10.3 (NET-064). The lenny-preflight Job
   # enumerates these annotations across every lenny-gateway Deployment
   # in the cluster to enforce SPIFFE-trust-domain / SA-token-audience
   # uniqueness. Without them, the collision check sees existing
   # deployments as having empty annotations and never flags a clash.
   # F-10.3.6.
   annotations:
-    # §10.3 — global.spiffeTrustDomain is a required
+    # §10.3 (NET-064) — global.spiffeTrustDomain is a required
     # chart value with no default; `required` fails `helm install/upgrade`
     # templating with the spec-mandated error when it is unset so two
     # deployments cannot silently share a trust domain. This annotation is
@@ -4339,7 +4339,7 @@ spec:
             # deployments). F-12.5.10.
             - name: LENNY_GATEWAY_LEADER_ELECTION
               value: "true"
-            # §12.5 — the leader-elected continuous T4
+            # §12.5 (STO-021) — the leader-elected continuous T4
             # KMS availability probe cadence (default 300, minimum 60) and
             # the token-bucket rate ceiling (default 10 probes/sec).
             # F-12.5.4.

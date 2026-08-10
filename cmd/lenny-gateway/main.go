@@ -638,7 +638,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 	// cert material is configured the option is nil and the listener
 	// serves plaintext — the documented local-development path only.
 	// F-8.6.4 / F-15.3.1.
-	// spec: §10.3 — the gateway validates the pod's
+	// spec: §10.3 (NET-060) — the gateway validates the pod's
 	// SPIFFE URI on every inbound handshake. The verifier runs as a
 	// VerifyPeerCertificate callback on top of CA chain verification, so
 	// possession of a cluster-CA cert is necessary but never sufficient
@@ -2690,7 +2690,7 @@ func dialInterceptor(addr, certPath, keyPath, caPath string, id interceptorIdent
 		if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
 			host = h
 		}
-		// spec: §10.3 — only an in-cluster
+		// spec: §10.3 (NET-063) — only an in-cluster
 		// interceptor presents a SPIFFE identity; an external endpoint
 		// (public FQDN or raw IP) is out of NET-063 scope (spec line 322)
 		// and keeps CA + DNS-SAN validation only.

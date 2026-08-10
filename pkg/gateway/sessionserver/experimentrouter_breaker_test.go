@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §10.7 — once the per-tenant targeting
+// spec: §10.7 (SCL-023) — once the per-tenant targeting
 // circuit breaker opens, the gateway skips the OpenFeature call entirely
 // and sets lenny_experiment_targeting_circuit_open to 1. With a fixed
 // clock every failure lands in one window, so the 5th consecutive

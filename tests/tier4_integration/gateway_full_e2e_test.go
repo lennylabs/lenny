@@ -155,7 +155,7 @@ func TestGatewayFullSurfaceE2E(t *testing.T) {
 	}
 
 	// ---- audit: the bootstrap mutation is in the verified chain ----
-	// spec: §25.9 — there is no standalone verify
+	// spec: §25.9 (F-25.9.10) — there is no standalone verify
 	// route; chain integrity rides on the list response's
 	// chainIntegrityReport envelope. A healthy chain reports zero broken
 	// rows and at least one verified row. The bootstrap mutation is

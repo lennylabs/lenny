@@ -225,7 +225,7 @@ const selectList = `sequence_number, event_type, payload, created_at, prev_hash,
 // failure is returned immediately without consuming a retry.
 // spec: §11.7 item 3.
 func (s *Store) Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	// spec: §11.7 — a platform-tenant audit write
+	// spec: §11.7 (CMP-058) — a platform-tenant audit write
 	// that references a non-platform target tenant via target_tenant_id is
 	// residency-routed to the target tenant's regional platform-Postgres,
 	// falling back to global when no region is set and failing closed with

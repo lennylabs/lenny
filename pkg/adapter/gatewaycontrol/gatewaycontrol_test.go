@@ -136,7 +136,7 @@ func TestDialBadTarget(t *testing.T) {
 	}
 }
 
-// TestGatewayDNSNameMatchesSpec pins the §10.3
+// TestGatewayDNSNameMatchesSpec pins the §10.3 (NET-060)
 // gateway Service DNS SAN the adapter must pin as tls.Config.ServerName.
 func TestGatewayDNSNameMatchesSpec_spec_10_3_322(t *testing.T) {
 	if gatewaycontrol.GatewayDNSName != "lenny-gateway.lenny-system.svc" {

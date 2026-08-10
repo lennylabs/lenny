@@ -355,7 +355,7 @@ const (
 	// rejected request) when a fail-closed to fail-open transition arms
 	// the weakening cooldown. It carries interceptor_ref, transition_ts,
 	// cooldown_seconds, and the affected_policy_count /
-	// affected_policy_names. spec: §8.3. F-4.8.17.
+	// affected_policy_names. spec: §8.3 (SEC-013). F-4.8.17.
 	EventInterceptorWeakeningCooldownActive EventType = "interceptor.weakening_cooldown_active"
 
 	// EventPoolIsolationWarning is the §8.3 proactive

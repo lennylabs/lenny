@@ -185,7 +185,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --adapter-tls-cert=/etc/lenny/mtls/tls.crt
 
-  # spec: §4.7 / §10.3 — the same lenny-gateway-tls
+  # spec: §4.7 / §10.3 (NET-060) — the same lenny-gateway-tls
   # Secret carries the client cert the gateway presents to each pod
   # adapter's gRPC listener; without these flags the gateway dials
   # adapters in plaintext. F-10.3.10.
@@ -204,7 +204,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --adapter-ca=/etc/lenny/mtls/ca.crt
 
-  # spec: §10.3 — the gateway validates each inbound
+  # spec: §10.3 (NET-060) — the gateway validates each inbound
   # pod certificate's SPIFFE URI SAN against this trust domain at the
   # GatewayControl handshake; without the flag the listener falls back
   # to CA-only trust. F-10.3.1.
@@ -239,7 +239,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --spiffe-trust-domain=cluster.local
 
-  # spec: §10.3 — the interceptor-namespace allowlist
+  # spec: §10.3 (NET-063) — the interceptor-namespace allowlist
   # the gateway enforces against each in-cluster interceptor's SPIFFE URI
   # SAN. Rendered only when gateway.interceptorNamespaces is non-empty.
   # F-10.3.3.
@@ -314,7 +314,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --proxy-extension-wait-timeout=12s
 
-  # spec: §11.1 — the global,
+  # spec: §11.1 (F-11.1.3 / F-11.1.4) — the global,
   # per-user, per-runtime concurrent-session caps and the per-user
   # active-delegated-children cap render env vars only when configured > 0.
   - it: renders the §11.1 concurrent-session and delegated-children admission caps when set
@@ -374,7 +374,7 @@ tests:
             name: LENNY_DELEGATION_MAX_ACTIVE_CHILDREN_PER_USER
             value: "0"
 
-  # spec: §10.3 — the lenny-preflight Job reads
+  # spec: §10.3 (NET-064) — the lenny-preflight Job reads
   # these annotations to enforce uniqueness across Lenny Deployments in
   # the same cluster; without them the collision check is a no-op.
   # F-10.3.6.
@@ -1387,7 +1387,7 @@ tests:
             name: LENNY_GATEWAY_LEADER_ELECTION
             value: "false"
 
-  # spec: §12.5 / F-12.5.4 — the continuous T4 KMS
+  # spec: §12.5 (STO-021) / F-12.5.4 — the continuous T4 KMS
   # probe cadence and rate ceiling default to 300s and 10 probes/sec and
   # flow through to the gateway env.
   - it: renders the default storage.t4KmsProbeInterval / t4KmsProbeRateLimit env
@@ -2979,7 +2979,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --deprecated-api-versions=v1,v2
 
-  # spec: §17.9.1 — the environment dimension drives
+  # spec: §17.9.1 (F-17.9.9) — the environment dimension drives
   # gateway log verbosity. The default posture (dev) renders debug.
   - it: drives LENNY_LOG_LEVEL=debug from the default dev environment
     documentSelector:
@@ -3005,7 +3005,7 @@ tests:
             name: LENNY_LOG_LEVEL
             value: info
 
-  # spec: §17.9.3 — provider=sentinel wires the
+  # spec: §17.9.3 (F-17.9.4) — provider=sentinel wires the
   # Sentinel discovery env; addresses and master are plain env, the data
   # AUTH password is read from the datastore Secret, and TLS is requested.
   - it: wires the Redis Sentinel env when redis.provider=sentinel

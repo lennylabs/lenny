@@ -87,7 +87,7 @@ func TestTargetingConfigEffectiveTimeout(t *testing.T) {
 	}
 }
 
-// spec: §10.7 — the circuit-breaker accessors
+// spec: §10.7 (SCL-023) — the circuit-breaker accessors
 // return the configured value when positive, else the default.
 func TestTargetingConfigBreakerAccessors(t *testing.T) {
 	zero := TargetingConfig{}

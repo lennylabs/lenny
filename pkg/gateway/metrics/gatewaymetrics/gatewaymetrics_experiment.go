@@ -69,7 +69,7 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.7 / §16.1 — the per-tenant
+	// spec: §10.7 (SCL-023) / §16.1 — the per-tenant
 	// targeting circuit-breaker gauge: 1 while the breaker is open (the
 	// gateway is skipping the OpenFeature call), 0 when closed. The §16.5
 	// ExperimentTargetingCircuitOpen alert fires on a sustained 1.

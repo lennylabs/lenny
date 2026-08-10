@@ -4,7 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10 line 437 / §10 line 443 — CRD schema-version annotation
+    # spec: §10.5 — CRD schema-version annotation
     # read at controller startup + lenny-preflight; mismatch causes a
     # FATAL exit so stale CRDs never silently strip new fields.
     # F-15.5.12.

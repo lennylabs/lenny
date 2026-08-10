@@ -168,7 +168,7 @@ func (errAuditRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle
 	return nil, errors.New("no audit shards in unit test")
 }
 
-// spec: §11.7 — Append for a platform-tenant event that
+// spec: §11.7 (CMP-058) — Append for a platform-tenant event that
 // references an unresolvable target tenant fails closed with
 // PlatformAuditRegionUnresolvableError and bumps both residency counters.
 func TestAppendPlatformTargetedFailsClosedAndBumpsMetrics_spec_11_7_433(t *testing.T) {

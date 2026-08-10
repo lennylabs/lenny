@@ -4,7 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
+    # spec: §10.5 — F-15.5.12.
     lenny.dev/schema-version: "1"
   name: sandboxes.lenny.dev
 spec:

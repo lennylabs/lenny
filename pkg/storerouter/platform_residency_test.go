@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// spec: §11.7 — PlatformPostgresForRegion resolves a
+// spec: §11.7 (CMP-058) — PlatformPostgresForRegion resolves a
 // region-set platform-tenant audit write to that region's platform-Postgres
 // from the storage.regions.<region>.postgresEndpoint map. The empty region
 // falls back to the global PlatformPostgres pool (residency rule 2).
@@ -59,7 +59,7 @@ func TestPlatformPostgresForRegionResolvesConfiguredRegion_spec_11_7_431(t *test
 	}
 }
 
-// spec: §11.7 — a region with no
+// spec: §11.7 (CMP-058 rule 3) — a region with no
 // storage.regions.<region>.postgresEndpoint entry is unresolvable and
 // PlatformPostgresForRegion fails closed with ErrPlatformRegionUnresolvable
 // so the audit write maps to PLATFORM_AUDIT_REGION_UNRESOLVABLE.

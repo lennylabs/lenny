@@ -1022,7 +1022,7 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.gatewayLeaderElection = flag.Bool("gateway-leader-election",
 		envBool("LENNY_GATEWAY_LEADER_ELECTION", true),
 		"§12.5: when true (default), gate the gateway-singleton background sweeps (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4 KMS probe) under the lenny-gateway-leader Kubernetes Lease so exactly one gateway replica runs them. Falls back to always-run when the gateway is not in-cluster. Override via LENNY_GATEWAY_LEADER_ELECTION.")
-	// spec: §12.5 — the leader-elected continuous T4
+	// spec: §12.5 (STO-021) — the leader-elected continuous T4
 	// KMS availability probe. The cadence floor (60s) and the
 	// token-bucket rate ceiling keep a large T4 fleet from bursting the
 	// KMS backend; both are operator-tunable.

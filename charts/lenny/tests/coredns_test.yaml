@@ -20,7 +20,7 @@ tests:
       - failedTemplate:
           errorMessage: "coredns.clusterIP must be set to a free address in the cluster service CIDR when agentNamespaces is non-empty: every agent pod's dnsConfig nameserver targets it (§13.2 K8S-033)."
 
-  # spec: §13.2 — a single replica blackholes agent DNS
+  # spec: §13.2 (NET-018) — a single replica blackholes agent DNS
   # on disruption; the chart requires >= 2. F-13.2.3.
   - it: fails the render when coredns.replicas is below 2
     templates:

@@ -116,7 +116,7 @@ tests:
                 name: lenny-datastore-conn
                 key: minio-access-key
 
-  # spec: §10.3 — the preflight Job needs the
+  # spec: §10.3 (NET-064) — the preflight Job needs the
   # values at hand to feed CheckSPIFFETrustDomainUniqueness /
   # CheckSATokenAudienceUniqueness. F-10.3.5.
   - it: passes --spiffe-trust-domain and --sa-token-audience to the preflight binary
@@ -427,7 +427,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--feature-registry-digest=true"
 
-  # §5.3: the cosign-production advisory inputs reach
+  # §5.3 (F-5.3.5): the cosign-production advisory inputs reach
   # the preflight binary. At chart defaults the environment is dev and
   # cosign is disabled, so the advisory short-circuits to a pass.
   - it: passes --environment and --feature-cosign-verify at chart defaults

@@ -70,7 +70,7 @@ type TLSConfigMod func(*tls.Config)
 // that exact name, regardless of the dial target host. The §10.3 NET-060 adapter→gateway dial pins the gateway's DNS SAN this way so a cluster-CA-signed certificate issued to the
 // Token Service, controller, or any other lenny-system workload cannot
 // impersonate the gateway.
-// spec: §10.3
+// spec: §10.3 (NET-060)
 func WithServerName(name string) TLSConfigMod {
 	return func(c *tls.Config) { c.ServerName = name }
 }

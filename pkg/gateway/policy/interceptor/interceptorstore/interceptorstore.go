@@ -25,7 +25,7 @@
 // the registry is the single source of truth, read per invocation, never
 // snapshotted into a lease).
 //
-// spec: §4.8; §8.3.
+// spec: §4.8; §8.3 (SEC-013).
 package interceptorstore
 
 import (

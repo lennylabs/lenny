@@ -424,7 +424,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				ref := ""
 				if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, row.ID); ok {
 					ref = r
-					// spec: §4.8 / §8.3 — reject the delivery when the target
+					// spec: §4.8 / §8.3 (SEC-013, F-4.8.17) — reject the delivery when the target
 					// session's effective interceptorRef names an
 					// interceptor inside the `fail-closed → fail-open`
 					// weakening cooldown, mirroring the delegate_task gate

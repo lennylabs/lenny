@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §10.7 — the per-tenant OpenFeature
+// spec: §10.7 (SCL-023) — the per-tenant OpenFeature
 // targeting circuit breaker.
 
 type gaugeEvent struct {

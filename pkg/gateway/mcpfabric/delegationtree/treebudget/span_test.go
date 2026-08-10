@@ -19,7 +19,7 @@ import (
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the function under
 // test emitted, then restores the prior provider when the test ends.
-// spec: §16.3.
+// spec: §16.3 (F-16.3.1).
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()

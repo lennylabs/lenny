@@ -124,7 +124,7 @@ type Decision struct {
 // do not rescue them here — the webhook enforces regardless of any
 // opt-in field value.
 func Decide(r Request) Decision {
-	// spec: §13.2 — proxy + provider-direct is an
+	// spec: §13.2 (NET-006) — proxy + provider-direct is an
 	// incoherent security posture in any tenancy mode, so this check is
 	// not gated on enforced(). The proxy path is designed to keep API
 	// keys off the pod; provider-direct egress would hand the pod a

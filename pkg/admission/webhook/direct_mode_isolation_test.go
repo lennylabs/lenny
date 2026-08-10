@@ -83,7 +83,7 @@ func TestDirectModeIsolationAdmitsEverythingInSingleTenant(t *testing.T) {
 	}
 }
 
-// spec: §13.2 — the transport threads
+// spec: §13.2 (NET-006) — the transport threads
 // tmpl.Spec.EgressProfile into the decider, and the proxy/provider-direct
 // mutual exclusivity is enforced even in single-tenant mode (it is not
 // gated on tenancy).

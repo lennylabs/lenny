@@ -1062,7 +1062,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 				if pol, err := s.policies.Get(ctx, tenantID, rt.DelegationPolicyRef); err == nil && pol.IsActive() {
 					adm.effectivePolicy = pol
 					adm.haveEffectivePolicy = true
-					// spec: §8.3 —
+					// spec: §8.3 (F-8.7.12 / F-13.5.7) —
 					// reject every `delegate_task` whose effective
 					// DelegationPolicy is inside the cluster-scoped
 					// scanExportedFiles weakening cooldown window so
@@ -1074,7 +1074,7 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 					if cdErr := s.checkInterceptorWeakeningCooldown(pol); cdErr != nil {
 						return cdErr
 					}
-					// spec: §4.8 / §8.3 — reject every `delegate_task` whose
+					// spec: §4.8 / §8.3 (SEC-013, F-4.8.17) — reject every `delegate_task` whose
 					// effective policy names an interceptor inside the
 					// `fail-closed → fail-open` weakening cooldown, the
 					// same protection against a timing-observable

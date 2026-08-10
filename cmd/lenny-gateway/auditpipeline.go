@@ -113,7 +113,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 			// §12.3: route synchronous audit writes onto the
 			// dedicated sync write pool when one was opened. F-12.3.14.
 			auditstore.WithSyncWritePool(w.auditSyncPool),
-			// spec: §11.7 — route a platform-tenant
+			// spec: §11.7 (CMP-058) — route a platform-tenant
 			// audit write that references a non-platform target_tenant_id to
 			// the target tenant's regional platform-Postgres, failing closed
 			// with PLATFORM_AUDIT_REGION_UNRESOLVABLE when the region cannot

@@ -474,7 +474,7 @@ func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
 // admission-denial backoff keys consistently across every rule-set-1
 // rejection.
 //
-// spec: §13.2.
+// spec: §13.2 (NET-006).
 func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 	if spec.DeliveryMode == "proxy" && spec.EgressProfile == "provider-direct" {
 		return reject(
@@ -485,7 +485,7 @@ func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 				"with deliveryMode: direct (Section 13.2)",
 		)
 	}
-	// spec: §13.2 — the `internet` egress profile
+	// spec: §13.2 (NET-002) — the `internet` egress profile
 	// requires a sandboxed isolation profile (`sandboxed` or `microvm`). A
 	// `standard` (runc) pod shares the host kernel, so broad internet
 	// egress plus a runc escape reaches the node directly. An unset

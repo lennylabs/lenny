@@ -79,7 +79,7 @@ type AgentPeerVerifier struct {
 // verifiedChains is populated) and applies the §10.3 NET-060 SPIFFE
 // identity check on top of CA trust. Returning a non-nil error aborts
 // the handshake with no gRPC response, exactly as the spec requires.
-// spec: §10.3; §10.3
+// spec: §10.3 (NET-060); §10.3
 func (v AgentPeerVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	leaf, err := leafCertificate(rawCerts, verifiedChains)
 	if err != nil {
@@ -179,7 +179,7 @@ type InterceptorPeerVerifier struct {
 // the §10.3 NET-063 SPIFFE identity check on top of CA trust. Returning
 // a non-nil error aborts the handshake with no gRPC response. Every
 // returned error is a *VerifyError carrying the classified reason.
-// spec: §10.3; §10.3
+// spec: §10.3 (NET-063); §10.3
 func (v InterceptorPeerVerifier) VerifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	leaf, err := leafCertificate(rawCerts, verifiedChains)
 	if err != nil {

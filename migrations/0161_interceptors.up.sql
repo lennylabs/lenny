@@ -1,4 +1,4 @@
--- §4.8 / §8.3 — the
+-- §4.8 / §8.3 (SEC-013) — the
 -- external-interceptor registry. Each row is the admin-mutable,
 -- cross-replica source of truth for a deployer-registered
 -- RequestInterceptor: the registration fields (endpoint, priority,

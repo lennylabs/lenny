@@ -161,7 +161,7 @@ func TestClearExtensionDenial_Unwired404(t *testing.T) {
 	}
 }
 
-// spec: §10.2; §15.1 — a tenant-admin of one
+// spec: §10.2; §15.1 (ADM-4) — a tenant-admin of one
 // tenant cannot clear a tree owned by another tenant. The resolver maps
 // root-1 to acme, so the globex tenant-admin is rejected 403 FORBIDDEN
 // and the durable clearer is never called. Fails pre-fix, where the
@@ -187,7 +187,7 @@ func TestClearExtensionDenial_ForeignTenantForbidden_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2; §15.1 — the owning tenant-admin
+// spec: §10.2; §15.1 (ADM-4) — the owning tenant-admin
 // (acme owns root-1) still clears its own tree: 204, the clearer runs,
 // and the audit row is emitted. This pins that the confinement does not
 // over-reject the legitimate own-tenant caller.
@@ -211,7 +211,7 @@ func TestClearExtensionDenial_OwningTenantAllowed_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 — fail closed when the tenant resolver is
+// spec: §10.2 (ADM-4) — fail closed when the tenant resolver is
 // unwired: a non-platform-admin caller is rejected 403 FORBIDDEN so a
 // misconfigured gateway cannot reopen the cross-tenant clear, while the
 // clearer is never reached.
@@ -237,7 +237,7 @@ func TestClearExtensionDenial_NilResolverFailsClosed_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 — a platform-admin still clears across
+// spec: §10.2 (ADM-4) — a platform-admin still clears across
 // tenants even when the tree is owned by another tenant; the resolver
 // confinement applies only to non-platform-admin callers. root-1 is
 // owned by acme, but the platform-admin (tenant=platform) succeeds.
@@ -258,7 +258,7 @@ func TestClearExtensionDenial_PlatformAdminCrossTenant_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2; §15.1 — a non-platform-admin
+// spec: §10.2; §15.1 (ADM-4) — a non-platform-admin
 // caller naming a tree the resolver does not know gets 404
 // RESOURCE_NOT_FOUND before the clear, so an unknown tree is reported
 // rather than confirming or denying ownership. The clearer is never
@@ -283,7 +283,7 @@ func TestClearExtensionDenial_ResolverUnknownTree404_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 — a resolver storage error on the
+// spec: §10.2 (ADM-4) — a resolver storage error on the
 // confinement lookup surfaces as 500 and the clear does not run, so a
 // transient resolver outage fails closed rather than skipping the
 // cross-tenant check.

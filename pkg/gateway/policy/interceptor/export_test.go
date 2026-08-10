@@ -488,7 +488,7 @@ func TestRunPreExportMaterializationThroughExternalInterceptor(t *testing.T) {
 	}
 }
 
-// spec: §16.3 / §16 trace inventory. Every
+// spec: §16.3 / §16 (F-8.7.11) trace inventory. Every
 // PreExportMaterialization scan loop runs under a
 // `delegation.export_files` span. The span carries the §8.7 telemetry
 // attributes (file_count, total_bytes, max_per_file_bytes,

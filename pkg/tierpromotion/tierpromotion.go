@@ -174,7 +174,7 @@ type Inputs struct {
 	// MinReplicas is the rendered chart's `autoscaling.minReplicas`
 	// value. The SCL-036 burst-absorption check verifies it satisfies
 	// the §17.8.2 formula for the active autoscaling provider.
-	// spec: §17.8.2.
+	// spec: §17.8.2 (SCL-036).
 	MinReplicas int
 
 	// MaxSessionsPerReplica is the rendered chart's
@@ -182,7 +182,7 @@ type Inputs struct {
 	// check uses it as the formula's `sessions_per_replica` term, and
 	// the Phase 13.5 calibration attestation must be set before a
 	// Tier 3 promotion uses the 400-session provisional value.
-	// spec: §17.8.2, §17.8.3.
+	// spec: §17.8.2 (SCL-036), §17.8.3.
 	MaxSessionsPerReplica int
 
 	// LLMProxyExtractionAttested is the operator's attestation that

@@ -363,7 +363,7 @@ func TestUpdateDelegationPolicyEmitsScanWeakenedEvent(t *testing.T) {
 	if _, present := findAuditEvent(audit.snapshot(), "interceptor.fail_policy_weakened"); present {
 		t.Error("a scanExportedFiles transition must not re-use interceptor.fail_policy_weakened (§8.3)")
 	}
-	// spec: §8.3 — a `true → false`
+	// spec: §8.3 (F-8.7.12 / F-13.5.7) — a `true → false`
 	// weakening MUST stamp the server-minted transition timestamp on
 	// the policy row so the delegation service can enforce
 	// INTERCEPTOR_WEAKENING_COOLDOWN.
@@ -406,7 +406,7 @@ func TestUpdateDelegationPolicyEmitsScanStrengthenedEvent(t *testing.T) {
 	if _, hasCooldown := ev.Detail["cooldown_seconds"]; hasCooldown {
 		t.Error("a strengthening transition takes effect immediately — it must not carry cooldown_seconds")
 	}
-	// spec: §8.3 — a strengthen MUST
+	// spec: §8.3 (F-8.7.12 / F-13.5.7) — a strengthen MUST
 	// clear the prior weakening timestamp so subsequent delegations
 	// admit immediately rather than wait for the §8.3 cluster-scoped
 	// window opened by the prior weaken.

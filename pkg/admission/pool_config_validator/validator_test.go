@@ -601,7 +601,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 	})
 }
 
-// spec: §13.2 — deliveryMode: proxy with
+// spec: §13.2 (NET-006) — deliveryMode: proxy with
 // egressProfile: provider-direct is mutually exclusive. The check is
 // independent of executionMode, so it fires for session, task, and
 // concurrent pools alike, and names the InvalidPoolEgressDeliveryCombo
@@ -645,7 +645,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 		}
 	})
 
-	// spec: §13.2 — the internet egress profile requires
+	// spec: §13.2 (NET-002) — the internet egress profile requires
 	// sandboxed/microvm isolation; standard (runc, including the empty
 	// default) is rejected. F-13.2.11.
 	t.Run("internet requires sandboxed or microvm isolation", func(t *testing.T) {
