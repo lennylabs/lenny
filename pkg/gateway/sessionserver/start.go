@@ -3887,7 +3887,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	if row.WorkspaceSnapshot != nil {
 		expectedBytes = row.WorkspaceSnapshot.Bytes
 	}
-	// spec: §10.1 — resolve the checkpoint's chunk set from the
+	// spec: §10.1.7 — resolve the checkpoint's chunk set from the
 	// manifest row the gateway owns, verify contiguity of [0, chunk_count),
 	// and mint one presigned GET capability per index. The adapter fetches
 	// them in ascending index order and concatenates the bodies into one
@@ -3949,7 +3949,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	return result.Mode, nil
 }
 
-// resolveResumeChunks resolves the §10.1 reassembly chunk set for
+// resolveResumeChunks resolves the §10.1.7 reassembly chunk set for
 // the checkpoint the session is being restored from. It returns one
 // presigned GET capability per chunk in ascending index order, which the
 // gateway hands the adapter on ResumeRequest.Chunks. When reassembly of the
@@ -3961,20 +3961,20 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 // empty so the resume still proceeds; the adapter then restores nothing
 // beyond what the size pre-check permits.
 //
-// spec: §10.1 — reassembly on resume; fallback to the last full
+// spec: §10.1.7 — reassembly on resume; fallback to the last full
 // checkpoint on a contiguity failure.
 func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Session) []adapterclient.ChunkGrant {
 	if s.resumeChunkResolver == nil {
 		return nil
 	}
-	// spec: §10.1 — reassembly is manifest-driven, so it is not gated
+	// spec: §10.1.7 — reassembly is manifest-driven, so it is not gated
 	// on the WorkspaceSnapshot.Ref being present. The ref is a validation input
 	// that names the session's last completed checkpoint (written only on a
 	// partial = false success), and the selector takes the active manifest row
 	// at MAX(coordination_generation) regardless of partial. A partial = true
 	// drain whose session never completed a full checkpoint has an empty ref,
 	// yet LatestActiveAny still selects it and its NULL-baseline threshold is 0
-	// (§10.1), so it must reassemble. Gating on a non-empty ref would
+	// (§10.1.7), so it must reassemble. Gating on a non-empty ref would
 	// short-circuit that partial-only session to zero chunks even though
 	// classifyResume reports partial_workspace for it.
 	var ref string
@@ -3994,7 +3994,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 		return res.Grants
 	}
 	if errors.Is(err, resumechunks.ErrReassemblyContiguity) || errors.Is(err, resumechunks.ErrBelowRecoveryThreshold) {
-		// spec: §10.1 — reassembly failed atomically before any
+		// spec: §10.1.7 — reassembly failed atomically before any
 		// chunk body was fetched (a contiguity failure) or the generation-
 		// selected partial checkpoint did not clear the recovery threshold;
 		// fall back to the last successful full checkpoint so the resume
@@ -4011,7 +4011,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 
 // selectResumeCheckpoint resolves the checkpoint_id the resume reassembles
 // from. It selects the active manifest row for the session at
-// MAX(coordination_generation) regardless of partial (§10.1), so a
+// MAX(coordination_generation) regardless of partial (§10.1.7), so a
 // newer partial = true drain row at or above the completed checkpoint's
 // generation is preferred over the older completed checkpoint. The
 // WorkspaceSnapshot.Ref, written only on a successful checkpoint, is the
@@ -4024,7 +4024,7 @@ func (s *Server) resolveResumeChunks(ctx context.Context, row sessionstore.Sessi
 // resolves to the checkpoint_id the manifest row is keyed by, matching the
 // workspace-download and derive paths.
 //
-// spec: §10.1 — MAX(coordination_generation) select regardless of
+// spec: §10.1.7 — MAX(coordination_generation) select regardless of
 // partial; the ref is a validation input in the four-segment form.
 func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID, ref string) string {
 	if s.checkpointManifests == nil {
@@ -4044,7 +4044,7 @@ func (s *Server) selectResumeCheckpoint(ctx context.Context, tenantID, sessionID
 // checkpoint is the row that already failed (selected), or the fallback does
 // not resolve.
 //
-// spec: §10.1 — fallback to the last successful full checkpoint.
+// spec: §10.1.7 — fallback to the last successful full checkpoint.
 func (s *Server) resolveFullCheckpointFallback(ctx context.Context, row sessionstore.Session, selected string) []adapterclient.ChunkGrant {
 	if s.checkpointManifests == nil {
 		return nil

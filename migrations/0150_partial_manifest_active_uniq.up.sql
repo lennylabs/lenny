@@ -10,7 +10,7 @@
 -- The index covers only rows where deleted_at IS NULL, so it does not
 -- prevent multiple soft-deleted (tombstoned) rows for the same
 -- (tenant, session) from coexisting until the §12.5 hard-prune sweep
--- removes them. It is the database-side companion to the §10.1
+-- removes them. It is the database-side companion to the §10.1.7
 -- supersede-on-write performed by partialmanifeststore.Put: that write
 -- soft-deletes every lower-generation active row before inserting the
 -- new one in the same transaction, so a concurrent second writer that

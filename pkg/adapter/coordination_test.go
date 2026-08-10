@@ -55,7 +55,7 @@ func TestCoordinatorFenceRejectsZeroGeneration(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceFirstFenceNeverGap verifies the §10.1
+// TestCoordinatorFenceFirstFenceNeverGap verifies the §10.1.2
 // rule that the first fence on a pod's lifetime is recorded regardless
 // of value and never treated as a gap.
 func TestCoordinatorFenceFirstFenceNeverGap(t *testing.T) {
@@ -75,7 +75,7 @@ func TestCoordinatorFenceFirstFenceNeverGap(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceMonotonicIncrement verifies the §10.1
+// TestCoordinatorFenceMonotonicIncrement verifies the §10.1.2
 // strict-monotonic rule and that the no-gap path doesn't set
 // gap_detected.
 func TestCoordinatorFenceMonotonicIncrement(t *testing.T) {
@@ -122,13 +122,13 @@ func TestCoordinatorFenceStaleGenerationRejected(t *testing.T) {
 	}
 }
 
-// TestCoordinatorFenceGapDetected verifies §10.1 gap detection:
+// TestCoordinatorFenceGapDetected verifies §10.1.2 gap detection:
 // a generation that skips one or more values still logs
 // `coordinator_generation_gap` and returns gap_detected=true after the
 // dead last_tool_call_id reset was removed (proposal 0026), since gap
 // detection has no dependence on last_tool_call_id. It also pins the
 // proposal-0026 Pass-14 doc reconciliation: the gap path does not cancel
-// in-flight RPCs (the §10.1 cancellation is an unimplemented
+// in-flight RPCs (the §10.1.2 cancellation is an unimplemented
 // requirement), so the fence's own context is left un-cancelled.
 //
 // spec: §10.1, §4.2 (coordination_generation handoff).
@@ -166,7 +166,7 @@ func TestCoordinatorFenceGapDetected(t *testing.T) {
 		t.Fatalf("gap path should log coordinator_generation_gap, got %q", logBuf.String())
 	}
 	if gapCtx.Err() != nil {
-		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1); ctx.Err()=%v", gapCtx.Err())
+		t.Fatalf("gap path must not cancel in-flight RPCs (unimplemented §10.1.2); ctx.Err()=%v", gapCtx.Err())
 	}
 }
 
@@ -184,7 +184,7 @@ func TestCheckpointBarrierRequiresSession(t *testing.T) {
 
 // TestCheckpointBarrierRejectsWithoutFence verifies that the barrier
 // path requires a prior CoordinatorFence; without one the gate is
-// closed. spec: §10.1 — fence is a precondition for any
+// closed. spec: §10.1.2 — fence is a precondition for any
 // subsequent operational RPC.
 func TestCheckpointBarrierRejectsWithoutFence(t *testing.T) {
 	s := newFencedServer(t)
@@ -323,7 +323,7 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	}
 }
 
-// TestCheckpointBarrierQuiescedMsIsTimeToQuiescence pins §10.1:
+// TestCheckpointBarrierQuiescedMsIsTimeToQuiescence pins §10.1.8:
 // quiesced_ms is the time to reach quiescence measured inside the ack window,
 // not the full hold duration across the gateway-driven Checkpoint stream. The
 // barrier holds quiescence open for a wall-clock span before the stream

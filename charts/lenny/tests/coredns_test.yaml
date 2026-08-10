@@ -7,7 +7,7 @@ templates:
   - coredns-service.yaml
   - coredns-deployment.yaml
 tests:
-  # spec: §13.2 — the chart fails the render when clusterIP is
+  # spec: §13.2.6 — the chart fails the render when clusterIP is
   # empty while agent namespaces are configured. F-13.2.3.
   - it: fails the render when coredns.clusterIP is empty with agent namespaces
     templates:
@@ -40,7 +40,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  # spec: §13.2 — the Service pins the configured ClusterIP and
+  # spec: §13.2.6 — the Service pins the configured ClusterIP and
   # selects the coredns component on UDP/TCP 53 plus the metrics port.
   - it: pins the Service ClusterIP and DNS ports
     templates:
@@ -131,7 +131,7 @@ tests:
           path: spec.replicas
           value: 3
 
-  # spec: §13.2 — the readiness probe queries the CoreDNS health
+  # spec: §13.2.7 — the readiness probe queries the CoreDNS health
   # endpoint so a pod whose image lacks the plugins never joins the Service.
   - it: probes the CoreDNS health endpoint for readiness
     templates:

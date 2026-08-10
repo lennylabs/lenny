@@ -23,7 +23,7 @@ const CoordinatorFenceTimeout = 5 * time.Second
 // CoordinatorFenceResponse: whether the pod accepted the announced
 // coordination_generation, the pod's last fenced generation (so a
 // rejecting caller knows how far ahead the pod is), and whether the
-// fence skipped one or more generations (the §10.1 gap path).
+// fence skipped one or more generations (the §10.1.2 gap path).
 type CoordinatorFenceResult struct {
 	Accepted             bool
 	LastFencedGeneration int64

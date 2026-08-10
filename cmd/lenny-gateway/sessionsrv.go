@@ -111,7 +111,7 @@ func (w *gatewayWiring) buildSessionServer(
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := f.envVarBlocklistCSV
 
-	// spec: §10.1 — the resume path resolves the checkpoint's
+	// spec: §10.1.7 — the resume path resolves the checkpoint's
 	// chunk set and mints one presigned GET capability per chunk. It needs
 	// a Presigner-capable and prefix-listing object store; the in-memory
 	// dev backend implements neither, so the resolver stays nil there and
@@ -279,7 +279,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// spec: §10.1 partial-manifest path — classify a resume as
 		// partial_workspace when an active partial manifest exists.
 		PartialManifestLookup: w.partialManifests,
-		// spec: §10.1 — resolve the checkpoint's chunk set from the
+		// spec: §10.1.7 — resolve the checkpoint's chunk set from the
 		// manifest row, verify contiguity, and mint one presigned GET
 		// capability per chunk for the resume path; read the row for the
 		// workspace-download stream; write the derived manifest on derive.

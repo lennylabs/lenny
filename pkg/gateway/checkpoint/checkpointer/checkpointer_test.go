@@ -124,7 +124,7 @@ func TestCheckpointRecordsTheWorkspaceSnapshot(t *testing.T) {
 	if row.WorkspaceSnapshot == nil {
 		t.Fatal("no WorkspaceSnapshot recorded on the session row")
 	}
-	// spec: §10.1 — the ref is the gateway-minted checkpoint_id
+	// spec: §10.1.7 — the ref is the gateway-minted checkpoint_id
 	// (a UUID), not an adapter-supplied value.
 	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
 		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
@@ -171,7 +171,7 @@ func TestFailedCheckpointDoesNotBumpFreshnessTimestamp(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a CheckpointFailed frame terminates the stream
+// spec: §10.1.7 — a CheckpointFailed frame terminates the stream
 // and the checkpoint fails; the gateway records no WorkspaceSnapshot and
 // surfaces the adapter-reported reason.
 func TestCheckpointSurfacesACheckpointFailedFrame_spec_10_1(t *testing.T) {
@@ -288,7 +288,7 @@ func TestSweepCheckpointsEveryCoordinatedSession(t *testing.T) {
 	cp.Sweep(context.Background())
 
 	// Each coordinated session receives its own gateway-minted checkpoint
-	// id (§10.1), so the two refs are present and distinct.
+	// id (§10.1.7), so the two refs are present and distinct.
 	refs := map[string]string{}
 	for _, id := range []string{"s1", "s2"} {
 		row, err := store.Get(context.Background(), "acme", id)
@@ -488,7 +488,7 @@ func TestSealRecordsASealedSnapshot(t *testing.T) {
 	if row.WorkspaceSnapshot.Source != sessionstore.WorkspaceSnapshotSealed {
 		t.Errorf("snapshot source = %q, want sealed", row.WorkspaceSnapshot.Source)
 	}
-	// spec: §10.1 — the ref is the gateway-minted checkpoint_id.
+	// spec: §10.1.7 — the ref is the gateway-minted checkpoint_id.
 	if _, err := uuid.Parse(row.WorkspaceSnapshot.Ref); err != nil {
 		t.Errorf("snapshot ref = %q, want a gateway-minted UUID: %v", row.WorkspaceSnapshot.Ref, err)
 	}
@@ -653,7 +653,7 @@ func TestCheckpointWritesRetentionCatalog(t *testing.T) {
 	}
 	ins := ret.inserts[0]
 	// The catalog row records the gateway-minted checkpoint id, the same
-	// ref recorded on the session's WorkspaceSnapshot (§10.1).
+	// ref recorded on the session's WorkspaceSnapshot (§10.1.7).
 	row, err := store.Get(context.Background(), "acme", "s1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)

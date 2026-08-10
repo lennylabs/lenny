@@ -87,7 +87,7 @@ type BindingRegistry interface {
 //
 // On a terminal fence failure it publishes no binding, closes the
 // connection, and relinquishes the lease (the coordfence driver releases
-// it and backs off per §10.1), returning a non-nil error. The
+// it and backs off per §10.1.2), returning a non-nil error. The
 // Sweeper then records a per-session adoption backoff so the fixed sweep
 // interval does not re-adopt inside the spec's jittered backoff window.
 //
@@ -102,7 +102,7 @@ type Readopter interface {
 	ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (publish func(), err error)
 }
 
-// minAdoptionBackoff and maxAdoptionBackoff bound the §10.1 jittered
+// minAdoptionBackoff and maxAdoptionBackoff bound the §10.1.2 jittered
 // re-adoption delay a Sweeper waits after a relinquished crash-takeover
 // before it re-adopts the same session. Jittering across the window keeps
 // competing replicas from re-adopting a relinquished session in lockstep.
@@ -121,7 +121,7 @@ type Options struct {
 	TTL time.Duration
 	// Interval is the sweep cadence.
 	Interval time.Duration
-	// Mirror is the §10.1 coordination_lease barrier-target
+	// Mirror is the §10.1.8 coordination_lease barrier-target
 	// mirror. When set, the sweep upserts a mirror row for every lease
 	// this replica holds (so a cross-replica handoff overwrites
 	// coordinator_replica with the new holder) and marks a terminal
@@ -143,10 +143,10 @@ type Options struct {
 	// does not re-establish the serving binding. spec: §10.1 (coordinator
 	// handoff re-adopts the still-running pod).
 	Readopter Readopter
-	// AdoptionBackoff overrides the §10.1 re-adoption delay applied
+	// AdoptionBackoff overrides the §10.1.2 re-adoption delay applied
 	// after a relinquished crash-takeover. A value <= 0 selects a jittered
 	// delay across the 2s-to-16s window; a positive value is used verbatim,
-	// so an operator (or a test) can pin the delay. spec: §10.1
+	// so an operator (or a test) can pin the delay. spec: §10.1.2
 	// (relinquish-and-backoff).
 	AdoptionBackoff time.Duration
 	// Clock supplies the current time for the adoption-backoff window. Nil
@@ -274,7 +274,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 		}
 		for _, row := range rows {
 			if session.IsTerminal(row.State) {
-				// §10.1 — a terminal session is no longer
+				// §10.1.8 — a terminal session is no longer
 				// coordinated by anyone; mark its mirror row released so the
 				// barrier-target query stops returning it. Best-effort.
 				s.releaseMirror(ctx, tenantID, row.ID)
@@ -296,7 +296,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			bound := s.boundHere(row.ID)
 			leaseUnheld := errors.Is(getErr, leasestore.ErrNotFound)
 			// A session in its post-relinquish adoption backoff is not
-			// re-adopted until the §10.1 jittered window elapses, so
+			// re-adopted until the §10.1.2 jittered window elapses, so
 			// the fixed sweep does not re-drive RecordHandoff and the fence on
 			// every sweep after a terminal fence failure released the lease.
 			adoptable := leaseUnheld && isRunningPod(row) && !s.inAdoptionBackoff(row.ID)
@@ -424,7 +424,7 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 				publish()
 				s.clearAdoptionBackoff(row.ID)
 			}
-			// §10.1 — mirror the held lease into Postgres so the
+			// §10.1.8 — mirror the held lease into Postgres so the
 			// preStop barrier-target query observes it. A cross-replica
 			// handoff overwrites coordinator_replica with this replica.
 			s.upsertMirror(ctx, tenantID, row.ID, row.CoordinationGeneration)
@@ -509,7 +509,7 @@ func (s *Sweeper) inAdoptionBackoff(sessionID string) bool {
 	return true
 }
 
-// recordAdoptionBackoff opens the §10.1 jittered re-adoption backoff
+// recordAdoptionBackoff opens the §10.1.2 jittered re-adoption backoff
 // window for a session whose crash-takeover fence relinquished the lease.
 func (s *Sweeper) recordAdoptionBackoff(sessionID string) {
 	s.mu.Lock()
@@ -526,7 +526,7 @@ func (s *Sweeper) clearAdoptionBackoff(sessionID string) {
 	delete(s.backoffUntil, sessionID)
 }
 
-// nextBackoff returns the §10.1 re-adoption delay. A positive
+// nextBackoff returns the §10.1.2 re-adoption delay. A positive
 // operator override (Options.AdoptionBackoff) is used verbatim; otherwise
 // the delay is jittered uniformly across the 2s-to-16s window.
 func (s *Sweeper) nextBackoff() time.Duration {
@@ -536,7 +536,7 @@ func (s *Sweeper) nextBackoff() time.Duration {
 	return minAdoptionBackoff + time.Duration(rand.Int63n(int64(maxAdoptionBackoff-minAdoptionBackoff)))
 }
 
-// upsertMirror records the §10.1 barrier-target row for a lease
+// upsertMirror records the §10.1.8 barrier-target row for a lease
 // this replica holds. Best-effort: a transient mirror error is logged but
 // does not fail the sweep — the next sweep cycle re-upserts, and the
 // barrier coordinator falls back to the in-memory lease cache when the
@@ -555,7 +555,7 @@ func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, 
 	}
 }
 
-// releaseMirror marks a terminal session's §10.1 barrier-target
+// releaseMirror marks a terminal session's §10.1.8 barrier-target
 // row released. Best-effort.
 func (s *Sweeper) releaseMirror(ctx context.Context, tenantID, sessionID string) {
 	if s.mirror == nil {

@@ -16,8 +16,7 @@ Rendering is gated by monitoring.bundleRules and monitoring.format:
     vanilla Prometheus that mount rule_files.
   - monitoring.format: both            — render both.
 
-monitoring.alertOverrides applies per-rule replacements (§25.13 line
-4776): each entry merges over the bundled rule by §16.5 alert name; an
+monitoring.alertOverrides applies per-rule replacements (§25.13): each entry merges over the bundled rule by §16.5 alert name; an
 override carrying `enabled: false` prunes the bundled rule from the
 rendered manifest. The override map is applied to both the
 PrometheusRule and the ConfigMap output so a deployer running both

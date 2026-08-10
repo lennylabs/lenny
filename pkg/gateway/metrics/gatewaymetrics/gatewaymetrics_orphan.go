@@ -33,12 +33,12 @@ type orphanMetrics struct {
 	treeRecoveryDuration       *prometheus.HistogramVec
 	treeRecoveryTimeout        *prometheus.CounterVec
 	// §10.1 orphan-session reconciler observability.
-	// orphanSessionReconciliations counts each session the §10.1
+	// orphanSessionReconciliations counts each session the §10.1.4
 	// reconciler forces to `failed` after its bound pod terminated with
 	// no terminal event. agentPodStateMirrorLag is the per-pool staleness
 	// gauge the §16.5 PodStateMirrorStale alert reads; the reconciler
 	// publishes it once per pool per pass.
-	// spec: §10.1; §16.1.
+	// spec: §10.1.4; §16.1.
 	orphanSessionReconciliations prometheus.Counter
 	agentPodStateMirrorLag       *prometheus.GaugeVec
 }
@@ -85,11 +85,11 @@ func newOrphanMetrics(reg *prometheus.Registry) (orphanMetrics, error) {
 	}
 	orphanSessionReconciliations := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_orphan_session_reconciliations_total",
-		Help: "Orphan sessions forcibly transitioned to failed by the §10.1 reconciler (§10.1 / §16.1).",
+		Help: "Orphan sessions forcibly transitioned to failed by the §10.1.4 reconciler (§10.1 / §16.1).",
 	})
 	agentPodStateMirrorLag, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_agent_pod_state_mirror_lag_seconds",
-		Help: "Seconds since the last agent_pod_state mirror update per pool; drives the §16.5 PodStateMirrorStale alert (§10.1).",
+		Help: "Seconds since the last agent_pod_state mirror update per pool; drives the §16.5 PodStateMirrorStale alert (§10.1.4).",
 	}, []string{"pool"})
 	if err != nil {
 		return m, err

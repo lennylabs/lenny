@@ -37,7 +37,7 @@ var platformComponents = map[string]bool{
 	"coredns":           true,
 }
 
-// opsAppValues is the set of app: label values §13.2
+// opsAppValues is the set of app: label values §13.2.3
 // Exception 1 reserves for the operability plane. A NetworkPolicy
 // clause may select these through the app: key without that being
 // counted as selector drift.

@@ -35,7 +35,7 @@ func ingressPod(namespace, name string, labels map[string]string, phase corev1.P
 	}
 }
 
-// spec: §13.2 NET-038 — an empty namespace skips the check
+// spec: §13.2.4 NET-038 — an empty namespace skips the check
 // entirely (no ingress integration configured).
 func TestIngressControllerCheckSkipsEmpty_spec_13_2_292(t *testing.T) {
 	d := IngressControllerCheck{}.Decide()
@@ -44,7 +44,7 @@ func TestIngressControllerCheckSkipsEmpty_spec_13_2_292(t *testing.T) {
 	}
 }
 
-// spec: §13.2 NET-038 — a configured namespace with a running
+// spec: §13.2.4 NET-038 — a configured namespace with a running
 // labeled controller pod passes without an advisory.
 func TestIngressControllerCheckPasses_spec_13_2_292(t *testing.T) {
 	d := IngressControllerCheck{
@@ -59,7 +59,7 @@ func TestIngressControllerCheckPasses_spec_13_2_292(t *testing.T) {
 	}
 }
 
-// spec: §13.2 NET-038 — a missing namespace is a non-blocking
+// spec: §13.2.4 NET-038 — a missing namespace is a non-blocking
 // WARNING (the namespaceSelector matches nothing).
 func TestIngressControllerCheckWarnsMissingNamespace_spec_13_2_292(t *testing.T) {
 	d := IngressControllerCheck{
@@ -78,7 +78,7 @@ func TestIngressControllerCheckWarnsMissingNamespace_spec_13_2_292(t *testing.T)
 	}
 }
 
-// spec: §13.2 NET-038 — a present namespace with no running
+// spec: §13.2.4 NET-038 — a present namespace with no running
 // pod matching the controllerPodLabel is a non-blocking WARNING (the
 // podSelector matches nothing).
 func TestIngressControllerCheckWarnsMissingPod_spec_13_2_292(t *testing.T) {
@@ -99,7 +99,7 @@ func TestIngressControllerCheckWarnsMissingPod_spec_13_2_292(t *testing.T) {
 	}
 }
 
-// spec: §13.2 NET-038 — a present namespace with an empty pod
+// spec: §13.2.4 NET-038 — a present namespace with an empty pod
 // label only checks namespace existence (the pod half is skipped).
 func TestIngressControllerCheckSkipsPodHalfWithoutLabel_spec_13_2_292(t *testing.T) {
 	d := IngressControllerCheck{
@@ -111,7 +111,7 @@ func TestIngressControllerCheckSkipsPodHalfWithoutLabel_spec_13_2_292(t *testing
 	}
 }
 
-// spec: §13.2 NET-038 — gatherIngressController reads the
+// spec: §13.2.4 NET-038 — gatherIngressController reads the
 // namespace and a running labeled pod from the cluster.
 func TestGatherIngressControllerRunningPod_spec_13_2_292(t *testing.T) {
 	c := ingressClient(
@@ -129,7 +129,7 @@ func TestGatherIngressControllerRunningPod_spec_13_2_292(t *testing.T) {
 	}
 }
 
-// spec: §13.2 NET-038 — a pod matching the label but not in the
+// spec: §13.2.4 NET-038 — a pod matching the label but not in the
 // Running phase (sidecar churn, crash loop) is not a usable controller
 // pod, so hasRunningPod is false.
 func TestGatherIngressControllerPendingPodNotCounted_spec_13_2_292(t *testing.T) {
@@ -148,7 +148,7 @@ func TestGatherIngressControllerPendingPodNotCounted_spec_13_2_292(t *testing.T)
 	}
 }
 
-// spec: §13.2 NET-038 — a missing namespace returns
+// spec: §13.2.4 NET-038 — a missing namespace returns
 // NamespaceExists=false with no error so the advisory fires.
 func TestGatherIngressControllerMissingNamespace_spec_13_2_292(t *testing.T) {
 	c := ingressClient(t)

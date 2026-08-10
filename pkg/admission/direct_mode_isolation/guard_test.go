@@ -166,7 +166,7 @@ func TestRejectsProxyProviderDirectComboInEveryTenancyMode_spec_13_2_NET006(t *t
 }
 
 func TestAllowsCoherentEgressDeliveryPairings_spec_13_2_NET006(t *testing.T) {
-	// The two correct pairings (§13.2) and the benign cases the
+	// The two correct pairings (§13.2.5) and the benign cases the
 	// NET-006 check must not touch.
 	for _, tc := range []struct {
 		name string

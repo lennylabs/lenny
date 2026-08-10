@@ -829,7 +829,7 @@ func TestCleanupPartialManifestNilReleaseSeamsSkipsMinIO(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — input validation: an empty tenant id,
+// spec: §10.1.7 — input validation: an empty tenant id,
 // checkpoint id, or chunk_object_key_prefix is a programming error the
 // cleanup path rejects before touching either store.
 func TestCleanupPartialManifestRejectsEmptyFields(t *testing.T) {

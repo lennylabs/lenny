@@ -855,7 +855,7 @@ func (m *Metrics) SetQuotaUserFailopenFraction(fraction float64) {
 	m.quotaUserFailopenFraction.Set(fraction)
 }
 
-// SetDualStoreUnavailable flips the §10.1 DualStoreUnavailable
+// SetDualStoreUnavailable flips the §10.1.3 DualStoreUnavailable
 // source gauge. The dual-store monitor sets 1 the moment it declares
 // both Postgres and Redis unreachable and clears to 0 once at least one
 // store recovers, so the §16.5 alert reflects the live degraded state.
@@ -1286,7 +1286,7 @@ func (m *Metrics) IncPreStopCapSelection(pool, serviceInstanceID, source string)
 	m.prestopCapSelection.WithLabelValues(pool, serviceInstanceID, source).Inc()
 }
 
-// IncPreStopBarrierTargetSource increments the §10.1
+// IncPreStopBarrierTargetSource increments the §10.1.8
 // `lenny_prestop_barrier_target_source_total` counter for one preStop
 // barrier target-set read. The source label is `postgres` on the
 // steady-state healthy path or `cache_fallback` when the
@@ -1300,7 +1300,7 @@ func (m *Metrics) IncPreStopBarrierTargetSource(source string) {
 	m.barrierTargetSource.WithLabelValues(source).Inc()
 }
 
-// IncCoordinatorHandoffStale increments the §10.1
+// IncCoordinatorHandoffStale increments the §10.1.5
 // `lenny_coordinator_handoff_stale_total` counter for one generation-stale
 // coordinator-handoff rejection: a CoordinatorFence the gateway issued was
 // refused (FailedPrecondition) because the pod had already been fenced to
@@ -1336,12 +1336,12 @@ func (m *Metrics) IncCoordinatorFenceRelinquished() {
 	m.coordinatorFenceRelinquished.Inc()
 }
 
-// IncSigkillStreams increments the §10.1
+// IncSigkillStreams increments the §10.1.7
 // `lenny_gateway_sigkill_streams_total` counter for one in-flight
 // stream the kubelet SIGKILLs at the grace deadline because its
 // eviction checkpoint did not finish in budget. Called once per
 // deadline-exceeded session during the preStop staged drain.
-// spec: §10.1 — SIGKILL-deadline stream counter.
+// spec: §10.1.7 — SIGKILL-deadline stream counter.
 func (m *Metrics) IncSigkillStreams(pool, serviceInstanceID string) {
 	if m == nil {
 		return
@@ -1423,7 +1423,7 @@ func (m *Metrics) IncOrphanCleanupRun() {
 // IncOrphanSessionReconciliation increments
 // `lenny_orphan_session_reconciliations_total` once per session the
 // §10.1 reconciler forces to `failed` after its bound pod terminated
-// without a terminal event. spec: §10.1; F-10.1.5.
+// without a terminal event. spec: §10.1.4; F-10.1.5.
 func (m *Metrics) IncOrphanSessionReconciliation() {
 	if m == nil {
 		return
@@ -1435,7 +1435,7 @@ func (m *Metrics) IncOrphanSessionReconciliation() {
 // `lenny_agent_pod_state_mirror_lag_seconds` gauge — the staleness of
 // the agent_pod_state mirror for poolID. The §10.1 reconciler emits it
 // once per pool per pass; the §16.5 PodStateMirrorStale alert fires when
-// it exceeds 60s. spec: §10.1; F-10.1.5.
+// it exceeds 60s. spec: §10.1.4; F-10.1.5.
 func (m *Metrics) SetAgentPodStateMirrorLag(poolID string, seconds float64) {
 	if m == nil {
 		return

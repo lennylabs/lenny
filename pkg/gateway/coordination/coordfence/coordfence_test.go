@@ -110,7 +110,7 @@ func TestFenceStaleNoAdvanceRelinquishes_spec_11_3_209(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a stale rejection whose authoritative generation
+// spec: §10.1.8 — a stale rejection whose authoritative generation
 // advanced mid-handoff is retried at the new value and then accepted.
 func TestFenceStaleThenAdvanceRetriesAndAccepts_spec_10_1(t *testing.T) {
 	fc := &fakeFenceClient{

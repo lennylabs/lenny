@@ -1,6 +1,5 @@
 {{- /*
-ClusterIP Service for the dedicated lenny-system CoreDNS instance (§13.2
-line 486). The Service ClusterIP is pinned to coredns.clusterIP so the
+ClusterIP Service for the dedicated lenny-system CoreDNS instance (§13.2). The Service ClusterIP is pinned to coredns.clusterIP so the
 WarmPoolController's agent-pod dnsConfig nameserver (passed as
 --dedicated-dns-cluster-ip) matches a stable address. The chart fails the
 render when clusterIP is empty while any agent namespace is configured,

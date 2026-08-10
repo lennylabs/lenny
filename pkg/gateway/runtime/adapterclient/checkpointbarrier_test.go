@@ -168,7 +168,7 @@ func waitBarrierGateOpen(t *testing.T, srv *adapter.Server) {
 	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
 }
 
-// spec: §10.1 — a generation-stale barrier is rejected with
+// spec: §10.1.8 — a generation-stale barrier is rejected with
 // FailedPrecondition so the gateway can record it as a false-positive
 // without aborting the drain.
 func TestCheckpointBarrierGenerationStale_spec_10_1(t *testing.T) {

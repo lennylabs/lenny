@@ -39,10 +39,10 @@ import (
 
 // §10.1 defaults.
 const (
-	// DefaultInterval is the §10.1 reconcile cadence ("every 60
+	// DefaultInterval is the §10.1.4 reconcile cadence ("every 60
 	// seconds, same leader-only pattern as orphan claim detection").
 	DefaultInterval = 60 * time.Second
-	// DefaultStaleMirrorThreshold is the §10.1 lag past which the
+	// DefaultStaleMirrorThreshold is the §10.1.4 lag past which the
 	// reconciler stops trusting the mirror for a pool and falls back to a
 	// direct Kubernetes read ("When mirror staleness exceeds 60s …").
 	DefaultStaleMirrorThreshold = 60 * time.Second
@@ -52,12 +52,12 @@ const (
 	// controller-runtime dependency the podlifecycle package carries.
 	// spec: §6.2 — terminal pod phase.
 	podPhaseTerminated = "terminated"
-	// orphanReason is the §10.1 failure reason recorded on the
+	// orphanReason is the §10.1.4 failure reason recorded on the
 	// forced transition.
 	orphanReason = string(session.FailureOrphanPodTerminated)
 )
 
-// orphanEligibleStates is the §10.1 non-terminal-with-pod set:
+// orphanEligibleStates is the §10.1.4 non-terminal-with-pod set:
 // "running, attached, starting, suspended (with pod), finalizing,
 // input_required". `attached` is an internal pod phase that the REST
 // surface projects as `running`, so `running` covers it. `suspended` is
@@ -99,7 +99,7 @@ type MirrorPod struct {
 	Phase string
 }
 
-// PodPhaseReader is the §10.1 direct-Kubernetes fallback,
+// PodPhaseReader is the §10.1.4 direct-Kubernetes fallback,
 // consulted when the mirror is stale for the pool or carries no row for
 // the bound pod. It wraps the gateway's PodLifecycleManager.GetPodStatus.
 // found=false reports that the Sandbox no longer exists, itself a
@@ -124,7 +124,7 @@ type TerminalHook interface {
 }
 
 // MetricsSink receives the §16.1 orphan-session observations. A nil
-// sink disables emission. spec: §10.1 / §16.1.
+// sink disables emission. spec: §10.1.4 / §16.1.
 type MetricsSink interface {
 	// IncOrphanSessionReconciliation bumps
 	// lenny_orphan_session_reconciliations_total once per forced
@@ -237,7 +237,7 @@ func (r *Reconciler) Tick(ctx context.Context) (int, error) {
 	return failed, nil
 }
 
-// eligible reports whether a session row is a §10.1 orphan
+// eligible reports whether a session row is a §10.1.4 orphan
 // candidate: a non-terminal state in the with-pod set, carrying an
 // active pod binding.
 func eligible(row sessionstore.Session) bool {
@@ -283,7 +283,7 @@ func (r *Reconciler) isOrphaned(ctx context.Context, row sessionstore.Session, l
 		// No mirror row for a session that still claims a pod: the pod
 		// may have been pruned (terminated) or the mirror is merely cold
 		// for this pod. Resolve authoritatively via Kubernetes rather
-		// than guess. spec: §10.1 — "ensuring orphan detection
+		// than guess. spec: §10.1.4 — "ensuring orphan detection
 		// is not silently blocked by stale mirror data".
 		return r.fallbackOrphaned(ctx, row, pool)
 	}

@@ -34,7 +34,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root and runtime")
 	}
-	// spec: §10.1 — the gateway resolves the checkpoint's chunk
+	// spec: §10.1.7 — the gateway resolves the checkpoint's chunk
 	// set and hands the adapter one presigned single-key GET capability per
 	// chunk on ResumeRequest.chunks; the adapter fetches them directly from
 	// object storage. A restore that carries chunks needs the transport; a
@@ -146,7 +146,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 // uncompressed bytes restored. An empty chunk set restores nothing (a
 // conversation-only or coordinator-handoff resume), which is not an error.
 //
-// spec: §10.1 — the concatenation of all chunks in index order is
+// spec: §10.1.7 — the concatenation of all chunks in index order is
 // consumed as a single tar (or tar.gz) stream fed end-to-end into one
 // decompress→untar pipeline; chunk boundaries are never parsed in
 // isolation.

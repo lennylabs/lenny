@@ -113,7 +113,7 @@ func TestPodDispatcherSendHoldsUntilWindow_spec_10_1_169(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a generation-stale barrier (FailedPrecondition)
+// spec: §10.1.8 — a generation-stale barrier (FailedPrecondition)
 // is surfaced as ErrGenerationStale so Dispatch records it without
 // aborting the drain.
 func TestPodDispatcherSendGenerationStale_spec_10_1_165(t *testing.T) {
@@ -129,7 +129,7 @@ func TestPodDispatcherSendGenerationStale_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — with the co-located coordination lease the
+// spec: §10.1.8 — with the co-located coordination lease the
 // coordinator always reaches the pod through the held connection, so a
 // target for which this replica holds no live binding is unreachable and
 // the barrier has no fresh-dial fallback. The Outcome records the error
@@ -152,7 +152,7 @@ func (erroringMirror) ListHeldByReplica(context.Context, string) ([]coordlease.L
 	return nil, errors.New("postgres down")
 }
 
-// spec: §10.1 — the primary barrier-target source is the
+// spec: §10.1.8 — the primary barrier-target source is the
 // coordination_lease mirror (source "postgres").
 func TestMirrorTargetListerPostgresPrimary_spec_10_1_165(t *testing.T) {
 	mirror := coordlease.NewMemoryStore(nil)
@@ -173,7 +173,7 @@ func TestMirrorTargetListerPostgresPrimary_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a Postgres read failure falls back to the
+// spec: §10.1.8 — a Postgres read failure falls back to the
 // in-memory lease cache with source "cache_fallback".
 func TestMirrorTargetListerCacheFallbackOnError_spec_10_1_165(t *testing.T) {
 	l := &barrier.MirrorTargetLister{
@@ -195,7 +195,7 @@ func TestMirrorTargetListerCacheFallbackOnError_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — with no mirror configured the lister uses the
+// spec: §10.1.8 — with no mirror configured the lister uses the
 // cache fallback directly.
 func TestMirrorTargetListerNilMirrorUsesFallback_spec_10_1_165(t *testing.T) {
 	l := &barrier.MirrorTargetLister{

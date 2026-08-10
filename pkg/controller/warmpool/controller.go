@@ -547,7 +547,7 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 // reconciler copies sb.Labels onto the pod), where the §13.2
 // pre-created NetworkPolicies select them. The controller never creates
 // NetworkPolicies; it only labels pods so the chart-rendered policies
-// take effect (spec: §13.2).
+// take effect (spec: §13.2.5).
 //
 //   - LabelPool / LabelManaged: pool scoping and §17.2 admission targeting.
 //   - LabelDeliveryMode: `proxy` only on proxy-mode pools so the

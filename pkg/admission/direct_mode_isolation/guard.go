@@ -4,7 +4,7 @@
 // the lenny-direct-mode-isolation ValidatingAdmissionWebhook per spec
 // §4.9 and §13.2. The webhook is deployed fail-closed in front of
 // SandboxTemplate resources in agent namespaces and renders
-// unconditionally (§13.2 step 2). The credential-delivery
+// unconditionally (§13.2.5 step 2). The credential-delivery
 // fields it inspects (deliveryMode, isolationProfile, spiffeBinding,
 // egressProfile) are authored only on the SandboxTemplate spec. A
 // SandboxWarmPool references a template by name (templateRef) and

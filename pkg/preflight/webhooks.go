@@ -14,7 +14,7 @@ import "fmt"
 // lenny-pod-security is a §13.1 pod-security baseline control: it
 // renders unconditionally and so belongs in the baseline set.
 //
-// lenny-direct-mode-isolation renders unconditionally (§13.2
+// lenny-direct-mode-isolation renders unconditionally (§13.2.5
 // step 2): its enforcement target is a pool's credential-delivery and
 // egress configuration — the §13.2 NET-006 proxy/provider-direct mutual
 // exclusivity (every tenancy mode) and the §4.9 direct/standard and

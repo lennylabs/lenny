@@ -432,7 +432,7 @@ func gwDial(t *testing.T, srv adapterv1.AdapterServer) *adapterclient.Client {
 	return cl
 }
 
-// spec: §5.2 / §10.1 — the resolved grant window bounds outstanding
+// spec: §5.2 / §10.1.7 — the resolved grant window bounds outstanding
 // grants by backpressure: a producer that pipelines every declaration ahead
 // of any ack is paced, not aborted. The gateway keeps at most `window` grants
 // outstanding, mints the (window+1)th grant only after the first chunk is
@@ -518,7 +518,7 @@ func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a lagging Stat confirm never blocks the next
+// spec: §10.1.7 — a lagging Stat confirm never blocks the next
 // grant: the serial producer completes within the deadline even though
 // every confirm sleeps, because the ack (not the Stat) releases the window.
 // diagnosis: a slow Stat confirm blocked the next grant, so the serial
@@ -544,7 +544,7 @@ func TestLaggingStatDoesNotBlockNextGrant(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — out-of-order chunk acknowledgements confirm each
+// spec: §10.1.7 — out-of-order chunk acknowledgements confirm each
 // chunk exactly once under the monotonic counter and the per-key catalog
 // insert.
 // diagnosis: out-of-order acknowledgements confirmed a chunk more than

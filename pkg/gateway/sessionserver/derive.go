@@ -319,7 +319,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	now := s.clock()
 	derivedID := s.idFn()
 	derivedRef := derivedSnapshotRef(tenantID, derivedID)
-	// spec: §10.1 / §7.1 derive — when the parent's checkpoint is a
+	// spec: §10.1.7 / §7.1 derive — when the parent's checkpoint is a
 	// chunked manifest, derive copies every chunk under the parent's
 	// chunk_object_key_prefix into the derived session's own prefix and
 	// writes a derived manifest row, so the derived session owns a resumable

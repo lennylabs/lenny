@@ -34,7 +34,7 @@ const (
 //	    with the canonical key.
 //
 // The check is fail-closed: a silently non-matching NetworkPolicy is
-// more dangerous than a missing one (§13.2).
+// more dangerous than a missing one (§13.2.3).
 //
 // TODO(NET-050): §13.2 part (b) of the NET-047/NET-050 audit — "any
 // selector matches zero pods for a component that is expected to be

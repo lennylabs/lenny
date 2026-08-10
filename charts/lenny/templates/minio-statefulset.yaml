@@ -21,8 +21,7 @@ The pod carries the `lenny.dev/component: minio` label the §13.2 system
 NetworkPolicies (allow-minio, allow-gateway-egress) already select.
 
 spec: §17.9.5, §12.5
-(ArtifactStore HA topology), §17.8 (per-tier node counts), §17.9.7 line
-1521 (S3-compatible API, encryption at rest, TLS in transit).
+(ArtifactStore HA topology), §17.8 (per-tier node counts), §17.9.7 (S3-compatible API, encryption at rest, TLS in transit).
 */ -}}
 {{- if .Values.minio.deploy }}
 {{- $m := .Values.minio }}

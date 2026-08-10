@@ -243,7 +243,7 @@ func TestRunReportsNetworkPolicyListFailureFailClosed(t *testing.T) {
 // object-store egress arm rendered without the paired allow-minio
 // agent-namespace ingress clause fails the install fail-closed.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestRunFailsOnUnpairedObjectStoreEgress(t *testing.T) {
 	objs := allBaselineWebhooks()
 	egress := lennyNetPolicy("allow-pod-egress-objectstore")

@@ -109,7 +109,7 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 }
 
-// spec: §10.1 / §5.2 — the per-pool checkpointGrantWindow
+// spec: §10.1.7 / §5.2 — the per-pool checkpointGrantWindow
 // override is declared on the SandboxTemplate, so ResolvePool copies it
 // onto the PoolMatch for the checkpoint driver to prefer over the
 // deployment-wide default. A pool that declares no override leaves the
@@ -132,7 +132,7 @@ func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing
 	}
 }
 
-// spec: §10.1 / §5.2 — a pool that declares no per-pool
+// spec: §10.1.7 / §5.2 — a pool that declares no per-pool
 // checkpointGrantWindow leaves the PoolMatch field nil so the checkpoint
 // driver resolves the deployment-wide default.
 func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *testing.T) {
@@ -148,7 +148,7 @@ func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *t
 	}
 }
 
-// spec: §10.1 / §5.2 — a poolstore mirror row that carries a
+// spec: §10.1.7 / §5.2 — a poolstore mirror row that carries a
 // checkpointGrantWindow override wins over the template-derived value, so
 // the gateway-enforced pool policy governs the driver's per-pool window.
 func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T) {

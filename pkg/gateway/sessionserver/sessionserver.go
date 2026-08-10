@@ -305,7 +305,7 @@ type Server struct {
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	// resumeChunkResolver, when set, resolves the §10.1 reassembly
+	// resumeChunkResolver, when set, resolves the §10.1.7 reassembly
 	// chunk set the resume path hands the adapter on ResumeRequest.Chunks.
 	// Nil leaves the resume carrying no chunks (dev mode, or a checkpoint
 	// that predates the chunked-object model), so the adapter restores
@@ -727,7 +727,7 @@ type PartialManifestLookup interface {
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
-// ResumeChunkResolver resolves the §10.1 reassembly chunk set for
+// ResumeChunkResolver resolves the §10.1.7 reassembly chunk set for
 // a checkpoint the resume path restores. It lists the committed chunk
 // objects under the manifest row's chunk_object_key_prefix, verifies
 // contiguity of the prefix [0, chunk_count), and mints one presigned
@@ -762,7 +762,7 @@ type CheckpointRecoveryMetrics interface {
 // resume and workspace-download paths: Get resolves one checkpoint by id
 // (for its chunk_count / chunk_encoding), LatestActiveAny resolves the
 // active row at MAX(coordination_generation) regardless of partial (the
-// §10.1 resume-reassembly selector), and LatestFull resolves the
+// §10.1.7 resume-reassembly selector), and LatestFull resolves the
 // last successful full checkpoint the resume path falls back to when
 // reassembly of the selected manifest fails its contiguity or recovery-
 // threshold check. The Postgres and in-memory checkpoint_manifest stores
@@ -1400,7 +1400,7 @@ type Options struct {
 	// defaulting to ResumeFull when a workspace snapshot is present.
 	PartialManifestLookup PartialManifestLookup
 
-	// ResumeChunkResolver, when set, resolves the §10.1 reassembly
+	// ResumeChunkResolver, when set, resolves the §10.1.7 reassembly
 	// chunk set the resume path hands the adapter. Nil leaves the resume
 	// carrying no chunks.
 	ResumeChunkResolver ResumeChunkResolver
@@ -2520,7 +2520,7 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
 	}
 	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
-	// spec: §10.1 / §5.2 — surface the per-pool
+	// spec: §10.1.7 / §5.2 — surface the per-pool
 	// checkpointGrantWindow override so the checkpoint driver's per-pool
 	// lookup reads the gateway-enforced value; nil leaves the driver on the
 	// deployment-wide default.

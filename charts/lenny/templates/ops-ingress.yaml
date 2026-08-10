@@ -1,6 +1,5 @@
 {{- /*
-The §25.4 lenny-ops Ingress and PodDisruptionBudget (§25.4 lines
-991-1024, 1313-1324). §25.4 documents lenny-ops as external-only:
+The §25.4 lenny-ops Ingress and PodDisruptionBudget (§25.4). §25.4 documents lenny-ops as external-only:
 agents reach the §25 operability surface through this Ingress, which
 the controller terminates TLS for and forwards to the lenny-ops
 ClusterIP Service on its http port. The companion
@@ -14,8 +13,7 @@ read/send timeout so the §25.5 SSE long-lived connections are not
 severed mid-stream; it renders as nginx proxy-timeout annotations,
 merged under any operator-supplied annotations.
 
-The PodDisruptionBudget is rendered regardless of replica count (§25.4
-line 1316): at one replica it is a no-op, but scaling up then requires
+The PodDisruptionBudget is rendered regardless of replica count (§25.4): at one replica it is a no-op, but scaling up then requires
 no chart change. minAvailable: 1 caps voluntary disruptions during node
 drains; the lease (15s) expires and a new pod is elected leader.
 */ -}}

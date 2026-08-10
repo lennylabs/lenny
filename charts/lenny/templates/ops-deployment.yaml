@@ -7,7 +7,7 @@ delivery worker, the scheduled-backup runner). lenny-ops is mandatory
 in every installation (§17.8.5); the chart provides no flag to disable
 it.
 
-Pod label exception (§13.2): lenny-ops pods carry app:
+Pod label exception (§13.2.3): lenny-ops pods carry app:
 lenny-ops rather than the lenny.dev/component selector the rest of the
 control plane uses, because lenny-ops is a separate operability plane.
 The §13.2 NET-051 NetworkPolicies and podmonitor.yaml select it by this

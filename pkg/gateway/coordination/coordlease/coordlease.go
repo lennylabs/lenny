@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package coordlease is the §10.1 CheckpointBarrier
+// Package coordlease is the §10.1.8 CheckpointBarrier
 // barrier-target mirror: a Postgres-durable, cross-replica index of
 // which gateway replica coordinates which session. The authoritative
 // coordination lease lives in Redis (pkg/gateway/leasestore); the
@@ -8,7 +8,7 @@
 // preStop graceful-drain barrier can enumerate its barrier-target set
 // from Postgres rather than the in-memory lease cache.
 //
-// §10.1 sources the barrier-target set from
+// §10.1.8 sources the barrier-target set from
 //
 //	SELECT session_id FROM coordination_lease
 //	WHERE coordinator_replica = $this_replica_id AND released_at IS NULL
@@ -50,7 +50,7 @@ type Lease struct {
 	// CoordinatorReplica is the OTel service.instance.id of the holder.
 	CoordinatorReplica string
 	// CoordinationGeneration is the §4.2 fenced generation carried in
-	// the CheckpointBarrier message (§10.1).
+	// the CheckpointBarrier message (§10.1.8).
 	CoordinationGeneration int64
 }
 
@@ -70,7 +70,7 @@ type Store interface {
 	Release(ctx context.Context, tenantID, sessionID string) error
 
 	// ListHeldByReplica returns the active (released_at IS NULL) leases
-	// whose coordinator_replica equals replica — the §10.1
+	// whose coordinator_replica equals replica — the §10.1.8
 	// barrier-target set. The query is cross-tenant.
 	ListHeldByReplica(ctx context.Context, replica string) ([]Lease, error)
 

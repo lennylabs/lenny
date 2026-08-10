@@ -21,7 +21,7 @@ import (
 // check is a non-blocking warning that catches the two most common
 // misconfigurations (wrong namespace, wrong pod label) at deploy time.
 //
-// spec: §13.2 (NET-038 lenny-preflight validates that (a) a
+// spec: §13.2.4 (NET-038 lenny-preflight validates that (a) a
 // namespace with the configured name exists and (b) at least one running
 // pod there carries the configured controllerPodLabel, and warns if
 // either check fails). F-13.2.8.

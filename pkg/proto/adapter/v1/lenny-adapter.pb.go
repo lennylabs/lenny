@@ -3903,7 +3903,7 @@ func (*CheckpointRequest_Grant) isCheckpointRequest_Msg() {}
 func (*CheckpointRequest_Abort) isCheckpointRequest_Msg() {}
 
 // CheckpointStart opens the stream. It carries the gateway-minted
-// `checkpoint_id` (§10.1 — the adapter never mints one), the
+// `checkpoint_id` (§10.1.7 — the adapter never mints one), the
 // typed trigger, the gateway-chosen chunk size and encoding, and the
 // applicable deadline.
 type CheckpointStart struct {
@@ -5200,7 +5200,7 @@ func (x *CheckpointBarrierRequest) GetBarrierId() string {
 // CheckpointBarrierAck event emitted on the AdapterEvents control
 // stream (§4.7). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
-// CheckpointStart of the barrier-window Checkpoint stream (§10.1);
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1.8);
 // empty when the gateway drove no stream against the pod. The adapter
 // returns the ack only after that gateway-driven stream terminates.
 // quiesced_ms reports the time-to-quiescence measured inside the ack

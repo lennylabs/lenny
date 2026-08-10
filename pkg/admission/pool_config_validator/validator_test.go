@@ -562,7 +562,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 // budget rejections (floor > terminationGracePeriodSeconds, floor >
 // maxTerminationGracePeriodSeconds) set Decision.BudgetExceeded so the
 // webhook increments lenny_pool_termination_budget_exceeded_total. The
-// BarrierAck-floor rule (§10.1) and the warm-count / acknowledgment
+// BarrierAck-floor rule (§10.1.7) and the warm-count / acknowledgment
 // rejections are distinct and must NOT increment that counter.
 func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }

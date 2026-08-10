@@ -412,7 +412,7 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	spec := tpl.Spec
 
-	// spec: §13.2 — the §13.2 egress/delivery coherence
+	// spec: §13.2.5 — the §13.2 egress/delivery coherence
 	// cross-controls are independent of executionMode, so they run before
 	// the mode-specific switch. This is the pool-registration-validation
 	// layer (layer 1) of the NET-006 mutual exclusivity; the
@@ -532,10 +532,10 @@ func decideRecycleScrubProfile(spec lennyv1.SandboxTemplateSpec) Decision {
 	return allow()
 }
 
-// MaxTieredCheckpointCapSeconds returns the §10.1 tiered
+// MaxTieredCheckpointCapSeconds returns the §10.1.7 tiered
 // checkpoint cap matching workspaceSizeLimitBytes. Unknown/unset sizes
 // (workspaceSizeLimitBytes <= 0) fall back to the conservative 90s
-// maximum tier per §10.1 — the same behaviour the gateway
+// maximum tier per §10.1.7 — the same behaviour the gateway
 // applies when last_checkpoint_workspace_bytes is NULL.
 //
 // Tier table:
@@ -563,7 +563,7 @@ func MaxTieredCheckpointCapSeconds(workspaceSizeLimitBytes int64) int64 {
 	}
 }
 
-// defaultCheckpointBarrierAckTimeoutSeconds is the §10.1 wall-
+// defaultCheckpointBarrierAckTimeoutSeconds is the §10.1.7 wall-
 // clock deadline default the gateway waits for `CheckpointBarrierAck`
 // from every coordinated pod during a rolling drain.
 const defaultCheckpointBarrierAckTimeoutSeconds = 90
@@ -624,7 +624,7 @@ const agentDefaultTerminationGraceSeconds = 120
 //     exceeds it, the configuration is rejected (deployers opt into a
 //     hard ceiling per §5.2).
 //   - When checkpointBarrierAckTimeoutSeconds < max_tiered_checkpoint_cap,
-//     the configuration is rejected per §10.1 BarrierAck-floor
+//     the configuration is rejected per §10.1.7 BarrierAck-floor
 //     rule (a BarrierAck below the tier cap would declare a legitimately
 //     slow uploader unresponsive). This is an independent rule; the
 //     BarrierAck term does not enter the grace floor above.

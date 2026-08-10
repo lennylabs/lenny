@@ -20,7 +20,7 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
-		// spec: §13.2 step 2 — renders unconditionally, so the
+		// spec: §13.2.5 step 2 — renders unconditionally, so the
 		// inventory expects it in the baseline set (F-13.2.12).
 		"lenny-direct-mode-isolation": true,
 		// spec: §10.5 — renders unconditionally and fail-closed
@@ -70,7 +70,7 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 	}
 }
 
-// spec: §13.2 step 2 (F-13.2.12) — lenny-direct-mode-isolation
+// spec: §13.2.5 step 2 (F-13.2.12) — lenny-direct-mode-isolation
 // is no longer gated on the LLM-proxy feature flag; it appears in the
 // inventory whether or not LLMProxy is set.
 func TestExpectedValidatingWebhooksDirectModeIsolationUngated_spec_13_2(t *testing.T) {

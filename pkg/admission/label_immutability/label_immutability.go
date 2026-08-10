@@ -119,7 +119,7 @@ func Decide(r Request) (Decision, error) {
 // DecideImmutableLabels enforces the §17.2 item 5 rule that the
 // canonical egress-governing labels (lenny.dev/managed,
 // lenny.dev/delivery-mode, lenny.dev/egress-profile, lenny.dev/dns-policy)
-// are immutable on existing agent pods. spec: §13.2 — mutating
+// are immutable on existing agent pods. spec: §13.2.2 — mutating
 // lenny.dev/egress-profile from `restricted` to `internet`, or adding
 // lenny.dev/dns-policy to a non-opted-out pod, would broaden egress or
 // bypass the dedicated CoreDNS instance without re-admission through the

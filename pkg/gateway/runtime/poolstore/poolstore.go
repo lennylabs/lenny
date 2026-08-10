@@ -61,7 +61,7 @@ type Pool struct {
 	// deployment-wide checkpointGrantWindow: the number of chunk-upload
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. Nil leaves the checkpoint driver on the
-	// deployment-wide default. spec: §10.1 chunk-grant window;
+	// deployment-wide default. spec: §10.1.7 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int
 

@@ -59,8 +59,7 @@ The cloud-managed fragments carry placeholder connection endpoints
 mirror (`platform.registry.*`) and `preflight.skipNetworkProbes: true`
 (§17.9.11). Each catalog fragment is linted against
 `charts/lenny/values.schema.json` by
-`pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2 line
-1374), and the wizard auto-suggests a catalog base from cluster
+`pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2), and the wizard auto-suggests a catalog base from cluster
 detection (§17.9.2; see the install wizard).
 
 ## Schema

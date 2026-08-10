@@ -26,7 +26,7 @@ docker build \
 ```
 
 The Helm chart renders a readiness probe against the CoreDNS health
-endpoint (spec §13.2); a custom image missing either plugin
+endpoint (spec §13.2.7); a custom image missing either plugin
 fails to load the Corefile and the probe keeps the pod out of the
 `lenny-agent-dns` Service.
 

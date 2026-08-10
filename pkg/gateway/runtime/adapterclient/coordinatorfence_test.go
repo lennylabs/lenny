@@ -54,7 +54,7 @@ func TestCoordinatorFenceStaleRejected_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a fence that skips one or more generations is
+// spec: §10.1.2 — a fence that skips one or more generations is
 // accepted but flags the gap so the pod resets transient tool-call
 // state; the wrapper surfaces GapDetected.
 func TestCoordinatorFenceGapDetected_spec_10_1(t *testing.T) {

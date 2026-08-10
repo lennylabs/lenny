@@ -209,7 +209,7 @@ tests:
       value: allow-gateway-ingress
     asserts:
       # §13.2 NET-051/NET-070: lenny-ops matched by namespaceSelector +
-      # podSelector app: lenny-ops (the §13.2 selector exception).
+      # podSelector app: lenny-ops (the §13.2.3 selector exception).
       - equal:
           path: spec.ingress[3].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: lenny-system
@@ -335,7 +335,7 @@ tests:
       - notExists:
           path: $[?(@.metadata.name == "allow-deployment-config-sync-egress")]
 
-  # spec: §4.6.2 / §13.2 — the PoolScalingController runs as its own
+  # spec: §4.6.2 / §13.2.3 — the PoolScalingController runs as its own
   # Deployment labelled lenny.dev/component: pool-scaling-controller, so the
   # allow-controller-egress policy (which selects lenny.dev/component:
   # controller) does not cover it. This policy admits the §13.2 PSC egress:
@@ -402,7 +402,7 @@ tests:
       path: metadata.name
       value: allow-ops
     asserts:
-      # §13.2: lenny-ops uses app: lenny-ops, not the component label.
+      # §13.2.3: lenny-ops uses app: lenny-ops, not the component label.
       - equal:
           path: spec.podSelector.matchLabels.app
           value: lenny-ops

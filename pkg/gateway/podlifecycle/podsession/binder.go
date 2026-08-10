@@ -654,7 +654,7 @@ type ResumeRequest struct {
 	// decompress→untar pipeline. Empty for the conversation-only and
 	// coordinator-handoff resume paths that restore no workspace.
 	//
-	// spec: §10.1 — reassembly on resume.
+	// spec: §10.1.7 — reassembly on resume.
 	Chunks []adapterclient.ChunkGrant
 }
 

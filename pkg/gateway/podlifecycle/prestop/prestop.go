@@ -203,7 +203,7 @@ type SessionEnumerator interface {
 // dispatcher skips the barrier.
 //
 // The Outcome set lets the hook skip every barrier-acked session in its
-// post-barrier per-session loop: under the §10.1
+// post-barrier per-session loop: under the §10.1.8
 // quiesce-and-hold contract the barrier already drove a full gateway-side
 // checkpoint for every session it acked, so re-checkpointing those
 // sessions in the loop would open a second manifest row and duplicate
@@ -226,7 +226,7 @@ type CheckpointFn func(ctx context.Context, tenantID, sessionID string, budget t
 // `lenny_gateway_sigkill_streams_total` counters on. The
 // gatewaymetrics.Metrics satisfies it; tests inject fakes.
 //
-// spec: §10.1 — preStop tier selection source counter and the
+// spec: §10.1.7 — preStop tier selection source counter and the
 // SIGKILL-deadline stream counter.
 type CapMetricsEmitter interface {
 	IncPreStopCapSelection(pool, serviceInstanceID, source string)
@@ -234,7 +234,7 @@ type CapMetricsEmitter interface {
 	// checkpoint did not finish within its tier budget before the
 	// grace period elapsed. Kubernetes SIGKILLs the pod at the grace
 	// deadline, forcibly terminating any such stream, so the counter
-	// quantifies the impact of forced disconnections (§10.1).
+	// quantifies the impact of forced disconnections (§10.1.7).
 	IncSigkillStreams(pool, serviceInstanceID string)
 }
 
@@ -325,7 +325,7 @@ type Summary struct {
 	// at the deadline so each is a forcibly terminated stream
 	// (§10.1).
 	SigkilledStreams int `json:"sigkilled_streams,omitempty"`
-	// BarrierCheckpointedSessions counts sessions the §10.1
+	// BarrierCheckpointedSessions counts sessions the §10.1.8
 	// quiesce-and-hold barrier already checkpointed, so the post-barrier
 	// per-session loop skipped them rather than checkpointing them twice.
 	BarrierCheckpointedSessions int      `json:"barrier_checkpointed_sessions,omitempty"`
@@ -359,7 +359,7 @@ func (h *Hook) run(ctx context.Context) Summary {
 	// lag (1–5s) overlaps the checkpoint wait rather than racing it.
 	h.draining.Store(true)
 	grace := h.gracePeriod()
-	// spec: §10.1 — the moment readiness flips, send the
+	// spec: §10.1.8 — the moment readiness flips, send the
 	// CheckpointBarrier to every coordinated session under the single
 	// checkpointBarrierAckTimeoutSeconds wall-clock deadline (§10.1 / §11.3), so in-flight tool calls quiesce and flush a
 	// best-effort checkpoint before the eviction-checkpoint drain runs.
@@ -387,7 +387,7 @@ func (h *Hook) run(ctx context.Context) Summary {
 	var wg sync.WaitGroup
 	for _, sess := range sessions {
 		sess := sess
-		// spec: §10.1 — a session the barrier already checkpointed
+		// spec: §10.1.8 — a session the barrier already checkpointed
 		// under quiesce-and-hold must not be checkpointed a second time by
 		// this loop. The loop covers only barrier-unreachable sessions
 		// (ack-timeout, generation-stale, or transport error), which are the
@@ -472,7 +472,7 @@ func (h *Hook) emitCapSelection(pool string, source CapSelectionSource) {
 	h.Metrics.IncPreStopCapSelection(pool, h.ServiceInstanceID, string(source))
 }
 
-// emitSigkillStream bumps the §10.1
+// emitSigkillStream bumps the §10.1.7
 // `lenny_gateway_sigkill_streams_total` counter for one session whose
 // eviction checkpoint exceeded its budget before the grace deadline.
 func (h *Hook) emitSigkillStream(pool string) {
@@ -491,7 +491,7 @@ func (h *Hook) emitSigkillStream(pool string) {
 // checkpointBarrierAckTimeoutSeconds single wall-clock deadline across all
 // pods.
 //
-// Under the §10.1 quiesce-and-hold contract every acked session
+// Under the §10.1.8 quiesce-and-hold contract every acked session
 // was checkpointed by the barrier itself, so the returned set is the
 // sessions the post-barrier per-session loop must skip to avoid
 // checkpointing them a second time.

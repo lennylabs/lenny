@@ -762,7 +762,7 @@ spec:
             # matches the §11.3 value and fits inside the grace period.
             - name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
               value: {{ .Values.gateway.checkpointBarrierAckTimeoutSeconds | default 90 | quote }}
-            # §10.1 / §17.8.1 — checkpointGrantWindow: the number of
+            # §10.1.7 / §17.8.1 — checkpointGrantWindow: the number of
             # chunk-upload capabilities the gateway keeps outstanding at once
             # while draining a session's workspace checkpoint. It bounds the
             # pipelining depth and the worst-case unreconciled overage against

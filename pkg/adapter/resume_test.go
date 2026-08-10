@@ -23,7 +23,7 @@ import (
 // spec: §4.7 / §7.1 — the adapter Resume RPC restores a session
 // workspace from the gateway-minted presigned GET capabilities on
 // ResumeRequest.chunks, fetched in index order and concatenated into one
-// tar (or tar.gz) byte stream (§10.1).
+// tar (or tar.gz) byte stream (§10.1.7).
 
 // fakeCheckpointTransport serves fixed chunk bodies keyed by presigned
 // URL, standing in for the object store the production restore path
@@ -139,7 +139,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a multi-chunk checkpoint is restored by fetching
+// spec: §10.1.7 — a multi-chunk checkpoint is restored by fetching
 // each presigned GET capability in ascending index order and feeding the
 // concatenation into one decompress→untar pipeline. This pins that the
 // adapter reassembles across chunk boundaries rather than treating each

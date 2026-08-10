@@ -47,17 +47,17 @@ type podLifecycleMetrics struct {
 	// and `source` (postgres | postgres_null | cache_hit |
 	// cache_miss_max_tier).
 	prestopCapSelection *prometheus.CounterVec
-	// barrierTargetSource counts the §10.1 preStop barrier
+	// barrierTargetSource counts the §10.1.8 preStop barrier
 	// target-set reads by source (postgres | cache_fallback) so
 	// operators can detect how often the degraded in-memory lease-cache
 	// path is exercised when the coordination-lease read fails.
 	barrierTargetSource *prometheus.CounterVec
-	// sigkillStreams counts the §10.1 in-flight streams the
+	// sigkillStreams counts the §10.1.7 in-flight streams the
 	// kubelet SIGKILLs at the grace deadline because their eviction
 	// checkpoint did not finish in budget. Labels: `pool`,
 	// `service_instance_id`.
 	sigkillStreams *prometheus.CounterVec
-	// coordinatorHandoffStale counts the §10.1 generation-stale
+	// coordinatorHandoffStale counts the §10.1.5 generation-stale
 	// coordinator-handoff rejections: a CoordinatorFence the gateway
 	// issued was rejected because the pod had already been fenced to an
 	// equal-or-higher generation by another coordinator.
@@ -144,7 +144,7 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §10.1 — `lenny_prestop_barrier_target_source_total`
+	// §10.1.8 — `lenny_prestop_barrier_target_source_total`
 	// counts preStop CheckpointBarrier target-set reads by source
 	// (postgres | cache_fallback) so operators can detect how often the
 	// degraded in-memory lease-cache path is taken when the
@@ -156,7 +156,7 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.1 — `lenny_gateway_sigkill_streams_total`
+	// spec: §10.1.7 — `lenny_gateway_sigkill_streams_total`
 	// counts in-flight streams forcibly terminated when the kubelet
 	// SIGKILLs the pod at the grace deadline because their eviction
 	// checkpoint did not complete in budget. Labels mirror the cap
@@ -169,13 +169,13 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §10.1 — `lenny_coordinator_handoff_stale_total` counts the
+	// §10.1.5 — `lenny_coordinator_handoff_stale_total` counts the
 	// generation-stale coordinator-handoff rejections: a CoordinatorFence
 	// the gateway issued was refused because the pod had already been
 	// fenced to an equal-or-higher generation by another coordinator.
 	coordinatorHandoffStale, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_coordinator_handoff_stale_total",
-		Help: "Generation-stale coordinator handoff rejections (§10.1).",
+		Help: "Generation-stale coordinator handoff rejections (§10.1.5).",
 	}, nil)
 	if err != nil {
 		return m, err

@@ -72,7 +72,7 @@ func mustCreate(t *testing.T, store sessionstore.Store, s sessionstore.Session) 
 	}
 }
 
-// spec: §10.1 — the sweep mirrors every lease this replica holds
+// spec: §10.1.8 — the sweep mirrors every lease this replica holds
 // into the coordination_lease barrier-target table, and a terminal
 // session's row is marked released so the barrier-target query stops
 // returning it.
@@ -123,7 +123,7 @@ func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a session this replica cannot acquire (held by
+// spec: §10.1.8 — a session this replica cannot acquire (held by
 // another replica) is not mirrored under this replica's id.
 func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
@@ -147,7 +147,7 @@ func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a nil Mirror disables mirroring without
+// spec: §10.1.8 — a nil Mirror disables mirroring without
 // affecting the sweep (the barrier then falls back to the in-memory
 // lease cache).
 func TestSweepNilMirrorIsNoop_spec_10_1_165(t *testing.T) {

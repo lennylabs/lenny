@@ -80,7 +80,7 @@ var (
 		Help: "Adapter→gateway control events that could not be delivered " +
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
-	// §10.1: 1 while the adapter is in the coordinator-loss hold
+	// §10.1.4: 1 while the adapter is in the coordinator-loss hold
 	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
 	coordinatorHold = mustGauge(prometheus.GaugeOpts{
 		Name: "lenny_adapter_coordinator_hold",

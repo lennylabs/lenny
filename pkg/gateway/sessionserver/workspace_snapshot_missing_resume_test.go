@@ -12,7 +12,7 @@ import "testing"
 // the gateway surfaces this to clients via the existing session-state API."
 //
 // The adapter restore path now fetches presigned chunk GET capabilities the
-// gateway mints from the manifest row (§10.1) rather than an
+// gateway mints from the manifest row (§10.1.7) rather than an
 // in-adapter checkpoint source, so the missing-snapshot detection point and
 // the session-state API field that carries the error are re-expressed
 // against the gateway resume driver. The test stays skipped until that path

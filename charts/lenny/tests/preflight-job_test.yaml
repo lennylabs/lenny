@@ -685,7 +685,7 @@ tests:
             resources: ["clusterissuers"]
             verbs: ["get"]
 
-  # spec: §13.2 NET-038 — the Job passes the
+  # spec: §13.2.4 NET-038 — the Job passes the
   # ingressControllerNamespace and ingress.controllerPodLabel.key/value to
   # the preflight binary so it can verify the allow-gateway-ingress
   # NetworkPolicy admits external HTTPS. F-13.2.8.
@@ -704,7 +704,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--ingress-controller-pod-label-value=ingress-nginx"
 
-  # spec: §13.2 NET-038 — a custom Ingress controller (traefik)
+  # spec: §13.2.4 NET-038 — a custom Ingress controller (traefik)
   # flows through to the advisory inputs. F-13.2.8.
   - it: passes a custom ingress-controller namespace and pod label
     set:

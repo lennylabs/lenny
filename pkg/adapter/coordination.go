@@ -74,10 +74,10 @@ func (s *Server) BarrierWaiting() bool {
 // detail. The first fence on a pod's lifetime is recorded regardless of
 // value (a replacement pod can be fenced into an existing session's
 // generation); subsequent fences must be strictly greater. Skipping one
-// or more generations triggers the §10.1 gap-detection path:
+// or more generations triggers the §10.1.2 gap-detection path:
 // the adapter logs a `coordinator_generation_gap` event and returns
 // GapDetected: true while still acknowledging the new generation. The
-// §10.1 in-flight-RPC cancellation is an unimplemented spec
+// §10.1.2 in-flight-RPC cancellation is an unimplemented spec
 // requirement the adapter does not currently perform.
 //
 // spec: §4.7, §10.1.
@@ -107,7 +107,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	}
 	gap := s.coord.initialized && gen > s.coord.lastFenced+1
 	if gap {
-		// §10.1 — a skipped generation logs
+		// §10.1.2 — a skipped generation logs
 		// `coordinator_generation_gap` and reports GapDetected so the
 		// caller can react. The spec's in-flight-RPC cancellation is a
 		// requirement the adapter does not currently implement.
@@ -121,7 +121,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	s.coord.initialized = true
 	_ = prev
 
-	// spec: §10.1 — a successful fence from a new coordinator is
+	// spec: §10.1.4 — a successful fence from a new coordinator is
 	// the only way out of hold state. exitHoldState locks only hold.mu, so
 	// calling it while coord.mu is held is deadlock-free (enterHoldState
 	// reads the generation through the accessor before taking hold.mu, and
@@ -225,7 +225,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 		return nil, status.Error(codes.InvalidArgument, "CheckpointBarrier requires a positive coordination_generation")
 	}
 
-	// §10.1: the barrier shares the §10.1 generation gate the
+	// §10.1.2: the barrier shares the §10.1 generation gate the
 	// CoordinatorFence installs. Reject when the gateway-supplied value
 	// does not match the last fenced generation; the gateway re-issues
 	// after the next fence.
@@ -246,7 +246,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	s.coord.mu.Lock()
 	s.coord.quiesced = true
 	s.coord.mu.Unlock()
-	// spec: §10.1 — quiesced_ms is the time-to-quiescence measured
+	// spec: §10.1.8 — quiesced_ms is the time-to-quiescence measured
 	// inside the ack window, so it is captured the instant quiescence is
 	// reached, not across the held gateway-driven upload that follows.
 	quiescedMs := time.Since(startedAt).Milliseconds()

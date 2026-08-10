@@ -263,7 +263,7 @@ type Server struct {
 	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
 	ExpiryNow       func() time.Time
 
-	// CoordinatorHoldTimeout overrides the §10.1
+	// CoordinatorHoldTimeout overrides the §10.1.4
 	// coordinatorHoldTimeoutSeconds default (120s): the window the adapter
 	// holds a session after losing its coordinator before it
 	// self-terminates. Zero selects the spec default.
@@ -272,7 +272,7 @@ type Server struct {
 	// time.AfterFunc; tests inject a fake to fire the hold timeout
 	// deterministically.
 	HoldAfterFunc func(time.Duration, func()) expiryTimerHandle
-	// PostMortemDir is the pod-local directory the §10.1 hold
+	// PostMortemDir is the pod-local directory the §10.1.4 hold
 	// timeout writes a coordinator_lost post-mortem record into when no
 	// new coordinator returns and the gateway control stream is gone.
 	// Empty skips the disk write (the dev path); the AdapterTerminating

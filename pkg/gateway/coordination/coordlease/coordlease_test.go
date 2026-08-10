@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §10.1 — Upsert records the held lease and
+// spec: §10.1.8 — Upsert records the held lease and
 // ListHeldByReplica returns it as part of the barrier-target set.
 func TestMemoryStoreUpsertAndListHeldByReplica_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
@@ -40,7 +40,7 @@ func TestMemoryStoreUpsertAndListHeldByReplica_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a cross-replica handoff overwrites
+// spec: §10.1.8 — a cross-replica handoff overwrites
 // coordinator_replica with the new holder, so the prior holder's
 // barrier-target set no longer returns the session.
 func TestMemoryStoreUpsertHandoffOverwritesReplica_spec_10_1_165(t *testing.T) {
@@ -60,7 +60,7 @@ func TestMemoryStoreUpsertHandoffOverwritesReplica_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — Release excludes the row from the barrier-target
+// spec: §10.1.8 — Release excludes the row from the barrier-target
 // query; it is idempotent and monotonic.
 func TestMemoryStoreReleaseExcludesFromTargets_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()

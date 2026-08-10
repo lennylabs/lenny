@@ -71,7 +71,7 @@ func TestCheckpointFinalisesCompleteOnlyAfterEveryByteConfirmed(t *testing.T) {
 	}
 }
 
-// spec: §4.4 / §10.1 — a PUT that fails past the retry budget
+// spec: §4.4 / §10.1.7 — a PUT that fails past the retry budget
 // leaves partial = true and the DeleteObject sweep removes the chunks the
 // aborted attempt confirmed before the failure.
 // diagnosis: a PUT that exhausted its retry budget either finalised the

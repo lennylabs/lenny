@@ -37,7 +37,7 @@ func NewGRPCServer(s *Server, opts ...grpc.ServerOption) *grpc.Server {
 	// type, and outcome, never the secret payload. Prepended so it owns the
 	// credential access-log surface before any caller-supplied interceptor.
 	// F-16.4.8.
-	// spec: §10.1 — the hold-state interceptors reject every
+	// spec: §10.1.4 — the hold-state interceptors reject every
 	// non-allowlisted RPC with coordinator_hold while the adapter is
 	// awaiting a new coordinator, so the enforcement is uniform across
 	// every operational method without each handler re-checking.

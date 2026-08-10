@@ -1140,13 +1140,13 @@ func (f *gatewayFlags) registerArtifactFlags() {
 		"§12.5 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
 	f.checkpointGrantWindow = flag.Int("checkpoint-grant-window",
 		envInt("LENNY_CHECKPOINT_GRANT_WINDOW", checkpointer.DefaultGrantWindow),
-		"§10.1 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
+		"§10.1.7 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
 	f.checkpointCapabilityTTLSeconds = flag.Int("checkpoint-capability-ttl-seconds",
 		envInt("LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS", checkpointer.DefaultCapabilityTTLSeconds),
 		"§13.2 / §17.8.1 checkpointCapabilityTTLSeconds: the expiry, in seconds, of each gateway-minted presigned checkpoint upload or restore capability. Default 30. Override via LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.")
 	f.partialRecoveryThresholdFraction = flag.Float64("partial-recovery-threshold-fraction",
 		envFloat("LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION", 0.5),
-		"§10.1 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
+		"§10.1.7 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
 	f.noEnvPolicy = flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	f.connectorOAuthCallbackURL = flag.String("connector-oauth-callback-url", os.Getenv("LENNY_CONNECTOR_OAUTH_CALLBACK_URL"),

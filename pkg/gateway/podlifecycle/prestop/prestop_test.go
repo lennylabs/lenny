@@ -169,7 +169,7 @@ func TestHook_DrainsSessionsAndEmitsCapSelection(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a session whose eviction checkpoint exceeds
+// spec: §10.1.7 — a session whose eviction checkpoint exceeds
 // its budget is still in flight at the grace deadline, so the hook
 // counts it as a SIGKILL'd stream and bumps
 // lenny_gateway_sigkill_streams_total once per such session. A session
@@ -212,7 +212,7 @@ func TestHook_DeadlineExceededEmitsSigkillStream_spec_10_1_161(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a non-deadline checkpoint failure is not a
+// spec: §10.1.7 — a non-deadline checkpoint failure is not a
 // SIGKILL'd stream; only the grace-deadline path bumps the counter.
 func TestHook_NonDeadlineFailureNoSigkillStream_spec_10_1_161(t *testing.T) {
 	enum := &fakeEnumerator{sessions: []SessionInfo{

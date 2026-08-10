@@ -1123,7 +1123,7 @@ func runOpsSARBACChecks(ctx context.Context, _ client.Reader, cfg Config) []Chec
 	}}
 }
 
-// runIngressControllerChecks runs the §13.2 NET-038 non-blocking
+// runIngressControllerChecks runs the §13.2.4 NET-038 non-blocking
 // ingress-controller advisory. It validates that the
 // ingressControllerNamespace exists and runs at least one pod carrying the
 // configured controllerPodLabel, so the allow-gateway-ingress

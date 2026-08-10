@@ -8,7 +8,7 @@ proxy / egressProfile provider-direct mutual exclusivity (every tenancy
 mode). Scoped to agent namespaces and the sandboxtemplates resource;
 fail-closed.
 
-Rendered unconditionally (§13.2 step 2): the enforcement target
+Rendered unconditionally (§13.2.5 step 2): the enforcement target
 is the credential-delivery / egress configuration of a pool, which is
 independent of whether the LLM proxy feature is enabled. A multi-tenant
 install with features.llmProxy: false still admits direct + standard

@@ -2,7 +2,7 @@
 
 //go:build load_local
 
-// Tier-7a load_local coverage for the §10.1 quiesce-and-hold
+// Tier-7a load_local coverage for the §10.1.8 quiesce-and-hold
 // drain: across a whole preStop drain no coordinated session is
 // checkpointed twice. Under quiesce-and-hold the barrier drives a full
 // gateway-side Checkpoint for every session it acks, so the post-barrier

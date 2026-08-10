@@ -257,7 +257,7 @@ func minioIngressGatewayOnly() *networkingv1.NetworkPolicy {
 // NET-071 both-or-neither invariant: an in-cluster object-store egress
 // arm paired with the matching MinIO agent-namespace ingress clause passes.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityPassesOnMatchedPair(t *testing.T) {
 	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
 		*objectStoreInClusterPolicy(),
@@ -273,7 +273,7 @@ func TestCheckObjectStoreEgressParityPassesOnMatchedPair(t *testing.T) {
 // with no in-cluster arm and no MinIO agent-namespace ingress clause
 // passes: the cloud-managed profile has no MinIO pod and no ingress side.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityPassesOnCloudManagedArm(t *testing.T) {
 	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
 		*objectStoreCloudPolicy(),
@@ -288,7 +288,7 @@ func TestCheckObjectStoreEgressParityPassesOnCloudManagedArm(t *testing.T) {
 // deployment resolving the in-memory or filesystem store (no object-store
 // egress policy, no agent-namespace MinIO ingress clause) passes.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityPassesWhenNeitherRenders(t *testing.T) {
 	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
 		*minioIngressGatewayOnly(),
@@ -306,7 +306,7 @@ func TestCheckObjectStoreEgressParityPassesWhenNeitherRenders(t *testing.T) {
 // gate rejects; before this check existed the one-sided render passed
 // preflight and silently broke checkpoint transfer at runtime.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityFailsInClusterArmWithoutMinIOIngress(t *testing.T) {
 	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
 		*objectStoreInClusterPolicy(),
@@ -324,7 +324,7 @@ func TestCheckObjectStoreEgressParityFailsInClusterArmWithoutMinIOIngress(t *tes
 // pins the reverse NET-071 fail-closed gate: a MinIO agent-namespace
 // ingress clause rendered with no object-store egress policy fails closed.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityFailsMinIOIngressWithoutInClusterArm(t *testing.T) {
 	d := preflight.CheckObjectStoreEgressParity([]networkingv1.NetworkPolicy{
 		*minioIngressWithAgentClause(),
@@ -343,7 +343,7 @@ func TestCheckObjectStoreEgressParityFailsMinIOIngressWithoutInClusterArm(t *tes
 // objectStorage.egressCIDRs list under a cloud-managed provider. The
 // check fails it closed.
 //
-// spec: §13.2; §17.6 (NET-071).
+// spec: §13.2.3; §17.6 (NET-071).
 func TestCheckObjectStoreEgressParityFailsEmptyCloudCIDRs(t *testing.T) {
 	p := netPolicy("allow-pod-egress-objectstore")
 	p.Namespace = "lenny-agents"

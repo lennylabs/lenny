@@ -1018,14 +1018,14 @@ tests:
       #   renders)
       # + LENNY_QUOTA_ENFORCEMENT_MODE (§12.4, F-12.4.14 —
       #   quotaEnforcementMode defaults to `redis` and renders)
-      # + LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS (§10.1 /
+      # + LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS (§10.1.8 /
       #   §11.3, F-11.3.15 — checkpointBarrierAckTimeoutSeconds
       #   defaults to 90 and renders)
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
       #   claimHoldTTLSeconds defaults to 10 and renders)
       # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 / §6.57 —
       #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders)
-      # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1 / §17.8.1 —
+      # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1.7 / §17.8.1 —
       #   checkpointGrantWindow defaults to 4 and renders)
       # + LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS (§13.2 / §17.8.1 —
       #   checkpointCapabilityTTLSeconds defaults to 30 and renders) = 84.
@@ -3279,7 +3279,7 @@ tests:
             name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
             value: "120"
 
-  # §10.1 / §17.8.1 — checkpointGrantWindow defaults to 4 and
+  # §10.1.7 / §17.8.1 — checkpointGrantWindow defaults to 4 and
   # renders into the gateway env so the checkpoint grant/confirm loop keeps
   # at most that many chunk-upload capabilities outstanding at once.
   - it: renders the default checkpointGrantWindow (4)

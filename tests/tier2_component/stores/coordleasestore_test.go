@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §10.1 coordination_lease barrier-target
+// Contract test for the §10.1.8 coordination_lease barrier-target
 // mirror. Exercises pkg/gateway/coordlease/pgstore against a real Postgres
 // container with the production migrations (including 0164) applied: the
 // Upsert/ListHeldByReplica round-trip, the cross-replica handoff overwrite
@@ -29,7 +29,7 @@ func newCoordLeaseStore(t *testing.T) *coordleasepg.Store {
 	return coordleasepg.New(pg.Pool, nil)
 }
 
-// spec: §10.1 — the barrier-target query is cross-tenant per
+// spec: §10.1.8 — the barrier-target query is cross-tenant per
 // replica; a handoff overwrites coordinator_replica; Release excludes a
 // terminal session.
 // diagnosis: a failure means the coordination-lease store mishandles a

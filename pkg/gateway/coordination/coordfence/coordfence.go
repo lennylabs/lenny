@@ -163,7 +163,7 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 			return false, nil
 		case ferr != nil && status.Code(ferr) == codes.FailedPrecondition,
 			ferr == nil && !res.Accepted:
-			// spec: §10.1 — generation-stale rejection. Re-read
+			// spec: §10.1.8 — generation-stale rejection. Re-read
 			// the authoritative generation; if a handoff bump advanced it
 			// mid-flight, retry with the new value, otherwise the pod is
 			// genuinely ahead and this replica must relinquish.

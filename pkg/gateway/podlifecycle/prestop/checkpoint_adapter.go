@@ -21,7 +21,7 @@ type CheckpointTrigger interface {
 // CheckpointFnFor adapts a CheckpointTrigger (typically
 // *checkpointer.Checkpointer) to the CheckpointFn signature the
 // Hook expects. The per-session drain checkpoint is stamped
-// checkpoint.TriggerEviction so the §10.1 finalisation and the
+// checkpoint.TriggerEviction so the §10.1.8 finalisation and the
 // §16.1 `lenny_checkpoint_partial_total{trigger="eviction"}` domain both
 // see the eviction trigger on the post-barrier loop, symmetric with the
 // barrier-window driver. The budget is wrapped around the inner call via

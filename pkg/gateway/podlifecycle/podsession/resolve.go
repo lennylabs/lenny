@@ -163,7 +163,7 @@ type PoolMatch struct {
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. It is copied from the SandboxTemplate's
 	// checkpointGrantWindow field. Nil leaves the driver on the
-	// deployment-wide default. spec: §10.1 chunk-grant window;
+	// deployment-wide default. spec: §10.1.7 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int32
 }
@@ -210,7 +210,7 @@ type PoolPolicyMirror struct {
 	MaxQueueWaitSeconds int
 	// CheckpointGrantWindow is the §5.2 per-pool checkpointGrantWindow
 	// override read from the poolstore mirror. Nil leaves the checkpoint
-	// driver on the deployment-wide default. spec: §10.1; §5.2
+	// driver on the deployment-wide default. spec: §10.1.7; §5.2
 	// (per-pool override of the deployment-wide default).
 	CheckpointGrantWindow *int32
 }
@@ -321,7 +321,7 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 		if tmpl.Spec.WorkspaceSizeLimitBytes != nil {
 			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
-		// spec: §10.1 / §5.2 — copy the per-pool
+		// spec: §10.1.7 / §5.2 — copy the per-pool
 		// checkpointGrantWindow override from the SandboxTemplate so the
 		// checkpoint driver can prefer it over the deployment-wide default.
 		// foldPoolPolicy lets a poolstore mirror row override it further.
@@ -393,7 +393,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	if mirror.MaxConcurrent > 0 {
 		m.MaxConcurrent = mirror.MaxConcurrent
 	}
-	// spec: §10.1 / §5.2 — a poolstore mirror row that carries a
+	// spec: §10.1.7 / §5.2 — a poolstore mirror row that carries a
 	// checkpointGrantWindow override wins over the CRD-derived value; a
 	// mirror without the override leaves the CRD value in place.
 	if mirror.CheckpointGrantWindow != nil {

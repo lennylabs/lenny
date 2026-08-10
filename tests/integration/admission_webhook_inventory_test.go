@@ -99,7 +99,7 @@ func TestAdmissionWebhookInventoryMatchesPreflightExpected(t *testing.T) {
 // rendered webhook set relative to the baseline, because the proxy flag
 // no longer gates any webhook.
 //
-// spec: §17.2; §13.2 step 2. F-17.2.15 / F-13.2.12.
+// spec: §17.2; §13.2.5 step 2. F-17.2.15 / F-13.2.12.
 func TestAdmissionWebhookInventoryLLMProxyAddsNoWebhook(t *testing.T) {
 	helm.SkipUnlessAvailable(t)
 

@@ -46,7 +46,7 @@ const (
 	// SourcePostgres is the steady-state healthy path: the target set
 	// came from the coordination-lease table.
 	SourcePostgres = "postgres"
-	// SourceCacheFallback is the §10.1 degraded path: the
+	// SourceCacheFallback is the §10.1.8 degraded path: the
 	// coordination-lease read failed or exceeded its 2s deadline and
 	// the replica fell back to its in-memory lease cache for the
 	// barrier-target set.
@@ -61,7 +61,7 @@ type Target struct {
 	SessionID string
 	// CoordinationGeneration is the replica's fenced generation for
 	// the session. The adapter rejects a barrier whose generation does
-	// not match its last fenced value (§10.1 false-positive
+	// not match its last fenced value (§10.1.8 false-positive
 	// handling), so a stale value is safe.
 	CoordinationGeneration int64
 }
@@ -87,7 +87,7 @@ type Dispatcher interface {
 // TargetLister enumerates the barrier-target set for this replica and
 // reports its source. Production queries the coordination-lease mirror
 // under a 2s deadline and falls back to the in-memory lease cache; the
-// returned Source drives the §10.1 counter.
+// returned Source drives the §10.1.8 counter.
 type TargetLister interface {
 	Targets(ctx context.Context) ([]Target, string, error)
 }
@@ -113,7 +113,7 @@ type Checkpointer interface {
 }
 
 // ErrGenerationStale is the sentinel a Dispatcher returns when the pod
-// rejects the barrier as generation-stale (a §10.1
+// rejects the barrier as generation-stale (a §10.1.8
 // false-positive that survived the cache fallback). It is recorded but
 // never aborts the drain.
 var ErrGenerationStale = errors.New("barrier: pod rejected barrier as generation-stale")
@@ -132,7 +132,7 @@ type Coordinator struct {
 // metrics may be nil (the counters are disabled) and checkpoint may be
 // nil (the barrier fires without driving a gateway-side checkpoint, the
 // dev-mode / single-replica posture). When checkpoint is set the barrier
-// drives the §10.1 quiesce-and-hold Checkpoint stream against
+// drives the §10.1.8 quiesce-and-hold Checkpoint stream against
 // each target concurrently with the CheckpointBarrier RPC.
 func New(targets TargetLister, dispatch Dispatcher, meta sessioncheckpointmeta.Store, metrics Metrics, checkpoint Checkpointer) *Coordinator {
 	return &Coordinator{targets: targets, dispatch: dispatch, meta: meta, metrics: metrics, checkpoint: checkpoint}
@@ -146,13 +146,13 @@ type Outcome struct {
 	// Acked reports whether the pod acknowledged within the deadline.
 	Acked bool
 	// Stale reports the pod rejected the barrier as generation-stale
-	// (a §10.1 false-positive); not a failure.
+	// (a §10.1.8 false-positive); not a failure.
 	Stale bool
 	// Err is any non-stale dispatch error (deadline, transport). The
 	// drain continues past it.
 	Err error
 	// CheckpointErr is any error the gateway-driven quiesce-and-hold
-	// Checkpoint stream returned for this target (§10.1). The
+	// Checkpoint stream returned for this target (§10.1.8). The
 	// stream finalises the manifest row itself (a partial row on abort),
 	// so a non-nil value does not clear Acked: a barrier-acked session is
 	// captured and must not be re-checkpointed by the post-barrier loop.
@@ -170,7 +170,7 @@ type DispatchSummary struct {
 // barrier-target set, then sends the CheckpointBarrier to every target
 // concurrently under ctx (the caller bounds ctx by
 // checkpointBarrierAckTimeoutSeconds — the single wall-clock deadline
-// across all pods, §10.1). For each acked target it persists
+// across all pods, §10.1.8). For each acked target it persists
 // the barrier_id, checkpoint_ref, and workspace_recovery_fraction into
 // session_checkpoint_meta so a later coordinator can source the
 // `session.resumed` workspaceRecoveryFraction (§10.1). A
@@ -207,7 +207,7 @@ func (c *Coordinator) Dispatch(ctx context.Context) (DispatchSummary, error) {
 func (c *Coordinator) dispatchOne(ctx context.Context, t Target) Outcome {
 	barrierID := c.nextBarrierID(ctx, t)
 	out := Outcome{Target: t, BarrierID: barrierID}
-	// §10.1 quiesce-and-hold: open the gateway-driven Checkpoint
+	// §10.1.8 quiesce-and-hold: open the gateway-driven Checkpoint
 	// stream concurrently with the CheckpointBarrier RPC. The adapter
 	// holds its quiescence open and returns the ack only after this stream
 	// terminates, so starting it before the ack (rather than after) is
@@ -256,7 +256,7 @@ func (c *Coordinator) dispatchOne(ctx context.Context, t Target) Outcome {
 }
 
 // nextBarrierID returns the next monotonically-increasing-per-session
-// barrier id (§10.1). It reads the session's prior persisted
+// barrier id (§10.1.8). It reads the session's prior persisted
 // barrier id and increments; an absent or unparseable prior value
 // starts the sequence at 1. A store read error degrades to 1 rather
 // than aborting the barrier — a non-monotonic id on the degraded path

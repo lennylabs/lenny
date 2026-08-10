@@ -274,7 +274,7 @@ const (
 	// lost and never reconnected. The §10.1 orphan-session reconciler
 	// forcibly transitions such a session to `failed` with this reason
 	// so it stops holding quota indefinitely.
-	// spec: §10.1 — "forcibly transitioned to `failed` with
+	// spec: §10.1.4 — "forcibly transitioned to `failed` with
 	// reason `orphan_pod_terminated`".
 	FailureOrphanPodTerminated FailureReason = "orphan_pod_terminated"
 

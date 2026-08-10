@@ -35,7 +35,7 @@ type Record struct {
 	TenantID  string
 	SessionID string
 	// CoordinationGeneration is the coordinator's fenced generation at
-	// BarrierAck time (§10.1).
+	// BarrierAck time (§10.1.8).
 	CoordinationGeneration int64
 	// BarrierID is the gateway's monotonically-increasing-per-session
 	// correlation id for the barrier that produced this row.

@@ -48,7 +48,7 @@ CREATE TABLE checkpoint_manifest (
     -- (coordination, recovery) tuple that authored the partial chunks.
     recovery_generation            BIGINT      NOT NULL DEFAULT 0,
     partial                        BOOLEAN     NOT NULL DEFAULT TRUE,
-    -- manifest_reason is the §10.1 closed enum of the row's
+    -- manifest_reason is the §10.1.7 closed enum of the row's
     -- disposition. It carries 'in_progress' from intent-row INSERT until a
     -- terminal arm overwrites it with 'complete', 'timeout',
     -- 'stream_truncated', 'superseded', or 'quota_exceeded'. NOT NULL: the
@@ -94,7 +94,7 @@ CREATE TABLE checkpoint_manifest (
     -- resume-time threshold check and the post-extraction
     -- workspaceRecoveryFraction. NULL is load-bearing: it denotes a
     -- session with no prior successful full checkpoint, in which case
-    -- §10.1 degenerates the threshold check to "any non-zero
+    -- §10.1.7 degenerates the threshold check to "any non-zero
     -- workspace_bytes_uploaded is eligible" and §7.2 omits
     -- workspaceRecoveryFraction from session.resumed. It carries no
     -- DEFAULT so the IS NULL predicate stays reachable and the resume path

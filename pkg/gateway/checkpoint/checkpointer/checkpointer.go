@@ -40,7 +40,7 @@ var ErrNoBinding = errors.New("checkpointer: no pod binding for the session")
 // (default: 600s / 10 minutes)".
 const defaultInterval = 10 * time.Minute
 
-// DefaultGrantWindow is the §10.1 / §17.8.1 default for
+// DefaultGrantWindow is the §10.1.7 / §17.8.1 default for
 // `checkpointGrantWindow`: the gateway keeps at most this many
 // chunk-upload capabilities outstanding at once while draining a
 // session's workspace checkpoint. It bounds both the pipelining depth
@@ -142,7 +142,7 @@ type Checkpointer struct {
 	// once. It is the fallback the loop applies when the session's pool
 	// declares no per-pool checkpointGrantWindow override. Zero selects
 	// DefaultGrantWindow.
-	// spec: §10.1 chunk-grant window; §17.8.1 checkpointGrantWindow
+	// spec: §10.1.7 chunk-grant window; §17.8.1 checkpointGrantWindow
 	// default 4; §5.2 (deployment-wide default with per-pool override).
 	GrantWindow int
 	// CapabilityTTL is the expiry the loop signs into every presigned
@@ -366,7 +366,7 @@ func (c *Checkpointer) Checkpoint(ctx context.Context, tenantID, sessionID strin
 // checkpoint.TriggerEviction so both the barrier-window checkpoint and
 // the per-session tier-cap finalisation are labelled eviction, which is
 // what the §16.1 `lenny_checkpoint_partial_total{trigger="eviction"}`
-// domain and the §10.1 finalisation counter are written
+// domain and the §10.1.8 finalisation counter are written
 // against. Like Checkpoint it returns ErrNoBinding when this replica
 // does not coordinate the session.
 //
@@ -442,7 +442,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 		// the post-snapshot rotation observes the committed state.
 		legalHold = row.LegalHold
 		row.WorkspaceSnapshot = &sessionstore.WorkspaceSnapshot{
-			// spec: §10.1 — the gateway mints the
+			// spec: §10.1.7 — the gateway mints the
 			// checkpoint_id and records it as the snapshot ref; the
 			// adapter never mints one.
 			Ref:       checkpointID,
@@ -477,7 +477,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 
 // driveCheckpoint runs the gateway side of the §4.7 / §10.1
 // bidirectional Checkpoint stream far enough to record a workspace
-// snapshot. It mints the checkpoint_id (§10.1 — the gateway
+// snapshot. It mints the checkpoint_id (§10.1.7 — the gateway
 // mints it, never the adapter), opens the stream against the bound pod,
 // and sends CheckpointStart carrying the id and the typed trigger. It
 // then consumes server frames until the adapter closes the attempt with
@@ -639,7 +639,7 @@ func (c *Checkpointer) sessionCheckpointContext(ctx context.Context, tenantID, s
 	// A prior successful checkpoint recorded its compressed size as
 	// last_checkpoint_workspace_bytes; freeze it as this attempt's baseline.
 	// Nil is load-bearing: it denotes a session with no prior successful full
-	// checkpoint (§10.1).
+	// checkpoint (§10.1.7).
 	if row.WorkspaceSnapshot != nil && row.WorkspaceSnapshot.Bytes > 0 {
 		b := row.WorkspaceSnapshot.Bytes
 		sc.baselineBytes = &b

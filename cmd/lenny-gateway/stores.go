@@ -1361,7 +1361,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// inside the Redis-available branch below; nil without Redis).
 		erasureLeaseStore leasestore.LeaseStore
 
-		// coordMirror is the §10.1 coordination_lease barrier-target
+		// coordMirror is the §10.1.8 coordination_lease barrier-target
 		// mirror the Sweeper writes and the preStop barrier reads. Postgres-
 		// backed when pgPool is wired; nil otherwise, in which case the
 		// barrier falls back to the in-memory lease cache.
@@ -1463,7 +1463,7 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// the accumulator for buildSessionServer to inject as
 		// CoordinationLeaseStore.
 		w.coordLeaseStore = leaseStore
-		// §10.1: mirror held leases into Postgres so the preStop
+		// §10.1.8: mirror held leases into Postgres so the preStop
 		// barrier-target query observes coordinator handoffs that occurred
 		// in the seconds before drain. Without Postgres the mirror is nil
 		// and the barrier falls back to the in-memory lease cache.
@@ -2167,7 +2167,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// Metrics field is wired after gatewaymetrics.New() below
 			// so the §4.4 duration histogram is emitted.
 			Retention: checkpointRetention,
-			// §10.1 / §17.8.1 / §5.2 — the deployment-wide
+			// §10.1.7 / §17.8.1 / §5.2 — the deployment-wide
 			// checkpointGrantWindow default and the presigned-capability
 			// TTL the grant/confirm loop signs into each grant. GrantWindow
 			// is the fallback the driver applies when a pool declares no

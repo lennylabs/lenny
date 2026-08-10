@@ -1,6 +1,5 @@
 {{- /*
-Corefile for the dedicated lenny-system CoreDNS instance (§13.2 lines
-492-536). The ConfigMap is mounted into the Deployment rendered by
+Corefile for the dedicated lenny-system CoreDNS instance (§13.2). The ConfigMap is mounted into the Deployment rendered by
 coredns-deployment.yaml. The Corefile enables:
 
   - log: every agent-pod DNS query is recorded for audit.

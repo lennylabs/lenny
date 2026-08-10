@@ -28,7 +28,7 @@ func TestPublishAssignsMonotonicSeq(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — Broadcast pushes a platform-level event to every
+// spec: §10.1.3 — Broadcast pushes a platform-level event to every
 // session that has a live subscriber, assigning each its own per-session
 // Seq, and returns the number of sessions reached. Sessions with no live
 // subscriber are skipped.

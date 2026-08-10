@@ -508,7 +508,7 @@ type CheckpointStream = adapterv1.Adapter_CheckpointClient
 // directly to object storage. This is the single upload path for every
 // checkpoint trigger; the adapter no longer mints a checkpoint id.
 //
-// spec: §10.1 — the gateway mints the checkpoint_id.
+// spec: §10.1.7 — the gateway mints the checkpoint_id.
 func (c *Client) Checkpoint(ctx context.Context) (CheckpointStream, error) {
 	stream, err := c.rpc.Checkpoint(ctx)
 	if err != nil {
@@ -648,7 +648,7 @@ type ResumeParams struct {
 	// single tar (or tar.gz) byte stream. Empty for the conversation-only
 	// and coordinator-handoff resume paths that restore no workspace.
 	//
-	// spec: §10.1 — reassembly on resume.
+	// spec: §10.1.7 — reassembly on resume.
 	Chunks []ChunkGrant
 }
 

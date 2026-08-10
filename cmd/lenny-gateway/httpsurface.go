@@ -611,7 +611,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 				return b.Adapter, true
 			},
 		}
-		// §10.1 — hand the barrier the in-process checkpointer so
+		// §10.1.8 — hand the barrier the in-process checkpointer so
 		// it drives the gateway-side Checkpoint stream (with
 		// checkpoint.TriggerEviction) against each quiesced pod concurrently
 		// with the CheckpointBarrier RPC. A nil checkpointSvc (no store

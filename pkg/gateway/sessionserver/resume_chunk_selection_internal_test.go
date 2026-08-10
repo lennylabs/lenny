@@ -63,7 +63,7 @@ func seedManifest(t *testing.T, m *partialmanifeststore.MemoryStore, tenant, ses
 	}
 }
 
-// spec: §10.1 — the resume path selects the checkpoint to reassemble
+// spec: §10.1.7 — the resume path selects the checkpoint to reassemble
 // by MAX(coordination_generation) regardless of partial, with
 // WorkspaceSnapshot.Ref as a validation input only. A newer partial = true
 // drain row at a higher generation than the completed checkpoint the ref
@@ -105,7 +105,7 @@ func TestResolveResumeChunksSelectsHighestGenerationPartial(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — when no active manifest row is selectable (the
+// spec: §10.1.7 — when no active manifest row is selectable (the
 // completed checkpoint was rotated out and no drain partial exists), the
 // resume falls back to the WorkspaceSnapshot.Ref identifier so a legacy or
 // GC-pruned session still resolves its last completed checkpoint.
@@ -131,7 +131,7 @@ func TestResolveResumeChunksFallsBackToRefWhenNoActiveRow(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — the WorkspaceSnapshot.Ref is kept in the four-segment
+// spec: §10.1.7 — the WorkspaceSnapshot.Ref is kept in the four-segment
 // object-path form (/{tenant}/checkpoints/{session}/{checkpoint_id}). When no
 // active manifest row is selectable and the resume falls back to the ref, the
 // ref must be normalized to its checkpoint_id (the last segment) before it is
@@ -230,7 +230,7 @@ func (c *capturingRecoveryMetrics) IncCheckpointPartial(pool string, recovered b
 // a trigger inside the closed checkpoint.Trigger enum. The §10.1 manifest
 // column set does not persist the originating trigger, so the resume stamps
 // eviction as the enum-valid representative (the preStop drain is the recovery
-// mechanism this counter primarily serves, §10.1). A complete
+// mechanism this counter primarily serves, §10.1.8). A complete
 // (partial = false) restore emits nothing.
 //
 // diagnosis: a missing emission means the resume-side recovery signal is
@@ -282,7 +282,7 @@ func TestResolveResumeChunksEmitsRecoveredOnAboveThresholdPartial(t *testing.T) 
 	}
 	// spec: §16.1 — the resume stamps eviction as the enum-valid
 	// representative because the §10.1 manifest column set does not persist the
-	// originating trigger, and the preStop drain (§10.1) is the
+	// originating trigger, and the preStop drain (§10.1.8) is the
 	// recovery mechanism this counter primarily serves.
 	if got.trigger != checkpoint.TriggerEviction {
 		t.Errorf("trigger = %q, want %q (the enum-valid representative the resume stamps)",

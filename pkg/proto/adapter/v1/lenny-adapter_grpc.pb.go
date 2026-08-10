@@ -155,7 +155,7 @@ type AdapterClient interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1). Used for
+	// sends in CheckpointStart is authoritative (§10.1.7). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error)
@@ -600,7 +600,7 @@ type AdapterServer interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1). Used for
+	// sends in CheckpointStart is authoritative (§10.1.7). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error

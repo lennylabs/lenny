@@ -1783,7 +1783,7 @@ func (a agentPodStateMirror) MirrorLagSeconds(ctx context.Context, poolID string
 	return a.store.MirrorLagSeconds(ctx, poolID)
 }
 
-// sandboxPhaseReader is the §10.1 direct-Kubernetes fallback the
+// sandboxPhaseReader is the §10.1.4 direct-Kubernetes fallback the
 // orphan-session reconciler consults when the agent_pod_state mirror is
 // stale or missing. It reads the authoritative Sandbox phase through the
 // §4.6.1 PodLifecycleManager.GetPodStatus surface; a deleted Sandbox
@@ -2510,7 +2510,7 @@ func envInt64(name string, def int64) int64 {
 // prestop.BarrierDispatcher interface. It surfaces the pass's per-session
 // Outcome set (not just the error) so the preStop hook can skip every
 // barrier-acked session in its post-barrier per-session loop: under the
-// §10.1 quiesce-and-hold contract the barrier already drives a
+// §10.1.8 quiesce-and-hold contract the barrier already drives a
 // full gateway-side checkpoint for every session it acks, so a loop that
 // re-checkpointed those sessions would open a second manifest row and
 // duplicate catalog rows for one (session, coordination_generation).

@@ -17,12 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// defaultCoordinatorHoldTimeout is the §10.1
+// defaultCoordinatorHoldTimeout is the §10.1.4
 // coordinatorHoldTimeoutSeconds default: the window the adapter holds a
 // session after losing its coordinator before it self-terminates.
 const defaultCoordinatorHoldTimeout = 120 * time.Second
 
-// reasonCoordinatorLost is the §10.1 AdapterTerminating /
+// reasonCoordinatorLost is the §10.1.4 AdapterTerminating /
 // session.terminated reason the adapter reports when the hold times out
 // without a new coordinator.
 const reasonCoordinatorLost = "coordinator_lost"
@@ -44,7 +44,7 @@ type holdState struct {
 	gen     int64
 }
 
-// coordinatorHoldAllowedMethods is the §10.1 allowlist: the only
+// coordinatorHoldAllowedMethods is the §10.1.4 allowlist: the only
 // inbound gRPC methods the adapter still serves while in hold state. A
 // new coordinator negotiates, opens the control stream, and fences;
 // health probes keep the pod live. Every other RPC is rejected with the
@@ -68,7 +68,7 @@ func (s *Server) holdAfter(d time.Duration, f func()) expiryTimerHandle {
 	return time.AfterFunc(d, f)
 }
 
-// coordinatorHoldTimeout returns the configured §10.1 hold
+// coordinatorHoldTimeout returns the configured §10.1.4 hold
 // timeout, or the 120s spec default.
 func (s *Server) coordinatorHoldTimeout() time.Duration {
 	if s.CoordinatorHoldTimeout > 0 {
@@ -126,7 +126,7 @@ func (s *Server) enterHoldState(session string) {
 // CoordinatorFence lands: it stops the timeout timer and lowers the
 // coordinator-hold gauge. It is a no-op when no hold is active.
 //
-// spec: §10.1 — a successful CoordinatorFence is the only way to
+// spec: §10.1.4 — a successful CoordinatorFence is the only way to
 // exit hold state.
 func (s *Server) exitHoldState() {
 	s.hold.mu.Lock()
@@ -169,7 +169,7 @@ func (s *Server) onHoldTimeout() {
 		"session_id", session,
 		"last_generation", gen)
 
-	// §10.1 — notify the gateway so it can transition the session
+	// §10.1.4 — notify the gateway so it can transition the session
 	// without waiting for the 60s orphan-session reconciler.
 	s.EmitAdapterTerminating(reasonCoordinatorLost)
 	s.writeHoldPostMortem(session, gen)
@@ -190,7 +190,7 @@ func (s *Server) inHoldState() bool {
 	return s.hold.active
 }
 
-// writeHoldPostMortem records a §10.1 coordinator_lost
+// writeHoldPostMortem records a §10.1.4 coordinator_lost
 // post-mortem to PostMortemDir so the terminal cause survives even when
 // no coordinator ever returns to receive the AdapterTerminating event.
 // Best-effort: an empty dir skips the write, and an encode/write failure
@@ -262,7 +262,7 @@ func (s *Server) holdStateStreamInterceptor(srv any, ss grpc.ServerStream, info 
 	return handler(srv, ss)
 }
 
-// coordinatorHoldError builds the §10.1 rejection carrying the
+// coordinatorHoldError builds the §10.1.4 rejection carrying the
 // coordinator_hold detail in its message.
 func coordinatorHoldError(fullMethod string) error {
 	return status.Errorf(codes.Unavailable,

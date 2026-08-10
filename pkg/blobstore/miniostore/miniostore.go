@@ -616,10 +616,10 @@ func (s *Store) statBlob(ctx context.Context, u blobstore.URI) (blobstore.BlobIn
 // key's suffix after the (tenant, object_type, session) prefix) and Size,
 // in the store's native lexicographic list order. §12.5 tombstoned objects
 // are excluded so a soft-deleted chunk is not offered for reassembly. The
-// §10.1 resume path calls it to enumerate a checkpoint's chunk
+// §10.1.7 resume path calls it to enumerate a checkpoint's chunk
 // objects and verify contiguity before minting GET capabilities.
 //
-// spec: §10.1 — list objects under chunk_object_key_prefix.
+// spec: §10.1.7 — list objects under chunk_object_key_prefix.
 func (s *Store) ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	objType := u.ObjectType
 	if objType == "" {

@@ -149,7 +149,7 @@ func TestReclaimAbandonedManifestsSweepsReclaimableRows(t *testing.T) {
 	}
 }
 
-// spec: §12.5 GC rule 6; §10.1 — a live seal-checkpoint attempt that
+// spec: §12.5 GC rule 6; §10.1.7 — a live seal-checkpoint attempt that
 // holds an in_progress intent row inside its timeout is not swept out from
 // under it. ListReclaimable excludes it, so the worker reclaims nothing. This
 // pins the boundary the backstop selector must respect.

@@ -61,7 +61,7 @@ var migrationColumnRE = regexp.MustCompile(`^\s+([a-z_]+)\s+(TEXT|UUID|BIGINT|IN
 // spec: 10.1
 // diagnosis: the §10.1 partial-manifest column enumeration and migration 0178
 //
-//	disagree on the checkpoint_manifest column set. §10.1 enumerates
+//	disagree on the checkpoint_manifest column set. §10.1.7 enumerates
 //	the manifest columns in prose; migration 0178 CREATEs the table. A failure
 //	here means one side added, renamed, or dropped a domain column the other
 //	did not — for example the migration grows a column §10.1 never names, or

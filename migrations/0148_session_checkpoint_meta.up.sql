@@ -2,7 +2,7 @@
 -- metadata: the barrier_id, the checkpoint_ref the barrier flush
 -- produced, and the workspace_recovery_fraction. The gateway writes a
 -- row after receiving a CheckpointBarrierAck during a graceful drain
--- (§10.1 records the barrier_id in the session's checkpoint
+-- (§10.1.8 records the barrier_id in the session's checkpoint
 -- metadata).
 --
 -- One row per session holds the latest barrier metadata: the

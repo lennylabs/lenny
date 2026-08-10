@@ -60,7 +60,7 @@ func TestDecideRejectsEgressProfileMutation(t *testing.T) {
 	}
 }
 
-// spec: §13.2 — adding lenny.dev/dns-policy to a pod that was not
+// spec: §13.2.2 — adding lenny.dev/dns-policy to a pod that was not
 // opted out would grant it a kube-system DNS egress path, bypassing the
 // dedicated CoreDNS instance's query logging, rate limiting, and response
 // filtering. The label is immutable on existing pods. F-13.2.4.

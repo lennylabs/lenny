@@ -17,7 +17,7 @@ import (
 // PoolConfigMetricsSink receives the §16.1
 // lenny_pool_termination_budget_exceeded_total counter, labeled by pool,
 // each time the webhook rejects a SandboxTemplate write on the §5.2 /
-// §10.1 agent-pod grace floor (maxConcurrentSessions ×
+// §10.1.7 agent-pod grace floor (maxConcurrentSessions ×
 // max_tiered_checkpoint_cap + 30 against the effective
 // terminationGracePeriodSeconds). The lenny-webhook binary supplies a
 // CounterVec-backed implementation; a nil sink disables emission without

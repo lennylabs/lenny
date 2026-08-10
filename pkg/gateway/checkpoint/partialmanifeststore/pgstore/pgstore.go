@@ -64,7 +64,7 @@ const terminalStates = `('completed', 'failed', 'cancelled', 'expired')`
 // supersedes prior attempts for the same (session, slot). A write whose
 // generation is below an already-active strictly-higher generation is a
 // fenced stale-coordinator attempt and is rejected with
-// ErrStaleGeneration (§10.1); otherwise every active partial
+// ErrStaleGeneration (§10.1.7); otherwise every active partial
 // row at or below the incoming generation is soft-deleted
 // (manifest_reason = 'superseded') before the INSERT so the
 // partial_manifest_active_uniq index never sees two active partial rows.
@@ -90,7 +90,7 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 			return partialmanifeststore.ErrAlreadyExists
 		}
 
-		// §10.1 fencing: reject a stale write before any mutation.
+		// §10.1.7 fencing: reject a stale write before any mutation.
 		var higherActive bool
 		if err := tx.QueryRow(ctx,
 			`SELECT EXISTS(
@@ -105,7 +105,7 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 			return partialmanifeststore.ErrStaleGeneration
 		}
 
-		// §10.1 supersede-on-write: soft-delete every active
+		// §10.1.7 supersede-on-write: soft-delete every active
 		// partial row at or below the incoming generation in the same
 		// transaction as the INSERT so the active partial set collapses to
 		// the new row.
@@ -232,7 +232,7 @@ func (s *Store) LatestActive(ctx context.Context, tenantID, sessionID string) (p
 
 // LatestActiveAny returns the highest-coordination_generation active row
 // (`deleted_at IS NULL`) for (tenantID, sessionID) regardless of `partial` —
-// the §10.1 resume-reassembly selector. Ties on
+// the §10.1.7 resume-reassembly selector. Ties on
 // coordination_generation break to the most recently created row.
 func (s *Store) LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
@@ -279,7 +279,7 @@ func (s *Store) HasActivePartialManifest(ctx context.Context, tenantID, sessionI
 // LatestFull returns the most-recently-created active full checkpoint row
 // (`partial = FALSE AND deleted_at IS NULL`) for (tenantID, sessionID), or
 // ErrNotFound when the session has no surviving full checkpoint. It is the
-// §10.1 fallback selector the resume path consults when the
+// §10.1.7 fallback selector the resume path consults when the
 // selected partial manifest fails its reassembly contiguity check.
 func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
@@ -308,7 +308,7 @@ func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (par
 
 // LatestActiveForSlot returns the active partial row for
 // (tenantID, sessionID, slotID), the single slot the supersede path scopes
-// on (§10.1). partial_manifest_active_uniq admits at most one such
+// on (§10.1.7). partial_manifest_active_uniq admits at most one such
 // row, so the ORDER BY / LIMIT is defensive.
 func (s *Store) LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
@@ -335,7 +335,7 @@ func (s *Store) LatestActiveForSlot(ctx context.Context, tenantID, sessionID, sl
 	return out, nil
 }
 
-// ConfirmChunk applies the §10.1 monotonic counter UPDATE under
+// ConfirmChunk applies the §10.1.7 monotonic counter UPDATE under
 // the `deleted_at IS NULL` and `chunk_count < n + 1` guards.
 func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -355,7 +355,7 @@ func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string,
 // in the same transaction rather than left active for a later supersede or
 // the §12.5 backstop to reclaim.
 //
-// spec: §10.1 — the zero-chunk finalisation soft-deletes the row
+// spec: §10.1.7 — the zero-chunk finalisation soft-deletes the row
 // in the same transaction.
 func (s *Store) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error {
 	if !partialmanifeststore.IsValidReason(manifestReason) {

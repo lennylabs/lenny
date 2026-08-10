@@ -160,7 +160,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "0.1.0"
 spec:
-  # §13.2 — the provider-direct egress profile. Pods the
+  # §13.2.5 — the provider-direct egress profile. Pods the
   # WarmPoolController stamps with lenny.dev/egress-profile: provider-direct
   # reach the LLM provider CIDRs (egressCIDRs.providers) directly on TCP
   # 443, on top of the gateway + DNS egress the base policy grants. The
@@ -4197,7 +4197,7 @@ spec:
             # matches the §11.3 value and fits inside the grace period.
             - name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS
               value: "90"
-            # §10.1 / §17.8.1 — checkpointGrantWindow: the number of
+            # §10.1.7 / §17.8.1 — checkpointGrantWindow: the number of
             # chunk-upload capabilities the gateway keeps outstanding at once
             # while draining a session's workspace checkpoint. It bounds the
             # pipelining depth and the worst-case unreconciled overage against

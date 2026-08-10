@@ -4,7 +4,7 @@ package checkpointer
 
 import "testing"
 
-// spec: §10.1 — the chunk object basename is
+// spec: §10.1.7 — the chunk object basename is
 // chunk-{n}.{chunk_encoding} with {n} a zero-padded 5-digit monotonic index
 // starting at 00000, so the signed key matches the reassembly layout the
 // resume path enumerates and lexicographic list order tracks index order.

@@ -99,7 +99,7 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — the barrier id is monotonically increasing
+// spec: §10.1.8 — the barrier id is monotonically increasing
 // per session: a second barrier reads the prior persisted id and
 // advances it.
 func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
@@ -124,7 +124,7 @@ func TestDispatchBarrierIDMonotonic_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a pod that rejects the barrier as
+// spec: §10.1.8 — a pod that rejects the barrier as
 // generation-stale (a false-positive surviving the cache fallback) is
 // recorded as Stale and does not abort the drain; its meta is not
 // written.
@@ -178,7 +178,7 @@ func TestDispatchTransportErrorNonFatal_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — the degraded cache-fallback target source is
+// spec: §10.1.8 — the degraded cache-fallback target source is
 // reported on the counter.
 func TestDispatchCacheFallbackSource_spec_10_1(t *testing.T) {
 	mx := newFakeMetrics()

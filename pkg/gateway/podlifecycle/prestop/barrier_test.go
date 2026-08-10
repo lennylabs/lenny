@@ -86,7 +86,7 @@ func TestHookBarrierDefaultAckTimeout_spec_11_3_210(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a barrier dispatch error is best-effort: it does
+// spec: §10.1.8 — a barrier dispatch error is best-effort: it does
 // not abort the eviction-checkpoint drain.
 func TestHookBarrierErrorDoesNotAbortDrain_spec_10_1_165(t *testing.T) {
 	bar := &recordingBarrier{err: errors.New("postgres down during drain")}
@@ -110,7 +110,7 @@ func TestHookBarrierErrorDoesNotAbortDrain_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — the post-barrier per-session loop skips every
+// spec: §10.1.8 — the post-barrier per-session loop skips every
 // session the barrier already checkpointed under quiesce-and-hold, so no
 // session is checkpointed twice on a drain. With three coordinated
 // sessions where two ack the barrier and one does not, the loop
@@ -167,7 +167,7 @@ func TestHookSkipsBarrierAckedSessions_spec_10_1_169(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a nil Barrier is skipped without affecting the
+// spec: §10.1.8 — a nil Barrier is skipped without affecting the
 // drain (dev-mode / single-replica posture).
 func TestHookNilBarrierIsNoop(t *testing.T) {
 	hook := &Hook{

@@ -135,7 +135,7 @@ type SandboxTemplateSpec struct {
 	// chunk-upload capabilities the gateway keeps outstanding at once
 	// while draining this pool's workspace checkpoints. When unset the
 	// gateway falls back to its deployment-wide checkpointGrantWindow
-	// default. spec: §10.1 chunk-grant window; §17.8.1
+	// default. spec: §10.1.7 chunk-grant window; §17.8.1
 	// checkpointGrantWindow default 4.
 	// +kubebuilder:validation:Minimum=1
 	// +optional

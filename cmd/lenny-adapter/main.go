@@ -176,10 +176,10 @@ func main() {
 		"§11.3 keepalive timeout (ms) the gateway waits for a ping reply. Default 5000ms.")
 	coordinatorHoldTimeoutSec := flag.Int("coordinator-hold-timeout-seconds",
 		envIntOr("LENNY_COORDINATOR_HOLD_TIMEOUT_SECONDS", 120),
-		"§10.1 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
+		"§10.1.4 coordinatorHoldTimeoutSeconds: how long the adapter holds a session after losing its coordinator before self-terminating. Default 120s.")
 	postMortemDir := flag.String("post-mortem-dir",
 		os.Getenv("LENNY_POST_MORTEM_DIR"),
-		"§10.1 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
+		"§10.1.4 directory the adapter writes a coordinator_lost post-mortem record into when a hold times out with no new coordinator. Empty skips the disk write.")
 	heartbeatIntervalSec := flag.Int("heartbeat-interval-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_INTERVAL_SECONDS", 30),
 		"§28.5.3 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")

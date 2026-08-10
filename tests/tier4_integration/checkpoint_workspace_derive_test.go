@@ -67,7 +67,7 @@ func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
 	}
 }
 
-// spec: §7.1 derive / §10.1 — deriving from a multi-chunk parent
+// spec: §7.1 derive / §10.1.7 — deriving from a multi-chunk parent
 // copies every chunk into the derived session's own prefix and writes a
 // derived manifest row, so no object is shared with the parent.
 //
@@ -203,7 +203,7 @@ func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
 	}
 }
 
-// spec: §7.1 derive / §10.1 — deriving from a parent whose
+// spec: §7.1 derive / §10.1.7 — deriving from a parent whose
 // WorkspaceSnapshot.Ref is the four-segment object-path form resolves the
 // parent manifest from the trailing checkpoint_id segment and copies every
 // chunk into the derived session's own prefix.

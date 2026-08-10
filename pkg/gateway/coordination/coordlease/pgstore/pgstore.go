@@ -2,7 +2,7 @@
 
 // Package pgstore is the Postgres-backed §10.1 coordination_lease mirror
 // store. It persists barrier-target rows to the coordination_lease table
-// from migration 0164. The table is platform-scoped (the §10.1
+// from migration 0164. The table is platform-scoped (the §10.1.8
 // barrier-target query is cross-tenant per replica), so the store reads
 // and writes through the pool directly without the §12.3 per-tenant RLS
 // guard the tenant-scoped stores use.
@@ -70,7 +70,7 @@ func (s *Store) Release(ctx context.Context, tenantID, sessionID string) error {
 	return err
 }
 
-// ListHeldByReplica returns the §10.1 barrier-target set: the
+// ListHeldByReplica returns the §10.1.8 barrier-target set: the
 // active leases whose coordinator_replica equals replica. The query is
 // cross-tenant.
 func (s *Store) ListHeldByReplica(ctx context.Context, replica string) ([]coordlease.Lease, error) {

@@ -44,7 +44,7 @@ type quotaMetrics struct {
 	// QuotaFailOpenUserFractionInoperative warning fires for operators who
 	// joined after startup. spec: §12.4; §16.1 / §16.5.
 	quotaUserFailopenFraction prometheus.Gauge
-	// dualStoreUnavailable is the §10.1 DualStoreUnavailable
+	// dualStoreUnavailable is the §10.1.3 DualStoreUnavailable
 	// alert's source gauge: 1 while this replica observes Postgres and
 	// Redis simultaneously unreachable, 0 otherwise. The §16.5 alert
 	// reads `lenny_dual_store_unavailable == 1`.
@@ -127,7 +127,7 @@ func newQuotaMetrics(reg *prometheus.Registry) (quotaMetrics, error) {
 	// at fail-open entry and on each subsequent error in the outage
 	// window so the operator sees a rate even when the gauge is
 	// pinned to 1.
-	// §10.1 DualStoreUnavailable — `lenny_dual_store_unavailable`
+	// §10.1.3 DualStoreUnavailable — `lenny_dual_store_unavailable`
 	// is the per-replica gauge the §10.1 dual-store monitor pins to 1
 	// while both Postgres and Redis are unreachable and clears to 0 on
 	// recovery. The §16.5 DualStoreUnavailable alert reads `== 1`.

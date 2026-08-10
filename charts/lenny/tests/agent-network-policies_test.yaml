@@ -238,7 +238,7 @@ tests:
           path: spec.egress[1].to[0].ipBlock.except
           content: fd00:ec2::254/128
 
-  # spec: §13.2 — the kube-system DNS opt-out policy, scoped to
+  # spec: §13.2.6 — the kube-system DNS opt-out policy, scoped to
   # the dns-policy label, rendered only when allowClusterDefaultOptOut is
   # set. F-13.2.4.
   - it: adds the kube-dns opt-out policy only when allowClusterDefaultOptOut is set

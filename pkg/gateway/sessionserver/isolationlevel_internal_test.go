@@ -115,7 +115,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Fatalf("create standard-reuse pool: %v", err)
 	}
 
-	// §10.1 / §5.2 per-pool checkpointGrantWindow override: the
+	// §10.1.7 / §5.2 per-pool checkpointGrantWindow override: the
 	// gateway-enforced value the checkpoint driver prefers over the
 	// deployment-wide default.
 	grantWindow := 8
@@ -180,7 +180,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Errorf("queue-pool mirror = %+v, want onPoolExhausted=queue / maxQueueWaitSeconds=45", got)
 	}
 
-	// §10.1 / §5.2 — the per-pool checkpointGrantWindow override
+	// §10.1.7 / §5.2 — the per-pool checkpointGrantWindow override
 	// surfaces on the mirror so the checkpoint driver's per-pool lookup
 	// reads the gateway-enforced value.
 	got, found, err = m.PoolPolicy(ctx, "cp-pool")

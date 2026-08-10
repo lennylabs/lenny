@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration coverage for the §10.1 reassembly contiguity
+// Tier-4 integration coverage for the §10.1.7 reassembly contiguity
 // check, driven against a live MinIO container. Before minting any GET
 // capability, the gateway lists the objects under a checkpoint's chunk
 // prefix and verifies the prefix [0, chunk_count) is contiguous: every
@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 )
 
-// spec: §10.1 — an extra object at index N with chunk_count = N is
+// spec: §10.1.7 — an extra object at index N with chunk_count = N is
 // expected residue; reassembly consumes exactly the contiguous prefix
 // [0, N) and ignores the residue.
 // diagnosis: reassembly consumed residue beyond chunk_count or rejected a
@@ -71,7 +71,7 @@ func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — a missing intermediate index below chunk_count
+// spec: §10.1.7 — a missing intermediate index below chunk_count
 // fails reassembly atomically before any chunk body is fetched; the resume
 // falls back to the last successful full checkpoint.
 //
@@ -127,7 +127,7 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — an out-of-order index below chunk_count fails the
+// spec: §10.1.7 — an out-of-order index below chunk_count fails the
 // same way as a gap, before any chunk body is fetched. A stray
 // non-zero-padded chunk-1 sorts after chunk-00002 in lexicographic list
 // order, reintroducing index 1 out of ascending order below chunk_count.

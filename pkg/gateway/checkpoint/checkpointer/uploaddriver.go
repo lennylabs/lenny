@@ -341,7 +341,7 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		d.releaseReservation()
 		return fmt.Errorf("checkpointer: write intent row: %w", err)
 	}
-	// spec: §10.1 — only after the intent-row INSERT commits may the
+	// spec: §10.1.7 — only after the intent-row INSERT commits may the
 	// gateway mint a chunk-upload capability, so no chunk object can be
 	// orphaned under a checkpoint_id whose manifest row was never written.
 	// onChunkReady fences on this flag rather than trusting adapter frame
@@ -403,7 +403,7 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	// selector returns an arbitrary slot's row on tied generations, so in a
 	// concurrent-workspace session it can miss the row Put will supersede for
 	// this slot, leaking its reservation and orphaning its chunks.
-	// spec: §10.1 — supersede is scoped to (session_id, slot_id).
+	// spec: §10.1.7 — supersede is scoped to (session_id, slot_id).
 	prior, err := c.Manifests.LatestActiveForSlot(d.ctx, d.tenantID, d.sessionID, d.slotID)
 	if err != nil {
 		if errors.Is(err, partialmanifeststore.ErrNotFound) {
@@ -478,19 +478,19 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 // length outside (0, chunk_size_bytes] aborts the attempt with
 // stream_truncated before any capability is signed, so the bytes a
 // capability can carry are a gateway constant rather than a pod
-// self-report (spec: §10.1, §13.2 residual-exposure bound).
+// self-report (spec: §10.1.7, §13.2 residual-exposure bound).
 //
 // The window is enforced by backpressure, not by aborting: when a fresh
 // declaration would exceed the resolved window the driver queues it and
 // mints its grant once onChunkCommitted frees a slot, so a producer that
 // pipelines its declarations ahead of acks is paced rather than failed
-// (spec: §10.1 — the gateway keeps at most `window` grants
+// (spec: §10.1.7 — the gateway keeps at most `window` grants
 // outstanding at a time).
 func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 	c := d.c
 	index := cr.GetIndex()
 	length := cr.GetLength()
-	// spec: §10.1 — the gateway mints a chunk capability only after
+	// spec: §10.1.7 — the gateway mints a chunk capability only after
 	// the intent-row INSERT commits. The gate is unconditional: a ChunkReady
 	// seen before the Probe wrote the row, or on a manifest-disabled dev-mode
 	// path where onProbe returns before writing any row, gets no capability, so
@@ -615,7 +615,7 @@ func (d *uploadDriver) popPendingLocked() (pendingChunk, bool) {
 // onChunkCommitted confirms a committed chunk off the grant's critical
 // path: it Stats the object for the bytes actually written, records the
 // artifact_store catalog row, and advances the monotonic manifest
-// counter. Confirmation never gates the next grant (spec: §10.1 —
+// counter. Confirmation never gates the next grant (spec: §10.1.7 —
 // the grant window is paced against acks, so a lagging confirm does not
 // stall the next capability). A bytes-actually-written
 // count larger than the signed Content-Length aborts the attempt and
@@ -852,10 +852,10 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// deadline-expired d.ctx. Against a store that honours ctx these writes
 	// would otherwise fail on the dead context, leaving the row
 	// manifest_reason='in_progress' with a leaked reservation and unswept
-	// chunks (spec: §10.1 — every abort arm finalises partial=true
+	// chunks (spec: §10.1.7 — every abort arm finalises partial=true
 	// and releases the reservation the attempt did not keep).
 	//
-	// spec: §10.1 — an abort that latched before the first chunk
+	// spec: §10.1.7 — an abort that latched before the first chunk
 	// confirmed finalises with chunk_count == 0; Finalise soft-deletes such
 	// a row in the same transaction so an empty partial manifest is never
 	// left active for the resume path or a downstream reclaimer.
@@ -882,7 +882,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every
 	// other abort arm's chunks are released because no resume will consume
-	// them (spec: §10.1). The release runs each confirmed chunk
+	// them (spec: §10.1.7). The release runs each confirmed chunk
 	// through the cataloging decorator — soft-delete its artifact_store row
 	// (the §12.5 rule 4 decrement, exactly once) before the per-key object
 	// delete — so an aborted checkpoint's confirmed bytes return to the tenant

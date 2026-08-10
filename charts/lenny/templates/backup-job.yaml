@@ -1,7 +1,6 @@
 {{- /*
 The lenny-backup ServiceAccount, its RBAC envelope, and the opt-in
-on-demand backup Job (§17.1 row 17; §25.11 "Job Pod Specification"; §25
-lines 3992-3998).
+on-demand backup Job (§17.1 row 17; §25.11 "Job Pod Specification"; §25).
 
 lenny-ops creates transient lenny-backup Jobs on demand to run Postgres
 and MinIO backup, restore, and verification (§25.11). Those Jobs run

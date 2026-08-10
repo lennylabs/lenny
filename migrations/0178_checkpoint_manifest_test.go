@@ -65,14 +65,14 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	}
 
 	// manifest_reason is NOT NULL and defaults to the in_progress
-	// intent-row disposition (§10.1).
+	// intent-row disposition (§10.1.7).
 	if !strings.Contains(up, "manifest_reason") ||
 		!strings.Contains(up, "NOT NULL DEFAULT 'in_progress'") {
 		t.Errorf("migration 0178 up must declare manifest_reason NOT NULL DEFAULT 'in_progress'")
 	}
 
 	// baseline_full_checkpoint_bytes is BIGINT NULL with no DEFAULT so the
-	// §10.1 IS NULL branch stays reachable and the §7.2 resume
+	// §10.1.7 IS NULL branch stays reachable and the §7.2 resume
 	// path never divides by zero.
 	if !strings.Contains(up, "baseline_full_checkpoint_bytes BIGINT      NULL") {
 		t.Errorf("migration 0178 up must declare baseline_full_checkpoint_bytes BIGINT NULL")

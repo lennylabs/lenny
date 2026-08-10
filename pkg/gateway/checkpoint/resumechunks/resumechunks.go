@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package resumechunks resolves the §10.1 reassembly-on-resume
+// Package resumechunks resolves the §10.1.7 reassembly-on-resume
 // chunk set for a checkpoint the gateway is restoring onto a replacement
 // pod. Given a checkpoint's manifest row, it lists the committed chunk
 // objects under the row's chunk_object_key_prefix, verifies contiguity of
@@ -38,17 +38,17 @@ import (
 // before any chunk body is fetched. The caller falls back to the last
 // successful full checkpoint.
 //
-// spec: §10.1 — a gap or an out-of-order index below chunk_count
+// spec: §10.1.7 — a gap or an out-of-order index below chunk_count
 // fails reassembly atomically before any chunk body is fetched.
 var ErrReassemblyContiguity = errors.New("resumechunks: chunk set is not a contiguous [0, chunk_count) sequence")
 
 // ErrBelowRecoveryThreshold is returned when a partial checkpoint carries
-// fewer confirmed workspace bytes than the §10.1 recovery
+// fewer confirmed workspace bytes than the §10.1.7 recovery
 // threshold (`baseline_full_checkpoint_bytes * partialRecoveryThresholdFraction`),
 // or has no confirmed bytes or chunks. The reassembly is not worth the
 // splice; the caller falls back to the last successful full checkpoint.
 //
-// spec: §10.1 — reassembly is attempted only when
+// spec: §10.1.7 — reassembly is attempted only when
 // workspace_bytes_uploaded >= threshold AND workspace_bytes_uploaded > 0
 // AND chunk_count > 0.
 var ErrBelowRecoveryThreshold = errors.New("resumechunks: partial checkpoint is below the recovery threshold")
@@ -81,7 +81,7 @@ type Resolver struct {
 	// capability carries; a fetch that outlives it is re-driven by
 	// re-calling Resume, which re-mints.
 	TTL time.Duration
-	// PartialRecoveryThresholdFraction is the §10.1
+	// PartialRecoveryThresholdFraction is the §10.1.7
 	// partialRecoveryThresholdFraction (Helm default 0.5): a partial
 	// checkpoint is reassembled only when its confirmed workspace bytes are
 	// at least this fraction of the frozen baseline_full_checkpoint_bytes.
@@ -122,7 +122,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("resumechunks: resolve manifest %s/%s: %w", tenantID, checkpointID, err)
 	}
-	// spec: §10.1 — a partial checkpoint is reconstructed only
+	// spec: §10.1.7 — a partial checkpoint is reconstructed only
 	// when it clears the recovery threshold. A full checkpoint (partial =
 	// false) restores whole and skips the gate. The threshold is
 	// baseline_full_checkpoint_bytes * partialRecoveryThresholdFraction when

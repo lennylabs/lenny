@@ -46,7 +46,7 @@ func TestBuildSetsDedicatedDNSConfig(t *testing.T) {
 	}
 }
 
-// spec: §13.2 — a pool that opts out via the
+// spec: §13.2.6 — a pool that opts out via the
 // lenny.dev/dns-policy: cluster-default label keeps the Kubernetes default
 // ClusterFirst behavior even when a dedicated ClusterIP is configured.
 func TestBuildOmitsDNSConfigForClusterDefaultOptOut(t *testing.T) {

@@ -297,7 +297,7 @@ func (b *Bus) publish(tenantID, sessionID, eventType, data string, now time.Time
 // of declaring both stores unreachable. The event publishes under each
 // session's frozen tenant so the §7.2 isolation invariant holds.
 //
-// spec: §10.1 — "all active client SSE streams receive a
+// spec: §10.1.3 — "all active client SSE streams receive a
 // PLATFORM_DEGRADED server-sent event ... within 1 second".
 func (b *Bus) Broadcast(eventType, data string, now time.Time) int {
 	b.mu.Lock()

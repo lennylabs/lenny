@@ -210,7 +210,7 @@ func TestFreshnessCheckTreatsZeroIntervalAsUnbounded(t *testing.T) {
 // `lenny_checkpoint_duration_seconds` label depend on, so a Trigger added
 // without a matching wire value fails here.
 //
-// spec: §10.1 — the gateway carries the typed trigger in the
+// spec: §10.1.7 — the gateway carries the typed trigger in the
 // gateway-driven Checkpoint stream.
 func TestTriggerProtoMirrorsEveryTrigger(t *testing.T) {
 	seen := map[adapterv1.CheckpointTrigger]bool{}

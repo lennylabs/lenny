@@ -489,7 +489,7 @@ func TestDriverAbortsWhenQuotaLimitLookupFails_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — the intent row is partial = true from INSERT and
+// spec: §10.1.7 — the intent row is partial = true from INSERT and
 // stays partial until every declared byte is confirmed. A stream that
 // truncates before the Summary leaves partial = true and the sweep removes
 // the confirmed chunks.
@@ -758,7 +758,7 @@ func TestDriverAbortsOnOverSizeConfirm_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 / §13.2 — a declared chunk length larger than the
+// spec: §10.1.7 / §13.2 — a declared chunk length larger than the
 // gateway-chosen chunk_size_bytes gets no capability; the attempt aborts
 // with stream_truncated before anything is signed, so the bytes a
 // capability can carry are a gateway constant.
@@ -780,7 +780,7 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant minted)", rec.ChunkCount)
 	}
-	// spec: §10.1 — a zero-chunk finalisation soft-deletes the row
+	// spec: §10.1.7 — a zero-chunk finalisation soft-deletes the row
 	// in the same transaction, so an empty partial manifest is never left
 	// active occupying the (session, slot) slot for a later supersede or the
 	// §12.5 backstop to reclaim.
@@ -1010,7 +1010,7 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — supersede is scoped to (session_id, slot_id). In a
+// spec: §10.1.7 — supersede is scoped to (session_id, slot_id). In a
 // multi-slot session the driver releases the prior active row for the exact
 // slot it is superseding, not a session-wide winner that may belong to a
 // different slot.
@@ -1122,7 +1122,7 @@ func (s ctxHonoringManifests) ReleaseReservation(ctx context.Context, tenantID, 
 	return s.MemoryStore.ReleaseReservation(ctx, tenantID, checkpointID)
 }
 
-// spec: §10.1 — every abort arm finalises the intent row
+// spec: §10.1.7 — every abort arm finalises the intent row
 // partial = true with its manifest_reason and releases the reservation the
 // attempt did not keep, even though a latched abort cancels the attempt's
 // stream context before the terminal handler runs.
@@ -1265,7 +1265,7 @@ func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapte
 	return nil
 }
 
-// spec: §10.1 — the gateway mints a chunk capability only after the
+// spec: §10.1.7 — the gateway mints a chunk capability only after the
 // intent-row INSERT commits. A ChunkReady that arrives before the Probe wrote
 // the row gets an Abort, not a Grant, so no PUT can orphan an object under a
 // checkpoint_id with no manifest row.
@@ -1379,7 +1379,7 @@ func (p *countingPresigner) count() int {
 	return p.signed
 }
 
-// spec: §10.1 — the chunk-capability gate is unconditional: no PUT
+// spec: §10.1.7 — the chunk-capability gate is unconditional: no PUT
 // capability may be minted before an intent row commits. A gateway with a
 // Presigner wired but no manifest store writes no intent row (onProbe returns
 // early), so a ChunkReady must still receive an Abort and sign nothing;
@@ -1500,7 +1500,7 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 		}
 	}
 	// A zero-chunk abort soft-deletes its row in the finalising transaction
-	// (§10.1), so LatestActive no longer returns it and the failed
+	// (§10.1.7), so LatestActive no longer returns it and the failed
 	// attempt left no session ref. Recover the tombstoned row so the test can
 	// assert its finalised disposition.
 	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))

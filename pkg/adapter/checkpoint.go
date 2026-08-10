@@ -119,7 +119,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 
 	// Link a quiesce-and-hold barrier, if one is waiting, to this stream's
 	// checkpoint_id and signal it on stream termination so the barrier's
-	// CheckpointBarrierAck echoes the gateway-minted id (§10.1).
+	// CheckpointBarrierAck echoes the gateway-minted id (§10.1.8).
 	linked := s.barrier.link(start.GetCheckpointId())
 	if linked {
 		defer s.barrier.complete()

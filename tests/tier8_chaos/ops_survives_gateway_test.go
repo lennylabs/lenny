@@ -29,7 +29,7 @@ const opsDeployment = "lenny-ops"
 // opsSelector is the label the lenny-ops Deployment, its pods, and its
 // Service key on. lenny-ops carries app: lenny-ops rather than the
 // lenny.dev/component key the rest of the control plane uses, because it
-// is a separate operability plane (§13.2, ops-deployment.yaml).
+// is a separate operability plane (§13.2.3, ops-deployment.yaml).
 const opsSelector = "app=lenny-ops"
 
 // spec: 25.1

@@ -293,7 +293,7 @@ egressCIDRs:
   # exactly these CIDRs (§13.2 default-scope caveat); resolving provider
   # hostnames to CIDRs is the operator's responsibility.
   llmProviders: []
-  # providers is the §13.2 CIDR allowlist for the
+  # providers is the §13.2.5 CIDR allowlist for the
   # `provider-direct` agent-pod egress profile: the LLM provider endpoint
   # ranges (e.g. Bedrock, Vertex) a provider-direct pool's pods may reach
   # directly. The allow-pod-egress-provider-direct supplemental policy
@@ -335,7 +335,7 @@ coredns:
     tag: "1.11.3-lenny1"
     pullPolicy: IfNotPresent
   # rateLimit.responsesPerSecond is the per-source-IP DNS response rate
-  # the coredns-ratelimit plugin enforces (§13.2), throttling
+  # the coredns-ratelimit plugin enforces (§13.2.7), throttling
   # high-throughput tunneling.
   rateLimit:
     responsesPerSecond: 10
@@ -344,14 +344,14 @@ coredns:
   filter:
     maxTxtSize: 255
     blockTypes: "NULL PRIVATE KEY TYPE65534"
-  # cacheTTL is the CoreDNS answer cache TTL in seconds (§13.2);
+  # cacheTTL is the CoreDNS answer cache TTL in seconds (§13.2.7);
   # a short TTL bounds stale-data exposure.
   cacheTTL: 30
   # allowClusterDefaultOptOut renders the supplemental kube-system DNS
   # egress policy in every agent namespace, scoped to the
   # lenny.dev/dns-policy: cluster-default label, so `standard`-isolation
   # pools that set `dnsPolicy: cluster-default` can fall back to
-  # kube-system CoreDNS (§13.2). Leave false unless at least one
+  # kube-system CoreDNS (§13.2.6). Leave false unless at least one
   # pool opts out; the broad managed selector is never used.
   allowClusterDefaultOptOut: false
   resources:
@@ -1006,7 +1006,7 @@ monitoring:
     # Service ServiceMonitor (lenny-control-plane). The gateway scrapes on
     # its own faster interval below.
     interval: "30s"
-    # gatewayInterval is the §10.1 gateway scrape interval. The
+    # gatewayInterval is the §10.1.6 gateway scrape interval. The
     # gateway is rendered as a dedicated ServiceMonitor (lenny-gateway) so
     # it can scrape at 10s while the rest of the control plane stays on
     # interval: a faster gateway scrape keeps the custom-metric pipeline
@@ -2445,7 +2445,7 @@ gateway:
   # of the three terms in the 240s grace-period budget (90s tier cap + 90s
   # BarrierAck + 30s stream drain). F-11.3.15.
   checkpointBarrierAckTimeoutSeconds: 90
-  # checkpointGrantWindow is the §10.1 / §17.8.1 deployment-wide
+  # checkpointGrantWindow is the §10.1.7 / §17.8.1 deployment-wide
   # default for the number of chunk-upload capabilities the gateway keeps
   # outstanding at once while draining a session's workspace checkpoint. It
   # bounds the pipelining depth and the worst-case unreconciled overage
@@ -2715,7 +2715,7 @@ autoscaling:
   # autoscaler. The base default is false so a stock render needs no
   # KEDA or Prometheus Adapter install; the tier presets enable it.
   #
-  # §10.1 operator action (Prometheus Adapter path): the adapter
+  # §10.1.6 operator action (Prometheus Adapter path): the adapter
   # is an external dependency this chart does not render. To hold the
   # custom-metric pipeline lag near the §10.1 budget, set
   # metricsRelistInterval: 15s and cacheMetricResolutionPeriod: 15s in
@@ -4127,7 +4127,7 @@ bootstrap:
   #     # gateway.checkpointGrantWindow for this pool only (§5.2): the number
   #     # of chunk-upload capabilities the gateway keeps outstanding while
   #     # draining a session's workspace checkpoint. Omit to inherit the
-  #     # deployment-wide default. spec: §10.1; §17.8.1.
+  #     # deployment-wide default. spec: §10.1.7; §17.8.1.
   #     # checkpointGrantWindow: 8
   # users:
   #   - subject: alice@acme.com
