@@ -469,7 +469,7 @@ func TestEraseUserBlockedByLegalHold(t *testing.T) {
 	}
 }
 
-// spec: §12.8 — an artifact-level hold on an artifact owned
+// spec: §12.8(b) — an artifact-level hold on an artifact owned
 // by one of the user's sessions blocks the erasure even when the session
 // itself is not held.
 func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {

@@ -498,7 +498,7 @@ func (r *Router) heldSessions(ctx context.Context, tenantID, userID string) ([]s
 // and artifact-level holds on any artifact owned by one of the user's
 // sessions (resourceType artifact). The returned holds back the
 // gdpr.erasure_blocked_by_hold event's resource tuples and the override
-// receipt. spec: §12.8(b).
+// receipt. spec: §12.8(a)(b).
 func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID string) ([]heldResource, error) {
 	if r.sessions == nil {
 		return nil, nil
@@ -515,7 +515,7 @@ func (r *Router) heldResourcesForUser(ctx context.Context, tenantID, userID stri
 		if s.LegalHold {
 			holds = append(holds, heldResource{ResourceType: "session", ResourceID: s.ID})
 		}
-		// §12.8: an artifact under one of the user's sessions
+		// §12.8(b): an artifact under one of the user's sessions
 		// that carries its own hold blocks the erasure even when the
 		// session itself is not held.
 		if r.artifactHolds != nil {

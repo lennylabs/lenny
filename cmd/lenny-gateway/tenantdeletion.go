@@ -121,7 +121,7 @@ type artifactHoldChecker interface {
 // and artifact-level holds (any artifact under one of the tenant's
 // sessions). The audit_range / workspace_snapshot ledger holds (§12.8) are not yet enumerated here.
 //
-// spec: §12.8(b).
+// spec: §12.8(a)(b).
 type tenantHoldEnumerator struct {
 	sessions  sessionstore.Store
 	artifacts artifactHoldChecker

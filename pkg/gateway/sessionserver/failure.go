@@ -194,7 +194,7 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 // awaiting_client_action. The resuming watchdog has the same disposition
 // on timeout, but a direct failure report shortcuts the timeout wait.
 //
-// spec: §7.2 — every exit from `resuming` that aborts the
+// spec: §7.2 (a) — every exit from `resuming` that aborts the
 // in-flight resume bumps coordination_generation so any stale
 // coordinator's subsequent RPC fails the §4.2 CoordinatorFence check.
 // Both branches (re-enter resume_pending, write awaiting_client_action)

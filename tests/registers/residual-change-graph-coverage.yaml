@@ -456,6 +456,12 @@ entries:
     reason: |-
       a one-off migration helper over the citation form, which no test tier is selected from
   - member: |-
+      scripts/restore-requirement-ids.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a one-off migration helper over the citation form, which no test tier is selected from
+  - member: |-
       tests/results/.gitignore
     class: change-graph-coverage
     disposition: excluded

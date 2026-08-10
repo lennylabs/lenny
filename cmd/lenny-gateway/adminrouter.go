@@ -353,7 +353,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		adminRouter = adminRouter.WithRuntimeUpgrade(runtimeUpgradeMgr)
 	}
 	if w.artifactCatalog != nil {
-		// §12.8: the durable artifact_store catalog backs
+		// §12.8(b): the durable artifact_store catalog backs
 		// artifact-scoped legal holds (POST /v1/admin/legal-hold with
 		// artifactId) and the artifact half of the GDPR-erasure legal-hold
 		// preflight.

@@ -3393,7 +3393,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 			if s.incSessionResumeAttempt != nil {
 				s.incSessionResumeAttempt(row.PoolRef, "failure")
 			}
-			// spec: §7.2 — the row was in `resuming` when
+			// spec: §7.2 (a) — the row was in `resuming` when
 			// the resumeOnPod call started; bump the
 			// coordination_generation before unwinding so any stale
 			// coordinator's subsequent RPC fails the §4.2
@@ -4309,7 +4309,7 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 // operational RPC carrying a lower coordination_generation is rejected.
 // recovery_generation is intentionally left untouched: the interrupted
 // resume attempt is recorded as failed-by-terminal and is not retried,
-// so no new recovery is minted (§7.2).
+// so no new recovery is minted (§7.2 (b)).
 //
 // This helper is the gateway's authoritative CAS-fence primitive for
 // the resuming → {cancelled, completed, failed} edges (§7.2). The store's monotonicity floor (sessionstore/pgstore guards
@@ -4326,7 +4326,7 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 // Returns whether the bump succeeded. Callers may use the boolean for
 // metric / audit emission; v1 only logs on failure.
 //
-// spec: §7.2 — snapshot-close coordination_generation bump.
+// spec: §7.2 (a) — snapshot-close coordination_generation bump.
 // spec: §4.2 — CoordinatorFence preconditions. F-7.1.14.
 func (s *Server) bumpCoordinationGenerationOnSnapshotClose(ctx context.Context, tenantID, sessionID string) bool {
 	_, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {

@@ -15,7 +15,7 @@ import (
 )
 
 // fenceTestServer builds a sessionserver wired only with the in-memory
-// store so the CAS-fence tests can exercise the §7.2
+// store so the CAS-fence tests can exercise the §7.2 (a)
 // snapshot-close bump without any §15.1 precondition gates getting in
 // the way of the seeded states.
 func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
@@ -28,7 +28,7 @@ func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
 
 // TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14
 // verifies §7.2 bumps coordination_generation in the same logical
-// write that records the terminal state, per the §7.2
+// write that records the terminal state, per the §7.2 (a)
 // snapshot-close fence. F-7.1.14.
 func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *testing.T) {
 	srv, store := fenceTestServer(t)
@@ -55,7 +55,7 @@ func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *test
 		t.Errorf("CoordinationGeneration = %d, want 5 (bumped on resuming → cancelled)", got.CoordinationGeneration)
 	}
 	if got.RecoveryGeneration != 2 {
-		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2)", got.RecoveryGeneration)
+		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2 (b))", got.RecoveryGeneration)
 	}
 }
 

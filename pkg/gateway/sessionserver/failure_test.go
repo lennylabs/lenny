@@ -345,7 +345,7 @@ func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
 	}
 }
 
-// spec: §7.2 — every exit from `resuming` that aborts
+// spec: §7.2 (a) — every exit from `resuming` that aborts
 // the in-flight resume bumps coordination_generation by exactly one in
 // the same logical write that records the new state. The bump fences
 // any stale coordinator still mid-restore against the prior generation

@@ -41,7 +41,7 @@ func TestValidatePreservesAuthorizedTools_spec_13_3_580(t *testing.T) {
 	}
 }
 
-// §13.3: an exchange may further narrow authorized_tools to a
+// §13.3(e): an exchange may further narrow authorized_tools to a
 // subset of the subject's.
 func TestValidateNarrowsAuthorizedTools_spec_13_3_583(t *testing.T) {
 	subject := validSubject()
@@ -87,7 +87,7 @@ func TestValidateRejectsAuthorizedToolsBroadening_spec_13_3_580(t *testing.T) {
 	}
 }
 
-// §13.3: a child-minting exchange (actor_token present) copies
+// §13.3(e): a child-minting exchange (actor_token present) copies
 // the parent's authorized_tools intersected with the issued scope, so a
 // tool whose scope the child did not inherit is dropped from the allowlist.
 func TestValidateChildMintingIntersectsAuthorizedToolsWithScope_spec_13_3_583(t *testing.T) {

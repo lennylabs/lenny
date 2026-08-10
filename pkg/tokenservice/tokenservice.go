@@ -1081,7 +1081,7 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		DelegationDepth: c.DelegationDepth,
 		Scope:           splitScope(c.Scope),
 		Audience:        append([]string{}, c.Audience...),
-		// §13.3: the subject's narrowed operability-tool
+		// §13.3(e): the subject's narrowed operability-tool
 		// allowlist is carried into the exchange so Validate can preserve
 		// or further narrow it rather than dropping it.
 		AuthorizedTools: append([]string{}, c.AuthorizedTools...),

@@ -2947,7 +2947,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §7.2 — DELETE during the internal `resuming`
+	// spec: §7.2 (a) — DELETE during the internal `resuming`
 	// transient is the canonical resuming → cancelled snapshot-close
 	// edge (§7.2). Bump coordination_generation in the same
 	// logical write so any stale coordinator's subsequent RPC fails
@@ -2993,7 +2993,7 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 			return
 		}
 		if session.IsTerminal(updated.State) {
-			// spec: §7.2 — when the terminal write
+			// spec: §7.2 (a) — when the terminal write
 			// collapses an in-flight resume (resuming → cancelled /
 			// completed / failed), bump coordination_generation in the
 			// same logical write so any stale coordinator's subsequent
