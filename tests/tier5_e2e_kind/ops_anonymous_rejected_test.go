@@ -26,7 +26,7 @@
 // caller, so the anonymous rejection is a genuine authorization decision
 // rather than an unconditionally closed or missing route.
 //
-// §25.4 's error taxonomy places both 401 and 403 in the AUTH
+// §25.4's error taxonomy places both 401 and 403 in the AUTH
 // category, and the sentence under test mandates denial rather than a
 // specific status. The deployed dev-mode binary runs single-tenant with
 // AllowDevHeaders, so a no-credential request is admitted through the

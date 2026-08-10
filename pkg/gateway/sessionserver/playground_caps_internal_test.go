@@ -94,7 +94,7 @@ func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing
 
 // TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6 — with no runtime
 // cap declared, the §27.6 playground idle-timeout override and hard duration
-// cap are stamped onto the row unchanged. F-27.6.1 / F-27.6.2.
+// caps are stamped onto the row unchanged. F-27.6.1 / F-27.6.2.
 func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
 	row := sessionstore.Session{}

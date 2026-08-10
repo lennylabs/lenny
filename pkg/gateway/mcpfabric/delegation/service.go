@@ -44,7 +44,7 @@ import (
 // integer maxDepth on every effective lease, so the service uses this
 // when no preceding precedence layer supplied one.
 //
-// spec: §8.2 .bis.
+// spec: §8.2.bis.
 const DefaultMaxDepth = 10
 
 // DefaultInterceptorWeakeningCooldown is the §8.3 cluster-
@@ -412,7 +412,7 @@ type Options struct {
 	// rejecting self-recursive hops regardless of the policy's
 	// declared value.
 	//
-	// spec: §8.2; §8.2 .bis.
+	// spec: §8.2; §8.2.bis.
 	Policies delegationpolicystore.Store
 
 	// PlatformAllowSelfRecursion drives the §8.2 LayerPlatform input
@@ -431,7 +431,7 @@ type Options struct {
 	// maxDepth, even when the caller and the policy ceiling are both
 	// unset.
 	//
-	// spec: §8.2 .bis.
+	// spec: §8.2.bis.
 	DefaultMaxDepth int
 
 	// Metrics, when set, receives §8.2 delegation admission and
@@ -1132,9 +1132,9 @@ func (s *Service) detectCycle(ctx context.Context, tenantID string, req Request,
 // Helm-fallback) and enforces that the child's depth (the parent's
 // lineage depth + 1) does not exceed the resolved ceiling.
 //
-// spec: §8.2 .bis.
+// spec: §8.2.bis.
 func (s *Service) checkDelegationDepth(req Request, adm admission) error {
-	// §8.2 .bis depth check. The precedence chain is
+	// §8.2.bis depth check. The precedence chain is
 	// explicit-client → preset → runtime-default → policy-ceiling →
 	// Helm-fallback. v1 wires layers 1, 4, 5 (caller, policy ceiling,
 	// Helm fallback); presets and runtime-level default leases are

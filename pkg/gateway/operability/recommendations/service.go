@@ -27,7 +27,7 @@ var (
 	ErrRecommendationsUnavailable = errors.New("recommendations unavailable")
 )
 
-// §25.3 warm-pool sizing constants. The formula on is
+// §25.3 warm-pool sizing constants. The formula is
 // minWarm = ceil(peak_claim_rate * (startup_p99 + failover_seconds) * 1.3).
 const (
 	// failoverSeconds is the worst-case controller failover window used

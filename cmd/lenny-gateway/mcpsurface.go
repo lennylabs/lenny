@@ -178,7 +178,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
-		// §8.2 .bis — Helm value gateway.delegation.defaultMaxDepth.
+		// §8.2.bis — Helm value gateway.delegation.defaultMaxDepth.
 		DefaultMaxDepth: *delegationDefaultMaxDepth,
 		// §8.3 — Helm value gateway.interceptorWeakeningCooldownSeconds.
 		// F-8.7.12 / F-13.5.7.

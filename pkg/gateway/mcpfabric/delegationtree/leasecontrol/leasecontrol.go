@@ -260,7 +260,7 @@ type TreeBudget struct {
 	CoolOffExpiry time.Time
 }
 
-// NewLimits is the §8.6 the audit
+// NewLimits is the §8.6 "resulting new limits" the audit
 // record carries after a grant lands. Every dimension is an absolute
 // post-grant value (pre-grant + granted, subject to the §8.6 ceilings)
 // for the requesting session, so the audit reader does not add a delta
@@ -516,7 +516,7 @@ type AutoRateLimitAudit struct {
 	ClientIP string
 }
 
-// AuditOutcome is the §8.6
+// AuditOutcome is the §8.6 "outcome (approved/denied/capped)"
 // classification recorded on every extension audit. It groups the
 // proto-level statuses (GRANTED/PARTIALLY_GRANTED/CEILING_REACHED/
 // REJECTED) into the three audit-facing categories the spec calls out:
@@ -594,7 +594,7 @@ type ExtensionAudit struct {
 	// tree's registered mode (defaulting to elicitation per spec line
 	// 674) without yet driving the dispatcher. F-8.6.10.
 	ApprovalMode ApprovalMode
-	// Approver is the §8.6
+	// Approver is the §8.6 "approver (gateway-auto or client)"
 	// classification: `gateway-auto` when the grant did not surface an
 	// elicitation (auto-mode, or a fallthrough during cool-off), and
 	// `client` on the rejection path because the cool-off itself is
@@ -625,7 +625,7 @@ type ExtensionAudit struct {
 	// when no peer is available (unit tests; in-process callers).
 	// F-8.6.10.
 	ClientIP string
-	// NewLimits is the §8.6 — the
+	// NewLimits is the §8.6 "resulting new limits" — the
 	// post-grant per-session view of currentTokenBudget and
 	// currentMaxAgeSeconds. F-8.6.10; F-8.6.12.
 	NewLimits NewLimits

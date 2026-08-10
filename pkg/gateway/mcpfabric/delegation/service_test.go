@@ -1214,12 +1214,12 @@ func TestDelegatePolicyLayerWiredFromStore_spec_8_2_F_8_2_3(t *testing.T) {
 	})
 }
 
-// TestDelegateMaxDepthFallsThroughToHelmDefault verifies §8.2 .bis:
+// TestDelegateMaxDepthFallsThroughToHelmDefault verifies §8.2.bis:
 // a delegation that omits explicit MaxDepth still receives a bounded
 // chain via the Helm fallback (DefaultMaxDepth). A child at depth equal
 // to the fallback is rejected; a child below it is admitted.
 //
-// spec: §8.2 .bis; F-8.1.4 / F-8.2.6.
+// spec: §8.2.bis; F-8.1.4 / F-8.2.6.
 func TestDelegateMaxDepthFallsThroughToHelmDefault_spec_8_2_bis_F_8_1_4(t *testing.T) {
 	mk := func(fallback int, lineageLen int) (*delegation.Service, string) {
 		store := memstore.New()
@@ -1318,7 +1318,7 @@ func TestDelegateMaxDepthFallsThroughToHelmDefault_spec_8_2_bis_F_8_1_4(t *testi
 // fallback. A small explicit value can reject a chain the fallback
 // would have admitted.
 //
-// spec: §8.2 .bis; F-8.1.4 / F-8.2.6.
+// spec: §8.2.bis; F-8.1.4 / F-8.2.6.
 func TestDelegateExplicitMaxDepthBeatsHelmFallback_spec_8_2_bis(t *testing.T) {
 	store := memstore.New()
 	seedParent(t, store, "sess_root", "", "r0", "p0", isolation.ProfileSandboxed)

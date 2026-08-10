@@ -462,6 +462,18 @@ entries:
     reason: |-
       a one-off migration helper over the citation form, which no test tier is selected from
   - member: |-
+      scripts/review-migration-diff/funnel.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/review.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
       tests/results/.gitignore
     class: change-graph-coverage
     disposition: excluded

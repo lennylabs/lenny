@@ -251,7 +251,7 @@ type TreeConfig struct {
 	AutoMaxPerMinute int
 }
 
-// SessionLease is the §8.6 snapshot
+// SessionLease is the §8.6 "parent's own lease limits" snapshot
 // recorded for a delegated child session. The MemoryBudgetSource keys
 // it on the child session id; the handler reads it as the second hard
 // ceiling so a child cannot extend beyond what the parent's lease
