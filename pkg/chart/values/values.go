@@ -72,7 +72,7 @@ type Root struct {
 	GC                         Object     `json:"gc,omitempty"`
 	KMS                        Object     `json:"kms,omitempty"`
 	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
-	Monitoring                 Object     `json:"monitoring,omitempty"`
+	Monitoring                 Monitoring `json:"monitoring,omitempty" open:"true"`
 	SLO                        Object     `json:"slo,omitempty"`
 	Observability              Object     `json:"observability,omitempty"`
 	Tracing                    Object     `json:"tracing,omitempty"`
@@ -131,7 +131,7 @@ type Global struct {
 	// NoEnvironmentPolicy is the §10.6/§17.6 platform-wide default
 	// access policy. The gateway refuses to start when it is unset outside
 	// --dev-mode, so the schema constrains it to the two documented values.
-	NoEnvironmentPolicy string  `json:"noEnvironmentPolicy,omitempty" enum:"deny-all|allow-all" desc:"Platform-wide default access policy for a session that names no environment. §10.6 /."`
+	NoEnvironmentPolicy string  `json:"noEnvironmentPolicy,omitempty" enum:"deny-all|allow-all" desc:"Platform-wide default access policy for a session that names no environment. §10.6."`
 	SpiffeTrustDomain   string  `json:"spiffeTrustDomain,omitempty" desc:"SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3."`
 	TraceSamplingRate   float64 `json:"traceSamplingRate,omitempty" min:"0" max:"1" desc:"Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3."`
 	SaTokenAudience     string  `json:"saTokenAudience,omitempty" desc:"Projected SA-token audience the gateway validates on every pod→gateway request. §10.3."`
@@ -141,6 +141,32 @@ type Global struct {
 // fully enumerated so the schema enforces the §17.6
 // devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum, and
 // rejects out-of-range bearer-token TTLs.
+// Monitoring carries the §16.10 OpenSLO export settings that need a schema
+// constraint of their own. Every other monitoring key is free-form, so the
+// struct declares only the constrained path and leaves the rest to Object.
+//
+// The notification-target name renders into pattern-constrained OpenSLO
+// metadata.name and targetRef fields, so an out-of-pattern override has to be
+// rejected at install rather than producing an invalid document. The constraint
+// lives here rather than hand-written into charts/lenny/values.schema.json
+// because that file is generated: a constraint added to the committed schema
+// alone is deleted by the next regeneration, which is how it was lost once.
+type Monitoring struct {
+	OpenSLO OpenSLO `json:"openslo,omitempty" open:"true"`
+}
+
+// OpenSLO is the §16.10 export block.
+type OpenSLO struct {
+	NotificationTarget NotificationTarget `json:"notificationTarget,omitempty" open:"true"`
+}
+
+// NotificationTarget names the shared OpenSLO AlertNotificationTarget.
+type NotificationTarget struct {
+	// Name renders into OpenSLO metadata.name and targetRef, which are
+	// RFC 1123 label fields, so it takes the label pattern and length.
+	Name string `json:"name,omitempty" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" maxLength:"63" desc:"Shared OpenSLO AlertNotificationTarget name; renders into pattern-constrained metadata.name and targetRef fields."`
+}
+
 type Playground struct {
 	Enabled  bool   `json:"enabled,omitempty" desc:"Turns the §27 playground on. Off by default."`
 	AuthMode string `json:"authMode,omitempty" enum:"oidc|apiKey|dev" desc:"Playground authentication mode. §27.3."`

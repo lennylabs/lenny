@@ -90,6 +90,15 @@ func schemaForType(t reflect.Type, tag reflect.StructTag) map[string]any {
 		}
 	case reflect.Struct:
 		s = schemaForStruct(t)
+		// A struct is strict by default. `open:"true"` reopens it, for a
+		// block where the schema needs to constrain one nested path while
+		// leaving its siblings free-form. Without it, constraining a single
+		// key of a large permissive block means declaring every sibling, and
+		// a sibling added to values.yaml later fails the chart at install
+		// with no schema change to point at.
+		if tag.Get("open") == "true" {
+			delete(s, "additionalProperties")
+		}
 	default:
 		s = map[string]any{}
 	}
