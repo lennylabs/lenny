@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MIT
 """Refine a parent-section citation to the numbered subsection it meant.
 
-WHY THIS EXISTS. The line pass converted every `§10.1 line 131` citation to a
-bare `§10.1`, and the numbered subsections that would have given it paragraph
+WHY THIS EXISTS. The line pass converted every citation naming a section and a
+line into a bare section reference, and the numbered subsections that would have
+given it paragraph
 granularity were inserted afterwards, so 737 citations name a 200-line section
 where a subsection exists. This restores the granularity from the line numbers
 the conversion discarded, which git still holds.
@@ -20,8 +21,9 @@ inside the removed block has no successor and the offset does not hold. §4.4 an
 THE GUARD THAT MAKES IT SAFE. A citation is refined only when its mapped line
 falls inside the bounds of the section it names. Roughly 15 of the 737 already
 pointed outside their section before the migration, and for those the old line
-number is evidence of nothing: `§10.1 line 393` maps to a line inside §10.4, and
-writing `§10.1.8` there would turn a stale citation into a confidently wrong one.
+number is evidence of nothing. One such citation names §10.1 but its line sits
+inside §10.4, so writing a §10.1 subsection there would turn a stale citation
+into a confidently wrong one.
 Those are reported and left alone.
 
 Usage:

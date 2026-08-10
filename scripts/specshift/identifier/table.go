@@ -65,6 +65,74 @@ func (c Carrier) Valid() bool {
 	return false
 }
 
+// carrierToken states the token form a carrier writes a spelling in,
+// together with the prose a failure names the form by.
+//
+// The form is a property of the cell alone, so a row is held to it
+// whatever the tree around it holds. That is what the check needs to
+// be: a rename the passes have carried to completion writes the
+// canonical spelling everywhere and the retired spelling nowhere, so a
+// correctly authored row and a mis-authored one reach the same site
+// count of zero and no count taken from the tree separates them. The
+// mis-authored row the check exists to name is mis-authored lexically,
+// a flag cell carrying the dashes the shell prefixes the flag with
+// being the case that motivated it, and the cell states that on its
+// own.
+//
+// Each form is the alphabet and the opening class of the carrier's
+// tokens rather than a full naming convention, so the rule rejects a
+// cell no carrier could write and admits every spelling a carrier does.
+type carrierToken struct {
+	form  *regexp.Regexp
+	prose string
+}
+
+// carrierTokens states that form for every carrier. A carrier absent
+// from the map has no form rule, which rowFrom reads as accepting any
+// non-empty cell; every carrier of the closed set is present.
+var carrierTokens = map[Carrier]carrierToken{
+	CarrierProtoRPC: {
+		form:  regexp.MustCompile(`^[A-Z][A-Za-z0-9]*$`),
+		prose: "an upper camel-case RPC name",
+	},
+	CarrierGoSymbol: {
+		form:  regexp.MustCompile(`^[A-Z][A-Za-z0-9]*$`),
+		prose: "an exported Go identifier stem",
+	},
+	CarrierSocket: {
+		form:  regexp.MustCompile(`^@?[a-z0-9]+(?:[-_.][a-z0-9]+)*$`),
+		prose: "a lowercase socket token, which opens with the abstract-namespace at sign or with the token itself",
+	},
+	CarrierManifestKey: {
+		form:  regexp.MustCompile(`^[a-z][A-Za-z0-9]*(?:-[a-z][A-Za-z0-9]*)*$`),
+		prose: "a manifest key opening lowercase",
+	},
+	CarrierFlag: {
+		form:  regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
+		prose: "a lowercase hyphenated flag name, written without the dashes the shell prefixes it with",
+	},
+	CarrierPath: {
+		form:  regexp.MustCompile(`^[a-z0-9]+(?:[-_][a-z0-9]+)*$`),
+		prose: "a lowercase file-name stem",
+	},
+	CarrierMetric: {
+		form:  regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`),
+		prose: "a metric name stem",
+	},
+}
+
+// wellFormed reports whether a spelling is written in the carrier's
+// token form.
+func (c Carrier) wellFormed(spelling string) bool {
+	token, stated := carrierTokens[c]
+	return !stated || token.form.MatchString(spelling)
+}
+
+// tokenProse renders the carrier's token form for a failure message.
+func (c Carrier) tokenProse() string {
+	return carrierTokens[c].prose
+}
+
 // carrierNames renders the closed set for a failure message.
 func carrierNames() string {
 	names := make([]string, 0, len(Carriers()))
@@ -107,6 +175,30 @@ func (t *Table) Retired() []string {
 	out := make([]string, 0, len(t.byRetire))
 	for spelling := range t.byRetire {
 		out = append(out, spelling)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i]) != len(out[j]) {
+			return len(out[i]) > len(out[j])
+		}
+		return out[i] < out[j]
+	})
+	return out
+}
+
+// Canonical returns every canonical spelling the table carries, longest
+// first, which is the order Retired states for the same reason: one
+// canonical spelling is a prefix of another wherever a carrier writes a
+// stem and a compound of that stem, and the shorter match would consume
+// the span the longer one stands on.
+func (t *Table) Canonical() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(t.rows))
+	for _, row := range t.rows {
+		if seen[row.Canonical] {
+			continue
+		}
+		seen[row.Canonical] = true
+		out = append(out, row.Canonical)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if len(out[i]) != len(out[j]) {
@@ -309,6 +401,15 @@ func rowFrom(raw []string, columns map[string]int) (Row, error) {
 	if row.Retired == row.Canonical {
 		return Row{}, fmt.Errorf("the row for %s retires %q to itself, so a site carrying it has no substitution",
 			row.Channel, row.Retired)
+	}
+	for _, cell := range []struct{ column, spelling string }{
+		{"retired spelling", row.Retired},
+		{"canonical spelling", row.Canonical},
+	} {
+		if !row.Carrier.wellFormed(cell.spelling) {
+			return Row{}, fmt.Errorf("the row for %s states the %s %q, which is not %s, so the %s carrier writes no token the pass could read or splice there",
+				row.Channel, cell.column, cell.spelling, row.Carrier.tokenProse(), row.Carrier)
+		}
 	}
 	return row, nil
 }

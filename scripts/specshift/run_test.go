@@ -5187,12 +5187,24 @@ func nameTree(t *testing.T, carriers string) string {
 	return root
 }
 
+// registerPath resolves the register one pass case is driven by. A
+// relative name is a register fixture committed under the pass's own
+// fixture directory; an absolute path is a register a case wrote itself,
+// which is how a case drives a pass over a perturbed copy of a fixture
+// register without editing the committed one.
+func registerPath(fixture, register string) string {
+	if filepath.IsAbs(register) {
+		return register
+	}
+	return filepath.Join(fixture, "registers", register)
+}
+
 // nameRewriter returns the name pass over the tree at root, driven by
 // the named register fixture.
 func nameRewriter(t *testing.T, root, register string) *name.Rewriter {
 	t.Helper()
 	r := name.New(scope.DirLister(root), scope.DirReader(root))
-	if err := r.LoadRegister(filepath.Join(fixtureNamePass, "registers", register)); err != nil {
+	if err := r.LoadRegister(registerPath(fixtureNamePass, register)); err != nil {
 		t.Fatalf("load the name pass register %s: %v", register, err)
 	}
 	return r
@@ -8439,7 +8451,7 @@ func idHarness(root string) *pass.Harness {
 func idRewriter(t *testing.T, root, register string) *identifier.Rewriter {
 	t.Helper()
 	r := identifier.New(scope.DirLister(root), scope.DirReader(root))
-	if err := r.LoadRegister(filepath.Join(fixtureIDPass, "registers", register)); err != nil {
+	if err := r.LoadRegister(registerPath(fixtureIDPass, register)); err != nil {
 		t.Fatalf("load the identifier pass register %s: %v", register, err)
 	}
 	return r
@@ -10050,101 +10062,129 @@ func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *
 }
 
 // misSeededOccurrence is an occurrence number above the site count any
-// carrier of the committed tree holds, so an entry carrying it is
-// mis-seeded whatever the file it is keyed to.
+// carrier of a fixture tree holds, so an entry carrying it is mis-seeded
+// whatever the file it is keyed to.
 const misSeededOccurrence = 9999
 
-// perturbedRegister writes a copy of one committed register whose last
-// specification-keyed entry claims a mis-seeded occurrence, and returns
-// the copy's path. Every other field is carried over as written, so the
-// copy differs from the committed register in that one number.
-func perturbedRegister(t *testing.T, root, path string) string {
+// perturbedRegister writes a copy of one register fixture whose entry
+// keyed to the named carrier claims a mis-seeded occurrence, and returns
+// the copy's absolute path, which nameRewriter and idRewriter drive a
+// pass by in place of the committed fixture. Every other field is
+// carried over as written, so the copy differs from the fixture in that
+// one number.
+func perturbedRegister(t *testing.T, fixture, register, carrier string) string {
 	t.Helper()
+	source := registerPath(fixture, register)
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read the register fixture %s: %v", source, err)
+	}
 	var doc map[string]any
-	if !readRegister(t, root, path, &doc) {
-		t.Skipf("not-yet-applicable: the tree carries no %s", path)
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse the register fixture %s: %v", source, err)
 	}
 	entries, ok := doc["entries"].([]any)
 	if !ok {
-		t.Fatalf("%s carries no entries list to perturb", path)
+		t.Fatalf("the register fixture %s carries no entries list to perturb", source)
 	}
-	perturbed := ""
-	for at := len(entries) - 1; at >= 0 && perturbed == ""; at-- {
-		entry, ok := entries[at].(map[string]any)
+	perturbed := false
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		file, _ := entry["file"].(string)
-		if !strings.HasPrefix(file, "spec/") {
+		if file, _ := entry["file"].(string); file != carrier {
 			continue
 		}
 		if _, keyed := entry["occurrence"]; !keyed {
 			continue
 		}
 		entry["occurrence"] = misSeededOccurrence
-		perturbed = file
+		perturbed = true
+		break
 	}
-	if perturbed == "" {
-		t.Skipf("not-yet-applicable: %s keys no occurrence under spec/", path)
+	if !perturbed {
+		t.Fatalf("the register fixture %s keys no occurrence of %s to perturb", source, carrier)
 	}
-	data, err := yaml.Marshal(doc)
+	out, err := yaml.Marshal(doc)
 	if err != nil {
-		t.Fatalf("write the perturbed copy of %s: %v", path, err)
+		t.Fatalf("write the perturbed copy of %s: %v", source, err)
 	}
-	copied := filepath.Join(t.TempDir(), filepath.Base(path))
-	if err := os.WriteFile(copied, data, 0o600); err != nil {
-		t.Fatalf("write the perturbed copy of %s: %v", path, err)
+	copied := filepath.Join(t.TempDir(), filepath.Base(source))
+	if err := os.WriteFile(copied, out, 0o600); err != nil {
+		t.Fatalf("write the perturbed copy of %s: %v", source, err)
 	}
 	return copied
 }
 
-// TestAMisSeededOccurrenceFailsTheSpecificationConfinedRunsRatherThanSkippingThem
-// holds the window guard of the two specification-confined dry runs to
-// the state it exists for.
+// TestAMisSeededOccurrenceFailsAConfinedRunRatherThanSkippingIt holds
+// the window guard of the two confined dry runs to the state it exists
+// for.
 //
 // Both runs abort when the tree carries no site for an entry their
 // register keys, and that abort is the state the guard skips on as well
 // as the failure the runs exist to surface. A guard that reads the fact
 // of the abort therefore reports nothing over the mis-seeded occurrence
 // number it is the gate for, which leaves that class of mis-seeding
-// detected only mid-application. The case drives each pass over a copy of
-// its committed register carrying one mis-seeded occurrence and asserts
-// the run aborts on it and that the guard does not take the abort for the
-// emptied-carrier window.
+// detected only mid-application. The guard separates the two by reading
+// the per-entry site count the abort carries, so the case drives each
+// pass over a register whose one mis-seeded entry is keyed to a carrier
+// that still holds sites, and asserts the run aborts on it and that the
+// guard does not take that abort for the emptied-carrier window.
+//
+// The tree is a fixture tree. The case formerly drove the committed
+// registers over the committed tree under the specification confinement,
+// and that mechanism is retired: the passes have since rewritten every
+// specification carrier those registers key, so a mis-seeded entry and a
+// spent one both report a site count of zero there and the abort text of
+// the two states is identical byte for byte. No perturbation of the
+// committed registers can be told from the state the finished migration
+// leaves, so the guard is unexercisable against that tree by anyone. Do
+// not move this case back onto it. A fixture tree holds the carriers at
+// the state the guard discriminates in, which is the state the guard is
+// read in during a migration, and it holds them whatever the committed
+// tree has since become.
+//
+// The sibling case pins the other direction of the same guard over the
+// same fixture trees.
 //
 // spec: §28.1
-func TestAMisSeededOccurrenceFailsTheSpecificationConfinedRunsRatherThanSkippingThem(t *testing.T) {
+func TestAMisSeededOccurrenceFailsAConfinedRunRatherThanSkippingIt(t *testing.T) {
 	t.Parallel()
-	root := repoRoot(t)
-	for _, tc := range []struct {
-		pass     string
-		register string
-	}{
-		{pass: "name", register: sensePath},
-		{pass: "identifier", register: identifierSensePath},
-	} {
-		t.Run(tc.pass, func(t *testing.T) {
-			t.Parallel()
-			if tc.pass == "name" && !treeCarries(t, root, pinnedLiteralsPath) {
-				t.Skipf("not-yet-applicable: the tree carries no %s", pinnedLiteralsPath)
-			}
-			var out bytes.Buffer
-			err := run(context.Background(), []string{
-				"-root", root,
-				"-pass", tc.pass,
-				"-register", perturbedRegister(t, root, tc.register),
-				"-only", "spec/",
-			}, &out)
-			if err == nil {
-				t.Fatalf("the specification-confined dry run of the %s pass over a mis-seeded copy of %s exited zero", tc.pass, tc.register)
-			}
-			if !claimedEntryAbort(err) {
-				t.Fatalf("the run over a mis-seeded copy of %s reported %v, want the claimed-entry abort", tc.register, err)
-			}
-			if emptiedCarrierAbort(err) {
-				t.Errorf("the window guard takes the mis-seeded occurrence for an emptied carrier, so the confined run reports nothing over it: %v", err)
-			}
-		})
+	// Each carrier below still holds sites of its pass's class on the
+	// first confined run over the fixture tree, so the abort the
+	// mis-seeded entry raises reports a non-zero count and the guard has
+	// something to read.
+	t.Run("the name pass", func(t *testing.T) {
+		t.Parallel()
+		root := nameTree(t, "tree")
+		register := perturbedRegister(t, fixtureNamePass, "tree.yaml", "spec/13_security-model.md")
+		_, err := applyConfinedNamePass(t, root, register, specOnly)
+		assertMisSeededAbort(t, "name", err)
+	})
+	t.Run("the identifier pass", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "tree")
+		register := perturbedRegister(t, fixtureIDPass, "tree.yaml", "docs/reference/channels.md")
+		_, err := applyConfinedIDPass(t, root, register, pass.NewConfinement([]string{"docs/"}, nil))
+		assertMisSeededAbort(t, "identifier", err)
+	})
+}
+
+// assertMisSeededAbort holds one confined run over a mis-seeded register
+// to the abort the case exists for: the run fails, it fails through the
+// claimed-entry check, and the window guard does not read that failure
+// as the emptied-carrier state it skips on.
+func assertMisSeededAbort(t *testing.T, pass string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("the confined run of the %s pass over a mis-seeded register exited zero", pass)
+	}
+	if !claimedEntryAbort(err) {
+		t.Fatalf("the confined run of the %s pass over a mis-seeded register reported %v, want the claimed-entry abort", pass, err)
+	}
+	if emptiedCarrierAbort(err) {
+		t.Errorf("the window guard takes the mis-seeded occurrence for an emptied carrier, so the confined run reports nothing over it: %v", err)
 	}
 }
 

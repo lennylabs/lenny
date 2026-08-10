@@ -46,12 +46,30 @@ const proseSiteLine = 5
 //
 // The accept case checks the properties a row has to carry for the pass
 // to be able to act on it: a carrier the pass knows, a substitution that
-// changes the spelling, and at least one occurrence of the retired
-// spelling inside the pass's write domain outside the table that
-// declares it. Without the last one a row states a substitution for a
-// spelling the site walk never reaches, which is how a row retiring a
-// flag with its shell prefix attached passes every other check and
-// resolves nothing.
+// changes the spelling, both spellings written in the carrier's token
+// form, and at least one occurrence of one of the two spellings inside
+// the pass's write domain outside the table that declares it.
+//
+// The reachability rule reads either direction. It formerly read the
+// retired direction alone, and that rule is retired: it asserted that
+// the rename had sites left to make, which is a state a completed rename
+// ends. Once every site of a channel is written in the canonical
+// spelling, a correctly authored row and a row naming a spelling nothing
+// in the tree ever wrote both reach a retired count of zero, so the
+// retired count separates them no longer. Two rows of the tracked table
+// reached that state, and the seven that had not stood on specimen
+// occurrences inside the migration tooling's own test files rather than
+// on anything the pass could still rewrite, so the old rule was already
+// measuring an accident. Do not restore it. Reading either direction
+// keeps what it was for, which is that the row is about this tree: a row
+// whose channel this tree writes in neither spelling names a channel
+// that is not here.
+//
+// The mis-authored row the old rule was aimed at, the one "retiring a
+// flag with its shell prefix attached", is now caught by the token-form
+// rule rowFrom applies, which reads the cell rather than the tree and so
+// holds however far the rename has run. That rule is pinned by
+// TestARowStatesEachSpellingInItsCarriersTokenForm_spec_28_3.
 //
 // spec: §28.3
 func TestLoadTableReadsTheLandedNamingTable_spec_28_3(t *testing.T) {
@@ -78,14 +96,18 @@ func TestLoadTableReadsTheLandedNamingTable_spec_28_3(t *testing.T) {
 				t.Errorf("the row for %s retires %q to itself", row.Channel, row.Retired)
 			}
 		}
-		reachable, err := retiredSpellingsInWriteDomain(ctx, list, read, table)
+		retired, err := retiredSpellingsInWriteDomain(ctx, list, read, table)
 		if err != nil {
 			t.Fatalf("count the retired spellings of the write domain: %v", err)
 		}
+		canonical, err := canonicalSpellingsInWriteDomain(ctx, list, read, table)
+		if err != nil {
+			t.Fatalf("count the canonical spellings of the write domain: %v", err)
+		}
 		for _, row := range table.rows {
-			if reachable[row.Retired] == 0 {
-				t.Errorf("the %s row for %s retires %q, which occurs in no writable tracked file outside %s*, so no site carries it",
-					row.Carrier, row.Channel, row.Retired, channelSectionPrefix)
+			if retired[row.Retired]+canonical[row.Canonical] == 0 {
+				t.Errorf("the %s row for %s retires %q to %q, and no writable tracked file outside %s* carries a site of either spelling, so the row names a channel this tree does not write",
+					row.Carrier, row.Channel, row.Retired, row.Canonical, channelSectionPrefix)
 			}
 		}
 	})
@@ -104,6 +126,144 @@ func TestLoadTableReadsTheLandedNamingTable_spec_28_3(t *testing.T) {
 	})
 }
 
+// namingColumns is the column index of each naming-table column in a
+// row given as cells in the order the section writes them, which is what
+// rowFrom reads a raw row through.
+var namingColumns = map[string]int{
+	"channel": 0, "carrier": 1, "retired spelling": 2, "canonical spelling": 3,
+}
+
+// TestARowStatesEachSpellingInItsCarriersTokenForm_spec_28_3 pins the
+// rule that carries the mis-authored-row intent once a rename has run to
+// completion.
+//
+// A row whose spelling no carrier could write resolves nothing: the site
+// walk reads tokens, so a flag cell carrying the dashes the shell writes
+// the flag with matches no site, and a substitution spliced from such a
+// cell would write a token the carrier cannot hold. The defect is in the
+// cell, so the rule reads the cell. That is what makes it hold after the
+// pass has rewritten every site: a count taken from the tree reads a
+// spent row and a mis-authored row alike, and this rule reads neither
+// from the tree.
+//
+// The rule sits in rowFrom rather than here, so a mis-authored row fails
+// every run of the pass at load rather than only this case.
+//
+// The cells are specimen spellings rather than the tracked table's own,
+// for the reason the fixture trees state: a retired spelling written in
+// a Go source file of this package is a site the identifier-resolution
+// gate reads, so a case restating the tracked spellings would report
+// this package's own input as a second live spelling of a channel.
+//
+// spec: §28.3
+func TestARowStatesEachSpellingInItsCarriersTokenForm_spec_28_3(t *testing.T) {
+	const channel = "CH-SAMPLE"
+	for _, tc := range []struct {
+		name     string
+		carrier  string
+		retired  string
+		writes   string
+		accepted bool
+	}{
+		{
+			name:     "a flag row states the flag without the shell's dashes",
+			carrier:  "flag",
+			retired:  "sample-token",
+			writes:   "specimen-token",
+			accepted: true,
+		},
+		{
+			name:    "a flag row retiring a flag with its shell prefix attached",
+			carrier: "flag",
+			retired: "--sample-token",
+			writes:  "specimen-token",
+		},
+		{
+			name:    "a flag row substituting a flag with its shell prefix attached",
+			carrier: "flag",
+			retired: "sample-token",
+			writes:  "--specimen-token",
+		},
+		{
+			name:     "a socket row states the abstract-namespace token",
+			carrier:  "socket",
+			retired:  "@lenny-sample",
+			writes:   "@lenny-specimen",
+			accepted: true,
+		},
+		{
+			name:    "a socket row stating words no socket token carries",
+			carrier: "socket",
+			retired: "@lenny-sample",
+			writes:  "Lenny Specimen Token",
+		},
+		{
+			name:     "a go-symbol row states an exported stem",
+			carrier:  "go-symbol",
+			retired:  "SampleToken",
+			writes:   "SpecimenToken",
+			accepted: true,
+		},
+		{
+			name:    "a go-symbol row stating a hyphenated cell no Go identifier carries",
+			carrier: "go-symbol",
+			retired: "SampleToken",
+			writes:  "specimen-token",
+		},
+		{
+			name:     "a path row states a lowercase file-name stem",
+			carrier:  "path",
+			retired:  "sample-token",
+			writes:   "specimen-token",
+			accepted: true,
+		},
+		{
+			name:    "a path row stating a stem with the extension attached",
+			carrier: "path",
+			retired: "sample-token",
+			writes:  "specimen-token.go",
+		},
+		{
+			name:     "a manifest-key row states a key opening lowercase",
+			carrier:  "manifest-key",
+			retired:  "sampleToken",
+			writes:   "specimenToken",
+			accepted: true,
+		},
+		{
+			name:    "a manifest-key row stating a key with its parent path attached",
+			carrier: "manifest-key",
+			retired: "sampleToken",
+			writes:  "channels.specimenToken",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []string{channel, tc.carrier, tc.retired, tc.writes}
+			row, err := rowFrom(raw, namingColumns)
+			if tc.accepted {
+				if err != nil {
+					t.Fatalf("the row %v was refused: %v", raw, err)
+				}
+				if row.Retired != tc.retired || row.Canonical != tc.writes {
+					t.Errorf("the row read as %q to %q, want %q to %q", row.Retired, row.Canonical, tc.retired, tc.writes)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("the row %v was read as a row the pass can act on", raw)
+			}
+			// rowFrom returns the zero row on a refusal, so the cell the
+			// refusal has to name is read off the case's own carrier
+			// rather than off the row.
+			for _, cell := range []string{tc.retired, tc.writes} {
+				if !Carrier(tc.carrier).wellFormed(cell) && !strings.Contains(err.Error(), cell) {
+					t.Errorf("the refusal %q does not name the cell %q it refused", err, cell)
+				}
+			}
+		})
+	}
+}
+
 // TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3 pins the
 // reachability count to the pass's own site walk.
 //
@@ -112,6 +272,10 @@ func TestLoadTableReadsTheLandedNamingTable_spec_28_3(t *testing.T) {
 // nothing. A count taken by substring reads such a spelling as reachable
 // and passes the row, which is the class of unresolvable row the
 // reachability check exists to name.
+//
+// The reachability check reads both spellings of a row, and both counts
+// come from this walk, so pinning the retired direction to it pins the
+// terms the canonical direction is counted on as well.
 //
 // spec: §28.3
 func TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3(t *testing.T) {
@@ -215,34 +379,37 @@ func TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3(t *testing.T
 	})
 }
 
-// retiredSpellingsInWriteDomain counts, per retired spelling of the
-// table, the sites the pass reads outside the specification file the
-// table is stated in. Counting is by the pass's own site walk rather
-// than by substring, so the count is the number of occurrences the pass
-// would act on: a spelling standing only inside a longer lowercase word
-// is no site, and a check reading it as one would pass a row the
-// substitution never reaches.
+// spellingsInWriteDomain counts, per spelling of the given set, the
+// sites the pass's own walk reads outside the specification file the
+// table is stated in. Counting is by that walk rather than by substring,
+// so the count is the number of occurrences the pass would act on: a
+// spelling standing only inside a longer lowercase word is no site, and
+// a check reading it as one would pass a row the substitution never
+// reaches.
 //
-// The naming-table rows are excluded because every retired spelling
-// stands in the row that retires it by construction, so counting that
-// row would satisfy the reachability check for a spelling nothing else
-// in the tree writes. The exclusion is the row rather than the whole
-// specification file: an occurrence standing in the section's prose is a
-// site the pass acts on like any other, and a file-wide skip counts it
-// in neither direction.
-func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table) (map[string]int, error) {
+// The naming-table rows are excluded because every spelling of a row
+// stands in that row by construction, so counting the row would satisfy
+// a reachability check for a spelling nothing else in the tree writes.
+// The exclusion is the row rather than the whole specification file: an
+// occurrence standing in the section's prose is a site the pass acts on
+// like any other, and a file-wide skip counts it in neither direction.
+//
+// The spellings are a parameter because a row is reachable in either
+// direction. Before the pass runs, the tree writes the retired spelling;
+// after it, the canonical one. Both counts come from the same walk so
+// the two directions are measured on the same terms.
+func spellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table, spellings []string) (map[string]int, error) {
 	domain, err := scope.WriteDomain(ctx, list, scope.Identifier, read)
 	if err != nil {
 		return nil, err
 	}
-	retired := table.Retired()
 	counts := map[string]int{}
 	for _, target := range domain {
 		data, err := read(target)
 		if err != nil {
 			return nil, err
 		}
-		for _, s := range findSites(string(data), retired) {
+		for _, s := range findSites(string(data), spellings) {
 			if table.mentioned(target, s.start) {
 				continue
 			}
@@ -250,4 +417,17 @@ func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read 
 		}
 	}
 	return counts, nil
+}
+
+// retiredSpellingsInWriteDomain counts the sites the pass would rewrite,
+// which is the retired direction of spellingsInWriteDomain.
+func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table) (map[string]int, error) {
+	return spellingsInWriteDomain(ctx, list, read, table, table.Retired())
+}
+
+// canonicalSpellingsInWriteDomain counts the occurrences of the spelling
+// a row substitutes in, which is the direction the tree writes once the
+// pass has run over it.
+func canonicalSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table) (map[string]int, error) {
+	return spellingsInWriteDomain(ctx, list, read, table, table.Canonical())
 }
