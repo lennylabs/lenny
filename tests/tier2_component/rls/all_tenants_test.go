@@ -33,7 +33,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// spec: §4.2, (b), (c) — TestRLSPlatformAdminAllSentinel
+// spec: §4.2 (a), (b), (c) — TestRLSPlatformAdminAllSentinel
 // is the spec-named integration test. The three sub-tests below mirror
 // the three lettered sub-cases the spec requires.
 //

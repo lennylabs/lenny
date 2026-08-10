@@ -136,7 +136,7 @@ const maxMessagePartBytes = 50 * 1024 * 1024
 // spec: §8.5, §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
 // parity).
 var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
-	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId."},"message":%s,"inReplyTo":{"type":"string","description":"when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces thetopology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
+	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId."},"message":%s,"inReplyTo":{"type":"string","description":"when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
 	sessionrecord.MessageContentJSONSchema,
 ))
 

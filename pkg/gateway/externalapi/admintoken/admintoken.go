@@ -40,7 +40,7 @@ const (
 	// per the §17.6 block.
 	ManagedByLabel = "app.kubernetes.io/managed-by"
 	ManagedByValue = "lenny-bootstrap"
-	// TokenKey / CreatedAtKey / jtiKey are the §17.6
+	// TokenKey / CreatedAtKey / jtiKey are the §17.6 `data`
 	// fields. jtiKey is a Lenny addition: it records the token's `jti`
 	// so Rotate can revoke the superseded token (the spec's "old token
 	// is immediately invalidated" clause).

@@ -15,7 +15,7 @@ import (
 // MessagePart — both the text parts it generates and the input parts it
 // echoes verbatim. messagepart.schema.json makes schemaVersion required,
 // so a third-party author cloning this runtime inherits compliant output.
-// spec: §15.4.1.4-MED-021.
+// spec: §15.4.1 / 15.4-MED-021.
 func TestHandleMessageStampsSchemaVersion_spec_15_4_1_1499(t *testing.T) {
 	var buf bytes.Buffer
 	w := newWriter(&buf)

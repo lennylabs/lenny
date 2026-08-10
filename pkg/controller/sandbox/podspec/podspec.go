@@ -86,7 +86,7 @@ const (
 	// adapter bounds its SIGTERM-time DemoteSDK teardown by.
 	sdkDemoteTimeoutSeconds int64 = 5
 
-	// sdkDemoteGraceMarginSeconds is the §6.1 the grace
+	// sdkDemoteGraceMarginSeconds is the §6.1 "+5s" margin the grace
 	// period of a preConnect pod must exceed the demote timeout by, so the
 	// kubelet does not SIGKILL the adapter before its bounded DemoteSDK (and
 	// the force-terminate fallback) completes.

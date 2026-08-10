@@ -448,7 +448,7 @@ type messagePart struct {
 	// producer MUST set schemaVersion to the highest version required by
 	// the fields it emits. messagepart.schema.json:66 makes it required, so
 	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
-	// §15.4.1.4-MED-021.
+	// §15.4.1 / 15.4-MED-021.
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`

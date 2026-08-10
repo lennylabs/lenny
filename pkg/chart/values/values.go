@@ -137,10 +137,6 @@ type Global struct {
 	SaTokenAudience     string  `json:"saTokenAudience,omitempty" desc:"Projected SA-token audience the gateway validates on every pod→gateway request. §10.3."`
 }
 
-// Playground models the §27 web-playground chart values. The section is
-// fully enumerated so the schema enforces the §17.6
-// devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum, and
-// rejects out-of-range bearer-token TTLs.
 // Monitoring carries the §16.10 OpenSLO export settings that need a schema
 // constraint of their own. Every other monitoring key is free-form, so the
 // struct declares only the constrained path and leaves the rest to Object.
@@ -167,6 +163,10 @@ type NotificationTarget struct {
 	Name string `json:"name,omitempty" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" maxLength:"63" desc:"Shared OpenSLO AlertNotificationTarget name; renders into pattern-constrained metadata.name and targetRef fields."`
 }
 
+// Playground models the §27 web-playground chart values. The section is
+// fully enumerated so the schema enforces the §17.6
+// devTenantId pattern (^[a-zA-Z0-9_-]{1,128}$) and the authMode enum, and
+// rejects out-of-range bearer-token TTLs.
 type Playground struct {
 	Enabled  bool   `json:"enabled,omitempty" desc:"Turns the §27 playground on. Off by default."`
 	AuthMode string `json:"authMode,omitempty" enum:"oidc|apiKey|dev" desc:"Playground authentication mode. §27.3."`

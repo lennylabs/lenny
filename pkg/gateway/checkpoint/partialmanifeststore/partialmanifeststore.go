@@ -221,7 +221,8 @@ type Store interface {
 
 	// LatestFull returns the most-recently-created active full checkpoint
 	// row (`partial = FALSE AND deleted_at IS NULL`) for
-	// (tenantID, sessionID) — the §10.1 the resume path falls back to when reassembly of the
+	// (tenantID, sessionID) — the §10.1.7 "last successful full checkpoint"
+	// the resume path falls back to when reassembly of the
 	// selected partial manifest fails its contiguity check. Returns
 	// ErrNotFound when the session has no surviving full checkpoint.
 	//
