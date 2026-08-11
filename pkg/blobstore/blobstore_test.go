@@ -60,6 +60,45 @@ func TestParseURIRejectsMalformed(t *testing.T) {
 	}
 }
 
+// TestParseURIRejectsRelativeSegments asserts that a reference carrying
+// a relative path segment is refused by the parser rather than answered
+// by the store. A traversal that parses is handed to a lookup, and the
+// lookup reports the object missing, so the caller sees a 404 where the
+// reference should never have been accepted at all. Both the tenant and
+// the segments inside the part are checked, since the part legitimately
+// carries slashes for a nested checkpoint key.
+//
+// spec: §13.1 (tenant isolation)
+func TestParseURIRejectsRelativeSegments(t *testing.T) {
+	cases := []string{
+		"lenny-blob://acme/upload/../../../etc/passwd?ttl=60",
+		"lenny-blob://acme/upload/sess/../../../etc/passwd?ttl=60",
+		"lenny-blob://acme/upload/./part?ttl=60",
+		"lenny-blob://../upload/sess/part?ttl=60",
+		"lenny-blob://acme/upload/sess/ckpt/../../escape?ttl=60",
+	}
+	for _, raw := range cases {
+		if _, err := blobstore.ParseURI(raw); !errors.Is(err, blobstore.ErrInvalidURI) {
+			t.Errorf("ParseURI(%q): got %v, want ErrInvalidURI", raw, err)
+		}
+	}
+}
+
+// TestParseURIKeepsANestedCheckpointKey asserts the traversal check does
+// not reach a legitimate multi-segment part, which is how a checkpoint
+// chunk key is written.
+//
+// spec: §12.5 (blob reference format)
+func TestParseURIKeepsANestedCheckpointKey(t *testing.T) {
+	u, err := blobstore.ParseURI("lenny-blob://acme/checkpoints/sess_1/ckpt_9/chunk-3.aes256gcm?ttl=60")
+	if err != nil {
+		t.Fatalf("ParseURI on a nested checkpoint key: %v", err)
+	}
+	if want := "ckpt_9/chunk-3.aes256gcm"; u.PartID != want {
+		t.Errorf("PartID = %q, want %q", u.PartID, want)
+	}
+}
+
 // TestURIRoundTrip_LegacyForm asserts the §12.5 ll. 295 4-segment
 // serialiser accepts the pre-{object_type} 3-segment form and
 // re-emits it in the canonical 4-segment shape (stamping the

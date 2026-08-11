@@ -257,6 +257,21 @@ func ParseURI(raw string) (URI, error) {
 	if session == "" || part == "" {
 		return URI{}, fmt.Errorf("%w: empty path segment", ErrInvalidURI)
 	}
+	// A relative segment must not survive the parse. The path is used to
+	// build a store key, so `lenny-blob://acme/upload/../../../etc/passwd`
+	// would otherwise be accepted with session ".." and part
+	// "../../etc/passwd" and be answered by the store rather than refused
+	// here. Every element is checked, including the ones inside part, which
+	// legitimately carries slashes for a nested checkpoint key, and the
+	// tenant, which is a store-key element like the rest.
+	//
+	// spec: §13.1 (tenant isolation: a reference names its own tenant's
+	// objects and nothing above them)
+	for _, seg := range append([]string{tenant}, parts...) {
+		if seg == "." || seg == ".." {
+			return URI{}, fmt.Errorf("%w: relative path segment %q", ErrInvalidURI, seg)
+		}
+	}
 	ttlStr := u.Query().Get("ttl")
 	if ttlStr == "" {
 		return URI{}, fmt.Errorf("%w: missing ttl query parameter", ErrInvalidURI)
