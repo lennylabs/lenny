@@ -359,7 +359,7 @@ func TestOpsDriftDegradesUnderPostgresOutage(t *testing.T) {
 func TestGatewayAuditQueryEndpointsE2E(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
@@ -551,7 +551,7 @@ func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	gw := gateway.StartWith(
-		t, "--dev-mode",
+		t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn="+pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 	)

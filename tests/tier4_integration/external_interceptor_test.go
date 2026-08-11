@@ -121,7 +121,7 @@ func TestExternalInterceptorModifyThroughGateway_spec_4_8(t *testing.T) {
 	modified, _ := json.Marshal([]map[string]any{{"type": "text", "text": redacted}})
 	stub := stubinterceptor.Start(t, stubinterceptor.Modify(modified))
 
-	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
 		"--external-interceptor=name=redactor,endpoint="+stub.Addr()+",phase=PostAgentOutput")
 	do := interceptorReq(t, gw.BaseURL())
 	sid := bootstrapEchoSession(t, do)
@@ -215,7 +215,7 @@ func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *test
 	})
 	stub := stubinterceptor.Start(t, stubinterceptor.Modify(modified))
 
-	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
 		"--external-interceptor=name=tenant-rewriter,endpoint="+stub.Addr()+",phase=PreRoute")
 	do := interceptorReq(t, gw.BaseURL())
 	bootstrapEchoTenant(t, do)
@@ -289,7 +289,7 @@ func TestExternalInterceptorRejectThroughGateway_spec_4_8(t *testing.T) {
 	const reason = "blocked by external interceptor"
 	stub := stubinterceptor.Start(t, stubinterceptor.Reject(reason))
 
-	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
 		"--external-interceptor=name=blocker,endpoint="+stub.Addr()+",phase=PostAgentOutput")
 	do := interceptorReq(t, gw.BaseURL())
 	sid := bootstrapEchoSession(t, do)

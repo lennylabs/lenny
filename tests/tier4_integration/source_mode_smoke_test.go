@@ -67,7 +67,7 @@ func TestSourceModeSmoke_spec_17_4_276(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	// --agent-runtime echo pins the §17.4 zero-credential built-in echo
 	// runtime explicitly, exercising the F-17.4.15 selector end-to-end.
-	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo")
 	do := newReqFn(t, gw.BaseURL())
 
 	// Bootstrap the tenant + echo runtime (with injection support so the
@@ -145,7 +145,7 @@ func TestSourceModeSmoke_SQLiteDurability_spec_17_4_199(t *testing.T) {
 	// the subtest's cleanup SIGINT the gateway so the shutdown path
 	// flushes the SQLite file.
 	t.Run("write", func(t *testing.T) {
-		gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo", "--sqlite-path", dbPath)
+		gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo", "--sqlite-path", dbPath)
 		do := newReqFn(t, gw.BaseURL())
 
 		code, _ := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
@@ -180,7 +180,7 @@ func TestSourceModeSmoke_SQLiteDurability_spec_17_4_199(t *testing.T) {
 	// Second process: same SQLite file, fresh port. The runtime and the
 	// session row must be recovered from the file without re-bootstrapping.
 	t.Run("recover", func(t *testing.T) {
-		gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo", "--sqlite-path", dbPath)
+		gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo", "--sqlite-path", dbPath)
 		do := newReqFn(t, gw.BaseURL())
 
 		// The runtime registered before the restart is still listed.

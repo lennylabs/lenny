@@ -50,7 +50,7 @@ func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	// and policy_test.go pattern of wiring a real Redis via --redis-url.
 	gateway.SkipUnlessAvailable(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 

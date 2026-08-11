@@ -48,7 +48,7 @@ func TestErasureJobJourney(t *testing.T) {
 	// audit_seq_<40hex> sequence; without it every audit Append for a
 	// freshly bootstrapped tenant fails on nextval of a nonexistent
 	// relation. The single test Postgres instance plays both roles.
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
 	base := gw.BaseURL()
 	client := http.DefaultClient
 

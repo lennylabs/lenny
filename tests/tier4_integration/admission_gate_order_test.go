@@ -72,7 +72,7 @@ func TestCircuitBreakerGateShortCircuitsBeforePostAuthChain_spec_4_8(t *testing.
 	// without it the acme sequence never exists and the durable write is
 	// silently dropped. The Postgres container's superuser DSN is
 	// CREATE-privileged, so it doubles as the DDL login here.
-	gw := gateway.StartWith(t, "--dev-mode", "--agent-runtime", "echo",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
 		"--postgres-dsn="+pg.DSN,
 		"--postgres-billing-audit-ddl-dsn="+pg.DSN,
 		"--external-interceptor=name=recorder,endpoint="+stub.Addr()+",phase=PostAuth")

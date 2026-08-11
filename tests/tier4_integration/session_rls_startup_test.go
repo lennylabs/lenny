@@ -56,7 +56,7 @@ func TestSessionRLSStartupIsolationThroughGateway(t *testing.T) {
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	base := gw.BaseURL()
 	client := http.DefaultClient
 	ctx := context.Background()

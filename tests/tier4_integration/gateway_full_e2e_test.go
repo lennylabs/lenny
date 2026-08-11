@@ -31,7 +31,7 @@ import (
 // OpenAPI document, or §15.2 MCP adapter did not behave as specified
 // when driven through one process.
 func TestGatewayFullSurfaceE2E(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
