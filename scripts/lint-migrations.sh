@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/lint-migrations.sh — enforces the §12.0 "every migration has a
+# scripts/lint-migrations.sh — enforces the TESTING.md §12.0 "every migration has a
 # corresponding rollback script and a non-empty test under
 # tests/tier2_component/migrations/" rule.
 #

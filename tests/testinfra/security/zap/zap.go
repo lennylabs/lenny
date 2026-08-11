@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package zap wraps the §12.9.6 OWASP ZAP integration. The fuzz
+// Package zap wraps the TESTING.md §12.9.6 OWASP ZAP integration. The fuzz
 // runner invokes the ZAP CLI (or docker image) against a target URL
 // with the project's policy file and parses the resulting report.
 //

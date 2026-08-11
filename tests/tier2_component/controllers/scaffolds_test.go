@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.4 Controllers. Each controller
+// Tier-2 component scaffolds for TESTING.md §12.2.4 Controllers. Each controller
 // suite reconciles against a fake client-go lister first, then
 // against envtest for the higher-fidelity scenarios.
 

@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-2 RLS test: §12.2.2 connection-pooler reuse must not leak the
+// Tier-2 RLS test: TESTING.md §12.2.2 connection-pooler reuse must not leak the
 // previous transaction's app.current_tenant. The compose profile
 // supplies a PgBouncer in session-pooling mode (compose/default.yml,
 // pgbouncer service); when one client session releases a server
@@ -58,7 +58,7 @@ func applyMigrationsToCompose(t *testing.T, dsn string) {
 }
 
 // spec: 12.2.2
-// diagnosis: a client connecting through the §12.2.2 connection
+// diagnosis: a client connecting through the TESTING.md §12.2.2 connection
 // pooler reused a server connection that still carried the previous
 // session's app.current_tenant GUC. A leak here would let a second
 // client read or write against another tenant's data simply by

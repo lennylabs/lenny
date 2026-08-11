@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 §12.11 #5: every runbook has the documented step format
+// Tier-11 TESTING.md §12.11 #5: every runbook has the documented step format
 // and parseable metadata. The conventional runbook layout is the
 // Trigger → Diagnosis → Remediation structure documented in
 // docs/runbooks/index.md:

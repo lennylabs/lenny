@@ -14,5 +14,5 @@
   },
   "error_rate": 0.0,
   "throughput_per_sec": 400.0,
-  "notes": "Placeholder §13.31 post-hardening SLO re-baseline. Smoke against the e2e Kind cluster is phase-gated because the install does not apply the §14 hardening (cosign image-signature verification, the §13.1 pod-security admission webhook, NetworkPolicy refinement, gateway mTLS) — the overhead the gate measures has no surface there. The cloud overlay applies the hardening and runs the strict §12.7 regression comparison against the pre-hardening baseline (session_throughput.json)."
+  "notes": "Placeholder TESTING.md §13.31 post-hardening SLO re-baseline. Smoke against the e2e Kind cluster is phase-gated because the install does not apply the §14 hardening (cosign image-signature verification, the §13.1 pod-security admission webhook, NetworkPolicy refinement, gateway mTLS) — the overhead the gate measures has no surface there. The cloud overlay applies the hardening and runs the strict §12.7 regression comparison against the pre-hardening baseline (session_throughput.json)."
 }

@@ -21,7 +21,7 @@ package tier4_integration_test
 
 import "testing"
 
-// §13.12 / §13.23 / §13.25 — credential lifecycle. The §4.9 / §15.1
+// TESTING.md §13.12 / TESTING.md §13.23 / TESTING.md §13.25 — credential lifecycle. The §4.9 / §15.1
 // end-user credential lifecycle (TestCredentialLifecycle,
 // TestCredentialRotation, TestCredentialRevocation) is converted in
 // credential_test.go: the /v1/credentials register / list / rotate /
@@ -30,17 +30,17 @@ import "testing"
 // the cross-replica revocation propagation need a pod and a Redis
 // EventBus the integration harness does not provide.
 
-// §13.20 — delegation. TestDelegation is converted in delegation_test.go:
+// TESTING.md §13.20 — delegation. TestDelegation is converted in delegation_test.go:
 // the §8.2 delegate_task spawn-and-tree contract and the §8.3
 // tracingContext propagation are exercised against the live gateway.
 
-// §13.22 — MCP fabric.
+// TESTING.md §13.22 — MCP fabric.
 // TestMCPElicitationChain and TestMCPProvenance are converted in
 // elicitation_test.go: the §9.2 hop-by-hop elicitation chain through
 // the platform MCP server and the url-mode provenance controls are
 // built and exercised against the live gateway.
 
-// §13.9 — admin API + bootstrap.
+// TESTING.md §13.9 — admin API + bootstrap.
 //
 // The gateway-side bootstrap surface is covered by per-handler unit
 // tests under pkg/gateway/externalapi/admin (bootstrap_test.go) plus the
@@ -57,13 +57,13 @@ func TestAdminBootstrap(t *testing.T) {
 		"end-to-end exercise. No tier-4 surface to add.")
 }
 
-// §13.28 — audit pipeline. TestAuditPipeline is converted in
+// TESTING.md §13.28 — audit pipeline. TestAuditPipeline is converted in
 // audit_pipeline_test.go: the §11.7 audit pipeline is exercised end to
 // end — an audit event flows through the Postgres-backed hash chain,
 // the OCSF translator state machine, and the SIEM forwarder, against a
 // real Postgres container and the fake SIEM endpoint.
 
-// §13.19 — checkpoint/resume.
+// TESTING.md §13.19 — checkpoint/resume.
 // §4.4 / §7.1 checkpoint + resume — built and covered by:
 //   - pkg/checkpoint (checkpoint pipeline + property tests)
 //   - pkg/gateway/sessionserver Resume handler in handleResume
@@ -91,7 +91,7 @@ func TestCheckpointResume(t *testing.T) {
 		"skip in tests/tier5_e2e_kind/checkpoint_resume_test.go; no tier-4 composite surface to add.")
 }
 
-// §13.16 — interactive sessions / streaming.
+// TESTING.md §13.16 — interactive sessions / streaming.
 // §10.4 / §7.2 stream reconnect — built and covered by:
 //   - pkg/gateway/eventbuffer (SessionEvent ring buffer + buffer_test.go)
 //   - pkg/gateway/sessionserver/events.go (SSE handler with
@@ -110,7 +110,7 @@ func TestStreamingReconnect(t *testing.T) {
 		"streaming-echo Full-level reference runtime.")
 }
 
-// §13.15 — LLM Proxy.
+// TESTING.md §13.15 — LLM Proxy.
 // §4.9 LLM Proxy + native Anthropic translator — built and covered by:
 //   - pkg/gateway/llmproxy/llmproxy.AnthropicDirectTranslator (translator.go,
 //     translator_test.go)
@@ -132,13 +132,13 @@ func TestLLMProxyAnthropic(t *testing.T) {
 		"are a release smoke test.")
 }
 
-// §13.18 — policy engine end-to-end. TestPolicyGate and TestPolicyAudit
+// TESTING.md §13.18 — policy engine end-to-end. TestPolicyGate and TestPolicyAudit
 // are converted in policy_test.go: the §4.8 QuotaEvaluator is wired
 // onto the session-creation admission path and exercised against the
 // live gateway subprocess, and a chain REJECT emits the §16.7
 // `interceptor.rejected` row to the per-tenant audit hash chain.
 
-// §13.18 — quota enforcement. TestQuotaEnforcement and TestQuotaRecovery
+// TESTING.md §13.18 — quota enforcement. TestQuotaEnforcement and TestQuotaRecovery
 // are converted in quota_test.go: the §11.2 Redis-backed per-tenant
 // token counter is wired into the §4.8 admission path, and the §11.2
 // Redis MAX-rule reconciliation (quota.ReconcileMax) is exercised end
@@ -164,13 +164,13 @@ func TestMigrationUpgrade(t *testing.T) {
 		"prod_schema_test and migrations_test, plus tier-8 TestSchemaMigrationDirtyFlag.")
 }
 
-// §13.32 — environments + cross-environment delegation.
+// TESTING.md §13.32 — environments + cross-environment delegation.
 // TestEnvironmentResource and TestEnvironmentFiltering are converted
 // in environment_test.go: the §10.6 admin /v1/admin/environments CRUD
 // and the transparent-filtering environment-resolver middleware are
 // built and exercised against the live gateway.
 
-// §13.33 — experiments.
+// TESTING.md §13.33 — experiments.
 // §10.7 ExperimentRouter — built and covered by:
 //   - pkg/experiment (Router, HMAC bucketing, status-transition rules)
 //   - pkg/gateway/experiment/experimentstore (admin CRUD)
@@ -189,13 +189,13 @@ func TestExperimentRouting(t *testing.T) {
 		"pkg/controller/poolscaling/variants_test.go.")
 }
 
-// §13.25 — OAuth connectors.
+// TESTING.md §13.25 — OAuth connectors.
 // TestOAuthConnector is converted in connector_oauth_test.go: the §9.3
 // connector OAuth 2.1 authorize→callback flow, the PKCE state store,
 // and the connector-credential exchange are built and exercised
 // against the live gateway with a fake provider token endpoint.
 
-// §13.26 — type:mcp runtime support. TestMCPRuntimeLifecycle is
+// TESTING.md §13.26 — type:mcp runtime support. TestMCPRuntimeLifecycle is
 // converted in mcp_runtime_lifecycle_test.go: the type: mcp runtime-
 // side adapter path is built and exercised end to end against the
 // reference type: mcp runtime (cmd/runtimes/mcp-reference).

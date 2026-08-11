@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.2.1 SessionStore, exercising the
+// Contract test for the TESTING.md §12.2.1 SessionStore, exercising the
 // Postgres-backed pkg/gateway/sessionstore/pgstore against a real
 // container with the production migrations applied. Covers CRUD, the
 // sentinel errors, cross-tenant isolation, the SELECT ... FOR UPDATE

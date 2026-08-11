@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security test for §12.9.6 input fuzzing. TESTING.md states:
+// Tier-9 security test for TESTING.md §12.9.6 input fuzzing. TESTING.md states:
 // "OWASP ZAP runs against the REST and MCP surfaces with the project's
 // policy. Oversize payloads, malformed JSON, SQL-injection strings,
 // path-traversal in artifact keys, oversize headers, and deeply nested
@@ -13,7 +13,7 @@
 // in-tree black-box battery the ZAP run would otherwise be the only
 // coverage for: it boots a real lenny-gateway subprocess (the same
 // binary ZAP would point at) via tests/testinfra/gateway and drives the
-// six §12.9.6-named adversarial categories (oversize headers, deeply
+// six TESTING.md §12.9.6-named adversarial categories (oversize headers, deeply
 // nested objects, path-traversal artifact keys, oversize payloads,
 // malformed JSON, and SQL-injection strings) at the REST and MCP
 // surfaces, asserting each probe is rejected rather than crashing the

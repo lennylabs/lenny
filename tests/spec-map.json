@@ -1037,7 +1037,7 @@
         "pkg/gateway/sessionserver"
       ],
       "blocked_until_phase": "6.5",
-      "notes": "Phase 6.5 is the §13.17 incremental load test for the streaming surface. The smoke form drives the §15.1 message round-trip (POST /v1/sessions/{id}/messages) under a rate-bounded executor and asserts the run completed within the smoke health gate; the cloud tier runs the strict §13.29 regression comparison. The companion §12.7 streaming_reconnect SSE consumption path stays a t.Skip blocker in scaffolds_test.go until the gatewaymetrics middleware response-writer wrapper forwards http.Flusher."
+      "notes": "Phase 6.5 is the TESTING.md §13.17 incremental load test for the streaming surface. The smoke form drives the §15.1 message round-trip (POST /v1/sessions/{id}/messages) under a rate-bounded executor and asserts the run completed within the smoke health gate; the cloud tier runs the strict TESTING.md §13.29 regression comparison. The companion §12.7 streaming_reconnect SSE consumption path stays a t.Skip blocker in scaffolds_test.go until the gatewaymetrics middleware response-writer wrapper forwards http.Flusher."
     },
     "7": {
       "title": "Session Lifecycle",
@@ -1398,7 +1398,7 @@
         "pkg/delegation"
       ],
       "blocked_until_phase": "9.5",
-      "notes": "Phase 9.5 is the §13.21 incremental load test for the delegation surface. The smoke form drives the §8.2 lenny/delegate_task MCP tool through POST /mcp under a rate-bounded executor and asserts the fan-out completed within the smoke health gate; the cloud tier runs the strict §13.29 regression comparison. The companion §12.7 delegation_fanout scenario drives POST /v1/sessions/start directly so the two §8.2 spawn surfaces (MCP and REST) are both baselined."
+      "notes": "Phase 9.5 is the TESTING.md §13.21 incremental load test for the delegation surface. The smoke form drives the §8.2 lenny/delegate_task MCP tool through POST /mcp under a rate-bounded executor and asserts the fan-out completed within the smoke health gate; the cloud tier runs the strict TESTING.md §13.29 regression comparison. The companion §12.7 delegation_fanout scenario drives POST /v1/sessions/start directly so the two §8.2 spawn surfaces (MCP and REST) are both baselined."
     },
     "10": {
       "title": "Gateway Internals",
@@ -2030,7 +2030,7 @@
         "pkg/gateway/middleware/idempotency"
       ],
       "blocked_until_phase": "7",
-      "notes": "Phase 7 ships the §11.5 idempotency primitives and the HTTP middleware that wraps the gateway handler. pkg/gateway/middleware/idempotency consults a tenant-scoped Store on every POST with an Idempotency-Key header; matching keys replay the cached response, mismatching bodies emit the 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys store and the GC job are deferred to the K8s-integration phase; the in-memory MemoryStore satisfies the same interface for the minimal gateway and the tier-3 contract tests. Phase 11.5 is the §13.24 incremental load test (credential lifecycle); the smoke form drives the §4.9 / §15.1 end-user credential lifecycle through /v1/credentials under a rate-bounded executor and asserts the run completed within the smoke health gate. The credential lifecycle is the Phase 11.5 phase-gate surface even though the §11.5 spec heading reads Idempotency."
+      "notes": "Phase 7 ships the §11.5 idempotency primitives and the HTTP middleware that wraps the gateway handler. pkg/gateway/middleware/idempotency consults a tenant-scoped Store on every POST with an Idempotency-Key header; matching keys replay the cached response, mismatching bodies emit the 422 IDEMPOTENCY_KEY_REUSED envelope. The Postgres-backed idempotency_keys store and the GC job are deferred to the K8s-integration phase; the in-memory MemoryStore satisfies the same interface for the minimal gateway and the tier-3 contract tests. Phase 11.5 is the TESTING.md §13.24 incremental load test (credential lifecycle); the smoke form drives the §4.9 / §15.1 end-user credential lifecycle through /v1/credentials under a rate-bounded executor and asserts the run completed within the smoke health gate. The credential lifecycle is the Phase 11.5 phase-gate surface even though the §11.5 spec heading reads Idempotency."
     },
     "11.6": {
       "title": "Circuit Breakers",
@@ -2260,7 +2260,7 @@
         "pkg/gateway/storage/eventbus"
       ],
       "blocked_until_phase": "2",
-      "notes": "The §12.6 EventBus interface (§12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format. pkg/storerouter is the §12.6 StoreRouter interface and its v1 SingleShardRouter; v1 routes every Postgres accessor to a single pool and every RedisConcern to a single Redis client, but maintains the R-03 billing/audit routing discipline so a future split lands without sweeping call sites."
+      "notes": "The §12.6 EventBus interface (TESTING.md §12.3.7) is implemented by pkg/gateway/eventbus: the RedisEventBus over the §12.4 tenant-prefixed Redis pub/sub substrate, the CloudEvents v1.0.2 envelope with the lenny-prefixed extension attributes, the publish-state machine, and the retranscribe worker. The TESTING.md §12.3.7 OCSF audit-bearing data payload is the §11.7 wire format. pkg/storerouter is the §12.6 StoreRouter interface and its v1 SingleShardRouter; v1 routes every Postgres accessor to a single pool and every RedisConcern to a single Redis client, but maintains the R-03 billing/audit routing discipline so a future split lands without sweeping call sites."
     },
     "12.7": {
       "title": "Extensibility",
@@ -2739,7 +2739,7 @@
         "pkg/gateway/sessionserver"
       ],
       "blocked_until_phase": "14.5",
-      "notes": "Phase 14.5 is the §13.31 post-hardening SLO re-validation. The cloud tier re-runs the §13.29 pre-hardening pod_claim_latency baseline with the §14 security hardening enabled — cosign image-signature verification at admission, the §13.1 pod-security admission webhook, NetworkPolicy refinement, and gateway mTLS — and compares against the §13.5 baseline JSON. The PR-cadence Kind smoke is phase-gated because the e2e install does not apply the §14 hardening; the post_hardening_slo scenario is the §13.31 substrate the cloud tier runs."
+      "notes": "Phase 14.5 is the TESTING.md §13.31 post-hardening SLO re-validation. The cloud tier re-runs the TESTING.md §13.29 pre-hardening pod_claim_latency baseline with the §14 security hardening enabled — cosign image-signature verification at admission, the §13.1 pod-security admission webhook, NetworkPolicy refinement, and gateway mTLS — and compares against the §13.5 baseline JSON. The PR-cadence Kind smoke is phase-gated because the e2e install does not apply the §14 hardening; the post_hardening_slo scenario is the TESTING.md §13.31 substrate the cloud tier runs."
     },
     "15": {
       "title": "External API Surface",
@@ -3202,7 +3202,7 @@
         "charts/lenny/templates/prometheusrule.yaml"
       ],
       "blocked_until_phase": "2.5",
-      "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full §16.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift. Phase 16.5 is the §13.34 experiment load re-baseline; the cloud tier re-runs the §12.7 pod_claim_latency scenario with an active §10.7 experiment seeded so the ExperimentRouter bucketing path is on every claim. The PR-cadence Kind smoke is phase-gated because the e2e install starts with empty runtime, pool, and experiment stores; the experiment_load scenario is the §13.34 substrate the cloud tier runs."
+      "notes": "pkg/alerting/rules ships the typed Rule, the PromQL validator, and the full §16.5 alert catalog (every critical and warning alert plus the dual-window SLO burn-rate alerts). cmd/gen-alerting-rules renders the catalog into charts/lenny/files/alerting-rules.yaml; the prometheusrule.yaml chart template bundles it. The catalog_crosscheck tier-2 test asserts the rendered chart PrometheusRule matches the catalog with no drift. Phase 16.5 is the TESTING.md §13.34 experiment load re-baseline; the cloud tier re-runs the §12.7 pod_claim_latency scenario with an active §10.7 experiment seeded so the ExperimentRouter bucketing path is on every claim. The PR-cadence Kind smoke is phase-gated because the e2e install starts with empty runtime, pool, and experiment stores; the experiment_load scenario is the TESTING.md §13.34 substrate the cloud tier runs."
     },
     "16.6": {
       "title": "Operational Events Catalog",

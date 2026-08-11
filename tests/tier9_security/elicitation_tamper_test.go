@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 §12.9.9 elicitation tamper-detect probes. The §9.2 chain
+// Tier-9 TESTING.md §12.9.9 elicitation tamper-detect probes. The §9.2 chain
 // walker, the dispatcher, and the metric/alert wiring are covered
 // by pkg/elicitation and pkg/gateway/mcptools unit tests. This
 // suite drives the gateway-side admin API against a live cluster
@@ -50,7 +50,7 @@ func startElicitationProbe(t *testing.T, c *kind.Cluster) *elicitationProbe {
 	cmd := c.Kubectl("-n", "lenny-system", "port-forward", "svc/lenny-gateway",
 		fmt.Sprintf("%d:8080", port))
 	if err := cmd.Start(); err != nil {
-		t.Skipf("§12.9.9: kubectl port-forward did not start: %v", err)
+		t.Skipf("TESTING.md §12.9.9: kubectl port-forward did not start: %v", err)
 	}
 	cancel := func() {
 		if cmd.Process != nil {
@@ -74,7 +74,7 @@ func startElicitationProbe(t *testing.T, c *kind.Cluster) *elicitationProbe {
 	}
 	if !ready {
 		cancel()
-		t.Skipf("§12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh")
+		t.Skipf("TESTING.md §12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh")
 	}
 	probe := &elicitationProbe{baseURL: baseURL, client: client, cancel: cancel}
 	t.Cleanup(probe.cancel)
@@ -145,7 +145,7 @@ func requireTenantAcme(t *testing.T, p *elicitationProbe) {
 		"complianceProfile": "standard",
 	})
 	if status != http.StatusOK && status != http.StatusCreated {
-		t.Skipf("§12.9.9: tenant 'acme' missing and POST to create returned %d body %s", status, body)
+		t.Skipf("TESTING.md §12.9.9: tenant 'acme' missing and POST to create returned %d body %s", status, body)
 	}
 }
 
@@ -181,7 +181,7 @@ func TestElicitationTamperEnforceMode(t *testing.T) {
 	status, body := p.put(t, "/v1/admin/tenants/acme/elicitation-content-integrity",
 		map[string]string{"mode": "enforce"})
 	if status != http.StatusOK {
-		t.Skipf("§12.9.9 enforce PUT returned %d body %s", status, body)
+		t.Skipf("TESTING.md §12.9.9 enforce PUT returned %d body %s", status, body)
 	}
 
 	status, body = p.get(t, "/v1/admin/tenants/acme/elicitation-content-integrity")
@@ -213,9 +213,9 @@ func TestElicitationTamperDetectOnlyMode(t *testing.T) {
 	requireTenantAcme(t, p)
 
 	status, body := p.put(t, "/v1/admin/tenants/acme/elicitation-content-integrity",
-		map[string]any{"mode": "detect-only", "justification": "tier-9 §12.9.9 detect-only probe"})
+		map[string]any{"mode": "detect-only", "justification": "tier-9 TESTING.md §12.9.9 detect-only probe"})
 	if status != http.StatusOK {
-		t.Skipf("§12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)",
+		t.Skipf("TESTING.md §12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)",
 			status, body)
 	}
 

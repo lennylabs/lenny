@@ -1,6 +1,6 @@
 # Vendored CloudEvents JSON Schema
 
-§12.3.7 pins the EventBus envelope to CloudEvents v1.0.2. The file under
+TESTING.md §12.3.7 pins the EventBus envelope to CloudEvents v1.0.2. The file under
 this directory is the published CloudEvents JSON Schema for that
 envelope, vendored verbatim from
 [`cloudevents/spec`](https://github.com/cloudevents/spec):

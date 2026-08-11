@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security test for the §12.9.3 lenny-label-immutability UPDATE
+// Tier-9 security test for the TESTING.md §12.9.3 lenny-label-immutability UPDATE
 // guard. The e2e Kind cluster runs a real agent-pod workload in the
 // lenny-agents namespace (the two §4.7 deployment-model warm pools that
 // install.sh applies from agent-workload.yaml), so the
@@ -38,7 +38,7 @@ const labelImmutabilityWebhook = "label-immutability.lenny.dev"
 const managedLabel = "lenny.dev/managed"
 
 // spec: 12.9.3
-// diagnosis: the §12.9.3 lenny-label-immutability UPDATE guard does not
+// diagnosis: the TESTING.md §12.9.3 lenny-label-immutability UPDATE guard does not
 // reject mutation of an immutable agent-pod label. The test takes a
 // live managed agent pod from the e2e warm-pool workload and issues a
 // server-side dry-run that flips lenny.dev/managed from true to false.
@@ -62,7 +62,7 @@ func TestAdmissionLabelImmutability(t *testing.T) {
 		managedLabel+"=false", "--overwrite", "--dry-run=server",
 	)
 	if err == nil {
-		t.Fatalf("§12.9.3 violation: the API server admitted a dry-run UPDATE that flips %s on the "+
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted a dry-run UPDATE that flips %s on the "+
 			"managed agent pod %q from true to false; the lenny-label-immutability webhook did not "+
 			"reject the mutation of an immutable label.\noutput:\n%s", managedLabel, pod.Name, out)
 	}
@@ -80,6 +80,6 @@ func TestAdmissionLabelImmutability(t *testing.T) {
 			"rejection may not be the immutability rule firing.\noutput:\n%s",
 			labelImmutabilityWebhook, pod.Name, managedLabel, out)
 	}
-	t.Logf("§12.9.3: %s rejected the dry-run mutation of %s on managed pod %q (pool %q, %s model)",
+	t.Logf("TESTING.md §12.9.3: %s rejected the dry-run mutation of %s on managed pod %q (pool %q, %s model)",
 		labelImmutabilityWebhook, managedLabel, pod.Name, pod.Pool, pod.Model)
 }

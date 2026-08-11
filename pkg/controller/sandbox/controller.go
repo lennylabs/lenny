@@ -138,7 +138,7 @@ type Reconciler struct {
 	QueueFactory controllermetrics.QueueFactory
 }
 
-// EgressCaptureUpstreamAnnotation is the §12.9.8 opt-in annotation an
+// EgressCaptureUpstreamAnnotation is the TESTING.md §12.9.8 opt-in annotation an
 // operator stamps on a SandboxTemplate (and the reconciler propagates
 // to the Sandbox) to enable the egress-capture sidecar on every pod
 // created from that template. The value is the upstream the sidecar
@@ -970,7 +970,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// resolveEgressCapture returns the §12.9.8 egress-capture configuration
+// resolveEgressCapture returns the TESTING.md §12.9.8 egress-capture configuration
 // for the pod the reconciler is about to create, or nil when capture is
 // not enabled. Capture activates when the Sandbox carries the
 // EgressCaptureUpstreamAnnotation and the reconciler is configured with

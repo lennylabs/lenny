@@ -480,7 +480,7 @@ func TestWebhookDeliveryLoad(t *testing.T) {
 }
 
 // spec: 13.29 (full-system pre-hardening load baseline)
-// diagnosis: the §13.29 full-system load baseline is a phase-gated
+// diagnosis: the TESTING.md §13.29 full-system load baseline is a phase-gated
 // composite. It measures the §17.8.2 capacity-tier targets across the
 // entire production stack at the Phase 13.5 gate; the baseline is the
 // aggregate of the per-scenario §12.7 runs and is captured during that
@@ -488,13 +488,13 @@ func TestWebhookDeliveryLoad(t *testing.T) {
 func TestFullSystemLoadBaseline(t *testing.T) {
 	kind.InstallLenny(t)
 	load.SkipUnlessAvailable(t)
-	t.Skip("phase-gated: the §13.29 full-system load baseline is captured at the " +
+	t.Skip("phase-gated: the TESTING.md §13.29 full-system load baseline is captured at the " +
 		"Phase 13.5 release gate across the full production stack, not from a " +
 		"PR-cadence Kind smoke run")
 }
 
 // spec: 13.31 (post-hardening SLO re-validation)
-// diagnosis: the §13.31 post-hardening re-validation is a phase-gated
+// diagnosis: the TESTING.md §13.31 post-hardening re-validation is a phase-gated
 // composite. It re-runs the §12.7 scenarios after the §14 security
 // hardening (image signing, NetworkPolicy refinement, seccomp
 // profiles) and compares against the Phase 13.5 baseline; it runs at
@@ -502,7 +502,7 @@ func TestFullSystemLoadBaseline(t *testing.T) {
 func TestFullSystemWithHardeningLoad(t *testing.T) {
 	kind.InstallLenny(t)
 	load.SkipUnlessAvailable(t)
-	t.Skip("phase-gated: the §13.31 post-hardening SLO re-validation runs at the " +
+	t.Skip("phase-gated: the TESTING.md §13.31 post-hardening SLO re-validation runs at the " +
 		"Phase 14.5 release gate against the §13.5 baseline, not from a PR-cadence " +
 		"Kind smoke run")
 }

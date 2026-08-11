@@ -16,7 +16,7 @@ import (
 )
 
 // spec: 12.9.8
-// diagnosis: a Sandbox annotated with the §12.9.8 egress-capture
+// diagnosis: a Sandbox annotated with the TESTING.md §12.9.8 egress-capture
 // upstream is reconciled into a pod that carries the
 // lenny-egress-capture sidecar and the shared capture volume.
 func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
@@ -66,14 +66,14 @@ func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {
 		}
 	}
 	if !captureSeen {
-		t.Errorf("egress-capture container missing from pod; want it injected by the §12.9.8 annotation")
+		t.Errorf("egress-capture container missing from pod; want it injected by the TESTING.md §12.9.8 annotation")
 	}
 }
 
 // spec: 12.9.8
 // diagnosis: with no annotation the reconciler omits the
 // egress-capture sidecar even when the image is configured. The
-// §12.9.8 sidecar is opt-in per Sandbox.
+// TESTING.md §12.9.8 sidecar is opt-in per Sandbox.
 func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(t, s, sandboxCR(""), runtimeCR())
@@ -103,7 +103,7 @@ func TestReconcileOmitsEgressCaptureWithoutAnnotation(t *testing.T) {
 
 // spec: 12.9.8
 // diagnosis: with the EgressCaptureImage unset the reconciler omits
-// the sidecar even when the annotation is present. The §12.9.8
+// the sidecar even when the annotation is present. The TESTING.md §12.9.8
 // sidecar requires both the per-Sandbox annotation and the
 // controller-wide image to be configured; production installs do not
 // set the image so the sidecar is unreachable there.

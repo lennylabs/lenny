@@ -262,7 +262,7 @@ func TestAdminAuditQueryOverPostgres(t *testing.T) {
 // | failed ...)" and "Combining filters is AND." §25.9 —
 // "Operators reconciling after an EventBus outage typically query
 // ?eventbus_publish_state=failed&since=<outage_start>." The publish
-// state lives on the §12.3.7 audit_log.eventbus_publish_state column,
+// state lives on the TESTING.md §12.3.7 audit_log.eventbus_publish_state column,
 // which is not part of the §11.7 hash input, and is set on real rows via
 // the Postgres-backed store's SetPublishState.
 //

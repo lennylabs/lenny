@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Package cosign wraps the §12.9.11 image-signing checks: cosign
-// signature verification and trivy CVE scanning. The §12.9.11 gate
+// Package cosign wraps the TESTING.md §12.9.11 image-signing checks: cosign
+// signature verification and trivy CVE scanning. The TESTING.md §12.9.11 gate
 // runs pre-release; this scaffold ships the entry points so the
 // tier-9 tests can call them once the production image bundle is
 // available.
@@ -55,7 +55,7 @@ func VerifySignature(t testing.TB, image, trustedKey string) error {
 }
 
 // ScanCriticalCVEs runs trivy against the image and reports the
-// count of CRITICAL severity vulnerabilities. The §12.9.11 gate
+// count of CRITICAL severity vulnerabilities. The TESTING.md §12.9.11 gate
 // requires zero criticals at release time.
 func ScanCriticalCVEs(t testing.TB, image string) (int, error) {
 	t.Helper()

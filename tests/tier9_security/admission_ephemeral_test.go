@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security test for the §12.9.3 lenny-ephemeral-container-cred-guard
+// Tier-9 security test for the TESTING.md §12.9.3 lenny-ephemeral-container-cred-guard
 // webhook. The e2e Kind cluster runs a real agent-pod workload in the
 // lenny-agents namespace, so the guard can be exercised against a live
 // agent pod by attempting an ephemeral-container attach through the
@@ -43,7 +43,7 @@ const ephemeralCredGuardWebhook = "ephemeral-container-cred-guard.lenny.dev"
 const ephemeralCredRejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 
 // spec: 12.9.3
-// diagnosis: the §12.9.3 lenny-ephemeral-container-cred-guard does not
+// diagnosis: the TESTING.md §12.9.3 lenny-ephemeral-container-cred-guard does not
 // reject an ephemeral container that could reach the pod credential
 // file. The test takes a live managed agent pod and issues a
 // server-side dry-run that attaches an ephemeral container with no
@@ -82,7 +82,7 @@ func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
 		"replace", "--raw", raw, "-f", bodyPath,
 	)
 	if err == nil {
-		t.Fatalf("§12.9.3 violation: the API server admitted a dry-run ephemeral-container attach to "+
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted a dry-run ephemeral-container attach to "+
 			"the managed agent pod %q whose ephemeral container sets no securityContext; the "+
 			"lenny-ephemeral-container-cred-guard did not reject the credential-reaching attach."+
 			"\noutput:\n%s", pod.Name, out)
@@ -96,7 +96,7 @@ func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
 		t.Errorf("the %s rejection of the ephemeral-container attach lacks the §13.1 reason %q."+
 			"\noutput:\n%s", ephemeralCredGuardWebhook, ephemeralCredRejectionCode, out)
 	}
-	t.Logf("§12.9.3: %s rejected the ephemeral-container attach to managed pod %q (pool %q)",
+	t.Logf("TESTING.md §12.9.3: %s rejected the ephemeral-container attach to managed pod %q (pool %q)",
 		ephemeralCredGuardWebhook, pod.Name, pod.Pool)
 }
 

@@ -61,7 +61,7 @@ func startSidecar(t *testing.T, upstream string, enc *captureEncoder) string {
 	return lis.Addr().String()
 }
 
-// spec: §12.9.8 (the sidecar forwards bytes to the upstream and
+// spec: TESTING.md §12.9.8 (the sidecar forwards bytes to the upstream and
 // records the SHA-256 hash of the agent-sent payload)
 func TestSidecarForwardsAndHashes(t *testing.T) {
 	upstreamAddr, upstreamRx := upstreamServer(t)
@@ -139,7 +139,7 @@ func TestSidecarForwardsAndHashes(t *testing.T) {
 	}
 }
 
-// spec: §12.9.8 (concurrent connections each produce one record)
+// spec: TESTING.md §12.9.8 (concurrent connections each produce one record)
 func TestSidecarConcurrentConnections(t *testing.T) {
 	upstreamLis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -20,7 +20,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. |
 | [`envtest/`](envtest/) | controller-runtime envtest harness for Tier 2 K8s API-server interactions. |
 | [`fixtures/`](fixtures/) | Seed-data loaders for the canonical tenants, layers, runtimes, and OAuth providers used across tiers. Subpackages: `generators/`, `seed/`. |
-| [`fuzz/`](fuzz/) | Fuzz-harness scaffolding plus the `crashes/` corpus mirror (§19.2). |
+| [`fuzz/`](fuzz/) | Fuzz-harness scaffolding plus the `crashes/` corpus mirror (TESTING.md §19.2). |
 | [`gateway/`](gateway/) | Boots `cmd/lenny-gateway` as a subprocess on a random port and returns the base URL. |
 | [`golden/`](golden/) | Golden-file roundtrip helpers with `-update` flag for accepting diffs. |
 | [`goleak/`](goleak/) | Wrapper around `go.uber.org/goleak` keyed on the test name; the canonical place to install per-test leak detection. |
@@ -46,7 +46,7 @@ A few subdirectories under `testinfra/` carry only YAML, fixtures, or a single s
 | Path | Contents |
 |:--|:--|
 | [`k8s/`](k8s/) | Kubernetes manifests applied by the Kind install and cloud-load drivers: `datastores.yaml` (Postgres, Redis, MinIO fixtures) and `agent-workload-load.yaml.tmpl` (per-mode load runtime template). |
-| [`runtimes/`](runtimes/) | Conformance-fixture runtime images. `runtimes/conformance-fixtures/` carries intentionally-malformed runtimes (`blocked-stdin/`, `late-shutdown/`, `malformed-jsonl/`, `missing-heartbeat-ack/`, `oversize-payload/`, `unknown-message-type/`) the §12.10 conformance harness asserts against. Build with `go build -o ./bin/ ./tests/testinfra/runtimes/conformance-fixtures/...`. |
+| [`runtimes/`](runtimes/) | Conformance-fixture runtime images. `runtimes/conformance-fixtures/` carries intentionally-malformed runtimes (`blocked-stdin/`, `late-shutdown/`, `malformed-jsonl/`, `missing-heartbeat-ack/`, `oversize-payload/`, `unknown-message-type/`) the TESTING.md §12.10 conformance harness asserts against. Build with `go build -o ./bin/ ./tests/testinfra/runtimes/conformance-fixtures/...`. |
 | [`sdkhelper/`](sdkhelper/) | SDK conformance scaffolding. `sdkhelper/echo/` is a reference binary that implements the SDK contract helper protocol; Tier 3 SDK harness tests build and drive it. Real SDK helpers (`sdks/client/python/test-helper`, etc.) follow the same protocol over HTTP. |
 
 ## Importing a helper

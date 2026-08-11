@@ -2,7 +2,7 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind test for the §13.6 warm-pool pod lifecycle against
+// Tier-5 e2e Kind test for the TESTING.md §13.6 warm-pool pod lifecycle against
 // the live agent-pod workload. install.sh applies
 // tests/testinfra/kind/agent-workload.yaml, which declares two
 // SandboxWarmPools, one per §4.7 deployment model. The test asserts
@@ -20,7 +20,7 @@ import (
 )
 
 // spec: 13.6
-// diagnosis: the §13.6 warm-pool pod lifecycle is exercised against
+// diagnosis: the TESTING.md §13.6 warm-pool pod lifecycle is exercised against
 // the live agent-pod workload install.sh applies. The workload
 // declares two SandboxWarmPools, one per §4.7 deployment model. The
 // test asserts both models are represented, that each pool warmed a
@@ -54,7 +54,7 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) {
 	t.Helper()
 
 	containers := podContainers(t, c, p.Name)
-	// The §12.9.8 egress-capture sidecar is optional per
+	// The TESTING.md §12.9.8 egress-capture sidecar is optional per
 	// SandboxTemplate annotation. Filter it from the topology check
 	// so the §4.7 model assertion stays focused on the runtime /
 	// adapter pair the model defines.
@@ -146,7 +146,7 @@ func sandboxPhaseForPod(t *testing.T, c *kind.Cluster, pod string) string {
 
 // filterOutContainers returns the input container-name list with
 // any name in the drop set removed. Used to hide optional sidecars
-// (the §12.9.8 egress-capture container is opt-in per template) so
+// (the TESTING.md §12.9.8 egress-capture container is opt-in per template) so
 // the §4.7 model assertion compares the runtime/adapter pair alone.
 func filterOutContainers(in []string, drop ...string) []string {
 	dropped := make(map[string]struct{}, len(drop))

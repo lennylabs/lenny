@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component test for the §4.6.2 / §12.2.4 Pool Scaling Controller
+// Component test for the §4.6.2 / TESTING.md §12.2.4 Pool Scaling Controller
 // admission-retry harness and the §16.5 PoolScalingAdmissionStuck
 // alert wiring. Exercises pkg/controller/poolscaling at the public
 // API surface: confirm the catalog row binds the alert PromQL to the

@@ -30,7 +30,7 @@ const (
 
 // Runtime references — bundled and reference catalog. The bundled
 // runtimes are echo / streaming-echo / delegation-echo per TESTING.md
-// §11. The reference catalog ships per §12.10.
+// §11. The reference catalog ships per TESTING.md §12.10.
 const (
 	RuntimeEcho           = "echo"
 	RuntimeStreamingEcho  = "streaming-echo"

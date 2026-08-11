@@ -32,7 +32,7 @@ import (
 // run the static tier with both checks silently inert.
 //
 // spec: TESTING.md §20.6 (caching strategy — the ~/go/bin tool cache),
-// §20.8 (PR pipeline), §20.11 (per-phase gate pipeline), and §20.16
+// TESTING.md §20.8 (PR pipeline), TESTING.md §20.11 (per-phase gate pipeline), and TESTING.md §20.16
 // (action pinning discipline).
 
 // protoProducerToolModules maps each binary the proto no-drift check

@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.2 RLS and tenant isolation.
+// Tier-2 component scaffolds for TESTING.md §12.2.2 RLS and tenant isolation.
 // This is the self-contained suite that does not test a single
 // component — it connects to Postgres directly, seeds tenants A and
 // B on every tenant-scoped table, and asserts the documented RLS
@@ -22,6 +22,6 @@ package rls_test
 // cross_tenant_read audit emission tied to it.
 
 // TestRLSPoolerReuseDoesNotLeakContext is implemented in
-// pgbouncer_test.go, which exercises the §12.2.2 connection-pooler
+// pgbouncer_test.go, which exercises the TESTING.md §12.2.2 connection-pooler
 // reuse invariant against the compose-profile PgBouncer in
 // session-pooling mode.

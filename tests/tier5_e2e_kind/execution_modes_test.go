@@ -19,7 +19,7 @@
 // This file drives the same sequential-reuse and concurrent-slot
 // behaviors through the live gateway against pods
 // tests/testinfra/kind/install.sh warms in the lenny-agents namespace
-// (task-mode-echo-pool and concurrent-echo-pool), closing the §14.9
+// (task-mode-echo-pool and concurrent-echo-pool), closing the TESTING.md §14.9
 // coverage gap for concurrent per-slot directories on a real sandbox.
 // TestTaskModeRecycleScrubsWorkspaceBetweenSessions exercises the same
 // real-pod path for the task-mode workspace-scrub half of the gap. The
@@ -348,7 +348,7 @@ func waitPodLabel(t *testing.T, c *kind.Cluster, pod, label, want string, timeou
 //
 // The debug container's securityContext satisfies both admission layers
 // a real attach goes through: §13.1 pod-security (non-root, read-only
-// root filesystem, all capabilities dropped) and §12.9.3's
+// root filesystem, all capabilities dropped) and TESTING.md §12.9.3's
 // lenny-ephemeral-container-cred-guard (runAsUser/runAsGroup distinct
 // from the pod's adapter/agent UIDs and the lenny-cred-readers GID). The
 // chosen UID/GID (25252) has no other significance; it is the same value

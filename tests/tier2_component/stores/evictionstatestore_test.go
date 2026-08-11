@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.2.1 EvictionStateStore, exercising the
+// Contract test for the TESTING.md §12.2.1 EvictionStateStore, exercising the
 // Postgres-backed pkg/gateway/evictionstatestore/pgstore against a
 // real container with the production migrations applied. Covers
 // upsert + Get round-trip, MinIO context-key storage, idempotent

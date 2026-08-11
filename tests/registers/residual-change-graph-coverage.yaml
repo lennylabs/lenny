@@ -498,6 +498,12 @@ entries:
     reason: |-
       a review driver over the migration diff, which no test tier is selected from
   - member: |-
+      scripts/review-migration-diff/qualify-testing-refs.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
       scripts/review-migration-diff/classify-citations.py
     class: change-graph-coverage
     disposition: excluded

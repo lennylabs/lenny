@@ -12,10 +12,10 @@ import (
 )
 
 // spec: 12.9.8
-// diagnosis: pods that opt into the §12.9.8 egress-capture sidecar
+// diagnosis: pods that opt into the TESTING.md §12.9.8 egress-capture sidecar
 // carry the lenny-egress-capture container alongside the runtime,
 // a shared emptyDir for the JSONL capture file, and the runtime
-// container mounts the capture volume read-only so the §12.9.8
+// container mounts the capture volume read-only so the TESTING.md §12.9.8
 // probe can read it via `kubectl exec`.
 func TestBuildSidecarInjectsEgressCaptureWhenConfigured(t *testing.T) {
 	in := inputs()
@@ -58,7 +58,7 @@ func TestBuildSidecarInjectsEgressCaptureWhenConfigured(t *testing.T) {
 }
 
 // TestBuildEgressCaptureSidecarStaysOffCredentialPath_spec_13_1 asserts
-// the §13.1 membership boundary at the producer: the §12.9.8
+// the §13.1 membership boundary at the producer: the TESTING.md §12.9.8
 // egress-capture sidecar — a non-adapter, non-agent container that the
 // pod-level fsGroup nonetheless grants lenny-cred-readers supplementary
 // membership — mounts only its capture volume at /run/lenny-capture and
@@ -118,7 +118,7 @@ func TestBuildEmbeddedInjectsEgressCaptureWhenConfigured(t *testing.T) {
 
 // spec: 12.9.8
 // diagnosis: omitting the EgressCapture field produces a stock pod
-// with no capture container and no capture volume. The §12.9.8
+// with no capture container and no capture volume. The TESTING.md §12.9.8
 // sidecar is opt-in per-template.
 func TestBuildOmitsEgressCaptureByDefault(t *testing.T) {
 	pod, err := podspec.Build(inputs())

@@ -19,4 +19,4 @@ The seed set covers the failure modes the parser must handle without panic:
 | `null-bytes` | Embedded NUL bytes inside what's otherwise a valid frame |
 | `nested-batch` | Batch of three messages with the second truncated |
 
-The corpus stays minimal on purpose: the §19.2 fuzzer extends it as crashes accumulate. Each new file should carry a short comment header naming the issue it covered.
+The corpus stays minimal on purpose: the TESTING.md §19.2 fuzzer extends it as crashes accumulate. Each new file should carry a short comment header naming the issue it covered.

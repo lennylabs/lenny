@@ -79,7 +79,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: postgres
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test (which drains a worker) does not evict the database, lose
       # its emptyDir, and force every downstream test to re-migrate.
       # The preference falls back to any node on clusters that lack a
@@ -196,7 +196,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: redis
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test does not evict the cache, lose its emptyDir, and clear
       # coordination state mid-suite. Falls back to any node when the
       # control-plane label is absent (EKS / cloud installs).
@@ -353,7 +353,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: minio
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test does not evict MinIO, vanish the bucket with the emptyDir,
       # and cause the gateway's §12.5 drain-readiness probe to reject
       # subsequent agent-pod evictions. Falls back to any node when

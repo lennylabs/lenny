@@ -2,7 +2,7 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind tests for the §13.7 admission plane. Each test
+// Tier-5 e2e Kind tests for the TESTING.md §13.7 admission plane. Each test
 // installs the Lenny control plane on a Kind cluster (via the
 // install.sh-backed kind.InstallLenny harness) and asserts the named
 // §13.x admission behaviour against the live API server.
@@ -44,7 +44,7 @@ var expectedAgentWebhooks = []string{
 }
 
 // spec: 13.7
-// diagnosis: §13.7 admission policy is not enforced. The test applies
+// diagnosis: TESTING.md §13.7 admission policy is not enforced. The test applies
 // a SandboxWarmPool whose spec.minWarm exceeds spec.maxWarm — a §4.6.3
 // semantic budget violation — and expects the API server to reject it
 // via the lenny-pool-config-validator webhook with the
@@ -176,7 +176,7 @@ spec:
 }
 
 // spec: 13.7
-// diagnosis: the §13.7 admission inventory is incomplete. The test
+// diagnosis: the TESTING.md §13.7 admission inventory is incomplete. The test
 // lists every ValidatingWebhookConfiguration on the cluster and
 // asserts that each Phase 3.5 baseline webhook is present and
 // configured fail-closed (failurePolicy: Fail). A missing webhook
@@ -206,11 +206,11 @@ func TestAdmissionInventory(t *testing.T) {
 	for _, name := range expectedAgentWebhooks {
 		fp, present := policy[name]
 		if !present {
-			t.Errorf("ValidatingWebhookConfiguration %q is not installed; a §13.7 admission gate is missing", name)
+			t.Errorf("ValidatingWebhookConfiguration %q is not installed; a TESTING.md §13.7 admission gate is missing", name)
 			continue
 		}
 		if fp != "Fail" {
-			t.Errorf("webhook %q has failurePolicy %q; §13.7 requires fail-closed (Fail)", name, fp)
+			t.Errorf("webhook %q has failurePolicy %q; TESTING.md §13.7 requires fail-closed (Fail)", name, fp)
 		}
 	}
 	t.Logf("admission inventory: %d ValidatingWebhookConfigurations present", len(policy))

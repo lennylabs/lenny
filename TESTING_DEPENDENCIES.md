@@ -13,7 +13,7 @@ Companion to [`TESTING.md`](TESTING.md). This file lists every tool the test inf
 7. [Cloud provider toolchain (tier 6)](#7-cloud-provider-toolchain-tier-6)
 8. [Performance and chaos toolchain (tiers 7–8)](#8-performance-and-chaos-toolchain-tiers-78)
 9. [Security toolchain (tier 9)](#9-security-toolchain-tier-9)
-10. [SDK and language toolchains (§14.13)](#10-sdk-and-language-toolchains-1413)
+10. [SDK and language toolchains (TESTING.md §14.13)](#10-sdk-and-language-toolchains-1413)
 11. [Documentation toolchain (tier 11)](#11-documentation-toolchain-tier-11)
 12. [Optional convenience tools](#12-optional-convenience-tools)
 13. [Cloud authentication setup](#13-cloud-authentication-setup)
@@ -617,7 +617,7 @@ Image signing and verification.
 
 ---
 
-## 10. SDK and language toolchains (§14.13)
+## 10. SDK and language toolchains (TESTING.md §14.13)
 
 The language-SDK contract tests (TESTING.md §14.13) require runtimes for Python and Node alongside the existing Go toolchain.
 

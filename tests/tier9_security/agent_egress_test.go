@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 §12.9.4 NetworkPolicy adversarial test for the agent-pod
+// Tier-9 TESTING.md §12.9.4 NetworkPolicy adversarial test for the agent-pod
 // egress half. TESTING.md §12.9.4: "Test pods attempt to reach
 // forbidden endpoints: agent pod to internet, agent pod to Postgres,
 // agent pod to Redis, agent pod to another tenant's namespace,
@@ -10,7 +10,7 @@
 // service. Every attempt times out at the CNI layer."
 //
 // network_policy_test.go already exercises the lenny-system half of
-// §12.9.4 (TestNetworkPolicyAdversarial, TestNetworkPolicyPosture).
+// TESTING.md §12.9.4 (TestNetworkPolicyAdversarial, TestNetworkPolicyPosture).
 // This file exercises the agent-namespace half: a probe pod scheduled
 // directly into lenny-agents, carrying the same lenny.dev/managed:
 // "true" label and §13.1 hardened SecurityContext a real Sandbox
@@ -42,13 +42,13 @@ const cloudMetadataAddress = "169.254.169.254"
 
 // publicInternetAddress is a stable public IPv4 address outside every
 // RFC1918 / link-local / cluster range, used as the "agent pod to
-// internet" §12.9.4 target. default-deny-all drops the connection at
+// internet" TESTING.md §12.9.4 target. default-deny-all drops the connection at
 // the CNI layer regardless of whether the address is genuinely
 // reachable from the Kind host, so the probe does not depend on the
 // test runner having real internet egress.
 const publicInternetAddress = "1.1.1.1"
 
-// agentEgressProbeNamespace is the namespace the §12.9.4 agent-pod
+// agentEgressProbeNamespace is the namespace the TESTING.md §12.9.4 agent-pod
 // probe schedules into — the same namespace the Sandbox reconciler
 // places every managed agent pod in.
 const agentEgressProbeNamespace = "lenny-agents"
@@ -121,7 +121,7 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 		t.Run(strings.ReplaceAll(tc.name, " ", "_"), func(t *testing.T) {
 			res := curlFromPodInNamespace(t, c, agentEgressProbeNamespace, pod, tc.target, 8*time.Second)
 			if res.exitCode == 0 {
-				t.Fatalf("§12.9.4 violation: an agent pod reached the forbidden %s endpoint at %s. "+
+				t.Fatalf("TESTING.md §12.9.4 violation: an agent pod reached the forbidden %s endpoint at %s. "+
 					"default-deny-all plus the restricted-profile allow-list must block every destination "+
 					"other than the gateway control channel and cluster DNS.\noutput:\n%s",
 					tc.name, tc.target, res.output)
@@ -132,7 +132,7 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 					tc.name, tc.target, res.exitCode, res.output)
 				return
 			}
-			t.Logf("§12.9.4 adversarial probe: agent pod blocked reaching the %s endpoint at %s "+
+			t.Logf("TESTING.md §12.9.4 adversarial probe: agent pod blocked reaching the %s endpoint at %s "+
 				"(curl exit 28, connection timed out — egress boundary enforced)", tc.name, tc.target)
 		})
 	}
@@ -192,7 +192,7 @@ spec:
 
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {
-		t.Fatalf("failed to create the §12.9.4 agent-egress probe pod: %v\n%s", err, out)
+		t.Fatalf("failed to create the TESTING.md §12.9.4 agent-egress probe pod: %v\n%s", err, out)
 	}
 	out, err := c.KubectlOut(
 		t,
@@ -201,7 +201,7 @@ spec:
 	)
 	if err != nil {
 		desc, _ := c.KubectlOut(t, "-n", agentEgressProbeNamespace, "describe", "pod", name)
-		t.Fatalf("§12.9.4 agent-egress probe pod %q did not become Ready: %v\n%s\n--- describe ---\n%s",
+		t.Fatalf("TESTING.md §12.9.4 agent-egress probe pod %q did not become Ready: %v\n%s\n--- describe ---\n%s",
 			name, err, out, desc)
 	}
 	return name
@@ -209,7 +209,7 @@ spec:
 
 // createSiblingTenantTarget schedules a throwaway namespace and target
 // pod standing in for "another tenant's namespace" (TESTING.md
-// §12.9.4), registers a t.Cleanup to delete the namespace (which
+// TESTING.md §12.9.4), registers a t.Cleanup to delete the namespace (which
 // cascades to the pod), and returns the target pod's IP. The namespace
 // carries none of the lenny.dev/agent-namespace admission-webhook
 // scoping, so the target pod needs no §13.1 SecurityContext of its own;
@@ -243,7 +243,7 @@ spec:
 
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {
-		t.Fatalf("failed to create the §12.9.4 sibling-tenant-namespace fixture: %v\n%s", err, out)
+		t.Fatalf("failed to create the TESTING.md §12.9.4 sibling-tenant-namespace fixture: %v\n%s", err, out)
 	}
 	out, err := c.KubectlOut(
 		t,
@@ -251,7 +251,7 @@ spec:
 		"pod/sibling-tenant-target", "--timeout=90s",
 	)
 	if err != nil {
-		t.Fatalf("§12.9.4 sibling-tenant-namespace target pod did not become Ready: %v\n%s", err, out)
+		t.Fatalf("TESTING.md §12.9.4 sibling-tenant-namespace target pod did not become Ready: %v\n%s", err, out)
 	}
 	ip, err := c.KubectlOut(
 		t,

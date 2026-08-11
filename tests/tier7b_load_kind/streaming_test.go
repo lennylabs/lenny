@@ -2,7 +2,7 @@
 
 //go:build load_kind
 
-// Tier-7 Phase 6.5 incremental load test (streaming). The §13.17 phase
+// Tier-7 Phase 6.5 incremental load test (streaming). The TESTING.md §13.17 phase
 // gate baselines the §15.1 message round-trip surface as the gateway
 // transitions from in-memory to multi-replica Redis-coordinated
 // streaming. The PR-cadence smoke form drives the streaming_throughput
@@ -27,12 +27,12 @@ import (
 )
 
 // spec: 13.17 (Phase 6.5 — incremental load test, streaming)
-// diagnosis: the §13.17 streaming_throughput smoke run regressed or
+// diagnosis: the TESTING.md §13.17 streaming_throughput smoke run regressed or
 // failed. The scenario POSTs /v1/sessions/{id}/messages against the
 // e2e gateway; a failure means the synchronous executor round-trip
 // errored under load or its latency regressed beyond the baseline
 // budget. The phase gate compares the smoke run against the
-// committed baseline JSON; the cloud tier runs the strict §13.29
+// committed baseline JSON; the cloud tier runs the strict TESTING.md §13.29
 // regression comparison. Inspect the k6 output for the failing check
 // and the gateway logs for the executor error.
 func TestStreamingThroughput(t *testing.T) {

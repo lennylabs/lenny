@@ -71,7 +71,7 @@ func main() {
 	return bin
 }
 
-// spec: §12.10 (RegisterAdapterUnderTest entry point)
+// spec: TESTING.md §12.10 (RegisterAdapterUnderTest entry point)
 // diagnosis: a third-party runtime project must drive the harness
 // against its own binary through a single Go-test entry point.
 // RegisterAdapterUnderTest invokes the harness with the documented
@@ -97,7 +97,7 @@ func TestRegisterAdapterUnderTestHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §12.10 (NewAdapter convenience constructor)
+// spec: TESTING.md §12.10 (NewAdapter convenience constructor)
 // diagnosis: NewAdapter returns an Adapter whose BinaryPath and
 // DeclaredLevel reflect the supplied values. This is the entry
 // point a runtime project uses when its only requirement is a

@@ -108,7 +108,7 @@ spec:
   capabilities:
     preConnect: true
 ---
-# §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
+# TESTING.md §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
 # image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ works.
 # cred-shell-echo is a stdin/stdout §28.5.3 binary (it does not link the
 # adapter), so the §4.7 sidecar deployment model is the correct fit: the

@@ -76,7 +76,7 @@ Re-run a selector on every file change under `pkg/`, `cmd/`, `tests/`, `schemas/
 
 ### Stress-test a flaky test
 
-Per §17.10 every test must pass 50 consecutive runs. Investigate via:
+Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via:
 
 ```bash
 ./bin/lenny-test stress --test TestSandboxClaimSkipLocked --runs 50
@@ -139,7 +139,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - [Determinism](determinism.html) — `timectl`, `randctl`, `wait`, `goleak`, `ports`
 - [Domain suites](domain-suites.html) — RLS, workspace plan, credentials, delegation, MCP elicitation, operability, multi-protocol, interceptor chain, pool lifecycle, compliance/erasure, T4 controls, web playground, SDKs
 - [Testing `lenny-ctl`](lenny-ctl.html) — operability tests across the 14 command categories
-- [Flakiness](flakiness.html) — §17.10 stress sweep, quarantine workflow, root-cause categories
+- [Flakiness](flakiness.html) — TESTING.md §17.10 stress sweep, quarantine workflow, root-cause categories
 - [Documentation tests](documentation-tests.html) — tier-11 markdown / code-block / runbook / ADR checks
 - [Forward compatibility](forward-compatibility.html) — §23 v2 surfaces
 - [TESTING.md](../../TESTING.md) — the authoritative design

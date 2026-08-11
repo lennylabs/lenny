@@ -1,7 +1,7 @@
 # Upload fixtures
 
 §13.4 archive validators round-trip canonical upload bodies. The
-fixtures here are the test corpus the §13.4 + §12.2.3 File Fabric
+fixtures here are the test corpus the §13.4 + TESTING.md §12.2.3 File Fabric
 tests load.
 
 Layout:

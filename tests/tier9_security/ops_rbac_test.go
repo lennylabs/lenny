@@ -306,7 +306,7 @@ func authedDriftOpsServer(t *testing.T) (*opsserver.Server, *jwt.HMACSigner) {
 	return srv, signer
 }
 
-// spec: §12.9.1 (TESTING.md) — "for each store and each operation,
+// spec: TESTING.md §12.9.1 (TESTING.md) — "for each store and each operation,
 // attempt cross-tenant reads and writes through every code path (...,
 // drift detection, lenny-ops endpoints). Every attempt must fail with
 // the documented isolation error." §25.10 configuration drift is a
@@ -320,12 +320,12 @@ func authedDriftOpsServer(t *testing.T) (*opsserver.Server, *jwt.HMACSigner) {
 //
 // diagnosis: a tenant-admin reached the §25.10 drift surface and
 // received the platform-wide drift report (or reconcile preview) rather
-// than the §12.9.1 documented isolation error. A single tenant's admin
+// than the TESTING.md §12.9.1 documented isolation error. A single tenant's admin
 // can enumerate every tenant's pool/runtime/tenant configuration through
 // drift detection, and drive a platform-wide reconcile, breaching the
-// §12.9.1 cross-tenant isolation guarantee for the drift code path.
+// TESTING.md §12.9.1 cross-tenant isolation guarantee for the drift code path.
 func TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1(t *testing.T) {
-	// The §12.9.1 matrix names drift detection as a cross-tenant-rejection
+	// The TESTING.md §12.9.1 matrix names drift detection as a cross-tenant-rejection
 	// code path, but §25.10 defines drift as platform-scoped with no
 	// tenant dimension and no isolation error, while §25.4
 	// admits tenant-admin on every lenny-ops endpoint. The control this
@@ -333,7 +333,7 @@ func TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1(t *testing.T) {
 	// mirroring the §25.4 LOCK_SCOPE_FORBIDDEN control for
 	// platform-scoped locks) is not yet defined by the spec. Left skipped
 	// until the spec resolves how drift enforces cross-tenant isolation.
-	t.Skip("drift cross-tenant isolation control is unresolved: §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface")
+	t.Skip("drift cross-tenant isolation control is unresolved: TESTING.md §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface")
 
 	srv, signer := authedDriftOpsServer(t)
 	tenantAdmin := mintOpsRBACToken(t, signer, "carol@acme.com", "acme", "", auth.RoleTenantAdmin)

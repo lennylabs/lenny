@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test for the §12.9.1 cross-tenant isolation
+// Tier-4 integration test for the TESTING.md §12.9.1 cross-tenant isolation
 // matrix as it applies to the OpenAI-compatible external protocol
 // surfaces (OpenAI Chat Completions, Open Responses). The matrix
 // requires every store/operation/client-path combination — including
@@ -34,7 +34,7 @@ const (
 	crossTenantAttacker = "acme"
 )
 
-// spec: §12.9.1 ("A composed adversarial scenario: seed tenants A and
+// spec: TESTING.md §12.9.1 ("A composed adversarial scenario: seed tenants A and
 // B with rich state on every store, then for each store and each
 // operation, attempt cross-tenant reads and writes through every code
 // path (REST, MCP, OpenAI Completions, OpenAI Responses, admin API,
@@ -46,7 +46,7 @@ const (
 // /v1/chat/completions, that returns anything other than the
 // documented RESOURCE_NOT_FOUND / not-found-shaped isolation error is
 // a tenant-isolation breach on the OpenAI-compatible surfaces the
-// §12.9.1 matrix names.
+// TESTING.md §12.9.1 matrix names.
 func TestOpenAICompatibleSurfacesCrossTenantIsolation(t *testing.T) {
 	gw := gateway.StartWith(t, "--dev-mode")
 	base := gw.BaseURL()

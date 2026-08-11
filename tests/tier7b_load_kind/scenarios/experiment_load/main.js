@@ -45,7 +45,7 @@ const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 export const options = {
   // Emit p99 and p99.9 in the summary export so the Tier-7 baseline
   // diff has the percentiles the §12.7 SLOs are stated at and the
-  // §13.34 phase gate compares.
+  // TESTING.md §13.34 phase gate compares.
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   // A rate-bounded executor. An unbounded VU loop spins into hundreds
   // of thousands of requests when a request fails fast, saturating the

@@ -30,7 +30,7 @@ import (
 )
 
 // spec: 12.9.1
-// diagnosis: §12.9.1 cross-tenant session isolation did not hold. The
+// diagnosis: TESTING.md §12.9.1 cross-tenant session isolation did not hold. The
 // test creates a live session for tenant A through the §15.1
 // create-and-start endpoint, then issues a tenant-B-scoped GET against
 // the same session ID. The §10.2 tenant-scope guard must reject the
@@ -63,7 +63,7 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 		// The §4.6 warm pool never settled an idle pod within the retry
 		// window (a degraded cluster with the pool image in
-		// ImagePullBackOff, for example). This test exercises §12.9.1
+		// ImagePullBackOff, for example). This test exercises TESTING.md §12.9.1
 		// cross-tenant session isolation, not pool warm-up; skip cleanly
 		// as the sibling admin-API tier-9 tests do on an unready
 		// precondition rather than hard-failing on the environment.
@@ -95,15 +95,15 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	// exists). Either way, a 200 with the foreign payload is the
 	// breach.
 	if got, err := d.GetSession(ctx, tenantB, sess.ID); err == nil {
-		t.Errorf("§12.9.1 violation: tenant %s's GET on tenant %s's session %s returned a session "+
+		t.Errorf("TESTING.md §12.9.1 violation: tenant %s's GET on tenant %s's session %s returned a session "+
 			"payload (state %q, runtimeRef %q); the §10.2 tenant-scope guard did not reject the "+
 			"cross-tenant lookup", tenantB, tenantA, sess.ID, got.State, got.RuntimeRef)
 	} else if !strings.Contains(err.Error(), "404") {
-		t.Errorf("§12.9.1: tenant %s's GET on tenant %s's session %s failed with %v, expected a "+
+		t.Errorf("TESTING.md §12.9.1: tenant %s's GET on tenant %s's session %s failed with %v, expected a "+
 			"404 RESOURCE_NOT_FOUND; the gateway should hide the foreign session's existence",
 			tenantB, tenantA, sess.ID, err)
 	} else {
-		t.Logf("§12.9.1: cross-tenant GET on session %s rejected — tenant %s does not see tenant %s's "+
+		t.Logf("TESTING.md §12.9.1: cross-tenant GET on session %s rejected — tenant %s does not see tenant %s's "+
 			"session", sess.ID, tenantB, tenantA)
 	}
 
@@ -112,11 +112,11 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	// does not allow leaking the foreign session ID's existence via
 	// terminate).
 	if err := d.Terminate(ctx, tenantB, sess.ID); err == nil {
-		t.Errorf("§12.9.1 violation: tenant %s terminated tenant %s's session %s; the §10.2 "+
+		t.Errorf("TESTING.md §12.9.1 violation: tenant %s terminated tenant %s's session %s; the §10.2 "+
 			"tenant-scope guard did not reject the cross-tenant terminate",
 			tenantB, tenantA, sess.ID)
 	} else if !strings.Contains(err.Error(), "404") {
-		t.Logf("§12.9.1: cross-tenant terminate rejected with %v (any non-200 is sufficient; the "+
+		t.Logf("TESTING.md §12.9.1: cross-tenant terminate rejected with %v (any non-200 is sufficient; the "+
 			"404 contract is asserted by the GET test above)", err)
 	}
 
@@ -127,13 +127,13 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	} else if got.State == "" {
 		t.Errorf("after the cross-tenant terminate, tenant A's session reports an empty state")
 	} else {
-		t.Logf("§12.9.1: tenant %s's session %s survives a tenant %s terminate attempt (state %q)",
+		t.Logf("TESTING.md §12.9.1: tenant %s's session %s survives a tenant %s terminate attempt (state %q)",
 			tenantA, sess.ID, tenantB, got.State)
 	}
 }
 
 // spec: 12.9.7
-// diagnosis: §12.9.7 RBAC enforcement on the live session surface did
+// diagnosis: TESTING.md §12.9.7 RBAC enforcement on the live session surface did
 // not hold. The test drives a session as a platform-admin (the
 // canonical creator role), then attempts a state-mutating operation
 // (DELETE) as a tenant-viewer in the SAME tenant. §10.2 grants
@@ -158,7 +158,7 @@ func TestSessionViewerRoleCannotMutate(t *testing.T) {
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 		// The §4.6 warm pool never settled an idle pod within the retry
 		// window (a degraded cluster with the pool image in
-		// ImagePullBackOff, for example). This test exercises §12.9.7
+		// ImagePullBackOff, for example). This test exercises TESTING.md §12.9.7
 		// RBAC on the live session surface, not pool warm-up; skip
 		// cleanly as the sibling admin-API tier-9 tests do on an unready
 		// precondition rather than hard-failing on the environment.
@@ -192,12 +192,12 @@ func TestSessionViewerRoleCannotMutate(t *testing.T) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusForbidden {
-		t.Errorf("§12.9.7 violation: tenant-viewer DELETE on session %s returned status %d, "+
+		t.Errorf("TESTING.md §12.9.7 violation: tenant-viewer DELETE on session %s returned status %d, "+
 			"expected 403 FORBIDDEN; the §10.2 RBAC gate did not reject the role "+
 			"(roles without manage_own_sessions must be denied a DELETE)",
 			sess.ID, res.StatusCode)
 	} else {
-		t.Logf("§12.9.7: tenant-viewer DELETE on session %s rejected with 403", sess.ID)
+		t.Logf("TESTING.md §12.9.7: tenant-viewer DELETE on session %s rejected with 403", sess.ID)
 	}
 
 	// Confirm the session survived the rejected DELETE.
@@ -206,6 +206,6 @@ func TestSessionViewerRoleCannotMutate(t *testing.T) {
 	} else if got.ID != sess.ID {
 		t.Errorf("after the rejected DELETE the session ID changed: got %q, want %q", got.ID, sess.ID)
 	} else {
-		t.Logf("§12.9.7: session %s survives the rejected DELETE (state %q)", got.ID, got.State)
+		t.Logf("TESTING.md §12.9.7: session %s survives the rejected DELETE (state %q)", got.ID, got.State)
 	}
 }

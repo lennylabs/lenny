@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for the §12.2.1 store-interface contract
+// Tier-2 component scaffolds for the TESTING.md §12.2.1 store-interface contract
 // suites. Every store role listed in spec §12.2 (and the table in
 // TESTING.md §12.2.1) has one suite here. Each test calls t.Skip with
 // a precise diagnosis pointing at the missing implementation:
@@ -93,9 +93,9 @@ func TestArtifactStoreContract(t *testing.T) {
 }
 
 // TestEventStoreContract is implemented in eventstore_test.go, which
-// exercises the Postgres-backed §12.2.1 EventStore (pkg/gateway/auditstore)
+// exercises the Postgres-backed TESTING.md §12.2.1 EventStore (pkg/gateway/auditstore)
 // against a real container: the §11.7 audit hash chain, the OCSF
-// translation state machine, the §12.3.7 EventBus publish-state
+// translation state machine, the TESTING.md §12.3.7 EventBus publish-state
 // machine, the startup chain-continuity check, RLS, and erasure.
 
 // TestCredentialPoolStoreContract is implemented in
@@ -135,11 +135,11 @@ func TestArtifactStoreContract(t *testing.T) {
 // a real Postgres + Redis container.
 
 // TestEventBusContract is implemented in eventstore_test.go, which
-// exercises the §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a
+// exercises the TESTING.md §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a
 // real Redis container: the CloudEvents v1.0.2 envelope, the
 // tenant-prefixed channels, and at-most-once delivery isolation.
 
 // TestDeleteByUserAndTenantInterface is implemented in
-// erasure_interface_test.go, which compile-checks the §12.2.1 /
-// §14.10 mandatory-erasure interface against every tenant-scoped
+// erasure_interface_test.go, which compile-checks the TESTING.md §12.2.1 /
+// TESTING.md §14.10 mandatory-erasure interface against every tenant-scoped
 // store the gateway depends on.

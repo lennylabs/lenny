@@ -372,7 +372,7 @@ func curlFromPod(t *testing.T, c *kind.Cluster, pod, target string, timeout time
 
 // curlFromPodInNamespace is curlFromPod generalized to an arbitrary
 // namespace. agent_egress_test.go reuses it against lenny-agents (and a
-// throwaway sibling-tenant namespace) for the §12.9.4 agent-pod egress
+// throwaway sibling-tenant namespace) for the TESTING.md §12.9.4 agent-pod egress
 // probes.
 func curlFromPodInNamespace(t *testing.T, c *kind.Cluster, namespace, pod, target string, timeout time.Duration) curlResult {
 	t.Helper()

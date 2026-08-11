@@ -95,7 +95,7 @@ BINARIES=(
   # dedicated leader lease; the chart references it by image, so it must
   # be built and loaded onto the offline Kind cluster like the rest.
   lenny-pool-scaling-controller
-  # §12.9.8 tier-9 egress-capture sidecar; the controller injects this
+  # TESTING.md §12.9.8 tier-9 egress-capture sidecar; the controller injects this
   # image when a Sandbox carries the egress-capture annotation.
   lenny-egress-capture
 )
@@ -115,7 +115,7 @@ RUNTIME_IMAGES=(
   # capabilities.preConnect; the §6.3 startup_latency benchmark drives
   # its pool as the SDK-warm arm against the pod-warm echo pool.
   "lenny-runtime-preconnect-echo=runtimes/preconnect-echo"
-  # §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
+  # TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo retains
   # /bin/sh for the credential-leakage probes; elicitation-echo
   # raises §9.2 elicitations through the platform MCP fabric.
   "lenny-runtime-cred-shell-echo=runtimes/cred-shell-echo"

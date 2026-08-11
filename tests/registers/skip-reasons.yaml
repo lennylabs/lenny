@@ -1283,12 +1283,12 @@ sites:
       function: TestNodeDrainDuringActiveSession
       site: 1
       call: Skip
-      reason: 'precondition not met: agent-pod workload absent; §13.19 needs at least one Ready agent pod on a worker node to drain.'
+      reason: 'precondition not met: agent-pod workload absent; TESTING.md §13.19 needs at least one Ready agent pod on a worker node to drain.'
     - path: tests/tier5_e2e_kind/scaffolds_test.go
       function: TestNodeDrainDuringActiveSession
       site: 2
       call: Skipf
-      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the §13.19 node-drain path.'
+      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.'
     - path: tests/tier6_e2e_cloud/agent_objectstore_egress_test.go
       function: requireAgentNamespace
       site: 1
@@ -1872,7 +1872,7 @@ sites:
       site: 1
       call: Skipf
       reason: |-
-        §12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v
+        TESTING.md §12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v
         output:
         %s
     - path: tests/tier9_security/credential_leakage_test.go
@@ -1880,7 +1880,7 @@ sites:
       site: 1
       call: Skipf
       reason: |-
-        §12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v
+        TESTING.md §12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v
         output:
         %s
     - path: tests/tier9_security/credential_leakage_test.go
@@ -1888,14 +1888,14 @@ sites:
       site: 1
       call: Skipf
       reason: |-
-        §12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v
+        TESTING.md §12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the TESTING.md §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v
         output:
         %s
     - path: tests/tier9_security/credential_leakage_test.go
       function: findCredShellPod
       site: 1
       call: Skip
-      reason: '§12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml which declares the cred-shell-echo-pool. Without the pool the §12.9.8 boundary cannot be probed.'
+      reason: 'TESTING.md §12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml which declares the cred-shell-echo-pool. Without the pool the TESTING.md §12.9.8 boundary cannot be probed.'
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: TestElicitationPlatformFloor
       site: 1
@@ -1905,27 +1905,27 @@ sites:
       function: TestElicitationTamperDetectOnlyMode
       site: 1
       call: Skipf
-      reason: §12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)
+      reason: TESTING.md §12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: TestElicitationTamperEnforceMode
       site: 1
       call: Skipf
-      reason: §12.9.9 enforce PUT returned %d body %s
+      reason: TESTING.md §12.9.9 enforce PUT returned %d body %s
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: requireTenantAcme
       site: 1
       call: Skipf
-      reason: '§12.9.9: tenant ''acme'' missing and POST to create returned %d body %s'
+      reason: 'TESTING.md §12.9.9: tenant ''acme'' missing and POST to create returned %d body %s'
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: startElicitationProbe
       site: 1
       call: Skipf
-      reason: '§12.9.9: kubectl port-forward did not start: %v'
+      reason: 'TESTING.md §12.9.9: kubectl port-forward did not start: %v'
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: startElicitationProbe
       site: 2
       call: Skipf
-      reason: '§12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh'
+      reason: 'TESTING.md §12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh'
     - path: tests/tier9_security/embedded_gateway_loopback_test.go
       function: primaryNonLoopbackIP
       site: 1
@@ -1960,7 +1960,7 @@ sites:
       function: TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1
       site: 1
       call: Skip
-      reason: 'drift cross-tenant isolation control is unresolved: §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface'
+      reason: 'drift cross-tenant isolation control is unresolved: TESTING.md §12.9.1 lists drift among cross-tenant-rejection paths, but §25.10 defines no per-tenant drift model or isolation error and §25.4 admits tenant-admin; pending a spec decision on the documented isolation error for the drift surface'
     - path: tests/tier9_security/pool_admission_isolation_test.go
       function: TestNonceOnlyAcknowledgmentGate_spec_4_7
       site: 1

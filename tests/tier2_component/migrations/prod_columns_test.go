@@ -79,9 +79,9 @@ var prodMigrationSchema = []struct {
 	// 0044 adds the §9.4 pgvector embedding column to agent_memory,
 	// completing the "Postgres + pgvector" default memory backend.
 	{migration: "0044", table: "agent_memory", columns: []string{"embedding"}},
-	// 0045 creates the §12.2.1 EvictionStateStore registry. The
+	// 0045 creates the TESTING.md §12.2.1 EvictionStateStore registry. The
 	// table is tenant-scoped and carries the same RLS policy every
-	// tenant-scoped table uses (see §12.2.1).
+	// tenant-scoped table uses (see TESTING.md §12.2.1).
 	{migration: "0045", table: "session_eviction_state", create: true},
 	// 0046 creates the §25.5 webhook subscription registry for the
 	// lenny-ops control plane. Platform-scoped (no RLS, no tenant

@@ -33,7 +33,7 @@ func prodMigrations(t *testing.T) string {
 // with the migration that creates it. TestProdSchemaMigrationRoundTrip
 // asserts each table appears after the forward apply and is gone after
 // rollback, so every migration listed here is covered by a test under
-// tests/tier2_component/migrations/ (the §12.0 lint-migrations rule).
+// tests/tier2_component/migrations/ (the TESTING.md §12.0 lint-migrations rule).
 var prodTables = []struct{ migration, name string }{
 	{"0001", "tenants"},
 	{"0001", "runtime_definitions"},
@@ -256,7 +256,7 @@ func TestLedgerImmutability(t *testing.T) {
 
 	t.Run("audit_log permits the migration-0041 bookkeeping update", func(t *testing.T) {
 		// Migration 0041 narrows lenny_audit_immutability so the §11.7
-		// OCSF and §12.3.7 EventBus state machines can advance the
+		// OCSF and TESTING.md §12.3.7 EventBus state machines can advance the
 		// bookkeeping columns while the hash-input payload stays frozen.
 		if err := execTenant(ctx, pg, "acme",
 			`INSERT INTO audit_log (tenant_id, sequence_number, event_type, payload, payload_canonical_json)

@@ -2,12 +2,12 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.2.1 EventStore — the Postgres-backed
+// Contract test for the TESTING.md §12.2.1 EventStore — the Postgres-backed
 // audit_log ledger exercised against a real Postgres container with
-// the production migrations applied — and the §12.3.7 EventBus over a
+// the production migrations applied — and the TESTING.md §12.3.7 EventBus over a
 // real Redis container. It covers the §11.7 audit hash chain and
 // per-tenant sequence monotonicity, the OCSF translation state machine
-// (pending → retry_pending → succeeded | dead_lettered), the §12.3.7
+// (pending → retry_pending → succeeded | dead_lettered), the TESTING.md §12.3.7
 // EventBus publish-state machine, the startup chain-continuity check,
 // RLS tenant isolation, erasure, and the Redis pub/sub CloudEvents
 // envelope on tenant-prefixed channels.
@@ -32,10 +32,10 @@ import (
 )
 
 // spec: 12.2.1
-// diagnosis: the §12.2.1 EventStore — the Postgres-backed audit_log
+// diagnosis: the TESTING.md §12.2.1 EventStore — the Postgres-backed audit_log
 // ledger — must build a verifiable §11.7 hash chain with a monotonic
 // per-tenant sequence_number, drive the OCSF translation state machine
-// to a terminal state, drive the §12.3.7 EventBus publish-state
+// to a terminal state, drive the TESTING.md §12.3.7 EventBus publish-state
 // machine, isolate each tenant's rows under RLS, survive the startup
 // chain-continuity check, and permit erasure under the erasure-mode
 // guard. A failure here is a real defect in pkg/gateway/auditstore.
@@ -169,7 +169,7 @@ func TestEventStoreContract(t *testing.T) {
 			if r.TenantID == tenant && r.Seq == row.Seq {
 				found = true
 				rebuiltID = r.Event.ID
-				// The rebuilt envelope is a valid §12.3.7 CloudEvents
+				// The rebuilt envelope is a valid TESTING.md §12.3.7 CloudEvents
 				// envelope carrying an OCSF audit record.
 				if err := r.Event.Validate(); err != nil {
 					t.Errorf("rebuilt CloudEvents envelope is invalid: %v", err)
@@ -182,7 +182,7 @@ func TestEventStoreContract(t *testing.T) {
 		if !found {
 			t.Fatal("the failed row was not returned by PendingRepublish")
 		}
-		// §12.3.7: the CloudEvents id is byte-identical across
+		// TESTING.md §12.3.7: the CloudEvents id is byte-identical across
 		// retranscribes (it is derived from the immutable canonical
 		// tuple) so downstream de-duplication by id keeps working.
 		rows2, err := store.PendingRepublish(ctx, 5, 256)
@@ -367,7 +367,7 @@ func TestEventStoreContract(t *testing.T) {
 }
 
 // spec: 12.2.1
-// diagnosis: the §12.2.1 EventBus — the §12.3.7 Redis pub/sub event
+// diagnosis: the TESTING.md §12.2.1 EventBus — the TESTING.md §12.3.7 Redis pub/sub event
 // bus — must publish CloudEvents v1.0.2 envelopes on tenant-prefixed
 // channels with at-most-once delivery, and a subscriber on one tenant
 // must never receive another tenant's events. This exercises the

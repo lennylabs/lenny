@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 §12.9.8 credential-leakage probe. Three adversarial checks
+// Tier-9 TESTING.md §12.9.8 credential-leakage probe. Three adversarial checks
 // against a cred-shell-echo pod running on the Kind cluster:
 //
 //   - Environment: dump the runtime container's /proc/1/environ and
@@ -17,7 +17,7 @@
 //   - Network egress: locate the egress-capture sidecar in the same
 //     pod, parse the JSONL capture file the sidecar writes for each
 //     accepted forward, and assert no captured payload hash matches
-//     a known credential. The §12.9.8 sidecar (see
+//     a known credential. The TESTING.md §12.9.8 sidecar (see
 //     pkg/controller/sandbox/podspec.EgressCapture) is the network-
 //     side analogue of the environment and filesystem probes.
 //
@@ -39,7 +39,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
-// credShellPoolSuffix is the pool name suffix the §12.9.8 probe
+// credShellPoolSuffix is the pool name suffix the TESTING.md §12.9.8 probe
 // looks for: agent-workload.yaml names the pool
 // cred-shell-echo-pool.
 const credShellPoolSuffix = "cred-shell-echo-pool"
@@ -75,8 +75,8 @@ func findCredShellPod(t *testing.T, c *kind.Cluster) string {
 			return p.Name
 		}
 	}
-	t.Skip("§12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml " +
-		"which declares the cred-shell-echo-pool. Without the pool the §12.9.8 boundary cannot be probed.")
+	t.Skip("TESTING.md §12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml " +
+		"which declares the cred-shell-echo-pool. Without the pool the TESTING.md §12.9.8 boundary cannot be probed.")
 	return ""
 }
 
@@ -110,7 +110,7 @@ func scanCredentialPrefix(body string) string {
 }
 
 // spec: 12.9.8
-// diagnosis: a §12.9.8 credential-leakage probe dumps the runtime
+// diagnosis: a TESTING.md §12.9.8 credential-leakage probe dumps the runtime
 // container's environment and asserts no LLM-provider credential
 // prefix surfaces. The cred-shell-echo runtime retains /bin/sh so the
 // probe can read /proc/1/environ from inside; an adversarial dump that
@@ -122,17 +122,17 @@ func TestCredentialLeakageEnvironment(t *testing.T) {
 
 	env, err := execContainer(t, c, pod, "runtime", "cat", "/proc/1/environ")
 	if err != nil {
-		t.Skipf("§12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("TESTING.md §12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v\noutput:\n%s",
 			pod, err, env)
 	}
 	if hit := scanCredentialPrefix(env); hit != "" {
-		t.Errorf("§12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in /proc/1/environ; "+
+		t.Errorf("TESTING.md §12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in /proc/1/environ; "+
 			"upstream LLM credentials MUST NOT appear in the agent pod's environment", hit)
 	}
 }
 
 // spec: 12.9.8
-// diagnosis: a §12.9.8 filesystem probe lists the §4.7 credential
+// diagnosis: a TESTING.md §12.9.8 filesystem probe lists the §4.7 credential
 // mount (/run/lenny) and asserts no LLM-provider credential prefix
 // is readable from inside the runtime container. The runtime mounts
 // the credential tmpfs read-only per §13.1, so the only legitimate
@@ -154,30 +154,30 @@ func TestCredentialLeakageFilesystem(t *testing.T) {
 	listing, err := execContainer(t, c, pod, "runtime", "sh", "-c",
 		"ls -la /run/lenny 2>/dev/null || true; find /run/lenny -type f 2>/dev/null -exec cat {} +; true")
 	if err != nil {
-		t.Skipf("§12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("TESTING.md §12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v\noutput:\n%s",
 			pod, err, listing)
 	}
 	if hit := scanCredentialPrefix(listing); hit != "" {
-		t.Errorf("§12.9.8 (filesystem) FAIL: /run/lenny in cred-shell-echo runtime container exposes credential prefix %q; "+
+		t.Errorf("TESTING.md §12.9.8 (filesystem) FAIL: /run/lenny in cred-shell-echo runtime container exposes credential prefix %q; "+
 			"the §4.7 credential file MUST contain only the per-session lease material, not standing LLM credentials", hit)
 	}
 }
 
 // spec: 12.9.8
-// diagnosis: the §12.9.8 network-egress probe reads the
+// diagnosis: the TESTING.md §12.9.8 network-egress probe reads the
 // lenny-egress-capture sidecar's JSONL capture file (mounted
 // read-only on the runtime container at /run/lenny-capture/egress.jsonl)
 // and asserts every captured connection's SentHash is a stable
 // SHA-256 digest, not a passthrough of credential bytes. The hash
 // itself is irreversible so the capture artifact cannot leak
 // credentials; this test asserts the capture is well-formed and the
-// sidecar is reachable on the standard mount path so the §12.9.8
+// sidecar is reachable on the standard mount path so the TESTING.md §12.9.8
 // boundary is exercised end-to-end. A missing sidecar or unparseable
 // capture is the probe's failure mode.
 //
-// spec: §12.9.8.
+// spec: TESTING.md §12.9.8.
 // diagnosis: a failure means the egress-capture sidecar is unreachable
-// or its JSONL capture is malformed, so the §12.9.8 SentHash boundary
+// or its JSONL capture is malformed, so the TESTING.md §12.9.8 SentHash boundary
 // (hashed, never raw credential bytes) cannot be verified end-to-end.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	c := kind.InstallLenny(t)
@@ -187,7 +187,7 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	// itself and the runtime mounts the same volume read-only.
 	listing, err := execContainer(t, c, pod, "runtime", "ls", "-la", "/run/lenny-capture")
 	if err != nil {
-		t.Skipf("§12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v\noutput:\n%s",
+		t.Skipf("TESTING.md §12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the TESTING.md §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v\noutput:\n%s",
 			pod, err, listing)
 	}
 
@@ -196,7 +196,7 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 		// Sidecar present but no capture yet — the pod has not emitted
 		// any outbound TCP. The mount existing is the meaningful
 		// assertion at this point.
-		t.Logf("§12.9.8 (egress): /run/lenny-capture/egress.jsonl not yet written (no egress traffic from cred-shell-echo); mount is in place. %v", err)
+		t.Logf("TESTING.md §12.9.8 (egress): /run/lenny-capture/egress.jsonl not yet written (no egress traffic from cred-shell-echo); mount is in place. %v", err)
 		return
 	}
 
@@ -215,18 +215,18 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 		}
 		var rec record
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Errorf("§12.9.8 (egress) FAIL: lenny-egress-capture wrote a malformed JSONL row %q: %v",
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: lenny-egress-capture wrote a malformed JSONL row %q: %v",
 				line, err)
 			continue
 		}
 		if rec.SentHash == "" || rec.Upstream == "" {
-			t.Errorf("§12.9.8 (egress) FAIL: capture row missing sent_hash or upstream: %+v", rec)
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture row missing sent_hash or upstream: %+v", rec)
 		}
 		// Defense in depth: the sent_hash field must NOT itself
 		// contain a credential prefix; only hex digits and dashes
 		// are legitimate.
 		if hit := scanCredentialPrefix(rec.SentHash); hit != "" {
-			t.Errorf("§12.9.8 (egress) FAIL: capture row hash %q contains credential prefix %q (sidecar bug); hashes must be SHA-256 hex",
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture row hash %q contains credential prefix %q (sidecar bug); hashes must be SHA-256 hex",
 				rec.SentHash, hit)
 		}
 	}
@@ -235,7 +235,7 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	// prefix. The sidecar writes only hashes, but a copy-paste bug
 	// could leak raw bytes; the probe catches that regression.
 	if hit := scanCredentialPrefix(body); hit != "" {
-		t.Errorf("§12.9.8 (egress) FAIL: capture file body contains credential prefix %q; lenny-egress-capture MUST only write SHA-256 hashes", hit)
+		t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture file body contains credential prefix %q; lenny-egress-capture MUST only write SHA-256 hashes", hit)
 	}
 }
 

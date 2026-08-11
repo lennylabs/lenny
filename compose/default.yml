@@ -38,7 +38,7 @@ services:
     volumes:
       - lenny-postgres-data:/var/lib/postgresql/data
 
-  # §12.2.2 connection-pooler context-leak harness. The pooler runs
+  # TESTING.md §12.2.2 connection-pooler context-leak harness. The pooler runs
   # in session pooling mode so a returned connection retains its
   # SET LOCAL state. The tier-2 TestRLSPoolerReuseDoesNotLeakContext
   # scaffold uses this to exercise the gateway's pre-checkout

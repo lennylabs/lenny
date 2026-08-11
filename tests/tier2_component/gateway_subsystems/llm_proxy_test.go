@@ -8,7 +8,7 @@
 // This suite wires the llmproxy.Handler to a real Postgres-backed
 // credential-lease store (the §4.9 durable lease record) and the mock
 // LLM provider recorder (the mocked upstream peer), then drives the
-// §12.2.3 LLM Proxy behaviors on the wire: lease-token validation, the
+// TESTING.md §12.2.3 LLM Proxy behaviors on the wire: lease-token validation, the
 // anthropic_direct native translator, request/response and SSE
 // translation, deny-list enforcement, and circuit-breaker behavior. The
 // lease is resolved through the real store on every request, so the
@@ -68,7 +68,7 @@ func (f fakeDenyList) Revoked(credential.CredentialKey) bool { return f.revoked 
 // realStore brings up a Postgres container with the production
 // migrations and returns a Postgres-backed credential-lease store over a
 // local KMS KEK provider, the §12.9 envelope-encryption posture the
-// store requires. This is the "real store" §12.2.3 wires the subsystem
+// store requires. This is the "real store" TESTING.md §12.2.3 wires the subsystem
 // to; it is started once per test and shared across the subtests.
 func realStore(t *testing.T) *credleasepg.Store {
 	t.Helper()
@@ -159,7 +159,7 @@ func newUUID(t *testing.T) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// spec: §12.2.3 (LLM Proxy component-tier suite: lease-token validation,
+// spec: TESTING.md §12.2.3 (LLM Proxy component-tier suite: lease-token validation,
 // native anthropic_direct translator, request/response/SSE translation,
 // deny-list enforcement, circuit-breaker behavior, validated against the
 // mock LLM provider), §4.9 (LLM reverse proxy delivery path resolving the

@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test for §13.26 Phase 12b — type: mcp runtime
+// Tier-4 integration test for TESTING.md §13.26 Phase 12b — type: mcp runtime
 // support. It drives the type: mcp runtime-side adapter path against
 // the reference type: mcp runtime (cmd/runtimes/mcp-reference) through
 // the full §4.7 session lifecycle: the adapter Server selects the type:

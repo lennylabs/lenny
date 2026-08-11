@@ -137,7 +137,7 @@ func deploymentModel(pool string) string {
 		// These runtimes all deploy as sidecar (see
 		// tests/testinfra/kind/agent-workload.yaml). The §4.7
 		// container topology is the same as the reference sidecar
-		// pool: adapter + runtime (and optionally the §12.9.8
+		// pool: adapter + runtime (and optionally the TESTING.md §12.9.8
 		// egress-capture sidecar on cred-shell-echo).
 		return "sidecar"
 	default:

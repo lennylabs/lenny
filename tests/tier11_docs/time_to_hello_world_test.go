@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 §22.7 time-to-hello-world documentation gate. The obligation
+// Tier-11 TESTING.md §22.7 time-to-hello-world documentation gate. The obligation
 // is that a fresh operator can go from install to a working session in
 // under five minutes of wall-clock, and that a runtime author can go
 // from scaffold to a published runtime in the same budget. These tests
@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-// tthwBudget is the §22.7 five-minute wall-clock budget. The converted
+// tthwBudget is the TESTING.md §22.7 five-minute wall-clock budget. The converted
 // offline steps run in well under a second; the budget assertion guards
 // against a regression that makes a step pathologically slow (for
 // example a build that no longer caches).
@@ -148,7 +148,7 @@ func TestTimeToHelloWorld(t *testing.T) {
 		usage := sb.String()
 		for _, want := range []string{"lenny session new", "--runtime"} {
 			if !strings.Contains(usage, want) {
-				t.Errorf("lenny session usage is missing %q; the §22.7 quick-start step is not documented\n%s", want, usage)
+				t.Errorf("lenny session usage is missing %q; the TESTING.md §22.7 quick-start step is not documented\n%s", want, usage)
 			}
 		}
 		// An unknown sub-subcommand exits 2 with the same usage hint.
@@ -162,20 +162,20 @@ func TestTimeToHelloWorld(t *testing.T) {
 	})
 
 	t.Run("step_4_session_cleanup_within_5min", func(t *testing.T) {
-		// The end-to-end wall-clock budget is the §22.7 envelope; the
+		// The end-to-end wall-clock budget is the TESTING.md §22.7 envelope; the
 		// offline CLI-dispatch assertions in steps 2-3 already hold
 		// (they are well below the budget). The live stack bring-up
 		// and the real session lifecycle are exercised by the tier-7
 		// tthw benchmark; this sub-test asserts the wall-clock
 		// regression gate for the parts that run here.
 		if elapsed := time.Since(start); elapsed > tthwBudget {
-			t.Errorf("TTHW offline steps took %s, over the §22.7 budget of %s",
+			t.Errorf("TTHW offline steps took %s, over the TESTING.md §22.7 budget of %s",
 				elapsed, tthwBudget)
 		}
 	})
 
 	if elapsed := time.Since(start); elapsed > tthwBudget {
-		t.Errorf("time-to-hello-world steps took %s, over the §22.7 budget of %s", elapsed, tthwBudget)
+		t.Errorf("time-to-hello-world steps took %s, over the TESTING.md §22.7 budget of %s", elapsed, tthwBudget)
 	}
 }
 
@@ -288,7 +288,7 @@ func TestRuntimeAuthorQuickStart(t *testing.T) {
 	})
 
 	if elapsed := time.Since(start); elapsed > tthwBudget {
-		t.Errorf("runtime-author quick-start steps took %s, over the §22.7 budget of %s", elapsed, tthwBudget)
+		t.Errorf("runtime-author quick-start steps took %s, over the TESTING.md §22.7 budget of %s", elapsed, tthwBudget)
 	}
 }
 
@@ -392,6 +392,6 @@ func TestOperatorInstallNonInteractive(t *testing.T) {
 	})
 
 	if elapsed := time.Since(start); elapsed > tthwBudget {
-		t.Errorf("operator-install steps took %s, over the §22.7 budget of %s", elapsed, tthwBudget)
+		t.Errorf("operator-install steps took %s, over the TESTING.md §22.7 budget of %s", elapsed, tthwBudget)
 	}
 }

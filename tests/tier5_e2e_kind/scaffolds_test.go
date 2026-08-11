@@ -19,20 +19,20 @@
 // than asserting against absent infrastructure.
 //
 // The converted tier-5 tests live in sibling files:
-//   - admission_test.go            §13.7 admission policy, inventory,
+//   - admission_test.go            TESTING.md §13.7 admission policy, inventory,
 //                                  label immutability, pod security.
 //   - admission_featuregated_test.go  feature-gated admission webhooks.
-//   - crd_test.go                  §13.6 warm-pool and sandbox-claim
+//   - crd_test.go                  TESTING.md §13.6 warm-pool and sandbox-claim
 //                                  CRD plane.
-//   - pod_lifecycle_test.go        §13.6 warm-pool pod lifecycle and
+//   - pod_lifecycle_test.go        TESTING.md §13.6 warm-pool pod lifecycle and
 //                                  the two §4.7 deployment models.
-//   - lifecycle_test.go            §13.7 lenny-ops deploy, bootstrap.
+//   - lifecycle_test.go            TESTING.md §13.7 lenny-ops deploy, bootstrap.
 //   - mtls_test.go                 §10.3 mTLS PKI.
-//   - etcd_encryption_test.go      §13.11 etcd encryption at rest.
+//   - etcd_encryption_test.go      TESTING.md §13.11 etcd encryption at rest.
 //   - ingress_test.go              §13.2 NET-038 gateway-ingress
 //                                  NetworkPolicy.
-//   - audit_test.go                §13.28 audit pipeline to Postgres.
-//   - backup_test.go               §13.28 / §25.11 backup subsystem.
+//   - audit_test.go                TESTING.md §13.28 audit pipeline to Postgres.
+//   - backup_test.go               TESTING.md §13.28 / §25.11 backup subsystem.
 
 package tier5_e2e_kind_test
 
@@ -46,7 +46,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// §13.6 Phase 3 — the pod-lifecycle critical path — is converted in
+// TESTING.md §13.6 Phase 3 — the pod-lifecycle critical path — is converted in
 // pod_lifecycle_test.go against the live agent-pod workload.
 
 // scaffoldsAgentNamespace is the namespace the agent-pod workload runs
@@ -68,11 +68,11 @@ const scaffoldsLiveSessionTenant = "scaffold-live-session-tenant"
 // fresh node plus probe convergence.
 const nodeDrainReplenishBound = 3 * time.Minute
 
-// §13.19 Phase 8 — checkpoint/resume + node drain. The drain-readiness
+// TESTING.md §13.19 Phase 8 — checkpoint/resume + node drain. The drain-readiness
 // webhook posture is covered in admission_featuregated_test.go.
 
 // spec: 13.19
-// diagnosis: §13.19 / §4.6.1 node-drain — the test drives a session via
+// diagnosis: TESTING.md §13.19 / §4.6.1 node-drain — the test drives a session via
 // sessiondriver, drains the node hosting the bound agent pod, and
 // asserts the WarmPoolController replenishes the pool to minWarm. Skips
 // "precondition not met" when --agent-namespace is unset (the §4.6 pod
@@ -86,7 +86,7 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 
 	pods := kind.RequireAgentWorkload(t, c)
 	if len(pods) == 0 {
-		t.Skip("precondition not met: agent-pod workload absent; §13.19 needs at least one " +
+		t.Skip("precondition not met: agent-pod workload absent; TESTING.md §13.19 needs at least one " +
 			"Ready agent pod on a worker node to drain.")
 	}
 
@@ -115,7 +115,7 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 		t.Skipf("precondition not met: no SandboxClaim binding found for session %s; "+
 			"the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — "+
 			"the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents "+
-			"on the gateway Deployment to exercise the §13.19 node-drain path.", sess.ID)
+			"on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.", sess.ID)
 	}
 	t.Logf("session %s is bound to agent pod %s", sess.ID, podName)
 
@@ -159,22 +159,22 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 		return countIdleSandboxesInPool(t, c, pool) >= 1
 	})
 	if !reached {
-		t.Errorf("§13.19 / §4.6.1 violation: warm pool %s did not replenish to minWarm within %s "+
+		t.Errorf("TESTING.md §13.19 / §4.6.1 violation: warm pool %s did not replenish to minWarm within %s "+
 			"after node %s was drained (idle Sandbox count before drain %d, current %d); the "+
 			"WarmPoolController did not replace the evicted pod on a surviving worker",
 			pool, nodeDrainReplenishBound, node, preIdle, countIdleSandboxesInPool(t, c, pool))
 		return
 	}
-	t.Logf("§13.19 / §4.6.1: warm pool %s replenished to minWarm; pool has %d idle Sandbox(es) "+
+	t.Logf("TESTING.md §13.19 / §4.6.1: warm pool %s replenished to minWarm; pool has %d idle Sandbox(es) "+
 		"after node drain", pool, countIdleSandboxesInPool(t, c, pool))
 }
 
-// §13.27 Phase 12c — concurrent execution modes. The §5.2 concurrent-
+// TESTING.md §13.27 Phase 12c — concurrent execution modes. The §5.2 concurrent-
 // workspace and concurrent-stateless admission rules are covered by
 // the tier-4 concurrent_workspace_test and concurrent_stateless_test.
 
 // spec: 13.27
-// diagnosis: §13.27 concurrent session routing — the test drives
+// diagnosis: TESTING.md §13.27 concurrent session routing — the test drives
 // sessions concurrently against the two §4.7 deployment models
 // (sidecar and embedded). It asserts each session has a distinct id
 // and reaches running, so the gateway routes concurrent sessions onto
@@ -238,29 +238,29 @@ func TestConcurrentExecutionModes(t *testing.T) {
 				r.runtime, r.sess.ID, r.sess.State)
 		}
 		if prev, ok := seenIDs[r.sess.ID]; ok {
-			t.Errorf("§13.27 isolation violation: runtime %s reused session id %s previously "+
+			t.Errorf("TESTING.md §13.27 isolation violation: runtime %s reused session id %s previously "+
 				"returned for runtime %s; concurrent sessions must have distinct ids",
 				r.runtime, r.sess.ID, prev)
 		}
 		seenIDs[r.sess.ID] = r.runtime
 		seenRuntimes[r.runtime] = r.sess.ID
-		t.Logf("§13.27 runtime %s session %s in state %q", r.runtime, r.sess.ID, r.sess.State)
+		t.Logf("TESTING.md §13.27 runtime %s session %s in state %q", r.runtime, r.sess.ID, r.sess.State)
 	}
 
 	if len(seenRuntimes) != len(runtimes) {
-		t.Errorf("§13.27 expected %d concurrent runtime sessions, got %d", len(runtimes), len(seenRuntimes))
+		t.Errorf("TESTING.md §13.27 expected %d concurrent runtime sessions, got %d", len(runtimes), len(seenRuntimes))
 	}
 }
 
-// §13.28 Phase 13 — observability + audit + backup. The audit pipeline
-// (§13.28) and the backup subsystem (§13.28 / §25.11) are converted in
+// TESTING.md §13.28 Phase 13 — observability + audit + backup. The audit pipeline
+// (TESTING.md §13.28) and the backup subsystem (TESTING.md §13.28 / §25.11) are converted in
 // audit_test.go and backup_test.go against the live in-cluster Postgres
 // and MinIO.
 
-// §13.32 Phase 15 — cross-environment delegation.
+// TESTING.md §13.32 Phase 15 — cross-environment delegation.
 
 // spec: 13.32
-// diagnosis: §13.32 / §10.6 cross-environment delegation is not
+// diagnosis: TESTING.md §13.32 / §10.6 cross-environment delegation is not
 // exercisable from the tier-5 harness. The §10.6 bilateral
 // cross-environment-delegation reachability primitive is wired into
 // pkg/gateway/envaccess and consulted by the gateway's lenny/delegate_task
@@ -278,7 +278,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // itself is covered by the tier-2 component suite against
 // envaccess.CrossEnvironmentReachable; the §10.6 transparent-filter
 // middleware is covered by pkg/gateway/middleware/environment.
-// §13.32 / §10.6 cross-environment delegation — covered by:
+// TESTING.md §13.32 / §10.6 cross-environment delegation — covered by:
 //   - pkg/gateway/envaccess.CrossEnvironmentReachable (the bilateral
 //     reachability rule itself; tier-2 unit suite).
 //   - pkg/gateway/middleware/environment (transparent-filter
@@ -297,7 +297,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // diagnosis: §15.1 e2e scenario — covered structurally by pkg/* + tier-2/3 suites; live Kind exercise on the ops backlog.
 func TestCrossEnvironmentDelegation(t *testing.T) {
 	kind.InstallLenny(t)
-	t.Logf("§13.32 / §10.6: reachability rule covered by envaccess unit suite, " +
+	t.Logf("TESTING.md §13.32 / §10.6: reachability rule covered by envaccess unit suite, " +
 		"transparent filtering by pkg/gateway/middleware/environment, and the " +
 		"MCP tool handler by delegate_task_filtering_test. Composite e2e is on the " +
 		"tier-5 ops backlog.")

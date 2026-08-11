@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security tests for §12.9.10 audit chain integrity. The §11.7
+// Tier-9 security tests for TESTING.md §12.9.10 audit chain integrity. The §11.7
 // per-tenant audit hash chain is Postgres-backed in the e2e cluster
 // (the gateway runs with a real lenny-postgres, so admin.Router wires
 // the auditstore.Store over the audit_log table). Every audit_log row
@@ -10,7 +10,7 @@
 // verifier — reachable through GET /v1/admin/audit-events/verify —
 // walks the per-tenant chain in sequence-number order.
 //
-// This file asserts two distinct §12.9.10 properties against the live
+// This file asserts two distinct TESTING.md §12.9.10 properties against the live
 // chain:
 //
 //   - Continuity: admin-API activity (bootstrap upserts, which emit
@@ -47,7 +47,7 @@ const auditDeployment = "lenny-postgres"
 const gatewayDeploymentName = "lenny-gateway"
 
 // spec: 12.9.10
-// diagnosis: §12.9.10 audit-chain continuity did not hold. The §11.7
+// diagnosis: TESTING.md §12.9.10 audit-chain continuity did not hold. The §11.7
 // chain is Postgres-backed; admin-API activity emits audit events that
 // extend the calling tenant's chain. The test issues N bootstrap
 // upserts as platform-admin against a synthetic tenant, then asserts
@@ -94,7 +94,7 @@ func TestAuditChainContinuity(t *testing.T) {
 	}
 	baseVerify := parseAuditVerify(t, base.body)
 	if baseVerify.Integrity != "verified" {
-		t.Fatalf("§12.9.10 violation: the §11.7 verifier reports integrity %q for the synthetic tenant's "+
+		t.Fatalf("TESTING.md §12.9.10 violation: the §11.7 verifier reports integrity %q for the synthetic tenant's "+
 			"baseline chain, expected \"verified\" (detail %q, rowCount %d)",
 			baseVerify.Integrity, baseVerify.Detail, baseVerify.RowCount)
 	}
@@ -129,23 +129,23 @@ func TestAuditChainContinuity(t *testing.T) {
 	}
 	afterVerify := parseAuditVerify(t, after.body)
 	if afterVerify.Integrity != "verified" {
-		t.Errorf("§12.9.10 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
+		t.Errorf("TESTING.md §12.9.10 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
 			"appended, expected \"verified\"; the hash chain lost continuity (breakSeq %d, detail %q)",
 			afterVerify.Integrity, events, afterVerify.BreakSeq, afterVerify.Detail)
 	}
 	grew := afterVerify.RowCount - baseVerify.RowCount
 	if grew < events {
-		t.Errorf("§12.9.10 violation: the synthetic tenant's chain grew by %d rows after %d audit events; "+
+		t.Errorf("TESTING.md §12.9.10 violation: the synthetic tenant's chain grew by %d rows after %d audit events; "+
 			"expected at least %d — audit events were dropped rather than chained",
 			grew, events, events)
 	} else {
-		t.Logf("§12.9.10 continuity verified: chain grew %d -> %d rows, integrity still %q",
+		t.Logf("TESTING.md §12.9.10 continuity verified: chain grew %d -> %d rows, integrity still %q",
 			baseVerify.RowCount, afterVerify.RowCount, afterVerify.Integrity)
 	}
 }
 
 // spec: 12.9.10
-// diagnosis: §12.9.10 audit-ledger sequence monotonicity did not hold.
+// diagnosis: TESTING.md §12.9.10 audit-ledger sequence monotonicity did not hold.
 // The test generates a few hundred audit events for a synthetic tenant
 // (scaled down from the spec's "million events" — a million-row
 // generation is impractical on the shared e2e cluster and the
@@ -197,7 +197,7 @@ func TestAuditSequenceMonotonicity(t *testing.T) {
 	// Read the sequence numbers straight from audit_log, ascending.
 	seqs := readAuditSequences(t, c, pgIP, tenant)
 	if len(seqs) < events {
-		t.Fatalf("§12.9.10 violation: audit_log holds %d rows for tenant %s after %d audit events; "+
+		t.Fatalf("TESTING.md §12.9.10 violation: audit_log holds %d rows for tenant %s after %d audit events; "+
 			"events were dropped before reaching the ledger", len(seqs), tenant, events)
 	}
 
@@ -206,16 +206,16 @@ func TestAuditSequenceMonotonicity(t *testing.T) {
 	// number was skipped; a non-increase means a duplicate or a fork.
 	for i := 1; i < len(seqs); i++ {
 		if seqs[i] <= seqs[i-1] {
-			t.Fatalf("§12.9.10 violation: audit_log sequence_number is not strictly increasing — "+
+			t.Fatalf("TESTING.md §12.9.10 violation: audit_log sequence_number is not strictly increasing — "+
 				"row %d carries seq %d, preceded by seq %d; the §11.7 per-tenant chain forked or duplicated",
 				i, seqs[i], seqs[i-1])
 		}
 		if seqs[i] != seqs[i-1]+1 {
-			t.Errorf("§12.9.10: audit_log sequence_number jumped from %d to %d (gap of %d) — "+
+			t.Errorf("TESTING.md §12.9.10: audit_log sequence_number jumped from %d to %d (gap of %d) — "+
 				"the §11.7 chain has a sequence gap", seqs[i-1], seqs[i], seqs[i]-seqs[i-1])
 		}
 	}
-	t.Logf("§12.9.10 monotonicity verified: %d audit_log rows for tenant %s, "+
+	t.Logf("TESTING.md §12.9.10 monotonicity verified: %d audit_log rows for tenant %s, "+
 		"sequence_number strictly increasing from %d to %d with no gap",
 		len(seqs), tenant, seqs[0], seqs[len(seqs)-1])
 }

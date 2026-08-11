@@ -327,7 +327,7 @@ func TestBundledRuntimesEveryPR(t *testing.T) {
 	a := buildArtifacts(t)
 	// Each bundled runtime declares an integration level and must pass
 	// the matching battery cleanly. This is the per-PR subset from
-	// §12.10: cheap, hermetic, and run on every change.
+	// TESTING.md §12.10: cheap, hermetic, and run on every change.
 	bundled := []struct {
 		name   string
 		binary string
@@ -365,7 +365,7 @@ func TestBundledRuntimesEveryPR(t *testing.T) {
 // images themselves are first-party deliverables published from
 // github.com/lennylabs/runtime-templates outside this repository.
 // spec: 12.10
-// diagnosis: §12.10 conformance scenario — covered structurally by pkg/* + the conformance binary; composite live exercise on the ops backlog.
+// diagnosis: TESTING.md §12.10 conformance scenario — covered structurally by pkg/* + the conformance binary; composite live exercise on the ops backlog.
 func TestReferenceCatalogNightly(t *testing.T) {
 	catalog, err := compliance.ReferenceCatalog()
 	if err != nil {
@@ -447,7 +447,7 @@ func TestThirdPartyRegistration(t *testing.T) {
 //	longer matches the translators — a field documented as preserved
 //	was dropped, or a field documented as lossy now survives.
 func TestFidelityMatrix(t *testing.T) {
-	// §12.10 specifies a table-driven test asserting the documented
+	// TESTING.md §12.10 specifies a table-driven test asserting the documented
 	// per-MessagePart fidelity for the OpenAI Chat Completions and Open
 	// Responses surfaces (the OpenAI Responses API serves the Open
 	// Responses dialect as a proper superset per §15.1). For each

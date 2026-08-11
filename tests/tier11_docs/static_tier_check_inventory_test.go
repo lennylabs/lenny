@@ -2,11 +2,11 @@
 
 // Tier-11 documentation check that reconciles the tier-0 check list in
 // TESTING.md §12.0 with the check table the harness actually composes in
-// cmd/lenny-test. §12.0 is the contract a contributor reads to learn what
+// cmd/lenny-test. TESTING.md §12.0 is the contract a contributor reads to learn what
 // the static tier runs, and nothing else guards it: a check added to or
 // deleted from the harness leaves the documented enumeration behind, as
 // happened when the proto no-drift check moved from a shell script to a
-// Go test and §12.0 kept naming the retired script and its predicate.
+// Go test and TESTING.md §12.0 kept naming the retired script and its predicate.
 //
 // cmd/lenny-test is a main package and cannot be imported, so the check
 // names are read out of its syntax tree rather than restated here. That
@@ -40,7 +40,7 @@ const staticTierSectionHeading = "### 12.0 Tier 0 — Static"
 // harnessCheckTableFile holds the check table the static tier composes.
 const harnessCheckTableFile = "cmd/lenny-test/cmd_run.go"
 
-// backtickSpan matches a single backtick-quoted span. §12.0 writes every
+// backtickSpan matches a single backtick-quoted span. TESTING.md §12.0 writes every
 // command and script path in that form, so a check name is documented
 // when some span carries it.
 var backtickSpan = regexp.MustCompile("`([^`]+)`")
@@ -51,7 +51,7 @@ var backtickSpan = regexp.MustCompile("`([^`]+)`")
 // itself, so the qualifier is dropped before matching.
 var checkNameQualifier = regexp.MustCompile(`\s+\([^)]*\)$`)
 
-// scriptPathRef matches a scripts/ shell path as §12.0 writes it.
+// scriptPathRef matches a scripts/ shell path as TESTING.md §12.0 writes it.
 var scriptPathRef = regexp.MustCompile(`^scripts/[A-Za-z0-9._-]+\.sh$`)
 
 // staticTierSection returns the body of the TESTING.md §12.0 section.
@@ -162,7 +162,7 @@ func undocumentedChecks(section string, names []string) []string {
 
 // TestStaticTierDocumentsEveryHarnessCheck pins the TESTING.md §12.0
 // enumeration to the check table cmd/lenny-test composes. A check the
-// harness runs and §12.0 omits leaves a contributor reading the document
+// harness runs and TESTING.md §12.0 omits leaves a contributor reading the document
 // unaware of a gate their change must clear.
 //
 // diagnosis: a failure means the tier-0 check table gained a check that
@@ -176,7 +176,7 @@ func TestStaticTierDocumentsEveryHarnessCheck(t *testing.T) {
 }
 
 // TestStaticTierNamesNoAbsentScript pins the reverse direction for the
-// shell checks: §12.0 must not name a script the repository no longer
+// shell checks: TESTING.md §12.0 must not name a script the repository no longer
 // carries. A check reimplemented as a Go test, as the proto no-drift
 // check was, leaves the retired script's path behind in the document
 // otherwise.
@@ -204,7 +204,7 @@ func TestStaticTierNamesNoAbsentScript(t *testing.T) {
 // entry removed, and must report exactly that entry.
 //
 // diagnosis: a failure means undocumentedChecks no longer detects a
-// missing entry, so the §12.0 reconciliation above would pass against a
+// missing entry, so the TESTING.md §12.0 reconciliation above would pass against a
 // document that has dropped a check.
 func TestStaticTierReconciliationDetectsAnOmittedCheck(t *testing.T) {
 	names := harnessCheckNames(t)

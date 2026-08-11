@@ -3,12 +3,12 @@ layout: default
 title: "Flakiness"
 parent: "Testing"
 nav_order: 5
-description: How to detect, diagnose, and quarantine flaky tests per §17.10 and §21.
+description: How to detect, diagnose, and quarantine flaky tests per TESTING.md §17.10 and §21.
 ---
 
 # Flakiness
 
-§17.10 sets the flake budget: every test must pass 50 consecutive runs. §21 defines the quarantine workflow and root-cause categories.
+TESTING.md §17.10 sets the flake budget: every test must pass 50 consecutive runs. §21 defines the quarantine workflow and root-cause categories.
 
 ## Detecting a flake
 
@@ -19,7 +19,7 @@ lenny-test stress --test TestSandboxClaim --runs 50
 lenny-test stress --pattern 'TestSession.*' --runs 25
 ```
 
-The harness runs `go test -count=1 -run <name>` once per iteration. It stops at the first failure (the §17.10 budget is zero tolerance) and prints the last 40 lines of stdout/stderr.
+The harness runs `go test -count=1 -run <name>` once per iteration. It stops at the first failure (the TESTING.md §17.10 budget is zero tolerance) and prints the last 40 lines of stdout/stderr.
 
 CI runs the sweep weekly via `.github/workflows/flake-budget.yml`:
 - Cadence: Sundays 08:00 UTC
@@ -28,7 +28,7 @@ CI runs the sweep weekly via `.github/workflows/flake-budget.yml`:
 
 ## Diagnosing the failure
 
-When a test fails the 50-run check, classify the root cause per §21.2:
+When a test fails the 50-run check, classify the root cause per TESTING.md §21.2:
 
 | Category | Symptoms | Likely fix |
 |:---------|:---------|:-----------|
@@ -68,7 +68,7 @@ When stress fails and a fix is more than 30 minutes away:
 
 1. Remove the `continue-on-error: true` from the stress step.
 2. Ensure every weekly run stays clean for 4 consecutive weeks.
-3. Update §17.10 to mark the gate as enforced.
+3. Update TESTING.md §17.10 to mark the gate as enforced.
 
 ## Common pitfalls
 

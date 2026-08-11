@@ -99,7 +99,7 @@ func TestKMSKeyProbeStale(t *testing.T) {
 }
 
 // §12.8 PgBouncer saturation — covered by:
-//   - tests/tier2_component/rls/pgbouncer_test.go (the §12.2.2
+//   - tests/tier2_component/rls/pgbouncer_test.go (the TESTING.md §12.2.2
 //     PgBouncer session-pooling reuse invariant against the compose
 //     profile's PgBouncer).
 //
@@ -177,7 +177,7 @@ func TestGatewayToPodPartition(t *testing.T) {
 
 // §12.8 agent-to-LLM partition — covered structurally by:
 //   - pkg/gateway/llmproxy (circuit breaker + per-provider translator).
-//   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
+//   - cmd/lenny-egress-capture (the TESTING.md §12.9.8 sidecar that records
 //     outbound bytes; pairing it with a partition driver is the
 //     remaining ops follow-on).
 //

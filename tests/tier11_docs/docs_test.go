@@ -98,7 +98,7 @@ func TestRepoREADMEReferencesSpecAndTesting(t *testing.T) {
 }
 
 // TESTING.md §13.10 names the directories that carry the Phase-5
-// REST↔OpenAI contract fidelity coverage, and §13.15 names where the
+// REST↔OpenAI contract fidelity coverage, and TESTING.md §13.15 names where the
 // LLM-proxy request/response wire-shape coverage lives. A reader
 // following either reference must land on a real test suite.
 //

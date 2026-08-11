@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component test for the §4.3 / §12.2.4 Token Service gRPC controller.
+// Component test for the §4.3 / TESTING.md §12.2.4 Token Service gRPC controller.
 // Drives pkg/tokenservice.GRPCServer over an in-process bufconn link
 // the same way the gateway will reach the deployed Token Service over
 // mTLS, and asserts the AssignCredentials, RotateCredentials, and

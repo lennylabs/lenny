@@ -131,7 +131,7 @@ jobs:
         run: ./bin/lenny-test --tier unit --output github-annotations
       - name: Fetch base branch for diff coverage
         run: git fetch --no-tags --depth=2000 origin main || true
-      - name: Coverage report (§22.1 80% floor on changed code)
+      - name: Coverage report (TESTING.md §22.1 80% floor on changed code)
         run: |
           ./bin/lenny-test coverage --go | tee -a "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 §12.11 #2: every Go / Bash / YAML / JSON / SQL code block
+// Tier-11 TESTING.md §12.11 #2: every Go / Bash / YAML / JSON / SQL code block
 // in docs / spec / runbooks parses or compiles. The walker extracts
 // fenced blocks (``` followed by a language tag), then dispatches
 // each block to a language-specific parser.

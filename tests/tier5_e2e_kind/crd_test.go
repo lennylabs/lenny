@@ -2,12 +2,12 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind tests for the CRD plane the §13.6 warm-pool and
+// Tier-5 e2e Kind tests for the CRD plane the TESTING.md §13.6 warm-pool and
 // sandbox-claim behaviours rest on. Each test installs the Lenny
 // control plane on a Kind cluster via the install.sh-backed
 // kind.InstallLenny harness.
 //
-// The full §13.6 critical path — a pool scaling to its warm floor,
+// The full TESTING.md §13.6 critical path — a pool scaling to its warm floor,
 // the Warm Pool Controller assigning a real pod to a claim — needs a
 // running agent-pod workload, which the control-plane-only dev-mode
 // install does not provide. Where a test cannot drive that workload it
@@ -42,7 +42,7 @@ func assertCRDEstablished(t *testing.T, c *kind.Cluster, crd string) {
 }
 
 // spec: 13.6
-// diagnosis: the §13.6 warm-pool CRD plane is not installed. The test
+// diagnosis: the TESTING.md §13.6 warm-pool CRD plane is not installed. The test
 // asserts the sandboxwarmpools.lenny.dev and sandboxtemplates.lenny.dev
 // CRDs are Established and that the lenny-pool-config-validator
 // admission webhook gating warm-pool writes is scoped to both
@@ -69,7 +69,7 @@ func TestWarmPool(t *testing.T) {
 }
 
 // spec: 13.6
-// diagnosis: the §13.6 sandbox-claim CRD plane is not installed. The
+// diagnosis: the TESTING.md §13.6 sandbox-claim CRD plane is not installed. The
 // test asserts the sandboxclaims.lenny.dev CRD is Established and that
 // the lenny-sandboxclaim-guard admission webhook — the §4.6.1 ADR-007
 // gate that rejects duplicate claims on CREATE and stale writes on
@@ -104,7 +104,7 @@ func TestSandboxClaim(t *testing.T) {
 }
 
 // spec: 13.6
-// diagnosis: the §13.6 pool-upgrade path cannot be admitted. A pool
+// diagnosis: the TESTING.md §13.6 pool-upgrade path cannot be admitted. A pool
 // upgrade is an UPDATE to a SandboxWarmPool or SandboxTemplate spec;
 // the lenny-pool-config-validator webhook must gate that UPDATE so an
 // upgrade cannot move the pool into an invalid budget. The test

@@ -6,8 +6,8 @@
 // load baseline with the §14 security hardening enabled — cosign
 // image-signature verification at admission, the §13.1 pod-security
 // admission webhook, NetworkPolicy refinement, and gateway mTLS. The
-// §13.31 phase gate compares the post-hardening percentiles against
-// the §13.29 baseline JSON; any regression beyond the documented
+// TESTING.md §13.31 phase gate compares the post-hardening percentiles against
+// the TESTING.md §13.29 baseline JSON; any regression beyond the documented
 // budget is the §14 hardening overhead and is recorded in
 // tests/tier7_load/baselines/.
 //
@@ -19,7 +19,7 @@
 //
 // The Tier-7 Go wrapper picks rate and duration. The PR-cadence smoke
 // run holds a modest steady arrival rate; the production run is the
-// 100-concurrent sweep against the §13.29 baseline.
+// 100-concurrent sweep against the TESTING.md §13.29 baseline.
 //
 // Environment:
 //   LENNY_BASE_URL   Gateway base URL. Default http://127.0.0.1:8080.
@@ -42,7 +42,7 @@ const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 export const options = {
   // Emit p99 and p99.9 in the summary export so the Tier-7 baseline
   // diff has the percentiles the §12.7 SLOs are stated at and the
-  // §13.31 phase gate compares.
+  // TESTING.md §13.31 phase gate compares.
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   // A rate-bounded executor. An unbounded VU loop spins into hundreds
   // of thousands of requests when a request fails fast, saturating the

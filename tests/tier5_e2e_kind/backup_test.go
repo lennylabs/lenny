@@ -2,7 +2,7 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind test for the §13.28 / §25.11 backup subsystem. The
+// Tier-5 e2e Kind test for the TESTING.md §13.28 / §25.11 backup subsystem. The
 // chart renders the §25.11 test-restore subsystem from
 // charts/lenny/templates/restore-test-cronjob.yaml: a CronJob that runs
 // the lenny-backup image in restore-test mode, plus the ServiceAccount,

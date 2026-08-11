@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component tests for §12.2.2 row-level security and the §12.3 R-01
+// Component tests for TESTING.md §12.2.2 row-level security and the §12.3 R-01
 // schema linter, exercised against the production migrations under
 // migrations/. These land the implementations promised by the
 // scaffold entries in scaffolds_test.go.

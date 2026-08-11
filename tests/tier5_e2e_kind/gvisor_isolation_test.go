@@ -174,7 +174,7 @@ func assertCapabilitiesDropped(t *testing.T, c *kind.Cluster, pod string) {
 //
 // The debug container's securityContext satisfies both admission
 // layers a real attach goes through: §13.1 pod-security (non-root,
-// read-only root filesystem, all capabilities dropped) and §12.9.3's
+// read-only root filesystem, all capabilities dropped) and TESTING.md §12.9.3's
 // lenny-ephemeral-container-cred-guard, which requires runAsUser,
 // runAsGroup, and supplementalGroups to be set explicitly and forbids
 // any of them from equaling the pod's adapter/agent UID or the
@@ -259,7 +259,7 @@ func assertGvisorKernelFingerprint(t *testing.T, c *kind.Cluster, pod string) {
 // assigns (adapter, agent, and the lenny-cred-readers GID); it carries
 // no other significance. corev1.SecurityContext (container-level) has
 // no supplementalGroups field — only PodSecurityContext does — so
-// condition (iii) of the §12.9.3 guard evaluates the pod's own
+// condition (iii) of the TESTING.md §12.9.3 guard evaluates the pod's own
 // spec.securityContext.supplementalGroups for that leg; runAsUser and
 // runAsGroup are the two fields this ephemeral container controls.
 func gvisorFingerprintAttachBody(podName, containerName, existingEphemeralContainersJSON string) ([]byte, error) {

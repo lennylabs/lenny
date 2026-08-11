@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security test for §12.9.5 SSRF and callback validation. The
+// Tier-9 security test for TESTING.md §12.9.5 SSRF and callback validation. The
 // e2e gateway runs against a real lenny-postgres, so the §9.3
 // ConnectorDefinition registry — the SSRF allowlist for external MCP
 // traffic — is reachable through the POST/PUT /v1/admin/connectors
@@ -19,7 +19,7 @@
 // the positive control.
 //
 // The DNS-rebinding / IP-pinning / IMDS-hostname blocklist half of
-// §12.9.5 is the network-layer SSRF boundary (§13.2 egress except
+// TESTING.md §12.9.5 is the network-layer SSRF boundary (§13.2 egress except
 // blocks covering 169.254.0.0/16 and the IMDS addresses) rather than
 // an application-layer URL validator reachable from this endpoint; the
 // connector validator checks the URL scheme, not the resolved
@@ -52,7 +52,7 @@ type ssrfRejectCase struct {
 }
 
 // spec: 12.9.5
-// diagnosis: §12.9.5 SSRF callback validation did not hold — the §9.3
+// diagnosis: TESTING.md §12.9.5 SSRF callback validation did not hold — the §9.3
 // connector registry admitted a non-HTTPS connector URL. The test
 // drives POST /v1/admin/connectors with an http:// MCP URL, a non-HTTPS
 // scheme, and an http:// OAuth token endpoint, and asserts each is
@@ -154,24 +154,24 @@ func TestSSRFCallbackValidation(t *testing.T) {
 					res.curlExit, res.body)
 			}
 			if res.statusCode == 201 || res.statusCode == 200 {
-				t.Fatalf("§12.9.5 violation: the §9.3 connector registry ADMITTED an adversarial "+
+				t.Fatalf("TESTING.md §12.9.5 violation: the §9.3 connector registry ADMITTED an adversarial "+
 					"connector (%s); a non-HTTPS connector URL is a registered SSRF pivot (body %q)",
 					tc.name, res.body)
 			}
 			if res.statusCode != 400 {
-				t.Errorf("§12.9.5: the %s connector was rejected with status %d, expected 400 "+
+				t.Errorf("TESTING.md §12.9.5: the %s connector was rejected with status %d, expected 400 "+
 					"VALIDATION_ERROR (body %q)", tc.name, res.statusCode, res.body)
 				return
 			}
 			if code := res.errorCode(); code != "VALIDATION_ERROR" {
-				t.Errorf("§12.9.5: the %s rejection carries error code %q, expected "+
+				t.Errorf("TESTING.md §12.9.5: the %s rejection carries error code %q, expected "+
 					"\"VALIDATION_ERROR\" (body %q)", tc.name, code, res.body)
 			}
 			if tc.wantReason != "" && !strings.Contains(res.body, tc.wantReason) {
-				t.Errorf("§12.9.5: the %s rejection body lacks the expected reason %q (body %q)",
+				t.Errorf("TESTING.md §12.9.5: the %s rejection body lacks the expected reason %q (body %q)",
 					tc.name, tc.wantReason, res.body)
 			}
-			t.Logf("§12.9.5: connector vector %q rejected with 400 VALIDATION_ERROR", tc.name)
+			t.Logf("TESTING.md §12.9.5: connector vector %q rejected with 400 VALIDATION_ERROR", tc.name)
 		})
 	}
 
@@ -192,10 +192,10 @@ func TestSSRFCallbackValidation(t *testing.T) {
 				res.curlExit, res.body)
 		}
 		if res.statusCode != 201 {
-			t.Fatalf("§12.9.5 positive control failed: the §9.3 connector registry rejected a fully "+
+			t.Fatalf("TESTING.md §12.9.5 positive control failed: the §9.3 connector registry rejected a fully "+
 				"HTTPS connector (status %d, body %q); the HTTPS-scheme check is over-broad",
 				res.statusCode, res.body)
 		}
-		t.Logf("§12.9.5 positive control: a fully-HTTPS connector was admitted (status 201)")
+		t.Logf("TESTING.md §12.9.5 positive control: a fully-HTTPS connector was admitted (status 201)")
 	})
 }

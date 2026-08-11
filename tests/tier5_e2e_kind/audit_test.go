@@ -2,13 +2,13 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind test for the §13.28 audit pipeline. The gateway
+// Tier-5 e2e Kind test for the TESTING.md §13.28 audit pipeline. The gateway
 // writes §11.7 audit events to the live in-cluster Postgres audit_log
 // table: every admin-API mutation emits an event onto the calling
 // tenant's per-tenant hash chain, and each row carries a prev_hash
 // linking it to its predecessor.
 //
-// This is the tier-5 end-to-end view of the §13.28 audit pipeline:
+// This is the tier-5 end-to-end view of the TESTING.md §13.28 audit pipeline:
 // events flow from a gateway admin-API call, through the gateway's
 // audit writer, into the durable Postgres ledger. The test drives a
 // sequence of admin-API mutations as platform-admin against a synthetic
@@ -36,7 +36,7 @@ import (
 const auditGenesisHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 // spec: 13.28
-// diagnosis: the §13.28 audit pipeline did not carry events end to end.
+// diagnosis: the TESTING.md §13.28 audit pipeline did not carry events end to end.
 // The gateway writes §11.7 audit events to the live Postgres audit_log;
 // each admin-API mutation emits one event onto the caller's hash chain.
 // The test issues N bootstrap upserts as platform-admin, then asserts
@@ -89,7 +89,7 @@ func TestAuditPipeline(t *testing.T) {
 	}
 	baseVerify := parseAuditVerifyT5(t, base.body)
 	if baseVerify.Integrity != "verified" {
-		t.Fatalf("§13.28: the §11.7 verifier reports integrity %q for the synthetic tenant's baseline "+
+		t.Fatalf("TESTING.md §13.28: the §11.7 verifier reports integrity %q for the synthetic tenant's baseline "+
 			"chain, expected \"verified\" (rowCount %d)", baseVerify.Integrity, baseVerify.RowCount)
 	}
 	t.Logf("baseline: synthetic-tenant chain integrity %q, rowCount %d",
@@ -127,17 +127,17 @@ func TestAuditPipeline(t *testing.T) {
 	}
 	afterVerify := parseAuditVerifyT5(t, after.body)
 	if afterVerify.Integrity != "verified" {
-		t.Errorf("§13.28 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
+		t.Errorf("TESTING.md §13.28 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
 			"appended, expected \"verified\"; the hash chain lost continuity (detail %q)",
 			afterVerify.Integrity, wantEvents, afterVerify.Detail)
 	}
 	grew := afterVerify.RowCount - baseVerify.RowCount
 	if grew < wantEvents {
-		t.Errorf("§13.28 violation: the synthetic tenant's chain grew by %d rows after %d admin-API "+
+		t.Errorf("TESTING.md §13.28 violation: the synthetic tenant's chain grew by %d rows after %d admin-API "+
 			"mutations; expected at least %d — audit events were dropped before reaching the ledger",
 			grew, wantEvents, wantEvents)
 	} else {
-		t.Logf("§13.28: §11.7 verifier reports the chain grew %d -> %d rows, integrity still %q",
+		t.Logf("TESTING.md §13.28: §11.7 verifier reports the chain grew %d -> %d rows, integrity still %q",
 			baseVerify.RowCount, afterVerify.RowCount, afterVerify.Integrity)
 	}
 
@@ -147,13 +147,13 @@ func TestAuditPipeline(t *testing.T) {
 	// bootstrap event type.
 	rows := readAuditRows(t, c, pgIP, tenant)
 	if len(rows) < wantEvents {
-		t.Fatalf("§13.28 violation: audit_log holds %d rows for tenant %s after %d admin-API mutations; "+
+		t.Fatalf("TESTING.md §13.28 violation: audit_log holds %d rows for tenant %s after %d admin-API mutations; "+
 			"expected at least %d — events did not reach the durable Postgres ledger",
 			len(rows), tenant, wantEvents, wantEvents)
 	}
 	for i, row := range rows {
 		if row.eventType != "admin.bootstrap.applied" {
-			t.Errorf("§13.28: audit_log row %d for tenant %s carries event_type %q, expected "+
+			t.Errorf("TESTING.md §13.28: audit_log row %d for tenant %s carries event_type %q, expected "+
 				"\"admin.bootstrap.applied\" — the bootstrap upserts emit that event type",
 				i, tenant, row.eventType)
 		}
@@ -166,22 +166,22 @@ func TestAuditPipeline(t *testing.T) {
 	// tenant's audit_log is cleaned in the t.Cleanup, so on a clean run
 	// the first row read here is the chain's genesis row.
 	if rows[0].prevHash != auditGenesisHash {
-		t.Errorf("§13.28: the first audit_log row read for tenant %s carries prev_hash %q rather than "+
+		t.Errorf("TESTING.md §13.28: the first audit_log row read for tenant %s carries prev_hash %q rather than "+
 			"the §11.7 genesis hash; a prior run's rows were not cleaned before this run", tenant, rows[0].prevHash)
 	}
 	for i := 1; i < len(rows); i++ {
 		if rows[i].seq <= rows[i-1].seq {
-			t.Fatalf("§13.28 violation: audit_log sequence_number is not strictly increasing for tenant "+
+			t.Fatalf("TESTING.md §13.28 violation: audit_log sequence_number is not strictly increasing for tenant "+
 				"%s — row %d carries seq %d, preceded by seq %d; the §11.7 chain forked or duplicated",
 				tenant, i, rows[i].seq, rows[i-1].seq)
 		}
 		if rows[i].prevHash == auditGenesisHash {
-			t.Errorf("§13.28 violation: audit_log row %d (seq %d) for tenant %s carries the genesis "+
+			t.Errorf("TESTING.md §13.28 violation: audit_log row %d (seq %d) for tenant %s carries the genesis "+
 				"prev_hash; only the chain's first row may — the §11.7 hash chain is broken",
 				i, rows[i].seq, tenant)
 		}
 	}
-	t.Logf("§13.28 audit pipeline verified end to end: %d admin-API mutations produced %d durable "+
+	t.Logf("TESTING.md §13.28 audit pipeline verified end to end: %d admin-API mutations produced %d durable "+
 		"audit_log rows for tenant %s, hash chain intact (genesis row + %d linked rows, seq %d..%d)",
 		wantEvents, len(rows), tenant, len(rows)-1, rows[0].seq, rows[len(rows)-1].seq)
 }

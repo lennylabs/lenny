@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package matrix is the §12.3.1 contract-test matrix runner.
+// Package matrix is the TESTING.md §12.3.1 contract-test matrix runner.
 //
 // A contract test states an invariant ("the OCSF translator emits a
 // schema-valid event for every Lenny event type"); the matrix runner

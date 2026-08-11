@@ -11,7 +11,7 @@
 // attributes and the application/ocsf+json discriminator for an
 // audit-bearing event.
 //
-// The sibling files in this package pin the distinct §12.3.7
+// The sibling files in this package pin the distinct TESTING.md §12.3.7
 // eventbus.Event envelope; they do not exercise the §25.5
 // OperationalEvent type or its three delivery transports, so a
 // regression in the operational-event wire form (a wrong specversion, a

@@ -2,12 +2,12 @@
 
 //go:build security
 
-// Tier-9 security test for §12.9.1 cross-store tenant isolation. The
+// Tier-9 security test for TESTING.md §12.9.1 cross-store tenant isolation. The
 // e2e Kind cluster runs the gateway against a real lenny-postgres, so
 // the §12.3 row-level-security path (the lenny_tenant_guard trigger and
 // the per-tenant RLS policies on every tenant-scoped table) is live.
 //
-// The full §12.9.1 scenario probes every store and every API surface;
+// The full TESTING.md §12.9.1 scenario probes every store and every API surface;
 // this test exercises a meaningful subset against the Postgres-backed
 // stores reachable through the gateway admin API. It seeds two
 // synthetic tenants with distinct state and asserts:
@@ -39,7 +39,7 @@ import (
 )
 
 // spec: 12.9.1
-// diagnosis: §12.9.1 cross-store tenant isolation did not hold. The
+// diagnosis: TESTING.md §12.9.1 cross-store tenant isolation did not hold. The
 // test seeds two synthetic tenants, generates audit events on each
 // tenant's §11.7 Postgres-backed chain, and asserts (a) tenant A's
 // audit-events list returns only tenant-A rows — the §12.3 RLS /
@@ -102,14 +102,14 @@ func TestTenantIsolationCrossStore(t *testing.T) {
 
 	for i, ten := range rowsA {
 		if ten != tenantA {
-			t.Errorf("§12.9.1 violation: tenant %s's audit-events list contains a row (index %d) "+
+			t.Errorf("TESTING.md §12.9.1 violation: tenant %s's audit-events list contains a row (index %d) "+
 				"belonging to tenant %q; the §12.3 RLS partition leaked a cross-tenant audit row",
 				tenantA, i, ten)
 		}
 	}
 	for i, ten := range rowsB {
 		if ten != tenantB {
-			t.Errorf("§12.9.1 violation: tenant %s's audit-events list contains a row (index %d) "+
+			t.Errorf("TESTING.md §12.9.1 violation: tenant %s's audit-events list contains a row (index %d) "+
 				"belonging to tenant %q; the §12.3 RLS partition leaked a cross-tenant audit row",
 				tenantB, i, ten)
 		}
@@ -129,7 +129,7 @@ func TestTenantIsolationCrossStore(t *testing.T) {
 		t.Logf("note: tenant A and tenant B chains returned equal row counts (%d); "+
 			"distinct seed counts (%d vs %d) expected distinct lengths", len(rowsA), eventsA, eventsB)
 	}
-	t.Logf("§12.9.1: audit chain partition holds — tenant %s sees %d own rows, tenant %s sees %d own rows, "+
+	t.Logf("TESTING.md §12.9.1: audit chain partition holds — tenant %s sees %d own rows, tenant %s sees %d own rows, "+
 		"no cross-tenant rows in either list", tenantA, len(rowsA), tenantB, len(rowsB))
 
 	// --- Isolation property 2: the cross-tenant audit-query path is
@@ -141,14 +141,14 @@ func TestTenantIsolationCrossStore(t *testing.T) {
 	cross := gatewayRequestRetry(t, c, probe, gatewayIP, "GET",
 		"/v1/admin/audit-events/verify?tenantId="+tenantB, tenantAAdmin, "")
 	if cross.statusCode != 403 {
-		t.Errorf("§12.9.1 violation: a tenant-admin for %s requesting %s's audit chain received "+
+		t.Errorf("TESTING.md §12.9.1 violation: a tenant-admin for %s requesting %s's audit chain received "+
 			"status %d, expected 403 FORBIDDEN; the cross-tenant audit-query guard did not reject it "+
 			"(body %q)", tenantA, tenantB, cross.statusCode, cross.body)
 	} else if code := cross.errorCode(); code != "FORBIDDEN" {
-		t.Errorf("§12.9.1: the cross-tenant audit-query rejection carries error code %q, expected "+
+		t.Errorf("TESTING.md §12.9.1: the cross-tenant audit-query rejection carries error code %q, expected "+
 			"\"FORBIDDEN\" (body %q)", code, cross.body)
 	} else {
-		t.Logf("§12.9.1: cross-tenant audit query rejected — tenant-admin for %s denied %s's chain "+
+		t.Logf("TESTING.md §12.9.1: cross-tenant audit query rejected — tenant-admin for %s denied %s's chain "+
 			"with 403 FORBIDDEN", tenantA, tenantB)
 	}
 

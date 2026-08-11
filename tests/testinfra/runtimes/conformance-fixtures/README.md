@@ -1,7 +1,7 @@
 # Conformance fixtures
 
 §11 of TESTING.md names this directory: runtime adapters that
-**intentionally violate** the conformance contract. The §12.10
+**intentionally violate** the conformance contract. The TESTING.md §12.10
 conformance harness runs each fixture against `lenny-compliance` and
 asserts the documented diagnostic.
 
