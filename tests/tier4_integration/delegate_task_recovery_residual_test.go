@@ -292,7 +292,7 @@ func testClientFacingMitigation(t *testing.T) {
 		t.Fatalf("idempotency_keys table missing after migrations; the §11.5 durable cache cannot be exercised")
 	}
 
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	// Bootstrap the built-in `default` MCP tenant with an `echo` runtime

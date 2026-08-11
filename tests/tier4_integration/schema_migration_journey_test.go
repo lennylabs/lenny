@@ -237,7 +237,7 @@ func TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart(t *tes
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
 
-	gw1 := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw1 := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c1 := poolUpgradeClient{t: t, base: gw1.BaseURL()}
 
 	if code, body := c1.do(http.MethodPost, "/v1/admin/bootstrap", map[string]any{
@@ -269,7 +269,7 @@ func TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart(t *tes
 	// Warm restart: a second gateway process boots against the same,
 	// now-migrated Postgres while gw1 remains alive, matching §10.5's
 	// "mixed-version replicas must coexist during rollout."
-	gw2 := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw2 := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c2 := poolUpgradeClient{t: t, base: gw2.BaseURL()}
 
 	// gw2 sees the pool gw1 created before the restart (data continuity

@@ -46,16 +46,35 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 	})
 }
 
+// The unit tier budget is operator-tunable (code-best-practices).
+//
+// The unit tier runs `go test ./...` with the race detector, and one
+// package under it starts an envtest control plane per test. Its default
+// budget must exceed that package's observed runtime, or a passing
+// package is reported as a tier failure for a timeout alone.
+func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
+	// Observed: 832.6s for pkg/gateway/podlifecycle/podsession without the
+	// race detector, which slows it further. Go's own default is 600s, so
+	// the package cannot pass without an explicit budget.
+	const observedSlowest = 833 * time.Second
+	if tierUnitTimeout <= observedSlowest {
+		t.Errorf("tierUnitTimeout %s does not exceed observed unit runtime %s; a passing package will be aborted as a timeout",
+			tierUnitTimeout, observedSlowest)
+	}
+}
+
 // The integration tier budget is operator-tunable (code-best-practices).
 //
 // The integration tier suite boots the gateway per test against the
-// compose stack and runs roughly four to five minutes end-to-end. Its
-// default budget must exceed that observed runtime with margin so a
-// passing suite is not reported as a tier failure for a timeout alone.
+// compose stack and runs end-to-end. Its default budget must exceed that
+// observed runtime with margin so a passing suite is not reported as a
+// tier failure for a timeout alone.
 func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 231.6s raw on a developer host, 279.8s at the base ref.
-	// The default must clear the slower of the two with headroom.
-	const observedSlowest = 280 * time.Second
+	// Observed: 768.0s for a passing suite on a developer host. The
+	// earlier 280s figure was recorded while most of the suite was refused
+	// at session creation and returned without doing its work, so it
+	// measured the refusal rather than the tier.
+	const observedSlowest = 768 * time.Second
 	if tierIntegrationTimeout <= observedSlowest {
 		t.Errorf("tierIntegrationTimeout %s does not exceed observed integration runtime %s; a passing suite will be aborted as a timeout",
 			tierIntegrationTimeout, observedSlowest)

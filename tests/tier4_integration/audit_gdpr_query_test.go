@@ -57,7 +57,7 @@ func TestAuditGDPRDownstreamNotificationQueryable(t *testing.T) {
 	// The single test Postgres plays both the app DSN and the
 	// CREATE-privileged DDL DSN the gateway uses to provision a tenant's
 	// audit_seq_<40hex> sequence.
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN, "--postgres-billing-audit-ddl-dsn="+pg.DSN)
 	base := gw.BaseURL()
 	client := http.DefaultClient
 

@@ -27,7 +27,7 @@ import (
 // the GET /v1/sessions/{id}/tree walker diverged from §8.2 when driven
 // through one process.
 func TestDelegation(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 
 	t.Run("spawn_child_appears_in_tree", func(t *testing.T) {
 		c := mcpClient{t: t, base: gw.BaseURL()}

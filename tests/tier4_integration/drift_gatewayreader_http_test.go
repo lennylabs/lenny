@@ -70,7 +70,7 @@ func (t devHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error)
 func TestGatewayReaderRunningStateAgainstLiveGatewayE2E(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 	ctx := context.Background()
 	httpClient := http.DefaultClient

@@ -37,7 +37,7 @@ func TestJWKSEndpointPublishedByLiveGateway(t *testing.T) {
 	// HMAC backend cannot publish usable public-key material. The
 	// endpoint mounts only under --jwks-publish=true, so the test opts in
 	// explicitly to exercise the published JWK Set.
-	gw := gateway.StartWith(t, "--dev-mode", "--jwks-publish=true")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--jwks-publish=true")
 	resp, err := http.Get(gw.BaseURL() + "/.well-known/jwks.json")
 	if err != nil {
 		t.Fatalf("GET /.well-known/jwks.json: %v", err)

@@ -52,7 +52,7 @@ import (
 // httptest server per protocol rather than one running gateway.
 func TestMultiProtocolSameDeploymentSharedState(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 	// The platform MCP tools dispatch against the gateway's fixed
 	// `default` MCP tenant (see elicitation_test.go mcpClient), so every

@@ -244,7 +244,7 @@ func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
 	// The ops process is started first so its base URL can be advertised
 	// by the gateway's GET /v1/admin/platform/version response.
 	ops := opsprocess.StartWith(t)
-	gw := gateway.StartWith(t, "--dev-mode", "--ops-service-url="+ops.BaseURL())
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--ops-service-url="+ops.BaseURL())
 
 	runCtlAgainst := func(apiURL string, args ...string) (int, []byte, []byte) {
 		t.Helper()
@@ -283,7 +283,7 @@ func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
 
 	// ---- rule 3: no opsServiceURL advertised -> gateway-host fallback,
 	// with a clear warning, rather than a silent failure ----
-	gwNoOps := gateway.StartWith(t, "--dev-mode")
+	gwNoOps := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	code, _, stderr = runCtlAgainst(gwNoOps.BaseURL(), "mcp-management", "tools")
 	if code == 0 {
 		t.Fatalf("lenny-ctl mcp-management tools against a gateway with no opsServiceURL: exit 0, want non-zero (the gateway does not mount /mcp/management, so the rule-3 fallback target cannot serve the call)")

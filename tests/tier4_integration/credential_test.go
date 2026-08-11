@@ -63,7 +63,7 @@ func (c credClient) do(method, path, tenant, user string, body any) (int, map[st
 //	is exercised separately — it needs a pod the integration
 //	harness does not provide.
 func TestCredentialLifecycle(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := credClient{t: t, base: gw.BaseURL()}
 
 	// ---- register a §4.9 credential ----
@@ -154,7 +154,7 @@ func TestCredentialLifecycle(t *testing.T) {
 //	does not provide; this exercises the user-facing rotation
 //	endpoint that triggers them.
 func TestCredentialRotation(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := credClient{t: t, base: gw.BaseURL()}
 
 	code, registered := c.do(http.MethodPost, "/v1/credentials", "acme", "bob@acme.com", map[string]any{
@@ -210,7 +210,7 @@ func TestCredentialRotation(t *testing.T) {
 //	integration harness does not provide; this exercises the
 //	user-facing revocation endpoint that drives them.
 func TestCredentialRevocation(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := credClient{t: t, base: gw.BaseURL()}
 
 	code, registered := c.do(http.MethodPost, "/v1/credentials", "acme", "carol@acme.com", map[string]any{

@@ -175,7 +175,7 @@ func TestMCPManagementPlatformToolDispatchE2E(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	opsprocess.SkipUnlessAvailable(t)
 
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	ops := opsprocess.StartWith(t, "--gateway-url="+gw.BaseURL())
 	ctx := context.Background()
 

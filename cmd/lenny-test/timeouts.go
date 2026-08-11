@@ -44,6 +44,17 @@ var (
 	// a workflow timeout. Override: LENNY_TEST_LONG_TIMEOUT.
 	tierLongTimeout = tierTimeout("LENNY_TEST_LONG_TIMEOUT", 600*time.Second)
 
+	// tierUnitTimeout caps each package in the unit tier. Without it Go's
+	// own ten-minute per-package default applies, and
+	// pkg/gateway/podlifecycle/podsession exceeds it: the package starts a
+	// fresh envtest control plane per test, 138 times, at roughly seven
+	// seconds each, so it passes in about fourteen minutes and is aborted
+	// at ten. The budget is what keeps a passing package from being
+	// reported as a failure; the per-test control plane is the thing that
+	// wants fixing, and a shared environment there would bring this well
+	// back under the default. Override: LENNY_TEST_UNIT_TIMEOUT.
+	tierUnitTimeout = tierTimeout("LENNY_TEST_UNIT_TIMEOUT", 1800*time.Second)
+
 	// tierComponentTimeout caps the component tier. Component tests
 	// stand up testcontainers (Postgres, Redis, MinIO) and run
 	// several minutes of integration work, so the budget tracks the
@@ -51,13 +62,17 @@ var (
 	// LENNY_TEST_COMPONENT_TIMEOUT.
 	tierComponentTimeout = tierTimeout("LENNY_TEST_COMPONENT_TIMEOUT", 600*time.Second)
 
-	// tierIntegrationTimeout caps the integration tier. The suite
-	// boots cmd/lenny-gateway as a subprocess per test against the
-	// compose stack and runs end-to-end over HTTP; the full battery
-	// takes roughly four to five minutes on a developer host, so the
-	// budget sits at the long-tier cap with margin above that.
-	// Override: LENNY_TEST_INTEGRATION_TIMEOUT.
-	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 600*time.Second)
+	// tierIntegrationTimeout caps the integration tier. The suite boots
+	// cmd/lenny-gateway as a subprocess per test against the compose stack
+	// and runs end-to-end over HTTP.
+	//
+	// The earlier four-to-five-minute figure was measured while most of the
+	// suite was refused at session creation and returned in milliseconds.
+	// With those tests reaching the gateway the battery runs about thirteen
+	// minutes on a developer host, so a budget that was comfortable then
+	// aborts a passing suite now. Override:
+	// LENNY_TEST_INTEGRATION_TIMEOUT.
+	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 1800*time.Second)
 
 	// tierE2EKindTimeout caps the e2e_kind tier. Override:
 	// LENNY_TEST_E2E_KIND_TIMEOUT.

@@ -48,7 +48,7 @@ const (
 // a tenant-isolation breach on the OpenAI-compatible surfaces the
 // TESTING.md §12.9.1 matrix names.
 func TestOpenAICompatibleSurfacesCrossTenantIsolation(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 
 	t.Run("open_responses_cross_tenant_get_and_delete", func(t *testing.T) {

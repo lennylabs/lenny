@@ -61,7 +61,7 @@ func buildStreamingEchoBinary(t *testing.T) string {
 func TestSourceModeProtocols_StreamingEcho_spec_17_4(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	bin := buildStreamingEchoBinary(t)
-	gw := gateway.StartWith(t, "--dev-mode", "--runtime-bin", bin)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--runtime-bin", bin)
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	t.Run("mcp_send_message", func(t *testing.T) {

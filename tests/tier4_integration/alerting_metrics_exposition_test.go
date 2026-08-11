@@ -40,7 +40,7 @@ func TestAlertingMetricsExposedOnGatewayScrape(t *testing.T) {
 	// override count feeds lenny_alerting_rule_overrides.
 	gw := gateway.StartWith(
 		t,
-		"--alerting-bundle-formats", "prometheusrule,configmap",
+		"--no-environment-policy", "allow-all", "--alerting-bundle-formats", "prometheusrule,configmap",
 		"--alerting-override-count", "2",
 	)
 

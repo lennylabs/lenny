@@ -44,7 +44,7 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 
 	// Induce the state change against the live gateway: open a circuit
@@ -98,7 +98,7 @@ func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
 	// aggregate, so terminating it forces a genuine aggregate-health
 	// transition rather than a synthetic one.
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 
 	// Establish the baseline aggregate verdict. The first Report sets the

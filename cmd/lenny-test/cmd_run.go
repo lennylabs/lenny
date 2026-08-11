@@ -877,7 +877,7 @@ func runUnitTier() (string, string, *tierResult) {
 	if !hasGoCode() {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
-	extra := []string{"-race", "-count=1"}
+	extra := []string{"-race", "-count=1", fmt.Sprintf("-timeout=%s", tierUnitTimeout)}
 	if profile := coverProfilePath(); profile != "" {
 		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
 			extra = append(extra, "-coverprofile="+profile, "-covermode=atomic")

@@ -84,7 +84,7 @@ func newPoolUpgradeGateway(t *testing.T) (poolUpgradeClient, func(pool string)) 
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c := poolUpgradeClient{t: t, base: gw.BaseURL()}
 
 	if code, body := c.do(http.MethodPost, "/v1/admin/bootstrap", map[string]any{
