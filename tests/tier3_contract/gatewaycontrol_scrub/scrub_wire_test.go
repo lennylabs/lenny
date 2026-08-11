@@ -8,7 +8,7 @@
 // marshal/unmarshal round-trip that asserts every field survives the
 // binary encoding, and an end-to-end gRPC call through the real client
 // and server stubs that asserts the request the adapter sends is the
-// request the gateway receives. spec: §4.7; §5.2; §3.4.
+// request the gateway receives. spec: §4.7; §5.2.
 package gatewaycontrol_scrub_test
 
 import (

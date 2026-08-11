@@ -141,7 +141,7 @@ func TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
 	}
 }
 
-// TestNonceOnlyConditionTypeConstants pins the §7.8 condition-type
+// TestNonceOnlyConditionTypeConstants pins the condition-type
 // constant values the WarmPoolController writes and the surfacing
 // predicate reads back. The string values are the wire-visible condition
 // types on the Sandbox and SandboxTemplate status; a rename would silently

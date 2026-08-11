@@ -34,6 +34,7 @@ import concurrent.futures as cf
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -86,6 +87,50 @@ OUTPUT. Return JSON and nothing else, on a single line:
 Every item must appear exactly once.
 """
 
+GAP_BRIEF = """\
+Each item below is a line of this repository citing a section number that belongs
+to a PROPOSAL document. A previous reading established that the specification does
+not state the rule these sentences depend on, so there is no section to point at.
+
+That gap is being recorded separately and is not your problem. Yours is narrower:
+the number must not stay. A proposal's internal numbering is meaningless to anyone
+reading this repository, and it sends a reader to a specification section that
+either does not exist or discusses something else entirely.
+
+So remove the number and leave the sentence saying what it said, in words. A
+comment reading "the §3.4 recycle disposition" becomes "the recycle disposition".
+One reading "per §3.2, the coordinator holds the slot" becomes "the coordinator
+holds the slot". The knowledge stays; only the false pointer goes.
+
+RETURN ONE DECISION PER ITEM:
+
+  "drop"     — give the replacement line with the proposal number removed and the
+               sentence repaired. This is the expected action for nearly every
+               item. Preserve leading whitespace, the comment marker, and any
+               trailing continuation exactly.
+  "rewrite"  — use this only if you can see a SPECIFICATION section named in the
+               surrounding lines that plainly states the same rule. Give the
+               replacement citing that section.
+  "leave"    — the number is not a citation (a version, a quantity, a literal in
+               data, a test's expected string), or the line is a table of
+               contents for the document it sits in. Say why.
+
+RULES:
+  - Removing the number must not strand a preposition, an article, a separator or
+    a possessive. "per §3.2, the" becomes "the", not ", the".
+  - `§4.6.1 / §6.5` where only §6.5 is a proposal number becomes `§4.6.1`. Remove
+    the separator with the number, and keep the specification citation.
+  - A line reading `spec: §3.1, §5.2` keeps §5.2 and loses §3.1. If nothing is
+    left after the marker, drop the marker too.
+  - Do not weaken or generalise what the line asserts. The sentence must still
+    make the same claim, minus the pointer.
+
+OUTPUT. Return JSON and nothing else, on a single line:
+{"decisions":[{"i":<0-based index>,"action":"drop|rewrite|leave",
+"line":"<exact replacement text, for drop and rewrite>","why":"<one clause>"}]}
+Every item must appear exactly once.
+"""
+
 lock = threading.Lock()
 
 
@@ -98,7 +143,7 @@ def context_of(path, lineno, span=3):
     return [(n + 1, lines[n]) for n in range(lo, hi)]
 
 
-def run_batch(bpath, model, effort, out_path, done_path):
+def run_batch(bpath, model, effort, out_path, done_path, brief=BRIEF):
     batch = json.load(open(bpath))
     items = batch["items"]
     blocks = []
@@ -112,7 +157,7 @@ def run_batch(bpath, model, effort, out_path, done_path):
             f'[{i}] {it["file"]}  (marked line {it["line"]}; the proposal-numbered citation is §{it["section"]})\n'
             f'    candidate declarers:\n{cands}\n{ctx}'
         )
-    prompt = BRIEF + "\n\nBATCH:\n" + "\n\n".join(blocks)
+    prompt = brief + "\n\nBATCH:\n" + "\n\n".join(blocks)
     try:
         p = subprocess.run(["claude", "-p", prompt, "--model", model, "--effort", effort],
                            capture_output=True, text=True, timeout=900)
@@ -137,17 +182,52 @@ def run_batch(bpath, model, effort, out_path, done_path):
     return n
 
 
+def merge_per_line(rows, residual):
+    """Collapse several decisions about one line into a single replacement.
+
+    A line carrying two proposal numbers is reviewed once per number, and each
+    reading removes only the number it was given: for `the §3.2/§3.4 coordinator`
+    one reviewer returns a line still holding §3.4 and the other one still holding
+    §3.2. Writing both, in either order, restores the number the other removed.
+
+    So the replacements are candidates rather than instructions. The one leaving
+    the fewest of the line's targeted numbers behind wins, and if it still carries
+    one, the line is recorded for a further reading instead of being written and
+    called done.
+    """
+    by_line = {}
+    for r in rows:
+        by_line.setdefault(r["line"], []).append(r)
+    out = []
+    for line, group in by_line.items():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        targets = {g["section"] for g in group}
+        def left(g):
+            t = g.get("line_text") or ""
+            return sum(1 for s in targets
+                       if re.search(r"§0*" + re.escape(s) + r"(?!\.?\d)", t))
+        best = min(group, key=left)
+        out.append(best)
+        if left(best):
+            residual.append({**best, "targets": sorted(targets)})
+    return out
+
+
 def apply_decisions(out_path):
     rows = [json.loads(l) for l in open(out_path) if l.strip() and "error" not in json.loads(l)]
     by_file = {}
     for r in rows:
         by_file.setdefault(r["file"], []).append(r)
     tally = {"rewrite": 0, "drop": 0, "gap": 0, "leave": 0, "skipped": 0}
+    residual = []
     for f, rs in by_file.items():
         try:
             lines = open(f, errors="ignore").read().splitlines(keepends=True)
         except OSError:
             continue
+        rs = merge_per_line(rs, residual)
         for r in sorted(rs, key=lambda x: -x["line"]):
             i = r["line"] - 1
             act = r.get("action")
@@ -165,6 +245,11 @@ def apply_decisions(out_path):
             tally[act] += 1
         open(f, "w").write("".join(lines))
     print("applied:", tally)
+    if residual:
+        print(f"\n{len(residual)} line(s) still carry a targeted number after merging;"
+              f" they need a further reading:")
+        for r in residual[:10]:
+            print(f"  {r['file']}:{r['line']}  targets {r['targets']}")
     if tally["skipped"]:
         print(f"  ({tally['skipped']} rejected: the replacement spanned more than one line)")
     gaps = [r for r in rows if r.get("action") == "gap"]
@@ -183,7 +268,12 @@ def main():
     ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--batch-size", type=int, default=12)
     ap.add_argument("--apply", action="store_true")
+    # The gap mode revisits sites a first reading found have no specification
+    # home. The pointer still has to go, so the brief asks for the number's
+    # removal rather than for its resolution.
+    ap.add_argument("--mode", choices=("resolve", "gaps"), default="resolve")
     args = ap.parse_args()
+    brief = GAP_BRIEF if args.mode == "gaps" else BRIEF
 
     out_path = os.path.join(args.out, "decisions.jsonl")
     done_path = os.path.join(args.out, "done.txt")
@@ -207,7 +297,7 @@ def main():
     print(f"sites: {len(sites)}   batches: {len(todo)}  (skipping {len(done)})")
     total = 0
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = [ex.submit(run_batch, p, args.model, args.effort, out_path, done_path) for p in todo]
+        futs = [ex.submit(run_batch, p, args.model, args.effort, out_path, done_path, brief) for p in todo]
         for k, f in enumerate(cf.as_completed(futs), 1):
             total += f.result()
             if k % 10 == 0 or k == len(todo):

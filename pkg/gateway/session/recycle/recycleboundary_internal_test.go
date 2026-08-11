@@ -236,7 +236,7 @@ func TestOnRecyclingReArmCancelsPriorTimer(t *testing.T) {
 // reserved patch that was previously absent on preConnect pools.
 //
 // spec: §3.4 (re-warm completion drives recycling → reserved), §6.2 (hold
-// registration after the reserved patch), §6.2 / §6.14 (recycling → reserved
+// registration after the reserved patch), §6.2 (recycling → reserved
 // binding edge).
 func TestPreConnectRewarmCompletionReservesOnReady(t *testing.T) {
 	st := &fakeBoundaryState{
@@ -265,7 +265,7 @@ func TestPreConnectRewarmCompletionReservesOnReady(t *testing.T) {
 // reserve while the pod is still NotReady (the SDK re-warm in progress), and
 // reserves once it becomes Ready.
 //
-// spec: §3.4 (reserve only when the SDK re-warm makes the pod Ready).
+// (reserve only when the SDK re-warm makes the pod Ready).
 func TestPreConnectRewarmPollWaitsForReady(t *testing.T) {
 	st := &fakeBoundaryState{
 		phase:         claimstate.Recycling,
@@ -294,7 +294,7 @@ func TestPreConnectRewarmPollWaitsForReady(t *testing.T) {
 // stops without reserving when the claim leaves `recycling` (a concurrent
 // rebind, reserve by a peer, or retire): the coordinator must not double-reserve.
 //
-// spec: §3.4 (stop when the claim advanced).
+// (stop when the claim advanced).
 func TestPreConnectRewarmPollStopsWhenClaimLeavesRecycling(t *testing.T) {
 	st := &fakeBoundaryState{
 		phase:         claimstate.Bound, // already advanced (a rebind)
@@ -315,7 +315,7 @@ func TestPreConnectRewarmPollStopsWhenClaimLeavesRecycling(t *testing.T) {
 // ReportPodScrub (where the disposition driver reserved synchronously) only
 // cancels the missing-report timer and does not start a re-warm poll.
 //
-// spec: §3.4 (no re-warm leg on a non-preConnect pool).
+// (no re-warm leg on a non-preConnect pool).
 func TestNonPreConnectScrubReportDoesNotPoll(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Reserved, claimExists: true, podReadyVal: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)

@@ -10,5 +10,5 @@
 // --cluster-qps / --cluster-burst flags closed the hole; this
 // package asserts they remain operator-tunable.
 //
-// TESTING.md §6.5 (Wave 4 default-tuning regression test).
+// TESTING.md (Wave 4 default-tuning regression test).
 package flagdefaults

@@ -54,7 +54,7 @@ func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 // mirror, and that a clean whole-pod scrub on a schedulable host drives the
 // recycle disposition onto the SandboxClaim (recycling → reserved).
 //
-// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §3.4
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side)
 // (recycle disposition), §5.2 (scrub model), §6.2 (host-node schedulability).
 //
 // diagnosis: a failure means the gateway either left the scrub-report RPCs
@@ -183,7 +183,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 // four leaked sessions in the window.
 //
 // spec: §4.7 (ReportSessionScrub leaked feeds the drain ledger), §5.2
-// (ceil(maxConcurrentSessions/2) unhealthy threshold), §3.4 (recycle
+// (ceil(maxConcurrentSessions/2) unhealthy threshold), recycle
 // disposition), §6.2 (gateway stamps drain-request).
 //
 // diagnosis: a failure means the gateway hard-wires the drain threshold to 1
@@ -404,7 +404,7 @@ func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memsto
 	t.Helper()
 	// holdTTL 0 falls back to the driver's DefaultClaimHoldTTL; nil HoldRegistrar
 	// leaves reserved-claim expiry to the §4.6.1 orphan GC and nil boundary
-	// leaves the §3.4 missing-report timeout and re-warm completion unwired (the
+	// leaves the missing-report timeout and re-warm completion unwired (the
 	// wiring tests do not exercise the in-process timers).
 	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, 0, nil, nil, func() time.Time { return time.Unix(0, 0) })
 	if err != nil {

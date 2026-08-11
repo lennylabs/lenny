@@ -204,7 +204,7 @@ const (
 	// is a coordinator-driven timeout rather than one of the three
 	// retirement-limit triggers, so it is NOT a member of the
 	// lenny_gateway_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
-	// reports false for it. spec: §3.4 (gateway-side missing-report timeout),
+	// reports false for it. spec: §4.7 (missing report bounded by cleanupTimeoutSeconds plus a grace),
 	// §4.7 (missing report bounded by cleanupTimeoutSeconds plus a grace),
 	// spec/16 §16.1.1 (retirement-reason vocabulary is the three limit triggers
 	// only).

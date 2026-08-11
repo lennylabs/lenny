@@ -166,7 +166,7 @@ func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transi
 // without persisting either on the Sandbox.
 //
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer), §3.3 (occupancy projection).
+// Sandbox.status writer).
 func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *PodRecord, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opClaim, opts.PoolID, start, err) }()

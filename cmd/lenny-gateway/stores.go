@@ -1849,7 +1849,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 
 // buildPodLifecycle constructs the §15.1 pod-placement surfaces when
 // --agent-namespace is set: the cluster client, the §25.3 apiserver health
-// probe, the §10.2 SA-token verifier, the §5.2 slot counter, the §3.2/§3.4
+// probe, the §10.2 SA-token verifier, the §5.2 slot counter, the reserved-hold
 // reserved-hold and recycle-boundary coordinators, the §4.7 pod binder, the
 // §4.6.1 Postgres-backed fallback claim, the §4.4/§12.5 checkpointer, and the
 // §7.1 seal-and-export sealer, recording each on the accumulator. Without
@@ -1860,7 +1860,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 // accumulator field and is consumed only by the checkpointer built here.
 //
 // spec: §4.1 gateway subsystem seams; §15.1 pod placement; §4.7 binder;
-// §5.2 slot counter; §3.2/§3.4 recycle.
+// §5.2 slot counter; recycle.
 func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store) {
 	f := w.f
 	adapterCA := f.adapterCA
@@ -1909,14 +1909,14 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		podBinder     *podsession.Binder
 		podRegistry   *podsession.Registry
 		checkpointSvc *checkpointer.Checkpointer
-		// holdCoordinator runs the §3.2 reserved-hold expiry timers on this
+		// holdCoordinator runs the reserved-hold expiry timers on this
 		// replica. It is shared between the Binder (whose acquisition-path
 		// rebind cancels the local timer) and the scrub-report service (whose
 		// recycle disposition driver arms the timer after a reserved patch). It
 		// stays nil when --agent-namespace is unset (single-process dev) so
 		// the recycle path and the rebind branch are inert there.
 		holdCoordinator *recycle.HoldCoordinator
-		// recycleBoundary runs the §3.4 gateway-side recycle-boundary timers on
+		// recycleBoundary runs the gateway-side recycle-boundary timers on
 		// this replica: the missing-report timeout armed at the bound → recycling
 		// patch (cancelled by ReportPodScrub, retiring the pod if no report
 		// arrives within cleanupTimeoutSeconds plus a grace) and the preConnect
@@ -2054,7 +2054,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 				slotcounter.WithFallbackSource(sessions),
 				slotcounter.WithFallbackMaxWindow(time.Duration(*slotCounterPostgresFallbackMaxSeconds)*time.Second))
 		}
-		// §3.2 reserved-hold coordinator: arms the per-claim hold-TTL expiry
+		// reserved-hold coordinator: arms the per-claim hold-TTL expiry
 		// timer after a recycle reserves the claim, and is cancelled on an
 		// acquisition-path rebind. Constructed here (with the cluster client and
 		// agent namespace available) and shared with the scrub-report service so
@@ -2065,9 +2065,9 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			Now:       clockinject.Now,
 		})
 		if err != nil {
-			log.Fatalf("lenny-gateway: §3.2 reserved-hold coordinator: %v", err)
+			log.Fatalf("lenny-gateway: reserved-hold coordinator: %v", err)
 		}
-		// §3.4 recycle-boundary coordinator: arms the missing-report timeout at
+		// recycle-boundary coordinator: arms the missing-report timeout at
 		// the bound → recycling patch and drives the preConnect re-warm
 		// completion (recycling → reserved) once the SDK re-warm makes the pod
 		// Ready. It hands the re-warm-completion reserve token to the
@@ -2082,7 +2082,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			Now:       clockinject.Now,
 		})
 		if err != nil {
-			log.Fatalf("lenny-gateway: §3.4 recycle-boundary coordinator: %v", err)
+			log.Fatalf("lenny-gateway: recycle-boundary coordinator: %v", err)
 		}
 		podBinder = &podsession.Binder{
 			Client:           k8sClient,

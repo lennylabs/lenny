@@ -105,12 +105,12 @@ const (
 	// POD_SCRUB_OUTCOME_SUCCEEDED — the §5.2 whole-pod scrub sequence
 	// completed. The gateway records rewarmStartedAt and coordinates the
 	// SDK re-warm on a preConnect pool, or patches the claim directly to
-	// reserved otherwise. spec: §3.4 recycle disposition.
+	// reserved otherwise. This is the recycle disposition.
 	PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED PodScrubOutcome = 1
 	// POD_SCRUB_OUTCOME_FAILED — the §5.2 whole-pod scrub did not complete.
 	// The gateway increments scrubFailureCount and computes the disposition
 	// against sessionPolicy (retire under onScrubFailure: fail or
-	// maxScrubFailures). spec: §3.4 recycle disposition; §4.6.3.
+	// maxScrubFailures). spec: §4.6.3.
 	PodScrubOutcome_POD_SCRUB_OUTCOME_FAILED PodScrubOutcome = 2
 )
 

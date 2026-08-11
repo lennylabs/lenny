@@ -2029,7 +2029,7 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 }
 
 // spec: §5.2 (service mode is claimless: no SandboxClaim, no workspace
-// materialization), §3.6 (service-mode session contract), §7.1
+// materialization), (service-mode session contract), §7.1
 // (conversationContinuity).
 // diagnosis: a service-mode start that claims a Sandbox or binds a pod
 // breaks the §5.2 claimless contract — every service-mode session would

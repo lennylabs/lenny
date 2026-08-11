@@ -41,7 +41,7 @@ func TestRequiredFlagsExposedInHelp(t *testing.T) {
 				t.Skipf("could not run --help for %s: %v", e.Binary, err)
 			}
 			if !strings.Contains(help, "-"+e.Flag) {
-				t.Errorf("§6.5 violated: %s --help does not surface flag %q", e.Binary, e.Flag)
+				t.Errorf("%s --help does not surface flag %q", e.Binary, e.Flag)
 			}
 		})
 	}

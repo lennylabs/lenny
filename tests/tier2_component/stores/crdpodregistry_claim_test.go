@@ -83,7 +83,7 @@ func seedIdleSandbox(t *testing.T, ctx context.Context, c client.Client, ns, nam
 }
 
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer), §3.3 (occupancy projection). The CRD-backed
+// Sandbox.status writer), occupancy projection. The CRD-backed
 // ClaimPod creates the deterministic per-pod SandboxClaim with a `bound`
 // binding state validated by the real CRD OpenAPI schema, and leaves the
 // claimed Sandbox.status untouched for the WarmPoolController to project.

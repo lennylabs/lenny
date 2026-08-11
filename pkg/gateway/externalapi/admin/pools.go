@@ -716,7 +716,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 // advisory audit event rather than a rejection. A session-mode pool, or a
 // one_shot runtime on a service pool, emits nothing.
 // spec: §5.2 (multi_turn permitted on service mode, registration-time
-// warning), §3.6.
+// warning).
 func (r *Router) maybeEmitMultiTurnServiceWarning(ctx context.Context, p authmw.Principal, pool poolstore.Pool, multiTurn bool) {
 	if pool.ExecutionMode != runtimestore.ExecutionModeService || !multiTurn {
 		return

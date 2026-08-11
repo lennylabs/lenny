@@ -156,7 +156,7 @@ func WriteRewarmStartedStatus(ctx context.Context, cl client.Client, namespace, 
 // (`reserved → bound`) lands a further status patch that changes the
 // `resourceVersion`, so a hold-expiry DELETE carrying these preconditions
 // fails and the expiry aborts. spec: §4.6.1 (precondition-guarded DELETE),
-// §3.2 (rebind-vs-hold-expiry race).
+// (rebind-vs-hold-expiry race).
 type ReservedHold struct {
 	// UID is the claim's metadata.uid at the reserved patch.
 	UID types.UID
@@ -208,11 +208,11 @@ func WriteReservedStatus(ctx context.Context, cl client.Client, namespace, claim
 // pod is no longer held) and re-stamps the binding-state transition time.
 // Any gateway replica may rebind; the patch changes the `resourceVersion`,
 // so a hold-expiry DELETE fenced on the reserved-patch version fails its
-// precondition and the expiry aborts (§3.2 rebind-vs-hold-expiry race). The
+// precondition and the expiry aborts (the rebind-vs-hold-expiry race). The
 // rebinding caller re-reads the claim after this patch before dispatching.
 //
 // spec: §4.6.1 (reserved → bound rebind, precondition race), §4.6.3
-// (binding-state enumeration), §3.2 (rebind-vs-hold-expiry race).
+// (binding-state enumeration, rebind-vs-hold-expiry race).
 func WriteRebindStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
@@ -266,7 +266,7 @@ func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, cl
 // caller that a rebind won the race and the pod is still claimed; err is nil
 // in that case so the caller distinguishes a lost race from a real failure.
 //
-// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §3.2
+// spec: §4.6.1 (precondition-guarded hold-expiry DELETE)
 // (rebind-vs-hold-expiry race: a rebind that lands first aborts the expiry).
 func DeleteOnHoldExpiry(ctx context.Context, cl client.Client, namespace, claimName string, hold ReservedHold) (aborted bool, err error) {
 	claim := &lennyv1.SandboxClaim{
@@ -289,7 +289,7 @@ func DeleteOnHoldExpiry(ctx context.Context, cl client.Client, namespace, claimN
 	case apierrors.IsConflict(err):
 		// A rebind (or any other writer) changed the resourceVersion since
 		// the reserved patch: the precondition failed, so the expiry aborts
-		// and the rebound claim is left intact. spec: §3.2.
+		// and the rebound claim is left intact.
 		return true, nil
 	default:
 		return false, fmt.Errorf("podclaim: hold-expiry delete of claim %s: %w", claimName, err)

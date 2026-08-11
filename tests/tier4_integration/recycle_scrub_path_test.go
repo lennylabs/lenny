@@ -689,7 +689,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 		t.Fatalf("nil-ScrubOps recycle emitted %d reports, want 0 (withheld fail-closed); got %+v", len(reps), reps)
 	}
 
-	// No report cancels the missing-report timer, so the §3.4 timeout retires
+	// No report cancels the missing-report timer, so the timeout retires
 	// the pod: the still-`recycling` claim advances to the fail-closed `failed`
 	// terminal rather than being reused without a scrub.
 	deadline := time.Now().Add(6 * time.Second)
@@ -828,7 +828,7 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
 	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
-		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (§3.4 patch-then-scrub)", got)
+		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
 		t.Fatalf("missing-report timers armed = %v, want [sbx-r]", armed)

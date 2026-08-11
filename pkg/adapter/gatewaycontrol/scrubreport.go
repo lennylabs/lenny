@@ -43,7 +43,7 @@ func (o SessionScrubOutcome) proto() adapterv1.SessionScrubOutcome {
 
 // PodScrubOutcome is the binary §5.2 result of the whole-pod scrub the
 // adapter runs at the occupancy-zero recycle boundary, lifted from the
-// proto enum. spec: §5.2 scrub model; §3.4 recycle disposition.
+// proto enum. spec: §5.2 scrub model.
 type PodScrubOutcome int
 
 const (
@@ -99,7 +99,7 @@ func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID, slotI
 // no session because occupancy is zero at the recycle boundary. detail
 // carries an optional failure description for the audit trail on a failed
 // outcome. A transport or gateway failure is returned as a wrapped error.
-// spec: §4.7 (Adapter → Gateway RPCs); §5.2; §3.4.
+// spec: §4.7 (Adapter → Gateway RPCs); §5.2.
 func (c *Client) ReportPodScrub(ctx context.Context, podID string, outcome PodScrubOutcome, detail string) error {
 	req := &adapterv1.ReportPodScrubRequest{
 		PodId:   podID,

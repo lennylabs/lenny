@@ -236,7 +236,7 @@ func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 // one-session-per-pod sizing defaults (RecycleEnabled false, both bounds 0),
 // so the mode_factor derivation keeps mode_factor = 1.0.
 //
-// spec: §6.33 (default configuration mode_factor = 1.0).
+// default configuration mode_factor = 1.0.
 func TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:          "plain-sizing-pool",

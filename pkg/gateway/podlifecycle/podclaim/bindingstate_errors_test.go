@@ -196,7 +196,7 @@ func TestDeleteOnHoldExpiryWrapsUnexpectedError_spec_4_6_1(t *testing.T) {
 // Conflict as a hard error or as a successful delete, breaking the
 // rebind-wins-the-race contract.
 //
-// spec: §4.6.1 (precondition DELETE), §3.2 (rebind-vs-hold-expiry race).
+// spec: §4.6.1 (precondition DELETE).
 func TestDeleteOnHoldExpiryAbortsOnConflict_spec_3_2(t *testing.T) {
 	ctx := context.Background()
 	conflict := apierrors.NewConflict(

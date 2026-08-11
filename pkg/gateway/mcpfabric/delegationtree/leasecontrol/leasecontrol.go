@@ -442,10 +442,10 @@ type Service struct {
 
 	// scrubReports handles the §4.7 ReportSessionScrub / ReportPodScrub
 	// side effects: the sessionsServed and scrubFailureCount recycle-counter
-	// writes, the unhealthy-threshold drain ledger, and the §3.4 / §6.2
+	// writes, the unhealthy-threshold drain ledger, and the §6.2
 	// recycle disposition that drives the claim binding-state patches. Nil
 	// leaves both scrub-report RPCs returning codes.Unimplemented (the
-	// §8.6-only GatewayControl deployment). spec: §4.7; §3.4; §6.2.
+	// §8.6-only GatewayControl deployment). spec: §4.7; §6.2.
 	scrubReports ScrubReportService
 
 	// treeGranter bridges a §8.6 GRANTED token-budget extension onto the
@@ -715,9 +715,9 @@ type Options struct {
 	// ScrubReports backs the §4.7 ReportSessionScrub / ReportPodScrub RPCs:
 	// the adapter's per-slot and whole-pod scrub reports reach the gateway
 	// recycle-counter writes, the unhealthy-threshold drain ledger, and the
-	// §3.4 / §6.2 recycle disposition through it. Nil leaves both RPCs
+	// recycle disposition through it. Nil leaves both RPCs
 	// returning codes.Unimplemented (the §8.6-only GatewayControl
-	// deployment). spec: §4.7; §3.4; §6.2.
+	// deployment). spec: §4.7; §6.2.
 	ScrubReports ScrubReportService
 
 	// TreeBudget bridges a §8.6 GRANTED token-budget extension onto the

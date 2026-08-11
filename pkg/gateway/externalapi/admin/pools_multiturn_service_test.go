@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// multiTurnServiceWarningType is the §5.2 / §3.6 audit event the gateway
+// multiTurnServiceWarningType is the §5.2 audit event the gateway
 // emits when a multi_turn runtime is bound to a service-mode pool.
 const multiTurnServiceWarningType = "pool.multi_turn_service_no_continuity"
 
@@ -46,7 +46,7 @@ func findWarning(events []admin.AuditEvent, pool string) *admin.AuditEvent {
 }
 
 // spec: §5.2 (multi_turn permitted on service mode, registration-time
-// warning), §3.6 (service-mode conversationContinuity), §7.1.
+// warning), §7.1.
 // A multi_turn runtime bound to a service-mode pool is admitted but warns:
 // service mode preserves no cross-message conversation continuity. A one_shot
 // runtime on a service pool, and a multi_turn runtime on a session pool, both
@@ -107,7 +107,7 @@ func TestCreateServicePoolWarnsMultiTurn_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (registration-time warning re-evaluated on update), §3.6.
+// spec: §5.2 (registration-time warning re-evaluated on update).
 // Switching a session pool bound to a multi_turn runtime into service mode
 // via PUT emits the warning, mirroring the create-path derivation.
 func TestUpdatePoolToServiceWarnsMultiTurn_spec_5_2(t *testing.T) {

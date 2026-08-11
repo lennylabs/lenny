@@ -570,7 +570,7 @@ func TestInspectForRecycleAgainstApiserver_spec_6_39(t *testing.T) {
 	c := newEnvtestClient(t, pod)
 	// The claim must exist for the recycle boundary: the inspector skips
 	// (found=false) when the claim is gone, so seed the recycling claim the
-	// pod is bound to. spec: §3.4 (skip when the claim is gone).
+	// pod is bound to.
 	seedRecyclingClaim(t, c, "pod-1")
 	// envtest stamps the server-side CreationTimestamp at Create; patch a
 	// deterministic one is not possible, so anchor uptime off the real
@@ -826,7 +826,7 @@ func agentPodWithContainer(name, pool string) *corev1.Pod {
 }
 
 // setPodReady writes a Ready=True condition on the pod's status subresource so
-// the §3.4 re-warm completion poll observes it as ready (envtest has no kubelet
+// the re-warm completion poll observes it as ready (envtest has no kubelet
 // to flip readiness).
 func setPodReady(t *testing.T, c client.Client, name string) {
 	t.Helper()
@@ -841,7 +841,7 @@ func setPodReady(t *testing.T, c client.Client, name string) {
 }
 
 // boundaryPoolReader resolves a pool with the given cleanupTimeoutSeconds for
-// the §3.4 missing-report timeout base.
+// the missing-report timeout base.
 func boundaryPoolReader(pool string, cleanupTimeoutSeconds int) fakePoolReader {
 	return fakePoolReader{pools: map[string]poolstore.Pool{
 		pool: {
@@ -911,7 +911,7 @@ func TestRecycleBoundaryPreConnectReachesReserved_spec_3_4(t *testing.T) {
 	}
 }
 
-// TestRecycleBoundaryMissingReportRetires drives the §3.4 gateway-side
+// TestRecycleBoundaryMissingReportRetires drives the gateway-side
 // missing-report timeout against the envtest API server: with the timeout armed
 // at the bound → recycling patch and no ReportPodScrub arriving, the coordinator
 // retires the pod (claim → `failed`) so it does not linger in `recycling` until

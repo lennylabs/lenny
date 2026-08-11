@@ -83,16 +83,16 @@ type SlotBindRequest struct {
 	// into the §15.4 manifest. Empty when none is specified.
 	MinPlatformVersion string
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
-	// by ResolvePool. On a recycling concurrent-session pool (the §3.1
+	// by ResolvePool. On a recycling concurrent-session pool (the
 	// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
 	// true), when the last slot drains cleanly ReleaseSlot patches the per-pod
 	// claim bound → recycling and signals the whole-pod scrub (the §4.7 recycle
 	// disposition) rather than deleting the claim, so the adapter's
 	// ReportPodScrub drives recycle vs. retire and the occupancy-zero whole-pod
 	// scrub clears the cross-cohort residue (shared /tmp, /dev/shm, surviving
-	// processes). False for a non-recycling concurrent pool (the §3.1 "Bounded
+	// processes). False for a non-recycling concurrent pool (the "Bounded
 	// cohort" preset), where the pod terminates after the cohort drains. spec:
-	// §3.1, §3.4, §6.30/§6.2 (occupancy-zero recycle edge on a recycling pod).
+	// §6.30/§6.2 (occupancy-zero recycle edge on a recycling pod).
 	Recycle bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters (folded onto PoolMatch from the sessionPolicy mirror) carried

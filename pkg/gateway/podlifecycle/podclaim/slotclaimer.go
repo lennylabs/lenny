@@ -288,22 +288,22 @@ type SlotClaimer struct {
 	// Now supplies the wall clock for the §6.2 pod-uptime
 	// retirement check. Nil defaults to time.Now.
 	Now func() time.Time
-	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// RecycleBoundary arms the gateway-side missing-report timeout when
 	// ReleaseSlot patches the per-pod claim bound → recycling on the
 	// occupancy-zero edge of a recycling concurrent-session pool. The adapter's
 	// ReportPodScrub cancels it; if no report arrives within
 	// cleanupTimeoutSeconds plus a grace, the coordinator retires the pod rather
 	// than leaving it stuck in `recycling` until the much longer §4.6.1
 	// orphan-GC window. Nil is a no-op (a deployment with no in-process recycle
-	// coordinator); the orphan GC remains the crash backstop. spec: §3.4
+	// coordinator); the orphan GC remains the crash backstop.
 	// (missing-report timeout).
 	RecycleBoundary RecycleBoundaryArmer
 }
 
-// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// RecycleBoundaryArmer arms the missing-report timeout for a pod at the
 // bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
 // through OnRecycling; the interface is defined at this consumer so podclaim
-// does not import the recycle package (which imports podclaim). spec: §3.4
+// does not import the recycle package (which imports podclaim).
 // (gateway-side missing-report timeout armed at session termination).
 type RecycleBoundaryArmer interface {
 	OnRecycling(podID string)
@@ -446,7 +446,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 		// changes the resourceVersion so the holder's expiry DELETE aborts.
 		// A rebind that loses to a concurrent expiry DELETE (the claim
 		// vanished, or moved off `reserved`) re-reads as not-rebound and the
-		// pod is skipped for normal acquisition. spec: §3.2, §4.6.1.
+		// pod is skipped for normal acquisition.
 		if claim.Status.Phase == string(claimstate.Reserved) {
 			rebound, ok, err := c.rebindReservedSlot(ctx, claim)
 			if err != nil {

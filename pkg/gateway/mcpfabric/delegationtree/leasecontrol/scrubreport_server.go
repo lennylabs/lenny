@@ -31,7 +31,7 @@ import (
 // tests pass a fake.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
-// onScrubFailure), §3.4 (recycle disposition, retire triggers), §6.2
+// onScrubFailure), recycle disposition, retire triggers), §6.2
 // (host-node schedulability retire at recycle disposition).
 type ScrubReportService interface {
 	// RecordSessionScrub records the §5.2 per-slot cleanup outcome at a
@@ -45,7 +45,7 @@ type ScrubReportService interface {
 	RecordSessionScrub(ctx context.Context, podID, sessionID, slotID string, leaked bool) error
 
 	// RecordPodScrub records the §5.2 whole-pod scrub outcome at the
-	// occupancy-zero recycle boundary and drives the §3.4 / §6.2 recycle
+	// occupancy-zero recycle boundary and drives the §6.2 recycle
 	// disposition. When failed is true it increments scrubFailureCount on
 	// the pod's agent_pod_state row. It then reads the pod's
 	// lenny.dev/host-schedulable label, computes the disposition against the
@@ -58,7 +58,7 @@ type ScrubReportService interface {
 	// drains. detail carries an optional adapter-side failure description for
 	// the audit trail. A gateway-side failure is returned as an error.
 	// spec: §4.7 (ReportPodScrub increments scrubFailureCount, computes
-	// disposition), §3.4, §5.2, §6.2.
+	// disposition), §5.2, §6.2.
 	RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error
 }
 
@@ -109,7 +109,7 @@ func (s *Service) ReportSessionScrub(ctx context.Context, req *adapterv1.ReportS
 // gateway cannot tell a clean scrub from a failure, so it cannot decide
 // between reuse and the scrub-failure retirement path. The handler returns
 // InvalidArgument rather than assuming success and risking reuse of a pod
-// whose residual state was not cleared. spec: §4.7; §5.2; §3.4; §6.2.
+// whose residual state was not cleared. spec: §4.7; §5.2; §6.2.
 func (s *Service) ReportPodScrub(ctx context.Context, req *adapterv1.ReportPodScrubRequest) (*adapterv1.ReportPodScrubResponse, error) {
 	if s.scrubReports == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: scrub-report handling is not configured on this gateway")
@@ -160,7 +160,7 @@ func podScrubFailed(o adapterv1.PodScrubOutcome) (bool, error) {
 }
 
 // RecycleCounterStore is the §4.7 recycle-counter seam the ScrubReporter
-// drives: the two per-pod counters on the agent_pod_state row the §3.4 /
+// drives: the two per-pod counters on the agent_pod_state row the
 // §6.2 recycle disposition evaluates. *agentpodstate.Store (the Postgres
 // mirror) satisfies it; the interface is kept narrow so leasecontrol does
 // not depend on the full mirror surface. A missing pod row reports
@@ -373,10 +373,10 @@ var ErrPodNotInMirror = errors.New("leasecontrol: pod not found in agent_pod_sta
 // ScrubReporter is the gateway-side ScrubReportService implementation. It
 // wires the §4.7 recycle-counter writes, the §5.2 unhealthy-threshold drain
 // ledger, the §6.2 host-node schedulability read, the pure podscrub
-// recycle disposition, and the §3.4 claim binding-state patches behind the
+// recycle disposition, and the claim binding-state patches behind the
 // narrow seams above so leasecontrol stays free of the Kubernetes client.
 //
-// spec: §4.7, §3.4, §5.2, §6.2.
+// spec: §4.7, §5.2, §6.2.
 type ScrubReporter struct {
 	counters  RecycleCounterStore
 	ledger    DrainLedger
@@ -484,12 +484,12 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 }
 
 // RecordPodScrub increments scrubFailureCount on a failed scrub, resolves
-// the §3.4 / §6.2 recycle disposition through podscrub.Decide against
+// the recycle disposition through podscrub.Decide against
 // the pod's recycle counters, sessionPolicy, uptime, and host-node
 // schedulability, and drives the resulting disposition onto the claim
 // binding state. detail carries an optional adapter-side failure
 // description that the retire path retains in the audit trail on a FAILED
-// outcome. spec: §4.7; §3.4; §5.2; §6.2.
+// outcome. spec: §4.7; §5.2; §6.2.
 func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error {
 	// Resolve the recycle policy first: it carries the pool and
 	// runtime_class dimensions the §16.1 scrub-failure and retirement
@@ -579,7 +579,7 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // increment. On a concurrent non-vm-restart pool the session_count_limit
 // counter is additionally suppressed here because the per-release
 // SessionCountRetirer owns that emission for that pod class; the occupancy-zero
-// disposition still retires the pod as the state backstop. spec: §3.4, §6.2,
+// disposition still retires the pod as the state backstop. spec: §6.2,
 // §16.1, §5.2 (per-release maxSessionsPerPod drain).
 func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, detail string, d podscrub.Disposition) error {
 	pool, runtimeClass := policy.Pool, policy.RuntimeClass

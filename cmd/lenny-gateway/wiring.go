@@ -51,7 +51,7 @@ package main
 // root used: a gateway that cannot construct a subsystem at startup must
 // abort the process, not return an error to a caller that has no recovery
 // path. The §4.3 token-service connection close, the §6.2 watchdog-context
-// cancel, and the §3.2/§3.4 coordinator Stops stay deferred in runGateway
+// cancel, and the coordinator Stops stay deferred in runGateway
 // (not the build steps that dial or construct them) so they run at process
 // shutdown rather than when the build step returns.
 //

@@ -2475,8 +2475,8 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 		MinPlatformVersion:       minPlatformVersion,
 		PreConnect:               preConnect,
 		SDKWarmBlockingPaths:     sdkWarmBlockingPaths,
-		// spec: §3.4 — carry the pool's recycle.enabled flag so Release applies
-		// the §3.4 recycle disposition (patch claim bound → recycling, signal
+		// carry the pool's recycle.enabled flag so Release applies
+		// the recycle disposition (patch claim bound → recycling, signal
 		// the whole-pod scrub) on a clean release rather than draining the pod.
 		Recycle: match.Recycle,
 		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's cleanup
@@ -2515,9 +2515,9 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 		UserCredentialProviders: userCredProviders,
 		AgentInterface:          agentInterface,
 		MinPlatformVersion:      minPlatformVersion,
-		// spec: §3.4 / §5.2 — carry the pool's recycle.enabled flag so the
+		// spec: §5.2 — carry the pool's recycle.enabled flag so the
 		// last-slot-drain edge of a recycling concurrent pool patches the
-		// claim bound → recycling and signals the whole-pod scrub (the §3.1
+		// claim bound → recycling and signals the whole-pod scrub (the
 		// "Concurrent" preset) rather than deleting the claim outright.
 		Recycle: match.Recycle,
 		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's cleanup

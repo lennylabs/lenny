@@ -322,7 +322,7 @@ func runGateway(f *gatewayFlags) {
 	// §11.3 session watchdog.
 	w.buildControlServer(gwMetrics, mcpSrv, auditAppender, slotHealth, w.mtlsDeny,
 		connectorAuthorizer, connectorInvoker, leaseBudgets, sessionSrv)
-	// The §3.2 reserved-hold coordinator and §3.4 recycle-boundary
+	// The reserved-hold coordinator and recycle-boundary
 	// coordinator are stopped on shutdown so the in-process timers and
 	// re-warm polls do not run against a draining client. The original
 	// inline control-server block registered these Stop defers only inside
@@ -617,7 +617,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		TreeBudget: treeGranter,
 		// §4.7 — the adapter's per-slot and whole-pod scrub reports drive the
 		// recycle-counter writes, the unhealthy-threshold drain ledger, and the
-		// §3.4 / §6.2 recycle disposition. Nil leaves ReportSessionScrub and
+		// §6.2 recycle disposition. Nil leaves ReportSessionScrub and
 		// ReportPodScrub returning Unimplemented (the §8.6-only deployment).
 		ScrubReports: scrubReports,
 	})
@@ -715,14 +715,14 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // over the shared slothealth tracker (the same tracker the sessionserver
 // slot-bind-failure path feeds, so adapter-reported leaks and slot-bind
 // failures accumulate in one §5.2 rolling window), the §6.2 host-node
-// schedulability pod inspector, the §3.4 claim disposition driver, and the
+// schedulability pod inspector, the claim disposition driver, and the
 // §16.1 retirement metrics. The drain ledger resolves each leaked pod's pool
 // maxConcurrentSessions through the pool store, so a single-session
 // recycling pod drains on the first leak while a recycling concurrent-session
 // pool (the §5.2 "Concurrent" preset, maxConcurrentSessions: N with
 // recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
-// spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub),
 // disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.2
 // (host-node schedulability retire), §16.1 (recycle metrics).
 func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
@@ -764,7 +764,7 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 		Now:       now,
 		Holds:     holds,
 	}
-	// §3.4: the disposition driver signals the recycle-boundary coordinator on
+	// The disposition driver signals the recycle-boundary coordinator on
 	// every resolved ReportPodScrub so it cancels the missing-report timeout
 	// and, on a preConnect recycle, drives recycling → reserved once the SDK
 	// re-warm completes. Set only when the coordinator exists so a typed-nil

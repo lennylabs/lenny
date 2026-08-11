@@ -10,7 +10,7 @@
 // runtimestore, and gatewaymetrics. The gateway constructs these here and
 // passes them into leasecontrol.NewScrubReporter.
 //
-// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §3.4
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), the recycle
 // (recycle disposition), §5.2 (scrub model, onScrubFailure), `spec/06_warm-pod-model.md` §6.2
 // (host-node schedulability retire), §16.1 (scrub-failure and retirement
 // metrics).
@@ -209,7 +209,7 @@ func (l *drainLedger) maxConcurrentSessions(ctx context.Context, podID string) (
 	if err := l.cl.Get(ctx, client.ObjectKey{Namespace: l.namespace, Name: podID}, &pod); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			// The pod is gone: nothing left to drain, fall back to the default
-			// bound so the threshold check is well-defined. spec: §3.4.
+			// bound so the threshold check is well-defined.
 			return 1, nil
 		}
 		return 0, fmt.Errorf("recycle: get pod %s for drain threshold: %w", podID, err)
@@ -222,7 +222,7 @@ func (l *drainLedger) maxConcurrentSessions(ctx context.Context, podID string) (
 	if err != nil {
 		if errors.Is(err, poolstore.ErrNotFound) {
 			// The pool was deleted with the pod; the default bound keeps the
-			// threshold well-defined. spec: §3.4.
+			// threshold well-defined.
 			return 1, nil
 		}
 		return 0, fmt.Errorf("recycle: resolve pool %s for leaked pod %s: %w", poolName, podID, err)
@@ -362,7 +362,7 @@ func (r *sessionCountRetirer) RetireOnSessionCount(ctx context.Context, podID st
 	if !ok {
 		// The pod or pool is gone: nothing left to drain. A per-release report
 		// for a vanished pod is a no-op, matching the drain ledger's gone-pod
-		// tolerance. spec: §3.4.
+		// tolerance.
 		return nil
 	}
 	// Gate on the concurrent non-vm-restart pod class: a single-session pool
@@ -404,7 +404,7 @@ func (r *sessionCountRetirer) RetireOnSessionCount(ctx context.Context, podID st
 // same pod-then-pool resolution drainLedger.maxConcurrentSessions performs. A
 // gone pod or a deleted pool reports ok=false (nothing to drain); a pod with
 // no pool label fails closed so a per-release report on an unresolvable pod is
-// not silently dropped. spec: §5.2 (recycle policy keyed on the pool), §3.4.
+// not silently dropped. spec: §5.2 (recycle policy keyed on the pool).
 func (r *sessionCountRetirer) resolve(ctx context.Context, podID string) (perReleasePolicy, bool, error) {
 	var pod corev1.Pod
 	if err := r.cl.Get(ctx, client.ObjectKey{Namespace: r.namespace, Name: podID}, &pod); err != nil {
@@ -569,13 +569,13 @@ func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error
 // the binding-state writers as the same no-op. A missing or "false"
 // lenny.dev/host-schedulable label reads as unschedulable, fail-safe per
 // §6.2. spec: §6.2 (host-node schedulability read via Pods get), §5.2
-// (recycle policy resolution), §3.4 / §4.7 (skip when the pod or claim is
+// (recycle policy resolution), §4.7 (skip when the pod or claim is
 // gone).
 func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (leasecontrol.PodRecyclePolicy, bool, error) {
 	var pod corev1.Pod
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podID}, &pod); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			// The pod is gone: nothing to recycle. spec: §3.4.
+			// The pod is gone: nothing to recycle.
 			return leasecontrol.PodRecyclePolicy{}, false, nil
 		}
 		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get pod %s: %w", podID, err)
@@ -588,7 +588,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 	// the disposition is skipped before any counter advances. The residual
 	// TOCTOU window between this read and the disposition write is absorbed by
 	// claimDispositionDriver, which treats a NotFound from the binding-state
-	// writers as the same no-op. spec: §3.4, §4.6.1, §4.7 (skip when the claim
+	// writers as the same no-op. spec: §4.6.1, §4.7 (skip when the claim
 	// is gone).
 	var claim lennyv1.SandboxClaim
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
@@ -609,7 +609,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 	if err != nil {
 		if errors.Is(err, poolstore.ErrNotFound) {
 			// The pool was deleted: the pod is being retired with it, nothing
-			// to recycle into. spec: §3.4.
+			// to recycle into.
 			return leasecontrol.PodRecyclePolicy{}, false, nil
 		}
 		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
@@ -739,7 +739,7 @@ func podUptimeSeconds(createdAt, now time.Time) int64 {
 	return int64(d / time.Second)
 }
 
-// claimDispositionDriver applies a resolved §3.4 recycle disposition to the
+// claimDispositionDriver applies a resolved recycle disposition to the
 // pod's SandboxClaim binding state via the podclaim binding-state writers.
 // On a recycle it stamps rewarmStartedAt on a preConnect pool (the
 // projection drives sdk_connecting and the §6.2 re-warm completes
@@ -755,14 +755,14 @@ type claimDispositionDriver struct {
 	holdTTL   time.Duration
 	now       func() time.Time
 	log       *slog.Logger
-	// holds receives the §3.2 reserved-hold token after a non-preConnect
+	// holds receives the reserved-hold token after a non-preConnect
 	// reserved patch so the coordinator arms the hold-TTL expiry timer. Nil
 	// disables the timer (the orphan GC still reclaims the reserved claim
 	// after holdExpiresAt plus a grace, §4.6.1), which keeps the disposition
 	// usable in unit tests that do not exercise the hold window.
 	holds HoldRegistrar
 	// boundary is signaled when a ReportPodScrub disposition resolves so the
-	// §3.4 recycle-boundary coordinator cancels the pod's missing-report
+	// recycle-boundary coordinator cancels the pod's missing-report
 	// timeout and, on a preConnect recycle, begins the re-warm completion poll
 	// that drives the claim recycling → reserved. Nil leaves the missing-report
 	// timeout to fire (and, on preConnect pools, the re-warm completion to the
@@ -771,7 +771,7 @@ type claimDispositionDriver struct {
 	boundary recycleBoundarySignal
 }
 
-// recycleBoundarySignal is the §3.4 seam the disposition driver notifies when
+// recycleBoundarySignal is the seam the disposition driver notifies when
 // a ReportPodScrub resolves: the boundary coordinator cancels the pod's
 // missing-report timeout and, on a preConnect recycle, starts the re-warm
 // completion poll. *RecycleBoundaryCoordinator satisfies it.
@@ -801,12 +801,12 @@ type ClaimDispositionDriverOptions struct {
 	// pod's metadata is retained in the audit log for inspection). nil
 	// resolves to slog.Default().
 	Logger *slog.Logger
-	// Holds receives the §3.2 reserved-hold token after a non-preConnect
+	// Holds receives the reserved-hold token after a non-preConnect
 	// reserved patch so the HoldCoordinator arms the hold-TTL expiry timer.
 	// Nil leaves expiry to the §4.6.1 orphan GC (after holdExpiresAt plus a
 	// grace) and is the default in tests that do not exercise the hold window.
 	Holds HoldRegistrar
-	// Boundary is the §3.4 recycle-boundary coordinator the driver notifies on
+	// Boundary is the recycle-boundary coordinator the driver notifies on
 	// every resolved ReportPodScrub so it cancels the pod's missing-report
 	// timeout and, on a preConnect recycle, drives the claim recycling →
 	// reserved once the SDK re-warm completes. Nil leaves the timeout to fire
@@ -814,7 +814,7 @@ type ClaimDispositionDriverOptions struct {
 	Boundary recycleBoundarySignal
 }
 
-// NewClaimDispositionDriver builds the §3.4 claim disposition driver.
+// NewClaimDispositionDriver builds the claim disposition driver.
 // Client and Namespace are required.
 func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol.ClaimDispositionDriver, error) {
 	if opts.Client == nil {
@@ -860,16 +860,16 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 // NotFound (a status apply cannot create the object) and WriteRewarmStartedStatus
 // returns a wrapped NotFound from its get-first, so detecting NotFound here
 // makes a vanished claim "nothing left to recycle" rather than an error the
-// handler maps to Internal. spec: §3.4 (disposition skipped when the claim is
+// handler maps to Internal. spec: §4.6.1 (orphan-GC crash recovery), §4.7 (concurrent-retirement
 // gone), §4.6.1 (orphan-GC crash recovery), §4.7 (concurrent-retirement
 // no-op).
 func claimGone(err error) bool {
 	return apierrors.IsNotFound(err)
 }
 
-// Recycle drives the §3.4 reuse disposition. A preConnect pool stamps
+// Recycle drives the reuse disposition. A preConnect pool stamps
 // rewarmStartedAt on the recycling claim, anchoring the §6.2 re-warm
-// watchdog; the projection then enters sdk_connecting and the §3.4
+// watchdog; the projection then enters sdk_connecting and the
 // recycle-boundary coordinator polls the pod readiness and patches the claim
 // recycling → reserved once the SDK re-warm makes the pod Ready. A
 // non-preConnect pool patches the claim directly to reserved. In both cases
@@ -878,7 +878,7 @@ func claimGone(err error) bool {
 // scrub failure that reuses the pod) it stamps the §5.2 lenny.dev/scrub-warning
 // annotation on the agent Pod first, so the residual-state marker re-enters
 // the pool with the pod and persists through the re-warm (the SDK
-// re-initialization does not clear it). spec: §3.4 (preConnect re-warm
+// re-initialization does not clear it). spec: §5.2 (warn policy returns the pod with a
 // completion drives recycling → reserved; ReportPodScrub cancels the
 // missing-report timeout), §5.2 (warn policy returns the pod with a
 // scrub_warning annotation), §6.2 (preConnect re-warm persists the
@@ -907,7 +907,7 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 			}
 			return fmt.Errorf("recycle: stamp rewarm-started on claim %s: %w", claim, err)
 		}
-		// §3.4: cancel the missing-report timeout (the report arrived) and
+		// cancel the missing-report timeout (the report arrived) and
 		// start the re-warm completion poll that patches the claim
 		// recycling → reserved once the SDK re-warm makes the pod Ready.
 		// Nothing else produces that reserved patch on a preConnect pool.
@@ -921,21 +921,21 @@ func (d *claimDispositionDriver) Recycle(ctx context.Context, podID string, preC
 		}
 		return fmt.Errorf("recycle: reserve claim %s: %w", claim, err)
 	}
-	// Hand the §3.2 reserved-hold token to the coordinator so it arms the
+	// Hand the reserved-hold token to the coordinator so it arms the
 	// hold-TTL expiry timer (the precondition-guarded DELETE that returns the
 	// pod to idle). A nil registrar leaves the reserved claim for the §4.6.1
-	// orphan GC after holdExpiresAt plus a grace. spec: §3.2.
+	// orphan GC after holdExpiresAt plus a grace.
 	if d.holds != nil {
 		d.holds.Hold(podID, hold)
 	}
-	// §3.4: the reserve happened synchronously here, so the boundary signal
+	// the reserve happened synchronously here, so the boundary signal
 	// only cancels the missing-report timeout (no re-warm poll on a
 	// non-preConnect pool).
 	d.signalBoundary(podID, false)
 	return nil
 }
 
-// signalBoundary notifies the §3.4 recycle-boundary coordinator that a
+// signalBoundary notifies the recycle-boundary coordinator that a
 // ReportPodScrub resolved for podID so it cancels the missing-report timeout
 // and, on a preConnect recycle, starts the re-warm completion poll. A nil
 // coordinator (unit tests, or a deployment without the cluster client) leaves

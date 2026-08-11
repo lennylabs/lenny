@@ -40,7 +40,7 @@ import (
 // fan-out's SessionReclaimer (proposal 0023 S6).
 //
 // The process-lifetime defers the original inline block registered (the
-// watchdog-context cancel and the §3.2/§3.4 hold and recycle coordinator
+// watchdog-context cancel and the hold and recycle coordinator
 // Stops) are relocated to the composition root (runGateway) so they fire at
 // process shutdown rather than when this build step returns; see the
 // scrub-report-branch predicate runGateway re-evaluates to defer the
@@ -138,7 +138,7 @@ func (w *gatewayWiring) buildControlServer(
 	}
 	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
 	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
-	// and the §3.4 / §6.2 recycle disposition through the ScrubReporter. It
+	// and the §6.2 recycle disposition through the ScrubReporter. It
 	// needs the cluster client (Pods get, SandboxClaim status patch) and the
 	// Postgres agent_pod_state mirror (the recycle counters), so it is wired
 	// only when both --agent-namespace (clusterClient) and the Postgres pool
@@ -147,7 +147,7 @@ func (w *gatewayWiring) buildControlServer(
 	var scrubReports leasecontrol.ScrubReportService
 	holdTTL := time.Duration(*claimHoldTTLSeconds) * time.Second
 	if w.scrubReportServiceWired() {
-		// The §3.2 reserved-hold coordinator and §3.4 recycle-boundary
+		// The reserved-hold coordinator and recycle-boundary
 		// coordinator are stopped on shutdown so the in-process timers and
 		// re-warm polls do not run against a draining client; those Stops are
 		// deferred by the composition root (runGateway) so they fire at
@@ -302,7 +302,7 @@ func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion
 
 // scrubReportServiceWired reports whether the §4.7 scrub-report service is
 // wired, which is the predicate the original inline control-server block
-// used to enter the scrub-report branch and to register the §3.2 / §3.4
+// used to enter the scrub-report branch and to register the
 // coordinator Stop defers. The composition root re-evaluates it to defer
 // those Stops exactly when the original branch did.
 //

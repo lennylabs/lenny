@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test for the §3.2 / §12.4 Redis-outage Postgres
+// Tier-4 integration test for the §12.4 Redis-outage Postgres
 // fallback behind the §5.2 intra-pod slot counter. It wires a real
 // slotcounter.Counter against a real Redis container and a real Postgres
 // container (the production migrations applied) as the FallbackSource, then
@@ -45,7 +45,7 @@ func newSessionUUID(t *testing.T) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// spec: §3.2 (Redis slot counter intra-pod gate with Postgres fallback),
+// spec:
 // §12.4 (durable fallback for every Redis-backed role), §12.4 (bounded
 // fail-closed window).
 // diagnosis: a failure means the §5.2 slot counter did not degrade to the

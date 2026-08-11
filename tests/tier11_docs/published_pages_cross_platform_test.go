@@ -144,7 +144,7 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 	// `microvm` (Kata) profile degrades because it needs hardware
 	// virtualization the single-node substrate cannot nest. The page must
 	// carry the microvm-specific cause, not collapse both profiles under
-	// the gVisor-runtime-class cause. §1.4 of the proposal flags conflating
+	// the gVisor-runtime-class cause. Conflating
 	// the two under a single cause as a spec defect — and it is technically
 	// wrong for `microvm`, whose runc fallback is not caused by a missing
 	// gVisor runtime class.

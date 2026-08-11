@@ -259,7 +259,7 @@ func (s *Server) runtimeMaxClientIdle(ctx context.Context, runtimeRef string) in
 	if rt.SessionPolicy != nil && rt.SessionPolicy.MaxClientIdleSeconds > 0 {
 		return rt.SessionPolicy.MaxClientIdleSeconds
 	}
-	// spec: §6.2 / §3.1 — maxClientIdleSeconds defaults to the pool's
+	// spec: §6.2 — maxClientIdleSeconds defaults to the pool's
 	// effective maxSessionAgeSeconds when no idle bound is declared.
 	return s.runtimeMaxSessionAge(ctx, runtimeRef)
 }

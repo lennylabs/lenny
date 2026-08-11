@@ -36,11 +36,11 @@ func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID stri
 }
 
 // dispositionForState maps a session's terminal §6.2 state to the executor
-// Disposition that drives the §3.4 pod disposition at release time: a clean
+// Disposition that drives the pod disposition at release time: a clean
 // terminal (completed/cancelled/expired) recycles a recycling pod, while
 // `failed` always retires it. A non-terminal state (recordSessionCompleted is
 // only called on a terminal transition, so this is defensive) carries no
-// disposition and falls back to Close. spec: §3.4; §6.2.
+// disposition and falls back to Close. spec: §6.2.
 func dispositionForState(st session.State) executor.Disposition {
 	switch st {
 	case session.StateCompleted:
