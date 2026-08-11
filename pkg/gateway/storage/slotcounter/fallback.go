@@ -21,9 +21,8 @@ import (
 // SessionStore, gated under a per-pod advisory lock and bounded by a
 // fail-closed window so a Redis-only outage degrades slot admission to
 // Postgres latency rather than rejecting all session dispatch.
-// spec: §12.4 (durable fallback for every Redis-backed role), §12.4 (Redis HA and
-// §12.4 (durable fallback for every Redis-backed role), §12.4 (Redis HA and
-// failure modes, bounded fail-closed window).
+// spec: §12.4 (durable fallback for every Redis-backed role), §12.4 (Redis HA
+// and failure modes, bounded fail-closed window).
 
 // ErrFailClosed reports that the §12.4 Redis-outage fallback could not
 // admit a slot and the gate is failing closed: the Redis-outage window

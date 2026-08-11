@@ -129,8 +129,8 @@ type acquire[T any] func(ctx context.Context) (T, error)
 // therefore preserved across the wait.
 //
 // spec: §4.6.1 (Pool exhaustion behavior), §5.2 (onPoolExhausted,
-// maxQueueWaitSeconds), §7.1 (session_id only on success), the queue
-// composes after the claim-path timeout and Postgres fallback).
+// maxQueueWaitSeconds), §7.1 (session_id only on success). The queue
+// composes after the claim-path timeout and the Postgres fallback.
 func runWithQueue[T any](ctx context.Context, q *podClaimQueue, pool, onPoolExhausted string, maxQueueWaitSeconds int, attempt acquire[T]) (T, error) {
 	var zero T
 	result, err := attempt(ctx)

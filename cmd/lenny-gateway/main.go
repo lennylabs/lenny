@@ -722,9 +722,9 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // pool (the §5.2 "Concurrent" preset, maxConcurrentSessions: N with
 // recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
-// spec: §4.7 (ReportSessionScrub/ReportPodScrub),
-// disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.2
-// (host-node schedulability retire), §16.1 (recycle metrics).
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
+// combined failed+leaked threshold), §6.2 (host-node schedulability
+// retire), §16.1 (recycle metrics).
 func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
 		Tracker:   slotHealth,

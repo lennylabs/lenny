@@ -31,8 +31,8 @@ import (
 // tests pass a fake.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
-// onScrubFailure), recycle disposition, retire triggers), §6.2
-// (host-node schedulability retire at recycle disposition).
+// onScrubFailure), §6.2 (host-node schedulability retire at the
+// recycle disposition, with the retire triggers).
 type ScrubReportService interface {
 	// RecordSessionScrub records the §5.2 per-slot cleanup outcome at a
 	// session release. It increments sessionsServed on the pod's

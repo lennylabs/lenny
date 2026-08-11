@@ -178,8 +178,7 @@ type ReservedHold struct {
 // patch, so a cross-replica rebind that lands first wins the race.
 //
 // spec: §4.6.1 (reserved hold, holdExpiresAt stamp, precondition token),
-// §4.6.3 (binding-state enumeration, holdExpiresAt).
-// projection).
+// §4.6.3 (binding-state enumeration, holdExpiresAt, reserved projection).
 func WriteReservedStatus(ctx context.Context, cl client.Client, namespace, claimName string, holdTTL time.Duration, now func() time.Time) (ReservedHold, error) {
 	if now == nil {
 		now = time.Now
@@ -266,8 +265,8 @@ func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, cl
 // caller that a rebind won the race and the pod is still claimed; err is nil
 // in that case so the caller distinguishes a lost race from a real failure.
 //
-// spec: §4.6.1 (precondition-guarded hold-expiry DELETE)
-// (rebind-vs-hold-expiry race: a rebind that lands first aborts the expiry).
+// spec: §4.6.1 (precondition-guarded hold-expiry DELETE; in the
+// rebind-vs-hold-expiry race a rebind that lands first aborts the expiry).
 func DeleteOnHoldExpiry(ctx context.Context, cl client.Client, namespace, claimName string, hold ReservedHold) (aborted bool, err error) {
 	claim := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{
