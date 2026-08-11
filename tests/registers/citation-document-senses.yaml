@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+#
+# Sense register for the citation-document gate in tests/tier0_static.
+#
+# The gate reports a §-number that names no section any document this
+# repository holds declares. An entry here is a reader's judgement that a
+# reported occurrence is legitimate anyway, keyed by file and by the
+# 1-based position of the occurrence among the unresolved references that
+# file carries, in source order.
+#
+# The three populations the gate closes over were resolved before it landed:
+# the proposal numbering, the testing-model numbering, and the citations that
+# over-specified a real section. An entry here is a claim that some further
+# form is legitimate, not a record of work deferred, and it carries the reason
+# a reader would need to agree.
+#
+# The gate reports an entry whose occurrence it no longer finds, so an
+# excuse cannot outlive the site it explained.
+kind: citation-document-senses
+version: 1
+entries:
+  - file: scripts/specshift/line/served.go
+    occurrence: 1
+    reason: |-
+      an example inside a comment about the matcher's boundary, "bounded so
+      §17.9.1 does not match §17.9.10", rather than a pointer into a document.
+      The number is chosen because nothing declares it, so a correction would
+      remove the case the comment explains.
+  - file: spec/15_external-api-surface.md
+    occurrence: 1
+    reason: |-
+      names TESTING.md §21.1, which the specification cannot qualify inline
+      without a spec edit. spec/ is written through the proposal pipeline and
+      the guard hook refuses a direct write, so the correction is staged there
+      rather than applied here.
+  - file: tests/tier3_contract/oauth_token/oauth_token_envelope_test.go
+    occurrence: 1
+    reason: |-
+      RFC 8693 §2.2.1, named at the head of the file and written bare in its
+      own prose further down. The file-wide reading of an external standard
+      deliberately holds back here because §2 is also a specification section,
+      so excusing the number by its top-level component would excuse a real
+      stale citation elsewhere in the same file.

@@ -26,8 +26,8 @@ import (
 // deadline still reports before the gateway retires the pod. The timeout
 // retires the pod if no ReportPodScrub arrives within
 // cleanupTimeoutSeconds plus this grace. It is a round-number control-plane
-// pad rather than a spec-fixed constant. spec: §3.4 (cleanupTimeoutSeconds
-// plus a grace), §4.7 (missing-report timeout).
+// pad rather than a spec-fixed constant. spec: §4.7 (missing-report
+// timeout, cleanupTimeoutSeconds plus a grace).
 const MissingReportGracePeriod = 15 * time.Second
 
 // DefaultCleanupTimeout is the §5.2 sessionPolicy.cleanupTimeoutSeconds
@@ -40,8 +40,8 @@ const DefaultCleanupTimeout = 60 * time.Second
 // completion poll re-reads the agent pod readiness while a recycling claim
 // carries rewarmStartedAt. The gateway has no pod informer (it dials the
 // cluster with a direct client, not a controller-runtime manager), so the
-// re-warm completion is polled rather than watched. spec: §3.4 (gateway-side
-// re-warm completion drives recycling → reserved).
+// re-warm completion is polled rather than watched: the gateway-side
+// re-warm completion drives recycling → reserved.
 const RewarmReadyPollInterval = 1 * time.Second
 
 // reserveFunc patches a recycling claim to reserved, stamping holdExpiresAt,

@@ -198,7 +198,7 @@ makes necessary.
 | 2. Plane | Control, content, or state | Distinguishes `CH-ATTACH` from `CH-ADAPTEREVENTS` |
 | 3. Transport | gRPC, Unix socket JSONL, JSON-RPC, HTTP, SQL, Redis, or Kubernetes API | Closed set; a new value requires a specification change |
 | 4. Boundary | `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`, `inter-replica`, or `control-plane` | Groups the contract cards. The same closed set names the §28.5 card groups and the Boundary column in §3.4, so a channel's boundary value and its card subsection are the same string. |
-| 5. Exclusivity | Granularity plus the enforcing guard, or the missing guard named | Reference §1.5 vocabulary, made a required field |
+| 5. Exclusivity | Granularity plus the enforcing guard, or the missing guard named | The `gateway-runtime-comms.md` §1.5 vocabulary, made a required field |
 
 The proto documents the axis 1a/1b inversion correctly for `GatewayControl`
 (`schemas/lenny-adapter.proto:230-234`) and does not document it at all for `LifecycleChannel`. Making
@@ -568,7 +568,7 @@ supersedes that list. Substrate for every capability step.
   template, capped at 25 lines per card. Grouping by edge is what makes the unbuilt adapter-to-gateway
   direction a visible block (§28.5.2, status `UNWIRED` end to end) rather than two rows in a twenty-two
   row table. The citable handle is `§28.5.2 CH-ADAPTEREVENTS`, a stable mnemonic anchor.
-- **28.6 Exclusivity and concurrency model.** Reference §1.5 vocabulary made normative, with the missing
+- **28.6 Exclusivity and concurrency model.** The `gateway-runtime-comms.md` §1.5 vocabulary made normative, with the missing
   guard named per channel.
 - **28.7 Wire-contract artifact register.** Derived mechanically from `ls schemas/**` rather than
   hand-enumerated. Measured today: `lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`,

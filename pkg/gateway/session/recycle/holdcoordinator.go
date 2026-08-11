@@ -49,8 +49,8 @@ type claimDeleter func(ctx context.Context, namespace, claimName string, hold po
 //
 // The coordinator is replica-local: only the replica that reserved the claim
 // holds its token and arms its timer. A different replica may rebind the
-// claim (Rebind re-reads the claim after its patch before dispatching, per
-// §3.2); the precondition on the holder's DELETE makes the cross-replica
+// claim (Rebind re-reads the claim after its patch before dispatching);
+// the precondition on the holder's DELETE makes the cross-replica
 // rebind win the race. If the holding replica crashes, the WarmPoolController
 // orphan GC reclaims the reserved claim after holdExpiresAt plus a grace
 // (§4.6.1), so a lost in-process timer never strands the pod.

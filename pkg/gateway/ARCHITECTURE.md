@@ -31,8 +31,8 @@ it implements; this index is the coarse map from concern to directory.
   groups.
 - `middleware` is already an intermediate group directory and stays at the
   gateway root. The §11.6 operator-managed circuit-breaker store (`breakerstore`)
-  nests under its existing `middleware/circuitbreaker` package, because §1.3 of
-  the proposal anchors it to the gateway-core circuit breaker it depends on
+  nests under its existing `middleware/circuitbreaker` package, because the
+  proposal's §1.3 anchors it to the gateway-core circuit breaker it depends on
   rather than to the persistence cluster.
 - `events` is split by Part B C2 rather than moved by C3. The shared event-type
   vocabulary (the CloudEvents envelope, the `source` discriminator, and the

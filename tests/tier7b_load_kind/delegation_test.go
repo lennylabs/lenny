@@ -30,7 +30,7 @@ import (
 // against the e2e gateway; a failure means the MCP delegation
 // hot path errored under load (a 4xx/5xx transport response, or an
 // `isError: true` tool result for which the k6 check fails) or its
-// latency regressed beyond the baseline budget. The §9.5 phase gate
+// latency regressed beyond the baseline budget. The §9 phase gate
 // compares the smoke run against the committed baseline JSON. Inspect
 // the k6 output for the failing check, the MCP error envelope, and
 // the gateway logs for the delegation error.

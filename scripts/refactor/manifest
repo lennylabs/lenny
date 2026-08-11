@@ -28,9 +28,10 @@
 #   pkg/gateway/middleware    -> already an intermediate group directory; it
 #                                stays at the gateway root. breakerstore nests
 #                                under its existing middleware/circuitbreaker
-#                                package (the §1.3 gateway-core re-anchor).
+#                                package (the proposal's §1.3 gateway-core
+#                                re-anchor).
 #
-# §1.3 exclusions encoded below:
+# The proposal's §1.3 exclusions encoded below:
 #   breakerstore     -> middleware/circuitbreaker/breakerstore (anchors into
 #                       gateway-core, not the persistence cluster).
 #   interceptorstore -> policy/interceptor/interceptorstore (anchors onto its
