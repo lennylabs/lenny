@@ -294,12 +294,12 @@ type PodInspector interface {
 	InspectForRecycle(ctx context.Context, podID string) (policy PodRecyclePolicy, found bool, err error)
 }
 
-// ClaimDispositionDriver applies a resolved §3.4 recycle disposition to the
+// ClaimDispositionDriver applies a resolved recycle disposition to the
 // pod's SandboxClaim binding state. The gateway satisfies it with the
 // podclaim binding-state writers (WriteRewarmStartedStatus,
 // WriteReservedStatus, WriteDispositionStatus). The interface keeps
 // leasecontrol free of the Kubernetes client and podclaim import.
-// spec: §3.4 (recycle disposition drives the claim binding state), §5.2.
+// spec: §5.2.
 type ClaimDispositionDriver interface {
 	// Recycle drives the reuse disposition. On a preConnect pool it stamps
 	// rewarmStartedAt on the recycling claim and coordinates the SDK re-warm
@@ -329,7 +329,7 @@ type ClaimDispositionDriver interface {
 	// [scrub_warning]` case); the limit-reached and fail-policy retires clear
 	// it. reason is the stable observability label, and detail is the optional
 	// adapter-side failure description retained in the audit trail on a FAILED
-	// outcome. spec: §3.4 (retire disposition), §6.2, §5.2 (audit retention of
+	// outcome. spec: §6.2, §5.2 (audit retention of
 	// the failed pod's metadata).
 	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error
 }

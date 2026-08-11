@@ -962,7 +962,7 @@ func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T)
 // recycling pool a clean session release patches the per-pod claim
 // bound → recycling rather than deleting it: the adapter-executed whole-pod
 // scrub (reported via §4.7 ReportPodScrub) then drives the recycle-vs-retire
-// disposition. The gateway writes no Sandbox.status field. spec: §6.2, §3.4
+// disposition. The gateway writes no Sandbox.status field. spec: §6.2
 // (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
 func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")

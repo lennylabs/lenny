@@ -113,7 +113,7 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 	case "draining", "terminated":
 		t.Logf("recycling claim reclaimed by draining; Sandbox %s is %q", sandboxRef, strings.TrimSpace(phase))
 	case "idle":
-		t.Errorf("§3.3 violation: Sandbox %s returned to idle after a recycling-claim reclaim; an "+
+		t.Errorf("violation: Sandbox %s returned to idle after a recycling-claim reclaim; an "+
 			"unscrubbed pod must drain, not re-pool", sandboxRef)
 	default:
 		t.Errorf("Sandbox %s phase = %q after reclaim, want draining or terminated", sandboxRef, strings.TrimSpace(phase))

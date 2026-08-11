@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security tests for the §5.2 / §6.60 / §13.1 concurrent-session
+// Tier-9 security tests for the §5.2 / §13.1 concurrent-session
 // (maxConcurrentSessions > 1) isolation boundaries that the §5.2 mode
 // collapse re-keyed onto the derived sessionPolicy. Two invariants are
 // pinned here as security-relevant admission and credential-handling
@@ -16,7 +16,7 @@
 //     slot sharing is never permitted. The microvm cross-tenant gate
 //     applies only to the sequential-reuse path (maxConcurrentSessions: 1).
 //
-//   - §6.60 / §13.1 per-slot credential-file read scope: each slot's
+//   - §13.1 per-slot credential-file read scope: each slot's
 //     credential file is written with the lenny-cred-readers group-read
 //     mode (0o440) so the runtime reads it while other UIDs cannot, and
 //     per-slot leases stay session-scoped — each slot holds its own lease

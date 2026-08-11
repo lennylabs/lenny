@@ -182,6 +182,61 @@ def run_batch(bpath, model, effort, out_path, done_path, brief=BRIEF):
     return n
 
 
+SECNUM = re.compile(r"§[\d.]+")
+
+
+def is_subsequence(small, big):
+    it = iter(big)
+    return all(c in it for c in small)
+
+
+def unsafe(before, after, target):
+    """Why this replacement must not be written, or None when it is safe.
+
+    Each check corresponds to a way an earlier run damaged the tree, and each is
+    mechanical because the instruction not to do it did not prevent it: a
+    reviewer told plainly never to write "spec §3.4" wrote it anyway.
+
+    The last check is the general one. Removing a pointer only ever deletes
+    characters, so a legitimate result is a subsequence of the line it replaces.
+    Anything introducing a character is doing something other than what was
+    asked, and the ways it has done so are not worth enumerating: one run copied
+    the listing's line-number prefix into a document, another re-punctuated a
+    clause it had stranded, and a third restructured a JSON tool schema so that a
+    declared type moved inside the object it described. The subsequence test
+    refuses all of them without having to anticipate any of them.
+    """
+    if re.search(r"spec[:\s]\s*§" + re.escape(target) + r"(?!\.?\d)", after):
+        return "asserts the proposal's number is a specification section"
+    b, a = SECNUM.findall(before), SECNUM.findall(after)
+    added = set(a) - set(b)
+    if added:
+        return "introduces a citation that was not there: " + ", ".join(sorted(added))
+    lost = [n for n in set(b) - set(a) if n.rstrip(".") != "§" + target]
+    if lost:
+        return "removes a citation it was not asked to touch: " + ", ".join(sorted(lost))
+    if not is_subsequence(after.strip(), before.strip()):
+        return "adds or reorders characters; removing a pointer only deletes"
+    # Deleting the pointer can still leave the sentence holding punctuation that
+    # belonged to it: an opening bracket whose subject has gone, a marker with
+    # nothing after it, a separator against a separator. Each pattern is reported
+    # only when the replacement introduces it, so a line that already read that
+    # way is not blamed on this edit.
+    for pat, what in STRANDED:
+        if re.search(pat, after) and not re.search(pat, before):
+            return what
+    return None
+
+
+STRANDED = [
+    (r"[,;:.]\s+[(\[]", "leaves a separator against an opening bracket"),
+    (r"[,;:]\s*[)\]]", "leaves a separator against a closing bracket"),
+    (r"[(\[]\s*[,;:)\]]", "leaves a bracket with nothing in it"),
+    (r"\b(?:spec|see|per)\s*:?\s*[(,;.]", "leaves a citation marker with nothing after it"),
+    (r"^\s*(?://+|#+)\s*[),;:.]", "leaves the comment starting on punctuation"),
+]
+
+
 def merge_per_line(rows, residual):
     """Collapse several decisions about one line into a single replacement.
 
@@ -221,7 +276,7 @@ def apply_decisions(out_path):
     for r in rows:
         by_file.setdefault(r["file"], []).append(r)
     tally = {"rewrite": 0, "drop": 0, "gap": 0, "leave": 0, "skipped": 0}
-    residual = []
+    residual, refused = [], []
     for f, rs in by_file.items():
         try:
             lines = open(f, errors="ignore").read().splitlines(keepends=True)
@@ -241,10 +296,28 @@ def apply_decisions(out_path):
             if not (0 <= i < len(lines)) or act not in ("rewrite", "drop") or not r.get("line_text"):
                 tally[act if act in tally else "skipped"] += 1
                 continue
-            lines[i] = r["line_text"].rstrip("\n") + "\n"
+            # Take the indentation from the file rather than from the reply. The
+            # site is shown inside a numbered listing, and a reviewer copying the
+            # text back reproduces the listing's padding, or once its line-number
+            # prefix, instead of the file's tabs.
+            body = r["line_text"].rstrip("\n").lstrip(" \t")
+            indent = lines[i][: len(lines[i]) - len(lines[i].lstrip(" \t"))]
+            candidate = indent + body + "\n"
+            why = unsafe(lines[i], candidate, r["section"])
+            if why:
+                refused.append({**r, "refused": why, "current": lines[i].strip()[:140]})
+                tally["skipped"] += 1
+                continue
+            lines[i] = candidate
             tally[act] += 1
         open(f, "w").write("".join(lines))
     print("applied:", tally)
+    if refused:
+        print(f"\n{len(refused)} replacement(s) refused as unsafe:")
+        for r in refused[:14]:
+            print(f"  {r['file']}:{r['line']}  {r['refused']}")
+            print(f"     -  {r['current'][:94]}")
+            print(f"     +  {(r['line_text'] or '').strip()[:94]}")
     if residual:
         print(f"\n{len(residual)} line(s) still carry a targeted number after merging;"
               f" they need a further reading:")

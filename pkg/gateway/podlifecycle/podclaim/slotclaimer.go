@@ -439,7 +439,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			// CreationTimestamp.
 			continue
 		}
-		// §3.2 within-hold rebind: a same-tenant claim held in `reserved`
+		// within-hold rebind: a same-tenant claim held in `reserved`
 		// within its hold window is dispatched onto with no acquisition round
 		// trip. The slot path consumes the hold by patching the claim
 		// `reserved → bound` before reserving the first slot; the rebind
@@ -522,7 +522,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	return nil, ErrNoConcurrentSlot
 }
 
-// rebindReservedSlot consumes a §3.2 reserved hold on a concurrent-session
+// rebindReservedSlot consumes a reserved hold on a concurrent-session
 // pod: when the same tenant holds the pod in `reserved` within its hold
 // window, it patches the claim `reserved → bound` and re-reads it so the slot
 // reservation lands on a `bound` claim. ok is false when the hold has expired
@@ -545,7 +545,7 @@ func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.San
 		}
 		return nil, false, fmt.Errorf("podclaim: rebind reserved claim %s for slot: %w", claim.Name, err)
 	}
-	// §3.2: re-read the claim after the rebind patch so the slot reservation
+	// re-read the claim after the rebind patch so the slot reservation
 	// lands on the post-rebind `bound` object. The claim name is the
 	// authoritative key; req.SandboxRef on the claim spec names its pod.
 	rebound, found, err := c.podClaim(ctx, claim.Spec.SandboxRef)
@@ -689,7 +689,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // ReleaseSlot releases a concurrent-session slot when its session ends or
 // fails. It decrements the pod's §5.2 Redis slot counter and, when the last
 // slot drains (the counter reaches zero), disposes of the per-pod SandboxClaim
-// per the §3.4 recycle disposition. While other slots remain the claim is
+// per the recycle disposition. While other slots remain the claim is
 // left in place: the per-pod claim spans the whole occupancy episode, and
 // the session-to-pod binding the released session held is cleared on its
 // Postgres session row by the session server. The gateway does not write
@@ -697,7 +697,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // from claim existence and binding state (§4.6.1, §6.2).
 //
 // recycle selects the occupancy-zero disposition for a recycling pool (the
-// §3.1 "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
+// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
 // true) on a clean terminal: the last-slot-drain edge patches the per-pod
 // claim bound → recycling (WriteRecyclingStatus) rather than deleting it, so
 // the adapter runs the whole-pod scrub when occupancy reaches zero and its
@@ -733,7 +733,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // internal. It is false on every other release (a sibling slot remains, the
 // slot leaked, the pool does not recycle, or the claim had already vanished).
 //
-// spec: §3.1, §5.2 (occupancy-zero recycle disposition); §6.2 (leaked slot
+// spec: §5.2 (occupancy-zero recycle disposition); §6.2 (leaked slot
 // remains counted); §6.2; §5.2 (whole-pod scrub trigger, threaded to the
 // binder via recycled).
 func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {

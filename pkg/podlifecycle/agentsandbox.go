@@ -177,7 +177,7 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 	claim.Namespace = pod.Namespace
 	claim.Name = podclaim.ClaimName(pod.Name)
 	claim.Spec.SandboxRef = pod.Name
-	// The claim's spec carries sandboxRef and tenantId (§4.6.1 / §6.5
+	// The claim's spec carries sandboxRef and tenantId (§4.6.1
 	// claim-spec contract); stamp the tenant the pod is pinned to.
 	claim.Spec.TenantID = opts.TenantID
 	if err := m.Client.Create(ctx, claim); err != nil {

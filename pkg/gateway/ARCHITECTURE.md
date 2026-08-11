@@ -83,7 +83,7 @@ it is kept cohesive in one subtree.
 The policy engine is physically embedded in the gateway and is not yet split out
 (§4.8), so it stays in the gateway tree. The `RequestInterceptor` extension point
 (§4.8) and the §11.1 request-rate limiter group here. `interceptorstore` nests
-under `interceptor` because it anchors onto that gateway-core dependency (§1.3).
+under `interceptor` because it anchors onto that gateway-core dependency.
 
 `interceptor`, `interceptor/interceptorstore`, `policy`, `ratelimit`.
 

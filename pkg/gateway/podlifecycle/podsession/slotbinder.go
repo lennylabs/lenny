@@ -92,7 +92,7 @@ type SlotBindRequest struct {
 	// scrub clears the cross-cohort residue (shared /tmp, /dev/shm, surviving
 	// processes). False for a non-recycling concurrent pool (the "Bounded
 	// cohort" preset), where the pod terminates after the cohort drains. spec:
-	// §6.30/§6.2 (occupancy-zero recycle edge on a recycling pod).
+	// §6.2 (occupancy-zero recycle edge on a recycling pod).
 	Recycle bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters (folded onto PoolMatch from the sessionPolicy mirror) carried
@@ -332,7 +332,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
-		// spec: §3.4 / §5.2 — carry the pool's recycle.enabled flag so
+		// spec: §5.2 — carry the pool's recycle.enabled flag so
 		// ReleaseSlot drives the §4.7 recycle disposition (patch the per-pod
 		// claim bound → recycling, signal the whole-pod scrub) on the
 		// occupancy-zero edge of a recycling concurrent pool rather than

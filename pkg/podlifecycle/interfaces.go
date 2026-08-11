@@ -108,7 +108,7 @@ type PoolManager interface {
 type ClaimOpts struct {
 	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
 	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
-	// sandboxRef, matching the §4.6.1 / §6.5 claim-spec contract: the claim's
+	// sandboxRef, matching the §4.6.1 claim-spec contract: the claim's
 	// spec carries sandboxRef and tenantId. Empty leaves the claim
 	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
 	TenantID string

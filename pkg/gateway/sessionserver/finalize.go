@@ -306,7 +306,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 // mismatch; any other error (a store read failure, a proxy-dialect mismatch)
 // is returned unchanged so it keeps its own envelope.
 //
-// spec: §4.9; §7.3, §7.6
+// spec: §4.9; §7.3
 // (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; the mismatch
 // surfaces as CREDENTIAL_POOL_EXHAUSTED at /finalize).
 func mapFinalizeCredentialMismatch(err error) error {

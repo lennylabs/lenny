@@ -117,7 +117,7 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 		return err == nil && strings.TrimSpace(out) == ""
 	})
 	if !reclaimed {
-		t.Fatalf("§3.2 violation: the reserved claim %s was not reclaimed by the orphan GC "+
+		t.Fatalf("violation: the reserved claim %s was not reclaimed by the orphan GC "+
 			"within the sweep window after holdExpiresAt plus the grace period; a holder crash "+
 			"during the hold window must be recovered by the leader-elected GC", claimName)
 	}

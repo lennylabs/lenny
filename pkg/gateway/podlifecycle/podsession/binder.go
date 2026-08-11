@@ -510,8 +510,8 @@ type BindResult struct {
 	// recycling concurrent-session pool (the §5.2 "Concurrent" preset) the same
 	// disposition runs when the last slot drains cleanly (ReleaseSlot →
 	// SlotClaimer.ReleaseSlot). False for a non-recycling pool, where the pod
-	// terminates after the session or cohort drains. spec: §3.1, §5.2,
-	// §6.30/§6.2.
+	// terminates after the session or cohort drains. spec: §5.2,
+	// §6.2.
 	Recycle bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters carried from the bind request so the recycle-path Shutdown
@@ -1891,7 +1891,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 		// recycle disposition plus the pool's whole-pod scrub parameters: it is
 		// the occupancy-zero signal that runs the §5.2 whole-pod scrub the
 		// adapter reports via ReportPodScrub, which drives the disposition off
-		// the `recycling` binding state. spec: §3.1, §4.7, §5.2 (whole-pod scrub
+		// the `recycling` binding state. spec: §4.7, §5.2 (whole-pod scrub
 		// on the occupancy-zero recycle edge).
 		b.shutdownAdapter(ctx, result, true)
 		return nil

@@ -130,7 +130,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.
 	if claim.Spec.SandboxRef != "pod-1" {
 		t.Errorf("claim SandboxRef = %q, want pod-1", claim.Spec.SandboxRef)
 	}
-	// The claim's spec carries sandboxRef and tenantId (§4.6.1 / §6.5
+	// The claim's spec carries sandboxRef and tenantId (§4.6.1
 	// claim-spec contract); the tenant from ClaimOpts is stamped on the claim.
 	if claim.Spec.TenantID != "acme" {
 		t.Errorf("claim TenantID = %q, want acme (claim-spec tenant pin)", claim.Spec.TenantID)

@@ -235,7 +235,7 @@ func TestOnRecyclingReArmCancelsPriorTimer(t *testing.T) {
 // reserved and registers the hold. This is the producer of the recycling →
 // reserved patch that was previously absent on preConnect pools.
 //
-// spec: §3.4 (re-warm completion drives recycling → reserved), §6.2 (hold
+// spec: §6.2 (hold
 // registration after the reserved patch), §6.2 (recycling → reserved
 // binding edge).
 func TestPreConnectRewarmCompletionReservesOnReady(t *testing.T) {

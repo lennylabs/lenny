@@ -12,7 +12,7 @@
 // The companion §12.7 streaming_reconnect scenario lives in
 // scaffolds_test.go and stays a t.Skip blocker until the gatewaymetrics
 // middleware response-writer wrapper forwards http.Flusher; until that
-// lands, the SSE consumption path cannot be load-tested. The §6.5
+// lands, the SSE consumption path cannot be load-tested. The
 // streaming_throughput smoke run drives the synchronous message
 // round-trip (POST /v1/sessions/{id}/messages), which is the
 // inject-and-stream-back path the executor publishes events through —
@@ -31,7 +31,7 @@ import (
 // failed. The scenario POSTs /v1/sessions/{id}/messages against the
 // e2e gateway; a failure means the synchronous executor round-trip
 // errored under load or its latency regressed beyond the baseline
-// budget. The §6.5 phase gate compares the smoke run against the
+// budget. The phase gate compares the smoke run against the
 // committed baseline JSON; the cloud tier runs the strict §13.29
 // regression comparison. Inspect the k6 output for the failing check
 // and the gateway logs for the executor error.

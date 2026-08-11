@@ -178,7 +178,7 @@ type ReservedHold struct {
 // patch, so a cross-replica rebind that lands first wins the race.
 //
 // spec: §4.6.1 (reserved hold, holdExpiresAt stamp, precondition token),
-// §4.6.3 (binding-state enumeration, holdExpiresAt), §6.14 (reserved
+// §4.6.3 (binding-state enumeration, holdExpiresAt).
 // projection).
 func WriteReservedStatus(ctx context.Context, cl client.Client, namespace, claimName string, holdTTL time.Duration, now func() time.Time) (ReservedHold, error) {
 	if now == nil {

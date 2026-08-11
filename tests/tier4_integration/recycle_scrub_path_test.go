@@ -232,7 +232,7 @@ func recycleBinder(c client.Client, dial func(string) (*adapterclient.Client, er
 	}, armer
 }
 
-// newRecycleCoordinator builds the production §3.4 RecycleBoundaryCoordinator
+// newRecycleCoordinator builds the production RecycleBoundaryCoordinator
 // against the cluster, so the dropped-report test exercises the real
 // missing-report timeout. It seeds a corev1.Pod carrying the pool label and a
 // poolstore pool with a 1s cleanupTimeoutSeconds; a 5ms grace bounds the timer
@@ -394,7 +394,7 @@ func claimPhase(t *testing.T, c client.Client, sandbox string) string {
 
 // diagnosis: a failure means the §5.2 recycle path broke end to end. If the
 // claim is not `recycling` after a clean release, Release did not patch the
-// claim before signaling the scrub (the §3.4 patch-then-scrub ordering). If the
+// claim before signaling the scrub (the patch-then-scrub ordering). If the
 // adapter ran no scrub or emitted no ReportPodScrub, the folded RecycleScrub did
 // not trigger the whole-pod scrub. If the reported outcome does not drive
 // podscrub.Decide to `reserved`, the disposition is not consuming the scrub
@@ -431,7 +431,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
-		t.Fatalf("claim phase after clean recycle Release = %q, want recycling (§3.4 patch-then-scrub)", got)
+		t.Fatalf("claim phase after clean recycle Release = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
 		t.Fatalf("missing-report timers armed = %v, want [sbx-r]", armed)
@@ -483,7 +483,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 }
 
 // TestRecyclePathDroppedReportRetires_spec_3_4 asserts the fail-closed backstop
-// end to end: when the adapter's scrub report never arrives, the real §3.4
+// end to end: when the adapter's scrub report never arrives, the real
 // missing-report timeout coordinator retires the pod rather than leaving it
 // stuck in `recycling`. The adapter runs the scrub but has no PodScrubReporter,
 // so it withholds the report (the dropped-report case); the coordinator's timer
@@ -492,7 +492,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 //
 // diagnosis: a failure means the missing-report timeout stopped retiring a pod
 // whose scrub never reported, so a hung or reporterless adapter would leave the
-// pod stuck in `recycling` — the availability backstop the §3.4 timeout exists
+// pod stuck in `recycling` — the availability backstop the timeout exists
 // to provide.
 // spec: 3.4 (gateway-side missing-report timeout), 5.2 (recycle lifecycle),
 // 6.2 (retire on missing report)
@@ -504,7 +504,7 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 	// off `recycling`.
 	srv, scrubDone := newRecycleAdapter(t, ops, nil)
 
-	// Wire the production §3.4 coordinator against the same cluster. A pod
+	// Wire the production coordinator against the same cluster. A pod
 	// object carrying the pool label plus a poolstore pool with a 1s
 	// cleanupTimeoutSeconds and a tiny grace bound the real missing-report timer
 	// to about a second, so the test exercises the genuine timer rather than a

@@ -11,7 +11,7 @@
 // /v1/sessions/{id}/messages, and reads the synchronous response. The
 // POST returns once the in-process executor has emitted its output
 // parts, so the per-request duration is the gateway's
-// inject-and-stream-back cost — the throughput surface the §6.5 phase
+// inject-and-stream-back cost — the throughput surface the phase
 // gate baselines.
 //
 // The full SSE consumption path (GET /v1/sessions/{id}/events) is the
