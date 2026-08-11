@@ -12,7 +12,7 @@ subsystem boundaries that are Go interfaces within a single binary rather than
 separate services (§4.1). The grouping preserves that component boundary: every
 package stays inside `pkg/gateway`, and each §4.1 subsystem and the §4.8 policy
 engine occupies one group subtree, so a future per-pod extraction of a
-subsystem (the LLM Proxy is the named first target, per §02 and §4.1) is a
+subsystem (the LLM Proxy is the named first target, per §2 and §4.1) is a
 directory-subtree move rather than a scattered cherry-pick. The remaining
 packages group by their §10, §11, §12, and §25 concern beneath those boundaries.
 

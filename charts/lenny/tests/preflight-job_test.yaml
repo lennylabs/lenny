@@ -33,7 +33,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--acknowledge-no-prometheus=true"
 
-  # spec: §17.9.2 / §17.9.11 — preflight.skipNetworkProbes is
+  # spec: §17.9.2 / §17.9 — preflight.skipNetworkProbes is
   # false by default so the backend-reachability probes run. F-17.9.11.
   - it: passes --skip-network-probes=false by default
     documentSelector:

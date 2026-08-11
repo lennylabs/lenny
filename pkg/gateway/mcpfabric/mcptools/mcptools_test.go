@@ -584,7 +584,7 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 	}
 }
 
-// TestToolErrorsCarryCanonicalEnvelopeCode asserts the §15.2.12
+// TestToolErrorsCarryCanonicalEnvelopeCode asserts the §15.2
 // conversion: tool error paths that previously returned a plain Go
 // error (and so fell back to INTERNAL_ERROR / TRANSIENT / retryable=true
 // in handleToolCall) now return *mcp.ToolError carrying the canonical

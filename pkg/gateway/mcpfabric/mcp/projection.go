@@ -14,7 +14,7 @@ import (
 // SessionEvent.Kind to exactly one MCP wire frame on the session's SSE
 // stream. The live session-event bus carries string-typed events
 // (status_change, response, elicitation_request, tool_use_requested,
-// ...); this file is the classifier that lifts those onto the §15.0
+// ...); this file is the classifier that lifts those onto the §15
 // closed SessionEventKind enum and the projector that renders each kind
 // as its method-specific JSON-RPC frame. Event types that fall outside
 // the closed enum (message_delivered, session_expiring_soon,
@@ -24,7 +24,7 @@ import (
 //
 // spec: §15.2; §8.8. F-15.2.13, F-15.2.14.
 
-// sessionEventKind mirrors the §15.0 closed SessionEventKind enum. It is
+// sessionEventKind mirrors the §15 closed SessionEventKind enum. It is
 // duplicated here as an unexported string type so the transport package
 // classifies a live bus event without importing adapterregistry (which
 // would couple the wire transport to the adapter-registration layer).
@@ -54,7 +54,7 @@ var terminalLennyStates = map[string]bool{
 }
 
 // classifyEventKind lifts a live session-event-bus type string onto the
-// §15.0 closed SessionEventKind enum, consulting the payload where the
+// §15 closed SessionEventKind enum, consulting the payload where the
 // kind depends on the event's state (a terminal status_change maps to
 // SessionEventTerminated). It returns kindUnclassified for bus event
 // types outside the closed enum so the caller falls back to the generic
@@ -445,7 +445,7 @@ func marshalServerRequest(id, method string, params any) []byte {
 	return b
 }
 
-// marshalGenericSessionEvent renders an event outside the §15.0 closed
+// marshalGenericSessionEvent renders an event outside the §15 closed
 // SessionEventKind enum as the generic notifications/lenny/sessionEvent
 // frame under the §15.2 notifications/lenny/* extension
 // namespace, which conforming clients ignore if unrecognized. This is the

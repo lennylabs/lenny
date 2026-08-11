@@ -44,7 +44,7 @@ func TestWebSocketEchoesSubprotocol(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 / §27.5.4 — when an origin=playground bearer is
+// spec: §27.3.1 / §27.5 — when an origin=playground bearer is
 // revoked mid-stream the gateway closes the WebSocket with code 4401 so
 // the in-flight connection is disconnected rather than honored to token
 // expiry.
@@ -68,7 +68,7 @@ func TestWebSocketRevocationClosesWith4401(t *testing.T) {
 	}
 }
 
-// spec: §27.5.4 — the revocation watch is keyed on the origin=playground
+// spec: §27.5 — the revocation watch is keyed on the origin=playground
 // claim; a non-playground MCP WebSocket client is never watched, so a
 // revoked checker (which would never be consulted for it) does not close
 // the connection.
@@ -90,7 +90,7 @@ func TestWebSocketRevocationWatchSkipsNonPlayground(t *testing.T) {
 	}
 }
 
-// spec: §27.5.4 — a playground connection whose bearer is not revoked
+// spec: §27.5 — a playground connection whose bearer is not revoked
 // keeps serving frames; the watch does not close a live bearer.
 func TestWebSocketRevocationWatchKeepsAliveWhenNotRevoked(t *testing.T) {
 	srv := mcp.NewServer()

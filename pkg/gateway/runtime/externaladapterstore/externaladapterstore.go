@@ -55,7 +55,7 @@ func (s Status) IsValid() bool {
 // RegisterAdapterUnderTest conformance suite (StatusActive) routes;
 // adapters in pending_validation or validation_failed are excluded from
 // all traffic routing. This is the machine-enforceable production gate
-// the §15.0 ExternalAdapterRegistry consults before dispatching to a
+// the §15 ExternalAdapterRegistry consults before dispatching to a
 // runtime-registered adapter.
 //
 // spec: §15.

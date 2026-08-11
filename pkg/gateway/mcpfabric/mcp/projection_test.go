@@ -29,7 +29,7 @@ func ev(typ, sessionID, data string) sessionevents.Event {
 }
 
 // spec: §15.2 — classifier lifts live bus types onto the
-// §15.0 closed SessionEventKind enum, with the terminal status_change
+// §15 closed SessionEventKind enum, with the terminal status_change
 // branch.
 func TestClassifyEventKind_spec_15_2_1356(t *testing.T) {
 	cases := []struct {

@@ -130,7 +130,7 @@ func TestPlaygroundEgressGate_spec_27_9_251(t *testing.T) {
 		t.Error("playgroundEgress with no extractor = true, want false")
 	}
 	// Wired extractor keyed on a header. nil revocations leaves the
-	// §27.5.4 watch off while the egress gate still reads origin.
+	// §27.5 watch off while the egress gate still reads origin.
 	s.SetWebSocketAuth(func(r *http.Request) (WSPrincipal, bool) {
 		return WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Origin")}, true
 	}, nil, 0)

@@ -57,7 +57,7 @@ The cloud-managed fragments carry placeholder connection endpoints
 (marked `REPLACE-...`) that the operator overrides per deployment. The
 `airgap-self-managed.yaml` fragment additionally sets a private registry
 mirror (`platform.registry.*`) and `preflight.skipNetworkProbes: true`
-(§17.9.11). Each catalog fragment is linted against
+(§17.9). Each catalog fragment is linted against
 `charts/lenny/values.schema.json` by
 `pkg/chart/values.TestCatalogAnswerFilesConformToSchema` (§17.9.2), and the wizard auto-suggests a catalog base from cluster
 detection (§17.9.2; see the install wizard).

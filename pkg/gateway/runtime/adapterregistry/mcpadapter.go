@@ -19,7 +19,7 @@ const mcpPathPrefix = "/mcp"
 //
 // The HTTP surface (initialize / tools/list / tools/call, plus the
 // Streamable HTTP and WebSocket transports) stays in pkg/gateway/mcp; the
-// MCPAdapter wraps that handler and adds only the §15.0 lifecycle/outbound
+// MCPAdapter wraps that handler and adds only the §15 lifecycle/outbound
 // contract the registry dispatches through. spec: §15.
 type MCPAdapter struct {
 	BaseAdapter
@@ -41,7 +41,7 @@ func (a *MCPAdapter) HTTPHandler() http.Handler { return a.handler }
 
 // Capabilities returns the §15.2 MCP adapter discovery declaration. The
 // MCP transport natively supports the hop-by-hop elicitation chain
-// (§9.2), so SupportsElicitation is true; this also satisfies the §15.0
+// (§9.2), so SupportsElicitation is true; this also satisfies the §15
 // capability-consistency invariant against the elicitation outbound kind
 // declared below.
 func (*MCPAdapter) Capabilities() Capabilities {

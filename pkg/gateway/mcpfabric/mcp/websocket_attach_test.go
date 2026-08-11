@@ -69,7 +69,7 @@ func sessionEventParams(t *testing.T, ctx context.Context, conn *websocket.Conn)
 func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	// message_delivered events project to the generic
-	// notifications/lenny/sessionEvent frame (they are outside the §15.0
+	// notifications/lenny/sessionEvent frame (they are outside the §15
 	// closed SessionEventKind enum), so this transport test exercises the
 	// ack / backlog / live ordering independent of the §15.2.1 per-kind
 	// projection (covered in projection_test.go). F-15.2.13.

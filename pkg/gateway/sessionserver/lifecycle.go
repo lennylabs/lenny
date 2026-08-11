@@ -462,7 +462,7 @@ func (s *Server) emitAwaitingClientActionExpired(ctx context.Context, sess sessi
 // create-time deadline in place rather than fail the terminal
 // transition.
 //
-// spec: §7.1 and §7.1.16 — the
+// spec: §7.1 and §7.1 — the
 // window starts at the terminal transition.
 func (s *Server) rollRetentionOnTerminal(ctx context.Context, sess sessionstore.Session) {
 	deadline := s.clock().Add(s.retentionForTier(ctx, sess.TenantID, sess.Environment))

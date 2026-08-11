@@ -432,7 +432,7 @@ func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 // SPA wire-key and the server decode disagree, or the create decoder changed
 // its handling of the nested delegationLease block.
 // spec: §27.4 (playground delegation-policy field), §14 (CreateSessionRequest
-// outer fields), §08.3 (delegation policy resource).
+// outer fields), §8.3 (delegation policy resource).
 func TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4(t *testing.T) {
 	store := memstore.New()
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})

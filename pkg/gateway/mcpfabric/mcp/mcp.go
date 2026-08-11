@@ -222,12 +222,12 @@ type Server struct {
 	// zero IdempotencyConfig disables the per-tool idempotency path.
 	// spec: §11.5; F-11.5.1.
 	idem IdempotencyConfig
-	// wsAuth carries the §27.5.4 WebSocket revocation watch wiring: the
+	// wsAuth carries the §27.5 WebSocket revocation watch wiring: the
 	// per-connection principal extractor and the playground revocation
 	// checker that together close a revoked origin=playground bearer
 	// mid-stream with WebSocket code 4401. A zero value leaves the watch
 	// off, so a non-playground MCP WebSocket client serves frames without
-	// it. spec: §27.3.1; §27.5.4.
+	// it. spec: §27.3.1; §27.5.
 	wsAuth wsAuthConfig
 	// attach carries the §15.2 Streamable HTTP SSE channel wiring. A zero
 	// value (Events == nil) leaves attach streaming off, so an

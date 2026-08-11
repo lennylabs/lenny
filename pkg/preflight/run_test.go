@@ -488,7 +488,7 @@ func networkProbeConfig(skip bool, called *[4]bool) preflight.Config {
 	}
 }
 
-// spec: §17.9.2 / §17.9.11 — preflight.skipNetworkProbes drops
+// spec: §17.9.2 / §17.9 — preflight.skipNetworkProbes drops
 // the backend-reachability probes (MinIO SSE, BYO-Redis maxmemory, OTLP
 // TLS handshake, ops-admin internal-TLS handshake) for an air-gapped
 // install while the cluster-API checks still run. F-17.9.11.

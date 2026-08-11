@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-// Package adapterregistry implements the §15.0 ExternalAdapterRegistry:
+// Package adapterregistry implements the §15 ExternalAdapterRegistry:
 // the gateway-side registry that holds every registered external
 // protocol adapter, mounts each adapter's HTTP surface on a shared
 // http.ServeMux, and fans out the session-lifecycle hooks
 // (OnSessionCreated, OnSessionEvent, OnSessionTerminated) per the
-// §15.0 ExternalProtocolAdapter interface.
+// §15 ExternalProtocolAdapter interface.
 //
 // v1 scope: the built-in MCP, OpenAI Completions, and Open Responses
 // adapters register through this surface so cmd/lenny-gateway/main.go
 // composes the gateway HTTP mux through Registry.Mount instead of
-// stamping each handler onto the mux by hand. The §15.0 admin-API
+// stamping each handler onto the mux by hand. The §15 admin-API
 // runtime-registration path (POST /v1/admin/external-adapters) is
 // served by the same Registry so a third-party adapter registered at
 // runtime takes effect without a restart. OutboundChannel dispatch is
@@ -30,17 +30,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 )
 
-// Capabilities is the §15.0 AdapterCapabilities — re-exported here as
+// Capabilities is the §15 AdapterCapabilities — re-exported here as
 // the registry's public Capabilities type so callers do not have to
 // import pkg/gateway/adapter for the registry contract alone. The
 // underlying struct is the same value type so a third-party adapter
 // can populate either symbol interchangeably.
 type Capabilities = adapter.Capabilities
 
-// SessionMetadata is the §15.0 SessionMetadata projection passed to
+// SessionMetadata is the §15 SessionMetadata projection passed to
 // OnSessionCreated. v1 carries only the fields wired up by the
 // existing gateway surfaces; the spec defines the full closed set in
-// §15.0 "Shared Adapter Types".
+// §15 "Shared Adapter Types".
 type SessionMetadata struct {
 	TenantID                  string
 	SessionID                 string
@@ -49,31 +49,31 @@ type SessionMetadata struct {
 	NegotiatedProtocolVersion string
 }
 
-// SessionEventKind is the §15.0 closed enum of outbound event
+// SessionEventKind is the §15 closed enum of outbound event
 // categories. It mirrors the SessionEventKind constants in spec
-// §15.0; adapters declare the subset they handle via
+// §15; adapters declare the subset they handle via
 // OutboundCapabilitySet.SupportedEventKinds.
 type SessionEventKind string
 
 const (
-	// SessionEventStateChange — session state transition (§15.0).
+	// SessionEventStateChange — session state transition (§15).
 	SessionEventStateChange SessionEventKind = "state_change"
-	// SessionEventOutput — agent output frame (§15.0).
+	// SessionEventOutput — agent output frame (§15).
 	SessionEventOutput SessionEventKind = "output"
-	// SessionEventElicitation — elicitation request surfaced (§15.0).
+	// SessionEventElicitation — elicitation request surfaced (§15).
 	SessionEventElicitation SessionEventKind = "elicitation"
-	// SessionEventToolUse — tool-call lifecycle transition (§15.0).
+	// SessionEventToolUse — tool-call lifecycle transition (§15).
 	SessionEventToolUse SessionEventKind = "tool_use"
-	// SessionEventError — non-terminal session error (§15.0).
+	// SessionEventError — non-terminal session error (§15).
 	SessionEventError SessionEventKind = "error"
-	// SessionEventTerminated — terminal-state event (§15.0).
+	// SessionEventTerminated — terminal-state event (§15).
 	SessionEventTerminated SessionEventKind = "terminated"
 )
 
-// AllSessionEventKinds returns the §15.0 closed SessionEventKind enum in
+// AllSessionEventKinds returns the §15 closed SessionEventKind enum in
 // spec order. The gateway will never dispatch a kind outside this set and
 // third-party adapters MUST NOT rely on receiving unknown kinds
-// (§15.0 "SessionEvent Kind Registry"). spec: §15.
+// (§15 "SessionEvent Kind Registry"). spec: §15.
 func AllSessionEventKinds() []SessionEventKind {
 	return []SessionEventKind{
 		SessionEventStateChange,
@@ -85,7 +85,7 @@ func AllSessionEventKinds() []SessionEventKind {
 	}
 }
 
-// IsValid reports whether k is one of the §15.0 closed-enum kinds.
+// IsValid reports whether k is one of the §15 closed-enum kinds.
 func (k SessionEventKind) IsValid() bool {
 	for _, v := range AllSessionEventKinds() {
 		if k == v {
@@ -95,7 +95,7 @@ func (k SessionEventKind) IsValid() bool {
 	return false
 }
 
-// ValidateCapabilityConsistency enforces the §15.0 "Capability-consistency
+// ValidateCapabilityConsistency enforces the §15 "Capability-consistency
 // invariant with elicitation policy": an adapter that declares
 // SessionEventElicitation in its OutboundCapabilitySet.SupportedEventKinds
 // MUST also return AdapterCapabilities.SupportsElicitation: true. Declaring
@@ -108,21 +108,21 @@ func ValidateCapabilityConsistency(caps Capabilities, out OutboundCapabilitySet)
 	declaresElicitation := false
 	for _, k := range out.SupportedEventKinds {
 		if !k.IsValid() {
-			return fmt.Errorf("adapterregistry: SupportedEventKinds carries %q which is outside the §15.0 closed SessionEventKind enum", k)
+			return fmt.Errorf("adapterregistry: SupportedEventKinds carries %q which is outside the §15 closed SessionEventKind enum", k)
 		}
 		if k == SessionEventElicitation {
 			declaresElicitation = true
 		}
 	}
 	if declaresElicitation && !caps.SupportsElicitation {
-		return fmt.Errorf("adapterregistry: adapter declares the %q outbound kind but Capabilities.SupportsElicitation is false (§15.0 capability-consistency invariant)", SessionEventElicitation)
+		return fmt.Errorf("adapterregistry: adapter declares the %q outbound kind but Capabilities.SupportsElicitation is false (§15 capability-consistency invariant)", SessionEventElicitation)
 	}
 	return nil
 }
 
 // SessionEvent is the outbound event envelope dispatched to adapters
-// per §15.0. v1 carries the minimum fields the built-in surfaces
-// emit; the spec defines the closed schema in §15.0 "Shared Adapter
+// per §15. v1 carries the minimum fields the built-in surfaces
+// emit; the spec defines the closed schema in §15 "Shared Adapter
 // Types".
 type SessionEvent struct {
 	Kind      SessionEventKind
@@ -131,29 +131,29 @@ type SessionEvent struct {
 	SessionID string
 }
 
-// TerminationCode is the §15.0 closed enum of terminal-state causes.
+// TerminationCode is the §15 closed enum of terminal-state causes.
 type TerminationCode string
 
 const (
-	// TerminationCompleted — runtime finished normally (§15.0).
+	// TerminationCompleted — runtime finished normally (§15).
 	TerminationCompleted TerminationCode = "completed"
-	// TerminationFailed — runtime exited abnormally (§15.0).
+	// TerminationFailed — runtime exited abnormally (§15).
 	TerminationFailed TerminationCode = "failed"
-	// TerminationCancelled — caller cancelled the session (§15.0).
+	// TerminationCancelled — caller cancelled the session (§15).
 	TerminationCancelled TerminationCode = "cancelled"
-	// TerminationExpired — session exceeded its max age (§15.0).
+	// TerminationExpired — session exceeded its max age (§15).
 	TerminationExpired TerminationCode = "expired"
-	// TerminationDrained — gateway/pod drained before completion (§15.0).
+	// TerminationDrained — gateway/pod drained before completion (§15).
 	TerminationDrained TerminationCode = "drained"
 )
 
-// TerminationReason is the §15.0 closed-enum termination cause.
+// TerminationReason is the §15 closed-enum termination cause.
 type TerminationReason struct {
 	Code   TerminationCode
 	Detail string
 }
 
-// OutboundCapabilitySet is the §15.0 declaration of an adapter's
+// OutboundCapabilitySet is the §15 declaration of an adapter's
 // asynchronous push capabilities. All fields are false in the zero
 // value (the BaseAdapter default).
 type OutboundCapabilitySet struct {
@@ -162,7 +162,7 @@ type OutboundCapabilitySet struct {
 	MaxConcurrentSubscriptions int
 }
 
-// OutboundSubscription is the §15.0 caller-supplied delivery target
+// OutboundSubscription is the §15 caller-supplied delivery target
 // (webhook URL, persistent SSE writer, etc.).
 type OutboundSubscription struct {
 	CallbackURL    string
@@ -170,15 +170,15 @@ type OutboundSubscription struct {
 	Metadata       map[string]string
 }
 
-// OutboundChannel is the §15.0 push-channel handle. Send is
+// OutboundChannel is the §15 push-channel handle. Send is
 // non-blocking (the channel implements either buffered-drop or
-// bounded-error policy per §15.0); Close releases resources.
+// bounded-error policy per §15); Close releases resources.
 type OutboundChannel interface {
 	Send(ctx context.Context, event SessionEvent) error
 	Close() error
 }
 
-// ExternalProtocolAdapter is the §15.0 canonical interface every
+// ExternalProtocolAdapter is the §15 canonical interface every
 // external adapter implements. The required methods (HandleInbound,
 // HandleDiscovery, Capabilities) are mandatory; the optional lifecycle
 // and outbound hooks have no-op defaults via BaseAdapter so existing
@@ -190,17 +190,17 @@ type ExternalProtocolAdapter interface {
 	Name() string
 
 	// HTTPHandler returns the http.Handler the registry mounts at
-	// Capabilities().PathPrefix. The handler implements §15.0
+	// Capabilities().PathPrefix. The handler implements §15
 	// HandleInbound and HandleDiscovery on the appropriate routes; the
 	// registry treats the returned value as opaque.
 	HTTPHandler() http.Handler
 
-	// Capabilities returns the §15.0 AdapterCapabilities declaration.
+	// Capabilities returns the §15 AdapterCapabilities declaration.
 	// PathPrefix MUST be non-empty and unique across the registry.
 	Capabilities() Capabilities
 
 	// OnSessionCreated is invoked once per session immediately after
-	// the gateway has materialized the session record. Per §15.0
+	// the gateway has materialized the session record. Per §15
 	// adapters MAY use this hook to allocate per-session state (push
 	// channels, correlation maps); returning a non-nil error fails the
 	// session-create call.
@@ -209,54 +209,54 @@ type ExternalProtocolAdapter interface {
 	// OnSessionEvent is invoked for each SessionEvent the gateway
 	// emits while the session is active. The registry filters by the
 	// adapter's declared OutboundCapabilitySet.SupportedEventKinds per
-	// the §15.0 dispatch-filter rule before calling this hook.
+	// the §15 dispatch-filter rule before calling this hook.
 	OnSessionEvent(ctx context.Context, event SessionEvent) error
 
 	// OnSessionTerminated is invoked once per session when it reaches
-	// a terminal state. Per §15.0 the hook MUST be safe to call after
+	// a terminal state. Per §15 the hook MUST be safe to call after
 	// the session record has been cleaned up.
 	OnSessionTerminated(ctx context.Context, sessionID string, reason TerminationReason) error
 
 	// OutboundCapabilities declares the adapter's push capabilities
-	// per §15.0. The zero value (PushNotifications false, no kinds)
+	// per §15. The zero value (PushNotifications false, no kinds)
 	// is the BaseAdapter default.
 	OutboundCapabilities() OutboundCapabilitySet
 
 	// OpenOutboundChannel returns an OutboundChannel for the session
-	// per §15.0. Adapters with no outbound push return a no-op
+	// per §15. Adapters with no outbound push return a no-op
 	// channel; the BaseAdapter implementation does this by default.
 	OpenOutboundChannel(ctx context.Context, sessionID string, sub OutboundSubscription) (OutboundChannel, error)
 }
 
-// BaseAdapter provides no-op implementations of the §15.0 optional
+// BaseAdapter provides no-op implementations of the §15 optional
 // hooks so existing adapters embed it and override only the methods
 // they actually need. The required Name / HTTPHandler / Capabilities
 // methods have no sensible default; an adapter that embeds BaseAdapter
 // MUST supply them.
 type BaseAdapter struct{}
 
-// OnSessionCreated is a no-op (§15.0 BaseAdapter default).
+// OnSessionCreated is a no-op (§15 BaseAdapter default).
 func (BaseAdapter) OnSessionCreated(context.Context, SessionMetadata) error { return nil }
 
-// OnSessionEvent is a no-op (§15.0 BaseAdapter default).
+// OnSessionEvent is a no-op (§15 BaseAdapter default).
 func (BaseAdapter) OnSessionEvent(context.Context, SessionEvent) error { return nil }
 
-// OnSessionTerminated is a no-op (§15.0 BaseAdapter default).
+// OnSessionTerminated is a no-op (§15 BaseAdapter default).
 func (BaseAdapter) OnSessionTerminated(context.Context, string, TerminationReason) error {
 	return nil
 }
 
-// OutboundCapabilities returns the zero-value (§15.0 BaseAdapter
+// OutboundCapabilities returns the zero-value (§15 BaseAdapter
 // default — PushNotifications false, no SupportedEventKinds).
 func (BaseAdapter) OutboundCapabilities() OutboundCapabilitySet { return OutboundCapabilitySet{} }
 
-// OpenOutboundChannel returns a discarding channel (§15.0 BaseAdapter
+// OpenOutboundChannel returns a discarding channel (§15 BaseAdapter
 // default — adapters with no outbound push reject the open call).
 func (BaseAdapter) OpenOutboundChannel(context.Context, string, OutboundSubscription) (OutboundChannel, error) {
 	return discardChannel{}, nil
 }
 
-// discardChannel is the §15.0 BaseAdapter no-op OutboundChannel: Send
+// discardChannel is the §15 BaseAdapter no-op OutboundChannel: Send
 // silently drops the event and Close is a no-op so adapters with no
 // outbound push surface cleanly through the registry's lifecycle
 // dispatch path.
@@ -265,19 +265,19 @@ type discardChannel struct{}
 func (discardChannel) Send(context.Context, SessionEvent) error { return nil }
 func (discardChannel) Close() error                             { return nil }
 
-// Registry is the §15.0 ExternalAdapterRegistry. Adapters register
+// Registry is the §15 ExternalAdapterRegistry. Adapters register
 // through Register and are mounted on a shared http.ServeMux via
 // Mount; lifecycle events fan out across every registered adapter via
 // DispatchSessionCreated, DispatchSessionEvent, DispatchTerminated.
 // Concurrent reads and writes are guarded by an internal RWMutex so
-// the §15.0 admin-API runtime-registration path can register a new
+// the §15 admin-API runtime-registration path can register a new
 // adapter while in-flight requests dispatch against the existing set.
 type Registry struct {
 	mu       sync.RWMutex
 	adapters map[string]ExternalProtocolAdapter
 	// prefixes records the path prefixes the registry has already
 	// mounted so a second adapter registering the same prefix is
-	// rejected (§15.0 "PathPrefix MUST be unique across all
+	// rejected (§15 "PathPrefix MUST be unique across all
 	// registered adapters").
 	prefixes map[string]string
 }
@@ -292,21 +292,21 @@ func New() *Registry {
 
 // Register adds a to the registry. Returns an error if the adapter's
 // Name or PathPrefix is empty, or if either collides with an already-
-// registered adapter (§15.0 uniqueness rule).
+// registered adapter (§15 uniqueness rule).
 func (r *Registry) Register(a ExternalProtocolAdapter) error {
 	if a == nil {
-		return fmt.Errorf("adapterregistry: nil adapter (§15.0)")
+		return fmt.Errorf("adapterregistry: nil adapter (§15)")
 	}
 	name := strings.TrimSpace(a.Name())
 	if name == "" {
-		return fmt.Errorf("adapterregistry: adapter name is empty (§15.0)")
+		return fmt.Errorf("adapterregistry: adapter name is empty (§15)")
 	}
 	caps := a.Capabilities()
 	prefix := strings.TrimSpace(caps.PathPrefix)
 	if prefix == "" {
-		return fmt.Errorf("adapterregistry: adapter %q PathPrefix is empty (§15.0)", name)
+		return fmt.Errorf("adapterregistry: adapter %q PathPrefix is empty (§15)", name)
 	}
-	// §15.0 capability-consistency invariant: an adapter cannot declare the
+	// §15 capability-consistency invariant: an adapter cannot declare the
 	// elicitation outbound kind without SupportsElicitation, and cannot
 	// declare a kind outside the closed enum. Checked at registration so a
 	// misdeclared adapter never reaches the dispatch path.
@@ -317,10 +317,10 @@ func (r *Registry) Register(a ExternalProtocolAdapter) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.adapters[name]; exists {
-		return fmt.Errorf("adapterregistry: adapter %q already registered (§15.0)", name)
+		return fmt.Errorf("adapterregistry: adapter %q already registered (§15)", name)
 	}
 	if owner, exists := r.prefixes[prefix]; exists {
-		return fmt.Errorf("adapterregistry: PathPrefix %q already owned by %q (§15.0)", prefix, owner)
+		return fmt.Errorf("adapterregistry: PathPrefix %q already owned by %q (§15)", prefix, owner)
 	}
 	r.adapters[name] = a
 	r.prefixes[prefix] = name
@@ -328,7 +328,7 @@ func (r *Registry) Register(a ExternalProtocolAdapter) error {
 }
 
 // Unregister removes the adapter by name and returns whether anything
-// was removed. The §15.0 admin-API DELETE
+// was removed. The §15 admin-API DELETE
 // /v1/admin/external-adapters/{name} path drives this.
 func (r *Registry) Unregister(name string) bool {
 	r.mu.Lock()
@@ -343,7 +343,7 @@ func (r *Registry) Unregister(name string) bool {
 }
 
 // Lookup returns the adapter registered under name and whether it
-// exists. The §15.0 admin-API GET /v1/admin/external-adapters/{name}
+// exists. The §15 admin-API GET /v1/admin/external-adapters/{name}
 // path drives this.
 func (r *Registry) Lookup(name string) (ExternalProtocolAdapter, bool) {
 	r.mu.RLock()
@@ -353,7 +353,7 @@ func (r *Registry) Lookup(name string) (ExternalProtocolAdapter, bool) {
 }
 
 // Names returns the sorted list of registered adapter names. The
-// §15.0 admin-API GET /v1/admin/external-adapters path drives this.
+// §15 admin-API GET /v1/admin/external-adapters path drives this.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -366,13 +366,13 @@ func (r *Registry) Names() []string {
 }
 
 // Mount installs every registered adapter's HTTPHandler on mux at the
-// adapter's Capabilities().PathPrefix. The §15.0 routing contract
+// adapter's Capabilities().PathPrefix. The §15 routing contract
 // says simultaneously active adapters route by path prefix; Mount
 // uses both the exact-prefix and slash-suffix forms so a handler
 // registered at "/v1/responses" also catches "/v1/responses/{id}".
 //
 // Mount is safe to call once after all built-in adapters have been
-// registered; the §15.0 admin-API runtime-registration path uses
+// registered; the §15 admin-API runtime-registration path uses
 // MountAdapter for individual adapters added after Mount has run.
 func (r *Registry) Mount(mux *http.ServeMux) {
 	r.mu.RLock()
@@ -382,7 +382,7 @@ func (r *Registry) Mount(mux *http.ServeMux) {
 	}
 }
 
-// MountAdapter installs one adapter's HTTPHandler on mux. The §15.0
+// MountAdapter installs one adapter's HTTPHandler on mux. The §15
 // admin-API runtime-registration path calls this after a successful
 // Register so the new adapter starts serving without a restart.
 func (r *Registry) MountAdapter(mux *http.ServeMux, a ExternalProtocolAdapter) {
@@ -405,7 +405,7 @@ func (r *Registry) mountUnlocked(mux *http.ServeMux, a ExternalProtocolAdapter) 
 }
 
 // DispatchSessionCreated fans out the OnSessionCreated hook to every
-// registered adapter per §15.0. Hook errors are accumulated and
+// registered adapter per §15. Hook errors are accumulated and
 // returned together so a slow adapter cannot blank the others.
 func (r *Registry) DispatchSessionCreated(ctx context.Context, metadata SessionMetadata) []error {
 	r.mu.RLock()
@@ -421,7 +421,7 @@ func (r *Registry) DispatchSessionCreated(ctx context.Context, metadata SessionM
 
 // DispatchSessionEvent fans out a SessionEvent to every adapter whose
 // declared OutboundCapabilitySet.SupportedEventKinds includes the
-// event's Kind (the §15.0 dispatch-filter rule). Adapters that do
+// event's Kind (the §15 dispatch-filter rule). Adapters that do
 // not declare the kind never receive the event.
 func (r *Registry) DispatchSessionEvent(ctx context.Context, event SessionEvent) []error {
 	r.mu.RLock()
@@ -440,7 +440,7 @@ func (r *Registry) DispatchSessionEvent(ctx context.Context, event SessionEvent)
 }
 
 // DispatchSessionTerminated fans out the OnSessionTerminated hook to
-// every registered adapter per §15.0. Errors are accumulated as in
+// every registered adapter per §15. Errors are accumulated as in
 // DispatchSessionCreated.
 func (r *Registry) DispatchSessionTerminated(ctx context.Context, sessionID string, reason TerminationReason) []error {
 	r.mu.RLock()
@@ -455,7 +455,7 @@ func (r *Registry) DispatchSessionTerminated(ctx context.Context, sessionID stri
 }
 
 // kindHandled reports whether kind appears in the declared subset.
-// Per §15.0 an empty SupportedEventKinds means the adapter handles
+// Per §15 an empty SupportedEventKinds means the adapter handles
 // no kinds — the gateway MUST NOT dispatch to it.
 func kindHandled(declared []SessionEventKind, kind SessionEventKind) bool {
 	for _, k := range declared {
@@ -466,7 +466,7 @@ func kindHandled(declared []SessionEventKind, kind SessionEventKind) bool {
 	return false
 }
 
-// SimpleAdapter is a §15.0 ExternalProtocolAdapter wrapper that
+// SimpleAdapter is a §15 ExternalProtocolAdapter wrapper that
 // captures an existing http.Handler plus its capability declaration.
 // The built-in adapters (MCP, OpenAI Completions, Open Responses)
 // keep their handler logic in their existing packages and register
@@ -492,5 +492,5 @@ func (s *SimpleAdapter) Name() string { return s.name }
 // HTTPHandler returns the wrapped handler.
 func (s *SimpleAdapter) HTTPHandler() http.Handler { return s.handler }
 
-// Capabilities returns the §15.0 declaration.
+// Capabilities returns the §15 declaration.
 func (s *SimpleAdapter) Capabilities() Capabilities { return s.caps }

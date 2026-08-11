@@ -1232,7 +1232,7 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	// budget; a slice that exceeds the parent's remaining budget on any
 	// axis is rejected with *lease.BudgetExceededError, which the §8.5 handler maps to BUDGET_EXHAUSTED. The parent's
 	// granted slice (DelegationLease) is the v1 "remaining budget": the
-	// per-call Redis debit of consumed tokens/children is the §8.2.12
+	// per-call Redis debit of consumed tokens/children is the §8.2
 	// follow-on, so admission here enforces the static subtree ceiling
 	// (a child can never request more than the ancestor ever held). A
 	// parent with no granted slice (root/standalone, or a child whose

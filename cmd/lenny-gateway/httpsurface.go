@@ -314,9 +314,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 			log.Printf("lenny-gateway: §10.2 / F-10.2.14: published JWKS contains only `kty: oct` entries (HMAC). The document advertises kid/alg only; verifiers cannot validate signatures against it.")
 		}
 	}
-	// §15.0 ExternalAdapterRegistry. Each built-in adapter registers
+	// §15 ExternalAdapterRegistry. Each built-in adapter registers
 	// through the registry and the registry mounts its HTTPHandler on
-	// the shared mux. The §15.0 admin-API runtime-registration path
+	// the shared mux. The §15 admin-API runtime-registration path
 	// uses the same registry so a third-party adapter takes effect
 	// without a gateway restart.
 	adapterReg := adapterregistry.New()
@@ -325,21 +325,21 @@ func (w *gatewayWiring) buildHTTPSurface(
 		openaiHandler.Handler(),
 		gwadapter.Capabilities{PathPrefix: "/v1/chat/completions", Protocol: "openai-completions"},
 	)); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
 	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
 		"open-responses",
 		responsesHandler.Handler(),
 		gwadapter.Capabilities{PathPrefix: "/v1/responses", Protocol: "open-responses"},
 	)); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
 	// §15.2: the MCP adapter is the platform's primary streaming
 	// surface, so it overrides the BaseAdapter no-op OutboundCapabilities()
 	// with the mandatory six-kind push declaration (MCPAdapter, not a plain
 	// SimpleAdapter). F-15.2.8.
 	if err := adapterReg.Register(adapterregistry.NewMCPAdapter(mcpSrv.Handler())); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
 	adapterReg.Mount(mux)
 	// §4.1 long-lived interactive streams: the MCP WebSocket transport
@@ -467,7 +467,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// auth middleware so an origin=playground bearer is rejected on
 		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.
 		playgroundRevocations = pg
-		// §27.5.4 — wire the same revocation check into the MCP WebSocket
+		// §27.5 — wire the same revocation check into the MCP WebSocket
 		// transport so an origin=playground bearer revoked mid-stream
 		// (logout / idle / admin / user.invalidated) closes the in-flight
 		// connection with WebSocket code 4401. The principal is read from
@@ -649,7 +649,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// eviction-checkpoint drain begins. Liveness stays on /healthz so a
 	// draining pod is not also killed by the kubelet mid-drain. The
 	// readiness probe also fails on NTP drift so a clock-untrustworthy
-	// replica is removed from the endpoints (the §13.3.5 behaviour that
+	// replica is removed from the endpoints (the §13.3 behaviour that
 	// previously rode on /healthz serving double duty). F-10.1.6.
 	//
 	// spec: §10.4 — readiness additionally reflects the hard

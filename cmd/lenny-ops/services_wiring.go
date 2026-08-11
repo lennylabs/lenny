@@ -192,7 +192,7 @@ func (w *opsWiring) buildOpsServices() {
 		AllowedFixes: splitCSV(*w.f.doctorAllowedFixes),
 		FixTimeout:   time.Duration(*w.f.doctorFixTimeout) * time.Second,
 		Helm:         newHelmRenderSource(*w.f.doctorRenderDir, releaseNS),
-		// The §25.6.1 pool-diagnosis service supplies warmPoolStuckReplenish
+		// The §25.6 pool-diagnosis service supplies warmPoolStuckReplenish
 		// its DEMAND_EXCEEDS_SUPPLY classification. buildDiagnosticService
 		// returns a non-nil *Service, so this never traps a typed nil.
 		PoolDiagnosis: w.diagnosticSvc,

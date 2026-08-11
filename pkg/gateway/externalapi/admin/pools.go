@@ -522,7 +522,7 @@ func (r *Router) WithPoolBootstrapStatusReader(rdr PoolBootstrapStatusReader) *R
 // WithCRDGenerationReader wires the §4.6.2 sync-status
 // data source. Without it the admin pool GET / PUT report
 // syncStatus="unknown" and the sync-status endpoint reports
-// crdGeneration=0 inSync=false — the §6.0 Postgres-only dev posture.
+// crdGeneration=0 inSync=false — the §6 Postgres-only dev posture.
 func (r *Router) WithCRDGenerationReader(rdr CRDGenerationReader) *Router {
 	r.crdGenerations = rdr
 	return r

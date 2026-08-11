@@ -48,7 +48,7 @@ const wsSubprotocol = "lenny.mcp.v1"
 
 // wsCloseBearerRevoked is the §27 Failure-modes WebSocket close code the gateway sends when an origin=playground bearer is
 // revoked mid-stream. The client (pkg/gateway/playground/ui/app.js)
-// special-cases 4401 to re-authenticate. spec: §27.3.1; §27.5.4.
+// special-cases 4401 to re-authenticate. spec: §27.3.1; §27.5.
 const wsCloseBearerRevoked = 4401
 
 // playgroundOriginClaim is the §27.3 `origin` claim value the revocation
@@ -56,7 +56,7 @@ const wsCloseBearerRevoked = 4401
 // §27.6 revocation primitive.
 const playgroundOriginClaim = "playground"
 
-// defaultWSRevPollInterval bounds how often the §27.5.4 revocation watch
+// defaultWSRevPollInterval bounds how often the §27.5 revocation watch
 // re-consults the playground revocation store for a long-lived WebSocket
 // that is otherwise idle. It is a backstop on top of the authoritative
 // per-upgrade check the auth middleware already ran; a tighter value
@@ -64,7 +64,7 @@ const playgroundOriginClaim = "playground"
 // store reads.
 const defaultWSRevPollInterval = 2 * time.Second
 
-// WSPrincipal carries the per-connection identity the §27.5.4 revocation
+// WSPrincipal carries the per-connection identity the §27.5 revocation
 // watch needs: the tenant and JWT id to key the revocation lookup, plus
 // the §27.3 origin claim so only playground bearers are watched.
 type WSPrincipal struct {
@@ -81,21 +81,21 @@ type RevocationChecker interface {
 	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
 }
 
-// wsAuthConfig is the §27.5.4 WebSocket revocation-watch wiring.
+// wsAuthConfig is the §27.5 WebSocket revocation-watch wiring.
 type wsAuthConfig struct {
 	principal    func(*http.Request) (WSPrincipal, bool)
 	revocations  RevocationChecker
 	pollInterval time.Duration
 }
 
-// SetWebSocketAuth installs the §27.5.4 revocation watch. extract derives
+// SetWebSocketAuth installs the §27.5 revocation watch. extract derives
 // the connection principal from the upgraded request (the gateway reads
 // it from the auth-middleware context); rev is the §27.6 playground
 // revocation checker. When both are non-nil and the connection carries an
 // origin=playground bearer, the WebSocket transport polls rev every
 // pollInterval and closes the connection with code 4401 once the bearer
 // is revoked. A non-positive pollInterval selects the package default.
-// Passing a nil extract or rev leaves the watch off. spec: §27.3.1; §27.5.4.
+// Passing a nil extract or rev leaves the watch off. spec: §27.3.1; §27.5.
 func (s *Server) SetWebSocketAuth(extract func(*http.Request) (WSPrincipal, bool), rev RevocationChecker, pollInterval time.Duration) {
 	s.wsAuth = wsAuthConfig{principal: extract, revocations: rev, pollInterval: pollInterval}
 }
@@ -141,7 +141,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(wsMaxMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	// §27.5.4 — watch the playground revocation store for the lifetime of
+	// §27.5 — watch the playground revocation store for the lifetime of
 	// the connection. The watch closes the socket with code 4401 the
 	// moment an origin=playground bearer is revoked (logout, idle, admin,
 	// user.invalidated) so an in-flight WebSocket is disconnected rather
@@ -228,7 +228,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // playgroundEgress reports whether outbound frames on this connection
 // must be redacted before reaching the browser, i.e. whether the request
 // carries an origin=playground bearer. It reuses the same principal
-// extractor the §27.5.4 revocation watch keys on, so the redaction gate
+// extractor the §27.5 revocation watch keys on, so the redaction gate
 // and the revocation gate agree on what "a playground connection" is.
 // When no extractor is wired (a deployment without the playground) the
 // gate is off and frames pass through; no playground bearer can reach the
@@ -241,7 +241,7 @@ func (s *Server) playgroundEgress(r *http.Request) bool {
 	return ok && p.Origin == playgroundOriginClaim
 }
 
-// startRevocationWatch spawns the §27.5.4 revocation poller for an
+// startRevocationWatch spawns the §27.5 revocation poller for an
 // origin=playground connection. It is a no-op when the watch is not
 // wired, the request carries no principal, the bearer is not a
 // playground-origin bearer, or the principal has no jti to key on — a
@@ -250,7 +250,7 @@ func (s *Server) playgroundEgress(r *http.Request) bool {
 // code 4401, which unblocks the read loop. A transient store error is
 // treated as fail-open for the watch (the authoritative per-upgrade
 // check already ran in the auth middleware); the next tick retries.
-// spec: §27.3.1; §27.5.4; §27.6.
+// spec: §27.3.1; §27.5; §27.6.
 func (s *Server) startRevocationWatch(ctx context.Context, conn *websocket.Conn, r *http.Request) {
 	if s.wsAuth.principal == nil || s.wsAuth.revocations == nil {
 		return

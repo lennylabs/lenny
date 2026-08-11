@@ -285,7 +285,7 @@ func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.
 // spec: §12.6, §4.6.1 (first `bound` status patch),
 // §4.6.3 (gateway holds `get`/`patch` and no `update` on sandboxclaims/status).
 //
-// A claim with all the inert §12.6.424 opts set still succeeds via the per-pod
+// A claim with all the inert §12.6 opts set still succeeds via the per-pod
 // claim, and the binding-state write is a status-subresource PATCH. The
 // gateway ServiceAccount is granted `get`/`patch` and explicitly no `update`
 // on sandboxclaims/status, so a regression to client.Status().Update — which

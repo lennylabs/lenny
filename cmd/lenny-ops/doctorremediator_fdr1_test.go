@@ -91,7 +91,7 @@ func templateWithDrained(name string, status metav1.ConditionStatus, reason stri
 }
 
 // stubPoolDiagnosis is a poolDiagnosisSource that returns a fixed
-// §25.6.1 diagnosis per pool name, so the warmPoolStuckReplenish
+// §25.6 diagnosis per pool name, so the warmPoolStuckReplenish
 // detection can be exercised over the DEMAND_EXCEEDS_SUPPLY classification
 // and the pod-state breakdown the production DataSource supplies.
 type stubPoolDiagnosis struct {
@@ -109,7 +109,7 @@ func (s stubPoolDiagnosis) DiagnosePool(_ context.Context, poolName string) (*di
 	return &diagnostics.PoolDiagnosis{Pool: poolName, Status: "healthy"}, nil
 }
 
-// demandExceedsSupply builds a §25.6.1 diagnosis classifying the pool as
+// demandExceedsSupply builds a §25.6 diagnosis classifying the pool as
 // DEMAND_EXCEEDS_SUPPLY with the given warming/claimed in-flight counts.
 func demandExceedsSupply(pool string, warming, claimed int) *diagnostics.PoolDiagnosis {
 	return &diagnostics.PoolDiagnosis{
@@ -134,7 +134,7 @@ func warmPoolDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 }
 
 // spec: §25.6 — warmPoolStuckReplenish fires for a pool the
-// §25.6.1 diagnosis classifies DEMAND_EXCEEDS_SUPPLY with zero in-flight
+// §25.6 diagnosis classifies DEMAND_EXCEEDS_SUPPLY with zero in-flight
 // warm-up claims (no warming, no claimed pods), whose PoolDrained=True
 // condition on the referenced SandboxTemplate has dwelt past the 5m window;
 // the fix re-drives the pool by stamping a re-drive annotation so the
@@ -145,7 +145,7 @@ func warmPoolDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 // assertion checks the re-drive annotation the apiserver honors rather than a
 // client-set .metadata.generation, which is server-managed and a no-op write.
 //
-// diagnosis: warmPoolStuckReplenish is no longer detected over the §25.6.1
+// diagnosis: warmPoolStuckReplenish is no longer detected over the §25.6
 // DEMAND_EXCEEDS_SUPPLY/zero-in-flight signal, or the fix does not stamp the
 // re-drive annotation, so a stalled warm pool is never re-driven — the F-DR-1
 // remediation regressed.
@@ -189,7 +189,7 @@ func TestRemediator_WarmPoolStuck_DetectAndApply_spec_25_6_2956(t *testing.T) {
 	}
 }
 
-// A pool the §25.6.1 diagnosis reports with in-flight warm-up pods
+// A pool the §25.6 diagnosis reports with in-flight warm-up pods
 // (warming > 0) is making progress, so it is not stuck even though its
 // bottleneck is DEMAND_EXCEEDS_SUPPLY and its template's PoolDrained
 // condition is False (still provisioning). This pins the spec's "zero

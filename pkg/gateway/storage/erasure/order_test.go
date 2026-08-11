@@ -34,7 +34,7 @@ func TestValidateOrder_canonicalConfigPasses(t *testing.T) {
 }
 
 // The full §12.8 production wiring (every store the gateway erases once
-// the §12.8.13 / §12.8.15 coverage lands) validates: the FK children
+// the §12.8 / §12.8 coverage lands) validates: the FK children
 // precede SessionStore and the post-session stores (tokens,
 // credential_pool) follow it. This pins the gateway's orchestrator
 // wiring against the dependency contract.

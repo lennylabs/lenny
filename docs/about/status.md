@@ -59,7 +59,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Checkpoint / resume | Not started | Sessions survive pod failure; artifacts retrievable. |
 | Recursive delegation | In progress | The §8 delegation service enforces cycle detection, isolation monotonicity, and the depth limit. Budgets and lease extension are pending. |
 | Recursive delegation with MCP semantics | In progress | `lenny/delegate_task` and the other §8.5 platform tools are served by the MCP adapter. |
-| Multi-tenancy (Postgres RLS, quotas, RBAC) | In progress | RBAC role enforcement and the §5.75 quota interceptor are active. The §12.3 row-level security policies and the `lenny_tenant_guard` transaction-isolation trigger ship in the `migrations/` schema. |
+| Multi-tenancy (Postgres RLS, quotas, RBAC) | In progress | RBAC role enforcement and the §5 quota interceptor are active. The §12.3 row-level security policies and the `lenny_tenant_guard` transaction-isolation trigger ship in the `migrations/` schema. |
 | Audit log with hash-chain integrity + SIEM | In progress | The §11.7 per-tenant audit hash chain records every admin mutation and is queryable. The chain is durable in the Postgres `audit_log` table under `--postgres-dsn`, the ledger-immutability triggers and the startup integrity check are active, and SIEM streaming is pending. |
 | Compliance controls (erasure receipts, legal holds, residency) | In progress | GDPR redaction receipts are modelled on the audit chain. The erasure pipeline and residency controls are pending. |
 | Security hardening (signed images, admission, pentest) | Not started | Sigstore/cosign + admission controller. |

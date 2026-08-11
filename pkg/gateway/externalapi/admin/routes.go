@@ -458,7 +458,7 @@ func (r *Router) registerPoolRoutes(mux *http.ServeMux) {
 	// registered unconditionally; without a CRD reader wired the
 	// handler reports the Postgres-only generation and leaves
 	// crdGeneration / inSync at their zero values so operators can
-	// see Postgres is moving even on the §6.0 Postgres-only dev
+	// see Postgres is moving even on the §6 Postgres-only dev
 	// posture.
 	mux.Handle("GET /v1/admin/pools/{name}/sync-status",
 		r.requireTenantResourceAdmin(http.HandlerFunc(r.handleSyncStatus)))

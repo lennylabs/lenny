@@ -152,7 +152,7 @@ func dialWithOrigin(t *testing.T, srv *mcp.Server, origin string) (context.Conte
 	}
 }
 
-// playgroundOriginServer builds a Server whose §27.5.4 principal extractor
+// playgroundOriginServer builds a Server whose §27.5 principal extractor
 // reads the §27.3 origin claim from the X-Test-Origin header, so the §27.9
 // egress redaction gate can be exercised end to end. A tool whose
 // inputSchema carries a credential-named property is registered so the

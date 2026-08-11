@@ -1119,7 +1119,7 @@ func TestLennyCtlDelegatesLocalStatus_spec_24_19_266(t *testing.T) {
 	}
 }
 
-// TestLennyCtlDelegatesTokenPrint confirms the §24.9.3 alias: `lenny-ctl
+// TestLennyCtlDelegatesTokenPrint confirms the §24.9 alias: `lenny-ctl
 // token print` resolves to the embedded token-mint path and returns the
 // §24.9 exit code 3 EMBEDDED_MODE_REQUIRED when no stack is running,
 // rather than `unknown command "token"`. F-24.9.3 / F-24.9.2.

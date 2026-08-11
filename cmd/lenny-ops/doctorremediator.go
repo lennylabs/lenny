@@ -46,16 +46,16 @@ const (
 	certExpiryWindow        = 7 * 24 * time.Hour
 )
 
-// poolDiagnosisSource is the §25.6.1 pool-diagnosis surface the
+// poolDiagnosisSource is the §25.6 pool-diagnosis surface the
 // warmPoolStuckReplenish detection reads its DEMAND_EXCEEDS_SUPPLY
 // bottleneck classification and pod-state breakdown from. It is the
 // consumer-side narrowing of diagnostics.DiagnosticService to the one
 // method this detection needs, injected so the remediator does not
-// re-derive the claim-rate-versus-replenishment-rate signal the §25.6.1
+// re-derive the claim-rate-versus-replenishment-rate signal the §25.6
 // DataSource already classifies. A nil source leaves warmPoolStuckReplenish
 // undetected (reported not_detected), matching the Helm-dependent findings.
 //
-// spec: §25.6, §25.6.1 (PoolBottleneck classification).
+// spec: §25.6, §25.6 (PoolBottleneck classification).
 type poolDiagnosisSource interface {
 	DiagnosePool(ctx context.Context, poolName string) (*diagnostics.PoolDiagnosis, error)
 }
@@ -64,7 +64,7 @@ type poolDiagnosisSource interface {
 // idempotently remediates the five §25.6 fixable findings over the
 // client-go typed and dynamic clients, plus an injected Helm-render
 // source for the two findings that re-apply a rendered chart template and
-// the §25.6.1 pool-diagnosis source for warmPoolStuckReplenish.
+// the §25.6 pool-diagnosis source for warmPoolStuckReplenish.
 //
 // Coverage:
 //   - coreDnsStuckEndpoint: rolling restart of the CoreDNS Deployment.
@@ -81,7 +81,7 @@ type poolDiagnosisSource interface {
 // The bootstrapConfigDrift and prometheusRuleMissing findings need the
 // Helm-rendered chart template lenny-ops does not itself hold; they are
 // driven by the injected HelmRenderSource, which the operator threads
-// through chart values. warmPoolStuckReplenish needs the §25.6.1
+// through chart values. warmPoolStuckReplenish needs the §25.6
 // pool-diagnosis source (`poolDx`) for its DEMAND_EXCEEDS_SUPPLY
 // classification. When a required source is nil (or reports monitoring
 // disabled / no bootstrap render), the affected finding is not detected,
@@ -103,7 +103,7 @@ type k8sDoctorRemediator struct {
 	// and prometheusRuleMissing fixes compare against and re-apply. A nil
 	// source leaves both findings undetected (reported not_detected).
 	helm doctor.HelmRenderSource
-	// poolDx classifies the §25.6.1 warm-pool bottleneck the
+	// poolDx classifies the §25.6 warm-pool bottleneck the
 	// warmPoolStuckReplenish detection reads. A nil source leaves that
 	// finding undetected (reported not_detected).
 	poolDx poolDiagnosisSource
@@ -208,7 +208,7 @@ func (r *k8sDoctorRemediator) Apply(ctx context.Context, d doctor.Detected) erro
 		// A code outside the fixable table reaches here only through the
 		// orchestrator's manual path (§25.6 non-fixable findings). The three
 		// findings above are never routed here: an undetectable finding
-		// (nil Helm source, monitoring disabled, or nil §25.6.1 pool-diagnosis
+		// (nil Helm source, monitoring disabled, or nil §25.6 pool-diagnosis
 		// source) reports not_detected rather than this manual recommendation.
 		return doctor.ErrManualRemediation
 	}
@@ -342,12 +342,12 @@ func (r *k8sDoctorRemediator) applyCertExpiring(ctx context.Context, resource st
 }
 
 // detectWarmPoolStuck reports warmPoolStuckReplenish for each SandboxWarmPool
-// that is stalled per §25.6: the §25.6.1 pool diagnosis classifies
+// that is stalled per §25.6: the §25.6 pool diagnosis classifies
 // its bottleneck as DEMAND_EXCEEDS_SUPPLY (claim rate outpaces replenishment
 // rate) with zero in-flight warm-up claims (no warming and no claimed pods),
 // and the pool has dwelt in that no-progress state for longer than the 5m
 // window. The DEMAND_EXCEEDS_SUPPLY classification and the pod-state
-// breakdown come from the injected §25.6.1 DataSource; the durable >5m dwell
+// breakdown come from the injected §25.6 DataSource; the durable >5m dwell
 // comes from the PoolWarmingUp/Drained condition the WarmPoolController
 // writes onto the referenced SandboxTemplate (the pool's own status never
 // carries it). A nil pool-diagnosis source leaves the finding undetected.
@@ -384,7 +384,7 @@ func (r *k8sDoctorRemediator) detectWarmPoolStuck(ctx context.Context) ([]doctor
 }
 
 // warmPoolStuck reports whether a SandboxWarmPool is in the §25.6 stuck-replenish state. It requires all three conjuncts the spec
-// names: the §25.6.1 bottleneck classification is DEMAND_EXCEEDS_SUPPLY;
+// names: the §25.6 bottleneck classification is DEMAND_EXCEEDS_SUPPLY;
 // the pod-state breakdown shows zero in-flight warm-up claims (no warming
 // and no claimed pods); and the referenced SandboxTemplate's
 // PoolWarmingUp/Drained condition (the zero-in-flight state) has dwelt

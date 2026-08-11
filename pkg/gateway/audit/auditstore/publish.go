@@ -88,7 +88,7 @@ func (a *PublishingAppender) Append(ctx context.Context, tenantID, eventType str
 		// path is disabled. The retranscribe worker will not pick the
 		// row up because it is still in the default `pending` state;
 		// operators that enable the publisher later can drive the
-		// initial transition via a manual republish API (§25.9.5).
+		// initial transition via a manual republish API (§25.9).
 		return row, nil
 	}
 	if err := a.publishAndMark(ctx, row); err != nil {

@@ -15,7 +15,7 @@ import (
 )
 
 // fakeAdapter is a test ExternalProtocolAdapter that records every
-// lifecycle invocation so the §15.0 contract can be asserted.
+// lifecycle invocation so the §15 contract can be asserted.
 type fakeAdapter struct {
 	adapterregistry.BaseAdapter
 	name    string
@@ -77,7 +77,7 @@ func (f *fakeAdapter) OnSessionTerminated(_ context.Context, _ string, r adapter
 	return nil
 }
 
-// spec: §15.0 — Register/Lookup/Names round-trip and a re-register
+// spec: §15 — Register/Lookup/Names round-trip and a re-register
 // of the same name is rejected so a third-party adapter cannot
 // silently shadow a built-in.
 func TestRegisterRoundTripsAndRejectsDuplicates(t *testing.T) {
@@ -95,30 +95,30 @@ func TestRegisterRoundTripsAndRejectsDuplicates(t *testing.T) {
 	}
 	// Duplicate name.
 	if err := r.Register(&fakeAdapter{name: "mcp", prefix: "/x"}); err == nil {
-		t.Error("duplicate name should be rejected (§15.0)")
+		t.Error("duplicate name should be rejected (§15)")
 	}
 	// Duplicate prefix.
 	if err := r.Register(&fakeAdapter{name: "mcp2", prefix: "/mcp"}); err == nil {
-		t.Error("duplicate PathPrefix should be rejected (§15.0)")
+		t.Error("duplicate PathPrefix should be rejected (§15)")
 	}
 }
 
-// spec: §15.0 — adapters with empty Name or PathPrefix are rejected
+// spec: §15 — adapters with empty Name or PathPrefix are rejected
 // at registration; nil adapter likewise.
 func TestRegisterRejectsInvalidInputs(t *testing.T) {
 	r := adapterregistry.New()
 	if err := r.Register(nil); err == nil {
-		t.Error("nil adapter should be rejected (§15.0)")
+		t.Error("nil adapter should be rejected (§15)")
 	}
 	if err := r.Register(&fakeAdapter{name: "", prefix: "/x"}); err == nil {
-		t.Error("empty name should be rejected (§15.0)")
+		t.Error("empty name should be rejected (§15)")
 	}
 	if err := r.Register(&fakeAdapter{name: "x", prefix: ""}); err == nil {
-		t.Error("empty PathPrefix should be rejected (§15.0)")
+		t.Error("empty PathPrefix should be rejected (§15)")
 	}
 }
 
-// spec: §15.0 — Unregister removes the adapter and frees its prefix
+// spec: §15 — Unregister removes the adapter and frees its prefix
 // so a replacement can register at the same path immediately.
 func TestUnregisterFreesNameAndPrefix(t *testing.T) {
 	r := adapterregistry.New()
@@ -138,7 +138,7 @@ func TestUnregisterFreesNameAndPrefix(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — Mount installs every registered adapter on a shared
+// spec: §15 — Mount installs every registered adapter on a shared
 // mux at its PathPrefix; both the exact prefix and the slash-suffix
 // form are mounted so a sub-path (e.g., /v1/responses/{id}) reaches
 // the same adapter.
@@ -174,7 +174,7 @@ func TestMountInstallsHandlersAtPathPrefix(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — MountAdapter installs a single adapter after the
+// spec: §15 — MountAdapter installs a single adapter after the
 // initial Mount so the admin-API runtime-registration path takes
 // effect without a restart.
 func TestMountAdapterServesAfterInitialMount(t *testing.T) {
@@ -200,7 +200,7 @@ func TestMountAdapterServesAfterInitialMount(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — DispatchSessionCreated and DispatchSessionTerminated
+// spec: §15 — DispatchSessionCreated and DispatchSessionTerminated
 // fan out to every registered adapter; the order does not matter for
 // v1 but every adapter MUST receive the call.
 func TestDispatchSessionCreatedAndTerminatedFansOutToEveryAdapter(t *testing.T) {
@@ -232,7 +232,7 @@ func TestDispatchSessionCreatedAndTerminatedFansOutToEveryAdapter(t *testing.T) 
 	}
 }
 
-// spec: §15.0 — the dispatch-filter rule: an adapter that does not
+// spec: §15 — the dispatch-filter rule: an adapter that does not
 // declare a SupportedEventKind MUST NOT receive that kind. The
 // BaseAdapter default has an empty SupportedEventKinds set, so a
 // stock adapter receives nothing.
@@ -280,7 +280,7 @@ func TestDispatchSessionEventHonorsTheDispatchFilterRule(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — a per-adapter hook error is accumulated and returned;
+// spec: §15 — a per-adapter hook error is accumulated and returned;
 // it MUST NOT prevent other adapters from receiving the call.
 func TestDispatchSessionCreatedAccumulatesErrorsWithoutShadowing(t *testing.T) {
 	r := adapterregistry.New()
@@ -300,7 +300,7 @@ func TestDispatchSessionCreatedAccumulatesErrorsWithoutShadowing(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — the BaseAdapter default returns a no-op
+// spec: §15 — the BaseAdapter default returns a no-op
 // OutboundChannel that discards Send and returns nil from Close. An
 // adapter that embeds BaseAdapter MUST surface this without panicking.
 func TestBaseAdapterOpenOutboundChannelReturnsNoOpChannel(t *testing.T) {
@@ -317,8 +317,8 @@ func TestBaseAdapterOpenOutboundChannelReturnsNoOpChannel(t *testing.T) {
 	}
 }
 
-// spec: §15.0 — concurrent Register/Mount/Dispatch must not race.
-// The §15.0 admin-API runtime-registration path can register a new
+// spec: §15 — concurrent Register/Mount/Dispatch must not race.
+// The §15 admin-API runtime-registration path can register a new
 // adapter while in-flight requests fan out to the existing set.
 func TestRegistryIsSafeUnderConcurrentRegisterAndDispatch(t *testing.T) {
 	r := adapterregistry.New()
@@ -376,7 +376,7 @@ func strNum(prefix string, i int) string {
 	return prefix + string(buf[:n])
 }
 
-// spec: §15.0 — the SimpleAdapter wraps an existing http.Handler and
+// spec: §15 — the SimpleAdapter wraps an existing http.Handler and
 // capability declaration so built-in adapters register through the
 // registry without changing their handler logic.
 func TestSimpleAdapterWrapsExistingHandler(t *testing.T) {

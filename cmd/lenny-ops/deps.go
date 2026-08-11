@@ -1499,7 +1499,7 @@ type doctorDeps struct {
 	// and prometheusRuleMissing fixes compare against and re-apply. A nil
 	// source leaves both findings undetected (reported not_detected).
 	Helm doctor.HelmRenderSource
-	// PoolDiagnosis is the §25.6.1 pool-diagnosis service the
+	// PoolDiagnosis is the §25.6 pool-diagnosis service the
 	// warmPoolStuckReplenish detection reads its DEMAND_EXCEEDS_SUPPLY
 	// bottleneck classification and pod-state breakdown from. A nil source
 	// leaves that finding undetected (reported not_detected).

@@ -5,7 +5,7 @@
 # mirror (platform.registry.*), and preflight.skipNetworkProbes=true.
 # The airgap posture pulls every image from a private mirror and drops
 # the backend-reachability preflight probes that would otherwise require
-# egress to the managed backends (§17.9.2, §17.9.11).
+# egress to the managed backends (§17.9.2, §17.9).
 #
 # Layering: with presets/values-tierN.yaml. The backends render
 # in-cluster; set the mirror host and pull-secret name, supply the Redis
@@ -68,5 +68,5 @@ minio:
 preflight:
   # skipNetworkProbes drops the MinIO, Redis, OTLP, and ops-admin
   # backend-reachability probes; the cluster-API checks still run
-  # (§17.9.11).
+  # (§17.9).
   skipNetworkProbes: true
