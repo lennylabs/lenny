@@ -39,8 +39,8 @@ controller:
   # reconciler stamps into every agent pod. Empty by default; operators
   # set it to the adapter image matching the release.
   adapterImage: ""
-  # egressCaptureImage is the §12.9.8 tier-9 lenny-egress-capture
-  # sidecar image. Empty by default; tier-9 §12.9.8 credential-leakage
+  # egressCaptureImage is the tier-9 lenny-egress-capture
+  # sidecar image. Empty by default; tier-9 credential-leakage
   # test overlays set it to enable the sidecar on Sandboxes whose
   # template annotates `lenny.dev/test-egress-capture-upstream`.
   # Production rejects the sidecar via the lenny-pod-security webhook;

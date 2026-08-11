@@ -6,7 +6,7 @@
 // k6 behind a uniform interface that produces a structured JSON verdict.
 //
 // The architecture, conventions, and selection model are documented in
-// TESTING.md at the repository root.
+// the project's testing documentation.
 //
 // This is the Phase 0 skeleton. It implements:
 //
@@ -20,7 +20,7 @@
 //
 // Subsequent phases add real implementations of the higher tiers, the cached
 // container daemon, the JUnit and GitHub-annotation emitters, and the
-// PR-comment integration. See TESTING.md §13 for the build sequence.
+// PR-comment integration.
 package main
 
 import (
@@ -120,22 +120,22 @@ Usage:
   lenny-test cached <status|ensure|       Manage the long-lived lenny-test-cached
                      endpoints|shutdown>   container daemon.
   lenny-test stress --test <name> [flags]  Run a single test N times to detect
-                                           flakes (§17.10).
+                                            flakes.
   lenny-test watch [--tier <t> | --changed | --pattern <re>]
                                            Rerun tests on file changes.
   lenny-test coverage --go|--spec|        Report Go, spec-section, or diff
                        --diff <ref>        coverage (§5, §19).
   lenny-test mutation [--pkg <pat>]       Run scripts/mutation.sh and compare
-                       [--threshold <f>]   against the §19.3 per-package threshold.
+                      [--threshold <f>]   against the per-package threshold.
   lenny-test baseline diff --before <a>   Diff two baseline JSON documents and
-                            --after <b>    enforce the §22.5 regression budget.
+                         --after <b>    enforce the regression budget.
                             [--threshold <f>]
   lenny-test report --dir <path>          Aggregate verdict JSONs from <path>
                     [--output             into a single roll-up.
                      human|markdown|json]
   lenny-test comment --verdict <path>     Render a verdict as a Markdown PR
                      [--output <file>]    comment.
-  lenny-test conformance --image <ref>     Run the §12.10 conformance battery
+  lenny-test conformance --image <ref>     Run the conformance battery
                           --level <basic|standard|full>
                                            against a third-party runtime image.
   lenny-test preflight --cluster <path>    Check a target cluster's readiness
@@ -163,6 +163,5 @@ Run flags:
   --cached                 Use the cached container daemon if available.
   --no-infra               Skip infrastructure provisioning.
 
-See TESTING.md for the full design and TESTING_DEPENDENCIES.md for setup.
 `)
 }

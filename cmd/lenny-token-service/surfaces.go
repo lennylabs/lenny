@@ -50,7 +50,7 @@ func (w *tokenServiceWiring) buildMetricsSurface() {
 	}
 }
 
-// buildGRPCSurface constructs the §4.3 / §12.2.4 gRPC TokenService surface when
+// buildGRPCSurface constructs the §4.3 gRPC TokenService surface when
 // --grpc-addr is set. The credential-assignment service is the same in-process
 // credassign.Service pool-selection + lease-minting logic the gateway runs
 // today; the binary makes it reachable over gRPC so the gateway can switch its
@@ -62,7 +62,7 @@ func (w *tokenServiceWiring) buildMetricsSurface() {
 // development path; a production deployment swaps in Postgres-backed
 // credleasestore/pgstore and a shared credential cache.
 //
-// spec: §4.3 / §12.2.4, §4.9, §4.3, §4.3.
+// spec: §4.3, §4.9, §4.3, §4.3.
 func (w *tokenServiceWiring) buildGRPCSurface() {
 	leases := credleasestore.New()
 	cache := credcache.New()

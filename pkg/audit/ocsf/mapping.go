@@ -277,7 +277,7 @@ func LookupClass(eventType string) (ClassMapping, bool) {
 }
 
 // CatalogEventTypes returns every event type with an exact catalog
-// entry, sorted. The §12.3.5 contract test generates one of each to
+// entry, sorted. A contract test generates one of each to
 // confirm the translation passes schema validation.
 func CatalogEventTypes() []string {
 	out := make([]string, 0, len(exactCatalog))

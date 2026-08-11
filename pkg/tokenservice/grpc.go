@@ -17,7 +17,7 @@ import (
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
-// GRPCServer is the §4.3 / §12.2.4 Token Service gRPC server. The
+// GRPCServer is the §4.3 Token Service gRPC server. The
 // gateway calls it over mTLS to materialize, rotate, and revoke
 // credential leases without ever holding KMS decrypt rights for the
 // underlying credential material itself.

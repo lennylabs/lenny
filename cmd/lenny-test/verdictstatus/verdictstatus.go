@@ -2,10 +2,10 @@
 
 // Package verdictstatus holds the verdict-level and per-tier status
 // values of the lenny-test verdict document, whose schema is owned by
-// TESTING.md §7. The values live in their own importable package
+// the harness's verdict schema. The values live in their own importable package
 // because `cmd/lenny-test` is a main package: a documentation-
 // reconciliation test cannot import a main package, so a test that
-// holds TESTING.md's enum sentences to the values the harness actually
+// holds the verdict schema's enum sentences to the values the harness actually
 // emits would otherwise have to restate them and drift.
 //
 // Every tierStat.Status field carries one of the tier statuses, and the
@@ -14,13 +14,13 @@
 // Nothing in this package carries a spec annotation. The harness
 // reduces such an annotation to a bare section number and would credit
 // the resulting failure to spec/07_session-lifecycle.md, which defines
-// no verdict schema; the verdict document belongs to TESTING.md §7.
+// no verdict schema; the verdict document's schema lives outside the specification.
 package verdictstatus
 
 import "strings"
 
 // Tier statuses. These are the values serialized into
-// `tiers.<name>.status` in the verdict document (TESTING.md §7).
+// `tiers.<name>.status` in the verdict document.
 const (
 	// Pass reports that the tier ran and every selected test passed.
 	Pass = "pass"
@@ -40,7 +40,7 @@ const (
 )
 
 // Verdicts. These are the values serialized into the top-level
-// `verdict` field of the verdict document (TESTING.md §7).
+// `verdict` field of the verdict document.
 const (
 	// VerdictPass reports that every tier that ran passed.
 	VerdictPass = "PASS"

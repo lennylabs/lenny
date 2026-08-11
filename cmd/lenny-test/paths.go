@@ -23,7 +23,7 @@ const (
 	latestVerdictFile = resultsDir + "/latest.json"
 
 	// verdictHistoryFile accumulates one-line JSON summaries per
-	// run per §21.2. Append-only; the §21.2 root-cause analyzer
+	// run. Append-only; the root-cause analyzer
 	// reads it.
 	verdictHistoryFile = "history.jsonl"
 
@@ -51,7 +51,7 @@ const (
 	// groups.yaml's include: clauses.
 	groupsSubsetsFile = "tests/groups.subsets.yaml"
 
-	// flakeBudgetFile lists quarantined tests per §21.4.
+	// flakeBudgetFile lists quarantined tests.
 	flakeBudgetFile = "tests/flake-budget.yaml"
 
 	// registersDir holds the gate registers that share one entry

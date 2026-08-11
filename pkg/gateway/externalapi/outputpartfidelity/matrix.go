@@ -3,7 +3,7 @@
 // Package outputpartfidelity encodes the §15.4 Translation Fidelity
 // Matrix and ships per-MessagePart translators for the OpenAI Chat
 // Completions and Open Responses wire forms. The package is the data
-// model behind the §12.10 fidelity-matrix conformance test: it lets a
+// model behind the fidelity-matrix conformance test: it lets a
 // table-driven test assert that the documented per-field fidelity
 // classification matches the actual translator behavior.
 //
@@ -77,7 +77,7 @@ const (
 
 // Matrix returns the §15.4 fidelity tag for the (adapter, field)
 // pair. The map is hand-transcribed from the spec table and is the
-// single source of truth for the §12.10 conformance assertion.
+// single source of truth for the conformance assertion.
 //
 // A missing (adapter, field) returns ("", false). Callers MUST treat
 // the boolean as the existence check.

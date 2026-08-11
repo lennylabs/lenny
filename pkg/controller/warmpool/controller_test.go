@@ -513,7 +513,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 }
 
 // spec: 12.9.8
-// diagnosis: the §12.9.8 egress-capture annotation lives on the
+// diagnosis: the egress-capture annotation lives on the
 // SandboxTemplate; the WarmPoolController propagates it to every
 // Sandbox it creates so the Sandbox reconciler can read it on
 // createPod. Other template annotations stay on the template.

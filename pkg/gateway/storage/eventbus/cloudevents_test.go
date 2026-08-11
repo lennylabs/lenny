@@ -11,7 +11,7 @@ import (
 )
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says every published Event sets the CloudEvents
+// diagnosis: every published Event must set the CloudEvents
 // v1.0.2 context attributes — specversion "1.0", an id, a source, a
 // dev.lenny.* type, an RFC 3339 time, a datacontenttype, and a subject.
 // NewEvent must populate all of them and Validate must accept the result.
@@ -52,7 +52,7 @@ func TestNewEventSetsRequiredAttributes(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 mandates the lenny-prefixed extension attributes:
+// diagnosis: the lenny-prefixed extension attributes are mandatory:
 // lennytenantid is always present and mirrors the tenantID; the
 // delegation-tree and operation extensions appear when supplied.
 func TestNewEventSetsLennyExtensions(t *testing.T) {
@@ -79,7 +79,7 @@ func TestNewEventSetsLennyExtensions(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says the id is
+// diagnosis: the id is
 // {tenantId}:{publisherId}:{nanoTimestamp}:{nonce} with a 64-bit
 // crypto/rand nonce — never a sequence counter. Two events built in
 // the same nanosecond must still have distinct ids.
@@ -103,7 +103,7 @@ func TestNewEventIDIsUniquePerEvent(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says an audit-bearing event carrying an OCSF
+// diagnosis: an audit-bearing event carrying an OCSF
 // record sets datacontenttype application/ocsf+json. The OCSF flag
 // must select that content type and IsAuditBearing must report it.
 func TestNewEventAuditBearingContentType(t *testing.T) {
@@ -123,7 +123,7 @@ func TestNewEventAuditBearingContentType(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 requires the CloudEvents envelope to round-trip
+// diagnosis: the CloudEvents envelope must round-trip
 // through structured-content JSON — the lenny-prefixed extensions are
 // flattened to top-level attributes and parsed back.
 func TestEventJSONRoundTrip(t *testing.T) {
@@ -250,7 +250,7 @@ func TestEventEmptyExtensionsRoundTrip(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 / §12.4 say the EventBus channel is
+// diagnosis: §12.4 says the EventBus channel is
 // t:{tenant_id}:evt:{topic}. ChannelName must build exactly that, so a
 // subscriber on one tenant cannot receive another tenant's events.
 func TestChannelNameIsTenantPrefixed(t *testing.T) {
@@ -263,7 +263,7 @@ func TestChannelNameIsTenantPrefixed(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: Validate is the §12.3.7 envelope-contract guard. It must
+// diagnosis: Validate is the envelope-contract guard. It must
 // reject an envelope missing the mandatory lennytenantid extension, a
 // wrong spec version, and a type without the dev.lenny. prefix.
 func TestValidateRejectsMalformedEnvelopes(t *testing.T) {

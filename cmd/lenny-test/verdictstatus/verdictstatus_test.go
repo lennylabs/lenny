@@ -12,7 +12,7 @@ import (
 )
 
 // The verdict document's `verdict` field and per-tier `status` field
-// value sets are owned by TESTING.md §7. These cases carry no spec
+// value sets are owned by the harness's verdict schema, not the specification. These cases carry no spec
 // annotation: the harness attributes an annotated failure to a numbered
 // section under spec/, and this package implements test infrastructure
 // rather than a spec behavior.
@@ -129,9 +129,9 @@ func TestVerdictAndTierStatusSetsAreDisjoint(t *testing.T) {
 // TestNoSpecAnnotationInPackage keeps this package free of the harness
 // spec annotation. The harness scans the failing test's own package
 // directory for that marker and reduces whatever follows it to a bare
-// section number, so an annotation naming TESTING.md §7 here would be
+// section number, so a spec annotation naming this schema here would be
 // recorded as a result for spec section 7, which is the session
-// lifecycle and defines no verdict schema. TESTING.md owns this schema,
+// lifecycle and defines no verdict schema. The verdict schema lives outside the specification,
 // and the harness has no annotation form that points at it.
 func TestNoSpecAnnotationInPackage(t *testing.T) {
 	// Built by concatenation so this file does not trip its own check.
@@ -157,7 +157,7 @@ func TestNoSpecAnnotationInPackage(t *testing.T) {
 				continue
 			}
 			if strings.HasPrefix(strings.TrimSpace(rest), marker) {
-				t.Errorf("%s:%d carries a harness spec annotation; the verdict schema is owned by TESTING.md and an annotation here is attributed to a spec section instead", e.Name(), i+1)
+				t.Errorf("%s:%d carries a harness spec annotation; the verdict schema lives outside the specification and an annotation here is attributed to a spec section instead", e.Name(), i+1)
 			}
 		}
 	}

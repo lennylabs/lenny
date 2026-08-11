@@ -64,7 +64,7 @@ func runTokenService(f *tokenServiceFlags) {
 		defer w.redisCleanup()
 	}
 
-	// §13.3 HTTP, §16.1 metrics, and §4.3 / §12.2.4 gRPC listeners.
+	// §13.3 HTTP, §16.1 metrics, and §4.3 gRPC listeners.
 	w.buildHTTPSurface()
 	w.buildMetricsSurface()
 	w.buildGRPCSurface()
@@ -90,7 +90,7 @@ func runTokenService(f *tokenServiceFlags) {
 //   - server.go: the §13.3 NTP drift self-monitor, the §13.3 token-exchange
 //     Server, and the §4.0 EventEmitter plus the §4.3 access-token cache —
 //     buildDriftMonitor, buildServer, and buildEventEmitterAndCache.
-//   - surfaces.go: the §13.3 HTTP, §16.1 metrics, and §4.3 / §12.2.4 gRPC
+//   - surfaces.go: the §13.3 HTTP, §16.1 metrics, and §4.3 gRPC
 //     listeners, and the signal-driven graceful shutdown — buildHTTPSurface,
 //     buildMetricsSurface, buildGRPCSurface, and runServer.
 //

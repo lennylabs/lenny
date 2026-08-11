@@ -65,9 +65,9 @@ type Reconciler struct {
 	// leaves the platform MCP server unstarted. spec: §9.1.
 	// F-9.1.1.
 	GatewayGRPCAddr string
-	// EgressCaptureImage is the §12.9.8 egress-capture sidecar image.
+	// EgressCaptureImage is the egress-capture sidecar image.
 	// Empty disables the sidecar globally; a non-empty value enables
-	// the §12.9.8 tier-9 leakage probe path on Sandboxes whose
+	// the tier-9 leakage probe path on Sandboxes whose
 	// SandboxTemplate carries the egress-capture annotation
 	// (EgressCaptureUpstreamAnnotation).
 	EgressCaptureImage string

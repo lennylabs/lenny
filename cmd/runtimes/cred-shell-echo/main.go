@@ -4,7 +4,7 @@
 // pairs the Basic-level echo loop with a Helm-renderable Runtime
 // definition declaring `credentialPoolRefs`, deployed on an
 // Alpine-based image that retains /bin/sh. The combination unblocks
-// the §12.9.8 credential-leakage probes (TestCredentialLeakageEnvironment
+// the credential-leakage probes (TestCredentialLeakageEnvironment
 // and TestCredentialLeakageFilesystem): the credential-delivery path
 // runs because the runtime declares credentials, and `kubectl exec
 // ... cat /proc/<pid>/environ` works because the image has a shell.

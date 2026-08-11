@@ -35,7 +35,7 @@ func (t EventType) CloudEventsType() string { return cloudEventsPrefix + string(
 // CloudEvents v1.0.2 record. §25.3 codifies this native structured-
 // content struct rather than an alias of the go-sdk cloudevents.Event
 // type (see pkg/gateway/eventbus/cloudevents.go for the same decision on
-// the §12.3.7 audit envelope), because the released go-sdk serializes
+// the audit envelope), because the released go-sdk serializes
 // application/ocsf+json data as an escaped JSON string and would
 // double-wrap the audit record. The envelope is modeled natively here
 // with the exact CloudEvents context-attribute contract and marshals to
@@ -78,7 +78,7 @@ type OperationalEvent struct {
 	Data json.RawMessage `json:"data,omitempty"`
 
 	// Extensions are CloudEvents extension attributes beyond the
-	// structured context fields above (e.g. the §12.3.7 lenny-prefixed
+	// structured context fields above (e.g. the lenny-prefixed
 	// lennytenantid / lennyrootsessionid). They flatten into the
 	// top-level CloudEvents JSON object on the wire, mirroring
 	// pkg/gateway/eventbus.Event. CloudEvents extension attribute names

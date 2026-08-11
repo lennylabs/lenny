@@ -179,7 +179,7 @@ tests:
                 name: lenny-datastore-conn
                 key: postgres-dsn
 
-  - it: omits the §12.9.8 egress-capture image arg by default
+  - it: omits the egress-capture image arg by default
     documentSelector:
       path: kind
       value: Deployment
@@ -188,7 +188,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --egress-capture-image=lenny-egress-capture:e2e
 
-  - it: renders the §12.9.8 egress-capture image arg when controller.egressCaptureImage is set
+  - it: renders the egress-capture image arg when controller.egressCaptureImage is set
     documentSelector:
       path: kind
       value: Deployment

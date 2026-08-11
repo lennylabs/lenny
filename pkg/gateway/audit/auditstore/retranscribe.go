@@ -21,7 +21,7 @@ import (
 // PendingRepublish implements eventbus.RetranscribeStore. It returns up
 // to limit audit rows whose eventbus_publish_state is failed or
 // retry_pending and whose retry_count is below maxRetryAttempts,
-// ordered by created_at ASC (FIFO per §12.3.7). For each row it
+// ordered by created_at ASC (FIFO order). For each row it
 // rebuilds the byte-identical CloudEvents envelope from the canonical
 // Postgres tuple: the OCSF record is re-translated and re-wrapped, so
 // the envelope's id, source, time, and data are identical to the
@@ -52,7 +52,7 @@ func (s *Store) PendingRepublish(ctx context.Context, maxRetryAttempts, limit in
 	return out, nil
 }
 
-// pendingRepublishOnShard runs the §12.3.7 failed-publish scan on a
+// pendingRepublishOnShard runs the failed-publish scan on a
 // single audit shard pool. PendingRepublish fans it across every shard
 // returned by the §12.3 R-03 router.
 func (s *Store) pendingRepublishOnShard(ctx context.Context, pool *pgxpool.Pool, maxRetryAttempts, limit int) ([]eventbus.RetranscribeRow, error) {
@@ -132,7 +132,7 @@ type canonicalView struct {
 	genesisNonce []byte
 }
 
-// publisherID is the §12.3.7 source/id replica segment for envelopes
+// publisherID is the source/id replica segment for envelopes
 // the retranscribe worker rebuilds. The original publisher id is not
 // persisted in v1, so the retranscribe worker stamps the gateway-fixed
 // retranscribe identity; the CloudEvents id stays byte-identical
@@ -144,7 +144,7 @@ const publisherID = "gw-retxn"
 // it in a CloudEvents envelope. The envelope is deterministic for a
 // fixed canonical tuple: the id uses the row's immutable created_at
 // nanos and a nonce derived from the row UUID, so every retranscribe
-// of the same row produces a byte-identical id (§12.3.7).
+// of the same row produces a byte-identical id.
 func (s *Store) rebuildEnvelope(v canonicalView) (eventbus.Event, error) {
 	in := ocsf.Input{
 		ID:                 v.id,
@@ -194,7 +194,7 @@ func (s *Store) rebuildEnvelope(v canonicalView) (eventbus.Event, error) {
 	return ev, nil
 }
 
-// uuidNonce derives the §12.3.7 id nonce segment from a row UUID. The
+// uuidNonce derives the id nonce segment from a row UUID. The
 // UUID is immutable for the row, so the nonce — and therefore the
 // CloudEvents id — is byte-identical across retranscribes.
 func uuidNonce(id string) string {

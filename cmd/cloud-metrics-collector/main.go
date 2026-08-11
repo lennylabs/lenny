@@ -4,7 +4,7 @@
 // API and exposes the results as Prometheus-format metrics that the
 // tier-12 load-run Prometheus scrapes.
 //
-// TESTING.md §12.12 and §24.1.
+// spec: §24.1.
 package main
 
 import (

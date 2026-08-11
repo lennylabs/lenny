@@ -140,7 +140,7 @@ func registerPodIdentityFlags(f *controllerFlags) {
 	flag.Int64Var(&f.credReadersGID, "cred-readers-gid", envInt64("LENNY_CRED_READERS_GID", podspec.CredReadersGID),
 		"§13.1 lenny-cred-readers GID used as the pod fsGroup for the credential tmpfs. Must match the lenny-webhook --cred-readers-gid.")
 	flag.StringVar(&f.egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
-		"the §12.9.8 tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 §12.9.8 credential-leakage probes.")
+		"the tier-9 lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Production rejects the sidecar via lenny-pod-security; the flag exists for tier-9 credential-leakage probes.")
 }
 
 // registerRateLimitFlags binds the §4.6.1 Postgres/Redis backends, the agent

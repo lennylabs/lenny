@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
-// PublishingAppender wraps a Store with the §4.4 / §12.3.7
+// PublishingAppender wraps a Store with the §4.4
 // audit-bearing EventBus first-publish path. On a successful Append it
 // translates the row to OCSF, wraps the record in a CloudEvents v1.0.2
 // envelope, publishes it on the §12.4 tenant-prefixed
@@ -23,7 +23,7 @@ import (
 // row's `eventbus_publish_state` to `published`. A publish failure
 // leaves the row in `retry_pending` so the existing
 // `pkg/gateway/auditstore/retranscribe.go` worker drains it on the
-// next sweep — the spec's failure-retry path the §12.3.7 publish-state
+// next sweep — the spec's failure-retry path the publish-state
 // machine and the retranscribe worker close together.
 //
 // The audit row is durable as soon as Append returns; the publish path
@@ -45,7 +45,7 @@ type PublishingAppender struct {
 	// path entirely (the wrapper then is functionally identical to
 	// Store.Append).
 	Publisher eventbus.EventBus
-	// PublisherID is the §12.3.7 gateway-replica id (gw-<5-hex>) the
+	// PublisherID is the gateway-replica id (gw-<5-hex>) the
 	// CloudEvents envelope stamps onto its `source` URI and the id
 	// segment. Required when Publisher is wired; the constructor
 	// defaults it to "gw-init" when empty so a dev-mode gateway has a
@@ -129,7 +129,7 @@ func (a *PublishingAppender) publishAndMark(ctx context.Context, row audit.Row) 
 }
 
 // buildEnvelope translates the row to OCSF and wraps it in a
-// CloudEvents v1.0.2 envelope on the §12.3.7
+// CloudEvents v1.0.2 envelope on the
 // TopicSessionLifecycle channel. The envelope's `data` is the OCSF
 // record (datacontenttype = application/ocsf+json).
 func (a *PublishingAppender) buildEnvelope(row audit.Row) (eventbus.Event, error) {

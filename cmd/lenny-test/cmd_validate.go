@@ -319,7 +319,7 @@ func changeGraphPathResolves(root, p string) bool {
 // line, spelled exactly as the graph spells it); this lets the change
 // graph commit ahead of the implementation.
 //
-// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
+// tests/change-graph.json maps source packages,
 // schemas, migrations, and chart templates to the tests that exercise
 // them)
 func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult {
@@ -839,7 +839,7 @@ func validateSpecMapCoverage(specMapPath, exceptionsPath string) checkResult {
 // on disk. A dangling reference (a rename or a typo left in the map)
 // silently drops a section's coverage: `lenny-test --spec <section>`
 // selects a file that is not there, and a maintainer reading the map
-// believes a suite exists that does not. TESTING.md ("maps every
+// believes a suite exists that does not. The spec-map file ("maps every
 // spec section to the tests ... that encode it"; validate-maps is the
 // spec-map integrity gate) requires the references to be real.
 //
@@ -934,7 +934,7 @@ func validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingPath, root str
 // reported once. The check reads the file and requires a top-level
 // `func TestName(` declaration to be present.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// tests/spec-map.json maps every spec section to
 // the tests ... that encode it"). A reference that names a
 // nonexistent function is as misleading to a maintainer reading the
 // map as a reference to a nonexistent file.
@@ -1215,7 +1215,7 @@ func precedingCommentExists(lines []string, idx int) bool {
 //     primitive, no clock-injection harness). The reason text names
 //     the missing infrastructure precisely.
 //   - t.Skip("phase-gated: …")            → blocked behind a phase
-//   - t.Skip("flaky-time: …")              → §17.10 quarantine
+//   - t.Skip("flaky-time: …")              → flaky-time quarantine
 //   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
 //   - cloud.SkipUnlessAuthorized(t)       → tier-6 helper
 //   - any *.SkipUnless* harness helper that gates the test on an

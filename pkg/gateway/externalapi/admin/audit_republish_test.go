@@ -19,7 +19,7 @@ import (
 
 // spec: §25.9 — POST /v1/admin/audit-events/{seq}/republish.
 
-// fakePublishLog is an admin.AuditLog that also tracks the §12.3.7
+// fakePublishLog is an admin.AuditLog that also tracks the
 // eventbus_publish_state per row, so the republish endpoint's eligibility
 // branches are exercisable without Postgres.
 type fakePublishLog struct {

@@ -8,5 +8,5 @@
 // override the Runner factory to substitute a deterministic in-process
 // scenario.
 //
-// TESTING.md §12.12 / §24.1.
+// §24.1.
 package exec

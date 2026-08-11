@@ -9,7 +9,7 @@ import (
 )
 
 // The change graph and the tracked source domain of the completeness
-// check are owned by TESTING.md rather than by a numbered section under
+// check are owned by the test harness rather than by a numbered section under
 // spec/, so these cases carry no spec annotation: the harness would
 // attribute an annotated failure to a platform section this package
 // implements nothing of.

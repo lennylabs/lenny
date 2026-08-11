@@ -215,7 +215,7 @@ func (v *verdict) recordTierWithResult(name, status string, dur time.Duration, d
 
 func (v *verdict) recordTier(name, status string, dur time.Duration, detail string) {
 	// Reclassify a "fail" whose detail looks like an infrastructure
-	// blow-up into "inconclusive" per §7 + §21.3. A genuine test
+	// blow-up into "inconclusive" per §7 and the harness's verdict rules. A genuine test
 	// failure stays FAIL; a docker-daemon crash or a kind bring-up
 	// timeout does not.
 	if status == verdictstatus.Fail && classifyInfraFailure(detail) {
@@ -277,8 +277,8 @@ func (v *verdict) promoteVerdict(candidate string) {
 // claim about the run. FAIL outranks every other value, so a real test
 // failure earlier or later in the run stays surfaced. INCONCLUSIVE
 // outranks UNVERIFIED, because an infrastructure-class failure carries
-// the retry-then-FAIL path the harness runs on exit code 2 (TESTING.md
-// §21.3), and ranking an unrelated unverified check above it would hide
+// the retry-then-FAIL path the harness runs on exit code 2 (see the
+// harness's documented verdict rules), and ranking an unrelated unverified check above it would hide
 // that failure behind a verdict CI does not retry. UNVERIFIED outranks
 // PASS, because a check that could not reach a conclusion leaves the
 // run unproven. An unrecognized value ranks with PASS so it cannot
@@ -456,7 +456,7 @@ func (v *verdict) write(path string) error {
 	// Bound the on-disk history: keep the 20 most recent rotated
 	// files; older verdicts are removed.
 	pruneOldVerdicts(dir, verdictRotationDepth)
-	// Append a one-line summary to history.jsonl per §21.2 so the
+	// Append a one-line summary to history.jsonl, documented for the harness, so the
 	// flake root-cause analyzer has a stable, append-only source.
 	if err := appendHistory(filepath.Join(dir, verdictHistoryFile), v); err != nil {
 		// Non-fatal: history is observational, not gating.
@@ -466,7 +466,7 @@ func (v *verdict) write(path string) error {
 }
 
 // appendHistory adds a one-line JSON record summarizing v to the
-// history file. Format mirrors §21.2: just enough fields to feed
+// history file. The format carries just enough fields to feed
 // the root-cause heuristics (run_id, started_at, finished_at,
 // verdict, trigger.mode, per-tier status). The file is open-append;
 // concurrent writers race only on the os.Write boundary, which is

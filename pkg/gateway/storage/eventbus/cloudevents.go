@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package eventbus is the §12.3.7 EventBus — the audit and event
+// Package eventbus is the EventBus — the audit and event
 // publication layer on top of the Wave-1 pkg/gateway/pubsub Redis
 // substrate. It carries control-plane events (delegation-tree signals,
 // session-lifecycle notifications) and, when an event is audit-bearing,
@@ -14,7 +14,7 @@
 // EventBus provides at-most-once delivery in v1 (Redis pub/sub drops
 // messages when no subscriber is connected). Callers must tolerate
 // missed events; a caller that requires guaranteed delivery polls
-// durable Postgres state as a fallback. The §12.3.7 publish-state
+// durable Postgres state as a fallback. The publish-state
 // machine and the retranscribe worker close the gap for audit-bearing
 // events.
 package eventbus
@@ -28,12 +28,12 @@ import (
 	"time"
 )
 
-// SpecVersion is the §12.3.7 CloudEvents envelope version. The
+// SpecVersion is the CloudEvents envelope version. The
 // envelope's specversion attribute carries "1.0"; the implemented
 // revision is v1.0.2.
 const SpecVersion = "1.0"
 
-// content types the §12.3.7 datacontenttype attribute uses.
+// content types the datacontenttype attribute uses.
 const (
 	// ContentTypeJSON is the default datacontenttype.
 	ContentTypeJSON = "application/json"
@@ -43,11 +43,11 @@ const (
 	ContentTypeOCSF = "application/ocsf+json"
 )
 
-// typePrefix is the §12.3.7 CloudEvents `type` prefix. The full type
+// typePrefix is the CloudEvents `type` prefix. The full type
 // is "dev.lenny." + the §16.6 / §25 catalog short name.
 const typePrefix = "dev.lenny."
 
-// EventTopic identifies a control-plane event channel. §12.3.7 pins
+// EventTopic identifies a control-plane event channel. This list is closed;
 // this list; adding a topic requires updating it, the CloudEvents type
 // registry, and the §12.4 key table.
 type EventTopic string
@@ -62,22 +62,22 @@ const (
 	TopicSessionLifecycle EventTopic = "session_lifecycle"
 )
 
-// AllTopics returns the closed §12.3.7 topic list.
+// AllTopics returns the closed topic list.
 func AllTopics() []EventTopic {
 	return []EventTopic{TopicDelegationTree, TopicSessionLifecycle}
 }
 
-// IsValid reports whether t is one of the §12.3.7 topics.
+// IsValid reports whether t is one of the known topics.
 func (t EventTopic) IsValid() bool {
 	return t == TopicDelegationTree || t == TopicSessionLifecycle
 }
 
-// Event is a §12.3.7 CloudEvents v1.0.2 envelope. §12.6 codifies this
+// Event is a CloudEvents v1.0.2 envelope. §12.6 codifies this
 // native structured-content struct rather than an alias of the go-sdk
 // cloudevents.Event type, because the released go-sdk serializes
 // application/ocsf+json data as an escaped JSON string and would
 // double-wrap the audit record. The struct implements the exact
-// §12.3.7 context-attribute contract and emits `data` inline.
+// context-attribute contract and emits `data` inline.
 type Event struct {
 	// SpecVersion is the CloudEvents spec version — always "1.0".
 	SpecVersion string `json:"specversion"`
@@ -108,14 +108,14 @@ type Event struct {
 	// audit-bearing event it is the OCSF v1.1.0 record.
 	Data json.RawMessage `json:"data,omitempty"`
 
-	// Extensions are the §12.3.7 lenny-prefixed extension attributes:
+	// Extensions are the lenny-prefixed extension attributes:
 	// lennytenantid (always), lennyrootsessionid (delegation-tree
 	// events), lennyoperationid (where applicable). CloudEvents
 	// extension attribute names are lowercase alphanumeric.
 	Extensions map[string]string `json:"-"`
 }
 
-// extension attribute names §12.3.7 pins.
+// extension attribute names this package pins.
 const (
 	ExtTenantID      = "lennytenantid"
 	ExtRootSessionID = "lennyrootsessionid"
@@ -188,7 +188,7 @@ func (e *Event) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// Validate reports an error when the envelope violates the §12.3.7
+// Validate reports an error when the envelope violates the
 // CloudEvents contract: the required context attributes must be set,
 // the spec version must be "1.0", the type must carry the dev.lenny.
 // prefix, and lennytenantid must always be present.
@@ -211,7 +211,7 @@ func (e Event) Validate() error {
 		return fmt.Errorf("eventbus: time %q is not RFC 3339: %w", e.Time, err)
 	}
 	if e.DataContentType != ContentTypeJSON && e.DataContentType != ContentTypeOCSF {
-		return fmt.Errorf("eventbus: datacontenttype %q is not a §12.3.7 value", e.DataContentType)
+		return fmt.Errorf("eventbus: datacontenttype %q is not a supported value", e.DataContentType)
 	}
 	if e.Extensions[ExtTenantID] == "" {
 		return fmt.Errorf("eventbus: %s extension is mandatory on every event", ExtTenantID)
@@ -262,7 +262,7 @@ type NewEventInput struct {
 	Now func() time.Time
 }
 
-// NewEvent builds a §12.3.7 CloudEvents v1.0.2 envelope with the
+// NewEvent builds a CloudEvents v1.0.2 envelope with the
 // mandatory context attributes and the lenny-prefixed extensions. The
 // id is {tenantId}:{publisherId}:{nanoTimestamp}:{nonce} with a 64-bit
 // crypto/rand nonce — never math/rand and never a sequence counter,
@@ -309,7 +309,7 @@ func NewEvent(in NewEventInput) (Event, error) {
 }
 
 // cryptoNonce returns a lowercase-hex 64-bit value from crypto/rand —
-// the §12.3.7 id nonce construction. math/rand and sequence counters
+// the id nonce construction. math/rand and sequence counters
 // are explicitly forbidden because the id is the de-duplication key.
 func cryptoNonce() (string, error) {
 	max := new(big.Int).Lsh(big.NewInt(1), 64)

@@ -70,7 +70,7 @@ func specMapTestFilesFixture(t *testing.T, sections map[string][]string, present
 // is probed, a directory or package reference is not required to be a
 // file, and the pending-path channel suppresses a missing-file report.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// tests/spec-map.json maps every spec section to
 // the tests ... that encode it"; tests/spec-map-exceptions.yaml records
 // sections "explicitly exempt from the 'every section has at least one
 // test' rule"). The exceptions file waives only the has-a-test
@@ -182,7 +182,7 @@ func specMapTestFuncsFixture(t *testing.T, sections map[string][]string, files m
 // that motivated the check renamed a tier-4 interactive-iteration test
 // and left both section 7.1 and 7.2 pointing at the gone symbol.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// tests/spec-map.json maps every spec section to
 // the tests ... that encode it"). A reference that names a nonexistent
 // function misdirects a maintainer reading the map exactly as a
 // reference to a nonexistent file does.
@@ -1120,8 +1120,8 @@ func trackIdentifierPassRename(t *testing.T, root string) {
 // that same tree in process, so the omission surfaces from a package-
 // scoped unit run rather than only from a composed tier-0 run.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
-// the tests ... that encode it") and TESTING.md §7, which requires the
+// ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it"), which requires the
 // spec and diagnosis annotations on every component-and-above test.
 func TestTrackedComponentAndAboveTestFilesAreMappedAndAnnotated(t *testing.T) {
 	root := repoRoot()
@@ -1203,7 +1203,7 @@ func changeGraphFileExistenceFixture(t *testing.T, globs map[string]map[string][
 // and the failure detail names the key, the tier, and the target so the
 // dangling edge is identifiable without re-reading the graph.
 //
-// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
+// tests/change-graph.json maps source packages,
 // schemas, migrations, and chart templates to the tests that exercise
 // them)
 func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
@@ -1263,7 +1263,7 @@ func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
 // tests/registers/ selects the static and unit tiers alone. Neither key
 // selects a tier whose suite the tooling does not carry.
 //
-// spec: 28.1 (channel naming law); TESTING.md §5
+// spec: 28.1 (channel naming law); tests/change-graph.json
 // (tests/change-graph.json maps source packages, schemas, migrations,
 // and chart templates to the tests that exercise them)
 func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
@@ -1305,7 +1305,7 @@ func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 // reads resolves to a key naming the docs tier. Neither document carries
 // code, so the docs tier is the whole set either one selects.
 //
-// spec: 28.1 (channel naming law); TESTING.md §5
+// spec: 28.1 (channel naming law); tests/change-graph.json
 // (tests/change-graph.json maps source packages, schemas, migrations,
 // and chart templates to the tests that exercise them)
 func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) {

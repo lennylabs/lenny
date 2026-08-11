@@ -4,7 +4,7 @@ package main
 
 import "testing"
 
-// spec: TESTING.md §22.1 (80% floor on changed code).
+// The 80% coverage floor applies to changed code.
 //
 // The changed-line coverage gate measures covered/coverable over the
 // lines a diff touched. parseCoverProfileRanges must separate the lines
@@ -48,7 +48,7 @@ func TestParseCoverProfileRangesSeparatesCoverableFromCovered(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §22.1 (80% floor on changed code).
+// The 80% coverage floor applies to changed code.
 //
 // A merged profile concatenates the blocks of several test runs under a
 // single `mode:` header. A line stays covered once any run records a hit
@@ -70,7 +70,7 @@ func TestParseCoverProfileRangesMergesAcrossRuns(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §22.1 (80% floor on changed code).
+// The 80% coverage floor applies to changed code.
 //
 // countChanged is the per-file denominator the gate applies: a changed
 // line counts only when the profile marks it coverable, and counts as

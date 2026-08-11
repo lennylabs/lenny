@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 )
 
-// The skip reason categories are owned by TESTING.md §17.9. These cases
+// The skip reason categories are owned by the test harness documentation. These cases
 // carry no spec annotation: the harness attributes an annotated failure
 // to a numbered section under spec/, and this package implements a test
 // convention rather than a platform behavior.

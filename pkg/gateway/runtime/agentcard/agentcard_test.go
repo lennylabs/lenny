@@ -59,7 +59,7 @@ func TestGenerateInjectsEnvelopeFields(t *testing.T) {
 	if card.GeneratorVersion != "1.4.0" {
 		t.Errorf("generatorVersion: %q", card.GeneratorVersion)
 	}
-	// §21.1: the v1 A2A path has elicitation disabled.
+	// The v1 A2A path has elicitation disabled.
 	if card.Capabilities.Elicitation {
 		t.Error("a generated card must advertise elicitation false for v1")
 	}

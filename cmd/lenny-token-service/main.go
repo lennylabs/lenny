@@ -7,7 +7,7 @@
 //     external dialect-issuing path. The gateway reverse-proxies
 //     `/v1/oauth/*` here so the Token Service is the actual minter
 //     for every Lenny bearer token.
-//   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3 / §12.2.4
+//   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3
 //     credential-assignment trust boundary the gateway calls over mTLS
 //     to materialize, rotate, and revoke credential leases.
 //

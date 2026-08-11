@@ -468,7 +468,7 @@ func (s *Store) CountActiveDelegatedChildrenByUser(_ context.Context, tenantID, 
 	return count, nil
 }
 
-// DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
+// DeleteByTenant implements the §12.1 mandatory-erasure
 // interface. Removes every session belonging to tenantID.
 func (s *Store) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	s.mu.Lock()

@@ -583,7 +583,7 @@ func sandboxLabels(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate)
 // propagatedAnnotations carries the small set of opt-in annotations
 // from a SandboxTemplate onto every Sandbox it warms. The
 // reconciler's createPod path reads these to decide whether to inject
-// optional features (the §12.9.8 egress-capture sidecar today; more
+// optional features (the egress-capture sidecar today; more
 // per-template knobs land alongside).
 func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
 	if tmpl == nil {
@@ -594,7 +594,7 @@ func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
 		return nil
 	}
 	keys := []string{
-		// §12.9.8: a SandboxTemplate annotated with the egress-capture
+		// a SandboxTemplate annotated with the egress-capture
 		// upstream propagates that annotation to every Sandbox it
 		// warms, and the Sandbox reconciler reads it on createPod.
 		"lenny.dev/test-egress-capture-upstream",

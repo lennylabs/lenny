@@ -23,7 +23,7 @@ import (
 // spec: §12.6.
 type TenantID = store.TenantID
 
-// PublishState is the §12.3.7 audit_log.eventbus_publish_state enum. It
+// PublishState is the audit_log.eventbus_publish_state enum. It
 // records, per audit-bearing row, whether the gateway's EventBus
 // publish reached Redis.
 type PublishState string
@@ -44,12 +44,12 @@ const (
 	PublishFailed PublishState = "failed"
 )
 
-// AllPublishStates returns the closed §12.3.7 enum.
+// AllPublishStates returns the closed enum.
 func AllPublishStates() []PublishState {
 	return []PublishState{PublishPending, PublishRetryPending, PublishPublished, PublishFailed}
 }
 
-// IsValid reports whether s is one of the §12.3.7 publish states.
+// IsValid reports whether s is one of the defined publish states.
 func (s PublishState) IsValid() bool {
 	for _, v := range AllPublishStates() {
 		if s == v {
@@ -59,7 +59,7 @@ func (s PublishState) IsValid() bool {
 	return false
 }
 
-// PublishErrorType is the §12.3.7 error_type label on the
+// PublishErrorType is the error_type label on the
 // lenny_event_bus_publish_dropped_total / retranscribe metrics.
 type PublishErrorType string
 
@@ -108,11 +108,11 @@ func (s *subscription) Unsubscribe() error {
 
 // BusMetrics is the §12.6 EventBus observability surface. Every
 // implementation emits the publish counter and duration histogram, the
-// handler duration histogram and error counter, the §12.3.7 drop
+// handler duration histogram and error counter, the drop
 // counter, and the §12.6 replay-buffer utilization gauge. A nil
 // BusMetrics is a valid no-op.
 //
-// spec: §12.6, §12.6, §12.3.7 (drop counter).
+// spec: §12.6, §12.6 (drop counter).
 type BusMetrics interface {
 	// PublishTotal counts a publish attempt for the topic
 	// (lenny_event_bus_publish_total).
@@ -124,7 +124,7 @@ type BusMetrics interface {
 
 	// PublishDropped counts a publish that failed after the durable
 	// commit, labeled by topic and error_type
-	// (lenny_event_bus_publish_dropped_total, §12.3.7).
+	// (lenny_event_bus_publish_dropped_total).
 	PublishDropped(topic EventTopic, errType PublishErrorType)
 
 	// HandlerDuration records the time spent in the caller-supplied
@@ -142,7 +142,7 @@ type BusMetrics interface {
 	ReplayBufferUtilization(ratio float64)
 }
 
-// PublishStateStore is the §12.3.7 surface the bus uses to record an
+// PublishStateStore is the surface the bus uses to record an
 // audit-bearing event's publish state. pkg/gateway/auditstore
 // implements it; the in-memory fake in tests implements it too. A nil
 // store means the bus does not track publish state (used for
@@ -264,7 +264,7 @@ func NewRedisEventBus(bus *pubsub.Bus, metrics BusMetrics, opts ...Option) *Redi
 // the channel name is built by prefixing with it, so tenant isolation is
 // enforced at the interface boundary, not by caller convention.
 //
-// Publish classifies a failure into a §12.3.7 error_type and records the
+// Publish classifies a failure into an error_type and records the
 // drop metric. A serialization failure is not retryable and is not
 // buffered; a backend or timeout failure after the durable commit appends
 // the serialized envelope to the bounded replay buffer (§12.6).
@@ -277,7 +277,7 @@ func (b *RedisEventBus) Publish(ctx context.Context, tenantID TenantID, topic Ev
 		return fmt.Errorf("eventbus: Publish requires a tenantID")
 	}
 	if !topic.IsValid() {
-		return fmt.Errorf("eventbus: %q is not a §12.3.7 topic", topic)
+		return fmt.Errorf("eventbus: %q is not a valid topic", topic)
 	}
 	if err := event.Validate(); err != nil {
 		return err
@@ -339,7 +339,7 @@ func (b *RedisEventBus) Subscribe(ctx context.Context, tenantID TenantID, topic 
 		return nil, fmt.Errorf("eventbus: Subscribe requires a tenantID")
 	}
 	if !topic.IsValid() {
-		return nil, fmt.Errorf("eventbus: %q is not a §12.3.7 topic", topic)
+		return nil, fmt.Errorf("eventbus: %q is not a valid topic", topic)
 	}
 	subCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -454,7 +454,7 @@ func (b *RedisEventBus) ReplayBufferLen() int {
 	return len(b.buffer)
 }
 
-// PublishError carries the §12.3.7 error_type so the audit-write path
+// PublishError carries the error_type so the audit-write path
 // can decide retry vs terminal and label the drop metric.
 type PublishError struct {
 	Type PublishErrorType

@@ -143,7 +143,7 @@ type CycleResult struct {
 // succeeded and the record is delivered to the sink; on failure the
 // §11.7 retry / dead-letter state machine advances the row.
 //
-// RunCycle is the unit the background loop and the §12.3.5 retry
+// RunCycle is the unit the background loop and the retry
 // contract test both drive. It does not sleep — Run wraps it with the
 // RetryInterval ticker.
 func (t *Translator) RunCycle(ctx context.Context) (CycleResult, error) {

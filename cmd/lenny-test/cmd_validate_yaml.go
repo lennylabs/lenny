@@ -306,7 +306,7 @@ func readExceptionSections(path string) map[string]bool {
 	return out
 }
 
-// validateFlakeBudgetYAML enforces TESTING.md §21.4 on
+// validateFlakeBudgetYAML enforces the flake budget policy on
 // tests/flake-budget.yaml. Every quarantined entry must carry a
 // non-empty test name, an https issue link, and an eta in
 // YYYY-MM-DD that has not yet passed.
@@ -853,7 +853,7 @@ func openFindingIDs(root string) map[string]bool {
 	return out
 }
 
-// validateParityMatrixYAML enforces TESTING.md §12.6 on
+// validateParityMatrixYAML enforces the parity matrix policy on
 // tests/tier6_e2e_cloud/parity-matrix.yaml. Every capability has
 // at least one `validated` provider, every provider in a row is
 // listed under the top-level providers block, and every `skip`

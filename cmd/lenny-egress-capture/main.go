@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-// Command lenny-egress-capture is the §12.9.8 tier-9 egress-capture
+// Command lenny-egress-capture is the tier-9 egress-capture
 // sidecar. It runs alongside an agent pod and forwards outbound
 // HTTPS traffic from a known port (--listen) to the upstream the
 // agent dialed (--upstream), logging every connection's destination
 // host, TLS SNI, and request-body byte hash to a capture file. The
-// §12.9.8 credential-leakage probe reads the capture file and
+// The tier-9 credential-leakage probe reads the capture file and
 // asserts no credential string appears in the recorded bytes.
 //
 // The capture file is a JSONL stream — one record per connection.
@@ -27,7 +27,7 @@
 //
 // The sidecar is TEST-ONLY: forwarding cleartext on the cluster
 // network weakens the §13.2 NetworkPolicy default-deny posture; the
-// tier-9 overlay deploys it explicitly for the §12.9.8 probes and
+// tier-9 overlay deploys it explicitly for the sidecar-forwarding probes and
 // the production install rejects it via the lenny-pod-security
 // admission webhook.
 //

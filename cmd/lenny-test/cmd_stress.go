@@ -12,7 +12,7 @@ import (
 )
 
 // runStress runs a single test repeatedly to detect flakes. Per
-// TESTING.md §17.10 the flake budget is 50 consecutive runs; any
+// The flake budget is 50 consecutive runs; any
 // failure quarantines the test.
 //
 // Usage:
@@ -103,7 +103,7 @@ func runStress(args []string) int {
 			for _, line := range trimLines(lines, 40) {
 				fmt.Printf("    %s\n", line)
 			}
-			// Stop at the first failing run — the §17.10 budget
+			// Stop at the first failing run — the flake budget
 			// is zero tolerance.
 			fmt.Printf("\nstress: failed at run %d/%d after %s\n", i, *runs, time.Since(start))
 			return 1

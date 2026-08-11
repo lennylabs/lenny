@@ -37,7 +37,7 @@ type Card struct {
 }
 
 // Capabilities is the A2A card capabilities block. The v1 A2A path has
-// elicitation disabled (§21.1), so a generated card advertises false.
+// elicitation disabled, so a generated card advertises false.
 type Capabilities struct {
 	Elicitation bool `json:"elicitation"`
 }

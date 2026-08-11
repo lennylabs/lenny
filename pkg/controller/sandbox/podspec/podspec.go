@@ -464,11 +464,11 @@ func (in Inputs) credReadersGID() int64 {
 	return CredReadersGID
 }
 
-// EgressCapture configures the §12.9.8 egress-capture sidecar an
+// EgressCapture configures the egress-capture sidecar an
 // agent pod runs alongside its runtime. The sidecar listens on
 // ListenPort, forwards every accepted TCP connection to Upstream,
 // and writes one JSONL row per connection to a path under the shared
-// capture volume; the §12.9.8 leakage probe (tier-9) reads the file
+// capture volume; the leakage probe (tier-9) reads the file
 // via `kubectl exec` to assert no credential material appears in
 // egress.
 type EgressCapture struct {
@@ -728,7 +728,7 @@ func applyResources(in Inputs, pod *corev1.Pod) {
 }
 
 const (
-	// EgressCaptureContainerName is the name of the §12.9.8 egress
+	// EgressCaptureContainerName is the name of the egress
 	// capture sidecar container injected into agent pods that opt in.
 	EgressCaptureContainerName = "egress-capture"
 	// EgressCaptureVolumeName is the shared emptyDir between the
@@ -753,14 +753,14 @@ const (
 )
 
 // defaultEgressCapturePath is the default in-pod path for the
-// JSONL capture file. The §12.9.8 leakage probe reads it via
+// JSONL capture file. The leakage probe reads it via
 // `kubectl exec` against the runtime container.
 var defaultEgressCapturePath = EgressCaptureMountPath + "/egress.jsonl"
 
-// injectEgressCaptureSidecar appends the §12.9.8 egress-capture
+// injectEgressCaptureSidecar appends the egress-capture
 // container to pod.Spec.Containers, mounts the capture volume on
 // each container index named in mountOn (typically the runtime
-// container so the §12.9.8 probe can read it), and appends the
+// container so the probe can read it), and appends the
 // emptyDir volume to pod.Spec.Volumes. The injection is a no-op when
 // in.EgressCapture is nil.
 func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {

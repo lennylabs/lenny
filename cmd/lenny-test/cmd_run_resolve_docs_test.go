@@ -163,7 +163,7 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 // the keys are removed to keep the static tier green, and the guards
 // that read those documents stop firing under `--changed`.
 //
-// spec: 28.1 (channel naming law), 28.3 (channel registers); TESTING.md
+// spec: 28.1 (channel naming law), 28.3 (channel registers); the test infrastructure
 // §5 (tests/change-graph.json maps source packages, schemas,
 // migrations, and chart templates to the tests that exercise them)
 func TestTheDocumentRootsTheChannelGuardsReadAreCanonicalChangeGraphKeys(t *testing.T) {

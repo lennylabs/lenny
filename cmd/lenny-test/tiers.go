@@ -24,7 +24,7 @@ const (
 )
 
 // allTiers returns the tier names in execution order. The order is the gate
-// hierarchy from TESTING.md §3: lower-numbered tiers gate higher ones.
+// hierarchy documented for the test harness: lower-numbered tiers gate higher ones.
 // Tier 7 is a two-stage gate (load_local then load_kind). Tier 12 (load_cloud)
 // sits after every other tier so cloud spend only fires once everything below
 // is green.
@@ -56,7 +56,7 @@ func tiersForGroup(name string) []tierPlan {
 	switch name {
 	case "pr-fast":
 		// pr-fast is the changed-only fast feedback group per
-		// TESTING.md §20.8. Resolve --changed at the time of the
+		// the test harness documentation. Resolve --changed at the time of the
 		// call so the plan reflects today's diff rather than a
 		// static superset.
 		plan := resolveChangedPlan()

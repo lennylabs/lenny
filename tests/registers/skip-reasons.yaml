@@ -123,7 +123,7 @@ sites:
       function: RegisterAdapterUnderTest
       site: 1
       call: Skipf
-      reason: 'compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install per TESTING.md §12.10 or set Options.HarnessPath'
+      reason: 'compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install the compliance harness or set Options.HarnessPath'
     - path: pkg/compliance/compliance_test.go
       function: buildStubHarness
       site: 1

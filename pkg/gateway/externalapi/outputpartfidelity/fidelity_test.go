@@ -260,7 +260,7 @@ func TestOpenResponsesInlineExact(t *testing.T) {
 	}
 }
 
-// TestMatrixDrivenRoundTrip is the §12.10 conformance check at the
+// TestMatrixDrivenRoundTrip is the conformance check at the
 // per-MessagePart level. For every (adapter, field) cell, the test:
 //
 //  1. Builds a sample MessagePart that exercises the field.

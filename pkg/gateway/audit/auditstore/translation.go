@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
-// translationTopic is the §12.3.7 EventTopic stamped on audit-bearing
+// translationTopic is the EventTopic stamped on audit-bearing
 // events the translator and retranscribe worker re-publish. Audit
 // events are session-scoped lifecycle records, so they ride the
 // session_lifecycle topic.
@@ -197,7 +197,7 @@ func (s *Store) SetPublishState(ctx context.Context, tenantID string, seq uint64
 	state eventbus.PublishState, retryCount int,
 ) error {
 	if !state.IsValid() {
-		return fmt.Errorf("auditstore: %q is not a §12.3.7 publish state", state)
+		return fmt.Errorf("auditstore: %q is not a valid publish state", state)
 	}
 	pool, err := s.shard(ctx, tenantID)
 	if err != nil {

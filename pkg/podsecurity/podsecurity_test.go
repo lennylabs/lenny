@@ -164,7 +164,7 @@ func TestValidateRejectsNonCredContainerMountingCredPath_spec_13_1(t *testing.T)
 	}
 }
 
-// TestValidateAcceptsSiblingPathMount_spec_13_1 asserts the §12.9.8
+// TestValidateAcceptsSiblingPathMount_spec_13_1 asserts the egress-capture
 // egress-capture sidecar case: a non-credential container that mounts
 // the sibling path /run/lenny-capture (which shares the textual prefix
 // /run/lenny but is not nested under /run/lenny/) is allowed. The

@@ -129,7 +129,7 @@ type tierPlan struct {
 	notes   string
 }
 
-// resolve expands the selector into a concrete plan per TESTING.md §6.
+// resolve expands the selector into a concrete plan.
 //
 // Per the selection algorithm:
 //  1. Resolve every active selector into a candidate plan.

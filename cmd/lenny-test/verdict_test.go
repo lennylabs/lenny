@@ -200,7 +200,7 @@ func TestRecordTierUnverifiedRaisesVerdict(t *testing.T) {
 // overall verdict must not depend on which tier ran first. INCONCLUSIVE
 // outranks UNVERIFIED so an infrastructure-class failure still reports
 // the verdict whose exit code drives the documented retry path
-// (TESTING.md §21.3), instead of being masked by an unrelated check
+// (per the harness's documented verdict rules), instead of being masked by an unrelated check
 // that could not reach a conclusion.
 func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 	cases := []struct {
@@ -231,8 +231,8 @@ func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 // TestUnverifiedTierKeepsInfraFailureRetryable pins the exit code a run
 // reports when an infrastructure-class failure and an unverified check
 // land in the same run. The harness retries an infrastructure failure
-// with fresh infrastructure on the INCONCLUSIVE exit code (TESTING.md
-// §21.3), and a degraded environment where part of the toolchain is
+// with fresh infrastructure on the INCONCLUSIVE exit code, and a degraded
+// environment where part of the toolchain is
 // absent is also where infrastructure fails to start, so the two
 // statuses coincide. The run must still exit 2 in either record order.
 func TestUnverifiedTierKeepsInfraFailureRetryable(t *testing.T) {

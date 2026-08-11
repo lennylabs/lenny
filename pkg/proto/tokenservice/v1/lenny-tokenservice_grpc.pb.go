@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// §4.3 / §12.2.4 Token Service gRPC contract. The gateway calls these
+// §4.3 Token Service gRPC contract. The gateway calls these
 // RPCs over mTLS to materialize, rotate, and revoke credential leases.
 // The Token Service runs as a separate Deployment with KMS access; the
 // gateway has no KMS decrypt grants and cannot mint leases in-process

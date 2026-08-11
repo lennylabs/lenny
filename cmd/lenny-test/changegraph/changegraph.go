@@ -17,7 +17,7 @@
 // the same path.
 //
 // Nothing in this package carries a spec annotation. It states the
-// harness's own test-selection domain, which TESTING.md governs rather
+// harness's own test-selection domain, which the test harness governs rather
 // than the platform specification.
 package changegraph
 

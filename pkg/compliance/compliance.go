@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package compliance is the importable third-party entry point to
-// the §12.10 / §15.4 conformance harness. A third-party runtime
+// the §15.4 conformance harness. A third-party runtime
 // project that ships its own adapter binary embeds this package in
 // its test suite and calls RegisterAdapterUnderTest from a single
 // `go test` target. The helper shells out to the `lenny-compliance`
@@ -76,7 +76,7 @@ type Options struct {
 	Verbose bool
 }
 
-// Report mirrors the §12.10 JSON document the harness emits with
+// Report mirrors the JSON document the harness emits with
 // --json. The fields the assertion path reads are exported; unknown
 // fields on the report are ignored.
 type Report struct {
@@ -182,7 +182,7 @@ func RegisterAdapterUnderTest(t *testing.T, a Adapter, opts Options) Report {
 	report, err := RunSuite(context.Background(), a, opts)
 	if err != nil {
 		if errors.Is(err, ErrHarnessNotFound) {
-			t.Skipf("compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install per TESTING.md §12.10 or set Options.HarnessPath", err)
+			t.Skipf("compliance.RegisterAdapterUnderTest: lenny-compliance not on PATH (%v); install the compliance harness or set Options.HarnessPath", err)
 		}
 		// Summary-inconsistency surfaces both a non-nil error and a
 		// populated report; treat it as a hard failure here.

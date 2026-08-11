@@ -72,12 +72,12 @@ func (r *Router) rowTranslationState(ctx context.Context, tenant string, seq uin
 // EventBus retranscribe path. When the wired backend does not implement
 // it, every row is treated as `published` (no outbound publish queue).
 //
-// spec: §12.3.7 eventbus_publish_state enum.
+// spec: eventbus_publish_state enum.
 type auditPublishLog interface {
 	PublishState(ctx context.Context, tenantID string, seq uint64) (eventbus.PublishState, int, error)
 }
 
-// rowPublishState resolves a row's §12.3.7 eventbus_publish_state.
+// rowPublishState resolves a row's eventbus_publish_state.
 // Backends without publish-state tracking report `published`.
 func (r *Router) rowPublishState(ctx context.Context, tenant string, seq uint64) (eventbus.PublishState, int, error) {
 	ps, ok := r.auditLog.(auditPublishLog)
@@ -1060,7 +1060,7 @@ func (r *Router) handleRetranslateAuditEvent(w http.ResponseWriter, req *http.Re
 // endpoint. The Postgres-backed auditstore implements it; the in-memory
 // chain does not, because it drives no §12.6 outbound publish queue, so
 // its rows are always reported `published` and never eligible for
-// republication. spec: §12.3.7 eventbus_publish_state; §25.9.
+// republication. spec: §25.9.
 type auditPublishStateStore interface {
 	PublishState(ctx context.Context, tenantID string, seq uint64) (eventbus.PublishState, int, error)
 	SetPublishState(ctx context.Context, tenantID string, seq uint64, state eventbus.PublishState, retryCount int) error

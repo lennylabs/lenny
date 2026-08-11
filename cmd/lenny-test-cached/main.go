@@ -19,7 +19,7 @@
 //	{"op":"endpoints"}               → endpoint URLs for postgres / redis / minio / otlp
 //
 // The daemon is a developer convenience and is not used in CI. CI
-// runs always start with cold containers for isolation (TESTING.md
+// runs always start with cold containers for isolation.
 // §6).
 package main
 

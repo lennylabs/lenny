@@ -99,7 +99,7 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 //
 // The lock is session-scoped (`pg_advisory_lock` / `pg_advisory_unlock` on
 // one acquired connection) rather than transaction-scoped
-// (`pg_advisory_xact_lock`, used by the §11.7 audit lock and the §12.2.1
+// (`pg_advisory_xact_lock`, used by the §11.7 audit lock and the
 // session-admission lock) because the protected sequence is not a single
 // Postgres transaction: it interleaves a K8s Secret read-modify-write with
 // several independent store transactions (Record, RecordWithAudit,

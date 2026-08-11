@@ -84,7 +84,7 @@ func parseAuditFilter(w http.ResponseWriter, req *http.Request, now time.Time) (
 		}
 	}
 	// spec: §25.9 — ?eventbus_publish_state filters by the
-	// §12.3.7 publish state; an unparseable value is rejected.
+	// publish state; an unparseable value is rejected.
 	if v := q.Get("eventbus_publish_state"); v != "" {
 		f.publishState = eventbus.PublishState(v)
 		if !f.publishState.IsValid() {

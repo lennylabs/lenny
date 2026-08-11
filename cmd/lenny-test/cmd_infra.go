@@ -18,7 +18,7 @@ import (
 // the harness is wired with cluster-bring-up code; for now it
 // reports a precise diagnosis.
 //
-// Architecture: TESTING.md §10.3 (profile=compose), §10.4 (kind).
+// Architecture: profile=compose brings up Docker Compose; profile=kind brings up a Kind cluster.
 func runInfra(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: lenny-test infra <up|down|status|prune> [--profile <compose|kind|all>]")
@@ -183,8 +183,7 @@ func kindUp() int {
 	if err != nil {
 		return 1
 	}
-	fmt.Println("\nkind cluster `lenny` is up. Helm chart bring-up is a Phase 3 deliverable; ")
-	fmt.Println("see TESTING.md §13.6.")
+	fmt.Println("\nkind cluster `lenny` is up. Helm chart bring-up is a Phase 3 deliverable.")
 	return 0
 }
 

@@ -48,7 +48,7 @@ func main() {
 	)
 	flag.Parse()
 
-	// spec: §12.10 (TESTING.md) — `lenny-compliance --image <ref> --level
+	// `lenny-compliance --image <ref> --level
 	// <level>` drives a container-deployed runtime through the same
 	// battery a locally built binary runs. Resolve --image to a wrapper
 	// script the rest of the harness can exec like any other adapter
@@ -100,7 +100,7 @@ func main() {
 // through to the container the same way it would to a local adapter
 // binary. The returned cleanup func removes the wrapper script; it is
 // always non-nil when err is nil.
-// spec: §12.10 (TESTING.md) — the reference-runtime and third-party
+// The reference-runtime and third-party
 // conformance batteries run against a container image via
 // `lenny-compliance --image`. A `file://` reference (see
 // tests/testinfra/runtimes/conformance-fixtures/README.md) names a

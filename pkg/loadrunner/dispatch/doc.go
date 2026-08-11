@@ -6,5 +6,5 @@
 // implementation; cloud-specific implementations (SQS, Pub/Sub,
 // Service Bus) live in sibling subpackages.
 //
-// TESTING.md §12.12 (Wave 5 tier-12 work-dispatch).
+// Wave 5 tier-12 work-dispatch.
 package dispatch

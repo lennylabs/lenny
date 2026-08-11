@@ -182,7 +182,7 @@ func Validate(opts ValidateOptions, stdout, stderr io.Writer) int {
 		case errors.Is(perr, compliance.ErrHarnessNotFound):
 			fmt.Fprintln(stdout,
 				"Observed integration level: not probed — the lenny-compliance harness "+
-					"was not found on PATH. Install it (TESTING.md) to run the §15.4.6 "+
+					"was not found on PATH. Install it to run the §15.4.6 "+
 					"reconciliation.")
 		case perr != nil:
 			findings = append(findings, "observed-level probe failed: "+perr.Error())

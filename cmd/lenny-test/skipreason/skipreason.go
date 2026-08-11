@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package skipreason holds the reason categories a skip call may open
-// with, which TESTING.md §17.9 governs. The values live in their own
+// with. The values live in their own
 // importable package because `cmd/lenny-test` is a main package: the
 // tier-0 classifier that holds every skip call site in the tree to
 // these categories cannot import the scaffold-marker reader that also
@@ -15,7 +15,7 @@
 // Nothing in this package carries a spec annotation. The harness
 // reduces such an annotation to a bare section number and would credit
 // the resulting failure to spec/17_*, which defines no skip convention;
-// the convention belongs to TESTING.md §17.9.
+// the convention belongs to the test harness's own documentation, not the spec.
 package skipreason
 
 import "strings"

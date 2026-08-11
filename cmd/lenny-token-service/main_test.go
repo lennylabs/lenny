@@ -29,7 +29,7 @@ import (
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
-// spec: 4.3 (§4.3 / §12.2.4 Token Service gRPC surface — the binary's
+// spec: 4.3 (§4.3 Token Service gRPC surface — the binary's
 // --grpc-addr flag exposes the lenny.tokenservice.v1.TokenService RPCs)
 // diagnosis: a smoke test that builds cmd/lenny-token-service, starts
 // the binary against an ephemeral gRPC port, and dials the

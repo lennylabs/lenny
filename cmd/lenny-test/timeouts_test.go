@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: TESTING.md §2 (per-tier go-test budgets); operator-tunable
+// Per-tier go-test budgets are an operator-tunable
 // default rule (code-best-practices: a non-spec default is overridable
 // and degrades to the documented default when the override is invalid).
 //
@@ -46,7 +46,7 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 	})
 }
 
-// spec: TESTING.md §2 (integration tier budget).
+// The integration tier budget is operator-tunable (code-best-practices).
 //
 // The integration tier suite boots the gateway per test against the
 // compose stack and runs roughly four to five minutes end-to-end. Its

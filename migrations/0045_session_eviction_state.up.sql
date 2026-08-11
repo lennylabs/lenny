@@ -1,4 +1,4 @@
--- §12.2.1 EvictionStateStore. Holds minimal session state written
+-- EvictionStateStore. Holds minimal session state written
 -- during the §4.4 eviction-checkpoint fallback path: when MinIO is
 -- unreachable mid-checkpoint and the adapter cannot persist the
 -- full workspace + transcript, the gateway writes a minimal-state

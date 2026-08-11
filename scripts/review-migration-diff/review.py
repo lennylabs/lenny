@@ -92,6 +92,29 @@ makes a finding here worth more than a finding on a single line, and a false
 positive here more expensive too.
 """
 
+
+REMOVAL_NOTE = """\
+THIS BATCH IS A REMOVAL, NOT A CITATION REWRITE. Each item is a line from product
+code that referenced the project's testing document, either by name or by a bare
+section number belonging to it, and the reference was deleted. Production code
+should not point a reader at the testing document, so the deletion is the intent.
+
+Judge only whether the deletion left the line correct:
+
+  - Does the sentence still parse, and still say what it said minus the pointer?
+    A dangling connective, a doubled article, a stranded punctuation mark, an
+    orphaned label such as a bare "spec:", or a clause with no subject is a
+    finding.
+  - Was something removed that was NOT a reference to the testing document? A
+    specification citation is not, and neither is an ordinary number.
+  - Does the line still identify what it documents? Losing a pointer is fine;
+    losing the name of the thing is not.
+  - For a removed line, was the whole line really nothing but the reference?
+
+Report a finding as class A when the line no longer parses or lost content, and
+class F when the removal reached something that was not a testing reference.
+"""
+
 lock = threading.Lock()
 
 
@@ -103,9 +126,11 @@ def run_batch(path, model, effort, out_path, done_path):
         f'[{i}] {it.get("file","")}\n  BEFORE: {it.get("before","")}\n  AFTER:  {it.get("after","")}'
         + (f'\n  (this transformation applies to {it["applies_to_sites"]} sites)'
            if "applies_to_sites" in it else "")
+        + (f'\n  (rule: {it["rule"]})' if "rule" in it else "")
         for i, it in enumerate(items)
     )
-    prompt = BRIEF + (SHAPE_NOTE if batch["kind"] == "shape" else "") + "\n\nBATCH:\n" + listing
+    extra = SHAPE_NOTE if batch["kind"] == "shape" else (REMOVAL_NOTE if batch["kind"] == "removal" else "")
+    prompt = BRIEF + extra + "\n\nBATCH:\n" + listing
     try:
         p = subprocess.run(
             ["claude", "-p", prompt, "--model", model, "--effort", effort],

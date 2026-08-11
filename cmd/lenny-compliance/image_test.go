@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §12.10 (TESTING.md) — "lenny-compliance --image <ref> --level
+// "lenny-compliance --image <ref> --level
 // <level>" drives a container-deployed runtime through the battery.
 // diagnosis: a file:// reference must resolve straight to the named
 // binary with no docker involvement (see
