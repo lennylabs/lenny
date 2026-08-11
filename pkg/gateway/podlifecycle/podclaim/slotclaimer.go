@@ -110,7 +110,7 @@ func StampDrainRequest(ctx context.Context, cl client.Client, namespace, podName
 // StampScrubWarning stamps the §5.2 lenny.dev/scrub-warning annotation on the
 // recycling agent Pod named podName. The gateway stamps it when a whole-pod
 // scrub fails under the onScrubFailure: warn policy and the recycle
-// disposition reuses the pod (reserve, preConnect re-warm, or the §6.39
+// disposition reuses the pod (reserve, preConnect re-warm, or the §6.2
 // cordon-drain-under-warn). The marker records that the pod re-enters the pool
 // carrying residual-state risk; it persists through the §6.2 preConnect
 // re-warm because SDK readiness is orthogonal to residual-state risk. The
@@ -342,7 +342,7 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 // it to skip the pod, and the WarmPoolController owns the resulting
 // draining transition, derived from the same CreationTimestamp (§4.6.1).
 //
-// spec: spec/06_warm-pod-model.md §6.2; spec/04 §4.6.1
+// spec: §6.2; §4.6.1
 // (uptime drains are WarmPoolController-written).
 func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
 	if req.MaxPodUptimeSeconds <= 0 {
@@ -694,7 +694,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // the session-to-pod binding the released session held is cleared on its
 // Postgres session row by the session server. The gateway does not write
 // Sandbox.status; the WarmPoolController projects the pod's occupancy phase
-// from claim existence and binding state (§4.6.1, §6.41).
+// from claim existence and binding state (§4.6.1, §6.2).
 //
 // recycle selects the occupancy-zero disposition for a recycling pool (the
 // §3.1 "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
@@ -703,7 +703,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // the adapter runs the whole-pod scrub when occupancy reaches zero and its
 // §4.7 ReportPodScrub drives the recycle-vs-retire disposition. This is the
 // concurrent-session counterpart of the session-mode Binder.Release recycle
-// branch and closes the §3.1 concurrent-workspace residue gap (shared /tmp,
+// branch and closes the §6.2 concurrent-workspace residue gap (shared /tmp,
 // /dev/shm, surviving processes across cohorts). When recycle is false (a
 // non-recycling "Bounded cohort" pool, or a failed/crashed concurrent session
 // the caller maps to the drain path) the claim is deleted directly so the
@@ -733,8 +733,8 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // internal. It is false on every other release (a sibling slot remains, the
 // slot leaked, the pool does not recycle, or the claim had already vanished).
 //
-// spec: §3.1, §3.4 (occupancy-zero recycle disposition); §6.2 (leaked slot
-// remains counted); §6.30/§6.41; §5.2 (whole-pod scrub trigger, threaded to the
+// spec: §3.1, §5.2 (occupancy-zero recycle disposition); §6.2 (leaked slot
+// remains counted); §6.2; §5.2 (whole-pod scrub trigger, threaded to the
 // binder via recycled).
 func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
@@ -769,22 +769,22 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 	}
 
 	if recycle {
-		// §3.4 recycle disposition on the occupancy-zero edge of a recycling
+		// §5.2 recycle disposition on the occupancy-zero edge of a recycling
 		// concurrent pool: patch the per-pod claim bound → recycling so the
 		// claim is in `recycling` before any §4.7 ReportPodScrub arrives (the
 		// claim state machine admits recycling → reserved/released/failed but
-		// not bound → reserved, §3.2). The adapter runs the whole-pod scrub on
+		// not bound → reserved, §6.2). The adapter runs the whole-pod scrub on
 		// occupancy zero and the ReportPodScrub disposition drives recycle vs.
 		// retire off the `recycling` binding state. A claim that vanished (a
 		// concurrent retirement, the §4.6.1 orphan GC reclaimed it) is a no-op:
-		// there is nothing left to recycle. spec: §3.1, §3.4, §6.41.
+		// there is nothing left to recycle. spec: §3.1, §3.4, §6.2.
 		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
 			return false, err
 		}
-		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// §5.2: arm the gateway-side missing-report timeout now that the claim
 		// is `recycling`. The adapter's ReportPodScrub cancels it; if no report
 		// arrives within cleanupTimeoutSeconds plus a grace the coordinator
 		// retires the pod rather than leaving it stuck in `recycling` until the

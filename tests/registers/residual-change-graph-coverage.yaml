@@ -480,6 +480,30 @@ entries:
     reason: |-
       a review driver over the migration diff, which no test tier is selected from
   - member: |-
+      scripts/review-migration-diff/author-proposal-refs.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/author-testing-refs.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/classify-citations.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/drop-testing-refs.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
       tests/results/.gitignore
     class: change-graph-coverage
     disposition: excluded

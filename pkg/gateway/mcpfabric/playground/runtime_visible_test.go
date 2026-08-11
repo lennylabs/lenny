@@ -140,7 +140,7 @@ func TestPlaygroundPickerFiltersAllowedRuntimes_spec_27_5_190(t *testing.T) {
 func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	// The state initializer declares effectiveScope so the §27.4 gate reads a
-	// defined value before the first mint completes (proposal §3.4).
+	// defined value before the first mint completes.
 	if !strings.Contains(app, `effectiveScope: ""`) {
 		t.Errorf("app.js state initializer must declare effectiveScope")
 	}
@@ -149,7 +149,7 @@ func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 		t.Errorf("app.js mintBearer must store body.effectiveScope into state.effectiveScope")
 	}
 	// The hasScope helper gates the delegation field on the minted bearer's
-	// effective scope (proposal §3.5). It probes a domain:domain-resource:action
+	// effective scope. It probes a domain:domain-resource:action
 	// target (such as tools:sessions:write), reads the stored effective scope,
 	// and honors the tools:sessions:* and tools:* wildcards.
 	for _, marker := range []string{
@@ -179,7 +179,7 @@ func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 func TestPlaygroundGatesDelegationField_spec_27_4_item2(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	// renderSessionConfig gates the delegation affordance on the minted
-	// bearer's effective scope granting tools:sessions:write (proposal §3.5).
+	// bearer's effective scope granting tools:sessions:write.
 	for _, marker := range []string{
 		`var canDelegate = hasScope("tools:sessions:write")`,                         // the gate is computed from hasScope
 		`canDelegate ? el("label", { text: "Delegation policy (optional)" }) : null`, // label is null-skipped when ungated
@@ -195,7 +195,7 @@ func TestPlaygroundGatesDelegationField_spec_27_4_item2(t *testing.T) {
 		t.Errorf("app.js must drop the '(requires scope)' qualifier now that visibility is gated")
 	}
 	// The create payload emits the nested delegationLease.delegationPolicyRef
-	// key the server decodes (proposal §3.6), guarded on canDelegate and a
+	// key the server decodes, guarded on canDelegate and a
 	// defined delegationField so the affordance-hidden path never dereferences
 	// an undefined field.
 	for _, marker := range []string{

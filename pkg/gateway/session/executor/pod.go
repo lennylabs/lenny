@@ -335,7 +335,7 @@ func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition
 	// The session-terminal disposition (completed/failed/cancelled/expired)
 	// is recorded on the Postgres session model and surfaced on the Sandbox
 	// only as a Terminated condition; it is no longer a coarse
-	// Sandbox.status.phase value (spec: §6.2, §6.37). Release maps the
+	// Sandbox.status.phase value (spec: §6.2, §7.2). Release maps the
 	// disposition string to that condition reason and drains the pod.
 	return e.binder.Release(ctx, bind, string(disposition))
 }

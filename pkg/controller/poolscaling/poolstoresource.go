@@ -125,7 +125,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		v := *p.BootstrapMinWarm
 		cfg.BootstrapMinWarm = &v
 	}
-	// spec: §5.2 / §6.33 — the CRD does not model the session-mode recycle
+	// spec: §5.2 — the CRD does not model the session-mode recycle
 	// sizing knobs (they live in the gateway poolstore, §4.6.3 ownership), so
 	// the controller's mode_factor derivation reads recycle.enabled,
 	// recycle.maxSessionsPerPod, and maxConcurrentSessions directly off the

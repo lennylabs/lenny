@@ -9,7 +9,7 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// TestProjectOccupancyPhase exercises the §4.6.1 / §6.14 claim-driven
+// TestProjectOccupancyPhase exercises the §4.6.1 / §4.6.3 claim-driven
 // occupancy projection table: the coarse Sandbox.status.phase computed from
 // the per-pod SandboxClaim binding state, the rewarm stamp, and the pod's
 // current phase. It covers the bound/recycling/reserved projections, the

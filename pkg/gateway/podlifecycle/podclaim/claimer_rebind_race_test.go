@@ -22,7 +22,7 @@ import (
 // patch.
 var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Resource: "sandboxclaims"}
 
-// TestClaimRebindFallsThroughWhenHoldExpiresMidRebind covers the §3.2
+// TestClaimRebindFallsThroughWhenHoldExpiresMidRebind covers the
 // rebind-vs-hold-expiry race in the acquisition path: a reserved pod looks
 // eligible for a within-hold rebind, but its hold-expiry DELETE lands between
 // the eligibility read and the rebind status patch, so WriteRebindStatus sees

@@ -21,7 +21,7 @@ import (
 // then hand the typed outcome to this interface, which owns the side
 // effects the spec assigns to the gateway: the per-pod recycle-counter
 // writes on agent_pod_state, the unhealthy-threshold drain ledger behind
-// the lenny.dev/drain-request annotation, the §6.39 host-node
+// the lenny.dev/drain-request annotation, the §6.2 host-node
 // schedulability read, the podscrub recycle disposition, and the
 // SandboxClaim binding-state patches that drive the recycle or retire.
 //
@@ -31,7 +31,7 @@ import (
 // tests pass a fake.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
-// onScrubFailure), §3.4 (recycle disposition, retire triggers), §6.39
+// onScrubFailure), §3.4 (recycle disposition, retire triggers), §6.2
 // (host-node schedulability retire at recycle disposition).
 type ScrubReportService interface {
 	// RecordSessionScrub records the §5.2 per-slot cleanup outcome at a
@@ -45,7 +45,7 @@ type ScrubReportService interface {
 	RecordSessionScrub(ctx context.Context, podID, sessionID, slotID string, leaked bool) error
 
 	// RecordPodScrub records the §5.2 whole-pod scrub outcome at the
-	// occupancy-zero recycle boundary and drives the §3.4 / §6.39 recycle
+	// occupancy-zero recycle boundary and drives the §3.4 / §6.2 recycle
 	// disposition. When failed is true it increments scrubFailureCount on
 	// the pod's agent_pod_state row. It then reads the pod's
 	// lenny.dev/host-schedulable label, computes the disposition against the
@@ -53,12 +53,12 @@ type ScrubReportService interface {
 	// drives it: on recycle, a preConnect pod stamps rewarmStartedAt and
 	// coordinates the SDK re-warm before reserving, a non-preConnect pod
 	// patches the claim directly to reserved; on retire (a limit reached, or
-	// the §6.39 unschedulable-host-node trigger when the label reads "false"
+	// the §6.2 unschedulable-host-node trigger when the label reads "false"
 	// or is absent), it writes the terminal disposition so the projection
 	// drains. detail carries an optional adapter-side failure description for
 	// the audit trail. A gateway-side failure is returned as an error.
 	// spec: §4.7 (ReportPodScrub increments scrubFailureCount, computes
-	// disposition), §3.4, §5.2, §6.39.
+	// disposition), §3.4, §5.2, §6.2.
 	RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error
 }
 
@@ -102,14 +102,14 @@ func (s *Service) ReportSessionScrub(ctx context.Context, req *adapterv1.ReportS
 // the gateway has patched the claim to recycling. The handler
 // fail-closed-validates the request and feeds the binary outcome to the
 // ScrubReportService, which increments scrubFailureCount on failure and
-// computes and drives the recycle disposition (including the §6.39
+// computes and drives the recycle disposition (including the §6.2
 // unschedulable-host-node retire).
 //
 // A POD_SCRUB_OUTCOME_UNSPECIFIED outcome is rejected fail-closed: the
 // gateway cannot tell a clean scrub from a failure, so it cannot decide
 // between reuse and the scrub-failure retirement path. The handler returns
 // InvalidArgument rather than assuming success and risking reuse of a pod
-// whose residual state was not cleared. spec: §4.7; §5.2; §3.4; §6.39.
+// whose residual state was not cleared. spec: §4.7; §5.2; §3.4; §6.2.
 func (s *Service) ReportPodScrub(ctx context.Context, req *adapterv1.ReportPodScrubRequest) (*adapterv1.ReportPodScrubResponse, error) {
 	if s.scrubReports == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: scrub-report handling is not configured on this gateway")
@@ -161,7 +161,7 @@ func podScrubFailed(o adapterv1.PodScrubOutcome) (bool, error) {
 
 // RecycleCounterStore is the §4.7 recycle-counter seam the ScrubReporter
 // drives: the two per-pod counters on the agent_pod_state row the §3.4 /
-// §6.39 recycle disposition evaluates. *agentpodstate.Store (the Postgres
+// §6.2 recycle disposition evaluates. *agentpodstate.Store (the Postgres
 // mirror) satisfies it; the interface is kept narrow so leasecontrol does
 // not depend on the full mirror surface. A missing pod row reports
 // found=false so the caller fails closed (a scrub report for a pod the
@@ -263,7 +263,7 @@ type PodRecyclePolicy struct {
 	VMRestart bool
 	// HostSchedulable is the lenny.dev/host-schedulable pod label read at the
 	// recycle boundary: true only when the label reads "true". An absent or
-	// "false" label is fail-safe-unschedulable. spec: §6.39.
+	// "false" label is fail-safe-unschedulable. spec: §6.2.
 	HostSchedulable bool
 	// PodUptimeSeconds is the pod's wall-clock uptime in whole seconds,
 	// floored at zero. spec: §6.2 (maxPodUptimeSeconds retire).
@@ -279,13 +279,13 @@ type PodRecyclePolicy struct {
 	RuntimeClass string
 }
 
-// PodInspector resolves the §5.2 recycle policy and §6.39 host-node
+// PodInspector resolves the §5.2 recycle policy and §6.2 host-node
 // schedulability for the pod under a whole-pod scrub report. It reads the
 // pod's lenny.dev/host-schedulable label via the gateway's existing get
 // access on the Pods resource (no Node verbs), the pool's resolved
 // sessionPolicy.recycle, and the pod's uptime. A missing pod (the absent
-// label case) reports HostSchedulable false, fail-safe per §6.39.
-// spec: §6.39 (host-node schedulability read via Pods get), §5.2 (recycle
+// label case) reports HostSchedulable false, fail-safe per §6.2.
+// spec: §6.2 (host-node schedulability read via Pods get), §5.2 (recycle
 // policy resolution).
 type PodInspector interface {
 	// InspectForRecycle resolves the recycle policy and pod facts for podID
@@ -314,7 +314,7 @@ type ClaimDispositionDriver interface {
 	// every other retire is a drain that maps to `released`. The drain-to-
 	// `released` set is every limit-reached retirement — maxSessionsPerPod,
 	// maxPodUptimeSeconds, AND the cumulative maxScrubFailures limit under the
-	// warn policy — plus the §6.39 unschedulable-host cordon-drain. The
+	// warn policy — plus the §6.2 unschedulable-host cordon-drain. The
 	// scrub-failure-limit drain belongs to `released` (not `failed`) because
 	// `failed` is scoped to the fail policy and to crashed sessions: a warn-
 	// policy pod that exhausts maxScrubFailures is retired as a lifecycle limit,
@@ -324,12 +324,12 @@ type ClaimDispositionDriver interface {
 	// (scrub_failure_limit grouped with the other two drain retirements).
 	//
 	// scrubWarning stamps the scrub_warning audit annotation onto the retire,
-	// set only on the §6.39 cordon-drain-under-warn path where the disposition
+	// set only on the §6.2 cordon-drain-under-warn path where the disposition
 	// retains the residual-state marker (the package doc's `draining
 	// [scrub_warning]` case); the limit-reached and fail-policy retires clear
 	// it. reason is the stable observability label, and detail is the optional
 	// adapter-side failure description retained in the audit trail on a FAILED
-	// outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit retention of
+	// outcome. spec: §3.4 (retire disposition), §6.2, §5.2 (audit retention of
 	// the failed pod's metadata).
 	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error
 }
@@ -356,7 +356,7 @@ type RetirementMetrics interface {
 	// (lenny_gateway_pod_retirement_total{reason, pool, runtime_class}). The
 	// caller emits it only for a gateway-owned reason in the frozen §16.1
 	// vocabulary (session_count_limit, scrub_failure_limit); it suppresses the
-	// uptime_limit emission (the controller owns that count), and the §6.39
+	// uptime_limit emission (the controller owns that count), and the §6.2
 	// cordon-drain and the fail-policy termination drain without a
 	// retirement-counter increment, so a sink never observes an
 	// out-of-vocabulary reason value. spec: §16.1
@@ -372,11 +372,11 @@ var ErrPodNotInMirror = errors.New("leasecontrol: pod not found in agent_pod_sta
 
 // ScrubReporter is the gateway-side ScrubReportService implementation. It
 // wires the §4.7 recycle-counter writes, the §5.2 unhealthy-threshold drain
-// ledger, the §6.39 host-node schedulability read, the pure podscrub
+// ledger, the §6.2 host-node schedulability read, the pure podscrub
 // recycle disposition, and the §3.4 claim binding-state patches behind the
 // narrow seams above so leasecontrol stays free of the Kubernetes client.
 //
-// spec: §4.7, §3.4, §5.2, §6.39.
+// spec: §4.7, §3.4, §5.2, §6.2.
 type ScrubReporter struct {
 	counters  RecycleCounterStore
 	ledger    DrainLedger
@@ -484,12 +484,12 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 }
 
 // RecordPodScrub increments scrubFailureCount on a failed scrub, resolves
-// the §3.4 / §6.39 recycle disposition through podscrub.Decide against
+// the §3.4 / §6.2 recycle disposition through podscrub.Decide against
 // the pod's recycle counters, sessionPolicy, uptime, and host-node
 // schedulability, and drives the resulting disposition onto the claim
 // binding state. detail carries an optional adapter-side failure
 // description that the retire path retains in the audit trail on a FAILED
-// outcome. spec: §4.7; §3.4; §5.2; §6.39.
+// outcome. spec: §4.7; §3.4; §5.2; §6.2.
 func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error {
 	// Resolve the recycle policy first: it carries the pool and
 	// runtime_class dimensions the §16.1 scrub-failure and retirement
@@ -569,17 +569,17 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // applyDisposition drives a resolved disposition onto the claim binding
 // state and emits the gateway retirement metric for a gateway-owned reason in
 // the §16.1 vocabulary. A retire writes the terminal disposition (failed vs
-// released), carrying the scrub_warning the §6.39 cordon-drain-under-warn path
+// released), carrying the scrub_warning the §6.2 cordon-drain-under-warn path
 // computes and the adapter-supplied failure detail for the audit trail; a reuse
 // drives the recycle path. policy.Pool and policy.RuntimeClass label
 // lenny_gateway_pod_retirement_total, which is incremented only for a
 // gateway-owned reason the §16.1 inventory declares (session_count_limit,
-// scrub_failure_limit; the uptime_limit count is controller-owned); the §6.39
+// scrub_failure_limit; the uptime_limit count is controller-owned); the §6.2
 // cordon-drain and the fail-policy termination drain without a counter
 // increment. On a concurrent non-vm-restart pool the session_count_limit
 // counter is additionally suppressed here because the per-release
 // SessionCountRetirer owns that emission for that pod class; the occupancy-zero
-// disposition still retires the pod as the state backstop. spec: §3.4, §6.39,
+// disposition still retires the pod as the state backstop. spec: §3.4, §6.2,
 // §16.1, §5.2 (per-release maxSessionsPerPod drain).
 func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, detail string, d podscrub.Disposition) error {
 	pool, runtimeClass := policy.Pool, policy.RuntimeClass
@@ -596,7 +596,7 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, poli
 		// emitter. Suppressing the gateway emission here keeps an over-uptime pod
 		// that drains its last slot to occupancy zero from being counted twice
 		// (once by this applyDisposition, once by the controller reconcileUptime)
-		// through the §16.1 summing recording rule. The §6.39 cordon-drain retire
+		// through the §16.1 summing recording rule. The §6.2 cordon-drain retire
 		// and the onScrubFailure: fail termination drive the drain but are not
 		// members of the vocabulary, so the counter is incremented only for a
 		// gateway-owned reason; emitting d.Reason for a non-vocabulary or
@@ -617,14 +617,14 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, poli
 		// `failed`; every other retire is a drain → claim `released`. Decide
 		// returns state.Draining for all three limit retirements
 		// (session_count_limit, uptime_limit, AND scrub_failure_limit) and for
-		// the §6.39 host_unschedulable cordon-drain, so the scrub-failure-limit
+		// the §6.2 host_unschedulable cordon-drain, so the scrub-failure-limit
 		// retirement (maxScrubFailures reached under the warn policy) routes to
 		// `released` alongside the other two lifecycle limits rather than to
 		// `failed`. `failed` is reserved for the fail-policy termination, which
 		// Decide alone returns as state.Failed. spec: §4.6.3 (`released` vs
 		// `failed` binding terminals), §16.1 (scrub_failure_limit is a drain
 		// retirement, grouped with the session-count and uptime limits).
-		// d.ScrubWarning is set only on the §6.39 cordon-drain-under-warn path;
+		// d.ScrubWarning is set only on the §6.2 cordon-drain-under-warn path;
 		// it stamps the scrub_warning audit annotation onto the retire so the
 		// residual-state marker the disposition computed is retained. detail
 		// carries the adapter-side failure description for the audit trail on a

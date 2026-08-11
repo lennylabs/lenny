@@ -11,7 +11,7 @@
 // passes them into leasecontrol.NewScrubReporter.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §3.4
-// (recycle disposition), §5.2 (scrub model, onScrubFailure), §6.39
+// (recycle disposition), §5.2 (scrub model, onScrubFailure), `spec/06_warm-pod-model.md` §6.2
 // (host-node schedulability retire), §16.1 (scrub-failure and retirement
 // metrics).
 package recycle
@@ -499,7 +499,7 @@ type runtimeReader interface {
 	Get(ctx context.Context, name string) (runtimestore.Runtime, error)
 }
 
-// podInspector resolves the §5.2 recycle policy and §6.39 host-node
+// podInspector resolves the §5.2 recycle policy and `spec/06_warm-pod-model.md` §6.2 host-node
 // schedulability for a pod under a whole-pod scrub report. It reads the
 // agent Pod (the lenny.dev/host-schedulable label, the lenny.dev/pool
 // label, and the pod's creation time for uptime) via the gateway's Pods
@@ -531,7 +531,7 @@ type PodInspectorOptions struct {
 	Now func() time.Time
 }
 
-// NewPodInspector builds the §6.39 / §5.2 recycle pod inspector. Client,
+// NewPodInspector builds the `spec/06_warm-pod-model.md` §6.2 / §5.2 recycle pod inspector. Client,
 // Namespace, Pools, and Runtimes are required.
 func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error) {
 	if opts.Client == nil {
@@ -568,7 +568,7 @@ func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error
 // write is absorbed by claimDispositionDriver, which treats a NotFound from
 // the binding-state writers as the same no-op. A missing or "false"
 // lenny.dev/host-schedulable label reads as unschedulable, fail-safe per
-// §6.39. spec: §6.39 (host-node schedulability read via Pods get), §5.2
+// §6.2. spec: §6.2 (host-node schedulability read via Pods get), §5.2
 // (recycle policy resolution), §3.4 / §4.7 (skip when the pod or claim is
 // gone).
 func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (leasecontrol.PodRecyclePolicy, bool, error) {
@@ -718,9 +718,9 @@ func runtimeClass(p isolation.Profile) string {
 	return name
 }
 
-// hostSchedulable reads the §6.39 lenny.dev/host-schedulable pod label:
+// hostSchedulable reads the §6.2 lenny.dev/host-schedulable pod label:
 // true only when the label reads exactly "true". An absent or any other
-// value is fail-safe-unschedulable. spec: §6.39.
+// value is fail-safe-unschedulable. spec: §6.2.
 func hostSchedulable(labels map[string]string) bool {
 	return labels[warmpool.LabelHostSchedulable] == "true"
 }
@@ -946,25 +946,25 @@ func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
 	}
 }
 
-// Retire writes the terminal §3.4 disposition on the claim so the
+// Retire writes the terminal §6.2 disposition on the claim so the
 // projection drains the pod. failed selects the claim's `failed` terminal
 // (the onScrubFailure: fail termination); every other retire is a drain to
-// `released` (the three lifecycle limits and the §6.39 cordon-drain). When
-// scrubWarning is true (the §6.39 cordon-drain-under-warn path) it stamps the
+// `released` (the three lifecycle limits and the §6.2 cordon-drain). When
+// scrubWarning is true (the §6.2 cordon-drain-under-warn path) it stamps the
 // §5.2 lenny.dev/scrub-warning annotation on the agent Pod so the
 // residual-state marker is retained on the draining pod for the audit trail.
 // reason and detail are the observability metadata the §5.2 audit trail
 // retains for a FAILED outcome; the binding-state writer records the terminal
-// phase. spec: §3.4 (retire disposition), §4.6.3 (released vs failed
-// terminals), §6.39 (cordon-drain retains the scrub_warning marker), §5.2
+// phase. spec: §6.2 (retire disposition), §4.6.3 (released vs failed
+// terminals), §6.2 (cordon-drain retains the scrub_warning marker), §5.2
 // (the failed pod's metadata is retained in the audit log).
 func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error {
-	// The §6.39 cordon-drain-under-warn path retains the residual-state
+	// The §6.2 cordon-drain-under-warn path retains the residual-state
 	// marker on the draining pod; stamp it before the terminal write so the
 	// audit trail sees the annotation on the pod. A stamp failure aborts the
 	// retire (fail closed). StampScrubWarning already tolerates a vanished pod
 	// (a NotFound patch is a no-op there), so a gone pod falls through to the
-	// gone-claim no-op below rather than erroring. spec: §6.39, §5.2.
+	// gone-claim no-op below rather than erroring. spec: §6.2, §5.2.
 	if scrubWarning {
 		if err := podclaim.StampScrubWarning(ctx, d.cl, d.namespace, podID, d.now()); err != nil {
 			return fmt.Errorf("recycle: stamp scrub-warning on retiring pod %s: %w", podID, err)
@@ -981,7 +981,7 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 		}
 		return fmt.Errorf("recycle: write %s disposition on claim %s: %w", disposition, claim, err)
 	}
-	// §3.4: the ReportPodScrub that drove this retire cancels the pod's
+	// §6.2: the ReportPodScrub that drove this retire cancels the pod's
 	// missing-report timeout so the coordinator does not later re-retire a
 	// claim it already terminated. A retire never starts a re-warm poll.
 	d.signalBoundary(podID, false)

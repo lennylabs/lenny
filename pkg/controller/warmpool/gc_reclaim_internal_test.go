@@ -103,7 +103,7 @@ func TestEvaluateSkipsWhenSessionLookupFails_spec_4_6_1(t *testing.T) {
 	}
 }
 
-// TestReclaimByDrainingPropagatesDrainError pins the §3.3 drain-before-delete
+// TestReclaimByDrainingPropagatesDrainError pins the §4.6.1 drain-before-delete
 // order: when the Sandbox drain patch fails the claim is left intact and the
 // error propagates, so a pod is never orphaned with its claim deleted but the
 // pod still un-drained.

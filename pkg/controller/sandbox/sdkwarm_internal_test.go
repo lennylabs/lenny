@@ -134,7 +134,7 @@ func TestPodRunningFor(t *testing.T) {
 	}
 }
 
-// spec: §6.1 (re-warm-start anchor), §3.3 — rewarmElapsed is the recycle
+// spec: §6.1 (re-warm-start anchor) — rewarmElapsed is the recycle
 // re-warm watchdog clock measured from the rewarmStartedAt stamp; a
 // future stamp (clock skew) yields zero so the watchdog stays dormant.
 func TestRewarmElapsed(t *testing.T) {
@@ -147,7 +147,7 @@ func TestRewarmElapsed(t *testing.T) {
 	}
 }
 
-// spec: §6.1 (watchdog clock per edge, reserved terminus), §3.3 —
+// spec: §6.1 (watchdog clock per edge, reserved terminus) —
 // sdkWarmInputs re-anchors the watchdog clock and selects the terminus per
 // edge: pod start on the warm-fill edge (no rewarm stamp), the
 // rewarmStartedAt stamp on the recycle re-warm edge, with the recycle flag

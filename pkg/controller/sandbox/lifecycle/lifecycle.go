@@ -129,7 +129,7 @@ type SDKWarmInputs struct {
 	// prior occupancy episode nor the whole-pod scrub counts against the
 	// re-warm budget. Zero disables the watchdog (no observed start time
 	// yet). spec: §6.1 (watchdog clock anchored at the entry into the
-	// SDK-connect work on the edge being measured), §3.3.
+	// SDK-connect work on the edge being measured).
 	SDKConnectElapsed time.Duration
 	// SDKConnectTimeout is the §6.1 watchdog budget
 	// (sdkConnectTimeoutSeconds). Zero disables the watchdog.
@@ -141,7 +141,7 @@ type SDKWarmInputs struct {
 	// the claim recycling → reserved), so the warm-fill arm takes no action
 	// on a ready pod and only runs the re-warm watchdog. On the warm-fill
 	// edge (Recycle false) the success terminus is idle and this arm writes
-	// it. spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3.
+	// it. spec: §6.1 (reserved terminus), §6.2 (recycle edges).
 	Recycle bool
 }
 
@@ -152,7 +152,7 @@ type SDKWarmInputs struct {
 // not for a genuine pod failure. It covers both the warm-fill edge and
 // the recycle re-warm edge: the reconciler re-anchors SDKConnectElapsed
 // per edge, so the watchdog measures only the re-warm leg on a recycling
-// claim. spec: §6.1, §3.3.
+// claim. spec: §6.1.
 func (in SDKWarmInputs) TimedOut() bool {
 	return in.Phase == state.SDKConnecting &&
 		(in.Pod == PodPending || in.Pod == PodNotReady) &&

@@ -95,7 +95,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 // spec: §6.1, §6.2 — a session-mode pod (recycle.enabled: false) is
 // terminated and replaced after its session ends; it is never returned to
 // idle for a different session. The fine session-terminal states moved to
-// the Postgres session model (§6.2, §6.37), so the static §6.2 invariant is
+// the Postgres session model (§6.2), so the static §6.2 invariant is
 // that no coarse terminal or draining phase has an edge back to idle: a pod
 // that reaches failed, draining, or terminated can only proceed toward
 // termination, never re-enter the claimable pool. The recycle path's

@@ -155,7 +155,7 @@ func TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6(t *testing.T)
 // sessionPolicy.maxClientIdleSeconds, not the removed limits.maxIdleTimeSeconds
 // knob. A runtime declaring a maxClientIdleSeconds tighter than the playground
 // cap keeps the runtime bound: min(maxClientIdleSeconds,
-// playground.maxIdleTimeSeconds). spec: §6.84, §3.1 (maxClientIdleSeconds
+// playground.maxIdleTimeSeconds). spec: §27.6, §3.1 (maxClientIdleSeconds
 // supersedes maxIdleTimeSeconds). F-27.6.1.
 func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
@@ -181,7 +181,7 @@ func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *tes
 // declares no sessionPolicy.maxClientIdleSeconds, the idle override resolves
 // against the runtime's effective maxSessionAgeSeconds (the §6.2 idle-clock
 // default). A maxSessionAgeSeconds tighter than the playground cap keeps the
-// session-age bound. spec: §6.84, §3.1 (idle defaults to effective
+// session-age bound. spec: §27.6, §3.1 (idle defaults to effective
 // maxSessionAgeSeconds). F-27.6.1.
 func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()

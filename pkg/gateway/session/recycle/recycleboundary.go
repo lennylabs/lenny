@@ -21,7 +21,7 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// MissingReportGracePeriod pads the §3.4 gateway-side missing-report timeout
+// MissingReportGracePeriod pads the §5.2 gateway-side missing-report timeout
 // beyond the pool's cleanupTimeoutSeconds so a scrub that finishes near the
 // deadline still reports before the gateway retires the pod. The timeout
 // retires the pod if no ReportPodScrub arrives within
@@ -33,10 +33,10 @@ const MissingReportGracePeriod = 15 * time.Second
 // DefaultCleanupTimeout is the §5.2 sessionPolicy.cleanupTimeoutSeconds
 // default the missing-report timeout uses when a recycling pool leaves the
 // field unset. The spec runtime.yaml example sets it to 60s. spec: §5.2
-// (cleanupTimeoutSeconds default), §3.4.
+// (cleanupTimeoutSeconds default), §5.2.
 const DefaultCleanupTimeout = 60 * time.Second
 
-// RewarmReadyPollInterval is how often the §3.4 preConnect re-warm
+// RewarmReadyPollInterval is how often the §5.2 preConnect re-warm
 // completion poll re-reads the agent pod readiness while a recycling claim
 // carries rewarmStartedAt. The gateway has no pod informer (it dials the
 // cluster with a direct client, not a controller-runtime manager), so the
@@ -45,7 +45,7 @@ const DefaultCleanupTimeout = 60 * time.Second
 const RewarmReadyPollInterval = 1 * time.Second
 
 // reserveFunc patches a recycling claim to reserved, stamping holdExpiresAt,
-// and returns the §3.2 hold token. *podclaim.WriteReservedStatus satisfies it.
+// and returns the §4.6.1 hold token. *podclaim.WriteReservedStatus satisfies it.
 type reserveFunc func(ctx context.Context, podID string) (podclaim.ReservedHold, error)
 
 // retireFunc writes a terminal disposition on a recycling claim so the
@@ -59,7 +59,7 @@ type retireFunc func(ctx context.Context, podID string, failed bool) error
 type claimBindingReader func(ctx context.Context, podID string) (phase claimstate.State, rewarmStarted, exists bool, err error)
 
 // cleanupTimeoutResolver resolves the pod's pool
-// sessionPolicy.cleanupTimeoutSeconds, the §3.4 missing-report timeout base.
+// sessionPolicy.cleanupTimeoutSeconds, the §5.2 missing-report timeout base.
 // A pod whose pool no longer resolves, or a pool with no cleanup timeout set,
 // returns DefaultCleanupTimeout so the timeout is always well-defined.
 type cleanupTimeoutResolver func(ctx context.Context, podID string) time.Duration
@@ -68,7 +68,7 @@ type cleanupTimeoutResolver func(ctx context.Context, podID string) time.Duratio
 // gone is true when the pod object no longer exists.
 type podReadyReader func(ctx context.Context, podID string) (ready, gone bool, err error)
 
-// RecycleBoundaryCoordinator owns the two §3.4 gateway-side timers the recycle
+// RecycleBoundaryCoordinator owns the two §5.2 gateway-side timers the recycle
 // boundary needs beyond the reserved-hold expiry the HoldCoordinator runs:
 //
 //   - The missing-report timeout: armed at the bound → recycling patch
@@ -96,9 +96,9 @@ type podReadyReader func(ctx context.Context, podID string) (ready, gone bool, e
 // re-warm completion arms is owned by the HoldCoordinator (the reserve patch
 // hands it the token through the HoldRegistrar).
 //
-// spec: §3.4 (gateway-side missing-report timeout, preConnect re-warm drives
+// spec: §5.2 (gateway-side missing-report timeout, preConnect re-warm drives
 // recycling → reserved), §4.7 (missing report bounded by cleanupTimeoutSeconds
-// plus a grace), §6.2 / §6.14 (recycling → reserved binding edge).
+// plus a grace), §6.2 / §4.6.3 (recycling → reserved binding edge).
 type RecycleBoundaryCoordinator struct {
 	reserve        reserveFunc
 	retire         retireFunc
@@ -131,13 +131,13 @@ type RecycleBoundaryCoordinatorOptions struct {
 	// Namespace is the agent namespace the pods and claims live in. Required.
 	Namespace string
 	// Pools resolves the pod's pool to its sessionPolicy.cleanupTimeoutSeconds,
-	// the §3.4 missing-report timeout base. Required.
+	// the §5.2 missing-report timeout base. Required.
 	Pools poolReader
 	// HoldTTL is the §4.6.1 gateway.claimHoldTTLSeconds reserved-hold TTL
 	// stamped at the re-warm-completion reserved patch. A non-positive value
 	// falls back to DefaultClaimHoldTTL.
 	HoldTTL time.Duration
-	// Holds receives the §3.2 reserved-hold token after the re-warm-completion
+	// Holds receives the §4.6.1 reserved-hold token after the re-warm-completion
 	// reserved patch so the HoldCoordinator arms the hold-TTL expiry timer.
 	// Nil leaves expiry to the §4.6.1 orphan GC.
 	Holds HoldRegistrar
@@ -149,7 +149,7 @@ type RecycleBoundaryCoordinatorOptions struct {
 	// PollInterval is the re-warm readiness poll period. A non-positive value
 	// falls back to RewarmReadyPollInterval.
 	PollInterval time.Duration
-	// GracePeriod pads the §3.4 missing-report timeout beyond the pool's
+	// GracePeriod pads the §5.2 missing-report timeout beyond the pool's
 	// cleanupTimeoutSeconds. A non-positive value falls back to
 	// MissingReportGracePeriod. It is operator-tunable (and shortened in tests)
 	// because the grace is a control-plane pad rather than a spec-fixed window.
@@ -168,10 +168,10 @@ type RecycleBoundaryCoordinatorOptions struct {
 // the §6.1 default sdkConnectTimeoutSeconds (60s) so the coordinator stops
 // polling shortly after the WarmPoolController watchdog would have retired an
 // overrunning re-warm, leaving the failure path to the watchdog. spec: §6.1
-// (sdkConnectTimeoutSeconds), §3.4.
+// (sdkConnectTimeoutSeconds), §5.2.
 const defaultRewarmBudget = 75 * time.Second
 
-// NewRecycleBoundaryCoordinator builds the §3.4 recycle-boundary coordinator.
+// NewRecycleBoundaryCoordinator builds the §5.2 recycle-boundary coordinator.
 // Client and Namespace are required. The reserve, retire, claim-binding, and
 // pod-readiness seams are wired to the podclaim writers and the cluster client.
 func NewRecycleBoundaryCoordinator(opts RecycleBoundaryCoordinatorOptions) (*RecycleBoundaryCoordinator, error) {
@@ -281,8 +281,8 @@ func podReadinessReader(cl client.Client, ns string) podReadyReader {
 // sessionPolicy.cleanupTimeoutSeconds via the pod's pool label and the pool
 // store. A pod whose pool label is missing, whose pool no longer resolves, or
 // whose pool leaves cleanupTimeoutSeconds unset falls back to
-// DefaultCleanupTimeout so the §3.4 missing-report timeout is always
-// well-defined. spec: §5.2 (cleanupTimeoutSeconds), §3.4.
+// DefaultCleanupTimeout so the §5.2 missing-report timeout is always
+// well-defined. spec: §5.2 (cleanupTimeoutSeconds).
 func cleanupTimeoutReader(cl client.Client, ns string, pools poolReader) cleanupTimeoutResolver {
 	return func(ctx context.Context, podID string) time.Duration {
 		var pod corev1.Pod
@@ -304,7 +304,7 @@ func cleanupTimeoutReader(cl client.Client, ns string, pools poolReader) cleanup
 	}
 }
 
-// OnRecycling arms the §3.4 missing-report timeout for podID at the
+// OnRecycling arms the §5.2 missing-report timeout for podID at the
 // bound → recycling patch. The timeout base is the pod's pool
 // sessionPolicy.cleanupTimeoutSeconds (defaulting to DefaultCleanupTimeout);
 // the timer fires after that plus MissingReportGracePeriod. On expiry, if no
@@ -317,7 +317,7 @@ func cleanupTimeoutReader(cl client.Client, ns string, pools poolReader) cleanup
 // timer fires per recycle episode. The cleanup-timeout resolution issues one
 // API read on its own bounded context (the caller is the release hot path).
 //
-// spec: §3.4 (missing-report timeout armed at session termination), §4.7.
+// spec: §5.2 (missing-report timeout armed at session termination), §4.7.
 func (c *RecycleBoundaryCoordinator) OnRecycling(podID string) {
 	resolveCtx, cancel := context.WithTimeout(context.Background(), recycleBoundaryWriteTimeout)
 	cleanupTimeout := c.cleanupTimeout(resolveCtx, podID)
@@ -337,7 +337,7 @@ func (c *RecycleBoundaryCoordinator) OnRecycling(podID string) {
 // re-warm makes the pod Ready. On a non-preConnect pool the disposition driver
 // already reserved the claim synchronously, so only the timer is cancelled.
 //
-// spec: §3.4 (ReportPodScrub cancels the missing-report timer; preConnect
+// spec: §5.2 (ReportPodScrub cancels the missing-report timer), §6.2 (preConnect
 // re-warm completion drives recycling → reserved).
 func (c *RecycleBoundaryCoordinator) OnScrubReported(podID string, preConnect bool) {
 	c.cancelTimer(podID)
@@ -429,7 +429,7 @@ func (c *RecycleBoundaryCoordinator) startRewarmPoll(podID string) {
 // the claim leaves `recycling` (a concurrent reserve, rebind, or retire), the
 // claim or pod is gone, or the re-warm budget elapses. On budget exhaustion it
 // stops without retiring: the WarmPoolController sdkConnectTimeoutSeconds
-// watchdog is the failure authority for an overrunning re-warm. spec: §3.4
+// watchdog is the failure authority for an overrunning re-warm. spec: §6.2
 // (re-warm completion drives recycling → reserved), §6.1 (watchdog retires an
 // overrunning re-warm).
 func (c *RecycleBoundaryCoordinator) pollRewarm(ctx context.Context, podID string) {

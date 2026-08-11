@@ -255,7 +255,7 @@ func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 }
 
 // reservedSandbox builds a Sandbox projecting the §6.2 `reserved` phase,
-// pinned to tenantID, the projection the §3.2 acquisition-path rebind branch
+// pinned to tenantID, the projection the acquisition-path rebind branch
 // scans for.
 func reservedSandbox(name, tenantID string) *lennyv1.Sandbox {
 	sb := sandboxIn(testPool, name, "reserved")
@@ -292,7 +292,7 @@ func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, no
 	}
 }
 
-// TestClaimRebindsReservedPodWithinHold verifies the §3.2 acquisition-path
+// TestClaimRebindsReservedPodWithinHold verifies the acquisition-path
 // rebind branch: a same-tenant session dispatches onto a pod the tenant holds
 // in `reserved` within its hold window via a reserved → bound patch, with no
 // fresh idle-pod acquisition.

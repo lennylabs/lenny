@@ -671,7 +671,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestReporterPodScrubWarnFailedCordonDrainCarriesWarning verifies the §6.39
+// TestReporterPodScrubWarnFailedCordonDrainCarriesWarning verifies the §6.2
 // cordon-drain-under-warn path stamps the scrub_warning audit annotation onto
 // the retire: a warn-policy scrub failure that retires because the host node
 // is cordoned retains the residual-state marker the disposition computed (the
@@ -681,7 +681,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 //
 // diagnosis: a failure means a warn-policy scrub failure that retires on a
 // cordoned node writes the released terminal with no scrub_warning, losing the
-// residual-state audit marker §6.39/§5.2 retain, or drops the failure detail.
+// residual-state audit marker §6.2/§5.2 retain, or drops the failure detail.
 func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -710,7 +710,7 @@ func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testin
 	}
 }
 
-// TestReporterPodScrubUnschedulableHostRetiresBothPools verifies the §6.39
+// TestReporterPodScrubUnschedulableHostRetiresBothPools verifies the §6.2
 // unschedulable-host-node retire applies on both preConnect and non-preConnect
 // pools even when no limit is reached.
 // spec: 6.39 (host-node schedulability retire), 3.4 (retire disposition)
@@ -1056,7 +1056,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	}
 }
 
-// TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.39
+// TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.2
 // cordon-drain retire drains the pod without incrementing the gateway
 // retirement counter lenny_gateway_pod_retirement_total: the frozen §16.1
 // retirement-reason vocabulary (session_count_limit, uptime_limit,
@@ -1067,7 +1067,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 // value. The driver still receives the cordon-drain retire.
 // spec: 16.1 (lenny_gateway_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 6.39 (cordon-drain operational retire)
 //
-// diagnosis: a failure means the §6.39 cordon-drain emits
+// diagnosis: a failure means the §6.2 cordon-drain emits
 // lenny_gateway_pod_retirement_total{reason="host_unschedulable"}, a reason
 // value the §16.1 inventory does not declare, widening the frozen label set
 // and breaking the metric-catalog vocabulary contract.

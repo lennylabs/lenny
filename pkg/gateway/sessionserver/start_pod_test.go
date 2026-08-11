@@ -1000,7 +1000,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §4.9, §7.3 / §7.6, §4.3 (proposal: a finalize-step failure reclaims the create-time
+// spec: §4.9, §7.3 / §4.9, §4.3 (proposal: a finalize-step failure reclaims the create-time
 // pod), §6.2 (pre-attached disposition).
 // diagnosis: a credential source present at the create-time §7.1-step-3
 // pre-check but gone by /finalize is the check-to-assignment mismatch. It must

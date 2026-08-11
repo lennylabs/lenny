@@ -2,13 +2,13 @@
 
 //go:build security
 
-// Tier-9 security tests for the §6.28 / §6.60 / §13.1 concurrent-session
+// Tier-9 security tests for the §5.2 / §6.60 / §13.1 concurrent-session
 // (maxConcurrentSessions > 1) isolation boundaries that the §5.2 mode
 // collapse re-keyed onto the derived sessionPolicy. Two invariants are
 // pinned here as security-relevant admission and credential-handling
 // boundaries:
 //
-//   - §6.28 categorical cross-tenant prohibition: a pool that runs
+//   - §5.2 categorical cross-tenant prohibition: a pool that runs
 //     concurrent slots (maxConcurrentSessions > 1) and also sets
 //     recycle.allowCrossTenantReuse: true is rejected at validation time,
 //     regardless of isolation profile or scrub profile. Simultaneous
@@ -47,7 +47,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// diagnosis: the §6.28 categorical cross-tenant prohibition for concurrent
+// diagnosis: the §5.2 categorical cross-tenant prohibition for concurrent
 // slots did not fail closed at pool validation. A maxConcurrentSessions > 1
 // pool that sets recycle.allowCrossTenantReuse: true was admitted; cross-tenant
 // slot sharing has no isolation boundary (concurrent slots share the process
@@ -76,11 +76,11 @@ func TestConcurrentCrossTenantReuseRejected_spec_6_28(t *testing.T) {
 	}
 	err := poolstore.ValidateSessionPolicy(bad)
 	if err == nil {
-		t.Fatalf("§6.28 violation: a maxConcurrentSessions=4 pool with allowCrossTenantReuse=true was admitted; " +
+		t.Fatalf("§5.2 violation: a maxConcurrentSessions=4 pool with allowCrossTenantReuse=true was admitted; " +
 			"cross-tenant slot sharing has no isolation boundary and must be rejected")
 	}
 	if !strings.Contains(err.Error(), "maxConcurrentSessions > 1") {
-		t.Errorf("§6.28: rejection does not name the concurrent-slot gate; the gate may be firing for the wrong "+
+		t.Errorf("§5.2: rejection does not name the concurrent-slot gate; the gate may be firing for the wrong "+
 			"reason: %v", err)
 	}
 
@@ -99,14 +99,14 @@ func TestConcurrentCrossTenantReuseRejected_spec_6_28(t *testing.T) {
 		},
 	}
 	if err := poolstore.ValidateSessionPolicy(good); err != nil {
-		t.Errorf("control: the corrected concurrent pool (no cross-tenant reuse) was rejected; the §6.28 gate is "+
+		t.Errorf("control: the corrected concurrent pool (no cross-tenant reuse) was rejected; the §5.2 gate is "+
 			"over-broad: %v", err)
 	}
-	t.Logf("§6.28: the concurrent-slot cross-tenant gate rejected allowCrossTenantReuse=true and admitted the " +
+	t.Logf("§5.2: the concurrent-slot cross-tenant gate rejected allowCrossTenantReuse=true and admitted the " +
 		"corrected control")
 }
 
-// diagnosis: the §6.60 / §13.1 per-slot credential-file read scope did not
+// diagnosis: the §13.1 per-slot credential-file read scope did not
 // hold. The adapter credential file must be written group-readable under the
 // lenny-cred-readers GID (mode 0o440) and unreadable by other UIDs, and each
 // slot's lease must stay in that slot's own file (session-scoped). A wider
@@ -160,7 +160,7 @@ func TestPerSlotCredentialFileReadScope_spec_6_60(t *testing.T) {
 		}
 	}
 
-	// §6.60: per-slot leases stay session-scoped. Each slot's lease lands in
+	// §13.1: per-slot leases stay session-scoped. Each slot's lease lands in
 	// that slot's own file only; slot-a's credential never appears in slot-b's
 	// file and vice versa.
 	aBytes, err := os.ReadFile(filepath.Join(slotA, credfile.FileName))
@@ -172,13 +172,13 @@ func TestPerSlotCredentialFileReadScope_spec_6_60(t *testing.T) {
 		t.Fatalf("read slot-b credential file: %v", err)
 	}
 	if !strings.Contains(string(aBytes), "lease-slot-a") || strings.Contains(string(aBytes), "lease-slot-b") {
-		t.Errorf("§6.60: slot-a credential file is not session-scoped to slot-a's lease: %s", aBytes)
+		t.Errorf("§13.1: slot-a credential file is not session-scoped to slot-a's lease: %s", aBytes)
 	}
 	if !strings.Contains(string(bBytes), "lease-slot-b") || strings.Contains(string(bBytes), "lease-slot-a") {
-		t.Errorf("§6.60: slot-b credential file is not session-scoped to slot-b's lease: %s", bBytes)
+		t.Errorf("§13.1: slot-b credential file is not session-scoped to slot-b's lease: %s", bBytes)
 	}
 	if strings.Contains(string(aBytes), "sk-ant-BBBB") || strings.Contains(string(bBytes), "sk-ant-AAAA") {
-		t.Fatalf("§6.60 violation: a slot's leased credential material crossed the slot boundary at the file layer")
+		t.Fatalf("§13.1 violation: a slot's leased credential material crossed the slot boundary at the file layer")
 	}
-	t.Logf("§6.60 / §13.1: each slot's credential file is group-read 0o440 and holds only its own session-scoped lease")
+	t.Logf("§13.1: each slot's credential file is group-read 0o440 and holds only its own session-scoped lease")
 }

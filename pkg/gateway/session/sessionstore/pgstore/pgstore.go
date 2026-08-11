@@ -90,7 +90,7 @@ var _ sessionstore.Store = (*Store)(nil)
 // columns are the §7.2 / §8.8 session-condition facts relocated off
 // Sandbox.status.conditions, all added in migration 0168. The nullable
 // condition timestamps COALESCE to NULL: a zero timestamp means the
-// condition has not fired. spec: §6.49; §7.1; §7.2;
+// condition has not fired. spec: §7.1; §7.2;
 // §8.8.
 // The metadata column is the §7.1 client-supplied
 // CreateSession(..., metadata) payload added in migration 0086
@@ -310,11 +310,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $53-$54 — §7.2 / §8.8 Terminated session-condition fact
 			// relocated off Sandbox.status.conditions. terminated_at passes
 			// through NullTime so a zero time persists as SQL NULL per the
-			// "condition has not fired" sentinel. spec: §6.49; §7.2; §8.8.
+			// "condition has not fired" sentinel. spec: §7.2; §8.8.
 			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
 			// $55-$56 — §7.2 interrupt-suspension Suspended condition fact.
 			// suspended_at is NULL while the session is not suspended. spec:
-			// §6.49; §7.2; §8.8.
+			// §7.2; §8.8.
 			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
 			// $57 — §8.3 credential_origin_session_id; the
 			// resolved origin pool the delegation Service stamps at
@@ -535,11 +535,11 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// terminal-disposition writer (S27/S30) stamps terminated_at and
 			// terminated_reason when the session reaches a terminal state.
 			// terminated_at passes through NullTime so a non-terminal row
-			// keeps SQL NULL. spec: §6.49; §7.2; §8.8.
+			// keeps SQL NULL. spec: §7.2; §8.8.
 			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
 			// $53-$54 — §7.2 interrupt-suspension Suspended condition fact;
 			// stamped when the session enters `suspended`, NULL otherwise.
-			// spec: §6.49; §7.2; §8.8.
+			// spec: §7.2; §8.8.
 			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
 		); err != nil {
 			return err
@@ -985,7 +985,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		wsHash string
 		// §7.2 / §8.8 session-condition timestamps from migration 0168.
 		// Nullable: NULL means the condition has not fired (the session is
-		// neither terminal nor suspended). spec: §6.49; §7.2; §8.8.
+		// neither terminal nor suspended). spec: §7.2; §8.8.
 		terminatedAt *time.Time
 		suspendedAt  *time.Time
 		// §7.1 client-supplied metadata payload from migration
@@ -1044,7 +1044,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.1 conversation_continuity envelope half and the
 		// §7.2 / §8.8 Terminated/Suspended session-condition facts from
 		// migration 0168. The nullable timestamps scan into pointers and
-		// map back to the zero time when NULL. spec: §6.49; §7.1;
+		// map back to the zero time when NULL. spec: §7.1;
 		// §7.2; §8.8.
 		&s.ConversationContinuity,
 		&terminatedAt, &s.TerminatedReason,
@@ -1105,7 +1105,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	if lastAgentActivityAt != nil {
 		s.LastAgentActivityAt = *lastAgentActivityAt
 	}
-	// spec: §6.49 / §7.2 / §8.8 — a NULL terminated_at /
+	// spec: §7.2 / §8.8 — a NULL terminated_at /
 	// suspended_at means the session-condition has not fired, mapped to
 	// the zero time so the in-memory Session matches the memstore "not
 	// fired" sentinel. The reason strings scan directly into the struct.

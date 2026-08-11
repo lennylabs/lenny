@@ -14,5 +14,5 @@
   },
   "error_rate": 0.0,
   "throughput_per_sec": 800.0,
-  "notes": "Placeholder §15.1 message-round-trip throughput baseline with the rate-bounded constant-arrival-rate k6 executor. Smoke against the e2e Kind cluster passes (error rate 0%, p99 ~237ms) per the BUILD-PROGRESS Phase 6.5 done entry. The §12.7 streaming_reconnect SSE consumption path stays blocked on the gatewaymetrics middleware Flusher forwarding fix; the §6.5 phase-gate uses this synchronous round-trip as the streaming-throughput substrate."
+    "notes": "Placeholder §15.1 message-round-trip throughput baseline with the rate-bounded constant-arrival-rate k6 executor. Smoke against the e2e Kind cluster passes (error rate 0%, p99 ~237ms) per the BUILD-PROGRESS Phase 6.5 done entry. The §12.7 streaming_reconnect SSE consumption path stays blocked on the gatewaymetrics middleware Flusher forwarding fix; the §4.6.1 phase-gate uses this synchronous round-trip as the streaming-throughput substrate."
 }

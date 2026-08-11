@@ -1278,7 +1278,7 @@ func (*ReportSessionScrubResponse) Descriptor() ([]byte, []int) {
 // agent_pod_state row key the gateway resolves the claim and disposition
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
-// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §3.4.
+// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §6.2.
 type ReportPodScrubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PodId         string                 `protobuf:"bytes,1,opt,name=pod_id,json=podId,proto3" json:"pod_id,omitempty"`

@@ -1182,7 +1182,7 @@ func podWarmupSeconds(cfg PoolConfig) float64 {
 // carries from the gateway poolstore (RecycleEnabled, MaxSessionsPerPod,
 // MaxConcurrentSessions).
 //
-// spec: §5.2 (execution mode scaling implications), §6.33.
+// spec: §5.2 (execution mode scaling implications).
 func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSource) (modeFactor, burstModeFactor float64) {
 	if cfg.Template.ExecutionMode == "service" && cfg.Template.MaxConcurrent > 0 {
 		modeFactor = float64(cfg.Template.MaxConcurrent)
@@ -1196,14 +1196,14 @@ func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSourc
 	// = maxConcurrentSessions).
 	burstModeFactor = float64(maxConcurrentSessionsOrOne(cfg.MaxConcurrentSessions))
 	// A non-recycling session pool serves one session per pod: mode_factor
-	// stays at the base 1.0. spec: §6.33 (default configuration mode_factor =
+	// stays at the base 1.0. spec: §5.2 (default configuration mode_factor =
 	// 1.0).
 	if !cfg.RecycleEnabled {
 		return 1, burstModeFactor
 	}
 	// Recycling pool: derive mode_factor from observed reuse, bounded above
 	// by recycle.maxSessionsPerPod, with a 1.0 cold-start fallback until the
-	// histogram converges. spec: §6.33.
+	// histogram converges. spec: §5.2.
 	modeFactor = recyclingModeFactor(ctx, cfg, src)
 	return modeFactor, burstModeFactor
 }
@@ -1217,7 +1217,7 @@ func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSourc
 // recycle.maxSessionsPerPod (a pod cannot serve more sessions than the
 // configured ceiling) and floored at 1.0 (a sub-1 observed median never
 // inflates the formula's pod count below the one-session baseline).
-// spec: §6.33 (cold-start fallback 1.0, converged value bounded above by
+// spec: §5.2 (cold-start fallback 1.0, converged value bounded above by
 // recycle.maxSessionsPerPod).
 func recyclingModeFactor(ctx context.Context, cfg PoolConfig, src ModeFactorSource) float64 {
 	const coldStart = 1.0

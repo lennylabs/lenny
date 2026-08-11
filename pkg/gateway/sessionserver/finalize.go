@@ -186,7 +186,7 @@ func sourceUploadRefField(i int, _ string) string {
 // the revoke is a no-op. A finalize-time credential availability miss is the
 // §4.9 check-to-assignment mismatch (the source vanished across the
 // upload window), so it is remapped to CREDENTIAL_POOL_EXHAUSTED rather than the
-// create-only USER_CREDENTIAL_NOT_FOUND (§7.6). The returned error is the
+// create-only USER_CREDENTIAL_NOT_FOUND (§4.9). The returned error is the
 // corresponding workspace-validation, setup-command, or credential error for
 // handleFinalize to surface (writePodClaimError).
 //
@@ -249,7 +249,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 		// resolution ran before the binder engaged, so reclaim the create-time
 		// pod here (no lease is assigned yet, so the revoke is a no-op).
 		s.reclaimFinalizedPod(ctx, row.PodAssignment, row.ID)
-		// spec: §7.6 — a credential source that was
+		// spec: §4.9 — a credential source that was
 		// available at the create-time pre-check but is gone at finalize is the
 		// check-to-assignment mismatch the proposal requires to surface as
 		// CREDENTIAL_POOL_EXHAUSTED at /finalize, not the create-only
@@ -297,7 +297,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 // create-only USER_CREDENTIAL_NOT_FOUND (404) or pre-claim CREDENTIAL_POOL_EXHAUSTED
 // envelopes.
 //
-// The §7.6 division is "check at create, assignment at finalize": a credential
+// The §4.9 division is "check at create, assignment at finalize": a credential
 // source present at the create-time pre-check that is gone by finalize is the
 // race the proposal attributes to the upload window, not a create-time
 // not-found. Both credrouter sentinels (ErrUserCredentialNotFound, which the

@@ -204,11 +204,11 @@ func TestFinalizeRejectsMalformedBody(t *testing.T) {
 // (ErrUserCredentialNotFound, ErrNoCredentialAvailable) to the
 // CredentialAssignmentError envelope so writePodClaimError reports
 // CREDENTIAL_POOL_EXHAUSTED rather than the create-only USER_CREDENTIAL_NOT_FOUND
-// or pre-claim envelope. Per §7.6 the user-credential lookup and the
+// or pre-claim envelope. Per §4.9 the user-credential lookup and the
 // without-fallback not-found rejection stay a POST /v1/sessions error; a source
 // that vanishes across the upload window is the finalize-time mismatch. An
 // unrelated error passes through unchanged so it keeps its own envelope.
-// spec: §4.9; §7.3, §7.6.
+// spec: §4.9; §7.3.
 func TestMapFinalizeCredentialMismatch(t *testing.T) {
 	otherErr := errors.New("kube-api read failure")
 	cases := []struct {
@@ -238,9 +238,9 @@ func TestMapFinalizeCredentialMismatch(t *testing.T) {
 // remapped finalize-time credential mismatch routes through writePodClaimError
 // to the §4.9 CREDENTIAL_POOL_EXHAUSTED envelope with the assignment_race
 // reason and emits the preclaim-mismatch metric, rather than the create-only
-// USER_CREDENTIAL_NOT_FOUND 404. This pins the §7.3 / §7.6
+// USER_CREDENTIAL_NOT_FOUND 404. This pins the §7.3 / §4.9
 // rule that USER_CREDENTIAL_NOT_FOUND is not a finalize trigger.
-// spec: §4.9; §7.3; §7.6.
+// spec: §4.9; §7.3.
 func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
 	var gotPool, gotProvider string
 	mismatchCalled := false
@@ -272,7 +272,7 @@ func TestFinalizeCredentialMismatchSurfacesPoolExhausted(t *testing.T) {
 		t.Errorf("reason = %v, want assignment_race", env.Error.Details["reason"])
 	}
 	// The mismatch metric is emitted, counting the same pre-check-passes-then-
-	// assignment-fails event now observed at finalize (§7.6).
+	// assignment-fails event now observed at finalize (§4.9).
 	if !mismatchCalled {
 		t.Errorf("preclaim-mismatch metric not emitted for the finalize credential mismatch")
 	}

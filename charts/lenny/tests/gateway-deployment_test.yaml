@@ -844,7 +844,7 @@ tests:
             name: LENNY_CLAIM_HOLD_TTL_SECONDS
             value: "30"
 
-  # spec: §12.4 / §6.57 (operator-tunable bounded slot-counter Postgres-fallback
+  # spec: §12.4 (operator-tunable bounded slot-counter Postgres-fallback
   # window) — gateway.slotCounterPostgresFallbackMaxSeconds renders into the
   # LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS env var with the spec
   # default 60s.
@@ -1023,7 +1023,7 @@ tests:
       #   defaults to 90 and renders)
       # + LENNY_CLAIM_HOLD_TTL_SECONDS (§4.6.1 reserved hold —
       #   claimHoldTTLSeconds defaults to 10 and renders)
-      # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 / §6.57 —
+      # + LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS (§12.4 —
       #   slotCounterPostgresFallbackMaxSeconds defaults to 60 and renders)
       # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1.7 / §17.8.1 —
       #   checkpointGrantWindow defaults to 4 and renders)

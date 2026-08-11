@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// spec: §6.1 (sdk_connecting watchdog, reserved terminus), §6.2, §3.3 — the SDK-warm warm path routes through sdk_connecting with
+// spec: §6.1 (sdk_connecting watchdog, reserved terminus), §6.2 — the SDK-warm warm path routes through sdk_connecting with
 // a watchdog. The phase has two non-failure termini: idle on the warm-fill
 // edge (this arm writes it) and reserved on the recycle re-warm edge (the
 // claim projection writes it, so this arm makes a clean no-action exit).
@@ -164,7 +164,7 @@ func TestSDKWarmInputs_TimedOut_spec_6_1(t *testing.T) {
 	}
 	// The re-warm watchdog fires on the recycle edge identically: TimedOut
 	// is edge-agnostic (the reconciler re-anchors the elapsed clock per
-	// edge, not the firing predicate). spec: §6.1, §3.3.
+	// edge, not the firing predicate). spec: §6.1.
 	rewarmTimedOut := lifecycle.SDKWarmInputs{
 		Phase: state.SDKConnecting, Pod: lifecycle.PodNotReady,
 		SDKConnectElapsed: 90 * time.Second, SDKConnectTimeout: 60 * time.Second, Recycle: true,
@@ -181,7 +181,7 @@ func TestSDKWarmInputs_TimedOut_spec_6_1(t *testing.T) {
 // the authoritative machine rejects (the recycle edge adds the reserved
 // terminus and the sdk_connecting → reserved clean exit).
 //
-// spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3
+// spec: §6.1 (reserved terminus), §6.2 (recycle edges)
 func TestDecideSDKWarmOnlyEmitsValidTransitions(t *testing.T) {
 	observations := []lifecycle.PodObservation{
 		lifecycle.PodAbsent,

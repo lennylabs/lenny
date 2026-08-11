@@ -25,10 +25,10 @@ import (
 // occupancy is the projection input the OccupancyReconciler reduces one
 // Sandbox plus its per-pod SandboxClaim to. It is the level-triggered view
 // that ProjectOccupancyPhase maps to the coarse Sandbox.status.phase, kept
-// as a pure value so the §4.6.1 / §6.14 projection table can be exhaustively
+// as a pure value so the §4.6.1 / §4.6.3 projection table can be exhaustively
 // unit-tested without a cluster.
 //
-// spec: §4.6.1 (occupancy projection), §6.14 (binding-state enumeration).
+// spec: §4.6.1 (occupancy projection), §4.6.3 (binding-state enumeration).
 type occupancy struct {
 	// Current is the Sandbox's live status.phase.
 	Current state.State
@@ -47,7 +47,7 @@ type occupancy struct {
 
 // ProjectOccupancyPhase computes the coarse Sandbox.status.phase as a
 // level-triggered projection of per-pod SandboxClaim existence, the claim's
-// binding state, and the rewarm stamp (§4.6.1, §6.2, §6.14). It returns the
+// binding state, and the rewarm stamp (§4.6.1, §6.2, §4.6.3). It returns the
 // projected phase and whether the projection owns the pod's phase at all:
 // when ok is false the warm-fill and SDK-warm legs the Sandbox-to-Pod
 // reconciler owns (warming→idle, the preConnect pre-idle sdk_connecting, idle,
@@ -62,7 +62,7 @@ type occupancy struct {
 // while a one-session-only (recycle.enabled: false) release deletes the claim
 // while the pod is still claimed and the projection drains it.
 //
-// The projection table (§6.5/§6.37):
+// The projection table (§4.6.1/§6.2):
 //   - claim binding bound → claimed.
 //   - claim binding recycling with no rewarm stamp → claimed (the whole-pod
 //     scrub runs while the pod projects claimed on both pool kinds, so the
@@ -80,7 +80,7 @@ type occupancy struct {
 //     scrub-before-idle invariant of §5.2).
 //
 // spec: §4.6.1 (occupancy projection), §6.2 (coarse pod state machine,
-// recycle edges), §6.14 (SandboxClaim binding-state enumeration).
+// recycle edges), §4.6.3 (SandboxClaim binding-state enumeration).
 func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
 	if o.HasClaim {
 		switch o.Binding {
@@ -160,7 +160,7 @@ func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
 // this projection turns that into the pod phase.
 //
 // spec: §4.6.1 (occupancy projection), §4.6.3 (ownership decomposition),
-// §6.2 (coarse pod state machine), §6.14 (binding-state enumeration).
+// §6.2 (coarse pod state machine), §4.6.3 (binding-state enumeration).
 type OccupancyReconciler struct {
 	// Client is the controller-runtime client backed by the manager cache.
 	Client client.Client

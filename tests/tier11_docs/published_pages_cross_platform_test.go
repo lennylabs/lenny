@@ -4,7 +4,7 @@
 // Embedded Mode) on the published, reader-facing pages — the quickstart
 // and the Go/Python/TypeScript SDK examples. These pages do not live in
 // spec/, so the spec-anchor tests in embedded_mode_anchors_test.go do
-// not cover them. The applied §17.4/§17.9.6/§15.4.3/§3.10 edits make the
+// not cover them. The applied §17.4/§17.9.6/§15.4.3 edits make the
 // pre-0013 claims on these pages ("No Docker ... required", a host-side
 // "Linux-only" abstract-socket restriction, pods unconditionally
 // "sandboxed under gVisor") false. These tests pin the reconciled text
@@ -42,7 +42,7 @@ func installationPath(root string) string {
 }
 
 // sdkExamplePages is the set of SDK-example pages whose Standard-level
-// platform note proposal §3.5/§3.6 reconciliation applies to.
+// platform note proposal §3.5/spec §17.4 reconciliation applies to.
 func sdkExamplePages(root string) []string {
 	base := filepath.Join(root, "docs", "runtime-author-guide", "sdk-examples")
 	return []string{
@@ -54,7 +54,7 @@ func sdkExamplePages(root string) []string {
 
 // abstractSocketPages is the set of published reader-facing pages, beyond
 // the SDK examples, that carry the host-side abstract-socket restriction
-// proposal §3.5/§3.6 reconciled. Each names the abstract-socket transport
+// spec §15.4.3/§17.4 reconciled. Each names the abstract-socket transport
 // for Standard/Full runtimes and must scope the host-side Linux
 // requirement to Source Mode rather than asserting a blanket Linux-only
 // restriction. These pages live outside spec/, so the spec-anchor tests
@@ -69,7 +69,7 @@ func abstractSocketPages(root string) []string {
 }
 
 // diagnosis: the quickstart's Docker prerequisite reconciliation from
-// proposal §3.2/§3.3 regressed. The page either reasserts that no Docker
+// spec §17.4/§17.9.6 regressed. The page either reasserts that no Docker
 // is required (false on macOS and Windows, where the embedded k3s runs
 // under Docker Desktop's Linux VM) or drops the Docker Desktop
 // prerequisite entirely, so a macOS or Windows reader follows `lenny up`
@@ -88,7 +88,7 @@ func TestQuickstartStatesDockerPrerequisiteOnMacOSAndWindows(t *testing.T) {
 		"Linux VM",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("quickstart.md missing Docker prerequisite text %q (proposal §3.2/§3.3 regression)", want)
+			t.Errorf("quickstart.md missing Docker prerequisite text %q (spec §17.4/§17.9.6 regression)", want)
 		}
 	}
 
@@ -99,13 +99,13 @@ func TestQuickstartStatesDockerPrerequisiteOnMacOSAndWindows(t *testing.T) {
 		"No Docker, no external service",
 	} {
 		if strings.Contains(content, banned) {
-			t.Errorf("quickstart.md still asserts %q; the Docker-backed substrate makes this false on macOS and Windows (proposal §3.2)", banned)
+			t.Errorf("quickstart.md still asserts %q; the Docker-backed substrate makes this false on macOS and Windows (spec §17.4)", banned)
 		}
 	}
 }
 
 // diagnosis: the quickstart's local-isolation-fidelity reconciliation
-// from proposal §3.10 regressed. The page presents the embedded stack's
+// from spec §17.4 regressed. The page presents the embedded stack's
 // pod isolation as identical to production ("sandboxed under gVisor"
 // among properties that "apply equally to a production install") when the
 // embedded single-node cluster degrades the gVisor profile to runc and
@@ -113,7 +113,7 @@ func TestQuickstartStatesDockerPrerequisiteOnMacOSAndWindows(t *testing.T) {
 // the production isolation boundary.
 //
 // spec: §17.4 (local isolation fidelity), §5.3 (isolation profiles),
-// §13.2 (network isolation). Proposal 0013 §3.10.
+// §13.2 (network isolation).
 func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 	root := repoRoot(t)
 	content := readDocPage(t, quickstartPath(root))
@@ -125,7 +125,7 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 		"NetworkPolicy",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("quickstart.md missing local-fidelity disclosure text %q (proposal §3.10 regression)", want)
+			t.Errorf("quickstart.md missing local-fidelity disclosure text %q (spec §17.4 regression)", want)
 		}
 	}
 
@@ -135,10 +135,10 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 	// pre-0013 list fragment is gone; the reconciled prose names gVisor
 	// only in the context of production or the runc-degradation note.
 	if strings.Contains(content, "sandboxed under gVisor, and no network access") {
-		t.Errorf("quickstart.md still presents pods as unconditionally 'sandboxed under gVisor' in the local stack; gVisor degrades to runc on the embedded cluster (proposal §3.10)")
+		t.Errorf("quickstart.md still presents pods as unconditionally 'sandboxed under gVisor' in the local stack; gVisor degrades to runc on the embedded cluster (spec §17.4)")
 	}
 
-	// Proposal §3.10 keeps the gVisor and Kata runc-degradation causes
+	// Spec §17.4 keeps the gVisor and Kata runc-degradation causes
 	// distinct: the `sandboxed` (gVisor) profile degrades because the
 	// embedded cluster installs no gVisor runtime class, while the
 	// `microvm` (Kata) profile degrades because it needs hardware
@@ -149,20 +149,20 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 	// wrong for `microvm`, whose runc fallback is not caused by a missing
 	// gVisor runtime class.
 	if !strings.Contains(content, "hardware virtualization the local substrate cannot nest") {
-		t.Errorf("quickstart.md is missing the distinct `microvm`/Kata runc-degradation cause (hardware virtualization the local substrate cannot nest); proposal §3.10 keeps the gVisor and Kata causes distinct")
+		t.Errorf("quickstart.md is missing the distinct `microvm`/Kata runc-degradation cause (hardware virtualization the local substrate cannot nest); spec §17.4 keeps the gVisor and Kata causes distinct")
 	}
 	for _, conflated := range []string{
 		"`sandboxed` and `microvm` profiles run under standard `runc` locally",
 		"`sandboxed` and `microvm` profiles run under standard `runc`",
 	} {
 		if strings.Contains(content, conflated) {
-			t.Errorf("quickstart.md conflates the gVisor and Kata causes under one cause (%q); proposal §3.10 requires each profile to carry its own distinct cause", conflated)
+			t.Errorf("quickstart.md conflates the gVisor and Kata causes under one cause (%q); spec §17.4 requires each profile to carry its own distinct cause", conflated)
 		}
 	}
 }
 
 // diagnosis: the SDK-example Standard-level platform note reconciliation
-// from proposal §3.5/§3.6 regressed on one of the published SDK pages.
+// from spec §15.4.3/§17.4 regressed on one of the published SDK pages.
 // The note either reasserts a blanket "Linux-only" abstract-socket
 // restriction that excludes macOS and Windows readers from the Standard
 // level, or drops the Embedded-Mode carve-out, telling a macOS or Windows
@@ -171,7 +171,7 @@ func TestQuickstartDisclosesLocalIsolationDegradation(t *testing.T) {
 // Desktop's Linux VM.
 //
 // spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
-// Proposal 0013 §3.5, §3.6.
+// Spec §15.4.3, §17.4.
 func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 	root := repoRoot(t)
 	for _, page := range sdkExamplePages(root) {
@@ -186,7 +186,7 @@ func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 			"macOS and Windows",
 		} {
 			if !strings.Contains(content, want) {
-				t.Errorf("%s missing abstract-socket reconciliation text %q (proposal §3.5/§3.6 regression)", name, want)
+				t.Errorf("%s missing abstract-socket reconciliation text %q (spec §15.4.3/§17.4 regression)", name, want)
 			}
 		}
 
@@ -195,7 +195,7 @@ func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 		// on macOS" — must be gone; it tells a macOS reader the Standard
 		// level excludes them.
 		if strings.Contains(content, "which are Linux-only. Use `docker compose up` on macOS") {
-			t.Errorf("%s still asserts the Standard level is flatly Linux-only; Embedded Mode runs the adapter in an in-cluster Linux pod on macOS and Windows (proposal §3.5/§3.6)", name)
+			t.Errorf("%s still asserts the Standard level is flatly Linux-only; Embedded Mode runs the adapter in an in-cluster Linux pod on macOS and Windows (spec §15.4.3/§17.4)", name)
 		}
 	}
 }
@@ -208,14 +208,14 @@ func TestSDKExamplesScopeAbstractSocketRestrictionToHostSide(t *testing.T) {
 // Standard/Full runtimes; if any reasserts a blanket host-OS Linux
 // requirement, it contradicts the reconciled spec (§15.4.3/§17.4) and
 // the sibling reconciled pages (local-development.md, integration-
-// levels.md), recreating the self-contradiction proposal §1.3 set out to
+// levels.md), recreating the self-contradiction the proposal set out to
 // prevent. The host-side Linux requirement holds only for Source Mode
 // (`make run`); Embedded Mode (`lenny up`) runs the adapter in an
 // in-cluster Linux pod under Docker Desktop's Linux VM on macOS and
 // Windows.
 //
 // spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
-// Proposal 0013 §1.3, §3.5, §3.6, §3.9.
+// spec: §15.4.5 (Standard-level default note).
 func TestPublishedPagesScopeAbstractSocketRestrictionToSourceMode(t *testing.T) {
 	root := repoRoot(t)
 	for _, page := range abstractSocketPages(root) {
@@ -230,7 +230,7 @@ func TestPublishedPagesScopeAbstractSocketRestrictionToSourceMode(t *testing.T) 
 			"Docker Desktop's Linux VM",
 		} {
 			if !strings.Contains(content, want) {
-				t.Errorf("%s missing abstract-socket reconciliation text %q (proposal §1.3/§3.5/§3.6 regression)", name, want)
+				t.Errorf("%s missing abstract-socket reconciliation text %q (spec §15.4.3/§17.4 regression)", name, want)
 			}
 		}
 
@@ -244,7 +244,7 @@ func TestPublishedPagesScopeAbstractSocketRestrictionToSourceMode(t *testing.T) 
 			"abstract Unix sockets (Linux only; use `docker compose` on macOS)",
 		} {
 			if strings.Contains(content, banned) {
-				t.Errorf("%s still asserts the pre-0013 over-broad abstract-socket restriction (%q); scope the host-side Linux requirement to Source Mode and name the Embedded-Mode in-cluster-pod path (proposal §1.3/§3.5/§3.6)", name, banned)
+				t.Errorf("%s still asserts the pre-0013 over-broad abstract-socket restriction (%q); scope the host-side Linux requirement to Source Mode and name the Embedded-Mode in-cluster-pod path (spec §15.4.3/§17.4)", name, banned)
 			}
 		}
 	}
@@ -295,7 +295,7 @@ func TestLocalDevelopmentStatesPerOSSubstrateAndDockerPrerequisite(t *testing.T)
 // production isolation boundary.
 //
 // spec: §17.4 (local isolation fidelity), §5.3 (isolation profiles),
-// §13.2 (network isolation). Proposal 0013 §3.10.
+// §13.2 (network isolation).
 func TestLocalDevelopmentDisclosesLocalIsolationDegradation(t *testing.T) {
 	root := repoRoot(t)
 	content := readDocPage(t, localDevelopmentPath(root))
@@ -307,29 +307,29 @@ func TestLocalDevelopmentDisclosesLocalIsolationDegradation(t *testing.T) {
 		"NetworkPolicy",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("local-development.md missing local-fidelity disclosure text %q (proposal §3.10 regression)", want)
+			t.Errorf("local-development.md missing local-fidelity disclosure text %q (local isolation fidelity regression)", want)
 		}
 	}
 
-	// Proposal §3.10 keeps the gVisor and Kata runc-degradation causes
+	// §17.4 keeps the gVisor and Kata runc-degradation causes
 	// distinct. The page must carry the microvm-specific cause rather than
 	// collapse both profiles under the gVisor-runtime-class cause.
 	if !strings.Contains(content, "hardware virtualization the local substrate cannot nest") {
-		t.Errorf("local-development.md is missing the distinct `microvm`/Kata runc-degradation cause; proposal §3.10 keeps the gVisor and Kata causes distinct")
+		t.Errorf("local-development.md is missing the distinct `microvm`/Kata runc-degradation cause; §17.4 keeps the gVisor and Kata causes distinct")
 	}
 	if !strings.Contains(content, "no gVisor runtime class") {
-		t.Errorf("local-development.md is missing the distinct `sandboxed`/gVisor runc-degradation cause (the cluster installs no gVisor runtime class); proposal §3.10 keeps the gVisor and Kata causes distinct")
+		t.Errorf("local-development.md is missing the distinct `sandboxed`/gVisor runc-degradation cause (the cluster installs no gVisor runtime class); §17.4 keeps the gVisor and Kata causes distinct")
 	}
 }
 
 // diagnosis: the local-development page's abstract-socket reconciliation
-// from proposal §3.5/§3.6 regressed. The page either keeps a blanket
+// from spec §15.4.3/§17.4 regressed. The page either keeps a blanket
 // "Linux-only" Standard/Full restriction that excludes macOS and Windows
 // authors, or drops the Embedded-Mode in-cluster-pod carve-out that makes
 // abstract sockets available on those hosts under `lenny up`.
 //
 // spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
-// Proposal 0013 §3.5, §3.6.
+// §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
 func TestLocalDevelopmentScopesAbstractSocketRestrictionToHostSide(t *testing.T) {
 	root := repoRoot(t)
 	content := readDocPage(t, localDevelopmentPath(root))
@@ -337,7 +337,7 @@ func TestLocalDevelopmentScopesAbstractSocketRestrictionToHostSide(t *testing.T)
 	// The reconciled note must name the Embedded-Mode in-cluster-pod path
 	// as how Standard/Full authors work on macOS and Windows.
 	if !strings.Contains(content, "in-cluster Linux pod") {
-		t.Errorf("local-development.md missing the in-cluster Linux pod carve-out for abstract sockets on macOS/Windows (proposal §3.5/§3.6 regression)")
+		t.Errorf("local-development.md missing the in-cluster Linux pod carve-out for abstract sockets on macOS/Windows (§15.4.3/§17.4 regression)")
 	}
 
 	// The pre-0013 blanket claim that abstract sockets "exist only on
@@ -346,18 +346,18 @@ func TestLocalDevelopmentScopesAbstractSocketRestrictionToHostSide(t *testing.T)
 	// asserted a flat host-OS restriction without the in-cluster-pod
 	// explanation — must be gone.
 	if strings.Contains(content, "Those sockets exist only on Linux, so on macOS or Windows use") {
-		t.Errorf("local-development.md still asserts a flat host-OS abstract-socket restriction without the in-cluster-pod carve-out (proposal §3.5/§3.6)")
+		t.Errorf("local-development.md still asserts a flat host-OS abstract-socket restriction without the in-cluster-pod carve-out (proposal §3.5, spec §17.4)")
 	}
 }
 
 // diagnosis: the operator-guide installation page's `lenny up` section
-// reconciliation from proposal §3.2/§3.7/§3.10 regressed. The deployment
+// reconciliation from spec §17.4/§24.19 regressed. The deployment
 // reader either still sees `lenny up` described as running "in-process"
 // (stale), or is not told Docker Desktop is required on macOS/Windows, or
 // is not warned the local cluster does not reproduce production isolation.
 //
 // spec: §17.4 (per-OS substrate, Docker prerequisite, local isolation
-// fidelity), §24.19 (`lenny up`). Proposal 0013 §3.2, §3.7, §3.10.
+// fidelity), §24.19 (`lenny up`).
 func TestInstallationLennyUpStatesSubstrateAndFidelity(t *testing.T) {
 	root := repoRoot(t)
 	content := readDocPage(t, installationPath(root))
@@ -369,13 +369,13 @@ func TestInstallationLennyUpStatesSubstrateAndFidelity(t *testing.T) {
 		"NetworkPolicy",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("installation.md `lenny up` section missing cross-platform/fidelity text %q (proposal §3.2/§3.7/§3.10 regression)", want)
+			t.Errorf("installation.md `lenny up` section missing cross-platform/fidelity text %q (spec §17.4/§24.19 regression)", want)
 		}
 	}
 
 	// The stale "runs the entire platform in-process" framing must be gone.
 	if strings.Contains(content, "runs the entire platform in-process") {
-		t.Errorf("installation.md still describes `lenny up` as running the entire platform in-process; k3s runs as a managed child process or Docker container and the controllers as host child processes (proposal §3.7)")
+		t.Errorf("installation.md still describes `lenny up` as running the entire platform in-process; k3s runs as a managed child process or Docker container and the controllers as host child processes (spec §24.19)")
 	}
 }
 

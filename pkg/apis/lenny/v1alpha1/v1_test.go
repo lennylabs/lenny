@@ -146,7 +146,7 @@ func TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
 // predicate reads back. The string values are the wire-visible condition
 // types on the Sandbox and SandboxTemplate status; a rename would silently
 // break the §13.1 security posture surfacing.
-// spec: §4.7, §7.8 (SOPeercredDisabled / SecurityDegradedMode conditions).
+// spec: §4.7 (SOPeercredDisabled / SecurityDegradedMode conditions).
 func TestNonceOnlyConditionTypeConstants(t *testing.T) {
 	if lennyv1.SandboxConditionSOPeercredDisabled != "SOPeercredDisabled" {
 		t.Errorf("SandboxConditionSOPeercredDisabled = %q, want SOPeercredDisabled",

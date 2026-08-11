@@ -54,7 +54,7 @@ type Session struct {
 	// is the wall-clock instant the session reached a terminal state
 	// (completed, failed, cancelled, expired); it is the zero time while
 	// the session is non-terminal. TerminatedReason is the coded reason
-	// string for the terminal disposition. spec: §6.49; §7.2;
+	// string for the terminal disposition. spec: §7.2;
 	// §8.8 session-level state mapping.
 	TerminatedAt     time.Time
 	TerminatedReason string
@@ -64,7 +64,7 @@ type Session struct {
 	// Sandbox.status.conditions alongside the Terminated fact. SuspendedAt
 	// is the wall-clock instant the session entered `suspended`; it is the
 	// zero time while the session is not suspended. SuspendedReason is the
-	// coded interrupt reason. spec: §6.49; §7.2; §8.8.
+	// coded interrupt reason. spec: §7.2; §8.8.
 	SuspendedAt     time.Time
 	SuspendedReason string
 

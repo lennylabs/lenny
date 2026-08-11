@@ -78,13 +78,13 @@ func TestEmbeddedModeCrossRefsResolveToLiveHeadings(t *testing.T) {
 // Standard/Full surface may assert a host-side Linux-only requirement.
 //
 // spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
-// Proposal 0013 §3.5, §3.6, §3.9.
+// spec: §15.4.5 (Standard-level surface requirement).
 func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 	root := repoRoot(t)
 
 	cases := []struct {
 		file        string
-		mustContain []string // reconciliation text proposal §3.5/§3.6 added
+		mustContain []string // reconciliation text spec §15.4.3/§17.4 added
 	}{
 		{
 			file: filepath.Join(root, "spec", "15_external-api-surface.md"),
@@ -111,14 +111,14 @@ func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 		content := string(b)
 		for _, want := range c.mustContain {
 			if !strings.Contains(content, want) {
-				t.Errorf("%s missing abstract-socket reconciliation text %q (proposal §3.5/§3.6 regression)",
+				t.Errorf("%s missing abstract-socket reconciliation text %q (spec §15.4.3/§17.4 regression)",
 					filepath.Base(c.file), want)
 			}
 		}
 	}
 }
 
-// diagnosis: the §17.4 local-fidelity disclosure from proposal §3.10
+// diagnosis: the §17.4 local-fidelity disclosure
 // regressed. The disclosure must name gVisor and Kata degradation with
 // their distinct per-mechanism causes (a missing RuntimeClass/runsc shim
 // for gVisor, missing nested hardware virtualization for Kata) and the
@@ -126,7 +126,7 @@ func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 // under one "nested virtualization" cause is itself a spec defect.
 //
 // spec: §17.4 (local isolation fidelity), §5.3 (isolation profiles),
-// §13.2 (network isolation). Proposal 0013 §3.10.
+// §13.2 (network isolation).
 func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 	root := repoRoot(t)
 	b, err := os.ReadFile(filepath.Join(root, "spec", "17_deployment-topology.md"))
@@ -144,7 +144,7 @@ func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 		"#132-network-isolation",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("§17.4 local-fidelity disclosure missing %q (proposal §3.10 regression)", want)
+			t.Errorf("§17.4 local-fidelity disclosure missing %q (regression)", want)
 		}
 	}
 
@@ -156,10 +156,10 @@ func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 		t.Fatal("could not locate the **Local isolation fidelity.** paragraph in §17.4")
 	}
 	if !strings.Contains(fidelity, "gVisor degrades because") {
-		t.Errorf("§17.4 disclosure does not state gVisor's distinct cause; proposal §3.10 keeps gVisor and Kata causes separate")
+		t.Errorf("§17.4 disclosure does not state gVisor's distinct cause; §17.4 keeps gVisor and Kata causes separate")
 	}
 	if !strings.Contains(fidelity, "Kata degrades because") {
-		t.Errorf("§17.4 disclosure does not state Kata's distinct cause; proposal §3.10 keeps gVisor and Kata causes separate")
+		t.Errorf("§17.4 disclosure does not state Kata's distinct cause; §17.4 keeps gVisor and Kata causes separate")
 	}
 }
 

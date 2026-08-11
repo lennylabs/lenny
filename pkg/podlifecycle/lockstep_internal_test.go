@@ -65,7 +65,7 @@ func TestPodStateMirrorIsLockstepWithStateMachine_spec_6_2(t *testing.T) {
 
 // TestPodStateMirrorRejectsRemovedPhases_spec_6_2 asserts that neither the
 // removed concurrent-occupancy phase (slot_active) nor the fine session/setup
-// phases that moved to the Postgres session model (spec §6.2, §6.37) name any
+// phases that moved to the Postgres session model (spec §6.2) name any
 // edge in the podlifecycle mirror. Every coarse phase the mirror admits must
 // be one of the eight §6.2 occupancy phases.
 //

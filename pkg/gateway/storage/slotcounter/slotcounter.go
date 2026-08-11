@@ -30,7 +30,7 @@
 // (pkg/gateway/breakerstore/redisstore) is another such exception, for
 // its cb: prefix.
 //
-// The §6.57 / §12.4 Redis-outage Postgres fallback (the FallbackSource gate,
+// The §12.4 / §12.4 Redis-outage Postgres fallback (the FallbackSource gate,
 // the bounded fail-closed window, and the Redis-connectivity detection) lives
 // in fallback.go; this file carries the Redis fast path and the §5.2
 // rehydration protocol.

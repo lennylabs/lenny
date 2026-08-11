@@ -2,7 +2,7 @@
 
 // Package podscrub implements the §6.2 recycle disposition branching
 // for a recycling session-mode pod (spec: spec/06_warm-pod-model.md
-// §6.2 recycle disposition, §6.39 host-node schedulability retire). When
+// §6.2 recycle disposition, §6.2 host-node schedulability retire). When
 // a recycling pod's occupancy reaches zero the gateway patches the claim
 // to `recycling`, the adapter runs the credential purge, cleanupCommands,
 // and the Lenny whole-pod scrub and reports the binary outcome via
@@ -21,7 +21,7 @@
 // per-pod occupancy claim, a successfully scrubbed pod is held for its
 // pinned tenant through the claim's `reserved` hold window rather than
 // returned straight to idle (spec: §5.2 recycle lifecycle). The
-// host-node-schedulability retire (§6.39) applies to BOTH pool types: a
+// host-node-schedulability retire (§6.2) applies to BOTH pool types: a
 // recycling pod on a cordoned host node is retired rather than held in
 // `reserved` or re-warmed, because either disposition would hand the next
 // session a soon-to-be-evicted pod.
@@ -30,7 +30,7 @@
 // unit-tested against the spec edges. The driver that supplies the
 // inputs (the scrub outcome, the cumulative counters, and the
 // lenny.dev/host-schedulable pod label read at the moment of the
-// transition per §6.39) and writes the resulting binding state is the
+// transition per §6.2) and writes the resulting binding state is the
 // gateway scrub-report handler; this package holds no Kubernetes client
 // and emits no metrics, it only decides.
 package podscrub
@@ -133,7 +133,7 @@ type Inputs struct {
 	// is fail-safe-unschedulable, so the caller passes false. The
 	// host-node-schedulability retire gates BOTH the preConnect re-warm
 	// reuse and the non-preConnect `reserved` reuse: a recycling pod on a
-	// cordoned host is retired rather than held or re-warmed. spec: §6.39
+	// cordoned host is retired rather than held or re-warmed. spec: §6.2
 	// ("absent, which is treated as unschedulable"; the trigger applies to
 	// non-preConnect pools as well).
 	HostSchedulable bool
@@ -147,7 +147,7 @@ type Inputs struct {
 // scrub_failure_limit on lenny_gateway_pod_retirement_total and suppresses its
 // uptime_limit emission, while the WarmPoolController counts uptime_limit on
 // lenny_controller_pod_retirement_total. A reason outside that frozen
-// vocabulary (the §6.39 cordon-drain, the fail-policy termination) is recorded
+// vocabulary (the §6.2 cordon-drain, the fail-policy termination) is recorded
 // in the audit trail only and never on either retirement counter.
 type RetireReason string
 
@@ -191,7 +191,7 @@ const (
 	// one of the three retirement-limit triggers, so it is NOT a member of the
 	// lenny_gateway_pod_retirement_total{reason} vocabulary and CountsOnRetirementTotal
 	// reports false for it; the disposition still drives the drain and records
-	// the reason in the audit trail. spec: §6.2 (recycle disposition), §6.39
+	// the reason in the audit trail. spec: §6.2 (recycle disposition), §6.2
 	// (host-node schedulability retire), spec/16 §16.1.1 (retirement-reason
 	// vocabulary is the three limit triggers only).
 	ReasonHostUnschedulable RetireReason = "host_unschedulable"
@@ -236,7 +236,7 @@ const (
 // applyDisposition additionally suppresses its own uptime_limit emission. A
 // retire whose reason is not one of the three (the onScrubFailure: fail
 // termination, which §16.1.1 classifies as a failure carried on error_type
-// rather than reason, and the §6.39 cordon-drain operational retire) drives the
+// rather than reason, and the §6.2 cordon-drain operational retire) drives the
 // drain disposition and records its reason in the audit trail but is not
 // counted on either retirement counter, so the emitter never widens the frozen
 // label set. spec: spec/16 §16.1 (retirement reason label set), §16.1.1 (reason
@@ -297,7 +297,7 @@ type Disposition struct {
 	// gateway's applyDisposition drives lenny_gateway_pod_retirement_total for
 	// session_count_limit and scrub_failure_limit and suppresses its
 	// uptime_limit emission (the controller owns that count). A retire outside
-	// that frozen vocabulary (the §6.39 cordon-drain, the fail-policy
+	// that frozen vocabulary (the §6.2 cordon-drain, the fail-policy
 	// termination) drains without incrementing either counter.
 	Retire bool
 
@@ -321,7 +321,7 @@ type Disposition struct {
 // sits below the fail-policy and scrub-exhaustion retirements but above the
 // session-count, uptime, and host-schedulability branches, so every
 // occupancy-zero retire on a vm-restart pool uses the non-counting
-// vm_restart_reprovision reason. The host-schedulability retire (§6.39)
+// vm_restart_reprovision reason. The host-schedulability retire (§6.2)
 // sits below the limit retirements but above every reuse path, so it
 // preempts both the preConnect re-warm and the non-preConnect reserve when
 // the host node is cordoned.
@@ -415,7 +415,7 @@ func Decide(in Inputs) Disposition {
 		}
 	}
 
-	// Not retiring on a limit. §6.39 host-node schedulability retire: a
+	// Not retiring on a limit. §6.2 host-node schedulability retire: a
 	// recycling pod on a cordoned host is retired rather than reused, on
 	// BOTH preConnect and non-preConnect pools. Holding a non-preConnect
 	// pod in `reserved` or re-warming a preConnect pod on a node whose

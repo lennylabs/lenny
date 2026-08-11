@@ -187,13 +187,13 @@ func TestPoolStoreSourceMapsVMRestartScrubMode(t *testing.T) {
 	}
 }
 
-// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2 / §6.33
+// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2
 // session-mode scaling knobs (recycle.enabled, recycle.maxSessionsPerPod,
 // maxConcurrentSessions) reach PoolConfig directly from the store row even
 // though the CRD does not model them. The mode_factor derivation reads them
 // off PoolConfig rather than the CRD spec (§4.6.3 ownership).
 //
-// spec: §5.2 / §6.33 (execution mode scaling implications).
+// spec: §5.2 (execution mode scaling implications).
 func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:             "recycle-sizing-pool",

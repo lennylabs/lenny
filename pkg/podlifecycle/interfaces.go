@@ -108,7 +108,7 @@ type PoolManager interface {
 type ClaimOpts struct {
 	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
 	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
-	// sandboxRef, matching the §3.2 / §6.5 claim-spec contract: the claim's
+	// sandboxRef, matching the §4.6.1 / §6.5 claim-spec contract: the claim's
 	// spec carries sandboxRef and tenantId. Empty leaves the claim
 	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
 	TenantID string
@@ -296,7 +296,7 @@ const (
 // Sandbox.status.phase. The named constants here are the only values the
 // WarmPoolController projects onto the CRD; the fine session-lifecycle
 // states live in the Postgres session model and are not mirrored here
-// (spec: §6.2, §6.37). This block stays in lockstep with
+// (spec: §6.2). This block stays in lockstep with
 // pkg/sandbox/state.All().
 // spec: spec/06_warm-pod-model.md §6.2; §4.6.1.
 type PodState string

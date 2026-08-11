@@ -72,7 +72,7 @@ var orphanedClaims = func() *prometheus.CounterVec {
 // whether an active session references it. If no active session exists,
 // the claim is reclaimed". The per-pod claim (§4.6.3) carries no session
 // identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding (§3.2). The WarmPoolController depends only on
+// `pod_assignment` binding. The WarmPoolController depends only on
 // this narrow contract so the GC loop stays decoupled from the session
 // store package.
 type SessionLookup interface {
@@ -181,11 +181,11 @@ const (
 	// reclaimDrain drains the pod, then deletes the claim. It applies to
 	// the live binding states (`bound`, `recycling`) and the empty-status
 	// CREATE-before-status fallback: the pod may be unscrubbed, so returning
-	// it to idle would break the scrub-before-idle invariant (§3.1/§5.2).
+	// it to idle would break the scrub-before-idle invariant (§5.2).
 	reclaimDrain
 	// reclaimReserved returns the scrubbed, SDK-warm pod to idle via a
 	// precondition-guarded DELETE (podclaim.DeleteOnHoldExpiry semantics),
-	// so a concurrent rebind from any gateway replica wins the race (§3.2).
+	// so a concurrent rebind from any gateway replica wins the race (§4.6.1).
 	reclaimReserved
 )
 
@@ -270,7 +270,7 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.San
 //
 // spec: §4.6.1 (orphaned SandboxClaim detection, three binding-state
 // predicates plus the creation-timestamp fallback), §3.3 (drain rather than
-// return-to-idle for live states), §6.10 (recycling-with-no-holdExpiresAt
+// return-to-idle for live states), §4.6.1 (recycling-with-no-holdExpiresAt
 // reclaimed by draining).
 func (g *ClaimGarbageCollector) classify(claim *lennyv1.SandboxClaim, now time.Time) reclaimDisposition {
 	switch claimstate.State(claim.Status.Phase) {
@@ -354,7 +354,7 @@ func (g *ClaimGarbageCollector) reservedHoldGrace() time.Duration {
 // already retiring when the claim disappears; the occupancy projection then
 // sees the draining phase and never pulls the pod back into the claimable set.
 //
-// spec: §4.6.1 (live-state and empty-status reclaim by draining), §3.3
+// spec: §4.6.1 (live-state and empty-status reclaim by draining), §4.6.1
 // (drain rather than return-to-idle; fail-closed on a coordinating-gateway
 // crash), §5.2 (scrub-before-idle invariant).
 func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *lennyv1.SandboxClaim) error {
@@ -378,7 +378,7 @@ func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *le
 // occupancy projection's reserved → idle edge and preserves the
 // scrub-before-idle invariant.
 //
-// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §3.2
+// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §4.6.1
 // (rebind-vs-hold-expiry race: a rebind that lands first aborts the reclaim).
 func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lennyv1.SandboxClaim) error {
 	preconditions := client.Preconditions(metav1.Preconditions{
@@ -401,7 +401,7 @@ func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lenn
 	case apierrors.IsConflict(err):
 		// A rebind (or any other writer) changed the resourceVersion since the
 		// sweep listed the claim: the precondition failed, the reclaim aborts,
-		// and the rebound claim is left intact. spec: §3.2.
+		// and the rebound claim is left intact. spec: §4.6.1.
 		logf.FromContext(ctx).Info("reserved-claim reclaim aborted: a rebind won the precondition race",
 			"claim", claim.Name)
 		return nil

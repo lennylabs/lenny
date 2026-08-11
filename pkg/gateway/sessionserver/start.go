@@ -2515,7 +2515,7 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 		UserCredentialProviders: userCredProviders,
 		AgentInterface:          agentInterface,
 		MinPlatformVersion:      minPlatformVersion,
-		// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so the
+		// spec: §3.4 / §5.2 — carry the pool's recycle.enabled flag so the
 		// last-slot-drain edge of a recycling concurrent pool patches the
 		// claim bound → recycling and signals the whole-pod scrub (the §3.1
 		// "Concurrent" preset) rather than deleting the claim outright.

@@ -65,7 +65,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 	}
 }
 
-// TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting is the §6.1/§3.3
+// TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting is the §6.1
 // reserved-terminus component case: on the recycle re-warm edge the
 // success terminus is reserved, written by the claim projection
 // (OccupancyReconciler) when the gateway patches the claim recycling →
@@ -73,7 +73,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 // idle on a ready pod; it makes a clean no-action exit so the two arms do
 // not fight over the phase.
 //
-// spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3
+// spec: §6.1 (reserved terminus), §6.2 (recycle edges)
 //
 // diagnosis: the SDK-warm arm raced the claim projection on the recycle
 // re-warm edge and wrote idle on a ready pod, breaking the reserved hold
@@ -99,14 +99,14 @@ func TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting(t *testing.T) {
 	}
 }
 
-// TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp is the §6.1/§3.3
+// TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp is the §6.1
 // re-warm-start anchor component case: a pod that has been running far
 // longer than the watchdog budget must not time out on the recycle
 // re-warm edge when the rewarmStartedAt stamp is within budget, because
 // neither the prior occupancy episode nor the whole-pod scrub counts
 // against the re-warm budget. The clock is measured from the stamp.
 //
-// spec: §6.1 (re-warm-start anchor), §3.3
+// spec: §6.1 (re-warm-start anchor)
 //
 // diagnosis: the watchdog anchored at pod start on the recycle re-warm
 // edge and counted the prior occupancy episode and the whole-pod scrub
@@ -136,12 +136,12 @@ func TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp(t *testing.T) {
 	}
 }
 
-// TestReconcileRecycleRewarmWatchdogRetiresOverBudget is the §6.1/§3.3
+// TestReconcileRecycleRewarmWatchdogRetiresOverBudget is the §6.1
 // re-warm watchdog component case: a re-warm that exceeds
 // sdkConnectTimeoutSeconds measured from rewarmStartedAt retires the pod
 // to failed via the sdk_connecting → failed edge.
 //
-// spec: §6.1 (re-warm watchdog), §6.2 (sdk_connecting → failed), §3.3
+// spec: §6.1 (re-warm watchdog), §6.2 (sdk_connecting → failed)
 //
 // diagnosis: the recycle re-warm watchdog did not fire on an over-budget
 // re-warm, leaving a pod hung in sdk_connecting holding a warm-pool slot.

@@ -11,7 +11,7 @@ import (
 // base returns an Inputs with a successful scrub, generous limits, and a
 // schedulable host: the canonical non-preConnect "reuse" case, which now
 // holds the pod in `reserved`. Each test mutates the fields relevant to
-// its §6.2 / §6.39 edge.
+// its §6.2 edge.
 func base() Inputs {
 	return Inputs{
 		PreConnect:          false,
@@ -80,7 +80,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			wantPhase:  state.Draining,
 			wantRetire: true,
 			wantReason: ReasonHostUnschedulable,
-			specLine:   "§6.39 (non-preConnect cordon retire)",
+			specLine:   "§6.2 (non-preConnect cordon retire)",
 		},
 		{
 			name: "non_preconnect_warn_failed_unschedulable_retire_warning",
@@ -93,7 +93,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			wantWarning: true,
 			wantRetire:  true,
 			wantReason:  ReasonHostUnschedulable,
-			specLine:    "§6.39 (non-preConnect cordon retire, warn)",
+			specLine:    "§6.2 (non-preConnect cordon retire, warn)",
 		},
 		{
 			name: "line149_scrub_failures_exhausted_draining",
@@ -212,7 +212,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			// Every recycle disposition is one of the coarse §6.2 occupancy
 			// phases the recycle edges target (re-warm, reserve reuse, or
 			// retire). The former task_cleanup source phase no longer exists
-			// (spec §6.2, §6.37); the disposition driver selects the NextPhase
+			// (spec §6.2); the disposition driver selects the NextPhase
 			// directly.
 			switch got.NextPhase {
 			case state.SDKConnecting, state.Reserved, state.Draining, state.Failed:
@@ -279,13 +279,13 @@ func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	}
 }
 
-// TestDecideHostUnschedulableRetiresBothPoolTypes verifies the §6.39
+// TestDecideHostUnschedulableRetiresBothPoolTypes verifies the §6.2
 // host-node schedulability retire applies to both preConnect and
 // non-preConnect pools: a recycling pod on a cordoned node drains rather
 // than reserving (non-preConnect) or re-warming (preConnect), because
 // either reuse disposition would hand the next session a
 // soon-to-be-evicted pod.
-// spec: §6.39 (host-node schedulability retire on both pool types).
+// spec: §6.2 (host-node schedulability retire on both pool types).
 func TestDecideHostUnschedulableRetiresBothPoolTypes(t *testing.T) {
 	nonPre := base()
 	nonPre.PreConnect = false
@@ -503,13 +503,13 @@ func TestDecideScrubbedReuseReserves(t *testing.T) {
 // retirement-limit triggers count (partitioned across
 // lenny_gateway_pod_retirement_total for session_count_limit and
 // scrub_failure_limit and lenny_controller_pod_retirement_total for
-// uptime_limit), and every operational or failure-driven retire (the §6.39
+// uptime_limit), and every operational or failure-driven retire (the §6.2
 // cordon-drain host_unschedulable, the onScrubFailure: fail termination, and
 // the non-retire reuse label) is excluded so the emitter cannot widen the
 // declared label set.
 // spec: spec/16 §16.1 (retirement reason label set: session_count_limit,
 // uptime_limit, scrub_failure_limit), §16.1.1 (reason is reserved for the
-// lifecycle limit triggers; failures use error_type), §6.39 (cordon-drain is
+// lifecycle limit triggers; failures use error_type), §6.2 (cordon-drain is
 // an operational retire outside the counter vocabulary).
 func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 	counted := map[RetireReason]bool{

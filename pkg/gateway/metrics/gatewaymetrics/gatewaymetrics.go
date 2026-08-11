@@ -1247,7 +1247,7 @@ func (m *Metrics) SetScrubFailureCount(podID, pool, runtimeClass string, count i
 // gateway-owned lifecycle-limit triggers (session_count_limit,
 // scrub_failure_limit); the controller-owned
 // `lenny_controller_pod_retirement_total` carries uptime_limit and
-// applyDisposition suppresses the gateway's uptime_limit emission. The §6.39
+// applyDisposition suppresses the gateway's uptime_limit emission. The §6.2
 // cordon-drain and the fail-policy termination drain without a
 // retirement-counter increment. spec: §16.1, §16.1.1.
 func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {

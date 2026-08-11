@@ -1391,7 +1391,7 @@ type GatewayControlClient interface {
 	// reserved otherwise. A missing report is bounded by a gateway-side
 	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
 	// initiates this RPC; a transport failure is a gRPC status error.
-	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §6.2 recycle disposition.
 	ReportPodScrub(ctx context.Context, in *ReportPodScrubRequest, opts ...grpc.CallOption) (*ReportPodScrubResponse, error)
 }
 
@@ -1560,7 +1560,7 @@ type GatewayControlServer interface {
 	// reserved otherwise. A missing report is bounded by a gateway-side
 	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
 	// initiates this RPC; a transport failure is a gRPC status error.
-	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §6.2 recycle disposition.
 	ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error)
 }
 

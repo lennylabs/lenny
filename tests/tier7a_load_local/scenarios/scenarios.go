@@ -21,7 +21,7 @@ import (
 	// under concurrent clean releases, -race clean.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/slot_leaked_counted_race"
 
-	// Wave 3: §3.4 regression scenarios.
+	// Wave 3: regression scenarios.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/audit_chain_concurrent"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/circuit_breaker_state_machine"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/idempotency_replay_race"
@@ -57,18 +57,18 @@ import (
 	// per-pod occupancy state raced across reports, -race clean.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition"
 
-	// Wave 3: §3.5 component-isolated benches.
+	// Wave 3: component-isolated benches.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/auth_jwt_verify_throughput"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/experiment_bucket_determinism"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/sessionstore_write_amplification"
 
-	// Wave 3: §3.5 multi-component scenarios.
+	// Wave 3: multi-component scenarios.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/clock_skew_admission"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/oversized_payload_rejection"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/redis_disconnect_midflight"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/runtime_adapter_slow_response"
 
-	// Wave 3 follow-up: §3.5 multi-component scenarios that drive
+	// Wave 3 follow-up: multi-component scenarios that drive
 	// the inproc gateway HTTP listener landed in W2/W3 follow-up.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/crd_watch_event_flood"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/error_injection_matrix"
@@ -76,7 +76,7 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/streaming_reconnect_storm"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/tenant_isolation_load"
 
-	// Wave 7 follow-up: scenarios closing the deferred §3.4 and §3.5
+	// Wave 7 follow-up: scenarios closing the deferred catalogue
 	// catalogue against the now-available fakekube SSA semantics and
 	// the broader inproc surface.
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/audit_sink_backpressure"

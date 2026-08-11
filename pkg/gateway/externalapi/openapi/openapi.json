@@ -401,7 +401,7 @@
               },
               "cleanupCommands":                  { "type": "array", "items": { "type": "string" }, "description": "§5.2 deployer cleanup executed before the whole-pod scrub." },
               "cleanupTimeoutSeconds":            { "type": "integer" },
-              "maxSessionRetries":                { "type": "integer", "description": "§5.2 / §6.6 crash re-dispatch budget (default 1; 0 disables retries)." },
+                "maxSessionRetries":                { "type": "integer", "description": "§5.2 / §4.6.1 crash re-dispatch budget (default 1; 0 disables retries)." },
               "maxSessionAgeSeconds":             { "type": "integer", "description": "§5.2 wall-clock session-age cap." },
               "maxClientIdleSeconds":             { "type": "integer", "description": "§5.2 / §6.2 client-inactivity bound; defaults to the effective maxSessionAgeSeconds." },
               "slotRetries":                      { "type": "integer", "description": "§5.2 per-slot retry budget when maxConcurrentSessions > 1 (default 1)." },

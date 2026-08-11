@@ -617,7 +617,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 		TreeBudget: treeGranter,
 		// §4.7 — the adapter's per-slot and whole-pod scrub reports drive the
 		// recycle-counter writes, the unhealthy-threshold drain ledger, and the
-		// §3.4 / §6.39 recycle disposition. Nil leaves ReportSessionScrub and
+		// §3.4 / §6.2 recycle disposition. Nil leaves ReportSessionScrub and
 		// ReportPodScrub returning Unimplemented (the §8.6-only deployment).
 		ScrubReports: scrubReports,
 	})
@@ -714,7 +714,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // agent_pod_state recycle counters, the unhealthy-threshold drain ledger
 // over the shared slothealth tracker (the same tracker the sessionserver
 // slot-bind-failure path feeds, so adapter-reported leaks and slot-bind
-// failures accumulate in one §5.2 rolling window), the §6.39 host-node
+// failures accumulate in one §5.2 rolling window), the §6.2 host-node
 // schedulability pod inspector, the §3.4 claim disposition driver, and the
 // §16.1 retirement metrics. The drain ledger resolves each leaked pod's pool
 // maxConcurrentSessions through the pool store, so a single-session
@@ -723,7 +723,7 @@ func newGatewayControlServer(addr string, budgets *leasecontrol.MemoryBudgetSour
 // recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §3.4 (recycle
-// disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.39
+// disposition), §5.2 (scrub model, combined failed+leaked threshold), §6.2
 // (host-node schedulability retire), §16.1 (recycle metrics).
 func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{

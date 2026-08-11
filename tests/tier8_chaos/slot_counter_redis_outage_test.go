@@ -2,7 +2,7 @@
 
 //go:build chaos
 
-// Tier-8 chaos test for the §3.2 / §6.57 / §12.4 Redis-outage Postgres
+// Tier-8 chaos test for the §12.4 Redis-outage Postgres
 // fallback behind the §5.2 intra-pod slot counter. It is the failure/recovery
 // path the proposal names: a Redis outage injected mid-flight under concurrent
 // dispatch, then a Redis recovery. The Kind e2e overlay's store-outage tests

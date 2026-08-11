@@ -19,8 +19,8 @@ import (
 // own precondition-guarded DELETE fires shortly after holdExpiresAt rather
 // than racing the wall clock exactly at the deadline. The orphan GC reclaims
 // a reserved claim only after holdExpiresAt plus a separate (longer) grace
-// (§3.3), so a short local grace here keeps the gateway holder as the
-// primary expiry path without colliding with the GC. spec: §3.2
+// so a short local grace here keeps the gateway holder as the
+// primary expiry path without colliding with the GC. spec: §4.6.1
 // (precondition-guarded hold-expiry DELETE), §4.6.1 (orphan GC reclaim after
 // holdExpiresAt plus grace).
 const HoldExpiryGracePeriod = 250 * time.Millisecond
@@ -28,16 +28,16 @@ const HoldExpiryGracePeriod = 250 * time.Millisecond
 // claimRebinder patches a reserved claim back to bound on a same-tenant
 // rebind within the hold window. *podclaim.WriteRebindStatus satisfies it
 // through rebindFunc; the seam keeps HoldCoordinator unit-testable without a
-// Kubernetes client. spec: §3.2 (reserved → bound rebind).
+// Kubernetes client. spec: §4.6.1 (reserved → bound rebind).
 type claimRebinder func(ctx context.Context, namespace, claimName string, now func() time.Time) error
 
 // claimDeleter performs the precondition-guarded hold-expiry DELETE.
 // *podclaim.DeleteOnHoldExpiry satisfies it; aborted reports that a
 // cross-replica rebind changed the resourceVersion and won the race. spec:
-// §3.2 (rebind-vs-hold-expiry precondition race).
+// §4.6.1 (rebind-vs-hold-expiry precondition race).
 type claimDeleter func(ctx context.Context, namespace, claimName string, hold podclaim.ReservedHold) (aborted bool, err error)
 
-// HoldCoordinator runs the §3.2 reserved-hold timers on a gateway replica.
+// HoldCoordinator runs the §4.6.1 reserved-hold timers on a gateway replica.
 // After the recycle disposition driver patches a recycled pod's claim to
 // `reserved` (S26) it hands the coordinator the ReservedHold token; the
 // coordinator arms a per-claim hold-TTL timer and, on expiry, deletes the
@@ -55,7 +55,7 @@ type claimDeleter func(ctx context.Context, namespace, claimName string, hold po
 // orphan GC reclaims the reserved claim after holdExpiresAt plus a grace
 // (§4.6.1), so a lost in-process timer never strands the pod.
 //
-// spec: §3.2 (reserved hold, precondition-guarded expiry DELETE,
+// spec: §4.6.1 (reserved hold, precondition-guarded expiry DELETE,
 // rebind-vs-hold-expiry race), §4.6.1 (reserved hold paragraph,
 // claimHoldTTLSeconds), §4.6.3 (holdExpiresAt status write).
 type HoldCoordinator struct {
@@ -104,7 +104,7 @@ type HoldCoordinatorOptions struct {
 	Logger *slog.Logger
 }
 
-// NewHoldCoordinator builds the §3.2 reserved-hold coordinator. Client and
+// NewHoldCoordinator builds the §4.6.1 reserved-hold coordinator. Client and
 // Namespace are required. The concrete rebind and delete seams are wired to
 // the podclaim binding-state writers (WriteRebindStatus, DeleteOnHoldExpiry).
 func NewHoldCoordinator(opts HoldCoordinatorOptions) (*HoldCoordinator, error) {
@@ -145,7 +145,7 @@ func NewHoldCoordinator(opts HoldCoordinatorOptions) (*HoldCoordinator, error) {
 	}, nil
 }
 
-// Hold arms the §3.2 hold-TTL timer for a freshly reserved claim. podID is
+// Hold arms the §4.6.1 hold-TTL timer for a freshly reserved claim. podID is
 // the agent pod (the claim is claim-<podID>); hold carries the token the
 // expiry DELETE is fenced against and the holdExpiresAt deadline stamped at
 // the reserved patch. The timer fires at holdExpiresAt plus a short grace,
@@ -157,7 +157,7 @@ func NewHoldCoordinator(opts HoldCoordinatorOptions) (*HoldCoordinator, error) {
 // prior timer and re-arms against the new token, so the expiry DELETE always
 // carries the resourceVersion of the most recent reserved patch.
 //
-// spec: §3.2 (per-claim hold-TTL timer, precondition-guarded expiry DELETE),
+// spec: §4.6.1 (per-claim hold-TTL timer, precondition-guarded expiry DELETE),
 // §4.6.1 (claimHoldTTLSeconds, reserved hold paragraph).
 func (c *HoldCoordinator) Hold(podID string, hold podclaim.ReservedHold) {
 	claimName := podclaim.ClaimName(podID)
@@ -180,7 +180,7 @@ func (c *HoldCoordinator) Hold(podID string, hold podclaim.ReservedHold) {
 // the time remaining until holdExpiresAt plus a short grace, floored at the
 // grace alone so an already-expired deadline (a slow reserved patch, or a
 // re-armed hold after the clock advanced) fires promptly rather than
-// scheduling a non-positive timer. spec: §3.2.
+// scheduling a non-positive timer. spec: §4.6.1.
 func (c *HoldCoordinator) holdDelay(holdExpiresAt time.Time) time.Duration {
 	remaining := holdExpiresAt.Sub(c.now())
 	if remaining < 0 {
@@ -193,8 +193,8 @@ func (c *HoldCoordinator) holdDelay(holdExpiresAt time.Time) time.Duration {
 // arriving within the hold window and cancels this replica's expiry timer.
 // The patch changes the claim's resourceVersion, so any other replica's
 // expiry DELETE fenced on the reserved-patch version fails its precondition
-// and aborts (§3.2). The caller re-reads the claim after this returns before
-// dispatching, per §3.2.
+// and aborts (§4.6.1). The caller re-reads the claim after this returns before
+// dispatching, per §4.6.1.
 //
 // Rebind cancels the local timer before the patch so a timer that is already
 // firing concurrently is detached; the precondition guard on the in-flight
@@ -203,7 +203,7 @@ func (c *HoldCoordinator) holdDelay(holdExpiresAt time.Time) time.Duration {
 // peer) still patches the claim — any replica may rebind — and is a no-op on
 // the local timer map.
 //
-// spec: §3.2 (reserved → bound rebind, no acquisition round trip, any replica
+// spec: §4.6.1 (reserved → bound rebind, no acquisition round trip, any replica
 // may rebind), §4.6.1 (within-hold rebind).
 func (c *HoldCoordinator) Rebind(ctx context.Context, podID string) error {
 	claimName := podclaim.ClaimName(podID)
@@ -247,7 +247,7 @@ func (c *HoldCoordinator) expire(claimName string) {
 		)
 	case aborted:
 		// A rebind from any replica changed the resourceVersion; the rebound
-		// claim is left intact and the pod stays claimed. spec: §3.2.
+		// claim is left intact and the pod stays claimed. spec: §4.6.1.
 		c.log.LogAttrs(
 			ctx, slog.LevelDebug, "recycle: hold-expiry delete aborted by rebind",
 			slog.String("claim", claimName),
@@ -286,13 +286,13 @@ func (c *HoldCoordinator) cancel(claimName string) {
 // expiry DELETE would abort on its precondition anyway), Cancel drops the
 // now-stale timer so it does not issue a wasted no-op DELETE. A claim this
 // replica does not hold (the reserving replica is a peer) is a no-op; the
-// peer's precondition guard is the authoritative race resolver. spec: §3.2.
+// peer's precondition guard is the authoritative race resolver. spec: §4.6.1.
 func (c *HoldCoordinator) Cancel(podID string) {
 	c.cancel(podclaim.ClaimName(podID))
 }
 
 // Holds reports whether this replica currently holds an armed expiry timer
-// for the pod's claim. It exists for the §3.2 acquisition-path rebind branch
+// for the pod's claim. It exists for the §4.6.1 acquisition-path rebind branch
 // and for tests; it does not consult the API server, so a claim reserved by a
 // peer replica reports false here even though it is reserved in etcd.
 func (c *HoldCoordinator) Holds(podID string) bool {
@@ -316,11 +316,11 @@ func (c *HoldCoordinator) Stop() {
 	}
 }
 
-// HoldRegistrar is the §3.2 seam the recycle disposition driver hands a
+// HoldRegistrar is the §4.6.1 seam the recycle disposition driver hands a
 // freshly reserved claim's hold token to. *HoldCoordinator satisfies it. The
 // driver reserves the claim (WriteReservedStatus) and then registers the hold
 // so the coordinator owns the expiry timer; the seam keeps the driver free of
-// the coordinator's timer state. spec: §3.2 (reserved hold timer ownership).
+// the coordinator's timer state. spec: §4.6.1 (reserved hold timer ownership).
 type HoldRegistrar interface {
 	Hold(podID string, hold podclaim.ReservedHold)
 }

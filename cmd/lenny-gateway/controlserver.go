@@ -138,7 +138,7 @@ func (w *gatewayWiring) buildControlServer(
 	}
 	// §4.7 — the adapter's per-slot and whole-pod scrub reports reach the
 	// gateway recycle-counter writes, the unhealthy-threshold drain ledger,
-	// and the §3.4 / §6.39 recycle disposition through the ScrubReporter. It
+	// and the §3.4 / §6.2 recycle disposition through the ScrubReporter. It
 	// needs the cluster client (Pods get, SandboxClaim status patch) and the
 	// Postgres agent_pod_state mirror (the recycle counters), so it is wired
 	// only when both --agent-namespace (clusterClient) and the Postgres pool

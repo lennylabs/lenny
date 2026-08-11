@@ -190,15 +190,15 @@ type Binder struct {
 	// symlink, etc.). Called only on the gateway extraction path. Nil is a
 	// no-op. spec: §7.4; §16.1 — F-7.4.11.
 	ExtractionAbort func(errorType string)
-	// HoldCanceller cancels the holding replica's local §3.2 reserved-hold
+	// HoldCanceller cancels the holding replica's local §6.2 reserved-hold
 	// expiry timer after a successful acquisition-path rebind, so the timer
 	// does not issue a wasted no-op DELETE. The rebind patch already changed
 	// the claim resourceVersion, so the precondition guard is the
 	// authoritative race resolver and a missed cancellation is harmless. Nil
 	// is a no-op (a deployment with no in-process hold coordinator, or a
-	// peer-held reserved claim). spec: §3.2.
+	// peer-held reserved claim). spec: §6.2.
 	HoldCanceller HoldCanceller
-	// RecycleBoundary arms the §3.4 gateway-side missing-report timeout when
+	// RecycleBoundary arms the §5.2 gateway-side missing-report timeout when
 	// Release patches the per-pod claim bound → recycling on a recycling pool.
 	// The adapter then runs the whole-pod scrub and reports it via
 	// ReportPodScrub; the report cancels the timer. If no report arrives within
@@ -206,25 +206,25 @@ type Binder struct {
 	// pod so a hung or silent adapter does not leave it stuck in `recycling`
 	// until the much longer §4.6.1 orphan-GC window. Nil is a no-op (a
 	// deployment with no in-process recycle coordinator); the orphan GC remains
-	// the crash backstop. spec: §3.4 (missing-report timeout).
+	// the crash backstop. spec: §5.2 (missing-report timeout).
 	RecycleBoundary RecycleBoundaryArmer
-	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
+	// Now supplies the wall clock for the §6.2 reserved-hold-window check on
 	// the acquisition-path rebind branch. Nil uses time.Now.
 	Now func() time.Time
 }
 
-// HoldCanceller cancels a §3.2 reserved-hold expiry timer this replica holds
+// HoldCanceller cancels a §6.2 reserved-hold expiry timer this replica holds
 // for the pod's claim. *recycle.HoldCoordinator satisfies it through Cancel;
 // the interface is defined at this consumer so podsession does not import the
-// recycle package. spec: §3.2 (within-hold rebind cancels the local timer).
+// recycle package. spec: §6.2 (within-hold rebind cancels the local timer).
 type HoldCanceller interface {
 	Cancel(podID string)
 }
 
-// RecycleBoundaryArmer arms the §3.4 missing-report timeout for a pod at the
+// RecycleBoundaryArmer arms the §5.2 missing-report timeout for a pod at the
 // bound → recycling patch. *recycle.RecycleBoundaryCoordinator satisfies it
 // through OnRecycling; the interface is defined at this consumer so podsession
-// does not import the recycle package. spec: §3.4 (gateway-side missing-report
+// does not import the recycle package. spec: §4.7 (gateway-side missing-report
 // timeout armed at session termination).
 type RecycleBoundaryArmer interface {
 	OnRecycling(podID string)
@@ -448,10 +448,10 @@ type BindRequest struct {
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, resolved
 	// by ResolvePool. When true and the session ends cleanly, Release patches
 	// the per-pod claim bound → recycling and signals the adapter to run the
-	// whole-pod scrub (the §3.4 recycle disposition) rather than draining the
+	// whole-pod scrub (the §5.2 recycle disposition) rather than draining the
 	// pod; the adapter's ReportPodScrub then drives recycle vs. retire. A
 	// failed/crashed session always retires regardless of this flag. spec:
-	// §3.1, §3.4 (recycle on occupancy-zero).
+	// §3.1, §5.2 (recycle on occupancy-zero).
 	Recycle bool
 	// SandboxName is the pod claimed at /create, persisted on the session
 	// row. The decomposed §7.1 lifecycle (§4.6) sets it so Prepare and Launch
@@ -503,15 +503,15 @@ type BindResult struct {
 	// another slot. spec: §7.2 (per-slot routing, SLOT_ID_REQUIRED), §5.2.
 	MaxConcurrentSessions int32
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
-	// from the bind request so the release path can apply the §3.4 recycle
+	// from the bind request so the release path can apply the §5.2 recycle
 	// disposition without re-resolving the pool. On a recycling session-mode
 	// pool a clean session release patches the claim bound → recycling and
 	// signals the whole-pod scrub rather than draining the pod (Release). On a
-	// recycling concurrent-session pool (the §3.1 "Concurrent" preset) the same
+	// recycling concurrent-session pool (the §5.2 "Concurrent" preset) the same
 	// disposition runs when the last slot drains cleanly (ReleaseSlot →
 	// SlotClaimer.ReleaseSlot). False for a non-recycling pool, where the pod
-	// terminates after the session or cohort drains. spec: §3.1, §3.4,
-	// §6.30/§6.41.
+	// terminates after the session or cohort drains. spec: §3.1, §5.2,
+	// §6.30/§6.2.
 	Recycle bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters carried from the bind request so the recycle-path Shutdown
@@ -1641,7 +1641,7 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 		Client:    b.Client,
 		Namespace: b.Namespace,
 		Now:       b.Now,
-		// On a §3.2 acquisition-path rebind, cancel the holding replica's local
+		// On a §4.6.1 acquisition-path rebind, cancel the holding replica's local
 		// hold-TTL timer so it does not issue a wasted no-op expiry DELETE.
 		OnRebind: func(podID string) {
 			if b.HoldCanceller != nil {
@@ -1829,7 +1829,7 @@ func (b *Binder) recordFallbackSkip(reason string) {
 const dispositionFailed = "failed"
 
 // Release tears down a session that Bind placed on a pod: it releases the
-// session's §4.9 credential leases, then applies the §3.4 disposition by either
+// session's §4.9 credential leases, then applies the §5.2 disposition by either
 // recycling the pod (patch the claim bound → recycling, then signal the
 // whole-pod scrub) or draining it (signal the adapter shutdown, then delete the
 // claim). disposition is the session-terminal outcome the session reached
@@ -1839,13 +1839,13 @@ const dispositionFailed = "failed"
 // WarmPoolController is the sole writer of Sandbox.status (§4.6.3).
 //
 // On a recycling pool (BindResult.Recycle, maxConcurrentSessions: 1) a clean
-// terminal (anything but "failed") brings occupancy to zero. The §3.4 recycle
+// terminal (anything but "failed") brings occupancy to zero. The §4.7 recycle
 // disposition orders the two steps patch-then-scrub: Release first patches the
 // per-pod claim bound → recycling (podclaim.WriteRecyclingStatus), then signals
 // the adapter so the whole-pod scrub runs while the pod projects `claimed`. The
 // claim must be in `recycling` before any §4.7 ReportPodScrub can arrive,
 // because the claim state machine admits only recycling → reserved/released/failed,
-// not bound → reserved (§3.2); the ReportPodScrub report then drives the
+// not bound → reserved (§4.6.3); the ReportPodScrub report then drives the
 // recycle-vs-retire disposition off the `recycling` binding state. A
 // non-recycling pool, or a failed/crashed session, takes the drain path: the
 // adapter is signaled to tear the session down and the per-pod claim is deleted,
@@ -1853,8 +1853,8 @@ const dispositionFailed = "failed"
 // recycling patch is durable and ordered first; the adapter Shutdown is
 // best-effort — a coordinating-gateway crash after the patch leaves the claim in
 // `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
-// path Release returns only an error from the recycling patch. spec: §3.1, §3.2,
-// §3.4 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
+// path Release returns only an error from the recycling patch. spec: §3.1, §4.6.1,
+// §4.7 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
 // §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
 	// spec: §7.1 — release the session's §4.9 credential
@@ -1864,20 +1864,20 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
-	// spec: §3.2 / §3.4 / §6.2 — a recycling pool recycles
+	// spec: §3.2 / §4.7 / §6.2 — a recycling pool recycles
 	// the pod across whole sessions of the same tenant when occupancy reaches
 	// zero after a clean session termination; a failed/crashed session always
 	// retires the pod. On the recycle path Release patches the claim
 	// bound → recycling FIRST, then signals the adapter scrub: the claim must be
 	// in `recycling` before any ReportPodScrub arrives, because the claim state
 	// machine admits recycling → reserved/released/failed but not bound →
-	// reserved (§3.2). On the retire path it tears the session down and deletes
+	// reserved (§4.6.3). On the retire path it tears the session down and deletes
 	// the claim so the WarmPoolController drains the pod.
 	if result.Recycle && disposition != dispositionFailed {
 		if err := podclaim.WriteRecyclingStatus(ctx, b.Client, b.Namespace, podclaim.ClaimName(result.SandboxName), nil); err != nil {
 			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
 		}
-		// §3.4: arm the gateway-side missing-report timeout now that the claim
+		// §4.7: arm the gateway-side missing-report timeout now that the claim
 		// is `recycling`. The adapter's ReportPodScrub cancels it; if the report
 		// never arrives within cleanupTimeoutSeconds plus a grace, the
 		// coordinator retires the pod so a hung adapter does not leave it stuck
@@ -1891,7 +1891,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 		// recycle disposition plus the pool's whole-pod scrub parameters: it is
 		// the occupancy-zero signal that runs the §5.2 whole-pod scrub the
 		// adapter reports via ReportPodScrub, which drives the disposition off
-		// the `recycling` binding state. spec: §3.1, §3.4, §5.2 (whole-pod scrub
+		// the `recycling` binding state. spec: §3.1, §4.7, §5.2 (whole-pod scrub
 		// on the occupancy-zero recycle edge).
 		b.shutdownAdapter(ctx, result, true)
 		return nil

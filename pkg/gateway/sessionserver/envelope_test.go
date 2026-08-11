@@ -421,7 +421,7 @@ func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 // TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4 confirms the
 // §27.4 playground SPA's create body reaches the server's delegation-policy
 // field. The SPA now emits the nested delegationLease.delegationPolicyRef key
-// (proposal §3.6), replacing the flat delegationPolicyId key the create
+// replacing the flat delegationPolicyId key the create
 // decoder never read. This anchors on the raw playground-shaped JSON body —
 // exactly the bytes the SPA POSTs — and confirms the decode populates
 // row.DelegationLeaseRequest.DelegationPolicyRef. It also confirms the obsolete

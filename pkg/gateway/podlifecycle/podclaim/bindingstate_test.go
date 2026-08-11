@@ -52,7 +52,7 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 // contract that the gateway writes the first `bound` binding state on the
 // per-pod SandboxClaim via the status-subresource PATCH verb, never a PUT
 // (`update`). The chart grants the gateway `get`/`patch` on
-// `sandboxclaims/status` and no `update` verb (§6.13 RBAC), so a regression
+// `sandboxclaims/status` and no `update` verb (§4.6.3 RBAC), so a regression
 // to client.Status().Update — which issues an HTTP PUT the API server
 // authorizes against `update` — would be denied Forbidden in any real
 // cluster while passing the envtest suite (which does not enforce RBAC). The
@@ -160,11 +160,11 @@ func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1(t *testing.T) {
 //
 // diagnosis: a failure means a recycle-path binding-state write either
 // stamped the wrong phase, skipped the transition-time stamp the orphan GC
-// keys on, or left a stale holdExpiresAt/rewarmStartedAt that the §6.14
+// keys on, or left a stale holdExpiresAt/rewarmStartedAt that the §4.6.3
 // projection would misread.
 //
 // spec: §4.6.1 (recycle binding states, reserved hold), §4.6.3 (binding-state
-// enumeration, status stamps), §6.14 (recycling/reserved projection).
+// enumeration, status stamps), §4.6.3 (recycling/reserved projection).
 func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
@@ -269,7 +269,7 @@ func TestRewarmStartedRequiresRecyclingClaim_spec_4_6_3(t *testing.T) {
 
 // TestWriteDispositionTerminalAndGuard_spec_4_6_3 pins the terminal
 // disposition writer: it stamps `released`/`failed` on the claim status so
-// the §6.14 projection drains then terminates the pod, and it rejects a
+// the §4.6.3 projection drains then terminates the pod, and it rejects a
 // non-terminal disposition rather than writing an out-of-enum value.
 //
 // diagnosis: a failure means the gateway wrote a non-terminal disposition (a
@@ -277,7 +277,7 @@ func TestRewarmStartedRequiresRecyclingClaim_spec_4_6_3(t *testing.T) {
 // retirement the WarmPoolController keys the drain on.
 //
 // spec: §4.6.1 (terminal disposition), §4.6.3 (released/failed terminal),
-// §6.14 (draining/terminated projection).
+// §4.6.3 (draining/terminated projection).
 func TestWriteDispositionTerminalAndGuard_spec_4_6_3(t *testing.T) {
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
@@ -358,7 +358,7 @@ func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1(t *testing.T) {
 // to prevent.
 //
 // spec: §4.6.1 (precondition-guarded DELETE), §4.6.3 (reserved → bound
-// rebind), §3.2 (rebind-vs-hold-expiry race).
+// rebind), §4.6.1 (rebind-vs-hold-expiry race).
 func TestRebindAbortsHoldExpiry_spec_3_2(t *testing.T) {
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)

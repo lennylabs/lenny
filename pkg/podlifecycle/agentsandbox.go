@@ -177,7 +177,7 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 	claim.Namespace = pod.Namespace
 	claim.Name = podclaim.ClaimName(pod.Name)
 	claim.Spec.SandboxRef = pod.Name
-	// The claim's spec carries sandboxRef and tenantId (§3.2 / §6.5
+	// The claim's spec carries sandboxRef and tenantId (§4.6.1 / §6.5
 	// claim-spec contract); stamp the tenant the pod is pinned to.
 	claim.Spec.TenantID = opts.TenantID
 	if err := m.Client.Create(ctx, claim); err != nil {
@@ -645,7 +645,7 @@ func firstNonEmpty(values ...string) string {
 // concurrent-occupancy self-edge), and the recycle edges (the occupancy-zero
 // re-warm, the same-tenant rebind, and the hold-expiry return to idle). The
 // fine session-lifecycle transitions live in the Postgres session model and
-// are not CRD edges (spec: §6.2, §6.37). spec: spec/06_warm-pod-model.md §6.2.
+// are not CRD edges (spec: §6.2). spec: spec/06_warm-pod-model.md §6.2.
 func allowedTransition(from, to PodState) bool {
 	allowed := map[PodState]sets.Set[PodState]{
 		PodStateWarming:       sets.New(PodStateIdle, PodStateSDKConnecting, PodStateFailed),

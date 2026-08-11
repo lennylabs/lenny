@@ -342,7 +342,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 }
 
 // TestInspectForRecycleAbsentHostScheduleLabelFailsSafe verifies a missing
-// lenny.dev/host-schedulable label resolves to unschedulable, the §6.39
+// lenny.dev/host-schedulable label resolves to unschedulable, the §6.2
 // fail-safe so a cordoned-or-unknown host retires rather than reuses.
 // spec: 6.39 (absent label treated as unschedulable)
 //

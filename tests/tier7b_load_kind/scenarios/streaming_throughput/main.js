@@ -102,7 +102,7 @@ export default function () {
   // executor publishes the corresponding `message_delivered` and
   // `response` events on the §15.1 event stream alongside the
   // response body; the POST round-trip's duration is the
-  // inject-and-stream-back cost the §6.5 gate baselines.
+  // inject-and-stream-back cost the §4.6.1 gate baselines.
   const msg = http.post(
     `${BASE}/v1/sessions/${sessionID}/messages`,
     JSON.stringify({ messages: [{ role: 'user', content: 'ping' }] }),

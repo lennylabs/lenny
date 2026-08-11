@@ -88,7 +88,7 @@ func writeBoundStatus(ctx context.Context, cl client.Client, namespace, claimNam
 // transition stamp.
 //
 // spec: §4.6.1 (recycling window, orphan GC), §4.6.3 (binding-state
-// enumeration), §6.14 (projection: a `recycling` claim projects `claimed`).
+// enumeration), §4.6.3 (projection: a `recycling` claim projects `claimed`).
 func WriteRecyclingStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
@@ -114,12 +114,12 @@ func WriteRecyclingStatus(ctx context.Context, cl client.Client, namespace, clai
 // pool and the recycle disposition begins the SDK re-warm. The phase stays
 // `recycling`; the stamp anchors the `sdkConnectTimeoutSeconds` re-warm
 // watchdog so only the re-warm leg is measured, and the projection enters
-// `sdk_connecting` from it (§6.14). The stamp does not re-stamp the
+// `sdk_connecting` from it (§4.6.3). The stamp does not re-stamp the
 // binding-state transition time, because the binding state does not change.
 // It is idempotent: a claim that already carries the stamp is a no-op.
 //
 // spec: §4.6.1 (rewarmStartedAt stamp on a preConnect successful
-// ReportPodScrub), §4.6.3 (rewarmStartedAt anchor), §6.14 (sdk_connecting
+// ReportPodScrub), §4.6.3 (rewarmStartedAt anchor), §4.6.3 (sdk_connecting
 // projection from rewarmStartedAt).
 func WriteRewarmStartedStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
@@ -230,13 +230,13 @@ func WriteRebindStatus(ctx context.Context, cl client.Client, namespace, claimNa
 // (`released` on a limit-reached retirement, `failed` on a scrub-failure or
 // crashed-session retirement) on the claim. The WarmPoolController projects
 // the pod to `draining` then `terminated` from a terminal disposition,
-// retiring it rather than returning it to the pool (§6.14). The patch records
+// retiring it rather than returning it to the pool (§4.6.3). The patch records
 // the binding-state transition time and is rejected when disposition is not a
 // terminal state, so the gateway fails closed rather than writing an
 // out-of-enum value the API server would reject.
 //
 // spec: §4.6.1 (terminal disposition), §4.6.3 (released/failed terminal
-// dispositions), §6.14 (draining/terminated projection).
+// dispositions), §4.6.3 (draining/terminated projection).
 func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, claimName string, disposition claimstate.State, now func() time.Time) error {
 	if now == nil {
 		now = time.Now

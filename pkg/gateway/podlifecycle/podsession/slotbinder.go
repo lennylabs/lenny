@@ -86,13 +86,13 @@ type SlotBindRequest struct {
 	// by ResolvePool. On a recycling concurrent-session pool (the §3.1
 	// "Concurrent" preset, maxConcurrentSessions > 1 with recycle.enabled:
 	// true), when the last slot drains cleanly ReleaseSlot patches the per-pod
-	// claim bound → recycling and signals the whole-pod scrub (the §3.4 recycle
+	// claim bound → recycling and signals the whole-pod scrub (the §4.7 recycle
 	// disposition) rather than deleting the claim, so the adapter's
 	// ReportPodScrub drives recycle vs. retire and the occupancy-zero whole-pod
 	// scrub clears the cross-cohort residue (shared /tmp, /dev/shm, surviving
 	// processes). False for a non-recycling concurrent pool (the §3.1 "Bounded
 	// cohort" preset), where the pod terminates after the cohort drains. spec:
-	// §3.1, §3.4, §6.30/§6.41 (occupancy-zero recycle edge on a recycling pod).
+	// §3.1, §3.4, §6.30/§6.2 (occupancy-zero recycle edge on a recycling pod).
 	Recycle bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod scrub
 	// parameters (folded onto PoolMatch from the sessionPolicy mirror) carried
@@ -332,8 +332,8 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
-		// spec: §3.4 / §6.30 — carry the pool's recycle.enabled flag so
-		// ReleaseSlot drives the §3.4 recycle disposition (patch the per-pod
+		// spec: §3.4 / §5.2 — carry the pool's recycle.enabled flag so
+		// ReleaseSlot drives the §4.7 recycle disposition (patch the per-pod
 		// claim bound → recycling, signal the whole-pod scrub) on the
 		// occupancy-zero edge of a recycling concurrent pool rather than
 		// deleting the claim.
@@ -494,7 +494,7 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 	// reservation rollback frees a slot that never held runtime resources, so
 	// the counter must decrement (the slot is not leaked). The recycled signal
 	// is discarded: recycle=false never returns it. spec: §5.2 (slot retry
-	// releases the reservation), §3.4, §6.2 (leaked slot remains counted).
+	// releases the reservation), §4.7 (recycle disposition), §6.2 (leaked slot remains counted).
 	_, err := claimer.ReleaseSlot(ctx, sandboxName, slotID, false, false)
 	return err
 }
@@ -547,7 +547,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		Client:    b.Client,
 		Namespace: b.Namespace,
 		Counter:   b.SlotCounter,
-		// §3.4: a recycling concurrent-session pool arms the missing-report
+		// §4.7: a recycling concurrent-session pool arms the missing-report
 		// timeout on the occupancy-zero edge (the last slot draining), the same
 		// gateway-side timeout session-mode Release arms.
 		RecycleBoundary: b.RecycleBoundary,

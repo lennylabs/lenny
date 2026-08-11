@@ -504,7 +504,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §6.49, §7.1, §7.2, §8.8 — the §7.1
+	// spec: §7.1, §7.2, §8.8 — the §7.1
 	// conversation_continuity envelope half and the §7.2 / §8.8
 	// Terminated/Suspended session-condition facts relocated off
 	// Sandbox.status.conditions must round-trip through pgstore's

@@ -105,7 +105,7 @@ func (r *Reconciler) resolveSDKWarm(ctx context.Context, sb *lennyv1.Sandbox) sd
 // prior occupancy episode nor the whole-pod scrub counts against the
 // re-warm budget. The recycle edge also flips the success terminus from
 // idle to reserved (the claim projection owns the reserved write).
-// spec: §6.1 (watchdog clock per edge, reserved terminus), §3.3 (the
+// spec: §6.1 (watchdog clock per edge, reserved terminus).
 // watchdog measures only the re-warm leg).
 func sdkWarmInputs(sb *lennyv1.Sandbox, obs lifecycle.PodObservation, pod *corev1.Pod, cfg sdkWarmConfig, rewarm *time.Time, now time.Time) lifecycle.SDKWarmInputs {
 	elapsed := podRunningFor(pod, now)
@@ -145,7 +145,7 @@ func (r *Reconciler) observeRewarm(ctx context.Context, sb *lennyv1.Sandbox) (*t
 	// The re-warm leg is the recycling binding state with a stamp; a
 	// recycling claim without a stamp is still in the whole-pod scrub leg
 	// (which projects claimed, bounded by the scrub-report timeout, not the
-	// sdk_connecting watchdog). spec: §6.1, §3.3.
+	// sdk_connecting watchdog). spec: §6.1.
 	if cl.Status.Phase != string(claimstate.Recycling) || cl.Status.RewarmStartedAt == nil {
 		return nil, nil
 	}
@@ -157,7 +157,7 @@ func (r *Reconciler) observeRewarm(ctx context.Context, sb *lennyv1.Sandbox) (*t
 // elapsed since the gateway stamped rewarmStartedAt when the recycle
 // disposition began the SDK re-warm. A stamp in the future (clock skew)
 // yields zero so the watchdog stays dormant rather than firing spuriously.
-// spec: §6.1 (re-warm-start anchor), §3.3.
+// spec: §6.1 (re-warm-start anchor).
 func rewarmElapsed(rewarmStartedAt, now time.Time) time.Duration {
 	d := now.Sub(rewarmStartedAt)
 	if d < 0 {

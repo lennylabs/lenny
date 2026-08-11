@@ -962,7 +962,7 @@ func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T)
 // recycling pool a clean session release patches the per-pod claim
 // bound → recycling rather than deleting it: the adapter-executed whole-pod
 // scrub (reported via §4.7 ReportPodScrub) then drives the recycle-vs-retire
-// disposition. The gateway writes no Sandbox.status field. spec: §3.1, §3.4
+// disposition. The gateway writes no Sandbox.status field. spec: §6.2, §3.4
 // (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
 func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
@@ -1008,17 +1008,17 @@ func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	}
 }
 
-// fakeRecycleBoundary records the §3.4 missing-report timeout arming the
+// fakeRecycleBoundary records the §5.2 missing-report timeout arming the
 // binder requests at the bound → recycling patch.
 type fakeRecycleBoundary struct{ armed []string }
 
 func (f *fakeRecycleBoundary) OnRecycling(podID string) { f.armed = append(f.armed, podID) }
 
 // TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4 asserts that on the
-// recycle path Release arms the §3.4 gateway-side missing-report timeout for
+// recycle path Release arms the §5.2 gateway-side missing-report timeout for
 // the pod after patching the claim bound → recycling, so a hung or silent
 // adapter is bounded by cleanupTimeoutSeconds plus a grace rather than the
-// much longer orphan-GC window. spec: §3.4 (missing-report timeout).
+// much longer orphan-GC window. spec: §5.2 (missing-report timeout).
 func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1046,7 +1046,7 @@ func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
 // TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4 asserts a failed session
 // on a recycling pool takes the retire path (deletes the claim) and does NOT
 // arm the missing-report timeout: there is no whole-pod scrub to await on a
-// retired pod. spec: §3.4; §6.2.
+// retired pod. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1071,15 +1071,15 @@ func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
 	}
 }
 
-// TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2 pins the §3.4
+// TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2 pins the §5.2
 // patch-then-scrub ordering: on the recycle path the claim is patched
 // bound → recycling BEFORE the adapter is signaled to run the whole-pod scrub.
 // The claim state machine admits recycling → reserved/released/failed but not
-// bound → reserved (§3.2), so the claim must already project `recycling` when
+// bound → reserved (§6.2), so the claim must already project `recycling` when
 // any ReportPodScrub arrives. The fakeRuntime's onClose hook runs inside the
 // adapter Shutdown RPC, which is the occupancy-zero scrub signal; reading the
 // claim binding state there observes the state at the moment the signal fires.
-// spec: §3.2 (claim state machine), §3.4 (recycle disposition, patch-then-scrub).
+// spec: §6.2 (claim state machine), §5.2 (recycle disposition, patch-then-scrub).
 func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1112,7 +1112,7 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 	}
 
 	if stateAtScrubSignal != string(claimstate.Recycling) {
-		t.Errorf("claim binding state at the scrub signal = %q, want %q (the claim must be patched bound → recycling before the whole-pod scrub is signaled, §3.2/§3.4)",
+		t.Errorf("claim binding state at the scrub signal = %q, want %q (the claim must be patched bound → recycling before the whole-pod scrub is signaled, §6.2/§5.2)",
 			stateAtScrubSignal, claimstate.Recycling)
 	}
 }
@@ -1120,7 +1120,7 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 // TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4 asserts a failed/crashed
 // session on a recycling pool retires the pod (deletes the claim) rather than
 // recycling: §6.2 require a failed session to always retire its
-// pod regardless of recycle settings. spec: §3.4; §6.2.
+// pod regardless of recycle settings. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
@@ -1208,7 +1208,7 @@ func dialRecordingAdapter(t *testing.T, a *recordingShutdownAdapter) *adaptercli
 // the §5.2 whole-pod scrub. It pins the full C-A3 fold: the scrub-config fields
 // on BindResult reach the wire on the recycle branch.
 // spec: §5.2 (whole-pod scrub trigger, poolstore scrub config delivered on the
-// recycle Shutdown); §4.7 (Shutdown recycle disposition); §3.4.
+// recycle Shutdown); §4.7 (Shutdown recycle disposition).
 func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()

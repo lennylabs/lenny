@@ -117,7 +117,7 @@ func TestConcurrentOccupancyCollapsesToClaimed_spec_6_2(t *testing.T) {
 
 // TestCoarseEnumIsTheAuthoritativeSet_spec_6_2 pins that All() is exactly the
 // §6.2 coarse pod-occupancy enum and that the fine session/setup states the
-// proposal moved to the Postgres session model (spec §6.2, §6.37) are no
+// proposal moved to the Postgres session model (spec §6.2) are no
 // longer coarse CRD phases: they carry no coarse mapping and no transition.
 func TestCoarseEnumIsTheAuthoritativeSet_spec_6_2(t *testing.T) {
 	t.Parallel()
@@ -270,7 +270,7 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		// A terminal phase cannot return to the claimable set.
 		{state.Terminated, state.Draining},
 		// The fine session/setup states are not CRD phases, so no edge names
-		// them (spec §6.2, §6.37).
+		// them (spec §6.2).
 		{state.Claimed, "attached"},
 		{state.Claimed, "task_cleanup"},
 	}

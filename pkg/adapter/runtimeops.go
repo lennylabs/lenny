@@ -42,7 +42,7 @@ var errLifecycleVersionIncompatible = errors.New("lifecycle protocol version inc
 // lifecycleCapabilities are the §4.7 lifecycle signals the adapter
 // advertises on every pod. The adapter sends them in the
 // lifecycle_capabilities handshake; the runtime replies with
-// lifecycle_support naming the subset it implements. spec: §6.16 removes
+// lifecycle_support naming the subset it implements. spec: §4.7 removes
 // the task_lifecycle capability along with the between-task
 // task_complete / task_ready frames, so the advertised set is fixed.
 var lifecycleCapabilities = []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"}

@@ -387,7 +387,7 @@ func TestClaimSlotRequiresCounter(t *testing.T) {
 	}
 }
 
-// spec: §3.2, §5.2, §12.4
+// spec: spec/06_warm-pod-model.md §6.2, §5.2, §12.4
 // diagnosis: ReleaseSlot silently treated a nil Counter as "no slots remain"
 // and deleted the per-pod claim, over-releasing a pod that may still host
 // live slots. The Redis counter (with its §12.4 Postgres fallback) is the
@@ -530,7 +530,7 @@ func TestReleaseSlotLeakedKeepsSlotCounted(t *testing.T) {
 	}
 }
 
-// fakeRecycleArmer records the §3.4 missing-report timeout arming the
+// fakeRecycleArmer records the §5.2 missing-report timeout arming the
 // SlotClaimer requests at the occupancy-zero recycle edge.
 type fakeRecycleArmer struct{ armed []string }
 
@@ -539,7 +539,7 @@ func (f *fakeRecycleArmer) OnRecycling(podID string) { f.armed = append(f.armed,
 // spec: 3.4, 3.1, 6.41, 5.2
 // diagnosis: a recycling concurrent-session pool deleted the per-pod claim on
 // the last-slot-drain edge instead of patching it bound → recycling and arming
-// the §3.4 missing-report timeout, so the pod retired rather than recycling and
+// the §5.2 missing-report timeout, so the pod retired rather than recycling and
 // no gateway-side timeout bounded a missing ReportPodScrub. The returned
 // recycled signal is the §5.2 whole-pod scrub trigger: it must be true on the
 // occupancy-zero recycle edge so Binder.ReleaseSlot sends the adapter the
@@ -763,7 +763,7 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 }
 
 // seedReservedSlotPod creates the per-pod claim for sandboxName, patches it
-// bound → recycling → reserved with the given hold TTL, so the §3.2 slot-path
+// bound → recycling → reserved with the given hold TTL, so the §6.2 slot-path
 // rebind branch sees a reserved claim it can rebind.
 func seedReservedSlotPod(t *testing.T, c client.Client, sandboxName, tenantID string, now time.Time, holdTTL time.Duration) {
 	t.Helper()
@@ -788,7 +788,7 @@ func seedReservedSlotPod(t *testing.T, c client.Client, sandboxName, tenantID st
 	}
 }
 
-// TestClaimSlotRebindsReservedSamePodWithinHold verifies the §3.2 slot-path
+// TestClaimSlotRebindsReservedSamePodWithinHold verifies the §6.2 slot-path
 // rebind: a same-tenant slot request on a pod held in `reserved` within its
 // hold window rebinds the claim (reserved → bound) and reserves the first slot
 // on it, rather than acquiring a fresh idle pod.

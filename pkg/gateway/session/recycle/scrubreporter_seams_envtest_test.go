@@ -122,7 +122,7 @@ func TestClaimDispositionRecycleNonPreConnectReserves_spec_3_4(t *testing.T) {
 	}
 }
 
-// captureRegistrar records the §3.2 reserved-hold tokens the disposition
+// captureRegistrar records the §6.2 reserved-hold tokens the disposition
 // driver hands it, so a test can assert the driver registers the hold timer
 // after a non-preConnect reserved patch.
 type captureRegistrar struct {
@@ -136,7 +136,7 @@ func (r *captureRegistrar) Hold(podID string, hold podclaim.ReservedHold) {
 }
 
 // TestClaimDispositionRecycleNonPreConnectRegistersHold verifies the driver
-// hands the §3.2 reserved-hold token (the pod, and the UID/resourceVersion
+// hands the §6.2 reserved-hold token (the pod, and the UID/resourceVersion
 // observed at the reserved patch) to the HoldRegistrar so the coordinator
 // arms the hold-TTL expiry timer.
 // spec: 3.2 (reserved hold timer ownership), 4.6.1 (claimHoldTTLSeconds)
@@ -175,7 +175,7 @@ func TestClaimDispositionRecycleNonPreConnectRegistersHold_spec_3_2(t *testing.T
 // TestClaimDispositionRecyclePreConnectDoesNotRegisterHold verifies a
 // preConnect recycle stamps rewarmStartedAt only and does not register a hold
 // synchronously. The reserved patch and the hold registration follow from the
-// §3.4 RecycleBoundaryCoordinator's re-warm completion poll once the SDK
+// §6.2 RecycleBoundaryCoordinator's re-warm completion poll once the SDK
 // re-warm makes the pod Ready (exercised in the boundary-coordinator tests),
 // not from the disposition driver. spec: 3.2 (reserved hold timer ownership),
 // 3.4 (re-warm completion drives recycling → reserved), 6.2 (preConnect re-warm)
@@ -203,7 +203,7 @@ func TestClaimDispositionRecyclePreConnectDoesNotRegisterHold_spec_3_2(t *testin
 }
 
 // TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer verifies the real
-// §3.2 coordinator (with its podclaim-wired DELETE seam) deletes a reserved
+// §6.2 coordinator (with its podclaim-wired DELETE seam) deletes a reserved
 // claim against the envtest API server once the hold TTL elapses, returning
 // the pod to idle. It exercises the NewHoldCoordinator constructor closures
 // end-to-end rather than the injected unit seams.
@@ -250,7 +250,7 @@ func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing
 
 // TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer verifies the real
 // coordinator's expiry DELETE aborts (the claim survives as bound) when a
-// rebind changed the resourceVersion before the timer fired, the §3.2
+// rebind changed the resourceVersion before the timer fired, the
 // rebind-vs-hold-expiry precondition race exercised against the API server.
 // spec: 3.2 (rebind-vs-hold-expiry precondition race)
 //
@@ -482,7 +482,7 @@ func TestClaimDispositionRecycleCleanScrubLeavesNoMarker_spec_5_2(t *testing.T) 
 }
 
 // TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning verifies the
-// §6.39 cordon-drain-under-warn path stamps the scrub-warning annotation on the
+// §6.2 cordon-drain-under-warn path stamps the scrub-warning annotation on the
 // draining pod (scrubWarning true) so the residual-state marker is retained for
 // the audit trail while the claim drains to `released`.
 // spec: 6.39 (cordon-drain retains the scrub_warning marker), 5.2 (warn-policy marker)

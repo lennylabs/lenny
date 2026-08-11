@@ -581,7 +581,7 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 }
 
 // spec: §5.2 (whole-pod scrub trigger, uniform across session modes), §4.7
-// (Shutdown recycle disposition), §3.4
+// (Shutdown recycle disposition).
 // diagnosis: a recycling concurrent-session pool never triggered the §5.2
 // whole-pod scrub at occupancy zero. On the last clean slot drain
 // Binder.ReleaseSlot must send the adapter a whole-pod recycle Shutdown (a

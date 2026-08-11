@@ -1,4 +1,4 @@
--- §6.49 / §7.2 / §8.8 — session-condition relocation and §7.1
+-- §7.2 / §8.8 — session-condition relocation and §7.1
 -- conversationContinuity persistence on the Postgres session row.
 --
 -- The §5.2 mode collapse relocates the session-end (Terminated) and

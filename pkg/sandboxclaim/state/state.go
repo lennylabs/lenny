@@ -20,7 +20,7 @@
 // the lenny-sandboxclaim-guard admission webhook backstops.
 //
 // spec: §4.6.1 (binding states, reserved hold, precondition DELETE),
-// §4.6.3 (binding-state enumeration), §6.14 (coarse pod enum projection).
+// §4.6.3 (binding-state enumeration), §6.2 (coarse pod enum projection).
 package state
 
 import "fmt"

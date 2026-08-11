@@ -1039,8 +1039,8 @@ type SessionPolicy struct {
 	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// MaxSessionRetries is the §5.2 / §6.6 crash re-dispatch budget. A nil
-	// value takes the §6.6 default of 1; an explicit 0 disables retries.
+	// MaxSessionRetries is the §5.2 / §6.2 crash re-dispatch budget. A nil
+	// value takes the §6.2 default of 1; an explicit 0 disables retries.
 	MaxSessionRetries *int `json:"maxSessionRetries,omitempty"`
 
 	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero

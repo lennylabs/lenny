@@ -55,7 +55,7 @@ func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 // recycle disposition onto the SandboxClaim (recycling → reserved).
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §3.4
-// (recycle disposition), §5.2 (scrub model), §6.39 (host-node schedulability).
+// (recycle disposition), §5.2 (scrub model), §6.2 (host-node schedulability).
 //
 // diagnosis: a failure means the gateway either left the scrub-report RPCs
 // unwired (returning Unimplemented to every adapter), mis-wired the recycle
@@ -184,7 +184,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 //
 // spec: §4.7 (ReportSessionScrub leaked feeds the drain ledger), §5.2
 // (ceil(maxConcurrentSessions/2) unhealthy threshold), §3.4 (recycle
-// disposition), §6.39 (gateway stamps drain-request).
+// disposition), §6.2 (gateway stamps drain-request).
 //
 // diagnosis: a failure means the gateway hard-wires the drain threshold to 1
 // instead of resolving the pod's pool maxConcurrentSessions, so a recycling
@@ -292,7 +292,7 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 //
 // spec: §5.2 (failed_slots + leaked_slots >= ceil(maxConcurrentSessions/2)),
 // §6.2 (leaked slots combine with failed slots in the rolling window), §4.7
-// (ReportSessionScrub leaked feeds the same ledger), §6.39 (gateway stamps
+// (ReportSessionScrub leaked feeds the same ledger), §6.2 (gateway stamps
 // drain-request).
 //
 // diagnosis: a failure means the gateway wired two disjoint trackers, so the

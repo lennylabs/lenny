@@ -9,7 +9,7 @@
 // InvalidTransitionError otherwise. The fine session-lifecycle states
 // (running, suspended, resume_pending, resuming, awaiting_client_action, and
 // the session terminals completed/cancelled/expired) live in the Postgres
-// session model, not on the CRD (spec: §6.2, §6.37); they are not part of
+// session model, not on the CRD (spec: §6.2); they are not part of
 // this enum. The host-schedulable label check that distinguishes a recycle
 // re-warm (claimed → sdk_connecting) from a retirement (claimed → draining)
 // on a cordoned node is enforced separately by the WarmPoolController; this
@@ -123,7 +123,7 @@ func All() []State {
 // reclaimed and no edge other than the failed → draining reclamation leaves
 // them; terminated has no outgoing edge of any kind. The fine
 // session-terminal states (completed, cancelled, expired) live in the
-// Postgres session model and are not coarse CRD phases (spec: §6.2, §6.37).
+// Postgres session model and are not coarse CRD phases (spec: §6.2).
 func Terminal() []State {
 	return []State{Failed, Terminated}
 }
@@ -150,7 +150,7 @@ type Transition struct {
 // serving any number of concurrent sessions projects claimed, so additional
 // and completing sessions are the claimed → claimed self-edge rather than a
 // distinct slot phase. The fine session-lifecycle transitions live in the
-// Postgres session model and are not CRD edges (spec: §6.2, §6.37).
+// Postgres session model and are not CRD edges (spec: §6.2).
 func ValidTransitions() []Transition {
 	return []Transition{
 		// Warm fill (pod-warm path).

@@ -110,12 +110,12 @@ func newTestBoundary(t *testing.T, st *fakeBoundaryState, fixedTimeout time.Dura
 	return c, func() *fakeTimer { return lastTimer }()
 }
 
-// TestMissingReportTimeoutRetiresFailed verifies the §3.4 gateway-side
+// TestMissingReportTimeoutRetiresFailed verifies the §5.2 gateway-side
 // missing-report timeout retires the pod (fail-closed `failed`) when no
 // ReportPodScrub arrives: the claim is still `recycling` with no rewarmStartedAt
 // when the timer fires.
 //
-// spec: §3.4 (missing-report timeout retires the pod), §4.7.
+// spec: §5.2 (missing-report timeout retires the pod), §4.7.
 func TestMissingReportTimeoutRetiresFailed(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Recycling, claimExists: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -141,7 +141,7 @@ func TestMissingReportTimeoutRetiresFailed(t *testing.T) {
 // arriving before the timeout cancels the timer so the pod is never retired by
 // the missing-report path.
 //
-// spec: §3.4 (ReportPodScrub cancels the missing-report timer).
+// spec: §5.2 (ReportPodScrub cancels the missing-report timer).
 func TestMissingReportTimeoutCancelledByScrubReport(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Reserved, claimExists: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -168,7 +168,7 @@ func TestMissingReportTimeoutCancelledByScrubReport(t *testing.T) {
 // landed after the timer fired but before the callback read the claim): the
 // report was not missing.
 //
-// spec: §3.4 (the timeout retires only when no report arrived).
+// spec: §5.2 (the timeout retires only when no report arrived).
 func TestMissingReportTimeoutNoOpWhenAlreadyReserved(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Reserved, claimExists: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -184,7 +184,7 @@ func TestMissingReportTimeoutNoOpWhenAlreadyReserved(t *testing.T) {
 // does not retire a recycling claim that carries rewarmStartedAt: a preConnect
 // ReportPodScrub arrived and the re-warm began, so the report was not missing.
 //
-// spec: §3.4 (rewarmStartedAt means the report arrived).
+// spec: §4.7 (rewarmStartedAt means the report arrived).
 func TestMissingReportTimeoutNoOpWhenRewarmStarted(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Recycling, rewarmStarted: true, claimExists: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -200,7 +200,7 @@ func TestMissingReportTimeoutNoOpWhenRewarmStarted(t *testing.T) {
 // concurrent orphan-GC reclaim or hold-expiry DELETE) is a no-op: there is
 // nothing to retire.
 //
-// spec: §3.4 / §4.6.1 (concurrent reclaim).
+// spec: §5.2 / §4.6.1 (concurrent reclaim).
 func TestMissingReportTimeoutNoOpWhenClaimGone(t *testing.T) {
 	st := &fakeBoundaryState{phase: "", claimExists: false}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -216,7 +216,7 @@ func TestMissingReportTimeoutNoOpWhenClaimGone(t *testing.T) {
 // patch on a re-bound pod) cancels the prior timer so a single timer fires per
 // recycle episode.
 //
-// spec: §3.4 (OnRecycling idempotent on the pod key).
+// spec: §5.2 (OnRecycling idempotent on the pod key).
 func TestOnRecyclingReArmCancelsPriorTimer(t *testing.T) {
 	st := &fakeBoundaryState{phase: claimstate.Recycling, claimExists: true}
 	c, _ := newTestBoundary(t, st, 60*time.Second)
@@ -228,14 +228,14 @@ func TestOnRecyclingReArmCancelsPriorTimer(t *testing.T) {
 	}
 }
 
-// TestPreConnectRewarmCompletionReservesOnReady verifies the §3.4 preConnect
+// TestPreConnectRewarmCompletionReservesOnReady verifies the §6.2 preConnect
 // re-warm completion path: after OnScrubReported(preConnect=true) the
 // coordinator polls the pod readiness and, once Ready with the claim still
 // recycling and carrying rewarmStartedAt, patches the claim recycling →
 // reserved and registers the hold. This is the producer of the recycling →
 // reserved patch that was previously absent on preConnect pools.
 //
-// spec: §3.4 (re-warm completion drives recycling → reserved), §3.2 (hold
+// spec: §3.4 (re-warm completion drives recycling → reserved), §6.2 (hold
 // registration after the reserved patch), §6.2 / §6.14 (recycling → reserved
 // binding edge).
 func TestPreConnectRewarmCompletionReservesOnReady(t *testing.T) {

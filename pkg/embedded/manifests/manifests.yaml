@@ -4229,7 +4229,7 @@ spec:
             # the gateway warns at startup when it is set high.
             - name: LENNY_CLAIM_HOLD_TTL_SECONDS
               value: "10"
-            # §12.4 / §6.57 slotCounterPostgresFallbackMaxSeconds — the
+            # §12.4 slotCounterPostgresFallbackMaxSeconds — the
             # bounded window during a Redis outage in which the §5.2 slot
             # counter gates intra-pod capacity on the Postgres fallback under
             # a per-pod advisory lock. After this window with Redis still

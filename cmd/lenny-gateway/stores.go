@@ -2045,7 +2045,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// gates intra-pod slot admission on GetActiveSlotsByPod under a
 			// per-pod Postgres advisory lock (ReserveSlotUnderLock), failing
 			// closed only after the bounded outage window.
-			// §12.4 / §6.57: the Postgres-fallback window is operator-tunable
+			// §12.4: the Postgres-fallback window is operator-tunable
 			// (gateway.slotCounterPostgresFallbackMaxSeconds) so the spec-default
 			// 60s bounded outage window is not hardcoded; a non-positive value
 			// keeps the default.

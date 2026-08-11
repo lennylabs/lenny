@@ -2,7 +2,7 @@
 
 //go:build chaos
 
-// Tier-8 chaos test for the §3.2 reserved-hold holder-crash recovery path.
+// Tier-8 chaos test for the §4.6.1 reserved-hold holder-crash recovery path.
 // When a gateway replica reserves a recycled pod's claim it arms an
 // in-process hold-TTL expiry timer (HoldCoordinator) that issues the
 // precondition-guarded DELETE returning the pod to idle. If that replica
@@ -57,7 +57,7 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 	// The occupancy projection associates a claim with its Sandbox by the
 	// deterministic per-pod name claim-<podName> (observeClaim), so the
 	// holder-crash residue must use that name for the projection to read it
-	// back during the hold window. spec: §3.2, §6.5 (claim-<podName>).
+	// back during the hold window. spec: §4.6.1 (claim-<podName>).
 	const claimName = "claim-" + sandboxRef
 
 	// A Sandbox the orphan GC can transition. It ends in the `reserved`

@@ -16,7 +16,7 @@
 // streaming_throughput smoke run drives the synchronous message
 // round-trip (POST /v1/sessions/{id}/messages), which is the
 // inject-and-stream-back path the executor publishes events through —
-// it is the §6.5 phase-gate substrate the SSE consumption sits on.
+// it is the §4.6.1 phase-gate substrate the SSE consumption sits on.
 
 package tier7b_load_kind_test
 

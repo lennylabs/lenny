@@ -182,7 +182,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	var decision lifecycle.Decision
 	sdkWarm := r.resolveSDKWarm(ctx, &sb)
 	if sdkWarm.sdkWarmActive() {
-		// §6.1/§3.3: the watchdog clock and the non-failure terminus differ
+		// §6.1: the watchdog clock and the non-failure terminus differ
 		// per edge. On the recycle re-warm edge the per-pod SandboxClaim
 		// carries a rewarmStartedAt stamp (binding state recycling); read it
 		// so sdkWarmInputs re-anchors the clock to the re-warm start and
