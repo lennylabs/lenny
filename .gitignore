@@ -79,3 +79,7 @@ tests/testinfra/kind/minio-ca.gen.crt
 
 # One-off operator workflow for the channel migration; deleted when it completes.
 .claude/workflows/apply-0064.js
+
+# Python bytecode from the review tooling under scripts/.
+__pycache__/
+*.pyc

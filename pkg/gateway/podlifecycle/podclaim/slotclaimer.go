@@ -530,8 +530,8 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 // which case the caller skips the pod (a slot can never be reserved on a
 // `reserved` claim because a reserved pod has zero active slots and must be
 // rebound first). The rebind changes the resourceVersion, so the holder's
-// precondition-guarded expiry DELETE aborts. spec: §3.2 (within-hold rebind),
-// §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound).
+// precondition-guarded expiry DELETE aborts. spec: §4.6.1 (reserved hold,
+// holdExpiresAt), §4.6.3 (reserved → bound).
 func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.SandboxClaim) (*lennyv1.SandboxClaim, bool, error) {
 	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(c.now()) {
 		// The hold has expired (or carries no deadline); leave the claim to the
@@ -777,7 +777,7 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// occupancy zero and the ReportPodScrub disposition drives recycle vs.
 		// retire off the `recycling` binding state. A claim that vanished (a
 		// concurrent retirement, the §4.6.1 orphan GC reclaimed it) is a no-op:
-		// there is nothing left to recycle. spec: §3.1, §3.4, §6.2.
+		// there is nothing left to recycle. spec: §6.2.
 		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil

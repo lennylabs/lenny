@@ -451,7 +451,7 @@ type BindRequest struct {
 	// whole-pod scrub (the §5.2 recycle disposition) rather than draining the
 	// pod; the adapter's ReportPodScrub then drives recycle vs. retire. A
 	// failed/crashed session always retires regardless of this flag. spec:
-	// §3.1, §5.2 (recycle on occupancy-zero).
+	// §5.2 (recycle on occupancy-zero).
 	Recycle bool
 	// SandboxName is the pod claimed at /create, persisted on the session
 	// row. The decomposed §7.1 lifecycle (§4.6) sets it so Prepare and Launch
@@ -1853,7 +1853,7 @@ const dispositionFailed = "failed"
 // recycling patch is durable and ordered first; the adapter Shutdown is
 // best-effort — a coordinating-gateway crash after the patch leaves the claim in
 // `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
-// path Release returns only an error from the recycling patch. spec: §3.1, §4.6.1,
+// path Release returns only an error from the recycling patch. spec: §4.6.1,
 // §4.7 (recycle on occupancy-zero, patch-then-scrub ordering); §4.6.1; §4.6.3;
 // §7.2 / §8.8.
 func (b *Binder) Release(ctx context.Context, result *BindResult, disposition string) error {
@@ -1864,7 +1864,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// select.go eventually reports exhaustion for idle credentials.
 	b.releaseCredentials(result.SessionID)
 
-	// spec: §3.2 / §4.7 / §6.2 — a recycling pool recycles
+	// spec: §4.7 / §6.2 — a recycling pool recycles
 	// the pod across whole sessions of the same tenant when occupancy reaches
 	// zero after a clean session termination; a failed/crashed session always
 	// retires the pod. On the recycle path Release patches the claim

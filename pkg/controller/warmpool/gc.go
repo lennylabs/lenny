@@ -269,9 +269,8 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.San
 //     termination path.
 //
 // spec: §4.6.1 (orphaned SandboxClaim detection, three binding-state
-// predicates plus the creation-timestamp fallback), §3.3 (drain rather than
-// return-to-idle for live states), §4.6.1 (recycling-with-no-holdExpiresAt
-// reclaimed by draining).
+// predicates plus the creation-timestamp fallback), §4.6.1
+// (recycling-with-no-holdExpiresAt reclaimed by draining).
 func (g *ClaimGarbageCollector) classify(claim *lennyv1.SandboxClaim, now time.Time) reclaimDisposition {
 	switch claimstate.State(claim.Status.Phase) {
 	case claimstate.Bound, claimstate.Recycling:
