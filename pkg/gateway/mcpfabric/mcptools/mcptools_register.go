@@ -950,24 +950,37 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, errSessionTerminalState(in.SessionID, row.State)
 		}
 		// §8.3: new entries merge with the inherited context and cannot
-		// overwrite or remove existing (parent) entries. Validation runs
-		// on the merged result that will be registered.
-		merged := tracing.Merge(row.TracingContext, in.Context)
-		if err := tracing.Validate(merged); err != nil {
-			// spec: §8.3 — a validation failure carries a stable
-			// TRACING_CONTEXT_* code. Surface it through *mcp.ToolError so
-			// REST and MCP envelopes share the §15.2.1 (category, retryable)
-			// pair instead of falling back to INTERNAL_ERROR. F-8.5.17.
-			var verr *tracing.ValidationError
-			if errors.As(err, &verr) {
-				return mcp.ToolResult{}, mcp.NewToolError(string(verr.Code), verr.Detail, nil)
-			}
-			return mcp.ToolResult{}, err
-		}
+		// overwrite or remove existing (parent) entries.
+		//
+		// The merge, its validation, and the write all run inside the store's
+		// update transaction, against the row that transaction locked. A merge
+		// computed from the read above is a snapshot taken before the lock, and
+		// assigning it inside the transaction overwrites whatever another
+		// writer registered in between while still reporting success. Two
+		// callers reach this handler for the same session on independent
+		// goroutines, so the lost update is reachable rather than theoretical.
+		var mergeErr error
 		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
+			merged := tracing.Merge(row.TracingContext, in.Context)
+			if err := tracing.Validate(merged); err != nil {
+				// spec: §8.3 — a validation failure carries a stable
+				// TRACING_CONTEXT_* code. Surface it through *mcp.ToolError so
+				// REST and MCP envelopes share the §15.2.1 (category, retryable)
+				// pair instead of falling back to INTERNAL_ERROR. F-8.5.17.
+				var verr *tracing.ValidationError
+				if errors.As(err, &verr) {
+					mergeErr = mcp.NewToolError(string(verr.Code), verr.Detail, nil)
+					return mergeErr
+				}
+				mergeErr = err
+				return err
+			}
 			row.TracingContext = merged
 			return nil
 		})
+		if mergeErr != nil {
+			return mcp.ToolResult{}, mergeErr
+		}
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
