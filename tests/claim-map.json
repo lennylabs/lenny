@@ -1,0 +1,416 @@
+{
+  "kind": "claim-register",
+  "version": 1,
+  "claims": [
+    {
+      "claim": "Adapter metric names carrying the retired channel spelling",
+      "status": "ABSENT",
+      "deferral_id": "R12",
+      "surface": "pkg/adapter/metrics.go:71, pkg/adapter/metrics.go:79",
+      "note": "the two metric names keep the retired spelling until R12 adds the adapter metrics endpoint and the catalog entries"
+    },
+    {
+      "claim": "Adapter-to-runtime heartbeat with SIGTERM escalation",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/attach.go:78`, escalation `:141-147`, monitor `pkg/adapter/heartbeat.go:34-45`"
+    },
+    {
+      "claim": "Agent podspec mTLS certificate material",
+      "status": "ABSENT",
+      "deferral_id": "R14",
+      "surface": "spec/04_system-components.md \u00a74.4",
+      "note": "the agent-pod mTLS client identity step supplies the certificate volumes"
+    },
+    {
+      "claim": "Agent-pod eviction checkpoint",
+      "status": "ABSENT",
+      "surface": "no trigger on that edge",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Agent-pod mTLS client identity",
+      "status": "ABSENT",
+      "surface": "no TLS flags in `podspec.go`",
+      "deferral_id": "R14"
+    },
+    {
+      "claim": "Agent-pod preStop hook",
+      "status": "WIRED",
+      "surface": "`podspec.go:607`, `cmd/lenny-adapter/prestop.go:68-94`"
+    },
+    {
+      "claim": "Barrier target set from the mirror, with cache fallback",
+      "status": "WIRED",
+      "surface": "`barrier/wiring.go:97-124`"
+    },
+    {
+      "claim": "Best-effort eviction snapshot",
+      "status": "UNWIRED",
+      "surface": "`pkg/adapter/checkpoint.go:179`, `:192`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Checkpoint restore onto a concurrent pod",
+      "status": "ABSENT",
+      "surface": "no `slot_id` on `ResumeRequest`",
+      "deferral_id": "R22"
+    },
+    {
+      "claim": "CheckpointBarrierRequest slot identifier field",
+      "status": "UNWIRED",
+      "deferral_id": "R22",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
+    },
+    {
+      "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Coordination sweeper and crash-takeover re-adopt",
+      "status": "WIRED",
+      "surface": "`cmd/lenny-gateway/workers.go:1298-1300`, `coordination_seams.go:199-251`"
+    },
+    {
+      "claim": "Coordinator-loss hold state",
+      "status": "WIRED",
+      "surface": "interceptors `pkg/adapter/transport.go:46-47`; sole arm `pkg/adapter/adapterevents.go:125`"
+    },
+    {
+      "claim": "Cross-replica message forward",
+      "status": "ABSENT",
+      "surface": "no identifier, no RPC, no transport",
+      "deferral_id": "R19"
+    },
+    {
+      "claim": "Dead-connection binding eviction",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/coordination/coordination/coordination.go:332-338`"
+    },
+    {
+      "claim": "Eviction-API admission gate on `pods/eviction`",
+      "status": "WIRED",
+      "surface": "`charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml:11`, `charts/lenny/values.yaml:1696`"
+    },
+    {
+      "claim": "Gateway preStop drain, barrier plus tiered per-session loop",
+      "status": "WIRED",
+      "surface": "`cmd/lenny-gateway/httpsurface.go:642-643`, `pkg/gateway/podlifecycle/prestop/prestop.go:390-451`"
+    },
+    {
+      "claim": "Gateway-to-gateway transport",
+      "status": "ABSENT",
+      "surface": "four services declared, none gateway-to-gateway",
+      "deferral_id": "R18"
+    },
+    {
+      "claim": "In-flight RPC cancellation on a generation gap",
+      "status": "ABSENT",
+      "surface": "conceded at `pkg/adapter/coordination.go:81-82`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Input-wait resolution across replicas",
+      "status": "ABSENT",
+      "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
+      "deferral_id": "R19"
+    },
+    {
+      "claim": "InterruptRequest slot identifier field",
+      "status": "UNWIRED",
+      "deferral_id": "R22",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
+    },
+    {
+      "claim": "InterruptRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Kubelet probes on agent-pod containers",
+      "status": "ABSENT",
+      "surface": "no probe field anywhere in `podspec.go`",
+      "deferral_id": "R6"
+    },
+    {
+      "claim": "LLM proxy (gateway)",
+      "status": "WIRED",
+      "surface": "`cmd/lenny-gateway/main.go:475`, `charts/lenny/values.yaml:1695`"
+    },
+    {
+      "claim": "LLM proxy (pod client)",
+      "status": "ABSENT",
+      "surface": "`cmd/lenny-gateway/main.go:475`, `charts/lenny/values.yaml:1695`",
+      "deferral_id": "R11"
+    },
+    {
+      "claim": "Lease or mirror release on gateway drain",
+      "status": "ABSENT",
+      "surface": "`cmd/lenny-gateway/runserver.go:213-252` closes stores only",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Mirror seed at bind",
+      "status": "ABSENT",
+      "surface": "no `coordlease` reference in `pkg/gateway/sessionserver/`",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "Object-store chunk upload and restore",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/checkpointtransport.go:76-117`"
+    },
+    {
+      "claim": "Orphan-claim garbage collector",
+      "status": "WIRED",
+      "surface": "`pkg/controller/warmpool/gc.go:231-283`"
+    },
+    {
+      "claim": "Orphan-session reconciler",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/session/orphansession/orphansession.go:45`, `:58`, launched ungated at `cmd/lenny-gateway/workers.go:1088`"
+    },
+    {
+      "claim": "Platform and connector MCP sockets",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/platformmcp.go:16-51`, `connectormcp.go:59-92`"
+    },
+    {
+      "claim": "PodDisruptionBudget for a busy pod",
+      "status": "ABSENT",
+      "surface": "`pkg/controller/warmpool/pdb.go:70-76`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Postgres `coordination_lease` mirror write",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/coordination/coordination/coordination.go:569`"
+    },
+    {
+      "claim": "Proxy SPIFFE lease binding",
+      "status": "UNWIRED",
+      "surface": "`pkg/credential/lease.go:335`; `PodSpiffeURI` never set",
+      "deferral_id": "R14"
+    },
+    {
+      "claim": "Quiesce enforcement against operational RPCs",
+      "status": "ABSENT",
+      "surface": "`coord.quiesced` has no reader in any handler",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "Redis coordination lease",
+      "status": "WIRED",
+      "surface": "`leasestore.go:98-105`, acquired at four bind sites"
+    },
+    {
+      "claim": "Redis hot routing cache",
+      "status": "UNWIRED",
+      "surface": "zero callers outside its package",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "ReportUsageRequest slot identifier field",
+      "status": "UNWIRED",
+      "deferral_id": "R22",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
+    },
+    {
+      "claim": "ReportUsageRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "ResumeRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "ResumeRequest.slot_id",
+      "status": "UNWIRED",
+      "deferral_id": "R22",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the carved resume path reads the slot identifier when it lands"
+    },
+    {
+      "claim": "Runtime lifecycle channel (at deployment)",
+      "status": "UNWIRED",
+      "surface": "`cmd/lenny-adapter/main.go:373`; no `--runtime-ops-socket` setter",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "Runtime lifecycle channel (in the binary)",
+      "status": "WIRED",
+      "surface": "`cmd/lenny-adapter/main.go:373`; no `--runtime-ops-socket` setter"
+    },
+    {
+      "claim": "Runtime message socket",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/socketruntime.go:60`, `cmd/lenny-adapter/main.go:354`"
+    },
+    {
+      "claim": "Runtime-operations events schema asserted by the external-adapter compliance suite",
+      "status": "ABSENT",
+      "deferral_id": "R8",
+      "surface": "cmd/lenny-compliance/schemavalidate.go",
+      "note": "the suite compiles two schema files and reads no third, while spec/24, the adapter-contract reference, and the publishing guide all name schemas/runtime-ops-events.schema.json as an artifact it asserts against"
+    },
+    {
+      "claim": "SDK-warm `ConfigureWorkspace` and `DemoteSDK` at the pod",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/sdkwarm.go:211-214`, `:267-270`; no `SDKWarmRuntime` in a rendered pod"
+    },
+    {
+      "claim": "SSE backlog across replicas",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/session/sessionevents/events.go:420-425`, relay at `cmd/lenny-gateway/stores.go:2270`"
+    },
+    {
+      "claim": "SSE live tail across replicas",
+      "status": "UNWIRED",
+      "surface": "`pkg/gateway/session/sessionevents/redisrelay.go:157` has no caller",
+      "deferral_id": "R19"
+    },
+    {
+      "claim": "Service-account token credential on `GatewayControl`",
+      "status": "UNWIRED",
+      "surface": "`gatewaycontrol/satoken.go:64`",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "Session inbox redelivery",
+      "status": "ABSENT",
+      "surface": "no dequeue path",
+      "deferral_id": "R20"
+    },
+    {
+      "claim": "SignalDeadlineRequest slot identifier field",
+      "status": "UNWIRED",
+      "deferral_id": "R22",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
+    },
+    {
+      "claim": "SignalDeadlineRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "Single-consumer enforcement on `Attach` at the pod",
+      "status": "ABSENT",
+      "surface": "no registry or counter anywhere in `pkg/adapter/attach.go`",
+      "deferral_id": "R20"
+    },
+    {
+      "claim": "Slot-qualified interrupt, deadline, usage, and barrier",
+      "status": "ABSENT",
+      "surface": "no `slot_id` on those request messages",
+      "deferral_id": "R22"
+    },
+    {
+      "claim": "Tool-approval resolution across replicas",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/sessionserver/toolapproval.go:158-167` store poll"
+    },
+    {
+      "claim": "`AdapterEvicting` producer and consumer (consumer)",
+      "status": "ABSENT",
+      "surface": "`pkg/adapter/adapterevents.go:248`; no hit outside `pkg/adapter`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "`AdapterEvicting` producer and consumer (producer)",
+      "status": "UNWIRED",
+      "surface": "`pkg/adapter/adapterevents.go:248`; no hit outside `pkg/adapter`",
+      "deferral_id": "R16"
+    },
+    {
+      "claim": "`Adapter` gRPC service, gateway to pod",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/transport.go:50`, client `cmd/lenny-gateway/stores.go:2097`"
+    },
+    {
+      "claim": "`Attach` content stream",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/session/executor/pod.go:154`, handler `pkg/adapter/attach.go:28`"
+    },
+    {
+      "claim": "`CheckpointBarrier`",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/coordination/barrier/wiring.go:49`, handler `pkg/adapter/coordination.go:212`"
+    },
+    {
+      "claim": "`Checkpoint` stream and the pod operation lock",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/checkpoint/checkpointer/checkpointer.go:522`, `pkg/adapter/oplock.go:74`"
+    },
+    {
+      "claim": "`CoordinatorFence`",
+      "status": "WIRED",
+      "surface": "`pkg/gateway/coordination/coordfence/coordfence.go:160`, handler `pkg/adapter/coordination.go:85`"
+    },
+    {
+      "claim": "`GatewayControl` service",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/gatewaylink.go:36-79`, handlers under `leasecontrol/`"
+    },
+    {
+      "claim": "`agent_pod_state` mirror, controller write and gateway read",
+      "status": "WIRED",
+      "surface": "`pkg/controller/warmpool/controller.go:248`, read at `pkg/gateway/session/orphansession/orphansession.go:50-55`"
+    },
+    {
+      "claim": "`coordinator_address` population",
+      "status": "UNWIRED",
+      "surface": "`InterReplicaAddress` never set",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "`coordlease.GetBySession` routing read",
+      "status": "UNWIRED",
+      "surface": "definitions and tests only",
+      "deferral_id": "R13"
+    },
+    {
+      "claim": "`grpc.health.v1.Health` service on the pod (client)",
+      "status": "ABSENT",
+      "surface": "`pkg/adapter/transport.go:52-54`; no health client anywhere in the gateway or the controller",
+      "deferral_id": "R23"
+    },
+    {
+      "claim": "`grpc.health.v1.Health` service on the pod (server)",
+      "status": "WIRED",
+      "surface": "`pkg/adapter/transport.go:52-54`; no health client anywhere in the gateway or the controller"
+    },
+    {
+      "claim": "`ready_for_input` signal",
+      "status": "ABSENT",
+      "surface": "comments only",
+      "deferral_id": "R20"
+    },
+    {
+      "claim": "gRPC control stream `Adapter/AdapterEvents` (client)",
+      "status": "UNWIRED",
+      "surface": "handler `pkg/adapter/adapterevents.go:108`; one comment in `pkg/gateway`",
+      "deferral_id": "R12"
+    },
+    {
+      "claim": "gRPC control stream `Adapter/AdapterEvents` (server)",
+      "status": "WIRED",
+      "surface": "handler `pkg/adapter/adapterevents.go:108`; one comment in `pkg/gateway`"
+    }
+  ]
+}

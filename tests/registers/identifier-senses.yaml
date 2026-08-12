@@ -1100,3 +1100,28 @@ entries:
   - file: tests/tier9_security/pentest/v1-baseline-bundle.json
     occurrence: 1
     channel: CH-RUNTIMEOPS
+  # The claim-register seeder carries the naming table's retired spellings in
+  # its own rename map, which is how it rewrites a frozen citation to the
+  # canonical spelling. Each occurrence there declares the retired spelling
+  # rather than using it, exactly as the naming table's own rows do.
+  - file: scripts/seed-claim-register.py
+    occurrence: 1
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 2
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 3
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 4
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 5
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 6
+    not-a-channel: true
+  - file: scripts/seed-claim-register.py
+    occurrence: 7
+    not-a-channel: true

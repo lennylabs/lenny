@@ -504,6 +504,12 @@ entries:
     reason: |-
       a review driver over the migration diff, which no test tier is selected from
   - member: |-
+      scripts/seed-claim-register.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the one-time seeder for the claim register, run to author tests/claim-map.json rather than by a test tier
+  - member: |-
       scripts/review-migration-diff/classify-citations.py
     class: change-graph-coverage
     disposition: excluded
