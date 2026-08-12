@@ -1,8 +1,6 @@
 # Proposal: Settle §15.4.1 and remove the channel contract it duplicates
 
-- **Status:** **Approved (2026-08-12) by jaf sign-off.** Verified (2026-08-12), converged after 8
-  adversarial review rounds (13 findings fixed) across three full-pool sweeps, the certifying sweep
-  running every lens complete with zero confirmed findings.
+- **Status:** Draft for review.
 - **Date:** 2026-08-12.
 - **Scope:** Settles the contradiction proposal 0064 leaves over the fate of `spec/15` §15.4.1, keeps the
   subsection, removes the `CH-MSGSOCK` contract it duplicates from §28.5.3, completes the one outbound
@@ -92,11 +90,24 @@ schema-defines them further down. A reader following the pointer arrives at the 
    normative prose with no destination. Completing the card is the destination, and SPEC-2 states the
    mechanism as the gateway implements it rather than copying the row's adapter-side wording.
 
-4. **§15.4.1 is retitled.** Once the adapter-to-binary contract is gone, "Adapter↔Binary Protocol" names
+4. **The frame's addressing is a name resolution, not a mode branch.** The adapter registers against the
+   session a frame names and discards a frame that names none, whether because it carries no `slotId` on
+   a pod serving several sessions or because it carries one no session holds. Branching on the pod's mode
+   instead needs a case per combination, and an earlier implementation attempt found two it got wrong:
+   a defensive `slotId` on a single-session pod was dropped silently, and a `slotId` the pod did not hold
+   registered against the wrong session.
+
+5. **The pod is told its concurrency at construction, and infers nothing.** `maxConcurrentSessions` is a
+   property of the pod for its whole life and is already resolved by the podspec builder, so it is passed
+   to the adapter as a launch argument. The same attempt inferred it from observed claim order and could
+   not make that hold: the inference is order-dependent, the terminal-state repair broke the per-slot
+   claim path, and declaring the value per claim widens the §4.7 claim contract with a pod-lifetime fact.
+
+6. **§15.4.1 is retitled.** Once the adapter-to-binary contract is gone, "Adapter↔Binary Protocol" names
    content the section no longer holds, while §28.5.3 owns it. A reader looking for that protocol would
    land on a section named for it that does not contain it.
 
-5. **The four `MessageEnvelope` labels stay at §15.4.** 0064 rewrote them from §15.4.1 to §15.4 on the
+7. **The four `MessageEnvelope` labels stay at §15.4.** 0064 rewrote them from §15.4.1 to §15.4 on the
    premise that §15.4.1 would not exist. Keeping §15.4.1 removes that premise, and the labels are still
    correct on the rule the tree's own tooling applies: a label names the numbered section the target
    heading is written inside, and the two carve-out headings are level-4 siblings of §15.4.1 whose
@@ -130,51 +141,79 @@ the outcome of a frame that omits it, the tier availability, and the §8.3 and �
 §15.4.1's row states today (`spec/15_external-api-surface.md:1494`). The block states the mechanism in
 the terms the implementation and §8 use rather than copying the row's adapter-side wording:
 
-- The runtime writes the frame on `CH-MSGSOCK`. On a pod whose pool sets
-  `sessionPolicy.maxConcurrentSessions > 1` the frame carries the `slotId` of the session whose
-  identifiers it declares, and on a pod that sets that value to 1 it carries no `slotId`.
-- On a pod whose pool sets `sessionPolicy.maxConcurrentSessions > 1`, a `set_tracing_context` frame that
-  carries no `slotId` names no session, and the adapter discards it without registering any identifiers
-  and without returning an error to the runtime. The card states the outcome of an unaddressable message
-  in the same form for a `tool_result` whose `id` is unknown
-  (`spec/28_communication-channels.md:545-548`).
-- The adapter consumes the frame rather than relaying it onward, and registers the identifiers with the
-  gateway against the session holding that slot, by calling the `lenny/set_tracing_context`
-  platform tool with that session's id injected (`pkg/adapter/tracingcontext.go:25-56`).
+- The runtime writes the frame on `CH-MSGSOCK`. The frame names the session whose identifiers it
+  declares by carrying that session's `slotId`. On a pod serving one session the name is implicit and the
+  frame carries no `slotId`.
+- The adapter registers the identifiers against the session the frame names. A frame that names no
+  session the adapter is serving registers nothing: the frame carries no `slotId` on a pod serving more
+  than one session, or carries a `slotId` no session on the pod holds. The adapter discards such a frame
+  and reports it to the runtime, because a runtime that stamps a stale or defensive `slotId` otherwise
+  loses its identifiers with no signal that it did.
+- The adapter consumes the frame rather than relaying it onward, and registers the identifiers by calling
+  the `lenny/set_tracing_context` platform tool with the named session's id injected
+  (`pkg/adapter/tracingcontext.go:25-56`).
 - The gateway merges the identifiers into the session row and validates the merged result under §8.3 at
   registration time, and a child entry cannot overwrite or remove a parent entry
-  (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go:952-966`, `pkg/delegation/tracing/tracing.go:62,
-  110`).
+  (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`, `pkg/delegation/tracing/tracing.go:62, 110`).
 - The gateway attaches the registered context to the child's delegation lease when it processes
   `lenny/delegate_task` (`spec/08_recursive-delegation.md:52, 286`).
 - The frame is available at all tiers, including Basic, because the adapter issues the platform call
   itself rather than routing it through the runtime's MCP client.
 
+**The rule resolves a name; it does not branch on a mode.** The adapter answers "which session does this
+frame name?" from the slots it is serving, which it knows because it admitted each one. It never asks
+"what kind of pod am I?" at frame time. Stating the rule this way is what makes the two failure cases
+fall out of one sentence rather than needing a case each: an untagged frame on a multi-slot pod names
+nothing, and a slot-tagged frame naming a slot the pod does not hold names nothing, and both are the same
+discard.
+
+**The pod is told its concurrency when it is built.** The adapter must still know whether "no `slotId`"
+is a valid name, which is true on a pod serving one session and false otherwise. That is a property of
+the pod for its whole life, so it is declared at construction: the sandbox controller passes
+`--max-concurrent-sessions` to the adapter from the resolved SandboxTemplate's
+`sessionPolicy.maxConcurrentSessions` (`pkg/apis/lenny/v1alpha1/sandboxtemplate_types.go:28`), alongside
+the `--workspace-root` and `--sessions-root` arguments it already passes
+(`pkg/controller/sandbox/podspec/podspec.go:560-570`). The builder already resolves the SandboxTemplate,
+so the value is a field it holds rather than a lookup it must acquire.
+
+The alternative is for the adapter to infer the pod's concurrency from the session claims it observes,
+and that inference is unsound in a way worth recording, because an earlier implementation attempt built
+it and spent thirty-five commits failing to make it hold. The inference is order-dependent: a claim
+naming no slot arriving before the first slot claim commits the pod to the single-session reading, so an
+untagged frame then registers against a pod-global session on a pool that runs several. Making the
+concurrent reading terminal instead broke the per-slot claim path on any pod that had once served a
+pod-global claim. Declaring the value on each claim
+(`StartSessionRequest.max_concurrent_sessions`) fixes the soundness but puts a pod-lifetime fact on every
+request and widens the §4.7 claim contract with a field every caller must set correctly. Construction is
+where a pod-lifetime fact belongs, it costs one existing-struct field and one flag, and it leaves the
+wire contracts untouched.
+
 `set_tracing_context` therefore joins `message`, `tool_result`, `response`, and `tool_call` in the card's
 `slotId` sentence (`spec/28_communication-channels.md:548-552`), which enumerates the types that carry a
 `slotId` on a multi-slot pod. The identifiers the frame declares are per-session state: the gateway merges
-them into one session row and validates the merged result against that one session under §8.3
-(`pkg/gateway/mcpfabric/mcptools/mcptools_register.go:945-975`), so a frame with no addressee has no
-defined target on a pod running several sessions at once. The card already states a mechanism for
-per-session frames on this multiplexed channel, and reusing it costs one optional field rather than a
-second addressing scheme. Two artifacts follow from that choice:
+them into one session row and validates the merged result against that one session under §8.3, so a frame
+naming no session has no defined target. The card already addresses per-session frames on this multiplexed
+channel by `slotId`, and reusing that costs one optional field rather than a second addressing scheme.
+
+Three artifacts follow:
 
 - `schemas/lenny-adapter-jsonl.schema.json` gains an optional `"slotId": { "type": "string" }` property on
   its `set_tracing_context` definition (`schemas/lenny-adapter-jsonl.schema.json:210-223`), matching the
   property the `message`, `tool_call`, `tool_result`, and `response` definitions already carry (:58, :139,
   :161, :190).
-- `pkg/adapter/attach.go` drops a `set_tracing_context` frame that carries no `slotId` on an Attach stream
-  serving a slot, rather than registering it. Today the runtime's output stream is fanned out to every
+- `pkg/controller/sandbox/podspec/podspec.go` gains a `MaxConcurrentSessions` field on `Inputs`, populated
+  at `pkg/controller/sandbox/controller.go:382` from the resolved SandboxTemplate, and passes
+  `--max-concurrent-sessions` in the adapter argument list it already builds. `cmd/lenny-adapter/main.go`
+  gains the matching flag, defaulting to 1, and threads it to the frame-addressing gate. §4.7's adapter
+  launch surface gains the argument, since it is part of how the platform launches an adapter.
+- `pkg/adapter` resolves each `set_tracing_context` frame to the session it names and registers there,
+  discarding and reporting a frame that names none. Today the runtime's output is fanned out to every
   Attach subscriber (`pkg/adapter/socketruntime.go:340-356`), the per-slot demultiplexer passes an
   untagged frame through so the per-session heartbeat path still observes it
   (`pkg/adapter/attach.go:285-291`), and each stream then calls `handleSetTracingContext` with its own
   session id (`pkg/adapter/attach.go:115`), so one untagged frame on a four-slot pod writes four session
-  rows and merges one session's identifiers into every sibling's delegation lease. Dropping the untagged
-  frame on a slot-serving stream fails closed and keeps one frame to one registration, and the discard
-  bullet above is the staged §28.5.3 sentence that states that outcome, so the tier-1 and tier-3 cases in
-  §5 annotate to a section that carries the rule. A single-session
-  pod is unaffected, because its Attach stream reads the raw output unfiltered
-  (`pkg/adapter/attach.go:70-73`) and its frames carry no `slotId`.
+  rows and merges one session's identifiers into every sibling's delegation lease. Resolving the name
+  once, against the slots the adapter is serving, keeps one frame to one registration.
 
 The §15.4.1 row states instead that the adapter stores the context and automatically attaches it to all
 subsequent `lenny/delegate_task` requests, with gateway validation when the delegation request arrives
@@ -234,7 +273,7 @@ framing that SPEC-1 deletes, so retargeting the anchor alone would leave a false
 SPEC-1 removes the §15.4 statement of the stdin/stdout framing, of the message enumeration, and of the
 `slotId` multiplexing rule, so every citation naming §15.4 as the source of any of the three has to be
 reconciled. The four links into `#messageenvelope--unified-message-format` keep their `§15.4` label, per
-decision 5.
+decision 7.
 
 In `spec/28_communication-channels.md`:
 
@@ -268,6 +307,18 @@ enumeration of the types that carry a `slotId`, so its list gains `set_tracing_c
 `spec/28_communication-channels.md:549-550`. Leaving it at four types would state one enumeration two
 ways, and a reader working from the shorter list would take an untagged frame to be well formed on a
 multi-slot pod, which SPEC-2 makes a dropped frame.
+
+### SPEC-5. Already landed, not staged here
+
+The gateway's `lenny/set_tracing_context` handler computed the §8.3 merge from a read taken before the
+store's update transaction locked the row, then assigned the result inside that transaction, so two
+callers registering against one session lost one registration while both reported success. That defect
+predates this proposal: the adapter's forward and the runtime's own platform call have both reached the
+handler since before §28.5.3 existed. It surfaced while an earlier attempt implemented SPEC-2, and it is
+fixed and tested on the branch already
+(`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`, `tests/tier7a_load_local/tracing_context_concurrent_registration_test.go`).
+It is recorded here so a reviewer does not raise it again, and so the implementation does not stage it a
+second time.
 
 ## 4. Non-goals
 
@@ -315,13 +366,19 @@ the in-process suite over that package pins the new rule. The cases go in
 `pkg/adapter/heartbeat_external_test.go`, which already holds the in-process coverage of this frame, and
 each carries `// spec: 28.5.3 (set_tracing_context slotId addressing)`.
 
-- Over an Attach stream serving a slot, a `set_tracing_context` frame carrying no `slotId` issues no
-  platform call.
-- Over an Attach stream serving a slot, a frame carrying that stream's `slotId` issues exactly one
-  platform call, against that stream's session id.
-- Over a single-session Attach, which reads the raw output unfiltered (`pkg/adapter/attach.go:70-73`), a
-  frame carrying no `slotId` still registers, so `TestAttachForwardsSetTracingContext`
-  (`pkg/adapter/heartbeat_external_test.go:109`) keeps holding as written.
+- On a pod launched with `--max-concurrent-sessions` above 1, a `set_tracing_context` frame carrying no
+  `slotId` names no session: it issues no platform call, registers nothing, and is reported to the
+  runtime rather than dropped silently.
+- On the same pod, a frame carrying the `slotId` of a slot the adapter is serving issues exactly one
+  platform call, against that slot's session id and no other.
+- On the same pod, a frame carrying a `slotId` no session on the pod holds names no session: it issues no
+  platform call and is reported. This is the stale-or-foreign slot case, distinct from the untagged one
+  and resolved by the same rule.
+- On a pod launched with `--max-concurrent-sessions` at 1, a frame carrying no `slotId` registers against
+  the pod's one session, and a frame carrying that session's `slotId` registers against it too, so a
+  runtime that stamps the field defensively is not penalised for it.
+- On a pod launched with `--max-concurrent-sessions` at 1, a frame carrying a `slotId` that names nothing
+  is reported rather than silently discarded.
 
 **Tier 3 (contract).** SPEC-2 makes §28.5.3 the owning statement of the `set_tracing_context` frame that
 `schemas/lenny-adapter-jsonl.schema.json:210-223` publishes and that `pkg/adapter/tracingcontext.go:36-56`
@@ -395,8 +452,13 @@ annotations follow it.
   whose adapter-stores wording SPEC-2 corrects and which gains the `slotId` addressing rule and the
   discard outcome.
 - `schemas/lenny-adapter-jsonl.schema.json`, for the optional `slotId` property SPEC-2 adds to the
-  `set_tracing_context` definition, and `pkg/adapter/attach.go`, for the drop of an untagged
-  `set_tracing_context` frame on a slot-serving Attach stream.
+  `set_tracing_context` definition.
+- `pkg/controller/sandbox/podspec/podspec.go` and `pkg/controller/sandbox/controller.go`, for the
+  `MaxConcurrentSessions` input the builder passes to the adapter as `--max-concurrent-sessions`, and
+  `cmd/lenny-adapter/main.go` for the flag that receives it.
+- `spec/04_system-components.md` §4.7, for the launch argument the adapter now takes.
+- `pkg/adapter`, for resolving a `set_tracing_context` frame to the session it names and discarding and
+  reporting a frame that names none.
 - `pkg/adapter/heartbeat_external_test.go`, for the tier-1 cases over that drop, per §5.
 - `schemas/examples/jsonl.set_tracing_context.json` (new), `tests/tier0_static/schemas_test.go`, and the
   tier-3 contract cases, per §5.
