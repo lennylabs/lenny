@@ -249,7 +249,7 @@ func dialSlotCapturingAdapter(t *testing.T, rec *slotCapturingAdapter) *adapterc
 	return cl
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestPodExecutorSendStampsTheSlotIDForAConcurrentPoolBind(t *testing.T) {
 	rec := newSlotCapturingAdapter()
 	cl := dialSlotCapturingAdapter(t, rec)
@@ -363,7 +363,7 @@ func TestPodExecutorSendAdmitsAnExclusiveBindWithNoSlot(t *testing.T) {
 	}
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestPodExecutorSendStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
 	rec := newSlotCapturingAdapter()
 	cl := dialSlotCapturingAdapter(t, rec)

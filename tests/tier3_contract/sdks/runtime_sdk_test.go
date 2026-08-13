@@ -245,7 +245,7 @@ func checkDetail(report complianceReport, name string) string {
 	return "check not found in report"
 }
 
-// spec: 15.4.1, 15.7 (Go runtime SDK, Basic level)
+// spec: 28.5.3, 15.7 (Go runtime SDK, Basic level)
 // diagnosis: the SDK-based echo runtime (sdks/runtime/go/example/echo)
 // must clear every Basic-level lenny-compliance check: stdin/stdout
 // JSON Lines framing, message/response round trip, heartbeat ack,
@@ -259,7 +259,7 @@ func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	assertAllPassed(t, report)
 }
 
-// spec: 15.4.1, 15.7 (Python runtime SDK, Basic level)
+// spec: 28.5.3, 15.7 (Python runtime SDK, Basic level)
 // diagnosis: the Python SDK echo runtime
 // (sdks/runtime/python, lenny_runtime.examples.echo) must clear every
 // Basic-level lenny-compliance check. A failed check means the Python
@@ -273,7 +273,7 @@ func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
 	assertAllPassed(t, report)
 }
 
-// spec: 15.4.1, 15.7 (TypeScript runtime SDK, Basic level)
+// spec: 28.5.3, 15.7 (TypeScript runtime SDK, Basic level)
 // diagnosis: the TypeScript SDK echo runtime
 // (sdks/runtime/typescript, examples/echo) must clear every Basic-level
 // lenny-compliance check. A failed check means the TypeScript SDK
@@ -369,7 +369,7 @@ func TestRuntimeSDKLifecycleFullLevelInterpreted(t *testing.T) {
 	})
 }
 
-// spec: 15.4.1, 15.7 (runtime SDK workspace helpers)
+// spec: 28.5.3, 15.7 (runtime SDK workspace helpers)
 // diagnosis: each SDK exposes the §28.5.3 adapter-local tool helpers
 // (read_file, write_file, list_dir, delete_file). The lenny-compliance
 // harness does not ship an adversarial path-traversal corpus that
@@ -388,7 +388,7 @@ func TestRuntimeSDKDelegationTools(t *testing.T) {
 	t.Logf("non-skip — documented follow-on: §8.5 runtime SDK delegation — the lenny/delegate_task SDK wrapper, budget metadata propagation, and child-result decoding are exercised by the Go, Python, and TypeScript Standard-level tests above (TestRuntimeSDKMCPSocketStandardLevel{,Python,TypeScript}); this case carries no incremental contract coverage")
 }
 
-// spec: 15.4.1, 15.7 (runtime SDK heartbeat handling)
+// spec: 28.5.3, 15.7 (runtime SDK heartbeat handling)
 // diagnosis: each SDK answers a §28.5.3 heartbeat with heartbeat_ack
 // without runtime-author intervention. The Basic-level heartbeat check
 // in lenny-compliance asserts this for the Go SDK; a failure means the
@@ -403,7 +403,7 @@ func TestRuntimeSDKHeartbeatHandling(t *testing.T) {
 	}
 }
 
-// spec: 15.4.1, 15.7 (runtime SDK graceful shutdown)
+// spec: 28.5.3, 15.7 (runtime SDK graceful shutdown)
 // diagnosis: each SDK exits cleanly within deadline_ms of a §28.5.3
 // shutdown frame. The Basic-level shutdown check in lenny-compliance
 // asserts this for the Go SDK; a failure means the SDK loop does not

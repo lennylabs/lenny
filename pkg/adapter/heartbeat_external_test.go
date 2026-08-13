@@ -106,7 +106,7 @@ func TestAttachConsumesHeartbeatAck_spec_15_4_1_1453(t *testing.T) {
 // set_tracing_context frame and registers it with the gateway's
 // lenny/set_tracing_context tool (scoped to the bound session); the frame
 // is never relayed as content.
-func TestAttachForwardsSetTracingContext_spec_15_4_1_1455(t *testing.T) {
+func TestAttachRegistersSetTracingContextForTheBoundSession(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	rt.output = make(chan []byte, 4)
 	fwd := &fakePlatformForwarder{result: json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)}

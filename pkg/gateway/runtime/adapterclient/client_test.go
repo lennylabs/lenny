@@ -1420,7 +1420,7 @@ func dialCapturingAdapter(t *testing.T) (*capturingAdapter, *adapterclient.Clien
 	return rec, cl
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestSendMessageStampsTheResolvedSlotIDForAConcurrentPoolBind(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
 	if err := cl.SendMessage(context.Background(), "sess-x", "slot_01", []byte(`{"type":"message"}`)); err != nil {
@@ -1434,7 +1434,7 @@ func TestSendMessageStampsTheResolvedSlotIDForAConcurrentPoolBind(t *testing.T) 
 	}
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestSendMessageStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
 	if err := cl.SendMessage(context.Background(), "sess-x", "", []byte(`{"type":"message"}`)); err != nil {
@@ -1448,7 +1448,7 @@ func TestSendMessageStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
 	}
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestAttachStampsTheResolvedSlotIDOnTheBindingAndEverySendFrame(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1469,7 +1469,7 @@ func TestAttachStampsTheResolvedSlotIDOnTheBindingAndEverySendFrame(t *testing.T
 	}
 }
 
-// spec: 7.2 (per-slot routing), 15.4.1 (slotId multiplexing)
+// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
 func TestAttachStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -36,8 +36,8 @@
 //
 // spec: 5.2 (slotId multiplexing over stdin, dispatch loop keyed on
 //
-//	slotId, line 509), 15.4.1 (single stdin channel carrying slotId when
-//	maxConcurrentSessions > 1, line 1459), 6.4 (per-slot cwd
+//	slotId, line 509), 28.5.3 (single stdin channel carrying slotId when
+//	maxConcurrentSessions > 1), 6.4 (per-slot cwd
 //	/workspace/slots/{slotId}/current/, no global /workspace/current when
 //	maxConcurrentSessions > 1, line 384).
 
@@ -140,8 +140,8 @@ func inlineText(f concurrentFrame) string {
 
 // spec: 5.2 (slotId multiplexing over stdin, dispatch loop keyed on slotId,
 //
-//	line 509), 15.4.1 (single stdin channel carrying slotId when
-//	maxConcurrentSessions > 1, line 1459), 6.4 (per-slot cwd derivation,
+//	line 509), 28.5.3 (single stdin channel carrying slotId when
+//	maxConcurrentSessions > 1), 6.4 (per-slot cwd derivation,
 //	line 384).
 //
 // diagnosis: The reference echo-concurrent runtime no longer demultiplexes
