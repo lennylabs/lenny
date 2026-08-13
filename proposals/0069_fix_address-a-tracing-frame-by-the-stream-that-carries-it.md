@@ -1,7 +1,7 @@
 # Proposal: Address a tracing frame by the stream that carries it
 
 - **Status:** Draft for review.
-- **Date:** 2026-08-13
+- **Date:** 2026-08-13.
 - **Scope:** Supersedes proposal 0068. Keeps its specification move, which removes from `spec/15` §15.4.1
   the `CH-MSGSOCK` contract §28.5.3 owns, and replaces its frame-addressing design. 0068 taught the
   adapter its pod's concurrency through a new CRD field and a launch argument; the adapter already holds
@@ -13,7 +13,7 @@ doc file. Apply the changes in the "Proposed changes" section after sign-off.
 
 ## 0. Context an implementor should read first
 
-0068 converged twice and failed implementation once. The failure is the useful part, and §1.3 records it.
+0068 converged twice and failed implementation once. §1.3 records what that failure establishes.
 An abandoned attempt is preserved at git tag `attempt/0068-spec2-implementation`; nothing in it should be
 restored.
 
@@ -57,30 +57,30 @@ is exhausted rejects every later registration on itself and on its children.
 
 ### 1.3 What the abandoned attempt proves
 
-The attempt asked one question — which session does this frame name — and answered it six mutually
+The attempt asked which session a `set_tracing_context` frame names and answered it six mutually
 exclusive ways, three of them twice, terminating on a strategy it had itself refuted eleven commits
 earlier. Roughly a third of its commits repair regressions it introduced: a pod-layout record built to
 answer the question began refusing §6.4 slot claims and bricked pods, and a per-claim wire field began
 refusing `Resume` and `ConfigureWorkspace`.
 
-The pattern is not carelessness. Every strategy tried to *resolve* the frame's target from state that
-varies over time — occupancy, claim order, a latch, a live slot table — and each died to that state
-moving: a registry that empties at teardown while streams still drain, a latch unset before the first
-claim, a layout committed before admission. **Resolving a name from time-varying state can route a frame
-to the wrong session. Rejecting a name using it can only drop a frame.** That distinction is the design
-below.
+Every strategy tried to *resolve* the frame's target from state that varies over time (occupancy, claim
+order, a latch, and a live slot table), and each died to that state moving: a registry that empties at
+teardown while streams still drain, a latch unset before the first claim, and a layout committed before
+admission. **Resolving a name from time-varying state can route a frame to the wrong session. Rejecting a
+name using it can only drop a frame.** Decision 2 confines the time-varying condition to rejection on that
+ground.
 
 ## 2. Decisions
 
 1. **The Attach stream is the address.** The adapter resolves the frame against the stream that delivered
-   it, not against the pod's configuration. A stream is bound to `(sessionID, slotID)` at Attach, and
+   it rather than against the pod's configuration. A stream is bound to `(sessionID, slotID)` at Attach, and
    `checkSlotSession` (`pkg/adapter/slotsession.go:116-128`) validated that binding at bind time.
 
 2. **The rule is two conditions, and only the first resolves.** Address equality names the session;
    live-binding confirmation may only reject. Condition 2 reads state that varies over time, and §1.3 is
    the reason it is confined to rejection.
 
-3. **No CRD field, no launch argument, no propagation chain.** The adapter never needs its pod's declared
+3. **The design stages no CRD field, launch argument, or propagation chain.** The adapter never needs its pod's declared
    concurrency to decide this frame, because the stream's own `slotID` already carries what "untagged"
    means there. §4.1 states the derivation. 0068's chain — a `SessionPolicy.MaxConcurrentSessions` CRD
    field, regenerated deepcopy and manifests, an extended `sessionPolicyToCRD` mirror, an `Inputs` field,
@@ -119,20 +119,21 @@ below.
 **The platform-tool authorization defect.** `pkg/gateway/mcpfabric/mcptools/mcptools_register.go:945`
 reads `in.SessionID` from the tool arguments and never compares it to the caller, while eleven sibling
 handlers in the same package resolve through `callerSessionID(ctx, …)` (`mcptools.go:1801`). The principal
-is trustworthy — `pkg/adapter/platformtoolprovider.go:37` sends the adapter's gateway-assigned session
-over the RPC field, and the runtime cannot influence it — so the handler is ignoring a good principal it
+is trustworthy (`pkg/adapter/platformtoolprovider.go:37` sends the adapter's gateway-assigned session
+over the RPC field, and the runtime cannot influence it), so the handler is ignoring a good principal it
 already holds. A runtime with MCP access can therefore name any non-terminal sibling session in its tenant
 and write tracing context onto it, with no concurrency involved.
 
-That is a live, more serious defect than the one this proposal fixes, it needs a one-line change, and it
-should not wait behind a documentation move. It is stated here so a reviewer does not raise it as a gap.
+That defect is live and more serious than the one this proposal fixes, and it needs a one-line change, so
+it should not wait behind a documentation move. It is stated here so a reviewer does not raise it as a gap.
 
 **`Binder.Resume` leaves the field its own gate reads unset.** `pkg/gateway/podlifecycle/podsession/binder.go:1608-1616`
 returns a `BindResult` with neither `SlotID` nor `MaxConcurrentSessions`, so the fail-closed check at
 `pkg/gateway/session/executor/pod.go:147` evaluates `0 > 1` and does nothing on the resume path. The chain
 that would exploit it appears latent, because `pkg/gateway/sessionserver/finalize.go:238` returns early
-for a concurrent pool and leaves no snapshot to resume from. Decision 2's condition 2 covers the frame
-regardless. The gate itself is a separate defect.
+for a concurrent pool and leaves no snapshot to resume from. The state the gate would have prevented, a
+pod holding slots and a pod-global session at once, is what condition 2's `len(s.slots) == 0` term rejects,
+so the frame is covered whether or not the chain is reachable. The gate itself is a separate defect.
 
 **The unbound `session_id` on `GatewayControl.CallPlatformTool`.** The SPIFFE `Expect` is left zero at
 `cmd/lenny-gateway/main.go:651-656`, so the handlers trust the session id in the request body. This
@@ -144,16 +145,28 @@ affects every platform tool and `callerSessionID` does not fix it.
 
 The adapter's per-slot path keys on slot-id presence alone: `useSlot(slotID)` returns `slotID != ""`
 (`pkg/adapter/slot.go:43`), and `maxConcurrentSessions` appears in `pkg/adapter/` only inside comments.
-The stream's address is therefore the discriminator, and it is complete:
+The stream's address is therefore the discriminator for every stream that carries a slot id. An empty
+stream `slotID` does not by itself mean the pod runs a single session, because the adapter's slot registry
+and its pod-global session are independent: `claimSession` (`pkg/adapter/session.go:361-369`) guards only
+on `s.sessionID != ""` and never reads `s.slots`, and `startSessionSlot`
+(`pkg/adapter/slotsession.go:34-46`) writes only `st.sessionID` and never `s.sessionID`. A pod can hold
+both at once, and `Binder.Resume` makes that reachable per §3. The pod's slot registry closes the gap:
 
-| Pod | Stream's `slotID` | Untagged frame under condition 1 |
-|:--|:--|:--|
-| Serving slots | non-empty | `"" != "s3"`, rejected |
-| Single session | `""` | `"" == ""`, accepted |
+| Pod state when the frame arrives | Stream's `slotID` | Condition 1 on an untagged frame | Condition 2 |
+|:--|:--|:--|:--|
+| Holds slots | non-empty | `"" != "s3"`, rejected | not reached |
+| Holds slots and a pod-global session | `""` | `"" == ""`, accepted | `len(s.slots) == 0` is false, rejected |
+| Holds no slot | `""` | `"" == ""`, accepted | `s.sessionID == sessionID`, accepted |
+
+`len(s.slots) == 0` is the fail-closed reading of "this pod runs one session". `ensureSlotStateLocked`
+(`pkg/adapter/slot.go:74-95`) can register a slot whose `sessionID` is still empty, and `releaseSlot`
+(`pkg/adapter/slotsession.go:102-112`) is what removes an entry, so a non-empty registry means the pod has
+taken the §6.4 per-slot path at least once. A single-session pod never reaches that path, so the predicate
+rejects nothing a conforming single-session pod produces.
 
 Two live streams can never share an address. `checkSession` (`pkg/adapter/session.go:346`) admits only the
-one pod-global `s.sessionID`, and `startSessionSlot` (`pkg/adapter/slotsession.go:41`) refuses a claim on
-an occupied slot with `Unavailable`.
+one pod-global `s.sessionID`, and `startSessionSlot` (`pkg/adapter/slotsession.go:40-43`) refuses a claim
+on an occupied slot with `Unavailable`.
 
 Slot ids are session ids: `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:682` returns
 `SlotID: req.SessionID`, documented at `:210-215` as collision-free for the slot's lifetime, and session
@@ -168,8 +181,9 @@ The adapter handles a `set_tracing_context` frame arriving on an Attach stream b
 
 1. **Address equality.** `frameSlotID(line) == slotID`, as exact string equality, with the empty string
    counting on both sides.
-2. **Live-binding confirmation.** The registry still binds that address to this stream's session:
-   `s.sessionID == sessionID` when `slotID == ""`, otherwise `s.slots[slotID].sessionID == sessionID`.
+2. **Live-binding confirmation.** The registry still binds that address to this stream's session, and the
+   address is unambiguous: `s.sessionID == sessionID && len(s.slots) == 0` when `slotID == ""`, otherwise
+   `s.slots[slotID].sessionID == sessionID`.
 
 Otherwise the adapter drops the frame, counts it, and logs a protocol error. It relays nothing onward and
 returns nothing to the runtime: the inbound set on this channel is closed
@@ -177,8 +191,14 @@ returns nothing to the runtime: the inbound set on this channel is closed
 (`schemas/lenny-adapter-jsonl.schema.json:8-19`), which is why the card already states the same outcome
 for a `tool_result` whose `id` is unknown (`spec/28_communication-channels.md:545-548`).
 
-Condition 2 exists for one case: a pod-global stream (`slotID == ""`) coexisting with slots, which
-`Binder.Resume` makes reachable per §3. Condition 1 alone would accept an untagged frame there.
+Condition 2 covers two cases condition 1 cannot. The first is a pod-global stream (`slotID == ""`)
+coexisting with slots, which `Binder.Resume` makes reachable per §3; `len(s.slots) == 0` is the term that
+rejects it, because the rest of condition 2's pod-global branch (`s.sessionID == sessionID`) repeats what
+`checkSession` (`pkg/adapter/session.go:346-356`) already evaluated at bind time and stays true for the
+life of the stream. The second is the teardown window on either branch, where the binding is released
+while the stream still drains: `releaseSession` (`pkg/adapter/session.go:384-386`) clears `s.sessionID`
+and `releaseSlot`
+(`pkg/adapter/slotsession.go:102-112`) deletes the slot entry, and a frame arriving after either drops.
 
 ## 5. Testing
 
@@ -191,8 +211,13 @@ session id, annotated `// spec: 28.5.3 (set_tracing_context addressing)`.
 - Single-session pod, untagged frame: exactly one call against the pod's session.
 - Single-session pod, frame carrying any `slotId`: no call, per decision 4. This is the case 0068 accepted
   and the tier-1 assertion is what records the reversal.
-- Condition 2 in isolation: a stream whose registry entry no longer names its session registers nothing,
-  driven by releasing the slot under an open stream.
+- Condition 2, slot branch: a stream whose slot entry no longer names its session registers nothing,
+  driven by releasing the slot under an open stream (`releaseSlot`, `pkg/adapter/slotsession.go:102-112`).
+- Condition 2, pod-global branch: a pod holding occupied slots and a pod-global session at once, built by
+  claiming slots through `startSessionSlot` and then binding a slotless Attach through `checkSession`, so
+  that `len(s.slots) == 0` is the only failing term. An untagged `set_tracing_context` on the slotless
+  stream produces no `CallPlatformTool` call and a protocol-error log. The two branches read different
+  state (`s.slots[slotID].sessionID` and `s.sessionID`), so neither case substitutes for the other.
 
 **Tier 3, `tests/tier3_contract/adapter_jsonl`.** A `set_tracing_context` example carrying `slotId`
 validates against the JSONL schema, and the schema rejects a non-string `slotId`. Adds
@@ -200,14 +225,17 @@ validates against the JSONL schema, and the schema rejects a non-string `slotId`
 (`tests/tier0_static/schemas_test.go`), which enumerates four files today and would otherwise not read it.
 
 **Tier 9, `tests/tier9_security`.** Two sessions on one concurrent pod: an untagged frame emitted by one
-runtime leaves both sessions' `tracingContext` unchanged. This is the cross-session isolation assertion
-and it fails against the current tree.
+runtime leaves both sessions' `tracingContext` unchanged. A second case mirrors the pod-global branch, with
+a resumed pod-global session coexisting with an occupied slot, and asserts that the sibling slot's untagged
+frame leaves the pod-global session's `tracingContext` unchanged. Both are cross-session isolation
+assertions and both fail against the current tree.
 
-**Tier 0.** `TestEveryCitationNamesADocumentAReaderCanReach`, `TestFragmentLinkGateCertifiesTheTree`, and
-the heading-walker slug case for the retitled §15.4.1.
+**Tier 0 (static).** The citation edits and the retitle are read by
+`TestEveryCitationNamesADocumentAReaderCanReach`, `TestFragmentLinkGateCertifiesTheTree`, and the
+heading-walker slug case for the retitled §15.4.1.
 
-**Tier 11.** `TestReducedSectionsPointAtTheHeadingThatOwnsTheirContent` over the §15.4 body after the
-deletion.
+**Tier 11 (documentation).** `TestReducedSectionsPointAtTheHeadingThatOwnsTheirContent` reads the §15.4
+body after the deletion.
 
 ## 6. Proposed changes
 
@@ -253,8 +281,12 @@ The enumerations that count these types are reconciled to nine:
 ### CODE-1. Resolve the frame against its stream
 
 In `pkg/adapter/attach.go`, the `set_tracing_context` branch at `:114-117` applies §4.2 before calling
-`handleSetTracingContext`, which gains the stream's `slotID` so it can evaluate both conditions. The drop
-path counts and logs. Nothing else in the branch changes, and `demuxSlotOutput` is untouched.
+`handleSetTracingContext`, which gains the stream's `slotID` so it can evaluate both conditions. Condition
+2 reads `s.sessionID`, `s.slots`, and the slot entry's `sessionID` under `s.mu` in one helper in
+`pkg/adapter/tracingcontext.go`, modelled on `checkSession` and `checkSlotSession`
+(`pkg/adapter/session.go:346`, `pkg/adapter/slotsession.go:116`), so the registry is sampled once under a
+single lock hold. The drop path counts and logs. Nothing
+else in the branch changes, and `demuxSlotOutput` is untouched.
 
 ### SPEC-3. Retitle §15.4.1
 
@@ -280,9 +312,11 @@ Repoint the `// spec:` annotations on tests citing §15.4.1 for deleted content 
 
 ## 7. Non-goals
 
-Renumbering §15.4.2 through §15.4.6. Widening §28.2's boundary set. Moving the Translation Fidelity Matrix
-or `MessageEnvelope`. Adding `MaxConcurrentSessions` to any CRD. Restoring anything from
-`attempt/0068-spec2-implementation`.
+- **Renumbering §15.4.2 through §15.4.6.**
+- **Widening §28.2's boundary set.**
+- **Moving the Translation Fidelity Matrix or `MessageEnvelope`.**
+- **Adding `MaxConcurrentSessions` to any CRD.**
+- **Restoring anything from `attempt/0068-spec2-implementation`.**
 
 ## 8. Deferred: route rather than broadcast
 
@@ -313,3 +347,27 @@ rather than writing a wrong row, and it deserves its own proposal with tier-7a c
   heading-walker slug case, per §5.
 - The `// spec:` annotations SPEC-4 names.
 - `proposals/0068_fix_settle-15-4-1-and-remove-the-channel-contract-it-duplicates.md` — a superseded note.
+
+## 10. Resolved in adversarial review
+
+### Pass 1 (2026-08-13, automated)
+
+- **Condition 2 could not reject the case §4.2 said it existed for, and no listed test drove it.** As
+  written, condition 2's pod-global branch was `s.sessionID == sessionID`, which is the predicate
+  `checkSession` (`pkg/adapter/session.go:346-356`) already evaluates at bind time, so it stayed true for
+  the life of the stream and could not distinguish a pod-global stream on a pod that also holds slots. The
+  coexistence is reachable: `claimSession` (`pkg/adapter/session.go:361-369`) guards only on
+  `s.sessionID != ""` and never reads `s.slots`, `startSessionSlot` (`pkg/adapter/slotsession.go:34-46`)
+  writes only `st.sessionID`, and `demuxSlotOutput` is applied only when `s.useSlot(slotID)`
+  (`pkg/adapter/attach.go:70-72`), so an untagged frame from a sibling slot's runtime reached the resumed
+  pod-global session's stream and passed both conditions. Condition 2's pod-global branch is now
+  `s.sessionID == sessionID && len(s.slots) == 0`, the fail-closed reading of "this pod runs one session",
+  justified in §4.1 against `ensureSlotStateLocked` (`pkg/adapter/slot.go:74-95`) and `releaseSlot`
+  (`pkg/adapter/slotsession.go:102-112`). §4.1's table now keys its rows on the pod's slot registry rather
+  than on the stream's `slotID` alone and carries the previously missing row for a pod holding slots and a
+  pod-global session together. §4.2's justification for condition 2 now names both cases it covers, the
+  coexistence and the teardown window. §3 states the same predicate as what covers the `Binder.Resume`
+  gap. §5 splits the single condition-2 case into a slot-branch case and a pod-global-branch case that
+  builds the coexisting state directly and asserts no `CallPlatformTool` call plus a protocol-error log,
+  and the tier-9 section gains the matching cross-session isolation case. CODE-1 states that both
+  conditions are evaluated from one sampling of the registry under `s.mu`.
