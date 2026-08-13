@@ -218,7 +218,8 @@
           "type": "object",
           "description": "Opaque tracing context. Typical keys: langsmith_run_id, otel_trace_id, otel_span_id, tracestate.",
           "additionalProperties": true
-        }
+        },
+        "slotId": { "type": "string" }
       }
     }
   }

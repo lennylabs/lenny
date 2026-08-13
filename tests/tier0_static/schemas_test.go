@@ -195,6 +195,7 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 		"schemas/examples/jsonl.heartbeat.json",
 		"schemas/examples/jsonl.tool_call.json",
 		"schemas/examples/jsonl.response.json",
+		"schemas/examples/jsonl.set_tracing_context.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
