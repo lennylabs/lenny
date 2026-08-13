@@ -1,6 +1,7 @@
 # Proposal: Address a tracing frame by the stream that carries it
 
-- **Status:** **Approved (2026-08-13) by jaf sign-off.** Verified (2026-08-13). Converged after 5
+- **Status:** **Applied to spec (2026-08-13).** Approved (2026-08-13) by jaf sign-off. Verified
+  (2026-08-13). Converged after 5
   adversarial review rounds (5 findings fixed) across two full-pool sweeps, the certifying sweep running
   every lens complete with zero confirmed findings. §9 records each round.
 - **Date:** 2026-08-13
