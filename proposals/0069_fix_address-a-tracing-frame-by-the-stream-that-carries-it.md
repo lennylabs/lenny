@@ -164,9 +164,21 @@ both at once, and `Binder.Resume` makes that reachable per §3. The pod's slot r
 taken the §6.4 per-slot path at least once. A single-session pod never reaches that path, so the predicate
 rejects nothing a conforming single-session pod produces.
 
-Two live streams can never share an address. `checkSession` (`pkg/adapter/session.go:346`) admits only the
-one pod-global `s.sessionID`, and `startSessionSlot` (`pkg/adapter/slotsession.go:40-43`) refuses a claim
-on an occupied slot with `Unavailable`.
+The addressing rule does not rest on an address being held by one live stream. The adapter enforces no
+per-address Attach exclusivity: Attach validates the binding and registers nothing
+(`pkg/adapter/attach.go:41-47`), `checkSession` (`pkg/adapter/session.go:346-356`) and `checkSlotSession`
+(`pkg/adapter/slotsession.go:116-128`) are comparisons against the recorded session id, and the
+`Unavailable` refusal on an occupied slot guards the StartSession claim rather than Attach
+(`pkg/adapter/slotsession.go:34-46`). What holds is one content consumer per session per gateway replica,
+because `PodExecutor.streamFor` caches a session's stream under `e.mu`
+(`pkg/gateway/session/executor/pod.go:125-133`). Across a §10.1 coordinator handoff the stale replica's
+adapter-side stream can survive alongside the new one: `EvictStream` only closes the client direction
+(`pkg/gateway/session/executor/pod.go:173-180`), the adapter keeps relaying runtime output after a client
+half-close (`pkg/adapter/attach.go:132-138`), and `CoordinatorFence` does not cancel in-flight RPCs
+(`pkg/adapter/coordination.go:110-113`). Both streams then pass conditions 1 and 2 and one frame is
+handled twice for the same session. The outcome is unchanged, because registration is idempotent on a
+repeated identical key: `tracing.Merge` (`pkg/delegation/tracing/tracing.go:110-124`) keeps the existing
+value on a key collision. The rule stays correct because both deliveries name the same session.
 
 Slot ids are session ids: `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:682` returns
 `SlotID: req.SessionID`, documented at `:210-215` as collision-free for the slot's lifetime, and session
@@ -193,12 +205,20 @@ for a `tool_result` whose `id` is unknown (`spec/28_communication-channels.md:54
 
 Condition 2 covers two cases condition 1 cannot. The first is a pod-global stream (`slotID == ""`)
 coexisting with slots, which `Binder.Resume` makes reachable per §3; `len(s.slots) == 0` is the term that
-rejects it, because the rest of condition 2's pod-global branch (`s.sessionID == sessionID`) repeats what
-`checkSession` (`pkg/adapter/session.go:346-356`) already evaluated at bind time and stays true for the
-life of the stream. The second is the teardown window on either branch, where the binding is released
-while the stream still drains: `releaseSession` (`pkg/adapter/session.go:384-386`) clears `s.sessionID`
-and `releaseSlot`
+rejects it, because the rest of condition 2's pod-global branch (`s.sessionID == sessionID`) repeats at
+frame time what `checkSession` (`pkg/adapter/session.go:346-356`) already evaluated at bind time. The
+second is the teardown window on either branch, where the binding is released while the stream still
+drains: `releaseSession` (`pkg/adapter/session.go:384-386`) clears `s.sessionID` and `releaseSlot`
 (`pkg/adapter/slotsession.go:102-112`) deletes the slot entry, and a frame arriving after either drops.
+That window is reachable on both branches. `Shutdown` calls `releaseSession` after a `Runtime.Close`
+bounded by the grace deadline (`pkg/adapter/session.go:262-265`) while the Attach output relay
+(`pkg/adapter/attach.go:93-118`) is still reading the runtime's output, and the resume failure paths
+release as well (`pkg/adapter/resume.go:62,78,96,115,120,126`). Today the branch at
+`pkg/adapter/attach.go:114-117` calls `handleSetTracingContext` unconditionally, so a frame arriving in
+that window registers the identifiers against the just-released session
+(`pkg/adapter/tracingcontext.go:47-56` injects the bound `sessionID`). Dropping it is a behavior change
+CODE-1 introduces and SPEC-2 writes into §28.5.3, and §5's released-session tier-1 case (`Condition 2,
+pod-global branch, released session`) is what pins the `s.sessionID == sessionID` conjunct.
 
 ## 5. Testing
 
@@ -216,8 +236,17 @@ session id, annotated `// spec: 28.5.3 (set_tracing_context addressing)`.
 - Condition 2, pod-global branch: a pod holding occupied slots and a pod-global session at once, built by
   claiming slots through `startSessionSlot` and then binding a slotless Attach through `checkSession`, so
   that `len(s.slots) == 0` is the only failing term. An untagged `set_tracing_context` on the slotless
-  stream produces no `CallPlatformTool` call and a protocol-error log. The two branches read different
-  state (`s.slots[slotID].sessionID` and `s.sessionID`), so neither case substitutes for the other.
+  stream produces no `CallPlatformTool` call and a protocol-error log.
+- Condition 2, pod-global branch, released session: a single-session pod holding no slots, with
+  `releaseSession` (`pkg/adapter/session.go:384-386`) invoked under an open Attach stream, mirroring the
+  grace-deadline overrun in `Shutdown` (`pkg/adapter/session.go:262-265`). An untagged
+  `set_tracing_context` delivered on that stream afterwards produces no `CallPlatformTool` call and a
+  protocol-error log.
+
+The three condition-2 cases read different state (`s.slots[slotID].sessionID`, `len(s.slots)`, and
+`s.sessionID`), so no one of them substitutes for another. The last case is the only one that drives the
+pod-global branch's `s.sessionID == sessionID` conjunct to false, so without it an implementor can delete
+that conjunct as redundant and no listed test turns red.
 
 **Tier 3, `tests/tier3_contract/adapter_jsonl`.** A `set_tracing_context` example carrying `slotId`
 validates against the JSONL schema, and the schema rejects a non-string `slotId`. Adds
@@ -354,8 +383,8 @@ rather than writing a wrong row, and it deserves its own proposal with tier-7a c
 
 - **Condition 2 could not reject the case §4.2 said it existed for, and no listed test drove it.** As
   written, condition 2's pod-global branch was `s.sessionID == sessionID`, which is the predicate
-  `checkSession` (`pkg/adapter/session.go:346-356`) already evaluates at bind time, so it stayed true for
-  the life of the stream and could not distinguish a pod-global stream on a pod that also holds slots. The
+  `checkSession` (`pkg/adapter/session.go:346-356`) already evaluates at bind time, so it could not
+  distinguish a pod-global stream on a pod that also holds slots. The
   coexistence is reachable: `claimSession` (`pkg/adapter/session.go:361-369`) guards only on
   `s.sessionID != ""` and never reads `s.slots`, `startSessionSlot` (`pkg/adapter/slotsession.go:34-46`)
   writes only `st.sessionID`, and `demuxSlotOutput` is applied only when `s.useSlot(slotID)`
@@ -371,3 +400,37 @@ rather than writing a wrong row, and it deserves its own proposal with tier-7a c
   builds the coexisting state directly and asserts no `CallPlatformTool` call plus a protocol-error log,
   and the tier-9 section gains the matching cross-session isolation case. CODE-1 states that both
   conditions are evaluated from one sampling of the registry under `s.mu`.
+
+### Pass 2 (2026-08-13, automated)
+
+- **§4.2 called the pod-global branch's session term permanently true while naming the case that falsifies
+  it, and no listed test drove it false.** `releaseSession` (`pkg/adapter/session.go:384-386`) clears
+  `s.sessionID` while an Attach stream is still draining, on the `Shutdown` grace-deadline path
+  (`pkg/adapter/session.go:262-265`, with the output relay at `pkg/adapter/attach.go:93-118` still
+  reading) and on the resume failure paths (`pkg/adapter/resume.go:62,78,96,115,120,126`). §4.2 no longer
+  claims the term stays true for the life of the stream, states that the teardown window is reachable on
+  both branches, and records that dropping the frame there is a behavior change over today's
+  unconditional `handleSetTracingContext` call (`pkg/adapter/attach.go:114-117`), which registers against
+  the just-released session (`pkg/adapter/tracingcontext.go:47-56`). §5 gains a third condition-2 tier-1 case, a
+  single-session pod holding no slots whose session is released under an open stream, asserting no
+  `CallPlatformTool` call and a protocol-error log, and its closing sentence now states that the three
+  condition-2 cases read different state and that this case is the only one pinning the
+  `s.sessionID == sessionID` conjunct. The Pass 1 entry's identical wording about the term is corrected.
+- **§4.1 claimed two live streams can never share an address, which the cited code does not establish.**
+  Attach validates the binding and registers nothing (`pkg/adapter/attach.go:41-47`), `checkSession` and
+  `checkSlotSession` are comparisons against the recorded session id (`pkg/adapter/session.go:346-356`,
+  `pkg/adapter/slotsession.go:116-128`), and the `Unavailable` refusal guards the StartSession claim
+  (`pkg/adapter/slotsession.go:34-46`). The exclusion is the gateway's per-replica stream cache
+  (`pkg/gateway/session/executor/pod.go:125-133`), which does not survive a §10.1 coordinator handoff:
+  `EvictStream` closes only the client direction (`pkg/gateway/session/executor/pod.go:173-180`), the
+  adapter keeps relaying runtime output after a client half-close (`pkg/adapter/attach.go:132-138`), and
+  `CoordinatorFence` cancels no in-flight RPC (`pkg/adapter/coordination.go:110-113`). The paragraph now
+  states the per-replica property, states that a stale and a fresh stream can briefly share an address and
+  deliver one frame twice, and rests correctness on both deliveries naming the same session together with
+  the idempotence of `tracing.Merge` (`pkg/delegation/tracing/tracing.go:110-124`) on a repeated key.
+- **Correction to this pass: §4.2's closing pointer named the wrong tier-1 case by ordinal.** §5's tier-1
+  list carries eight bullets, and its third is the concurrent-pod case whose frame is tagged with another
+  live slot, which the demux drops and which reads none of the pod-global branch's state. The case §4.2
+  means is the released-session bullet, the same one §5's closing sentence calls out. §4.2 now names that
+  case (`Condition 2, pod-global branch, released session`) instead of an ordinal, and this pass's first
+  entry calls it the third condition-2 case rather than the third tier-1 case.
