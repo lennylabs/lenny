@@ -1,7 +1,8 @@
 # Proposal: Settle §15.4.1 and remove the channel contract it duplicates
 
-- **Status:** Verified (2026-08-12). Converged after 10 adversarial review rounds (23 findings fixed);
-  awaiting sign-off.
+- **Status:** **Approved (2026-08-13) by jaf sign-off.** Verified (2026-08-12), converged after 10
+  adversarial review rounds (23 findings fixed) across three full-pool sweeps, the certifying sweep
+  running every lens complete with zero confirmed findings.
 - **Date:** 2026-08-12.
 - **Scope:** Settles the contradiction proposal 0064 leaves over the fate of `spec/15` §15.4.1, keeps the
   subsection, removes the `CH-MSGSOCK` contract it duplicates from §28.5.3, completes the one outbound
