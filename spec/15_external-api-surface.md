@@ -1468,7 +1468,7 @@ The artifacts are versioned by Lenny release tag. Breaking changes to the `.prot
 
 **SDK-warm demotion contract:** Adapters for runtimes that declare `capabilities.preConnect: true` **must** implement the `DemoteSDK` RPC. This RPC cleanly terminates the pre-connected agent process and returns the pod to a pod-warm state so that workspace files (including those matching `sdkWarmBlockingPaths`) can be materialized before the agent starts. The specification must document: expected teardown behavior, timeout (default: 10s — if the SDK process does not exit within this window, the adapter sends SIGKILL), post-demotion pod state (equivalent to a freshly warmed pod-warm pod), and the `UNIMPLEMENTED` error code for adapters that do not support demotion. Runtime authors who set `preConnect: true` without implementing `DemoteSDK` will see session failures whenever a client uploads files matching `sdkWarmBlockingPaths`.
 
-#### 15.4.1 Adapter↔Binary Protocol
+#### 15.4.1 Message Format and Binary I/O Requirements
 
 The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
 
@@ -2009,8 +2009,8 @@ Runtime-author information is distributed across this specification. The followi
 **Basic-level (get a runtime working):**
 
 1. **[Section 15.4.4](#1544-sample-echo-runtime)** — Sample Echo Runtime. Copy this pseudocode as your starting point.
-2. **[Section 28.5.3](28_communication-channels.md#2853-intra-pod)** — the message types, the `MessagePart` format, and the simplified response shorthand,
-   with **[Section 15.4.1](#1541-adapterbinary-protocol)** for the stdin/stdout JSON Lines framing and the stdout flushing requirement, which stays here.
+2. **[Section 28.5.3](28_communication-channels.md#2853-intra-pod)** — the message types, the `MessagePart` format, the stdin/stdout JSON Lines framing, and the simplified response shorthand,
+   with **[Section 15.4.1](#1541-message-format-and-binary-io-requirements)** for the stdout flushing requirement, which stays here.
 3. **[Section 15.4.2](#1542-rpc-lifecycle-state-machine)** — RPC Lifecycle State Machine. Read for context: the adapter (not your binary) owns this state machine. Knowing it helps you understand when your binary will start receiving messages (`ACTIVE`), and that `shutdown` arrives only during `DRAINING` — your binary never drives these transitions.
 4. **[Section 15.4.3](#1543-runtime-integration-levels)** — Runtime Integration Levels. Level definitions and the capability comparison matrix — confirms what Basic-level runtimes can skip.
 5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/current/`, `/tmp/`, `/artifacts/`).
