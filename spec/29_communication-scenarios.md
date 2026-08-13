@@ -1472,9 +1472,9 @@ as independent in each of them.
   not resolve to an active slot fails closed internally and is never routed, and the `delivery: immediate`
   interrupt targets the specific slot's tool-call context rather than the whole pod
   ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
-- The addressing key on the agent message plane. Every `message`, `tool_result`, `response`, and
-  `tool_call` on `CH-MSGSOCK` carries the slot's `slotId`, and a runtime serving such a pool implements a
-  dispatch loop keyed on it (§28.5.3, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+- The addressing key on the agent message plane. Every `message`, `tool_result`, `response`, `tool_call`,
+  and `set_tracing_context` on `CH-MSGSOCK` carries the slot's `slotId`, and a runtime serving such a
+  pool implements a dispatch loop keyed on it (§28.5.3, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
   The key is per slot and the channel it rides is not.
 - Admission of a checkpoint to the adapter's operation lock. The lock admits one pending checkpoint per
   distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and promotes the pending

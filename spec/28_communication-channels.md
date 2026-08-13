@@ -546,8 +546,9 @@ the connection it runs on. The runtime is the dialling participant on every chan
   the `id` of a previously emitted `tool_call`, results may arrive in any order, and a `tool_result`
   whose `id` is unknown is dropped and logged as a protocol error
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). On a pod whose pool sets
-  `sessionPolicy.maxConcurrentSessions > 1`, `message`, `tool_result`, `response`, and `tool_call` carry
-  a `slotId` assigned by the adapter, and on a pod that sets it to 1 no message carries `slotId`
+  `sessionPolicy.maxConcurrentSessions > 1`, `message`, `tool_result`, `response`, `tool_call`, and
+  `set_tracing_context` carry a `slotId` assigned by the adapter, and on a pod that sets it to 1 no
+  message carries `slotId`
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 - **Preconditions.** The adapter writes the final adapter manifest and spawns the runtime binary before
@@ -781,6 +782,64 @@ All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined t
 ```json
 { "type": "status", "state": "thinking", "message": "Analyzing code..." }
 ```
+
+**Outbound: `set_tracing_context`**
+
+Registers tracing identifiers for propagation through delegation.
+
+Schema:
+
+```json
+{
+  "type": "set_tracing_context",
+  "context": "<map<string, string>, required — opaque tracing identifiers>",
+  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
+}
+```
+
+Example:
+
+```json
+{
+  "type": "set_tracing_context",
+  "context": { "langsmith_run_id": "run_abc123" }
+}
+```
+
+The frame is available at all integration levels.
+
+**Addressing.** The adapter resolves the frame against the Attach stream that delivered it. A stream is
+bound to a session and, on a pod serving more than one concurrent session, to that session's slot. The
+adapter handles the frame if and only if both of the following hold.
+
+1. **Address equality.** The frame's `slotId` equals the stream's `slotId`, compared as exact string
+   equality, with an absent or empty `slotId` counting as the empty string on both sides. A frame
+   carrying a `slotId` on a stream that holds none is therefore not handled, and neither is an untagged
+   frame on a stream bound to a slot.
+2. **Live-binding confirmation.** The adapter's registry still binds that address to this stream's
+   session, and the address is unambiguous. When the stream carries no `slotId`, the pod's session is
+   still this stream's session and the pod holds no registered slot. When the stream carries a `slotId`,
+   the registry entry for that slot still names this stream's session.
+
+Otherwise the adapter drops the frame, counts it, and logs a protocol error. It relays nothing onward and
+returns nothing to the runtime, because the inbound message set on this channel admits no report frame,
+which is the same outcome this card states for a `tool_result` whose `id` is unknown.
+
+Address equality is the only condition that names a session. Live-binding confirmation reads state that
+changes over the session's lifetime and may only reject a frame, so a released binding drops the frame
+rather than routing it elsewhere.
+
+**Registration.** The adapter registers the identifiers by calling the platform tool with the addressed
+session's id injected. The gateway merges the submitted context into that session's recorded context and
+validates the result against the rules in
+[Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) when the identifiers are
+registered, and it attaches the registered context to the child's delegation lease. See
+[Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model.
+
+**Non-guarantee.** One runtime process serves every slot on a concurrent pod, so the `slotId` a frame
+carries is whatever that process stamped on it. The addressing rule removes ambiguity between the slots
+of one pod. It does not detect a frame the runtime process itself addressed to the wrong slot, and it is
+not an isolation guarantee against a misbehaving runtime.
 
 **Exit Codes**
 

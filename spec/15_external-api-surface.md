@@ -1678,8 +1678,8 @@ The event is persisted to the sender session's event store and replayable within
 **Future-proof:** `MessageEnvelope` with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, and `delegationDepth` accommodates all future conversational patterns without schema changes: threaded messages, multiple participants, non-linear context retrieval, broadcast, external agent participation.
 
 The message schemas of the adapter↔binary stdin and stdout messages, which are `message`,
-`heartbeat`, `shutdown`, `tool_result`, `response`, `tool_call`, `heartbeat_ack`, and `status`, are
-stated by the `CH-MSGSOCK` card in
+`heartbeat`, `shutdown`, `tool_result`, `response`, `tool_call`, `heartbeat_ack`, `status`, and
+`set_tracing_context`, are stated by the `CH-MSGSOCK` card in
 [Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
 contract.
 
