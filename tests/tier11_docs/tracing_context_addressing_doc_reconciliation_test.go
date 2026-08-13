@@ -128,8 +128,15 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		"resolves the frame against the stream that delivered it",
 		"the frame's `slotId` matches the stream's slot",
 		"still binds that address to the stream's session",
+		// The fail-closed second term: an untagged frame is rejected on a pod
+		// that holds registered slots, where the address names no one session.
+		"the address is unambiguous",
+		"untagged frame is applied only on a pod that holds no registered slot",
 		"dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
+		// The drop outcome is stated on the page rather than deferred to a
+		// behavior the page never describes.
+		"the runtime receives no error for a dropped frame",
 	})
 
 	tools := platformToolsDoc(t, root)
