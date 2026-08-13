@@ -1,7 +1,9 @@
 # Proposal: Address a tracing frame by the stream that carries it
 
-- **Status:** Draft for review.
-- **Date:** 2026-08-13.
+- **Status:** **Approved (2026-08-13) by jaf sign-off.** Verified (2026-08-13). Converged after 5
+  adversarial review rounds (5 findings fixed) across two full-pool sweeps, the certifying sweep running
+  every lens complete with zero confirmed findings. §9 records each round.
+- **Date:** 2026-08-13
 - **Scope:** Supersedes proposal 0068. Keeps its specification move, which removes from `spec/15` §15.4.1
   the `CH-MSGSOCK` contract §28.5.3 owns, and replaces its frame-addressing design. 0068 taught the
   adapter its pod's concurrency through a new CRD field and a launch argument; the adapter already holds
@@ -29,7 +31,7 @@ not finish removing.
 
 Two contradictions already sit in `spec/15` independently of this proposal:
 `spec/15_external-api-surface.md:1463` says the JSONL schema covers all nine `CH-MSGSOCK` message types,
-and `spec/15_external-api-surface.md:1702-1707` lists eight. §28.5.3 defines eight schema blocks while its
+and `spec/15_external-api-surface.md:1703-1704` lists eight. §28.5.3 defines eight schema blocks while its
 Messages axis at `spec/28_communication-channels.md:539-541` enumerates nine. `set_tracing_context` is the
 missing ninth in both counts.
 
@@ -82,10 +84,10 @@ ground.
 
 3. **The design stages no CRD field, launch argument, or propagation chain.** The adapter never needs its pod's declared
    concurrency to decide this frame, because the stream's own `slotID` already carries what "untagged"
-   means there. §4.1 states the derivation. 0068's chain — a `SessionPolicy.MaxConcurrentSessions` CRD
+   means there. §4.1 states the derivation. 0068's chain (a `SessionPolicy.MaxConcurrentSessions` CRD
    field, regenerated deepcopy and manifests, an extended `sessionPolicyToCRD` mirror, an `Inputs` field,
    a `--max-concurrent-sessions` flag on two deployment models, changes to two embedded reference
-   runtimes, and a three-valued undeclared sentinel — is not staged.
+   runtimes, and a three-valued undeclared sentinel) is not staged.
 
 4. **A `slotId` on a single-session pod is dropped.** No session on such a pod holds a slot id
    (`pkg/gateway/sessionserver/start.go:2111`), and the adapter stamps `slotId` only on concurrent slots
@@ -150,7 +152,12 @@ stream `slotID` does not by itself mean the pod runs a single session, because t
 and its pod-global session are independent: `claimSession` (`pkg/adapter/session.go:361-369`) guards only
 on `s.sessionID != ""` and never reads `s.slots`, and `startSessionSlot`
 (`pkg/adapter/slotsession.go:34-46`) writes only `st.sessionID` and never `s.sessionID`. A pod can hold
-both at once, and `Binder.Resume` makes that reachable per §3. The pod's slot registry closes the gap:
+both at once, because the adapter imposes no guard against it. `Binder.Resume`
+(`pkg/gateway/podlifecycle/podsession/binder.go:1608-1616`) is the gateway-side path that would produce
+that state, and §3 records its exploit chain as latent today, because
+`pkg/gateway/sessionserver/finalize.go:238` returns early for a concurrent pool and leaves no snapshot to
+resume from. Condition 2 rejects the state fail-closed whether or not the chain is reachable. The pod's
+slot registry closes the gap:
 
 | Pod state when the frame arrives | Stream's `slotID` | Condition 1 on an untagged frame | Condition 2 |
 |:--|:--|:--|:--|
@@ -204,8 +211,9 @@ returns nothing to the runtime: the inbound set on this channel is closed
 for a `tool_result` whose `id` is unknown (`spec/28_communication-channels.md:545-548`).
 
 Condition 2 covers two cases condition 1 cannot. The first is a pod-global stream (`slotID == ""`)
-coexisting with slots, which `Binder.Resume` makes reachable per §3; `len(s.slots) == 0` is the term that
-rejects it, because the rest of condition 2's pod-global branch (`s.sessionID == sessionID`) repeats at
+coexisting with slots, which the adapter does not prevent and which `Binder.Resume` is the gateway-side
+path toward, on an exploit chain §3 records as latent today; `len(s.slots) == 0` is the term that rejects
+that state fail-closed whether or not the chain is reachable, because the rest of condition 2's pod-global branch (`s.sessionID == sessionID`) repeats at
 frame time what `checkSession` (`pkg/adapter/session.go:346-356`) already evaluated at bind time. The
 second is the teardown window on either branch, where the binding is released while the stream still
 drains: `releaseSession` (`pkg/adapter/session.go:384-386`) clears `s.sessionID` and `releaseSlot`
@@ -255,9 +263,10 @@ validates against the JSONL schema, and the schema rejects a non-string `slotId`
 
 **Tier 9, `tests/tier9_security`.** Two sessions on one concurrent pod: an untagged frame emitted by one
 runtime leaves both sessions' `tracingContext` unchanged. A second case mirrors the pod-global branch, with
-a resumed pod-global session coexisting with an occupied slot, and asserts that the sibling slot's untagged
-frame leaves the pod-global session's `tracingContext` unchanged. Both are cross-session isolation
-assertions and both fail against the current tree.
+a pod-global session coexisting with an occupied slot, constructed the way §5's tier-1 pod-global case
+constructs it rather than through a resume, and asserts that the sibling slot's untagged frame leaves the
+pod-global session's `tracingContext` unchanged. Both are cross-session isolation assertions and both fail
+against the current tree.
 
 **Tier 0 (static).** The citation edits and the retitle are read by
 `TestEveryCitationNamesADocumentAReaderCanReach`, `TestFragmentLinkGateCertifiesTheTree`, and the
@@ -294,25 +303,48 @@ gateway merges and validates at registration
 (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`). It states the non-guarantee of decision 5.
 
 The §15.4.1 row, the platform-tool row at `spec/08_recursive-delegation.md:540`, and the entry at
-`docs/reference/adapter-contract.md:310-316` all say the adapter stores the context and attaches it to
-subsequent `lenny/delegate_task` requests. The adapter stores and attaches nothing. The two surviving
-statements are corrected to the registration mechanism.
+`docs/reference/adapter-contract.md:310-316` each carry two statements the code contradicts. The first is
+that the adapter stores the context and attaches it to subsequent `lenny/delegate_task` requests, and the
+adapter stores and attaches nothing. The second is that the gateway validates on delegation
+(`spec/08_recursive-delegation.md:540`, `docs/reference/adapter-contract.md:316`, and the clause SPEC-1
+deletes at `spec/15_external-api-surface.md:1494`), and validation runs at registration instead:
+`tracing.Validate` is called once in the tree, inside the `lenny/set_tracing_context` store update
+(`pkg/gateway/mcpfabric/mcptools/mcptools_register.go:964-965`), while the delegation path copies the
+recorded map without validating it (`pkg/gateway/mcpfabric/delegation/service.go:1468`). Both statements
+are corrected at the two surviving sites: the gateway merges the submitted context into the session's
+recorded context and validates the result against the §8.3 rules when the identifiers are registered, and
+it attaches the registered context to the child's delegation lease. The validation clause is corrected
+alongside the storage clause because §8.3's sensitive-key and URL blocklists
+(`spec/08_recursive-delegation.md:296-297`) are a security control whose stated purpose at `:299` is that
+a malicious parent cannot redirect a child's tracing to an attacker-controlled endpoint. Leaving the
+delegation-time wording in place would contradict the new §28.5.3 block, send a reader looking for an
+enforcement point that does not exist, and invite an implementor to drop the registration-time call as the
+wrong place.
 
 `schemas/lenny-adapter-jsonl.schema.json` gains an optional `"slotId": { "type": "string" }` on its
 `set_tracing_context` definition (`:210-223`), matching the property `message`, `tool_call`, `tool_result`,
 and `response` already carry.
 
-The enumerations that count these types are reconciled to nine:
-`spec/15_external-api-surface.md:1702-1707` and the §28.5.3 `slotId` sentence
-(`spec/28_communication-channels.md:548-552`), whose mirror at
-`spec/29_communication-scenarios.md:1475-1476` gains the same member.
+Two enumerations gain `set_tracing_context`, with different member sets and different resulting counts.
+The §15.4 message-type list at `spec/15_external-api-surface.md:1703-1704` enumerates eight types and goes
+to nine, which reconciles it with the "nine message types" claim at
+`spec/15_external-api-surface.md:1463`. The §28.5.3 `slotId` sentence at
+`spec/28_communication-channels.md:548-552` enumerates the subset that carries `slotId`, which is
+`message`, `tool_result`, `response`, and `tool_call`, and gains `set_tracing_context` as a fifth member;
+its mirror at `spec/29_communication-scenarios.md:1475-1476` gains the same member. That sentence is not a
+count of the message types, and rewriting it as a nine-member list would assert that `heartbeat`,
+`shutdown`, `heartbeat_ack`, and `status` carry `slotId`, which their own §28.5.3 schema blocks
+(`spec/28_communication-channels.md:606-612`, `:779-783`) and the JSONL schema contradict. The §28 side of
+the nine-versus-eight contradiction §1.1 records is closed by the new schema block above, which brings
+§28.5.3's schema set to nine and makes it agree with the Messages axis at
+`spec/28_communication-channels.md:539-541`.
 
 ### CODE-1. Resolve the frame against its stream
 
 In `pkg/adapter/attach.go`, the `set_tracing_context` branch at `:114-117` applies §4.2 before calling
 `handleSetTracingContext`, which gains the stream's `slotID` so it can evaluate both conditions. Condition
 2 reads `s.sessionID`, `s.slots`, and the slot entry's `sessionID` under `s.mu` in one helper in
-`pkg/adapter/tracingcontext.go`, modelled on `checkSession` and `checkSlotSession`
+`pkg/adapter/tracingcontext.go`, modeled on `checkSession` and `checkSlotSession`
 (`pkg/adapter/session.go:346`, `pkg/adapter/slotsession.go:116`), so the registry is sampled once under a
 single lock hold. The drop path counts and logs. Nothing
 else in the branch changes, and `demuxSlotOutput` is untouched.
@@ -331,8 +363,17 @@ moves array and derives a retired section number from the anchor slug, so an ent
 In `spec/28_communication-channels.md`, drop the `[§15.4]` citation from the Endpoint axis (`:525-527`),
 from the Messages axis (`:541`), from the `slotId` sentence (`:548-552`), and from the Exclusivity axis
 (`:567-570`), and state each on the card's own authority. Add the runtime-side dispatch-loop obligation
-the deleted paragraph carried. Repoint the `slotId` keying citations in §28.6 (`:1622-1626`) and the §28.8
-row (`:1710`) at §28.5.3, and the two in `spec/29_communication-scenarios.md` (`:1477`, `:1499-1501`).
+the deleted paragraph carried.
+
+The Messages axis carries a second `[§15.4]` citation at `:545` closing the framing sentence and the
+`MessageEnvelope` sentence together. SPEC-1 deletes the only statement of the framing in §15.4
+(`spec/15_external-api-surface.md:1473`), so that half is stated on the card's own authority, while the
+`MessageEnvelope` half keeps its `[§15.4]` citation, which decision 8 leaves in place.
+
+Repoint the `slotId` keying citations in §28.6 (`:1622-1626`) and the §28.8
+row (`:1710`) at §28.5.3, and the three in `spec/29_communication-scenarios.md` (`:450`, `:1477`,
+`:1499-1501`). At `:450` the framing claim rests on the §28.5.3 citation the step already carries, and the
+`[§15.4]` citation is kept for the flushing requirement SPEC-1 leaves in §15.4.
 
 Repoint the `// spec:` annotations on tests citing §15.4.1 for deleted content in
 `pkg/gateway/runtime/adapterclient/client_test.go`, `pkg/gateway/session/executor/pod_test.go`,
@@ -360,36 +401,20 @@ It is deferred because it requires hoisting the heartbeat, which is per-Attach t
 pass-through. The heartbeat drives the SIGTERM escalation, so its failure mode is killing a healthy agent
 rather than writing a wrong row, and it deserves its own proposal with tier-7a coverage.
 
-## 9. Files touched on application
-
-- `spec/15_external-api-surface.md` — SPEC-1, SPEC-3, the §15.4.5 roadmap item, and the nine-type
-  enumeration at `:1702-1707`.
-- `spec/28_communication-channels.md` — SPEC-2 and the SPEC-4 citation edits.
-- `spec/29_communication-scenarios.md` — the SPEC-4 citations and the `slotId` member list.
-- `spec/08_recursive-delegation.md` — the adapter-stores wording at `:540`.
-- `docs/reference/adapter-contract.md` — the same wording at `:316`, plus the addressing rule and the drop
-  outcome.
-- `schemas/lenny-adapter-jsonl.schema.json` — the optional `slotId`, and
-  `schemas/examples/jsonl.set_tracing_context.json` with its entry in `tests/tier0_static/schemas_test.go`.
-- `pkg/adapter/attach.go` and `pkg/adapter/tracingcontext.go` — CODE-1.
-- `pkg/adapter` tier-1 cases, `tests/tier3_contract/adapter_jsonl`, `tests/tier9_security`, and the
-  heading-walker slug case, per §5.
-- The `// spec:` annotations SPEC-4 names.
-- `proposals/0068_fix_settle-15-4-1-and-remove-the-channel-contract-it-duplicates.md` — a superseded note.
-
-## 10. Resolved in adversarial review
+## 9. Resolved in adversarial review
 
 ### Pass 1 (2026-08-13, automated)
 
 - **Condition 2 could not reject the case §4.2 said it existed for, and no listed test drove it.** As
   written, condition 2's pod-global branch was `s.sessionID == sessionID`, which is the predicate
   `checkSession` (`pkg/adapter/session.go:346-356`) already evaluates at bind time, so it could not
-  distinguish a pod-global stream on a pod that also holds slots. The
-  coexistence is reachable: `claimSession` (`pkg/adapter/session.go:361-369`) guards only on
+  distinguish a pod-global stream on a pod that also holds slots. The adapter imposes no guard against
+  that coexistence: `claimSession` (`pkg/adapter/session.go:361-369`) guards only on
   `s.sessionID != ""` and never reads `s.slots`, `startSessionSlot` (`pkg/adapter/slotsession.go:34-46`)
   writes only `st.sessionID`, and `demuxSlotOutput` is applied only when `s.useSlot(slotID)`
-  (`pkg/adapter/attach.go:70-72`), so an untagged frame from a sibling slot's runtime reached the resumed
-  pod-global session's stream and passed both conditions. Condition 2's pod-global branch is now
+  (`pkg/adapter/attach.go:70-72`), so in that state an untagged frame from a sibling slot's runtime
+  arrives on the pod-global stream and satisfies both conditions as they were written, whether or not the
+  gateway-side chain that would produce the state is reachable. Condition 2's pod-global branch is now
   `s.sessionID == sessionID && len(s.slots) == 0`, the fail-closed reading of "this pod runs one session",
   justified in §4.1 against `ensureSlotStateLocked` (`pkg/adapter/slot.go:74-95`) and `releaseSlot`
   (`pkg/adapter/slotsession.go:102-112`). §4.1's table now keys its rows on the pod's slot registry rather
@@ -434,3 +459,86 @@ rather than writing a wrong row, and it deserves its own proposal with tier-7a c
   means is the released-session bullet, the same one §5's closing sentence calls out. §4.2 now names that
   case (`Condition 2, pod-global branch, released session`) instead of an ordinal, and this pass's first
   entry calls it the third condition-2 case rather than the third tier-1 case.
+
+### Pass 3 (2026-08-13, automated)
+
+- **§4.1 and §4.2 attributed a reachability claim to §3 that §3 declines to make.** Both sections said
+  `Binder.Resume` makes the coexistence of a pod-global session and slot entries reachable "per §3", while
+  §3 records the chain as latent, because `pkg/gateway/sessionserver/finalize.go:238` returns early for a
+  concurrent pool and leaves no snapshot to resume from, and states the coverage claim independently of
+  reachability. Both sections now state what the adapter establishes, that it imposes no guard against the
+  coexistence (`claimSession` at `pkg/adapter/session.go:361-369` never reads `s.slots`, and
+  `startSessionSlot` at `pkg/adapter/slotsession.go:34-46` never writes `s.sessionID`), name
+  `Binder.Resume` (`pkg/gateway/podlifecycle/podsession/binder.go:1608-1616`) as the gateway-side path
+  toward that state on a chain §3 records as latent, and rest condition 2 on rejecting the state
+  fail-closed whether or not the chain is reachable.
+- **SPEC-4 left a §28.5.3 framing citation pointing at content SPEC-1 deletes.** The Messages axis carries
+  a second `[§15.4]` citation at `spec/28_communication-channels.md:545` closing the framing sentence
+  ("Each message is a single JSON object terminated by `\n`") together with the `MessageEnvelope`
+  sentence, and SPEC-1 deletes the only statement of that framing in §15.4
+  (`spec/15_external-api-surface.md:1473`). SPEC-4 now names `:545`, stating the framing on the card's own
+  authority and keeping the `[§15.4]` citation for the `MessageEnvelope` half that decision 8 leaves in
+  §15.4. The same omission at `spec/29_communication-scenarios.md:450` is added to the spec/29 repoint
+  list, where the framing claim rests on the §28.5.3 citation the step already carries and the `[§15.4]`
+  citation is kept for the flushing requirement SPEC-1 leaves in place.
+- **Correction to this pass: the Pass 1 entry still asserted the reachability §4.1 and §4.2 retracted.**
+  It read "The coexistence is reachable" and said an untagged sibling frame "reached the resumed
+  pod-global session's stream", which is the attribution this pass removed from §4.1 and §4.2. The entry
+  now states what the adapter establishes, that it imposes no guard against the coexistence, and describes
+  the frame as satisfying both conditions in that state whether or not the gateway-side chain producing it
+  is reachable.
+- **Correction to this pass: §5's tier-9 second case specified a resumed session.** It described the case
+  as "a resumed pod-global session coexisting with an occupied slot", which requires the `Binder.Resume`
+  chain §3 records as latent (`pkg/gateway/sessionserver/finalize.go:238-239` returns early for a
+  concurrent pool). The tier-1 pod-global case builds the same state directly through `startSessionSlot`
+  (`pkg/adapter/slotsession.go:34-46`) and `checkSession` (`pkg/adapter/session.go:346-356`) for that
+  reason. The tier-9 case now names the state it constructs and points at that construction instead of a
+  resume.
+
+### Pass 4 (2026-08-13, automated)
+
+- **SPEC-2 moved the §8.3 validation point to registration and left `spec/08_recursive-delegation.md:540`
+  stating that the gateway validates on delegation.** The three sites SPEC-2 enumerates each carry a second
+  clause naming when validation runs, and SPEC-1 deletes the only one of the three that lives in §15.4.1
+  (`spec/15_external-api-surface.md:1494`). With SPEC-2's new §28.5.3 block stating registration-time
+  validation, the applied spec would contradict itself about the enforcement point of the §8.3
+  sensitive-key and URL blocklists (`spec/08_recursive-delegation.md:296-297`, whose purpose at `:299` is
+  that a malicious parent cannot redirect a child's tracing to an attacker-controlled endpoint). The code
+  enforces the rules only at registration: `tracing.Validate` is called once in the tree, in the
+  `lenny/set_tracing_context` store update (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go:964-965`),
+  and the delegation path copies the recorded map without validating it
+  (`pkg/gateway/mcpfabric/delegation/service.go:1468`). SPEC-2 now corrects both clauses at the two
+  surviving sites, `spec/08_recursive-delegation.md:540` and `docs/reference/adapter-contract.md:316`, and
+  §10's entries for those two files name both statements.
+- **SPEC-2 ordered the §28.5.3 `slotId` sentence "reconciled to nine", and that sentence enumerates the
+  `slotId`-carrying types rather than the message types.** The sub-step gave one value for two different
+  enumerations. `spec/15_external-api-surface.md:1703-1704` lists the eight message types and does go to
+  nine, which reconciles it with `spec/15_external-api-surface.md:1463`. The sentence at
+  `spec/28_communication-channels.md:548-552` lists `message`, `tool_result`, `response`, and `tool_call`,
+  the four types that carry `slotId`, and its mirror at `spec/29_communication-scenarios.md:1475-1476`
+  lists the same four. Rewriting either as a nine-member list would assert that `heartbeat`, `shutdown`,
+  `heartbeat_ack`, and `status` carry `slotId`, contradicting their own §28.5.3 schema blocks
+  (`spec/28_communication-channels.md:606-612`, `:779-783`), the surviving clause "on a pod that sets it to
+  1 no message carries `slotId`", and the JSONL schema, which declares `slotId` on the envelope,
+  `tool_call`, `tool_result`, and `response` alone. SPEC-2 now states the two edits separately with their
+  own member sets, and records that the §28 side of the nine-versus-eight contradiction §1.1 names is
+  closed by the new schema block rather than by an edit at `:548-552`.
+
+## 10. Files touched on application
+
+- `spec/15_external-api-surface.md` — SPEC-1, SPEC-3, the §15.4.5 roadmap item, and the message-type
+  enumeration at `:1703-1704`.
+- `spec/28_communication-channels.md` — SPEC-2, the `slotId` member list at `:548-552`, and the SPEC-4
+  citation edits.
+- `spec/29_communication-scenarios.md` — the SPEC-4 citations and the `slotId` member list.
+- `spec/08_recursive-delegation.md` — the adapter-stores wording and the validates-on-delegation wording at
+  `:540`.
+- `docs/reference/adapter-contract.md` — the same two statements at `:316`, plus the addressing rule and
+  the drop outcome.
+- `schemas/lenny-adapter-jsonl.schema.json` — the optional `slotId`, and
+  `schemas/examples/jsonl.set_tracing_context.json` with its entry in `tests/tier0_static/schemas_test.go`.
+- `pkg/adapter/attach.go` and `pkg/adapter/tracingcontext.go` — CODE-1.
+- `pkg/adapter` tier-1 cases, `tests/tier3_contract/adapter_jsonl`, `tests/tier9_security`, and the
+  heading-walker slug case, per §5.
+- The `// spec:` annotations SPEC-4 names.
+- `proposals/0068_fix_settle-15-4-1-and-remove-the-channel-contract-it-duplicates.md` — a superseded note.
