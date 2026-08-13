@@ -32,8 +32,12 @@
 package tier11_docs_test
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // adapterContractDoc reads docs/reference/adapter-contract.md into a string.
@@ -121,12 +125,17 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/reference/adapter-contract.md: `set_tracing_context` entry not found (renamed or removed?)")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
-		// The documented frame carries the optional slot address.
-		`"slotId": null`,
+		// The documented frame carries the optional slot address in the
+		// wire form the published JSONL schema accepts: a string.
+		`"slotId": "slot_01"`,
+		"| `slotId` | string, optional |",
 		"`sessionPolicy.maxConcurrentSessions > 1`",
 		// The addressing rule and its outcome.
 		"resolves the frame against the stream that delivered it",
 		"the frame's `slotId` matches the stream's slot",
+		// The untagged side of the address comparison is the empty string,
+		// the form the schema and the adapter's decoder both produce.
+		"an absent or empty `slotId` matching a stream bound to no slot",
 		"still binds that address to the stream's session",
 		// The fail-closed second term: an untagged frame is rejected on a pod
 		// that holds registered slots, where the address names no one session.
@@ -160,6 +169,48 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		"the frame must carry the emitting slot's `slotId`",
 		"dropped and logged rather than applied",
 	})
+}
+
+// spec: 28.5.3 (set_tracing_context schema)
+// diagnosis: the `set_tracing_context` frame printed on
+//
+//	docs/reference/adapter-contract.md does not validate against the published
+//	JSONL schema at schemas/lenny-adapter-jsonl.schema.json. A runtime author
+//	copies the documented frame verbatim, so a documented form the schema
+//	rejects (a null `slotId`, for instance, where the schema declares a string)
+//	produces a frame the adapter reads as untagged and, on a pod holding
+//	registered slots, drops.
+func TestDocumentedTracingContextFrameValidatesAgainstJSONLSchema(t *testing.T) {
+	root := repoRoot(t)
+	page := filepath.Join(root, "docs", "reference", "adapter-contract.md")
+
+	blocks, err := extractFencedBlocks(page)
+	if err != nil {
+		t.Fatalf("read %s: %v", page, err)
+	}
+
+	compiler := schematest.NewCompiler(t)
+	schematest.MustAddLocalSchema(t, compiler, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
+	schema := schematest.MustCompile(t, compiler, "schemas/lenny-adapter-jsonl.schema.json")
+
+	found := 0
+	for _, b := range blocks {
+		if normalize(b.Language) != "json" || !strings.Contains(b.Body, `"set_tracing_context"`) {
+			continue
+		}
+		found++
+		var doc any
+		if err := json.Unmarshal([]byte(b.Body), &doc); err != nil {
+			t.Errorf("%s:%d: documented set_tracing_context frame is not JSON: %v", page, b.StartLine, err)
+			continue
+		}
+		if err := schema.Validate(doc); err != nil {
+			t.Errorf("%s:%d: documented set_tracing_context frame fails the published JSONL schema: %v\n  payload: %s", page, b.StartLine, err, b.Body)
+		}
+	}
+	if found == 0 {
+		t.Fatalf("%s: no documented set_tracing_context frame found (renamed or removed?)", page)
+	}
 }
 
 // spec: 28.5.3
