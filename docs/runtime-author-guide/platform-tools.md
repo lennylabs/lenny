@@ -423,9 +423,9 @@ Register tracing identifiers that the gateway propagates to child sessions. Use 
 
 **Notes:**
 
-- The adapter stores the context and attaches it to every subsequent `lenny/delegate_task` call. The LLM never sees or sets the tracing context; the runtime manages it as infrastructure plumbing.
+- The gateway merges the submitted context into your session's recorded context, validates the merged result at registration time, and attaches the registered context to each child's delegation lease when you delegate. The adapter itself stores no context and attaches none to later calls. The LLM never sees or sets the tracing context; the runtime manages it as infrastructure plumbing.
 - A child runtime can extend the inherited context with additional entries. Child entries merge with parent entries and cannot overwrite or remove them.
-- The same registration is available to all integration levels through the stdout JSONL `set_tracing_context` message. The MCP tool exists for Standard- and Full-level runtimes that already hold an MCP connection.
+- The same registration is available to all integration levels through the stdout JSONL `set_tracing_context` message. The MCP tool exists for Standard- and Full-level runtimes that already hold an MCP connection. On a pod running concurrent slots, the JSONL frame must carry the emitting slot's `slotId`; a frame the adapter cannot address to the stream's own live session is dropped and logged rather than applied. See [Adapter Contract](../reference/adapter-contract.md).
 
 ---
 
@@ -446,4 +446,4 @@ Register tracing identifiers that the gateway propagates to child sessions. Use 
 | `lenny/get_task_tree` | -- | Yes | Yes |
 | `lenny/set_tracing_context` | -- | Yes | Yes |
 
-All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and the adapter-local file tools (`read_file`, `write_file`, `list_dir`, and `delete_file`). A Basic-level runtime that needs to propagate a tracing context can still do so through the stdout JSONL `set_tracing_context` message, which is available at every level.
+All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and the adapter-local file tools (`read_file`, `write_file`, `list_dir`, and `delete_file`). A Basic-level runtime that needs to propagate a tracing context can still do so through the stdout JSONL `set_tracing_context` message, which is available at every level. On a pod running concurrent slots the frame must carry the emitting slot's `slotId`, and a frame the adapter cannot address to the stream's own live session is dropped and logged rather than applied.

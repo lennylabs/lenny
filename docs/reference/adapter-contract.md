@@ -310,10 +310,22 @@ Informational. The adapter forwards status updates to the gateway for client vis
 #### `set_tracing_context` --- Propagate Tracing Identifiers
 
 ```json
-{ "type": "set_tracing_context", "context": { "langsmith_run_id": "run_abc123" } }
+{
+  "type": "set_tracing_context",
+  "context": { "langsmith_run_id": "run_abc123" },
+  "slotId": null
+}
 ```
 
-Registers tracing identifiers that the adapter attaches to all subsequent `lenny/delegate_task` gRPC requests. Available at all levels. Validation rules are enforced by the gateway when the delegation request arrives.
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Always `"set_tracing_context"` |
+| `context` | object | Map of string keys to string values carrying opaque, non-sensitive tracing identifiers |
+| `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1`. Names the slot whose session is registering the identifiers. |
+
+Registers tracing identifiers for the session that emitted the frame. The gateway merges the submitted context into that session's recorded context, validates the merged result against the tracing-context rules at registration time, and attaches the registered context to each child's delegation lease when the session delegates. The adapter itself stores no context and attaches none to later requests. The frame is available at all integration levels.
+
+**Addressing.** The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and, on a pod serving more than one concurrent session, to that session's slot. The adapter applies the frame only when the frame's `slotId` matches the stream's slot (an absent or null `slotId` matching a stream bound to no slot) and the adapter still binds that address to the stream's session. A frame the adapter cannot address to the stream's own live session is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime, the same outcome as a `tool_result` carrying an unknown `id`.
 
 ---
 
