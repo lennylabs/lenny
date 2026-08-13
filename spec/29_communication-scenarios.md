@@ -1474,8 +1474,8 @@ as independent in each of them.
   ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 - The addressing key on the agent message plane. Every `message`, `tool_result`, `response`, `tool_call`,
   and `set_tracing_context` on `CH-MSGSOCK` carries the slot's `slotId`, and a runtime serving such a
-  pool implements a dispatch loop keyed on it (§28.5.3, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
-  The key is per slot and the channel it rides is not.
+  pool implements a dispatch loop keyed on it (§28.5.3). The key is per slot and the channel it rides is
+  not.
 - Admission of a checkpoint to the adapter's operation lock. The lock admits one pending checkpoint per
   distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and promotes the pending
   checkpoints in slot-ID order ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). The lock
@@ -1496,11 +1496,10 @@ independent in them.
   `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, `CH-PODHEALTH`, and `CH-ADAPTEREVENTS` are
   established per replica and pod, with no per-slot connection stated.
 - The agent message plane itself. `CH-MSGSOCK` is one channel over which a pod serving more than one
-  concurrent session multiplexes every slot's stream, keyed by `slotId` (§28.5.3, §28.6), which
-  [§15.4](15_external-api-surface.md#154-runtime-adapter-specification) states as multiple independent
-  concurrent session streams through a single stdin channel. It is a scoping constraint rather than an
-  exclusivity constraint, and the specification states no exclusivity constraint on this channel and
-  names no guard that enforces one (§28.6).
+  concurrent session multiplexes every slot's stream, keyed by `slotId` (§28.5.3, §28.6), which §28.5.3
+  states as multiple independent concurrent session streams through a single stdin channel. It is a
+  scoping constraint rather than an exclusivity constraint, and the specification states no exclusivity
+  constraint on this channel and names no guard that enforces one (§28.6).
 - The adapter's operation lock. It is pod-level and serializes `Checkpoint` and `Interrupt` across the
   pod's slots, and while an interrupt is pending it holds the whole-pod queue, so any further checkpoint
   or interrupt is dropped with a `BUSY` status ([§4.7](04_system-components.md#47-runtime-adapter),
