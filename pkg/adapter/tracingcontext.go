@@ -22,6 +22,41 @@ type setTracingContextFrame struct {
 	Context map[string]string `json:"context"`
 }
 
+// tracingFrameAddressesStream reports whether a set_tracing_context frame
+// is addressed to the Attach stream that delivered it, which is bound to
+// (sessionID, slotID). Both §28.5.3 conditions are evaluated here:
+//
+//  1. Address equality: the frame's slotId equals the stream's slotId as
+//     exact string equality, with an absent slotId counting as the empty
+//     string on both sides. This is the only condition that names a
+//     session.
+//  2. Live-binding confirmation: the registry still binds that address to
+//     this stream's session, and the address is unambiguous. A slotless
+//     stream requires the pod's session to still be this stream's session
+//     and the slot registry to be empty, because a pod holding registered
+//     slots has taken the §6.4 per-slot path and an untagged frame there
+//     names no single session. A slot-bound stream requires the slot's
+//     registry entry to still name this stream's session.
+//
+// Condition 2 reads state that changes over the session's lifetime, so it
+// may only reject. The registry is sampled once under a single s.mu hold
+// so both of its terms read one consistent state; a second locked read
+// could observe a slot claimed or released between the two. Modeled on
+// checkSession and checkSlotSession, which validate the same binding at
+// Attach bind time. spec: §28.5.3, §6.4.
+func (s *Server) tracingFrameAddressesStream(sessionID, slotID string, line []byte) bool {
+	if frameSlotID(line) != slotID {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if slotID == "" {
+		return s.sessionID == sessionID && len(s.slots) == 0
+	}
+	st, ok := s.slotStateLocked(slotID)
+	return ok && st.sessionID == sessionID
+}
+
 // handleSetTracingContext consumes a §28.5.3 set_tracing_context
 // frame and registers its identifiers with the gateway so they propagate
 // through subsequent lenny/delegate_task calls. It reuses the gateway's
@@ -32,8 +67,21 @@ type setTracingContextFrame struct {
 // the runtime's MCP client, so the frame works at all tiers including
 // Basic (which has no MCP access). The bound sessionID is injected, so a
 // runtime cannot register tracing context against a session it does not
-// own. spec: §28.5.3, §8.3.
-func (s *Server) handleSetTracingContext(ctx context.Context, sessionID string, line []byte) {
+// own.
+//
+// The single pod-global runtime serves every slot and its output is
+// fanned out to every Attach stream, so a frame that does not address
+// this stream is dropped, counted, and logged as a protocol error. The
+// adapter relays nothing onward and returns nothing to the runtime: the
+// inbound message set on this channel admits no report frame.
+// spec: §28.5.3, §8.3.
+func (s *Server) handleSetTracingContext(ctx context.Context, sessionID, slotID string, line []byte) {
+	if !s.tracingFrameAddressesStream(sessionID, slotID, line) {
+		incSetTracingContextDropped()
+		log.Printf("lenny-adapter: protocol error: set_tracing_context frame for slot %q dropped on the stream bound to session %s slot %q",
+			frameSlotID(line), sessionID, slotID)
+		return
+	}
 	if s.PlatformForwarder == nil {
 		// Dev path with no gateway link: there is nothing to register
 		// against, so the frame is dropped after being consumed.

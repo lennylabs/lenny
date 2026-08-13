@@ -138,10 +138,13 @@ func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
 	}
 }
 
-// fakePlatformForwarder records the session id it is forwarded with and
-// returns a canned catalog / result. The mutex guards the captured call
-// so a test reading it after a concurrent server-goroutine forward (the
-// Attach loop's set_tracing_context path) stays race-free. spec: §9.1. F-9.1.1.
+// fakePlatformForwarder records the calls it is forwarded and returns a
+// canned catalog / result. The mutex guards the captured calls so a test
+// reading them after a concurrent server-goroutine forward stays
+// race-free. The Attach loop's set_tracing_context path is one such
+// concurrent writer, and it forwards only when the frame addresses the
+// stream that delivered it (§28.5.3), so the recorded call count is what
+// an addressing test asserts against. spec: §9.1. F-9.1.1.
 type fakePlatformForwarder struct {
 	list       []mcp.Tool
 	result     json.RawMessage
@@ -149,6 +152,8 @@ type fakePlatformForwarder struct {
 	gotSession string
 	gotTool    string
 	gotArgs    json.RawMessage
+	callCount  int
+	sessions   []string
 }
 
 func (f *fakePlatformForwarder) ListPlatformTools(_ context.Context, sessionID string) ([]mcp.Tool, error) {
@@ -164,7 +169,18 @@ func (f *fakePlatformForwarder) CallPlatformTool(_ context.Context, sessionID, t
 	f.gotSession = sessionID
 	f.gotTool = toolName
 	f.gotArgs = append(json.RawMessage(nil), arguments...)
+	f.callCount++
+	f.sessions = append(f.sessions, sessionID)
 	return f.result, nil
+}
+
+// calls returns the number of CallPlatformTool forwards and the session id
+// of each, under the lock, so a test can assert that a frame produced
+// exactly one call against exactly one session.
+func (f *fakePlatformForwarder) calls() (int, []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.callCount, append([]string(nil), f.sessions...)
 }
 
 // lastCall returns the most recent CallPlatformTool arguments under the

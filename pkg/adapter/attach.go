@@ -110,9 +110,12 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// propagation) and never relays as content. Available at all
 			// tiers, so even a Basic runtime with no MCP access reaches the
 			// same gateway registration the lenny/set_tracing_context MCP
-			// tool performs.
+			// tool performs. The handler resolves the frame against this
+			// stream's (session, slot) address and drops one that addresses
+			// another stream, so an untagged frame on a concurrent pod no
+			// longer registers against every slot's session.
 			if jsonlFrameType(line) == "set_tracing_context" {
-				s.handleSetTracingContext(ctx, sessionID, line)
+				s.handleSetTracingContext(ctx, sessionID, slotID, line)
 				continue
 			}
 			// §28.5.3: an adapter-local tool_call is answered by the

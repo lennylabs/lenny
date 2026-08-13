@@ -80,6 +80,16 @@ var (
 		Help: "Adapter→gateway control events that could not be delivered " +
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
+	// §28.5.3: set_tracing_context frames dropped because the frame
+	// did not address the Attach stream that delivered it. A non-zero value
+	// means a runtime stamped a slot id that names another stream, omitted
+	// one on a concurrent pod, or emitted the frame after its binding was
+	// released.
+	setTracingContextDropped = mustCounter(prometheus.CounterOpts{
+		Name: "lenny_adapter_set_tracing_context_dropped_total",
+		Help: "set_tracing_context frames dropped because they did not " +
+			"address the Attach stream that delivered them (§28.5.3).",
+	})
 	// §10.1.4: 1 while the adapter is in the coordinator-loss hold
 	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
 	coordinatorHold = mustGauge(prometheus.GaugeOpts{
@@ -181,6 +191,10 @@ func incControlEventSent(event string) { controlEventsSent.WithLabelValues(event
 func incControlEventDropped(event, reason string) {
 	controlEventsDropped.WithLabelValues(event, reason).Inc()
 }
+
+// incSetTracingContextDropped records a §28.5.3 set_tracing_context
+// frame the adapter dropped because it addressed another Attach stream.
+func incSetTracingContextDropped() { setTracingContextDropped.WithLabelValues().Inc() }
 
 // setCoordinatorHold publishes the §10.1 coordinator-hold gauge, which
 // reads 1 while the adapter is in hold state and 0 once a fence resolves
