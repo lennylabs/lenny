@@ -1470,32 +1470,9 @@ The artifacts are versioned by Lenny release tag. Breaking changes to the `.prot
 
 #### 15.4.1 Adapter↔Binary Protocol
 
-The runtime adapter communicates with the agent binary over **stdin/stdout** using newline-delimited JSON (JSON Lines). Each message is a single JSON object terminated by `\n`. The `prompt` message type is removed — the unified `message` type handles all inbound content delivery.
-
-**Inbound messages (adapter → agent binary via stdin):**
-
-| `type` field  | Description                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`     | All content delivery: initial task, mid-session injection, reply to `request_input`, sibling notification. Carries optional `slotId` on pods whose pool sets `maxConcurrentSessions > 1`. |
-| `tool_result` | The result of a tool call requested by the agent. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `heartbeat`   | Periodic liveness ping; agent must respond                                                                                                                          |
-| `shutdown`    | Graceful shutdown with no new task                                                                                                                                  |
-
 The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
 
-**Outbound messages (agent binary → adapter via stdout):**
-
-| `type` field             | Description                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `response`               | Streamed or complete response carrying `MessagePart[]`. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `tool_call`              | Agent requests execution of a tool. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `heartbeat_ack`          | Acknowledges an inbound `heartbeat`. Protocol-level; no content payload.                              |
-| `status`                 | Optional status/trace update                                                                          |
-| `set_tracing_context`    | Registers tracing identifiers for propagation through delegation. Payload: `{"type": "set_tracing_context", "context": {"langsmith_run_id": "run_abc123"}}`. The adapter stores the context and automatically attaches it to all subsequent `lenny/delegate_task` gRPC requests. Validation rules ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)) are enforced by the gateway when the delegation request arrives. Available at all tiers. See [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
-
 **`input_required` outbound message type removed.** Replaced by `lenny/request_input` blocking MCP tool call on the platform MCP server.
-
-**`slotId` for concurrent-session multiplexing:** Messages on a pod whose pool sets `sessionPolicy.maxConcurrentSessions: 1` never carry `slotId`, and runtimes on those pods never see it. Runtimes serving a pool with `maxConcurrentSessions > 1` implement a dispatch loop keyed on `slotId`: each concurrent slot's messages carry a distinct `slotId` assigned by the adapter. This allows multiple independent concurrent session streams through a single stdin channel.
 
 **stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages.
 
