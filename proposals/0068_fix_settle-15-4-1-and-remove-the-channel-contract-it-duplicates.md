@@ -1,6 +1,13 @@
 # Proposal: Settle §15.4.1 and remove the channel contract it duplicates
 
-- **Status:** **Approved (2026-08-13) by jaf sign-off.** Verified (2026-08-12), converged after 10
+- **Status:** **Superseded (2026-08-13) by proposal 0069.** Approved (2026-08-13) by jaf sign-off and
+  never applied: the tree was reverted to the sign-off commit before implementation completed. Its
+  specification move is carried forward unchanged by 0069; its frame-addressing design is replaced.
+  0068 taught the adapter its pod's concurrency through a new CRD field, a poolstore mirror, and a
+  launch argument, on the premise that the adapter could not otherwise know it. The adapter holds a
+  more precise fact already: an Attach stream is bound to one `(session, slot)` address, and the
+  stream's own slot id carries what an untagged frame means on that pod. Verified (2026-08-12),
+  converged after 10
   adversarial review rounds (23 findings fixed) across three full-pool sweeps, the certifying sweep
   running every lens complete with zero confirmed findings.
 - **Date:** 2026-08-12.
