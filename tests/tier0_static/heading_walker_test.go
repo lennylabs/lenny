@@ -165,6 +165,7 @@ func TestHeadingWalkerSlugMatchesTheRenderedAnchor(t *testing.T) {
 		{"18.3 Phase 0 — Bootstrap the infrastructure repo", "183-phase-0--bootstrap-the-infrastructure-repo"},
 		{"17.4 Local Development Mode (`lenny-dev`)", "174-local-development-mode-lenny-dev"},
 		{"28.5.3 Intra-pod", "2853-intra-pod"},
+		{"15.4.1 Message Format and Binary I/O Requirements", "1541-message-format-and-binary-io-requirements"},
 		{"23.1 Why Lenny?", "231-why-lenny"},
 	}
 	for _, c := range cases {
