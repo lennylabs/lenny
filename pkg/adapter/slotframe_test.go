@@ -34,37 +34,6 @@ func TestFrameSlotID(t *testing.T) {
 	}
 }
 
-// spec: §28.5.3 — frameSlotAddress resolves the address an addressing
-// decision compares. An absent slotId is the empty address; a slotId that
-// is present but is not a JSON string is no address at all, so the probe
-// reports it as malformed rather than collapsing it to the empty address
-// the way frameSlotID does for the demultiplexer.
-func TestFrameSlotAddress(t *testing.T) {
-	cases := []struct {
-		name  string
-		frame string
-		want  string
-		ok    bool
-	}{
-		{"tagged", `{"type":"set_tracing_context","slotId":"slot-a"}`, "slot-a", true},
-		{"absent", `{"type":"set_tracing_context"}`, "", true},
-		{"empty value", `{"type":"set_tracing_context","slotId":""}`, "", true},
-		{"number", `{"type":"set_tracing_context","slotId":1}`, "", false},
-		{"null", `{"type":"set_tracing_context","slotId":null}`, "", false},
-		{"object", `{"type":"set_tracing_context","slotId":{"id":"slot-a"}}`, "", false},
-		{"array", `{"type":"set_tracing_context","slotId":["slot-a"]}`, "", false},
-		{"not an object", `not json`, "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := frameSlotAddress([]byte(tc.frame))
-			if got != tc.want || ok != tc.ok {
-				t.Errorf("frameSlotAddress(%q) = (%q, %v), want (%q, %v)", tc.frame, got, ok, tc.want, tc.ok)
-			}
-		})
-	}
-}
-
 // spec: §6.4; §28.5.3 — stampSlotID injects slotId
 // onto an inbound envelope so the shared runtime routes it to the slot's
 // cwd. A non-object frame is forwarded unchanged so a non-envelope frame is

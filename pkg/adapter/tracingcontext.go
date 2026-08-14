@@ -27,12 +27,11 @@ type setTracingContextFrame struct {
 // (sessionID, slotID). Both §28.5.3 conditions are evaluated here:
 //
 //  1. Address equality: the frame's slotId equals the stream's slotId as
-//     exact string equality, with an absent slotId counting as the empty
-//     string on both sides. This is the only condition that names a
-//     session. The caller resolves the frame's address with
-//     frameSlotAddress and drops a frame whose slotId is present but is
-//     not a JSON string before reaching here, so a malformed address is
-//     never compared as the empty one.
+//     exact string equality, with an absent or empty slotId counting as
+//     the empty string on both sides. This is the only condition that
+//     names a session. The caller reads the frame's address with
+//     frameSlotID, which yields the empty string for any frame that
+//     carries no readable slotId.
 //  2. Live-binding confirmation: the registry still binds that address to
 //     this stream's session, and the address is unambiguous. A slotless
 //     stream requires the pod's session to still be this stream's session
@@ -79,16 +78,7 @@ func (s *Server) tracingFrameAddressesStream(sessionID, frameSlot, slotID string
 // inbound message set on this channel admits no report frame.
 // spec: §28.5.3, §8.3.
 func (s *Server) handleSetTracingContext(ctx context.Context, sessionID, slotID string, line []byte) {
-	frameSlot, addressed := frameSlotAddress(line)
-	if !addressed {
-		// The frame carries a slotId that is not a JSON string, which the
-		// published JSONL schema rejects. It names no slot to compare, so
-		// it is dropped rather than read as an untagged frame.
-		incSetTracingContextDropped()
-		log.Printf("lenny-adapter: protocol error: set_tracing_context frame with a non-string slotId dropped on the stream bound to session %s slot %q",
-			sessionID, slotID)
-		return
-	}
+	frameSlot := frameSlotID(line)
 	if !s.tracingFrameAddressesStream(sessionID, frameSlot, slotID) {
 		incSetTracingContextDropped()
 		log.Printf("lenny-adapter: protocol error: set_tracing_context frame for slot %q dropped on the stream bound to session %s slot %q",

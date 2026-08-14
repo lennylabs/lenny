@@ -66,8 +66,10 @@ func TestSetTracingContextFrameCarriesSlotID(t *testing.T) {
 //
 //	frame whose slotId is not a string. The adapter compares the
 //	frame's slotId to the delivering stream's slotId as exact
-//	string equality, so a non-string value carries no address to
-//	compare and must not validate.
+//	string equality and reads any value it cannot decode as a
+//	string as no slotId at all, so a non-string value silently
+//	becomes an untagged frame that a concurrent pod drops. The
+//	schema is where that authoring mistake is caught.
 func TestSetTracingContextRejectsNonStringSlotID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)

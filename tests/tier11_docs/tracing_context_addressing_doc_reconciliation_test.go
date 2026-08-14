@@ -234,3 +234,63 @@ func TestTracingContextDocsCiteNoSpecSections(t *testing.T) {
 		requireNoneContain(t, label, entry, []string{"§", "spec/"})
 	}
 }
+
+// tracingAddressingSpecBlock returns the Addressing block of the
+// set_tracing_context card in spec/28_communication-channels.md, from its
+// "**Addressing.**" lead to the next heading. The block is the normative
+// statement of the addressing rule the reference page restates.
+func tracingAddressingSpecBlock(t *testing.T, root string) string {
+	t.Helper()
+	content := readRepoFile(t, root, "spec", "28_communication-channels.md")
+	const startMark = "**Addressing.** The adapter resolves the frame against the Attach stream"
+	start := strings.Index(content, startMark)
+	if start < 0 {
+		t.Fatalf("spec/28: set_tracing_context Addressing block not found (rewritten or removed?)")
+	}
+	rest := content[start:]
+	if end := strings.Index(rest, "\n#"); end > 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+// spec: 28.5.3 (set_tracing_context addressing)
+// diagnosis: docs/reference/adapter-contract.md publishes an addressing
+//
+//	outcome for `set_tracing_context` that §28.5.3 does not define. The
+//	addressing rule resolves the frame through two conditions over an
+//	address compared as exact string equality, with an absent or empty
+//	`slotId` counting as the empty string on both sides. A page that also
+//	tells a runtime author what happens to a `slotId` of some other JSON
+//	type states behavior no implementor can derive from the contract, and
+//	an adapter written from the spec alone would not match it. Either the
+//	statement comes out of the page or the outcome goes into §28.5.3
+//	first.
+func TestTracingContextAddressingDocStatesNoOutcomeBeyondTheSpec(t *testing.T) {
+	root := repoRoot(t)
+
+	entry := section(adapterContractDoc(t, root), "`set_tracing_context` ---")
+	if entry == "" {
+		t.Fatal("docs/reference/adapter-contract.md: `set_tracing_context` entry not found (renamed or removed?)")
+	}
+	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
+		"The comparison is exact string equality.",
+	})
+
+	// The page may describe an outcome for a `slotId` of a non-string JSON
+	// type only once §28.5.3 defines one, so the check reads the spec block
+	// first and applies only while the spec is silent.
+	specBlock := tracingAddressingSpecBlock(t, root)
+	claims := []string{"non-string", "is not a string", "not a JSON string"}
+	var stated []string
+	for _, c := range claims {
+		if strings.Contains(specBlock, c) {
+			stated = append(stated, c)
+		}
+	}
+	if len(stated) > 0 {
+		t.Logf("spec/28 §28.5.3 Addressing now states a non-string `slotId` outcome (%v); the reference page may restate it", stated)
+		return
+	}
+	requireNoneContain(t, "adapter-contract.md set_tracing_context entry", entry, claims)
+}

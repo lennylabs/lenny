@@ -22,47 +22,6 @@ func frameSlotID(line []byte) string {
 	return probe.SlotID
 }
 
-// frameSlotAddress returns the `slotId` a §28.5.3 JSONL frame carries as
-// an address, and whether that address is well formed. A frame that omits
-// `slotId` addresses the empty slot and reports ("", true). A frame whose
-// `slotId` is present but is not a JSON string carries no address to
-// compare, and reports ("", false) so the caller can fail closed; the
-// published JSONL schema rejects those values, and collapsing one to the
-// empty address would let a malformed frame pass as untagged.
-//
-// It is separate from frameSlotID because demultiplexing and addressing
-// need different answers for the same malformed frame: the demultiplexer
-// treats an unreadable key as "no key" and delivers the frame to every
-// slot stream, while an addressing decision with per-session side effects
-// must reject it. spec: §28.5.3 — outbound frames carry slotId when
-// maxConcurrentSessions > 1.
-func frameSlotAddress(line []byte) (string, bool) {
-	// The frame is decoded field by field rather than into a typed probe
-	// because the decision turns on whether `slotId` is present at all: a
-	// typed probe cannot separate an absent field from a JSON null, and
-	// the schema rejects both a null and any other non-string value.
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(line, &obj); err != nil {
-		return "", false
-	}
-	raw, present := obj["slotId"]
-	if !present {
-		return "", true
-	}
-	// A JSON null decodes into a string without error, leaving the zero
-	// value, so the value is required to open as a JSON string before it
-	// is decoded.
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '"' {
-		return "", false
-	}
-	var id string
-	if err := json.Unmarshal(trimmed, &id); err != nil {
-		return "", false
-	}
-	return id, true
-}
-
 // stampSlotID injects slotID into an outbound §28.5.3 envelope before the
 // adapter forwards it to the shared runtime, so the runtime's dispatch
 // loop and the per-slot demultiplexing both key on it. A frame that is
