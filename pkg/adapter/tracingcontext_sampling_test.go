@@ -27,7 +27,6 @@ const tracingSamplingToggleWindow = 300 * time.Millisecond
 func TestSetTracingContextAddressingSamplesTheRegistryOnce_spec_28_5_3(t *testing.T) {
 	const sessionID = "sess-pod"
 	s := New("test")
-	frame := []byte(`{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc"}}`)
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -60,7 +59,10 @@ func TestSetTracingContextAddressingSamplesTheRegistryOnce_spec_28_5_3(t *testin
 	for time.Now().Before(deadline) {
 		for i := 0; i < 1024; i++ {
 			decisions++
-			if s.tracingFrameAddressesStream(sessionID, "", frame) {
+			// An untagged frame on a slotless stream: both addresses are
+			// the empty string, so address equality holds and only the
+			// live-binding confirmation can reject.
+			if s.tracingFrameAddressesStream(sessionID, "", "") {
 				close(stop)
 				wg.Wait()
 				t.Fatalf("addressing decision %d admitted an untagged frame on a pod that never held "+

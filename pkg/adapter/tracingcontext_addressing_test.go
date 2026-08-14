@@ -347,6 +347,63 @@ func TestSetTracingContextTaggedOnSingleSessionPodIsDropped_spec_28_5_3(t *testi
 	requireDropLogs(t, logs, dropLog{frameSlot: "slot-x", session: "sess-solo", streamSlot: ""})
 }
 
+// spec: 28.5.3 (set_tracing_context addressing) — the frame's slotId is
+// compared as a string, so a frame whose slotId is present but is not a
+// JSON string carries no address. The published JSONL schema rejects that
+// value, and the adapter drops, counts, and logs it rather than reading it
+// as an untagged frame and registering it against the stream's session.
+//
+// diagnosis: a failure means a malformed address fails open. The slotless
+// stream on a single-session pod treats an unreadable slotId as an absent
+// one, so a frame the contract declares invalid registers tracing
+// identifiers instead of being dropped.
+func TestSetTracingContextWithNonStringSlotIDIsDropped_spec_28_5_3(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		frame string
+	}{
+		{"number", `{"type":"set_tracing_context","slotId":1,"context":{"langsmith_run_id":"run_abc"}}`},
+		{"null", `{"type":"set_tracing_context","slotId":null,"context":{"langsmith_run_id":"run_abc"}}`},
+		{"object", `{"type":"set_tracing_context","slotId":{"id":"slot-x"},"context":{"langsmith_run_id":"run_abc"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, rt, fwd, client := singleSessionTracingPod(t, "sess-solo")
+			stream := openTracingAttach(t, client, "sess-solo", "")
+			rt.waitForSubscribers(t, 1)
+
+			before := tracingDrops()
+			logs := captureDropLogs(t)
+			rt.output <- []byte(tc.frame)
+			rt.output <- statusFrame("")
+			awaitStatus(t, stream)
+
+			requireCalls(t, fwd)
+			requireDrops(t, before, 1)
+			requireMalformedSlotIDLog(t, logs, "sess-solo", "")
+		})
+	}
+}
+
+// requireMalformedSlotIDLog asserts the drop path emitted exactly one
+// protocol-error line naming a non-string slotId and the address of the
+// stream that dropped the frame. The line must be distinguishable from the
+// untagged-frame drop, because a runtime that stamps a non-string slotId
+// has a different defect from one that omits the field.
+func requireMalformedSlotIDLog(t *testing.T, logs func() []string, session, streamSlot string) {
+	t.Helper()
+	got := logs()
+	if len(got) != 1 {
+		t.Fatalf("set_tracing_context protocol-error log lines = %d %q, want 1", len(got), got)
+	}
+	line := got[0]
+	if !strings.Contains(line, "non-string slotId") {
+		t.Errorf("protocol-error line %q does not report a non-string slotId", line)
+	}
+	if !strings.Contains(line, "session "+session) || !strings.Contains(line, fmt.Sprintf("slot %q", streamSlot)) {
+		t.Errorf("protocol-error line %q does not name the stream (session %s, slot %q)", line, session, streamSlot)
+	}
+}
+
 // spec: 28.5.3 (set_tracing_context addressing) — live-binding
 // confirmation on the per-slot branch. The slot entry is deleted while the
 // stream is still draining the runtime's output, so a correctly tagged
