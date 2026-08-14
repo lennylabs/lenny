@@ -1,6 +1,7 @@
 # Proposal: Catalog the adapter tracing-frame drop counter
 
-- **Status:** **Approved (2026-08-14) by jaf sign-off.** Verified (2026-08-14). Converged after 5
+- **Status:** **Applied to spec (2026-08-14).** Approved (2026-08-14) by jaf sign-off. Verified
+  (2026-08-14). Converged after 5
   adversarial review rounds (2 findings fixed). See §7 for the review history.
 - **Date:** 2026-08-14
 - **Scope:** Adds the `lenny_adapter_set_tracing_context_dropped_total` counter to the §16.1 metric
