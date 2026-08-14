@@ -46,9 +46,7 @@ var undocumentedAdapterMetrics = map[string]string{
 // added to the reference with no staged amendment fails the sweep. When
 // the row lands the entry goes stale and the sweep fails until it is
 // removed.
-var specCatalogPending = map[string]string{
-	"lenny_adapter_set_tracing_context_dropped_total": "0074_fix_catalog-the-adapter-tracing-frame-drop-counter.md",
-}
+var specCatalogPending = map[string]string{}
 
 // registeredAdapterMetrics returns the metric names pkg/adapter/metrics.go
 // registers, which is the adapter's whole metric surface.
