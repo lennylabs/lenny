@@ -3,8 +3,13 @@
 package adapter_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -91,6 +96,91 @@ func requireCalls(t *testing.T, fwd *fakePlatformForwarder, want ...string) {
 	}
 }
 
+// syncBuffer collects log output written from the goroutines that serve
+// the pod's Attach streams, which write the drop log concurrently when a
+// fanned-out frame is rejected on more than one stream.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// captureDropLogs redirects the standard logger, which the adapter writes
+// the drop diagnostic through, to a buffer for the duration of the case.
+// The returned accessor yields the protocol-error lines the
+// set_tracing_context drop path emitted, ignoring any other line the pod
+// wrote while the case ran.
+func captureDropLogs(t *testing.T) func() []string {
+	t.Helper()
+	prev := log.Writer()
+	buf := &syncBuffer{}
+	log.SetOutput(buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	return func() []string {
+		var lines []string
+		for _, line := range strings.Split(buf.String(), "\n") {
+			if strings.Contains(line, "protocol error") && strings.Contains(line, "set_tracing_context") {
+				lines = append(lines, line)
+			}
+		}
+		return lines
+	}
+}
+
+// dropLog is one expected drop diagnostic: the slot the frame was tagged
+// with, and the (session, slot) address of the Attach stream that dropped
+// it. A drop counted by an unlabelled counter is only attributable to a
+// misaddressed frame, a wrong-slot stamp, or a teardown-window arrival
+// through this line, so the line must name all three fields in that order.
+type dropLog struct {
+	frameSlot  string
+	session    string
+	streamSlot string
+}
+
+// matches reports whether line names the frame's slot, then the stream's
+// session, then the stream's slot.
+func (d dropLog) matches(line string) bool {
+	frame := strings.Index(line, fmt.Sprintf("slot %q", d.frameSlot))
+	session := strings.Index(line, "session "+d.session)
+	stream := strings.LastIndex(line, fmt.Sprintf("slot %q", d.streamSlot))
+	return frame >= 0 && session > frame && stream > session
+}
+
+// requireDropLogs asserts the drop path emitted exactly one protocol-error
+// line per expected drop and that each names its frame slot and its
+// stream's address.
+func requireDropLogs(t *testing.T, logs func() []string, want ...dropLog) {
+	t.Helper()
+	got := logs()
+	if len(got) != len(want) {
+		t.Fatalf("set_tracing_context protocol-error log lines = %d %q, want %d", len(got), got, len(want))
+	}
+	for _, w := range want {
+		n := 0
+		for _, line := range got {
+			if w.matches(line) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%d protocol-error line(s) name frame slot %q on stream (session %s, slot %q), want 1; got %q",
+				n, w.frameSlot, w.session, w.streamSlot, got)
+		}
+	}
+}
+
 // requireDrops asserts the drop counter moved by want since before.
 func requireDrops(t *testing.T, before, want float64) {
 	t.Helper()
@@ -147,12 +237,14 @@ func TestSetTracingContextTaggedForOwnSlotRegistersOnce_spec_28_5_3(t *testing.T
 	rt.waitForSubscribers(t, 2)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("slot-a")
 	rt.output <- statusFrame("slot-a")
 	awaitStatus(t, streamA)
 
 	requireCalls(t, fwd, "sess-slot-a")
 	requireDrops(t, before, 0)
+	requireDropLogs(t, logs)
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — an untagged frame on a
@@ -170,6 +262,7 @@ func TestSetTracingContextUntaggedOnConcurrentPodIsDropped_spec_28_5_3(t *testin
 	rt.waitForSubscribers(t, 2)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
 	rt.output <- statusFrame("slot-a")
 	rt.output <- statusFrame("slot-b")
@@ -179,6 +272,9 @@ func TestSetTracingContextUntaggedOnConcurrentPodIsDropped_spec_28_5_3(t *testin
 	requireCalls(t, fwd)
 	// Both slot streams see the untagged frame, so both reject it.
 	requireDrops(t, before, 2)
+	requireDropLogs(t, logs,
+		dropLog{frameSlot: "", session: "sess-slot-a", streamSlot: "slot-a"},
+		dropLog{frameSlot: "", session: "sess-slot-b", streamSlot: "slot-b"})
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — a frame tagged for a
@@ -194,12 +290,14 @@ func TestSetTracingContextTaggedForSiblingSlotNeverReachesStream_spec_28_5_3(t *
 	rt.waitForSubscribers(t, 1)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("slot-b")
 	rt.output <- statusFrame("slot-a")
 	awaitStatus(t, streamA)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 0)
+	requireDropLogs(t, logs)
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — on a single-session pod
@@ -215,12 +313,14 @@ func TestSetTracingContextUntaggedOnSingleSessionPodRegisters_spec_28_5_3(t *tes
 	rt.waitForSubscribers(t, 1)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
 	rt.output <- statusFrame("")
 	awaitStatus(t, stream)
 
 	requireCalls(t, fwd, "sess-solo")
 	requireDrops(t, before, 0)
+	requireDropLogs(t, logs)
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — no session on a
@@ -237,12 +337,14 @@ func TestSetTracingContextTaggedOnSingleSessionPodIsDropped_spec_28_5_3(t *testi
 	rt.waitForSubscribers(t, 1)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("slot-x")
 	rt.output <- statusFrame("")
 	awaitStatus(t, stream)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
+	requireDropLogs(t, logs, dropLog{frameSlot: "slot-x", session: "sess-solo", streamSlot: ""})
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — live-binding
@@ -259,12 +361,14 @@ func TestSetTracingContextAfterSlotReleaseIsDropped_spec_28_5_3(t *testing.T) {
 	s.ReleaseSlotForTest(context.Background(), "slot-a")
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("slot-a")
 	rt.output <- statusFrame("slot-a")
 	awaitStatus(t, streamA)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
+	requireDropLogs(t, logs, dropLog{frameSlot: "slot-a", session: "sess-slot-a", streamSlot: "slot-a"})
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — live-binding
@@ -286,12 +390,14 @@ func TestSetTracingContextPodGlobalStreamWithOccupiedSlotIsDropped_spec_28_5_3(t
 	rt.waitForSubscribers(t, 1)
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
 	rt.output <- statusFrame("")
 	awaitStatus(t, stream)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
+	requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-pod", streamSlot: ""})
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — live-binding
@@ -314,10 +420,12 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 	s.ReleaseSessionForTest()
 
 	before := tracingDrops()
+	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
 	rt.output <- statusFrame("")
 	awaitStatus(t, stream)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
+	requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-solo", streamSlot: ""})
 }
