@@ -1206,6 +1206,7 @@
         "tests/tier4_integration/delegation_credential_propagation_test.go::TestInheritFromDenyOriginRejectedAtDelegation",
         "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058",
         "tests/tier7a_load_local/tracing_context_concurrent_registration_test.go",
+        "tests/tier7a_load_local/tracing_context_release_race_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
         "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
         "tests/tier9_security/delegation_credential_deny_leakage_test.go::TestDenyDelegationDeliversNoLeaseToken"
@@ -2943,6 +2944,9 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
         "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementCanonicalAccepted",
         "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementSiblingLocationRejected",
+        "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextFrameCarriesSlotID",
+        "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextRejectsNonStringSlotID",
+        "tests/tier9_security/tracing_context_session_isolation_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
