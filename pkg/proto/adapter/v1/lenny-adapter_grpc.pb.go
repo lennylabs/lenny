@@ -239,10 +239,13 @@ type AdapterClient interface {
 	// runtime's declared integrationLevel and reject an underperforming
 	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error)
-	// AdapterEvents is a bidirectional stream the adapter uses to surface
-	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
-	// the event taxonomy.
+	// AdapterEvents is the bidirectional stream over which the adapter
+	// surfaces operational events to the gateway: RATE_LIMITED,
+	// AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+	// AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+	// The gateway opens the stream and the adapter originates the
+	// messages. The event taxonomy is the adapter→gateway events table in
+	// spec/04_system-components.md (§4.7.3).
 	AdapterEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse], error)
 }
 
@@ -684,10 +687,13 @@ type AdapterServer interface {
 	// runtime's declared integrationLevel and reject an underperforming
 	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error)
-	// AdapterEvents is a bidirectional stream the adapter uses to surface
-	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
-	// the event taxonomy.
+	// AdapterEvents is the bidirectional stream over which the adapter
+	// surfaces operational events to the gateway: RATE_LIMITED,
+	// AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+	// AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+	// The gateway opens the stream and the adapter originates the
+	// messages. The event taxonomy is the adapter→gateway events table in
+	// spec/04_system-components.md (§4.7.3).
 	AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error
 }
 

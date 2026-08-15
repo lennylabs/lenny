@@ -6319,11 +6319,11 @@ func (x *GetObservedIntegrationLevelResponse) GetObservedLevel() string {
 	return ""
 }
 
-// Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
-// in lenny-adapter-jsonl.schema.json under the lifecycle section in the
-// spec. Kept opaque here so the proto schema does not need to evolve every
-// time a lifecycle event is added. Request and response carry the same
-// payload but are typed separately per proto-RPC convention.
+// Opaque adapter event envelope. The event taxonomy is the adapter→gateway
+// events table in spec/04_system-components.md (§4.7.3), the same source the
+// AdapterEvents RPC comment names. Kept opaque here so the proto schema does
+// not need to evolve every time an event is added. Request and response carry
+// the same payload but are typed separately per proto-RPC convention.
 type AdapterEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EnvelopeJson  []byte                 `protobuf:"bytes,1,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`

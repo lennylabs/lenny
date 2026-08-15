@@ -1,0 +1,20 @@
+// Fixture: the pre-correction text of the two comments on the
+// adapter→gateway event stream in schemas/lenny-adapter.proto. The RPC
+// comment credits the stream with the four intra-pod CH-RUNTIMEOPS frames
+// and sends the reader to §15.4; the envelope comment names
+// lenny-adapter-jsonl.schema.json as the taxonomy's owner.
+
+  // AdapterEvents is a bidirectional stream the adapter uses to surface
+  // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
+  // credentials_acknowledged, deadline_approaching). See spec §15.4 for
+  // the event taxonomy.
+  rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse) {}
+
+// Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
+// in lenny-adapter-jsonl.schema.json under the lifecycle section in the
+// spec. Kept opaque here so the proto schema does not need to evolve every
+// time a lifecycle event is added. Request and response carry the same
+// payload but are typed separately per proto-RPC convention.
+message AdapterEventsRequest {
+  bytes envelope_json = 1;
+}

@@ -596,7 +596,10 @@
         "pkg/adapter/adapterevents_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
-        "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go"
+        "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go",
+        "tests/tier0_static/adapter_proto_event_taxonomy_test.go",
+        "tests/tier3_contract/adapter_events/event_taxonomy_wire_test.go",
+        "tests/tier10_conformance/adapter_contract_event_taxonomy_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -4857,7 +4860,9 @@
       "tests": [
         "tests/tier11_docs/artifact_register_supersession_test.go",
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
-        "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go"
+        "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
+        "tests/tier3_contract/adapter_events/event_taxonomy_wire_test.go",
+        "tests/tier10_conformance/adapter_contract_event_taxonomy_test.go"
       ],
       "packages": [],
       "depends_on_sections": [

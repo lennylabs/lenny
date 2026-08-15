@@ -220,10 +220,13 @@ service Adapter {
   // runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
   rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
 
-  // AdapterEvents is a bidirectional stream the adapter uses to surface
-  // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-  // credentials_acknowledged, deadline_approaching). See spec §15.4 for
-  // the event taxonomy.
+  // AdapterEvents is the bidirectional stream over which the adapter
+  // surfaces operational events to the gateway: RATE_LIMITED,
+  // AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+  // AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+  // The gateway opens the stream and the adapter originates the
+  // messages. The event taxonomy is the adapter→gateway events table in
+  // spec/04_system-components.md (§4.7.3).
   rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse) {}
 }
 
@@ -1585,11 +1588,11 @@ message GetObservedIntegrationLevelResponse {
   string observed_level = 1;
 }
 
-// Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
-// in lenny-adapter-jsonl.schema.json under the lifecycle section in the
-// spec. Kept opaque here so the proto schema does not need to evolve every
-// time a lifecycle event is added. Request and response carry the same
-// payload but are typed separately per proto-RPC convention.
+// Opaque adapter event envelope. The event taxonomy is the adapter→gateway
+// events table in spec/04_system-components.md (§4.7.3), the same source the
+// AdapterEvents RPC comment names. Kept opaque here so the proto schema does
+// not need to evolve every time an event is added. Request and response carry
+// the same payload but are typed separately per proto-RPC convention.
 message AdapterEventsRequest {
   bytes envelope_json = 1;
 }
