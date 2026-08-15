@@ -663,12 +663,13 @@ Session transitions to suspended state. Pod is held.
 
 ## Canonical artifacts
 
-The adapter protocol is defined by three published schema artifacts. Runtime authors -- and the adapter compliance suite (`lenny-ctl runtime verify`) -- validate against these files rather than the narrative prose in this guide.
+The adapter protocol is defined by the published schema artifacts the table below names. Runtime authors, and the adapter compliance suite (`lenny-ctl runtime verify`), validate against these files rather than the narrative prose in this guide.
 
 | Artifact | Purpose | Canonical URL |
 |:---------|:--------|:--------------|
 | `lenny-adapter.proto` | gRPC service definition for the gateway ↔ adapter control plane (`Attach`, `SendMessage`, `Checkpoint`, `DemoteSDK`, etc.) and all associated message types. | `https://schemas.lenny.dev/adapter/v1/lenny-adapter.proto` |
-| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames exchanged between the adapter and the agent binary (`message`, `tool_call`, `tool_result`, `response`, `heartbeat`, lifecycle frames). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |
+| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames exchanged between the adapter and the agent binary (`message`, `heartbeat`, `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, and `set_tracing_context`). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |
 | `messagepart.schema.json` | JSON Schema for the structured `messageParts` field used in `agent_output` events and tool results (text, image, redaction, inline-file parts). | `https://schemas.lenny.dev/adapter/v1/messagepart.schema.json` |
+| `runtime-ops-events.schema.json` | JSON Schema for the [CH-RUNTIMEOPS](#ch-runtimeops-full-level-only) frames a Full-level runtime and the adapter exchange over the runtime-operations Unix socket (capability handshake, checkpoint, interrupt, `credentials_rotated`, `deadline_approaching`, `files_updated`, `terminate`, and the LLM-request frames). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |
 
 Each artifact is versioned independently and distributed alongside every Lenny release under `/schemas/adapter/v1/` in the release bundle. Compliance is checked programmatically during `lenny-ctl runtime verify`, which returns structured diff output when a runtime's frames fail validation. Fix your runtime to produce valid frames rather than pinning an older schema version -- the schemas are stable within `v1`, and breaking changes bump the major version.

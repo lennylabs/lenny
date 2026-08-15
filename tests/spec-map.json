@@ -4859,6 +4859,7 @@
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
         "tests/tier11_docs/artifact_register_supersession_test.go",
+        "tests/tier11_docs/compliance_suite_artifact_enumeration_test.go",
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
         "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
         "tests/tier3_contract/adapter_events/event_taxonomy_wire_test.go",

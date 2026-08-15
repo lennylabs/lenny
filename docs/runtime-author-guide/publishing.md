@@ -364,7 +364,7 @@ Before publishing:
    lenny runtime validate --report compliance.json
    ```
 
-   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `messagepart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
+   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames, `messagepart.schema.json` for structured content parts, and `runtime-ops-events.schema.json` for the Full-level runtime-operations frames. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
 
 2. **Write a clear description** of what your runtime does, what integration level it implements, and what LLM providers it supports.
 
