@@ -22,7 +22,7 @@
 // These tests are NOT under a build tag because they exercise the
 // repository state directly — no external infrastructure required.
 //
-// spec: §15.4, §21.1
+// spec: §15.4, §21
 
 package tier11_docs_test
 
@@ -65,7 +65,7 @@ var fidelityMatrixMaterialTerms = []string{"MessagePart", "schemaVersion", "[los
 // label, is sent to material that does not support the sentence.
 // Repoint or relabel the citation rather than widening this check.
 //
-// spec: §15.4, §21.1
+// spec: §15.4, §21
 func TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4(t *testing.T) {
 	pages := readFidelityMatrixPointerPages(t)
 	for _, finding := range fidelityMatrixPointerFindings(pages) {
@@ -103,7 +103,7 @@ func TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4(t *testing.T)
 // specification with this tier green. Repair the finding function
 // rather than the fixture.
 //
-// spec: §15.4, §21.1
+// spec: §15.4, §21
 func TestPlannedFidelityMatrixPointerCheckReadsItsFailureCases_spec_15_4(t *testing.T) {
 	const matrixTarget = apiSurfaceSpecFile + "#translation-fidelity-matrix"
 	api := fidelityMatrixFixtureAPIPage()
