@@ -2792,7 +2792,7 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
-        "cmd/lenny-compliance/full.go::checkLifecycleHandshake",
+        "cmd/lenny-compliance/full.go::checkRuntimeOpsHandshake",
         "cmd/lenny-compliance/full.go::checkCheckpointQuiesce",
         "cmd/lenny-compliance/full.go::checkInterruptAck",
         "cmd/lenny-compliance/full.go::checkCredentialRotation",
@@ -2997,11 +2997,13 @@
       "title": "Conformance Test Suite",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "cmd/lenny-compliance/full.go::checkLifecycleHandshake",
+        "cmd/lenny-compliance/full.go::checkRuntimeOpsHandshake",
         "cmd/lenny-compliance/full.go::checkCheckpointQuiesce",
         "cmd/lenny-compliance/full.go::checkInterruptAck",
         "cmd/lenny-compliance/full.go::checkCredentialRotation",
-        "cmd/lenny-compliance/full.go::checkDeadlineSignal"
+        "cmd/lenny-compliance/full.go::checkDeadlineSignal",
+        "tests/tier0_static/compliance_check_channel_naming_test.go::TestComplianceFullChecksNamedForTheirChannel",
+        "tests/tier0_static/compliance_check_channel_naming_test.go::TestSpecMapComplianceCheckReferencesResolve"
       ],
       "packages": [
         "cmd/lenny-compliance"
@@ -4783,6 +4785,8 @@
         "tests/tier0_static/spec_citation_resolution_test.go",
         "tests/tier0_static/line_citation_ratchet_test.go",
         "tests/tier0_static/fragment_link_test.go",
+        "tests/tier0_static/compliance_check_channel_naming_test.go::TestComplianceFullChecksNamedForTheirChannel",
+        "tests/tier0_static/compliance_check_channel_naming_test.go::TestSpecMapComplianceCheckReferencesResolve",
         "tests/tier11_docs/spec_28_reserved_phrase_test.go"
       ],
       "packages": [],

@@ -509,6 +509,7 @@
     },
     "cmd/lenny-compliance/": {
       "unit": ["cmd/lenny-compliance/..."],
+      "static": ["tests/tier0_static/compliance_check_channel_naming_test.go"],
       "conformance": [
         "tests/tier10_conformance/basic/...",
         "tests/tier10_conformance/standard/...",

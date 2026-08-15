@@ -37,7 +37,7 @@ func runFullBattery(binary string, timeout time.Duration, verbose bool) Report {
 		spec string
 		fn   func(string, time.Duration, bool) (string, error)
 	}{
-		{"lifecycle_channel_opening", "15.4.6", checkLifecycleHandshake},
+		{"lifecycle_channel_opening", "15.4.6", checkRuntimeOpsHandshake},
 		{"checkpoint_quiesce_resume", "15.4.6", checkCheckpointQuiesce},
 		{"interrupt_acknowledgement", "15.4.6", checkInterruptAck},
 		{"credential_rotation_no_disruption", "15.4.6", checkCredentialRotation},
@@ -222,7 +222,13 @@ func reap(cmd *exec.Cmd, stdin io.WriteCloser, deadline time.Duration) int {
 
 // --- Full-level checks --------------------------------------------------
 
-func checkLifecycleHandshake(binary string, _ time.Duration, _ bool) (string, error) {
+// checkRuntimeOpsHandshake drives the capability handshake the runtime
+// answers on CH-RUNTIMEOPS, and is named for that channel because the
+// naming law gives a channel one identifier on every carrier, the Go
+// symbol included (§28.1, §28.3 naming table).
+//
+// spec: §15.4.6, §28.1
+func checkRuntimeOpsHandshake(binary string, _ time.Duration, _ bool) (string, error) {
 	fa, cleanup, err := newFakeAdapter()
 	if err != nil {
 		return "", err
