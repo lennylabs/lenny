@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,7 +41,31 @@ var specLineCitationChecks = []struct {
 	},
 }
 
-var citedSection = regexp.MustCompile(`§25\.4\b`)
+// citedSection matches the anchor-form §25.4 citation, which is a bare
+// section reference carrying no line number. retiredLineCitation matches
+// the `§25.4 line N` and `§25.4 lines N-M` forms the naming law retires
+// (§28.1 N8). Go's regexp has no negative lookahead, so the rejection is a
+// second expression rather than a suffix guard inside the first: a word
+// boundary alone sits between the "4" and the following space and so
+// accepts the retired form.
+var (
+	citedSection        = regexp.MustCompile(`§25\.4(?:[^0-9.]|$)`)
+	retiredLineCitation = regexp.MustCompile(`§25\.4\s+lines?\s+\d+`)
+)
+
+// citationForm reports whether a comment block carries an anchor-form
+// §25.4 citation. It returns a message naming the defect when the block
+// carries no §25.4 citation at all, or when it still carries the retired
+// line-numbered form, and the empty string when the block passes.
+func citationForm(block string) string {
+	if m := retiredLineCitation.FindString(block); m != "" {
+		return "carries the retired line-numbered citation " + strconv.Quote(m) + "; cite the §25.4 heading without a line number"
+	}
+	if !citedSection.MatchString(block) {
+		return "carries no §25.4 citation"
+	}
+	return ""
+}
 
 // sectionBody returns the lines of spec/25 under the §25.4 heading, up to
 // the next heading at the same level. The bound is the sibling heading
@@ -128,8 +153,8 @@ func TestSpec254DegradationWarningLineCitationsAreFresh(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(root, tc.file)
 			block := commentBlockAbove(t, path, tc.anchor)
-			if !citedSection.MatchString(block) {
-				t.Fatalf("%s: no §25.4 citation found above %q in comment: %s", tc.file, tc.anchor, block)
+			if defect := citationForm(block); defect != "" {
+				t.Fatalf("%s: the comment above %q %s: %s", tc.file, tc.anchor, defect, block)
 			}
 			body := sectionBody(t, specLines, "## 25.4 ")
 			for _, l := range body {
@@ -139,6 +164,110 @@ func TestSpec254DegradationWarningLineCitationsAreFresh(t *testing.T) {
 			}
 			t.Errorf("%s: the comment above %q cites §25.4, but §25.4 carries no line containing %q; run `grep -n %q spec/25_agent-operability.md` to find the section that does and correct the citation",
 				tc.file, tc.anchor, tc.wantSubstring, tc.wantSubstring)
+		})
+	}
+}
+
+// citationFormFixtures is the fixture root for the citation-form cases.
+// Each fixture holds one comment block. The blocks live under testdata/
+// because the retired spellings among them are input to this gate rather
+// than pointers into the specification, and testdata/ sits outside the read
+// domain of the line-citation ratchet and the citation resolver, which would
+// otherwise count a fixture spelling as a citation this file carries.
+const citationFormFixtures = "testdata/degradation-lock-citation-form"
+
+// citationFormCases exercise the anchor-form predicate over fixture comment
+// blocks. The retired spellings are the ones the freshness gate must reject,
+// so the retirement of the line-numbered citation cannot be undone by editing
+// a comment above one of the declarations the gate reads.
+var citationFormCases = []struct {
+	name     string
+	fixture  string
+	wantFail bool
+}{
+	{
+		name:    "anchor-form citation passes",
+		fixture: "anchor-form.txt",
+	},
+	{
+		name:    "anchor-form citation inside a prose sentence passes",
+		fixture: "anchor-form-in-prose.txt",
+	},
+	{
+		name:     "retired single-line spelling fails",
+		fixture:  "retired-single-line.txt",
+		wantFail: true,
+	},
+	{
+		name:     "retired line-range spelling fails",
+		fixture:  "retired-line-range.txt",
+		wantFail: true,
+	},
+	{
+		name:     "retired spelling beside an anchor-form citation fails",
+		fixture:  "retired-beside-anchor-form.txt",
+		wantFail: true,
+	},
+	{
+		name:     "a block carrying no citation fails",
+		fixture:  "no-citation.txt",
+		wantFail: true,
+	},
+	{
+		name:     "a citation of another section fails",
+		fixture:  "other-section.txt",
+		wantFail: true,
+	},
+}
+
+// fixtureCommentBlock reads a fixture comment block and joins its lines the
+// way commentBlockAbove joins the lines it reads out of a Go source file, so
+// the predicate sees the same input in both.
+func fixtureCommentBlock(t *testing.T, fixture string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(citationFormFixtures, fixture))
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", fixture, err)
+	}
+	var block []string
+	for _, l := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
+		}
+		block = append(block, trimmed)
+	}
+	return strings.Join(block, " ")
+}
+
+// spec: §25.4 (degradation.warnings on optional-key idempotency endpoints and
+//
+//	the ops.locks.memoryTier replica-local warning, whose citations this
+//	gate reads), §28.1 (N8, the citation rule: a specification citation
+//	names a heading rather than a line, so the retired line-numbered form
+//	may not be written)
+//
+// diagnosis: The §25.4 freshness gate's citation-form predicate accepts a
+//
+//	citation spelling it must reject, or rejects one it must accept. An
+//	accepted line-numbered spelling means the gate no longer holds the
+//	retirement of line citations, so a comment in pkg/ops/ can reintroduce
+//	one without failing tier 0.
+func TestSpec254CitationFormRejectsRetiredLineCitations(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range citationFormCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			block := fixtureCommentBlock(t, tc.fixture)
+			defect := citationForm(block)
+			if tc.wantFail && defect == "" {
+				t.Errorf("the predicate accepted fixture %s; want it rejected: %s", tc.fixture, block)
+			}
+			if !tc.wantFail && defect != "" {
+				t.Errorf("the predicate rejected fixture %s as %q; want it accepted: %s", tc.fixture, defect, block)
+			}
 		})
 	}
 }
