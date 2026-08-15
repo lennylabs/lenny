@@ -591,6 +591,27 @@ func TestSpec287RegisterRowsNameArtifactsTheSchemasDirectoryHolds(t *testing.T) 
 	}
 }
 
+// shippedCanonicalArtifactsSection returns the "Canonical artifacts"
+// section of the adapter-contract reference as the page ships it. The
+// accept case for that enumeration reads the page rather than a fixture
+// of it, because the exemption is stated over the enumeration the
+// reference actually carries. A fixture states the accept direction over
+// text no reader sees, so it stays green while the shipped section drifts
+// into a form the predicate reports. The helper fails rather than
+// returning an empty section, so a page whose section was renamed or
+// removed cannot make the case vacuous.
+//
+// spec: §28.7 (wire-contract artifact register)
+func shippedCanonicalArtifactsSection(t *testing.T, root string) string {
+	t.Helper()
+	content := readRepoFile(t, root, "docs", "reference", "adapter-contract.md")
+	section, ok := canonicalArtifactsSection(content)
+	if !ok {
+		t.Fatalf("docs/reference/adapter-contract.md carries no Canonical artifacts section; the accept case has nothing to read")
+	}
+	return "## Canonical artifacts" + section
+}
+
 // artifactCorrectedSites holds the corrected text of the enumerations
 // TEST-1 names as accept cases. Each is quoted at the state the
 // supersession lands them in, because the exemption is stated over the
@@ -601,17 +622,6 @@ var artifactCorrectedSites = map[string]string{
 		"| Command | Description | API Mapping | Min Role |\n" +
 		"|---------|-------------|-------------|----------|\n" +
 		"| `lenny-ctl admin external-adapters validate --name <name>` | Run the compliance suite against a registered adapter. The suite is **schema-driven**: assertions are generated from the published `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, `schemas/messagepart.schema.json`, and `schemas/runtime-ops-events.schema.json` artifacts rather than hand-coded against prose. | `POST /v1/admin/external-adapters/{name}/validate` | `platform-admin` |\n",
-
-	"docs/reference/adapter-contract.md": "## Canonical artifacts\n" +
-		"\n" +
-		"The adapter protocol is defined by the published schema artifacts below. Runtime authors, and the adapter compliance suite, validate against these files rather than the narrative prose in this guide.\n" +
-		"\n" +
-		"| Artifact | Purpose | Canonical URL |\n" +
-		"|:---------|:--------|:--------------|\n" +
-		"| `lenny-adapter.proto` | gRPC service definition for the gateway and adapter control plane. | `https://schemas.lenny.dev/adapter/v1/lenny-adapter.proto` |\n" +
-		"| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames. | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |\n" +
-		"| `messagepart.schema.json` | JSON Schema for the structured `messageParts` field. | `https://schemas.lenny.dev/adapter/v1/messagepart.schema.json` |\n" +
-		"| `runtime-ops-events.schema.json` | JSON Schema for the Full-level runtime-operations frames. | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |\n",
 
 	"docs/runtime-author-guide/publishing.md": "## Publish\n" +
 		"\n" +
@@ -725,9 +735,9 @@ func TestArtifactEnumerationSupersessionPredicate(t *testing.T) {
 			content: artifactCorrectedSites["spec/24_lenny-ctl-command-reference.md"],
 		},
 		{
-			name:    "the corrected canonical-artifacts table passes on the named-consumer ground",
+			name:    "the shipped canonical-artifacts table passes on the named-consumer ground",
 			file:    "docs/reference/adapter-contract.md",
-			content: artifactCorrectedSites["docs/reference/adapter-contract.md"],
+			content: shippedCanonicalArtifactsSection(t, root),
 		},
 		{
 			name:    "the corrected publishing schema list passes on the named-consumer ground",
