@@ -27,7 +27,8 @@ import (
 // by a reachability gate this tree does not yet build; joining a row to that
 // gate's output is the work its own step carries. What is checkable here is that
 // every row is well-formed, that its status is one the closed set holds, that a
-// `WIRED` row names a surface, that every other row names a step, and that every
+// `WIRED` row names a surface, and one that carries a file path or a symbol
+// rather than a bare line number, that every other row names a step, and that every
 // row anchors itself to the §28 heading whose statement it carries a status for.
 // A register that fails any of those is one no later step can use, whatever the
 // tree does.
@@ -59,6 +60,21 @@ var claimStatuses = map[string]bool{"WIRED": true, "UNWIRED": true, "ABSENT": tr
 // deferralID is the form the plan gives a step: R followed by its number, with
 // an optional sub-step letter.
 var deferralID = regexp.MustCompile(`^R\d{1,2}[a-z]?$`)
+
+// bareLineSurface matches a surface that is only a line number or a line range,
+// carrying no file path and no symbol: `12`, `:141-147`, `lines 71-79`. Such a
+// surface names nowhere a reader can go, because the file the line belongs to is
+// the part that is missing. The match is against the whole string, so the
+// `path:line` form is unaffected and so is a compound surface that cites a line
+// fragment alongside a file it has already named.
+var bareLineSurface = regexp.MustCompile(`^(?i:lines?\s+)?:?\d+(\s*[-–]\s*:?\d+)?$`)
+
+// surfaceNamesOnlyALine reports whether a surface reduces to a bare line
+// reference once the markdown code fencing the register writes surfaces in is
+// removed.
+func surfaceNamesOnlyALine(surface string) bool {
+	return bareLineSurface.MatchString(strings.TrimSpace(strings.Trim(strings.TrimSpace(surface), "`")))
+}
 
 // claim is one row of the register. SpecAnchor is the fragment naming the §28
 // heading that states the mechanism, in the `#slug` form a markdown link to that
@@ -177,6 +193,12 @@ func validateClaimRegister(body []byte, anchors map[string]bool) []string {
 			findings = append(findings, where+" names no surface; every row cites where the mechanism is")
 		}
 		if c.Status == "WIRED" {
+			if surfaceNamesOnlyALine(c.Surface) {
+				findings = append(findings, fmt.Sprintf(
+					"%s is WIRED and carries surface %q, which is only a line reference; a wired surface names a file or a symbol",
+					where, c.Surface,
+				))
+			}
 			if c.DeferralID != "" {
 				findings = append(findings, fmt.Sprintf(
 					"%s is WIRED and names deferral %q; a wired mechanism has no step left to close it",
@@ -203,7 +225,8 @@ func validateClaimRegister(body []byte, anchors map[string]bool) []string {
 // diagnosis: the claim register no longer says what §28.4 requires of it, so a
 // later step cannot read it as a work queue. Either a row is malformed, a status
 // is outside the closed set, a row's spec_anchor names no §28 heading, a WIRED
-// row names no surface, or a row that is not WIRED names no step that closes it.
+// row names no surface or names one that is only a line reference, or a row that
+// is not WIRED names no step that closes it.
 func TestClaimRegisterSaysWhatTheSpecificationRequires(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
@@ -252,6 +275,21 @@ func TestClaimRegisterValidatorRefusesAnUnusableRegister(t *testing.T) {
 			"wired row naming no surface",
 			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"WIRED","spec_anchor":"#2851-gateway-to-pod"}]}`,
 			"names no surface",
+		},
+		{
+			"wired row whose surface is a bare line number",
+			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"12"}]}`,
+			"only a line reference",
+		},
+		{
+			"wired row whose surface is a bare line range",
+			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `:141-147` + "`" + `"}]}`,
+			"only a line reference",
+		},
+		{
+			"wired row whose surface is a bare line span written out",
+			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"lines 71-79"}]}`,
+			"only a line reference",
 		},
 		{
 			"unwired row naming no step",
@@ -319,6 +357,9 @@ func TestClaimRegisterValidatorAcceptsAWellFormedRegister(t *testing.T) {
 	t.Parallel()
 	body := `{"kind":"claim-register","version":1,"claims":[
       {"claim":"a wired mechanism","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"pkg/x/y.go:12"},
+      {"claim":"a wired mechanism cited by a range","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `pkg/x/y.go:60-79` + "`" + `"},
+      {"claim":"a wired mechanism cited at two sites in one file","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `pkg/x/y.go:78` + "`" + `, escalation ` + "`" + `:141-147` + "`" + `"},
+      {"claim":"a wired mechanism cited by a symbol","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `InterReplicaAddress` + "`" + `"},
       {"claim":"an implemented mechanism with no caller","status":"UNWIRED","spec_anchor":"#2853-intra-pod","surface":"pkg/x/z.go:8","deferral_id":"R22"},
       {"claim":"a specified mechanism that is not implemented","status":"ABSENT","spec_anchor":"#286-exclusivity-and-concurrency-model","surface":"spec/28_communication-channels.md","deferral_id":"R16"}]}`
 	if got := validateClaimRegister([]byte(body), claimRegisterSpecHeadings(t, schematest.RepoRoot(t))); len(got) != 0 {
