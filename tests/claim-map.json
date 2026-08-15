@@ -59,8 +59,9 @@
     {
       "claim": "Checkpoint restore onto a concurrent pod",
       "status": "ABSENT",
-      "surface": "no `slot_id` on `ResumeRequest`",
-      "deferral_id": "R22"
+      "surface": "`pkg/adapter/resume.go:25` reads no slot dimension from the request",
+      "deferral_id": "R22",
+      "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, so the wire field is present and the per-slot restore is not implemented"
     },
     {
       "claim": "CheckpointBarrierRequest slot identifier field",
@@ -373,8 +374,9 @@
     {
       "claim": "Slot-qualified interrupt, deadline, usage, and barrier",
       "status": "ABSENT",
-      "surface": "no `slot_id` on those request messages",
-      "deferral_id": "R22"
+      "surface": "`pkg/adapter/lifecycle.go:21`, `pkg/adapter/lifecycle.go:72`, `pkg/adapter/usage.go:259`, and `pkg/adapter/coordination.go:211` each ignore the request's slot identifier",
+      "deferral_id": "R22",
+      "note": "the four request messages carry a slot identifier and every handler dispatches per pod, so the wire field is present and the slot-qualified dispatch is not implemented"
     },
     {
       "claim": "Tool-approval resolution across replicas",

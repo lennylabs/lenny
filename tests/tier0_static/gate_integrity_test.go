@@ -58,6 +58,7 @@ var tierZeroGates = []tierZeroGate{
 	{"TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister", "matrix_completeness_test.go", "the §28.8 matrix covers every channel"},
 	{"TestEverySpecificationHeadingCarriesAnIndexEntry", "heading_walker_test.go", "every heading carries a resolving index entry"},
 	{"TestClaimRegisterSaysWhatTheSpecificationRequires", "claim_register_test.go", "the §28.4 claim register is well-formed"},
+	{"TestClaimRegisterAgreesWithTheAdapterProto", "claim_register_proto_agreement_test.go", "the claim register agrees with the adapter proto"},
 	{"TestEveryCitationNamesADocumentAReaderCanReach", "citation_document_test.go", "every citation names a document a reader can reach"},
 	{"TestResidualGateCertifiesTheTree", "residual_gate_test.go", "no member of a migration class is unclassified"},
 	{"TestSpecCitationResolutionCertifiesTheTree", "spec_citation_resolution_test.go", "a line citation resolves inside the section it names"},

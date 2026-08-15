@@ -4822,6 +4822,7 @@
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
         "tests/tier0_static/claim_register_test.go",
+        "tests/tier0_static/claim_register_proto_agreement_test.go",
         "tests/tier0_static/citation_document_test.go"
       ],
       "packages": [],

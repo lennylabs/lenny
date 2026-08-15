@@ -94,6 +94,30 @@ def canonical(text):
     return text
 
 
+# Rows whose surface the frozen reference cannot state, keyed by the claim the
+# table names. The reference recorded two capabilities by the absence of a
+# request field, and the tree now declares both fields while no handler reads
+# either. Carrying the reference's wording forward would make the register
+# contradict the proto it cites, so each of these rows names the handler that
+# ignores the field and states in its note that the field is carried and the
+# behavior is not implemented. The status stays `ABSENT`: §28.4 reads it as
+# specified and not implemented, which is what an unread field is.
+SURFACE_OVERRIDES = {
+    "Checkpoint restore onto a concurrent pod": {
+        "surface": "`pkg/adapter/resume.go:25` reads no slot dimension from the request",
+        "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, "
+                "so the wire field is present and the per-slot restore is not implemented",
+    },
+    "Slot-qualified interrupt, deadline, usage, and barrier": {
+        "surface": "`pkg/adapter/lifecycle.go:21`, `pkg/adapter/lifecycle.go:72`, "
+                   "`pkg/adapter/usage.go:259`, and `pkg/adapter/coordination.go:211` "
+                   "each ignore the request's slot identifier",
+        "note": "the four request messages carry a slot identifier and every handler "
+                "dispatches per pod, so the wire field is present and the "
+                "slot-qualified dispatch is not implemented",
+    },
+}
+
 # Rows the proposal writes explicitly, because no status table carries them.
 EXPLICIT = [
     {
@@ -189,6 +213,7 @@ def main():
     args = ap.parse_args()
 
     claims, fallbacks, dropped = [], [], []
+    overridden = set()
     for cells in rows_of_section(REFERENCE, SECTION):
         if len(cells) < 3:
             continue
@@ -213,7 +238,18 @@ def main():
                 row["deferral_id"] = step
                 if fell_back:
                     fallbacks.append(claim)
+            override = SURFACE_OVERRIDES.get(row["claim"])
+            if override:
+                row["surface"] = override["surface"]
+                row["note"] = override["note"]
+                overridden.add(row["claim"])
             claims.append(row)
+
+    missed = sorted(set(SURFACE_OVERRIDES) - overridden)
+    if missed:
+        # An override whose claim the table no longer names would drop silently
+        # and leave the register stating a surface the tree contradicts.
+        raise SystemExit("surface override matched no table row: " + ", ".join(missed))
 
     claims.extend(EXPLICIT)
     for msg in GENERATION_FENCE:
