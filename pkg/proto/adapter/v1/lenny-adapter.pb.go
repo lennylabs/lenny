@@ -454,7 +454,7 @@ type InterruptResponse_Status int32
 const (
 	InterruptResponse_STATUS_UNSPECIFIED       InterruptResponse_Status = 0
 	InterruptResponse_STATUS_ACKNOWLEDGED      InterruptResponse_Status = 1 // runtime reached a safe stop point
-	InterruptResponse_STATUS_INTERRUPT_TIMEOUT InterruptResponse_Status = 2 // deadline elapsed with no acknowledgement (§4.7)
+	InterruptResponse_STATUS_INTERRUPT_TIMEOUT InterruptResponse_Status = 2 // deadline elapsed with no acknowledgement (§28.5.3 CH-RUNTIMEOPS)
 	InterruptResponse_STATUS_BUSY              InterruptResponse_Status = 3 // operation lock rejected the interrupt (§4.7)
 )
 
@@ -6222,11 +6222,12 @@ func (x *NegotiateVersionResponse) GetWorkspaceRoot() string {
 type GetObservedIntegrationLevelRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// wait_ms bounds how long the adapter waits for the runtime to complete
-	// its first §4.7 lifecycle handshake before classifying. A Full-level
-	// runtime dials the CH-RUNTIMEOPS shortly after boot, so a generous
-	// window avoids misclassifying a slow-to-connect runtime; the window is
-	// only fully consumed when the runtime never opens the channel. Zero
-	// classifies from the runtime's current connection state with no wait.
+	// its first §28.5.3 CH-RUNTIMEOPS lifecycle handshake before
+	// classifying. A Full-level runtime dials the CH-RUNTIMEOPS shortly
+	// after boot, so a generous window avoids misclassifying a
+	// slow-to-connect runtime; the window is only fully consumed when the
+	// runtime never opens the channel. Zero classifies from the runtime's
+	// current connection state with no wait.
 	WaitMs        int32 `protobuf:"varint,1,opt,name=wait_ms,json=waitMs,proto3" json:"wait_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -211,13 +211,13 @@ service Adapter {
 
   // GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
   // level the adapter observed the runtime actually implement, derived
-  // from whether the runtime completed the §4.7
+  // from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
   // lifecycle_capabilities/lifecycle_support exchange (full) and whether
-  // it connected to the intra-pod platform MCP server (standard). The
-  // gateway calls it once per runtime on the first session assignment to
-  // compare the observed level against the runtime's declared
-  // integrationLevel and reject an underperforming runtime
-  // (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+  // it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+  // server (standard). The gateway calls it once per runtime on the
+  // first session assignment to compare the observed level against the
+  // runtime's declared integrationLevel and reject an underperforming
+  // runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
   rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
 
   // AdapterEvents is a bidirectional stream the adapter uses to surface
@@ -1056,7 +1056,7 @@ message InterruptResponse {
   enum Status {
     STATUS_UNSPECIFIED = 0;
     STATUS_ACKNOWLEDGED = 1;     // runtime reached a safe stop point
-    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)
+    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§28.5.3 CH-RUNTIMEOPS)
     STATUS_BUSY = 3;             // operation lock rejected the interrupt (§4.7)
   }
 }
@@ -1567,11 +1567,12 @@ message NegotiateVersionResponse {
 
 message GetObservedIntegrationLevelRequest {
   // wait_ms bounds how long the adapter waits for the runtime to complete
-  // its first §4.7 lifecycle handshake before classifying. A Full-level
-  // runtime dials the CH-RUNTIMEOPS shortly after boot, so a generous
-  // window avoids misclassifying a slow-to-connect runtime; the window is
-  // only fully consumed when the runtime never opens the channel. Zero
-  // classifies from the runtime's current connection state with no wait.
+  // its first §28.5.3 CH-RUNTIMEOPS lifecycle handshake before
+  // classifying. A Full-level runtime dials the CH-RUNTIMEOPS shortly
+  // after boot, so a generous window avoids misclassifying a
+  // slow-to-connect runtime; the window is only fully consumed when the
+  // runtime never opens the channel. Zero classifies from the runtime's
+  // current connection state with no wait.
   int32 wait_ms = 1;
 }
 

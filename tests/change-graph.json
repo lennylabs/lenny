@@ -390,9 +390,16 @@
       "component": ["tests/tier2_component/migrations/migrations_test.go"]
     },
     "schemas/lenny-adapter.proto": {
-      "static": ["tests/tier0_static/schemas_test.go"],
+      "static": [
+        "tests/tier0_static/schemas_test.go",
+        "tests/tier0_static/adapter_proto_intrapod_pointer_test.go"
+      ],
       "unit": ["pkg/adapter/..."],
-      "contract": ["tests/tier3_contract/adapter_jsonl/..."]
+      "contract": [
+        "tests/tier3_contract/adapter_jsonl/...",
+        "tests/tier3_contract/adapter_observedlevel/..."
+      ],
+      "conformance": ["tests/tier10_conformance/..."]
     },
     "schemas/lenny-interceptor.proto": {
       "static": ["tests/tier0_static/schemas_test.go"],

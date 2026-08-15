@@ -231,13 +231,13 @@ type AdapterClient interface {
 	NegotiateVersion(ctx context.Context, in *NegotiateVersionRequest, opts ...grpc.CallOption) (*NegotiateVersionResponse, error)
 	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
 	// level the adapter observed the runtime actually implement, derived
-	// from whether the runtime completed the §4.7
+	// from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
 	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
-	// it connected to the intra-pod platform MCP server (standard). The
-	// gateway calls it once per runtime on the first session assignment to
-	// compare the observed level against the runtime's declared
-	// integrationLevel and reject an underperforming runtime
-	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	// it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+	// server (standard). The gateway calls it once per runtime on the
+	// first session assignment to compare the observed level against the
+	// runtime's declared integrationLevel and reject an underperforming
+	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error)
 	// AdapterEvents is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
@@ -676,13 +676,13 @@ type AdapterServer interface {
 	NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error)
 	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
 	// level the adapter observed the runtime actually implement, derived
-	// from whether the runtime completed the §4.7
+	// from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
 	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
-	// it connected to the intra-pod platform MCP server (standard). The
-	// gateway calls it once per runtime on the first session assignment to
-	// compare the observed level against the runtime's declared
-	// integrationLevel and reject an underperforming runtime
-	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	// it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+	// server (standard). The gateway calls it once per runtime on the
+	// first session assignment to compare the observed level against the
+	// runtime's declared integrationLevel and reject an underperforming
+	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error)
 	// AdapterEvents is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
