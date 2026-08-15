@@ -513,6 +513,7 @@
         "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7",
         "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7",
         "tests/tier4_integration/credential_lifecycle_test.go::TestCredentialLifecycleAssignRotateRebindRevokeTerminate",
+        "tests/tier4_integration/credential_lifecycle_test.go::TestRuntimeOpsManifestKeyResolvesTheOperationsSocket",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
@@ -4824,7 +4825,8 @@
         "tests/tier0_static/identifier_resolution_test.go",
         "tests/tier0_static/matrix_completeness_test.go",
         "tests/tier11_docs/spec_28_register_writers_test.go",
-        "tests/tier11_docs/spec_28_ownership_test.go"
+        "tests/tier11_docs/spec_28_ownership_test.go",
+        "tests/tier4_integration/credential_lifecycle_test.go::TestRuntimeOpsManifestKeyResolvesTheOperationsSocket"
       ],
       "packages": [],
       "blocked_until_phase": "0",
