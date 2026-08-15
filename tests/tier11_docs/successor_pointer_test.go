@@ -88,7 +88,7 @@ func sectionBody(t *testing.T, path, section string) []string {
 	return lines[start:]
 }
 
-// spec: 28.2 (N8, successor pointers)
+// spec: §28.1 N8 (successor pointers)
 // diagnosis: a section that gave up content to §28 no longer tells a reader
 // where the content went, or tells them the heading without naming the channel
 // that moved. A reader landing on the reduced section will take its remaining
@@ -131,7 +131,7 @@ func TestReducedSectionsPointAtTheHeadingThatOwnsTheirContent(t *testing.T) {
 	}
 }
 
-// spec: 28.2 (N8, successor pointers)
+// spec: §28.1 N8 (successor pointers)
 // diagnosis: a pointer into §28.5 resolves to a card heading that does not
 // exist, so the successor sentence sends a reader nowhere.
 func TestSuccessorPointersNameACardThatExists(t *testing.T) {
