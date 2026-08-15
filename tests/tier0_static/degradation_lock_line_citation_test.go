@@ -121,6 +121,26 @@ func commentBlockAbove(t *testing.T, path, anchor string) string {
 	return strings.Join(block, " ")
 }
 
+// inertRun reports why a freshness run that selected declarations
+// declarations and read a §25.4 body of bodyLines lines certifies nothing.
+// It returns the empty string when the run inspected something.
+//
+// The freshness property is carried by the comparison between a citation and
+// the section body it names, so a run whose declaration table selects nothing
+// or whose §25.4 lookup returns an empty body performs no comparison and is
+// green with the property gone. Both are failures rather than a silent pass.
+func inertRun(declarations, bodyLines int) string {
+	switch {
+	case declarations == 0 && bodyLines == 0:
+		return "inspected zero declarations and read an empty §25.4 body"
+	case declarations == 0:
+		return "inspected zero declarations"
+	case bodyLines == 0:
+		return "read an empty §25.4 body"
+	}
+	return ""
+}
+
 // spec: §25.4 (degradation.warnings on optional-key idempotency endpoints —
 //
 //	"the response includes `degradation.warnings` noting that retry-safety
@@ -146,6 +166,11 @@ func TestSpec254DegradationWarningLineCitationsAreFresh(t *testing.T) {
 		t.Fatalf("read spec: %v", err)
 	}
 	specLines := strings.Split(string(specData), "\n")
+	body := sectionBody(t, specLines, "## 25.4 ")
+
+	if defect := inertRun(len(specLineCitationChecks), len(body)); defect != "" {
+		t.Fatalf("the §25.4 freshness run %s, so it certifies no citation; restore the declaration table or the §25.4 heading it reads", defect)
+	}
 
 	for _, tc := range specLineCitationChecks {
 		tc := tc
@@ -156,7 +181,6 @@ func TestSpec254DegradationWarningLineCitationsAreFresh(t *testing.T) {
 			if defect := citationForm(block); defect != "" {
 				t.Fatalf("%s: the comment above %q %s: %s", tc.file, tc.anchor, defect, block)
 			}
-			body := sectionBody(t, specLines, "## 25.4 ")
 			for _, l := range body {
 				if strings.Contains(l, tc.wantSubstring) {
 					return
@@ -269,5 +293,90 @@ func TestSpec254CitationFormRejectsRetiredLineCitations(t *testing.T) {
 				t.Errorf("the predicate rejected fixture %s as %q; want it accepted: %s", tc.fixture, defect, block)
 			}
 		})
+	}
+}
+
+// inertRunCases exercise the guard that keeps the freshness gate from
+// reporting green on a run that compared nothing. The counts stand for the
+// two selections the gate makes: the declaration table it ranges over and the
+// §25.4 body it searches.
+var inertRunCases = []struct {
+	name         string
+	declarations int
+	bodyLines    int
+	wantFail     bool
+}{
+	{
+		name:         "a run with declarations and a section body passes",
+		declarations: 2,
+		bodyLines:    40,
+	},
+	{
+		name:         "a run whose declaration table selects nothing fails",
+		declarations: 0,
+		bodyLines:    40,
+		wantFail:     true,
+	},
+	{
+		name:         "a run whose §25.4 lookup returns an empty body fails",
+		declarations: 2,
+		bodyLines:    0,
+		wantFail:     true,
+	},
+	{
+		name:         "a run that selected nothing on either side fails",
+		declarations: 0,
+		bodyLines:    0,
+		wantFail:     true,
+	},
+}
+
+// spec: §25.4 (degradation.warnings on optional-key idempotency endpoints and
+//
+//	the ops.locks.memoryTier replica-local warning, the citations whose
+//	freshness this gate certifies), §28.1 (N8, the citation rule the gate
+//	holds)
+//
+// diagnosis: The §25.4 freshness gate can report green on a run that inspected
+//
+//	no declaration or read no §25.4 body. The gate then certifies nothing
+//	while passing, so a citation that drifted from the section it names
+//	reaches the tree without failing tier 0. Restore the guard rather than
+//	the count it reads.
+func TestSpec254FreshnessRunFailsWhenItInspectsNothing(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range inertRunCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			defect := inertRun(tc.declarations, tc.bodyLines)
+			if tc.wantFail && defect == "" {
+				t.Errorf("the guard passed a run over %d declaration(s) and %d body line(s); want it failed", tc.declarations, tc.bodyLines)
+			}
+			if !tc.wantFail && defect != "" {
+				t.Errorf("the guard failed a run over %d declaration(s) and %d body line(s) as %q; want it passed", tc.declarations, tc.bodyLines, defect)
+			}
+		})
+	}
+}
+
+// spec: §25.4 (the section the freshness gate reads), §28.1 (N8)
+//
+// diagnosis: The declaration table the §25.4 freshness gate ranges over is
+//
+//	empty, or spec/25_agent-operability.md carries no §25.4 body, so the
+//	gate's own inputs are the inert case its guard rejects.
+func TestSpec254FreshnessGateInputsAreNonEmpty(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	specData, err := os.ReadFile(filepath.Join(root, "spec/25_agent-operability.md"))
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	body := sectionBody(t, strings.Split(string(specData), "\n"), "## 25.4 ")
+	if defect := inertRun(len(specLineCitationChecks), len(body)); defect != "" {
+		t.Errorf("the freshness gate's own inputs are inert: it %s", defect)
 	}
 }
