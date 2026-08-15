@@ -28,10 +28,16 @@ import (
 // gate's output is the work its own step carries. What is checkable here is that
 // every row is well-formed, that its status is one the closed set holds, that a
 // `WIRED` row names a surface, and one that carries a file path or a symbol
-// rather than a bare line number, that every other row names a step, and that every
-// row anchors itself to the §28 heading whose statement it carries a status for.
-// A register that fails any of those is one no later step can use, whatever the
-// tree does.
+// rather than a bare line number, that every other row names a step the
+// remediation plan carries, and that every row anchors itself to the §28 heading
+// whose statement it carries a status for. A register that fails any of those is
+// one no later step can use, whatever the tree does.
+//
+// A deferral is resolved against the plan rather than against its spelling. A
+// row that is not `WIRED` exists to hand the mechanism to the step that closes
+// it, so an identifier of the right form naming a step no plan declares hands
+// the mechanism to nobody, and the register stops being a work queue at that
+// row.
 //
 // The anchor is checked by resolution against the headings §28 declares, because
 // a row exists to record how far the tree has reached a statement §28 makes, and
@@ -50,6 +56,10 @@ const (
 	// claimRegisterSpecPath is the section whose statements the register carries
 	// a status for. A row's `spec_anchor` names a heading of this document.
 	claimRegisterSpecPath = "spec/28_communication-channels.md"
+
+	// remediationPlanPath is the plan whose steps a row that is not WIRED hands
+	// its mechanism to. A row's `deferral_id` names a step this document declares.
+	remediationPlanPath = "gateway-runtime-comms-remediation.md"
 )
 
 // claimStatuses is the closed set §28.4 draws a status from. The reference
@@ -58,8 +68,67 @@ const (
 var claimStatuses = map[string]bool{"WIRED": true, "UNWIRED": true, "ABSENT": true}
 
 // deferralID is the form the plan gives a step: R followed by its number, with
-// an optional sub-step letter.
+// an optional sub-step letter. The form is the cheap half of the rule; a
+// deferral also has to name a step the plan declares, which is resolved against
+// the set remediationPlanSteps reads.
 var deferralID = regexp.MustCompile(`^R\d{1,2}[a-z]?$`)
+
+// planStepID matches a step identifier wherever the plan writes one.
+var planStepID = regexp.MustCompile(`\bR\d{1,2}[a-z]?\b`)
+
+// planStepRow matches a row of the plan's edge list, whose first column is the
+// step the row states the dependencies of.
+var planStepRow = regexp.MustCompile(`^\|\s*(R\d{1,2}[a-z]?)\s*\|`)
+
+// remediationPlanStepsIn returns every step identifier a plan document declares.
+// A step is declared by its own heading or by its row in the plan's edge list,
+// which are the two places the plan enumerates its steps rather than refers to
+// one. Prose is deliberately outside the scan: a step is a unit of work the plan
+// commits to, and a mention in a sentence is not that commitment. Lines inside a
+// fenced block are skipped for the same reason the anchor scan skips them.
+func remediationPlanStepsIn(body []byte) map[string]bool {
+	steps := map[string]bool{}
+	fenced := false
+	for _, line := range strings.Split(string(body), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			// A step heading names its step anywhere in the line, because the
+			// plan writes some as a trailing parenthetical and others as the
+			// leading token.
+			for _, id := range planStepID.FindAllString(line, -1) {
+				steps[id] = true
+			}
+			continue
+		}
+		if m := planStepRow.FindStringSubmatch(line); m != nil {
+			steps[m[1]] = true
+		}
+	}
+	return steps
+}
+
+// remediationPlanSteps reads the plan's steps from the tree, so a row resolves
+// against the steps that exist rather than against a list the test maintains
+// beside the plan and lets drift.
+func remediationPlanSteps(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, remediationPlanPath))
+	if err != nil {
+		t.Fatalf("%s: %v (a row's deferral_id resolves against this document)", remediationPlanPath, err)
+	}
+	steps := remediationPlanStepsIn(body)
+	if len(steps) == 0 {
+		t.Fatalf("%s declares no steps; every deferred row would fail against an empty step set",
+			remediationPlanPath)
+	}
+	return steps
+}
 
 // bareLineSurface matches a surface that is only a line number or a line range,
 // carrying no file path and no symbol: `12`, `:141-147`, `lines 71-79`. Such a
@@ -141,8 +210,9 @@ func claimRegisterSpecHeadings(t *testing.T, root string) map[string]bool {
 
 // validateClaimRegister returns the findings the register's own text supports.
 // It is separated from the test so the cases below can drive it over fixtures.
-// anchors is the set every row's `spec_anchor` is resolved against.
-func validateClaimRegister(body []byte, anchors map[string]bool) []string {
+// anchors is the set every row's `spec_anchor` is resolved against, and steps is
+// the set every deferred row's `deferral_id` is resolved against.
+func validateClaimRegister(body []byte, anchors, steps map[string]bool) []string {
 	var doc claimRegister
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return []string{fmt.Sprintf("the register does not parse as JSON: %v", err)}
@@ -215,6 +285,11 @@ func validateClaimRegister(body []byte, anchors map[string]bool) []string {
 			findings = append(findings, fmt.Sprintf(
 				"%s names deferral %q, which is not a step identifier", where, c.DeferralID,
 			))
+		} else if !steps[c.DeferralID] {
+			findings = append(findings, fmt.Sprintf(
+				"%s names deferral %q, which %s declares no step for",
+				where, c.DeferralID, remediationPlanPath,
+			))
 		}
 	}
 	sort.Strings(findings)
@@ -226,7 +301,8 @@ func validateClaimRegister(body []byte, anchors map[string]bool) []string {
 // later step cannot read it as a work queue. Either a row is malformed, a status
 // is outside the closed set, a row's spec_anchor names no §28 heading, a WIRED
 // row names no surface or names one that is only a line reference, or a row that
-// is not WIRED names no step that closes it.
+// is not WIRED names no step that closes it or names one the remediation plan
+// does not declare.
 func TestClaimRegisterSaysWhatTheSpecificationRequires(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
@@ -236,7 +312,7 @@ func TestClaimRegisterSaysWhatTheSpecificationRequires(t *testing.T) {
 		t.Fatalf("%s: %v (the specification requires this register to exist; it is not optional)",
 			claimRegisterPath, err)
 	}
-	for _, f := range validateClaimRegister(body, claimRegisterSpecHeadings(t, root)) {
+	for _, f := range validateClaimRegister(body, claimRegisterSpecHeadings(t, root), remediationPlanSteps(t, root)) {
 		t.Errorf("%s: %s", claimRegisterPath, f)
 	}
 	var doc claimRegister
@@ -255,7 +331,9 @@ func TestClaimRegisterSaysWhatTheSpecificationRequires(t *testing.T) {
 // malformed register would be accepted and the work queue silently lost.
 func TestClaimRegisterValidatorRefusesAnUnusableRegister(t *testing.T) {
 	t.Parallel()
-	anchors := claimRegisterSpecHeadings(t, schematest.RepoRoot(t))
+	root := schematest.RepoRoot(t)
+	anchors := claimRegisterSpecHeadings(t, root)
+	steps := remediationPlanSteps(t, root)
 	cases := []struct {
 		name string
 		body string
@@ -302,6 +380,16 @@ func TestClaimRegisterValidatorRefusesAnUnusableRegister(t *testing.T) {
 			"not a step identifier",
 		},
 		{
+			"deferral of the right form naming a step the plan does not declare",
+			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"ABSENT","spec_anchor":"#2851-gateway-to-pod","surface":"x","deferral_id":"R99"}]}`,
+			"declares no step for",
+		},
+		{
+			"deferral naming a sub-step the plan does not declare",
+			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"UNWIRED","spec_anchor":"#2851-gateway-to-pod","surface":"x","deferral_id":"R16c"}]}`,
+			"declares no step for",
+		},
+		{
 			"wired row carrying a deferral",
 			`{"kind":"claim-register","version":1,"claims":[{"claim":"a","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"x","deferral_id":"R12"}]}`,
 			"no step left to close it",
@@ -339,7 +427,7 @@ func TestClaimRegisterValidatorRefusesAnUnusableRegister(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := validateClaimRegister([]byte(c.body), anchors)
+			got := validateClaimRegister([]byte(c.body), anchors, steps)
 			if len(got) == 0 {
 				t.Fatalf("the validator accepted a register it must refuse")
 			}
@@ -361,9 +449,51 @@ func TestClaimRegisterValidatorAcceptsAWellFormedRegister(t *testing.T) {
       {"claim":"a wired mechanism cited at two sites in one file","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `pkg/x/y.go:78` + "`" + `, escalation ` + "`" + `:141-147` + "`" + `"},
       {"claim":"a wired mechanism cited by a symbol","status":"WIRED","spec_anchor":"#2851-gateway-to-pod","surface":"` + "`" + `InterReplicaAddress` + "`" + `"},
       {"claim":"an implemented mechanism with no caller","status":"UNWIRED","spec_anchor":"#2853-intra-pod","surface":"pkg/x/z.go:8","deferral_id":"R22"},
-      {"claim":"a specified mechanism that is not implemented","status":"ABSENT","spec_anchor":"#286-exclusivity-and-concurrency-model","surface":"spec/28_communication-channels.md","deferral_id":"R16"}]}`
-	if got := validateClaimRegister([]byte(body), claimRegisterSpecHeadings(t, schematest.RepoRoot(t))); len(got) != 0 {
+      {"claim":"a specified mechanism that is not implemented","status":"ABSENT","spec_anchor":"#286-exclusivity-and-concurrency-model","surface":"spec/28_communication-channels.md","deferral_id":"R16"},
+      {"claim":"a mechanism deferred to a sub-step","status":"ABSENT","spec_anchor":"#286-exclusivity-and-concurrency-model","surface":"spec/28_communication-channels.md","deferral_id":"R11a"}]}`
+	root := schematest.RepoRoot(t)
+	got := validateClaimRegister([]byte(body), claimRegisterSpecHeadings(t, root), remediationPlanSteps(t, root))
+	if len(got) != 0 {
 		t.Errorf("the validator refused a well-formed register: %q", got)
+	}
+}
+
+// spec: 28.4 (claim register)
+// diagnosis: the step set a deferred row resolves against no longer comes from
+// the remediation plan. A set that holds every string accepts a deferral that
+// hands the mechanism to nobody, and a set that holds none rejects every
+// deferred row, so the membership rule reports on the register in neither case.
+func TestClaimRegisterDeferralsComeFromThePlansSteps(t *testing.T) {
+	t.Parallel()
+	steps := remediationPlanSteps(t, schematest.RepoRoot(t))
+	for _, want := range []string{"R1a", "R1b", "R2b", "R10", "R11a", "R16", "R25"} {
+		if !steps[want] {
+			t.Errorf("%s declares step %q and the step set does not hold it", remediationPlanPath, want)
+		}
+	}
+	for _, unwanted := range []string{"R99", "R16c", "R0a", ""} {
+		if steps[unwanted] {
+			t.Errorf("the step set holds %q, which %s declares no step for",
+				unwanted, remediationPlanPath)
+		}
+	}
+
+	// A step is declared by its heading or by its edge-list row. A mention in a
+	// sentence, in a fenced figure, or in a table column that is not the first
+	// is a reference to a step rather than the declaration of one.
+	doc := "### R3. Tooling\n\n```\n### R98. inside a fence\n```\n\n" +
+		"| Step | Depends on |\n|:--|:--|\n| R4 | R97 |\n\n" +
+		"R96 is discussed here.\n\n## 3. Step 1: naming (R1)\n"
+	got := remediationPlanStepsIn([]byte(doc))
+	for _, want := range []string{"R3", "R4", "R1"} {
+		if !got[want] {
+			t.Errorf("the step %q was declared and was not read: %v", want, got)
+		}
+	}
+	for _, unwanted := range []string{"R98", "R97", "R96"} {
+		if got[unwanted] {
+			t.Errorf("%q was referred to rather than declared and was read as a step: %v", unwanted, got)
+		}
 	}
 }
 
