@@ -63,6 +63,7 @@ var tierZeroGates = []tierZeroGate{
 	{"TestResidualGateCertifiesTheTree", "residual_gate_test.go", "no member of a migration class is unclassified"},
 	{"TestSpecCitationResolutionCertifiesTheTree", "spec_citation_resolution_test.go", "a line citation resolves inside the section it names"},
 	{"TestLineCitationRatchetCertifiesTheTree", "line_citation_ratchet_test.go", "the line-citation population does not grow"},
+	{"TestCoordinatorHoldAllowlistNamesMethodsTheAdapterServes", "coordinator_hold_allowlist_test.go", "every coordinator-hold allowlist entry names a method the adapter serves"},
 }
 
 // gatesOutsideTierZero are registered by the migration through another tier's
