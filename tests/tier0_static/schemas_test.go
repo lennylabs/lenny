@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -205,5 +206,74 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 				t.Errorf("expected %s to validate, got: %v", name, err)
 			}
 		})
+	}
+}
+
+// spec: 15.4 (runtime adapter artifacts), 28.5.3 (intra-pod channels)
+// diagnosis: the `description` of schemas/lenny-adapter-jsonl.schema.json
+//
+//	states the wrong mechanism for the cooperative-quiesce,
+//	interrupt, credential-rotation, and deadline frames. Those are
+//	CH-RUNTIMEOPS frames the adapter and the runtime exchange on the
+//	intra-pod runtime-ops Unix socket, schematized in
+//	schemas/runtime-ops-events.schema.json, and this artifact
+//	schematizes none of them. A description that credits the
+//	gateway-to-adapter gRPC stream with them contradicts the §15.4
+//	artifact list and misroutes every reader of the published
+//	schema.
+func TestAdapterJSONLDescriptionScopesRuntimeOpsFramesOut(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	const rel = "schemas/lenny-adapter-jsonl.schema.json"
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	var parsed struct {
+		Description string                     `json:"description"`
+		Defs        map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("parse %s: %v", rel, err)
+	}
+	if parsed.Description == "" {
+		t.Fatalf("%s has no description to check", rel)
+	}
+
+	// The description must send the runtime-operations frames to the
+	// artifact that actually schematizes them.
+	for _, want := range []string{"CH-RUNTIMEOPS", "schemas/runtime-ops-events.schema.json"} {
+		if !strings.Contains(parsed.Description, want) {
+			t.Errorf("%s description must name %q, got: %s", rel, want, parsed.Description)
+		}
+	}
+
+	// It must not attribute them to the gateway-to-adapter gRPC stream,
+	// which carries the adapter-to-gateway operational events instead.
+	for _, unwanted := range []string{"CH-ADAPTEREVENTS", "AdapterEvents", "gRPC", "lenny-adapter.proto"} {
+		if strings.Contains(parsed.Description, unwanted) {
+			t.Errorf("%s description must not attribute the runtime-operations frames to %q, got: %s",
+				rel, unwanted, parsed.Description)
+		}
+	}
+
+	// The description is true only while the artifact defines none of
+	// the frames it scopes out.
+	for _, frame := range []string{
+		"lifecycle_capabilities",
+		"checkpoint_request",
+		"checkpoint_ready",
+		"interrupt_request",
+		"interrupt_acknowledged",
+		"credentials_rotated",
+		"credentials_acknowledged",
+		"deadline_approaching",
+		"terminate",
+	} {
+		if _, defined := parsed.Defs[frame]; defined {
+			t.Errorf("%s must not schematize the CH-RUNTIMEOPS frame %q; it belongs to schemas/runtime-ops-events.schema.json",
+				rel, frame)
+		}
 	}
 }

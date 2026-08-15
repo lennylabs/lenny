@@ -400,7 +400,10 @@
     },
     "schemas/lenny-adapter-jsonl.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
-      "contract": ["tests/tier3_contract/adapter_jsonl/..."],
+      "contract": [
+        "tests/tier3_contract/adapter_jsonl/...",
+        "tests/tier3_contract/adapter_artifact_scope/..."
+      ],
       "conformance": ["tests/tier10_conformance/..."]
     },
     "schemas/messagepart.schema.json": {
@@ -515,6 +518,7 @@
     },
     "schemas/runtime-ops-events.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
+      "contract": ["tests/tier3_contract/adapter_artifact_scope/..."],
       "conformance": ["cmd/lenny-compliance/..."]
     },
     "cmd/runtimes/delegation-echo/": {

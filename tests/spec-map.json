@@ -2947,6 +2947,10 @@
         "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementSiblingLocationRejected",
         "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextFrameCarriesSlotID",
         "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextRejectsNonStringSlotID",
+        "tests/tier3_contract/adapter_artifact_scope/scope_test.go::TestJSONLArtifactDescriptionNamesTheRuntimeOpsArtifact",
+        "tests/tier3_contract/adapter_artifact_scope/scope_test.go::TestJSONLArtifactRejectsRuntimeOpsFrames",
+        "tests/tier3_contract/adapter_artifact_scope/scope_test.go::TestRuntimeOpsArtifactAcceptsTheFramesTheJSONLArtifactScopesOut",
+        "tests/tier3_contract/adapter_artifact_scope/scope_test.go::TestNeitherArtifactAcceptsAMalformedRuntimeOpsFrame",
         "tests/tier9_security/tracing_context_session_isolation_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
@@ -4829,7 +4833,8 @@
         "pkg/sessionrecord/record_test.go",
         "pkg/degradation/annotations_test.go",
         "cmd/runtimes/echo-concurrent/main_test.go",
-        "tests/tier3_contract/adapter_jsonl/messages_test.go"
+        "tests/tier3_contract/adapter_jsonl/messages_test.go",
+        "tests/tier3_contract/adapter_artifact_scope/scope_test.go"
       ],
       "packages": [
         "pkg/adapter",
