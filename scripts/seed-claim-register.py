@@ -70,6 +70,40 @@ DEFERRAL_RULES = [
      r"|hold state|service.account token", "R12"),
 ]
 
+# Which §28 heading states the mechanism a row carries a status for, by the words
+# the reference uses for it. The register records how far the tree has reached a
+# statement the specification makes, so a row names the heading that makes it, in
+# the `#slug` form a markdown link to that heading takes. The order is
+# significant: the first match wins, so a rule for one mechanism sits above the
+# rule for the boundary or the register it shares words with. A claim no rule
+# matches stops the run rather than taking a default, because a wrong anchor
+# sends a reader to a heading that does not state the mechanism and the schema
+# validator cannot tell the two apart.
+ANCHOR_RULES = [
+    (r"metric name", "#naming-table"),
+    (r"compliance suite", "#287-wire-contract-artifact-register"),
+    (r"gatewaycontrol|gateway.to.gateway", "#link-register"),
+    (r"coordination_generation", "#2851-gateway-to-pod"),
+    (r"slot identifier field|slot_id|slot.qualified|restore onto a concurrent pod"
+     r"|single.consumer|generation gap|quiesce",
+     "#286-exclusivity-and-concurrency-model"),
+    (r"barrier target set|eviction checkpoint|eviction snapshot|prestop drain"
+     r"|kubelet probe|mtls|podspec|sdk.warm|`adapter` grpc service"
+     r"|`attach` content stream|`checkpointbarrier`|`checkpoint` stream"
+     r"|`coordinatorfence`|health", "#2851-gateway-to-pod"),
+    (r"prestop hook|hold state|orphan.session|adapterevicting|adapterevents",
+     "#2852-pod-to-gateway"),
+    (r"heartbeat|mcp socket|runtime lifecycle|message socket|ready_for_input",
+     "#2853-intra-pod"),
+    (r"\bcross.replica|input.wait|inbox|tool.approval|coordinator_address",
+     "#2854-inter-replica"),
+    (r"llm proxy|object.store|spiffe", "#2855-pod-egress"),
+    (r"eviction.api|pods/eviction|poddisruptionbudget", "#2856-control-plane"),
+    (r"routing cache|\bsse\b", "#2857-gateway-to-store"),
+    (r"mirror|coordination.lease|coordlease|sweeper|orphan.claim|binding eviction",
+     "#register-entry-register"),
+]
+
 # The reference document is frozen at a point before the channel rename, so its
 # citations spell identifiers the way the tree no longer does. The register is a
 # live document about the current tree rather than a copy of a frozen one, so
@@ -123,6 +157,7 @@ EXPLICIT = [
     {
         "claim": "Adapter metric names carrying the retired channel spelling",
         "status": "ABSENT",
+        "spec_anchor": "#naming-table",
         "deferral_id": "R12",
         "surface": "pkg/adapter/metrics.go:71, pkg/adapter/metrics.go:79",
         "note": "the two metric names keep the retired spelling until R12 adds the "
@@ -131,6 +166,7 @@ EXPLICIT = [
     {
         "claim": "Agent podspec mTLS certificate material",
         "status": "ABSENT",
+        "spec_anchor": "#2851-gateway-to-pod",
         "deferral_id": "R14",
         "surface": "spec/04_system-components.md §4.4",
         "note": "the agent-pod mTLS client identity step supplies the certificate volumes",
@@ -139,6 +175,7 @@ EXPLICIT = [
         "claim": "Runtime-operations events schema asserted by the external-adapter "
                  "compliance suite",
         "status": "ABSENT",
+        "spec_anchor": "#287-wire-contract-artifact-register",
         "deferral_id": "R8",
         "surface": "cmd/lenny-compliance/schemavalidate.go",
         "note": "the suite compiles two schema files and reads no third, while "
@@ -179,6 +216,13 @@ def rows_of_section(path, heading):
         elif out:
             break
     return out[1:] if out else []
+
+
+def anchor_for(claim):
+    for pat, anchor in ANCHOR_RULES:
+        if re.search(pat, claim, re.I):
+            return anchor
+    raise SystemExit(f"no spec anchor rule matches claim: {claim}")
 
 
 def deferral_for(mechanism):
@@ -232,7 +276,12 @@ def main():
                 dropped.append((mechanism, status_cell))
                 continue
             claim = mechanism if side is None else f"{mechanism} ({side})"
-            row = {"claim": canonical(claim), "status": status, "surface": canonical(citation)}
+            row = {
+                "claim": canonical(claim),
+                "status": status,
+                "spec_anchor": anchor_for(canonical(claim)),
+                "surface": canonical(citation),
+            }
             if status != "WIRED":
                 step, fell_back = deferral_for(mechanism + " " + (side or ""))
                 row["deferral_id"] = step
@@ -256,6 +305,7 @@ def main():
         claims.append({
             "claim": f"{msg}.coordination_generation generation fence field",
             "status": "UNWIRED",
+            "spec_anchor": "#2851-gateway-to-pod",
             "deferral_id": "R16",
             "surface": "schemas/lenny-adapter.proto",
             "note": "the field is carried on the request and no production reader "
@@ -265,6 +315,7 @@ def main():
         claims.append({
             "claim": f"{msg} slot identifier field",
             "status": "UNWIRED",
+            "spec_anchor": "#286-exclusivity-and-concurrency-model",
             "deferral_id": "R22",
             "surface": "schemas/lenny-adapter.proto",
             "note": "the slot dimension is carried and unread until concurrent-slot "
@@ -273,6 +324,7 @@ def main():
     claims.append({
         "claim": "ResumeRequest.slot_id",
         "status": "UNWIRED",
+        "spec_anchor": "#286-exclusivity-and-concurrency-model",
         "deferral_id": "R22",
         "surface": "schemas/lenny-adapter.proto",
         "note": "the carved resume path reads the slot identifier when it lands",
