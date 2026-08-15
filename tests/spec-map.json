@@ -1963,7 +1963,7 @@
         "cmd/lenny-gateway/direct_usage_quota_integration_test.go::TestDirectModeUsageFlowsToQuotaCounter_spec_11_2",
         "tests/tier9_security/token_usage_anomaly_test.go::TestDirectModeInterspersedNonZeroResetsZeroRun_spec_11_2",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecReportUsageDirectionIsGatewayPull_F15_3_7",
-        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesSection47_F11_2_20",
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesRuntimeOpsChannel_F11_2_20",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecAnomalyMetricNotLabeledBySessionID_F11_2_20",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec"
       ],

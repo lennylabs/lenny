@@ -96,18 +96,19 @@ func TestSpecReportUsageDirectionIsGatewayPull_F15_3_7(t *testing.T) {
 	})
 }
 
-// spec: 11.2, 12, 4.7, 7.3
+// spec: 11.2, 12, 28.5.3, 7.3
 // diagnosis: a spec citation for the pod-reported cumulative-usage re-report
 // on reconnection still points at §7.3, which defines only retry and resume
-// and does not define the re-report mechanism. Proposal 0024 S2 re-pointed
-// all four dangling citations (§11.2 crash-recovery MAX rule, §11.2
-// in-memory-buffer reconstruction, §11.2 GATEWAY_CRASH_RECONSTRUCTION, and
-// the §12 storage-durability row) to §4.7, where ReportUsage and the
-// adapter's cumulative accumulation are defined. A failure here means a
-// citation drifted back to §7.3, dangling again, or §7.3 was made to home
-// the mechanism (which the resolution deliberately did not do). The §7.3
-// citations for the resume-window parameters are correct and must stay.
-func TestSpecPodReportedCumulativeCitesSection47_F11_2_20(t *testing.T) {
+// and does not define the re-report mechanism. The four citations (§11.2
+// crash-recovery MAX rule, §11.2 in-memory-buffer reconstruction, §11.2
+// GATEWAY_CRASH_RECONSTRUCTION, and the §12 storage-durability row) name the
+// `CH-RUNTIMEOPS` card in §28.5.3, which owns the intra-pod runtime-operations
+// channel and states the adapter's cumulative accumulation and its re-report
+// on reconnection. A failure here means a citation drifted back to §7.3,
+// dangling again, or §7.3 was made to home the mechanism (which the
+// resolution deliberately did not do). The §7.3 citations for the
+// resume-window parameters are correct and must stay.
+func TestSpecPodReportedCumulativeCitesRuntimeOpsChannel_F11_2_20(t *testing.T) {
 	root := repoRoot(t)
 	specDir := filepath.Join(root, "spec")
 
@@ -124,9 +125,10 @@ func TestSpecPodReportedCumulativeCitesSection47_F11_2_20(t *testing.T) {
 		t.Fatalf("read §7: %v", err)
 	}
 
-	// Each pod-reported cumulative-usage re-report sentence must cite §4.7 in
-	// the same line, not §7.3. Scan line-by-line so the assertion is anchored
-	// to the mechanism sentence rather than the whole file.
+	// Each pod-reported cumulative-usage re-report sentence must cite the
+	// §28.5.3 card that owns the mechanism on the same line, and must not cite
+	// §7.3. Scan line-by-line so the assertion is anchored to the mechanism
+	// sentence rather than the whole file.
 	type site struct {
 		body    []byte
 		file    string
@@ -135,10 +137,10 @@ func TestSpecPodReportedCumulativeCitesSection47_F11_2_20(t *testing.T) {
 		banRef  string
 	}
 	sites := []site{
-		{pol, "§11.2 crash-recovery MAX rule", "re-reported on reconnection to a new gateway replica", "04_system-components.md", "07_session-lifecycle.md"},
-		{pol, "§11.2 in-memory-buffer reconstruction", "reconstructed from pod-reported token usage during session recovery", "04_system-components.md", "07_session-lifecycle.md"},
-		{pol, "§11.2 GATEWAY_CRASH_RECONSTRUCTION", "reconciles billing from pod-reported token totals", "04_system-components.md", "07_session-lifecycle.md"},
-		{storage, "§12 storage-durability row", "In-memory buffer events reconstructed from pod-reported token usage", "04_system-components.md", "07_session-lifecycle.md"},
+		{pol, "§11.2 crash-recovery MAX rule", "re-reported on reconnection to a new gateway replica", "28_communication-channels.md", "07_session-lifecycle.md"},
+		{pol, "§11.2 in-memory-buffer reconstruction", "reconstructed from pod-reported token usage during session recovery", "28_communication-channels.md", "07_session-lifecycle.md"},
+		{pol, "§11.2 GATEWAY_CRASH_RECONSTRUCTION", "reconciles billing from pod-reported token totals", "28_communication-channels.md", "07_session-lifecycle.md"},
+		{storage, "§12 storage-durability row", "In-memory buffer events reconstructed from pod-reported token usage", "28_communication-channels.md", "07_session-lifecycle.md"},
 	}
 	for _, s := range sites {
 		line := lineContaining(string(s.body), s.marker)
@@ -147,7 +149,7 @@ func TestSpecPodReportedCumulativeCitesSection47_F11_2_20(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(line, s.wantRef) {
-			t.Errorf("%s: the pod-reported cumulative-usage sentence does not cite %s (must resolve to §4.7 where the mechanism is defined): %q", s.file, s.wantRef, line)
+			t.Errorf("%s: the pod-reported cumulative-usage sentence does not cite %s (must resolve to the §28.5.3 CH-RUNTIMEOPS card where the mechanism is defined): %q", s.file, s.wantRef, line)
 		}
 		if strings.Contains(line, s.banRef) {
 			t.Errorf("%s: the pod-reported cumulative-usage sentence still cites §7.3 (%s), which defines only retry and resume: %q", s.file, s.banRef, line)
@@ -155,15 +157,16 @@ func TestSpecPodReportedCumulativeCitesSection47_F11_2_20(t *testing.T) {
 	}
 
 	// §7.3 must not have been made to home the re-report mechanism: the
-	// resolution re-pointed the citations rather than moving the mechanism
-	// into §7.3, so §7.3 carries none of the pod-reported cumulative phrasing.
+	// citations point at the section that owns the mechanism rather than
+	// moving the mechanism into §7.3, so §7.3 carries none of the
+	// pod-reported cumulative phrasing.
 	s73 := section(string(sess), "### 7.3 ")
 	if s73 == "" {
 		t.Fatal("§7.3 heading not found")
 	}
 	for _, banned := range []string{"pod-reported", "cumulative usage total", "re-reported on reconnection", "reconstructed from pod-reported"} {
 		if strings.Contains(s73, banned) {
-			t.Errorf("§7.3 now homes the pod-reported cumulative-usage mechanism (%q); the resolution re-points citations to §4.7 rather than moving the mechanism into §7.3", banned)
+			t.Errorf("§7.3 now homes the pod-reported cumulative-usage mechanism (%q); the citations name the §28.5.3 CH-RUNTIMEOPS card rather than moving the mechanism into §7.3", banned)
 		}
 	}
 

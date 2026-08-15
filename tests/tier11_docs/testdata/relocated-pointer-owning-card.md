@@ -1,0 +1,1 @@
+The runtime completes its first `lifecycle_capabilities` / `lifecycle_support` exchange (the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod)), and the gateway compares the declared level against the observed level.
