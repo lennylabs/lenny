@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual register for the anchors class.
+#
+# Each entry is a member of the class that the enumeration the migration
+# works from does not carry. An in-class entry belongs to the class, and
+# its route out is the class's own pass or remediation. An excluded entry
+# never belonged to the class, and it is permanent.
+#
+# The residual gate in tests/tier0_static fails tier 0 on a member that
+# matches the class's broad predicate and appears in neither the
+# enumeration nor this file, so a member no enumeration anticipated is
+# triaged here rather than absorbed. The gate removes an in-class entry
+# whose member has left the class in the same run, and it never adds an
+# entry.
+kind: residual-register
+version: 1
+class: anchors
+entries: []

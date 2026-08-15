@@ -181,9 +181,15 @@ var classRegisters = map[Class][]string{
 		ClassIdentifier.ResidualRegister(),
 		"tests/registers/identifier-senses.yaml",
 	},
+	// The anchor class excludes the anchor-move map alongside its sense
+	// register. The map is keyed by the retired anchor, so it holds a
+	// verbatim copy of the text the class's predicate reads, and a scan
+	// that opened it would report every retirement the map records as a
+	// reference into a retired anchor under the map's own path.
 	ClassAnchor: {
 		ClassAnchor.ResidualRegister(),
 		"tests/registers/anchor-senses.yaml",
+		"tests/spec-anchor-moves.json",
 	},
 	ClassLineCitations: {
 		ClassLineCitations.ResidualRegister(),

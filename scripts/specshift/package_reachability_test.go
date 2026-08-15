@@ -210,7 +210,6 @@ var exportedSymbolsWithTestCallersOnly = map[string]bool{
 	"register.Save":               true,
 	"scope.Classes":               true,
 	"scope.PathKeyedRegisterRule": true,
-	"scope.PlanningRecords":       true,
 	"scope.Producers":             true,
 	"scope.Registers":             true,
 }

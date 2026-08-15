@@ -1,0 +1,9 @@
+package carrier
+
+// Client dials the pod.
+//
+//	The runtime opens the lifecycle
+//
+//	channel before the first frame, and the two words stand on either
+//	side of a blank comment line.
+type Client struct{}

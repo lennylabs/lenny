@@ -286,11 +286,10 @@ func TestStandardLevel(t *testing.T) {
 }
 
 // spec: 12.10 (Full-level conformance battery)
-// diagnosis: The Full battery — Standard plus the §15.4.6 lifecycle
-//
-//	channel handshake, checkpoint, interrupt, credential rotation, and
-//	deadline-signal handling — fails for streaming-echo, so the Full
-//	lifecycle contract regressed.
+// diagnosis: The Full battery — Standard plus the §15.4.6 CH-RUNTIMEOPS
+// handshake, checkpoint, interrupt, credential rotation, and
+// deadline-signal handling — fails for streaming-echo, so the Full
+// lifecycle contract regressed.
 func TestFullLevel(t *testing.T) {
 	a := buildArtifacts(t)
 

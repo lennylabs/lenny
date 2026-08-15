@@ -1,0 +1,4 @@
+# Record
+
+The step lands [the runtime-ops channel](#lifecycle-channel) and reworks
+the ReadControlChannel helper, whose stem the naming table retires.

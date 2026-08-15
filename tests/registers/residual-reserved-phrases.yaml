@@ -1,0 +1,523 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual register for the reserved-phrases class.
+#
+# Each entry is a member of the class that the enumeration the migration
+# works from does not carry. An in-class entry belongs to the class, and
+# its route out is the class's own pass or remediation. An excluded entry
+# never belonged to the class, and it is permanent.
+#
+# The residual gate in tests/tier0_static fails tier 0 on a member that
+# matches the class's broad predicate and appears in neither the
+# enumeration nor this file, so a member no enumeration anticipated is
+# triaged here rather than absorbed. The gate removes an in-class entry
+# whose member has left the class in the same run, and it never adds an
+# entry.
+kind: residual-register
+version: 1
+class: reserved-phrases
+entries:
+  - member: |-
+      .claude/rules/channel-naming.md: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: control channels
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: control-channels
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: lifecycle channels
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      .claude/rules/channel-naming.md: lifecycle-channels
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      the agent-facing statement of the naming law, which carries the banned spellings so an author can recognize them and which sits outside the domain the law names
+  - member: |-
+      charts/lenny/templates/agent-network-policies.yaml: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      charts/lenny/tests/reference-runtimes_test.yaml: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      charts/lenny/values.yaml: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      charts/lenny/values.yaml: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-adapter/main.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/scaffold.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/binary-minimal.main.go.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/go-chat.main.go.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/go-coding.main.go.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/python-chat.main.py.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/python-coding.main.py.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/runtime-binary.yaml.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/runtime-chat.yaml.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/runtime-coding.yaml.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/typescript-chat.main.ts.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-ctl/runtimescaffold/templates/typescript-coding.main.ts.tmpl: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      cmd/lenny-gateway/flags.go: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      cmd/runtimes/streaming-echo/main.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      docs/api/internal.md: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a markdown anchor identifier, which the ban places outside its matcher because rewriting one breaks every inbound link
+  - member: |-
+      docs/reference/glossary.md: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a markdown anchor identifier, which the ban places outside its matcher because rewriting one breaks every inbound link
+  - member: |-
+      pkg/adapter/adapterevents.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/checkpoint.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/credexpiry.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/gatewaylink.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/holdstate_test.go: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/lifecycle.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/lifecycle_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/manifest_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/runtimeops.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/session.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/adapter/usage_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/ctlcli/runtime.go: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/embedded/stack/bootstrap_seed_admin_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/embedded/stack/catalog.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      pkg/gateway/runtime/adapterclient/client_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      scripts/seed-claim-register.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/go/runtime/context.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      sdks/runtime/go/runtime/lifecycle.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      sdks/runtime/go/runtime/lifecycle_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      sdks/runtime/go/runtime/runtime.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      sdks/runtime/go/runtime/runtime.go: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      sdks/runtime/python/lenny_runtime/__init__.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/examples/lifecycle.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/lifecycle.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/lifecycle.py: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/runtime.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/runtime.py: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/types.py: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/lenny_runtime/types.py: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/python/pyproject.toml: lifecycle channels
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/examples/lifecycle/main.ts: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/index.ts: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/lifecycle.ts: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/lifecycle.ts: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/runtime.ts: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/runtime.ts: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/types.ts: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      sdks/runtime/typescript/src/types.ts: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      tests/claim-map.json: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      tests/groups.yaml: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      tests/spec-map.json: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      tests/spec-map.json: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
+  - member: |-
+      tests/tier10_conformance/scaffolds_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier11_docs/budget_extension_trigger_consistency_test.go: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier11_docs/eviction_coordinator_route_consistency_test.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier11_docs/eviction_coordinator_route_consistency_test.go: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier3_contract/sdks/runtime_sdk_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier4_integration/credential_lifecycle_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier4_integration/credential_lifecycle_test.go: lifecycle-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier8_chaos/credential_rotation_ceiling_test.go: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier9_security/agent_egress_test.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier9_security/agent_egress_test.go: control-channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier9_security/budget_extension_failclosed_test.go: control channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
+  - member: |-
+      tests/tier9_security/pentest/v1-baseline-bundle.json: lifecycle channel
+    class: reserved-phrases
+    disposition: excluded
+    reason: |-
+      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site

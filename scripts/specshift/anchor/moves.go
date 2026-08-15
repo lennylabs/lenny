@@ -109,6 +109,26 @@ func loadMoves(path string) (*moveMap, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the anchor-move map %s: %w", path, err)
 	}
+	m, err := decodeMoves(path, data)
+	if err != nil {
+		return nil, err
+	}
+	if len(m.byAnchor) == 0 {
+		return nil, fmt.Errorf("anchor-move map %s: carries no move", path)
+	}
+	return m, nil
+}
+
+// decodeMoves parses and validates the map, and indexes what it retires.
+//
+// A map declaring an empty list of moves is returned rather than refused,
+// because the two callers answer differently. The pass refuses it, since a
+// run with no redirect rewrites nothing and reports the zero work of a
+// completed migration. The residual scan over the same class admits it: the
+// map is what records a retirement, so a map that retires nothing states a
+// class with no member, which is the tree's state before the reduction the
+// map describes has landed and after the change that empties it.
+func decodeMoves(path string, data []byte) (*moveMap, error) {
 	var doc mapDocument
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse the anchor-move map %s: %w", path, err)
@@ -121,9 +141,6 @@ func loadMoves(path string) (*moveMap, error) {
 	}
 	if doc.Moves == nil {
 		return nil, fmt.Errorf("anchor-move map %s: carries no moves block", path)
-	}
-	if len(*doc.Moves) == 0 {
-		return nil, fmt.Errorf("anchor-move map %s: carries no move", path)
 	}
 	m := &moveMap{path: path, byAnchor: map[string]Move{}, sections: map[string]bool{}}
 	for i, move := range *doc.Moves {
