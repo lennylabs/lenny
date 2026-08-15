@@ -1084,6 +1084,11 @@ message InterruptRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 4;
+  // slot_id, when set, interrupts just this §6.4 per-slot session's
+  // runtime while sibling slots on the pod keep running. Empty when
+  // `maxConcurrentSessions: 1`, where the session claims the whole pod.
+  // spec: §6.4.
+  SlotId slot_id = 5;
   enum Mode {
     MODE_UNSPECIFIED = 0;
     MODE_CLEAN = 1; // SIGTERM with grace
@@ -1263,6 +1268,11 @@ message SignalDeadlineRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 4;
+  // slot_id, when set, addresses the warning at this §6.4 per-slot
+  // session's runtime rather than at the whole pod. Empty when
+  // `maxConcurrentSessions: 1`, where the session claims the whole pod.
+  // spec: §6.4.
+  SlotId slot_id = 5;
 }
 
 message SignalDeadlineResponse {
@@ -1344,6 +1354,11 @@ message ResumeRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 14;
+  // slot_id, when set, restores the checkpoint into this §6.4 per-slot
+  // workspace on a pod that runs concurrent sessions, rather than into
+  // the whole-pod workspace. Empty when `maxConcurrentSessions: 1`.
+  // spec: §6.4.
+  SlotId slot_id = 15;
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -1422,6 +1437,11 @@ message CheckpointBarrierRequest {
   // barrier_id is the gateway's correlation id for this barrier. Echoed
   // verbatim in the CheckpointBarrierAck.
   string barrier_id = 3;
+  // slot_id, when set, dispatches the barrier at this §6.4 per-slot
+  // session rather than at the whole pod, so a drain quiesces one slot
+  // while sibling slots keep running. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.4.
+  SlotId slot_id = 4;
 }
 
 // CheckpointBarrierResponse is the synchronous mirror of the
@@ -1511,6 +1531,12 @@ message ReportUsageRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 3;
+  // slot_id, when set, reads the usage counters of this §6.4 per-slot
+  // session rather than the whole pod's. A pod running concurrent
+  // sessions meters each slot independently, so a pod-scoped read would
+  // conflate sibling tenants' consumption. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.4.
+  SlotId slot_id = 4;
 }
 
 message ReportUsageResponse {

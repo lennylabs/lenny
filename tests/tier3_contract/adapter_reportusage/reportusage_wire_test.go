@@ -36,21 +36,26 @@ type wantField struct {
 
 // TestReportUsageRequestWireContract pins the exact field set and numbering
 // of ReportUsageRequest: session_id (field 1), the `cumulative` bool flag
-// (field 2), and the `coordination_generation` fence (field 3) a pod
-// validates on every gateway-to-pod RPC. It reads the compiled descriptor,
-// so a field addition, rename, or renumber that survives a coordinated
-// proto+regeneration edit is still caught.
+// (field 2), the `coordination_generation` fence (field 3) a pod
+// validates on every gateway-to-pod RPC, and the `slot_id` (field 4) that
+// names which §6.4 slot's counters a concurrent pod is asked to report. It
+// reads the compiled descriptor, so a field addition, rename, or renumber
+// that survives a coordinated proto+regeneration edit is still caught.
 //
 // spec: 4.7 (Runtime Adapter, ReportUsage RPC), 11.2 (crash recovery for
 // quota counters, pod-reported cumulative total), 10.1 (coordination
-// generation validated on every gateway-to-pod RPC)
+// generation validated on every gateway-to-pod RPC), 6.4 (per-slot pod
+// filesystem layout on a pod running concurrent sessions)
 //
 // diagnosis: the ReportUsageRequest wire contract diverged from the §4.7
 // pull contract. Either the cumulative flag is missing (a reconnected
 // gateway replica cannot request the pod-reported cumulative total, so the
 // §11.2 MAX-rule recovery reads only a delta and under-counts), the §10.1
 // generation fence is missing (a stale coordinator's usage pull carries
-// nothing the pod can reject it on), or a field was renumbered (breaking
+// nothing the pod can reject it on), the §6.4 slot identifier is missing (a
+// pull against a pod serving concurrent sessions cannot name whose counters
+// it reads, so sibling tenants' consumption is conflated), or a field was
+// renumbered (breaking
 // gateway/adapter binary compatibility on the ReportUsage pull). Re-edit
 // schemas/lenny-adapter.proto and run `make generate-proto`.
 func TestReportUsageRequestWireContract(t *testing.T) {
@@ -60,11 +65,12 @@ func TestReportUsageRequestWireContract(t *testing.T) {
 		{name: "session_id", number: 1, kind: protoreflect.MessageKind},
 		{name: "cumulative", number: 2, kind: protoreflect.BoolKind},
 		{name: "coordination_generation", number: 3, kind: protoreflect.Int64Kind},
+		{name: "slot_id", number: 4, kind: protoreflect.MessageKind},
 	}
 
 	fields := md.Fields()
 	if got := fields.Len(); got != len(want) {
-		t.Fatalf("ReportUsageRequest has %d fields, want %d (cumulative must be present per §11.2 crash recovery, coordination_generation per the §10.1 fence)", got, len(want))
+		t.Fatalf("ReportUsageRequest has %d fields, want %d (cumulative must be present per §11.2 crash recovery, coordination_generation per the §10.1 fence, slot_id per the §6.4 per-slot layout)", got, len(want))
 	}
 
 	for _, w := range want {
