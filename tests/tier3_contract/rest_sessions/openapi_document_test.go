@@ -19,11 +19,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -66,6 +69,122 @@ func TestServedDocumentIsValidOpenAPI31(t *testing.T) {
 	schema := schematest.Compile(t, openAPIMetaSchemaFile)
 	if err := schema.Validate(doc); err != nil {
 		t.Errorf("served /openapi.json does not conform to the OpenAPI 3.1 meta-schema: %v", err)
+	}
+}
+
+// servedDocumentRoutes are the §15.1 routes the gateway serves the
+// OpenAPI document on. Each is read separately, because a client that
+// reaches the document through one mount holds whatever that mount
+// returns; a strip that missed one form would ship to that client.
+var servedDocumentRoutes = []string{
+	"/openapi.yaml",
+	"/openapi.json",
+	"/v1/openapi.json",
+	"/v1/openapi.yaml",
+}
+
+// lineCitationSpecimenFile holds one citation of the retired line
+// form. The specimen lives under testdata/, which sits outside the read
+// domain of the tree-wide citation gates, because a specimen is input
+// to a gate rather than a pointer into the specification and a tracked
+// Go file carrying one would register as a live citation site.
+const lineCitationSpecimenFile = "testdata/line-citation-specimen.txt"
+
+// generatedMCPToolSchemaFiles are the committed generated MCP tool
+// schemas derived from the served OpenAPI document: the
+// `lenny/create_session` input schema genmcpschemas writes, and the
+// §25.12 `/mcp/management` tool inventory openapi-to-mcp writes. Both
+// copy their descriptions out of the document verbatim, so a citation
+// left in the document reaches an MCP client through them.
+var generatedMCPToolSchemaFiles = []string{
+	"pkg/gateway/mcpfabric/mcptools/generated_schemas.go",
+	"pkg/ops/mcp/generated_tools.go",
+}
+
+// spec: §28.1 (N8, the citation rule: a specification citation names a
+// heading rather than a line). A served client artifact carries no
+// citation of the specification at all, so the retired line form is
+// absent from the document the gateway serves under §15.1 and from the
+// §15.2.1 and §25.12 tool schemas generated from it.
+// diagnosis: a failure here means a citation of the retired line form
+// reached a client-facing artifact. A line number in a served
+// description points at a specification the client does not have and
+// goes stale the next time the section moves. Remove the citation from
+// pkg/gateway/externalapi/openapi/openapi.json and regenerate the two
+// derived artifacts; a section-only citation is out of this
+// assertion's scope and survives.
+func TestServedClientArtifactsCarryNoRetiredLineCitation(t *testing.T) {
+	t.Parallel()
+
+	// The matcher is exercised on a specimen first. Every assertion
+	// below reports absence, and absence is what a matcher that reads
+	// nothing reports over every input.
+	specimen, err := os.ReadFile(lineCitationSpecimenFile)
+	if err != nil {
+		t.Fatalf("read the retired-form specimen at %s: %v", lineCitationSpecimenFile, err)
+	}
+	if found := citation.Find(string(specimen)); len(found) != 1 {
+		t.Fatalf("the citation matcher read %d citation(s) in the specimen at %s, want the one it carries; "+
+			"the assertions below would pass over any input", len(found), lineCitationSpecimenFile)
+	}
+
+	ts := httptest.NewServer(openapi.Handler())
+	t.Cleanup(ts.Close)
+
+	for _, route := range servedDocumentRoutes {
+		t.Run(route, func(t *testing.T) {
+			body := fetchServedDocument(t, ts.URL+route)
+			if !strings.Contains(body, "openapi") {
+				t.Fatalf("GET %s returned no OpenAPI document, so the route carries nothing to assert over", route)
+			}
+			reportLineCitations(t, route, body)
+		})
+	}
+
+	root := schematest.RepoRoot(t)
+	for _, rel := range generatedMCPToolSchemaFiles {
+		t.Run(rel, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatalf("read the generated tool schemas at %s: %v", rel, err)
+			}
+			if len(body) == 0 {
+				t.Fatalf("%s is empty, so the file carries nothing to assert over", rel)
+			}
+			reportLineCitations(t, rel, string(body))
+		})
+	}
+}
+
+// fetchServedDocument reads the document the gateway serves at url.
+func fetchServedDocument(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d, want 200", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s: %v", url, err)
+	}
+	return string(body)
+}
+
+// reportLineCitations fails the test for every citation of the retired
+// line form the carrier holds. The broad predicate runs beside the
+// form, so a spelling the form does not read is reported here rather
+// than passing unread.
+func reportLineCitations(t *testing.T, carrier, content string) {
+	t.Helper()
+	for _, c := range citation.FindIn(carrier, content) {
+		t.Errorf("%s carries a citation of the retired line form: %s", carrier, c)
+	}
+	for _, b := range citation.FindBroadIn(carrier, content) {
+		t.Errorf("%s carries a citation naming a line: %s", carrier, b)
 	}
 }
 

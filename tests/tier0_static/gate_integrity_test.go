@@ -73,6 +73,11 @@ var gatesOutsideTierZero = []tierZeroGate{
 	{"TestReducedSectionsPointAtTheHeadingThatOwnsTheirContent", "tests/tier11_docs/successor_pointer_test.go", "tier 11"},
 	{"TestSpec287RegisterSupersedesEveryArtifactEnumerationInItsDomain", "tests/tier11_docs/artifact_register_supersession_test.go", "tier 11"},
 	{"TestReferenceDocumentIsFrozen_spec_28_1", "tests/tier11_docs/reference_document_freeze_test.go", "tier 11"},
+	{
+		"TestServedClientArtifactsCarryNoRetiredLineCitation",
+		"tests/tier3_contract/rest_sessions/openapi_document_test.go",
+		"tier 3",
+	},
 }
 
 // goTestFunc matches a Go test declaration.
