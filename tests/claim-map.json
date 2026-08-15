@@ -39,6 +39,13 @@
       "surface": "`podspec.go:607`, `cmd/lenny-adapter/prestop.go:68-94`"
     },
     {
+      "claim": "AttachRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
       "claim": "Barrier target set from the mirror, with cache fallback",
       "status": "WIRED",
       "surface": "`barrier/wiring.go:97-124`"
@@ -70,6 +77,13 @@
       "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
     },
     {
+      "claim": "CheckpointRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
       "claim": "Coordination sweeper and crash-takeover re-adopt",
       "status": "WIRED",
       "surface": "`cmd/lenny-gateway/workers.go:1298-1300`, `coordination_seams.go:199-251`"
@@ -94,6 +108,20 @@
       "claim": "Eviction-API admission gate on `pods/eviction`",
       "status": "WIRED",
       "surface": "`charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml:11`, `charts/lenny/values.yaml:1696`"
+    },
+    {
+      "claim": "ExportPathsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "ExtendCredentialLeaseRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
     },
     {
       "claim": "Gateway preStop drain, barrier plus tiered per-session loop",
@@ -244,6 +272,20 @@
       "note": "the carved resume path reads the slot identifier when it lands"
     },
     {
+      "claim": "RevokeCredentialsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
+      "claim": "RotateCredentialsRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
       "claim": "Runtime lifecycle channel (at deployment)",
       "status": "UNWIRED",
       "surface": "`cmd/lenny-adapter/main.go:373`; no `--runtime-ops-socket` setter",
@@ -283,6 +325,13 @@
       "deferral_id": "R19"
     },
     {
+      "claim": "SendMessageRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
+    },
+    {
       "claim": "Service-account token credential on `GatewayControl`",
       "status": "UNWIRED",
       "surface": "`gatewaycontrol/satoken.go:64`",
@@ -293,6 +342,13 @@
       "status": "ABSENT",
       "surface": "no dequeue path",
       "deferral_id": "R20"
+    },
+    {
+      "claim": "ShutdownRequest.coordination_generation generation fence field",
+      "status": "UNWIRED",
+      "deferral_id": "R16",
+      "surface": "schemas/lenny-adapter.proto",
+      "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
     },
     {
       "claim": "SignalDeadlineRequest slot identifier field",

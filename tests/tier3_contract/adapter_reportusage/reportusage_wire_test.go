@@ -35,33 +35,36 @@ type wantField struct {
 }
 
 // TestReportUsageRequestWireContract pins the exact field set and numbering
-// of ReportUsageRequest after proposal 0024 adds the `cumulative` bool flag
-// (field 2). It reads the compiled descriptor, so a field addition, rename,
-// or renumber that survives a coordinated proto+regeneration edit is still
-// caught. This test fails against the pre-0024 generated code, which
-// carried only session_id (field 1) and had no cumulative field.
+// of ReportUsageRequest: session_id (field 1), the `cumulative` bool flag
+// (field 2), and the `coordination_generation` fence (field 3) a pod
+// validates on every gateway-to-pod RPC. It reads the compiled descriptor,
+// so a field addition, rename, or renumber that survives a coordinated
+// proto+regeneration edit is still caught.
 //
 // spec: 4.7 (Runtime Adapter, ReportUsage RPC), 11.2 (crash recovery for
-// quota counters, pod-reported cumulative total)
+// quota counters, pod-reported cumulative total), 10.1 (coordination
+// generation validated on every gateway-to-pod RPC)
 //
 // diagnosis: the ReportUsageRequest wire contract diverged from the §4.7
 // pull contract. Either the cumulative flag is missing (a reconnected
 // gateway replica cannot request the pod-reported cumulative total, so the
-// §11.2 MAX-rule recovery reads only a delta and under-counts), or a field
-// was renumbered (breaking gateway/adapter binary compatibility on the
-// ReportUsage pull). Re-edit schemas/lenny-adapter.proto and run
-// `make generate-proto`.
+// §11.2 MAX-rule recovery reads only a delta and under-counts), the §10.1
+// generation fence is missing (a stale coordinator's usage pull carries
+// nothing the pod can reject it on), or a field was renumbered (breaking
+// gateway/adapter binary compatibility on the ReportUsage pull). Re-edit
+// schemas/lenny-adapter.proto and run `make generate-proto`.
 func TestReportUsageRequestWireContract(t *testing.T) {
 	md := (&adapterv1.ReportUsageRequest{}).ProtoReflect().Descriptor()
 
 	want := []wantField{
 		{name: "session_id", number: 1, kind: protoreflect.MessageKind},
 		{name: "cumulative", number: 2, kind: protoreflect.BoolKind},
+		{name: "coordination_generation", number: 3, kind: protoreflect.Int64Kind},
 	}
 
 	fields := md.Fields()
 	if got := fields.Len(); got != len(want) {
-		t.Fatalf("ReportUsageRequest has %d fields, want %d (cumulative must be present per §11.2 crash recovery)", got, len(want))
+		t.Fatalf("ReportUsageRequest has %d fields, want %d (cumulative must be present per §11.2 crash recovery, coordination_generation per the §10.1 fence)", got, len(want))
 	}
 
 	for _, w := range want {
@@ -107,7 +110,8 @@ func TestReportUsageRequestDefaultCumulativeWireIdentical(t *testing.T) {
 
 	// Golden encoding of session_id (field 1) alone, computed independently
 	// of the ReportUsageRequest type so the assertion fails if the cumulative
-	// field (field 2) emits any bytes when false. Field wire tags:
+	// field (field 2) emits any bytes when false or the coordination_generation
+	// fence (field 3) emits any bytes when zero. Field wire tags:
 	//   field 1 (session_id, message): tag 0x0a
 	want := []byte{
 		0x0a, 0x08, 0x0a, 0x06, 's', 'e', 's', 's', '-', '1', // session_id { value: "sess-1" }

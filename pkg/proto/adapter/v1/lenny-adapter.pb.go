@@ -2965,9 +2965,15 @@ type SendMessageRequest struct {
 	SlotId    *SlotId                `protobuf:"bytes,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	// Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
 	// `message`). The adapter writes it verbatim to the agent's stdin.
-	EnvelopeJson  []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	EnvelopeJson []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SendMessageRequest) Reset() {
@@ -3021,6 +3027,13 @@ func (x *SendMessageRequest) GetEnvelopeJson() []byte {
 	return nil
 }
 
+func (x *SendMessageRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
+}
+
 type SendMessageResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3067,9 +3080,17 @@ type AttachRequest struct {
 	// Opaque JSON-encoded client-to-agent frame (lenny-adapter-jsonl.schema.json
 	// `message`, `tool_result`, `heartbeat`, ...). The adapter writes it
 	// verbatim to the agent's stdin.
-	EnvelopeJson  []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	EnvelopeJson []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1). It is carried on every frame of the
+	// stream rather than on the opening frame alone, for the same reason
+	// session_id is.
+	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *AttachRequest) Reset() {
@@ -3121,6 +3142,13 @@ func (x *AttachRequest) GetEnvelopeJson() []byte {
 		return x.EnvelopeJson
 	}
 	return nil
+}
+
+func (x *AttachRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 // AttachResponse is one frame the adapter streams back over Attach as
@@ -3288,9 +3316,15 @@ type RotateCredentialsRequest struct {
 	// slot_id, when set, rotates the lease in this slot's §6.1 per-slot
 	// credential file independently of sibling slots. Empty when
 	// `maxConcurrentSessions: 1`. spec: §6.1.
-	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SlotId *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,5,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *RotateCredentialsRequest) Reset() {
@@ -3351,6 +3385,13 @@ func (x *RotateCredentialsRequest) GetSlotId() *SlotId {
 	return nil
 }
 
+func (x *RotateCredentialsRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
+}
+
 type RotateCredentialsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3398,9 +3439,15 @@ type ExtendCredentialLeaseRequest struct {
 	// slot_id, when set, extends this slot's §6.1 per-slot credential
 	// lease timer independently of sibling slots. Empty when
 	// `maxConcurrentSessions: 1`. spec: §6.1.
-	SlotId        *SlotId `protobuf:"bytes,5,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SlotId *SlotId `protobuf:"bytes,5,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,6,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ExtendCredentialLeaseRequest) Reset() {
@@ -3468,6 +3515,13 @@ func (x *ExtendCredentialLeaseRequest) GetSlotId() *SlotId {
 	return nil
 }
 
+func (x *ExtendCredentialLeaseRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
+}
+
 type ExtendCredentialLeaseResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -3512,9 +3566,15 @@ type RevokeCredentialsRequest struct {
 	// slot_id, when set, revokes from this slot's §6.1 per-slot credential
 	// file independently of sibling slots. Empty when
 	// `maxConcurrentSessions: 1`. spec: §6.1.
-	SlotId        *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	SlotId *SlotId `protobuf:"bytes,4,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,5,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *RevokeCredentialsRequest) Reset() {
@@ -3573,6 +3633,13 @@ func (x *RevokeCredentialsRequest) GetSlotId() *SlotId {
 		return x.SlotId
 	}
 	return nil
+}
+
+func (x *RevokeCredentialsRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 type RevokeCredentialsResponse struct {
@@ -3689,12 +3756,18 @@ func (x *CredentialLease) GetPayload() []byte {
 }
 
 type InterruptRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Mode          InterruptRequest_Mode  `protobuf:"varint,2,opt,name=mode,proto3,enum=lenny.adapter.v1.InterruptRequest_Mode" json:"mode,omitempty"`
-	DeadlineMs    int32                  `protobuf:"varint,3,opt,name=deadline_ms,json=deadlineMs,proto3" json:"deadline_ms,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SessionId  *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Mode       InterruptRequest_Mode  `protobuf:"varint,2,opt,name=mode,proto3,enum=lenny.adapter.v1.InterruptRequest_Mode" json:"mode,omitempty"`
+	DeadlineMs int32                  `protobuf:"varint,3,opt,name=deadline_ms,json=deadlineMs,proto3" json:"deadline_ms,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *InterruptRequest) Reset() {
@@ -3744,6 +3817,13 @@ func (x *InterruptRequest) GetMode() InterruptRequest_Mode {
 func (x *InterruptRequest) GetDeadlineMs() int32 {
 	if x != nil {
 		return x.DeadlineMs
+	}
+	return 0
+}
+
+func (x *InterruptRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
 	}
 	return 0
 }
@@ -3811,9 +3891,17 @@ type CheckpointRequest struct {
 	//	*CheckpointRequest_Start
 	//	*CheckpointRequest_Grant
 	//	*CheckpointRequest_Abort
-	Msg           isCheckpointRequest_Msg `protobuf_oneof:"msg"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Msg isCheckpointRequest_Msg `protobuf_oneof:"msg"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1). It sits outside the `msg` oneof
+	// because the fence applies to every frame the gateway sends on the
+	// stream rather than to the opening frame alone.
+	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *CheckpointRequest) Reset() {
@@ -3878,6 +3966,13 @@ func (x *CheckpointRequest) GetAbort() *CheckpointAbort {
 		}
 	}
 	return nil
+}
+
+func (x *CheckpointRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 type isCheckpointRequest_Msg interface {
@@ -4558,9 +4653,15 @@ type SignalDeadlineRequest struct {
 	RemainingMs int32 `protobuf:"varint,2,opt,name=remaining_ms,json=remainingMs,proto3" json:"remaining_ms,omitempty"`
 	// trigger names which deadline is approaching: "session_age" (the
 	// §11.3 maxSessionAge cap), "budget", or "idle".
-	Trigger       string `protobuf:"bytes,3,opt,name=trigger,proto3" json:"trigger,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Trigger string `protobuf:"bytes,3,opt,name=trigger,proto3" json:"trigger,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SignalDeadlineRequest) Reset() {
@@ -4612,6 +4713,13 @@ func (x *SignalDeadlineRequest) GetTrigger() string {
 		return x.Trigger
 	}
 	return ""
+}
+
+func (x *SignalDeadlineRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 type SignalDeadlineResponse struct {
@@ -4722,9 +4830,15 @@ type ResumeRequest struct {
 	// channel to the adapter on the resume path, so the capabilities are the
 	// adapter's only means of reading the chunks; a fetch that outlives the
 	// grants' expiry is re-driven by re-calling Resume, which re-mints.
-	Chunks        []*ChunkGrant `protobuf:"bytes,13,rep,name=chunks,proto3" json:"chunks,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Chunks []*ChunkGrant `protobuf:"bytes,13,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,14,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ResumeRequest) Reset() {
@@ -4839,6 +4953,13 @@ func (x *ResumeRequest) GetChunks() []*ChunkGrant {
 		return x.Chunks
 	}
 	return nil
+}
+
+func (x *ResumeRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -5333,9 +5454,15 @@ type ExportPathsRequest struct {
 	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// exports are applied in order; later entries overwrite earlier ones
 	// on path collision (§8.7 "Multiple exports").
-	Exports       []*ExportSpec `protobuf:"bytes,2,rep,name=exports,proto3" json:"exports,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Exports []*ExportSpec `protobuf:"bytes,2,rep,name=exports,proto3" json:"exports,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,3,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ExportPathsRequest) Reset() {
@@ -5380,6 +5507,13 @@ func (x *ExportPathsRequest) GetExports() []*ExportSpec {
 		return x.Exports
 	}
 	return nil
+}
+
+func (x *ExportPathsRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 // ExportedFile is one rebased file the adapter packaged for delegation.
@@ -5527,9 +5661,15 @@ type ReportUsageRequest struct {
 	// crash-recovery MAX rule (MAX(postgres_checkpoint, pod-reported cumulative
 	// total)); a delta-only read would under-count after a replica crash.
 	// spec: §4.7 ReportUsage, §11.2 crash recovery for quota counters.
-	Cumulative    bool `protobuf:"varint,2,opt,name=cumulative,proto3" json:"cumulative,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Cumulative bool `protobuf:"varint,2,opt,name=cumulative,proto3" json:"cumulative,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot drive the pod (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,3,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ReportUsageRequest) Reset() {
@@ -5574,6 +5714,13 @@ func (x *ReportUsageRequest) GetCumulative() bool {
 		return x.Cumulative
 	}
 	return false
+}
+
+func (x *ReportUsageRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 type ReportUsageResponse struct {
@@ -5652,9 +5799,15 @@ type ShutdownRequest struct {
 	// parameters, and reports the binary outcome asynchronously via
 	// ReportPodScrub. Absent on the terminate path (the pod is replaced).
 	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
-	Recycle       *RecycleScrub `protobuf:"bytes,5,opt,name=recycle,proto3" json:"recycle,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Recycle *RecycleScrub `protobuf:"bytes,5,opt,name=recycle,proto3" json:"recycle,omitempty"`
+	// coordination_generation is the gateway's view of the active
+	// coordination generation for the session. A pod validates the
+	// generation on every gateway-to-pod RPC and rejects a stale
+	// coordinator's request, so a replica that has lost coordination
+	// cannot tear the session down (§10.1).
+	CoordinationGeneration int64 `protobuf:"varint,6,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ShutdownRequest) Reset() {
@@ -5720,6 +5873,13 @@ func (x *ShutdownRequest) GetRecycle() *RecycleScrub {
 		return x.Recycle
 	}
 	return nil
+}
+
+func (x *ShutdownRequest) GetCoordinationGeneration() int64 {
+	if x != nil {
+		return x.CoordinationGeneration
+	}
+	return 0
 }
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
@@ -6628,18 +6788,20 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"on_timeout\x18\x02 \x01(\tR\tonTimeout\x12\x14\n" +
 	"\x05shell\x18\x03 \x01(\bR\x05shell\"=\n" +
 	"\x14StartSessionResponse\x12%\n" +
-	"\x0erefusal_reason\x18\x01 \x01(\tR\rrefusalReason\"\xa8\x01\n" +
+	"\x0erefusal_reason\x18\x01 \x01(\tR\rrefusalReason\"\xe1\x01\n" +
 	"\x12SendMessageRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x121\n" +
 	"\aslot_id\x18\x02 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x12#\n" +
-	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\"\x15\n" +
-	"\x13SendMessageResponse\"\xa3\x01\n" +
+	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\x127\n" +
+	"\x17coordination_generation\x18\x04 \x01(\x03R\x16coordinationGeneration\"\x15\n" +
+	"\x13SendMessageResponse\"\xdc\x01\n" +
 	"\rAttachRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x121\n" +
 	"\aslot_id\x18\x02 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x12#\n" +
-	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\"5\n" +
+	"\renvelope_json\x18\x03 \x01(\fR\fenvelopeJson\x127\n" +
+	"\x17coordination_generation\x18\x04 \x01(\x03R\x16coordinationGeneration\"5\n" +
 	"\x0eAttachResponse\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"\xb7\x02\n" +
 	"\x18AssignCredentialsRequest\x12:\n" +
@@ -6650,44 +6812,48 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\vLeasesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x127\n" +
 	"\x05value\x18\x02 \x01(\v2!.lenny.adapter.v1.CredentialLeaseR\x05value:\x028\x01\"\x1b\n" +
-	"\x19AssignCredentialsResponse\"\xe2\x02\n" +
+	"\x19AssignCredentialsResponse\"\x9b\x03\n" +
 	"\x18RotateCredentialsRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12N\n" +
 	"\x06leases\x18\x02 \x03(\v26.lenny.adapter.v1.RotateCredentialsRequest.LeasesEntryR\x06leases\x12)\n" +
 	"\x10rotation_trigger\x18\x03 \x01(\tR\x0frotationTrigger\x121\n" +
-	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x1a\\\n" +
+	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x127\n" +
+	"\x17coordination_generation\x18\x05 \x01(\x03R\x16coordinationGeneration\x1a\\\n" +
 	"\vLeasesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x127\n" +
 	"\x05value\x18\x02 \x01(\v2!.lenny.adapter.v1.CredentialLeaseR\x05value:\x028\x01\"\x1b\n" +
-	"\x19RotateCredentialsResponse\"\xf1\x01\n" +
+	"\x19RotateCredentialsResponse\"\xaa\x02\n" +
 	"\x1cExtendCredentialLeaseRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12\x19\n" +
 	"\blease_id\x18\x03 \x01(\tR\aleaseId\x12+\n" +
 	"\x12expires_at_unix_ms\x18\x04 \x01(\x03R\x0fexpiresAtUnixMs\x121\n" +
-	"\aslot_id\x18\x05 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\"\x1f\n" +
-	"\x1dExtendCredentialLeaseResponse\"\xbf\x01\n" +
+	"\aslot_id\x18\x05 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x127\n" +
+	"\x17coordination_generation\x18\x06 \x01(\x03R\x16coordinationGeneration\"\x1f\n" +
+	"\x1dExtendCredentialLeaseResponse\"\xf8\x01\n" +
 	"\x18RevokeCredentialsRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x1c\n" +
 	"\tproviders\x18\x02 \x03(\tR\tproviders\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x121\n" +
-	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\"\x1b\n" +
+	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x127\n" +
+	"\x17coordination_generation\x18\x05 \x01(\x03R\x16coordinationGeneration\"\x1b\n" +
 	"\x19RevokeCredentialsResponse\"\xc0\x01\n" +
 	"\x0fCredentialLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x1a\n" +
 	"\bprovider\x18\x02 \x01(\tR\bprovider\x12+\n" +
 	"\x12expires_at_unix_ms\x18\x03 \x01(\x03R\x0fexpiresAtUnixMs\x12/\n" +
 	"\x14renew_before_unix_ms\x18\x04 \x01(\x03R\x11renewBeforeUnixMs\x12\x18\n" +
-	"\apayload\x18\x05 \x01(\fR\apayload\"\xe9\x01\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload\"\xa2\x02\n" +
 	"\x10InterruptRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12;\n" +
 	"\x04mode\x18\x02 \x01(\x0e2'.lenny.adapter.v1.InterruptRequest.ModeR\x04mode\x12\x1f\n" +
 	"\vdeadline_ms\x18\x03 \x01(\x05R\n" +
-	"deadlineMs\";\n" +
+	"deadlineMs\x127\n" +
+	"\x17coordination_generation\x18\x04 \x01(\x03R\x16coordinationGeneration\";\n" +
 	"\x04Mode\x12\x14\n" +
 	"\x10MODE_UNSPECIFIED\x10\x00\x12\x0e\n" +
 	"\n" +
@@ -6700,11 +6866,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13STATUS_ACKNOWLEDGED\x10\x01\x12\x1c\n" +
 	"\x18STATUS_INTERRUPT_TIMEOUT\x10\x02\x12\x0f\n" +
-	"\vSTATUS_BUSY\x10\x03\"\xcb\x01\n" +
+	"\vSTATUS_BUSY\x10\x03\"\x84\x02\n" +
 	"\x11CheckpointRequest\x129\n" +
 	"\x05start\x18\x01 \x01(\v2!.lenny.adapter.v1.CheckpointStartH\x00R\x05start\x129\n" +
 	"\x05grant\x18\x02 \x01(\v2!.lenny.adapter.v1.CheckpointGrantH\x00R\x05grant\x129\n" +
-	"\x05abort\x18\x03 \x01(\v2!.lenny.adapter.v1.CheckpointAbortH\x00R\x05abortB\x05\n" +
+	"\x05abort\x18\x03 \x01(\v2!.lenny.adapter.v1.CheckpointAbortH\x00R\x05abort\x127\n" +
+	"\x17coordination_generation\x18\x04 \x01(\x03R\x16coordinationGenerationB\x05\n" +
 	"\x03msg\"\x9a\x02\n" +
 	"\x0fCheckpointStart\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12=\n" +
@@ -6753,14 +6920,15 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\vhttp_status\x18\x03 \x01(\x05R\n" +
 	"httpStatus\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\x04 \x01(\tR\terrorCode\"\x90\x01\n" +
+	"error_code\x18\x04 \x01(\tR\terrorCode\"\xc9\x01\n" +
 	"\x15SignalDeadlineRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12!\n" +
 	"\fremaining_ms\x18\x02 \x01(\x05R\vremainingMs\x12\x18\n" +
-	"\atrigger\x18\x03 \x01(\tR\atrigger\"6\n" +
+	"\atrigger\x18\x03 \x01(\tR\atrigger\x127\n" +
+	"\x17coordination_generation\x18\x04 \x01(\x03R\x16coordinationGeneration\"6\n" +
 	"\x16SignalDeadlineResponse\x12\x1c\n" +
-	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xff\x05\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\"\xb8\x06\n" +
 	"\rResumeRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x18\n" +
@@ -6775,7 +6943,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	" \x01(\x03R\x16expectedWorkspaceBytes\x12;\n" +
 	"\x1aworkspace_size_limit_bytes\x18\v \x01(\x03R\x17workspaceSizeLimitBytes\x126\n" +
 	"\x17expected_workspace_root\x18\f \x01(\tR\x15expectedWorkspaceRoot\x124\n" +
-	"\x06chunks\x18\r \x03(\v2\x1c.lenny.adapter.v1.ChunkGrantR\x06chunks\x1aA\n" +
+	"\x06chunks\x18\r \x03(\v2\x1c.lenny.adapter.v1.ChunkGrantR\x06chunks\x127\n" +
+	"\x17coordination_generation\x18\x0e \x01(\x03R\x16coordinationGeneration\x1aA\n" +
 	"\x13TracingContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01J\x04\b\x06\x10\aR\atask_id\"\x88\x02\n" +
@@ -6818,11 +6987,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"ExportSpec\x12\x16\n" +
 	"\x06source\x18\x01 \x01(\tR\x06source\x12\x1f\n" +
 	"\vdest_prefix\x18\x02 \x01(\tR\n" +
-	"destPrefix\"\x88\x01\n" +
+	"destPrefix\"\xc1\x01\n" +
 	"\x12ExportPathsRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x126\n" +
-	"\aexports\x18\x02 \x03(\v2\x1c.lenny.adapter.v1.ExportSpecR\aexports\"s\n" +
+	"\aexports\x18\x02 \x03(\v2\x1c.lenny.adapter.v1.ExportSpecR\aexports\x127\n" +
+	"\x17coordination_generation\x18\x03 \x01(\x03R\x16coordinationGeneration\"s\n" +
 	"\fExportedFile\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\fR\acontent\x12\x16\n" +
@@ -6832,17 +7002,18 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x13ExportPathsResponse\x124\n" +
 	"\x05files\x18\x01 \x03(\v2\x1e.lenny.adapter.v1.ExportedFileR\x05files\x12\x1f\n" +
 	"\vtotal_bytes\x18\x02 \x01(\x03R\n" +
-	"totalBytes\"p\n" +
+	"totalBytes\"\xa9\x01\n" +
 	"\x12ReportUsageRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x1e\n" +
 	"\n" +
 	"cumulative\x18\x02 \x01(\bR\n" +
-	"cumulative\"\x81\x01\n" +
+	"cumulative\x127\n" +
+	"\x17coordination_generation\x18\x03 \x01(\x03R\x16coordinationGeneration\"\x81\x01\n" +
 	"\x13ReportUsageResponse\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x03R\vinputTokens\x12#\n" +
 	"\routput_tokens\x18\x02 \x01(\x03R\foutputTokens\x12\"\n" +
-	"\rwall_clock_ms\x18\x03 \x01(\x03R\vwallClockMs\"\xf3\x01\n" +
+	"\rwall_clock_ms\x18\x03 \x01(\x03R\vwallClockMs\"\xac\x02\n" +
 	"\x0fShutdownRequest\x12:\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12\x16\n" +
@@ -6850,7 +7021,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\vdeadline_ms\x18\x03 \x01(\x05R\n" +
 	"deadlineMs\x121\n" +
 	"\aslot_id\x18\x04 \x01(\v2\x18.lenny.adapter.v1.SlotIdR\x06slotId\x128\n" +
-	"\arecycle\x18\x05 \x01(\v2\x1e.lenny.adapter.v1.RecycleScrubR\arecycle\"\x88\x01\n" +
+	"\arecycle\x18\x05 \x01(\v2\x1e.lenny.adapter.v1.RecycleScrubR\arecycle\x127\n" +
+	"\x17coordination_generation\x18\x06 \x01(\x03R\x16coordinationGeneration\"\x88\x01\n" +
 	"\fRecycleScrub\x12\x15\n" +
 	"\x06pod_id\x18\x01 \x01(\tR\x05podId\x12)\n" +
 	"\x10cleanup_commands\x18\x02 \x03(\tR\x0fcleanupCommands\x126\n" +

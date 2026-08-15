@@ -128,7 +128,10 @@ EXPLICIT = [
 # before that change, so no status table can carry a row for it.
 GENERATION_FENCE = [
     "InterruptRequest", "SignalDeadlineRequest", "ReportUsageRequest",
-    "CheckpointBarrierRequest", "ResumeRequest",
+    "CheckpointBarrierRequest", "ResumeRequest", "AttachRequest",
+    "SendMessageRequest", "ShutdownRequest", "CheckpointRequest",
+    "RotateCredentialsRequest", "ExtendCredentialLeaseRequest",
+    "RevokeCredentialsRequest", "ExportPathsRequest",
 ]
 SLOT_BEARING = [
     "InterruptRequest", "SignalDeadlineRequest", "ReportUsageRequest",

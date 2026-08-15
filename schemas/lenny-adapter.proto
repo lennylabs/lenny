@@ -949,6 +949,12 @@ message SendMessageRequest {
   // Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
   // `message`). The adapter writes it verbatim to the agent's stdin.
   bytes envelope_json = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 4;
 }
 
 message SendMessageResponse {}
@@ -963,6 +969,14 @@ message AttachRequest {
   // `message`, `tool_result`, `heartbeat`, ...). The adapter writes it
   // verbatim to the agent's stdin.
   bytes envelope_json = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1). It is carried on every frame of the
+  // stream rather than on the opening frame alone, for the same reason
+  // session_id is.
+  int64 coordination_generation = 4;
 }
 
 // AttachResponse is one frame the adapter streams back over Attach as
@@ -1002,6 +1016,12 @@ message RotateCredentialsRequest {
   // credential file independently of sibling slots. Empty when
   // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 4;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 5;
 }
 
 message RotateCredentialsResponse {}
@@ -1017,6 +1037,12 @@ message ExtendCredentialLeaseRequest {
   // lease timer independently of sibling slots. Empty when
   // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 5;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 6;
 }
 
 message ExtendCredentialLeaseResponse {}
@@ -1029,6 +1055,12 @@ message RevokeCredentialsRequest {
   // file independently of sibling slots. Empty when
   // `maxConcurrentSessions: 1`. spec: §6.1.
   SlotId slot_id = 4;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 5;
 }
 
 message RevokeCredentialsResponse {}
@@ -1046,6 +1078,12 @@ message InterruptRequest {
   SessionId session_id = 1;
   Mode mode = 2;
   int32 deadline_ms = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 4;
   enum Mode {
     MODE_UNSPECIFIED = 0;
     MODE_CLEAN = 1; // SIGTERM with grace
@@ -1091,6 +1129,14 @@ message CheckpointRequest {
     CheckpointGrant grant = 2;
     CheckpointAbort abort = 3;
   }
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1). It sits outside the `msg` oneof
+  // because the fence applies to every frame the gateway sends on the
+  // stream rather than to the opening frame alone.
+  int64 coordination_generation = 4;
 }
 
 // CheckpointStart opens the stream. It carries the gateway-minted
@@ -1211,6 +1257,12 @@ message SignalDeadlineRequest {
   // trigger names which deadline is approaching: "session_age" (the
   // §11.3 maxSessionAge cap), "budget", or "idle".
   string trigger = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 4;
 }
 
 message SignalDeadlineResponse {
@@ -1286,6 +1338,12 @@ message ResumeRequest {
   // adapter's only means of reading the chunks; a fetch that outlives the
   // grants' expiry is re-driven by re-calling Resume, which re-mints.
   repeated ChunkGrant chunks = 13;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 14;
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -1402,6 +1460,12 @@ message ExportPathsRequest {
   // exports are applied in order; later entries overwrite earlier ones
   // on path collision (§8.7 "Multiple exports").
   repeated ExportSpec exports = 2;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 3;
 }
 
 // ExportedFile is one rebased file the adapter packaged for delegation.
@@ -1441,6 +1505,12 @@ message ReportUsageRequest {
   // total)); a delta-only read would under-count after a replica crash.
   // spec: §4.7 ReportUsage, §11.2 crash recovery for quota counters.
   bool cumulative = 2;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot drive the pod (§10.1).
+  int64 coordination_generation = 3;
 }
 
 message ReportUsageResponse {
@@ -1466,6 +1536,13 @@ message ShutdownRequest {
   // ReportPodScrub. Absent on the terminate path (the pod is replaced).
   // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
   RecycleScrub recycle = 5;
+
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC and rejects a stale
+  // coordinator's request, so a replica that has lost coordination
+  // cannot tear the session down (§10.1).
+  int64 coordination_generation = 6;
 }
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
