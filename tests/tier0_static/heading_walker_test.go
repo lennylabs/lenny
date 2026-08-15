@@ -59,17 +59,42 @@ const (
 	reasonPendingImplementation = "pending-implementation"
 )
 
-// indexedHeading matches a heading the index is written to: a section or a
-// subsection, numbered.
-var indexedHeading = regexp.MustCompile(`^(#{2,3})\s+(\d+(?:\.\d+)?)\s+(.+)$`)
+// numberedHeading matches any numbered heading, at any depth and with a
+// section number of any number of parts. Which of those headings the walker
+// evaluates is decided by inHeadingDomain rather than by the match, because
+// the domain at depths below the subsection depends on what the index carries.
+var numberedHeading = regexp.MustCompile(`^(#{2,})\s+(\d+(?:\.\d+)*)\s+(.+)$`)
 
-// cardHeading matches a §28.5 contract card, which is deeper than the index's
-// usual depth and carried deliberately because the cards are the citable
-// handles the naming law creates.
-var cardHeading = regexp.MustCompile(`^#{3,4}\s+(28\.5\.\d+)\s+(.+)$`)
+// cardSection matches the number of a §28.5 contract card, which is deeper
+// than the index's usual depth and in the domain unconditionally because the
+// cards are the citable handles the naming law creates.
+var cardSection = regexp.MustCompile(`^28\.5\.\d+$`)
 
 // indexRow matches a markdown link target in the index.
 var indexRow = regexp.MustCompile(`\]\(([^)]+)\)`)
+
+// indexLabel matches the section number an index row's link label opens with,
+// as in `- [24.19.1 Image Management](...)`. The number is how the walker
+// decides whether the index carries a heading, so a row whose anchor does not
+// resolve still puts its heading in the domain and is reported there.
+var indexLabel = regexp.MustCompile(`\[(\d+(?:\.\d+)*)[ .]`)
+
+// inHeadingDomain reports whether the walker evaluates a heading. The `## N`
+// and `### N.M` headings are in the domain because that is the depth the index
+// is written to. Below that depth the domain is what the index already
+// carries, together with the §28.5 contract cards, because the index does not
+// descend uniformly and a gate that demanded it would be asking for a
+// different index rather than checking this one.
+func inHeadingDomain(marker, number string, indexedNumbers map[string]bool) bool {
+	switch {
+	case len(marker) <= 3 && strings.Count(number, ".") <= 1:
+		return true
+	case cardSection.MatchString(number):
+		return true
+	default:
+		return indexedNumbers[number]
+	}
+}
 
 // headingSlug renders a heading the way GitHub anchors it: punctuation is
 // dropped and every remaining space becomes one hyphen. The spaces a dropped
@@ -185,6 +210,10 @@ func runHeadingWalker(list scope.Lister, read scope.FileReader) ([]headingWalker
 	for _, m := range indexRow.FindAllStringSubmatch(string(body), -1) {
 		indexed[m[1]] = true
 	}
+	indexedNumbers := map[string]bool{}
+	for _, m := range indexLabel.FindAllStringSubmatch(string(body), -1) {
+		indexedNumbers[m[1]] = true
+	}
 	coverage, err := loadHeadingCoverage(read)
 	if err != nil {
 		return nil, 0, err
@@ -202,15 +231,12 @@ func runHeadingWalker(list scope.Lister, read scope.FileReader) ([]headingWalker
 			continue
 		}
 		for _, line := range strings.Split(string(src), "\n") {
-			var number, title string
-			switch {
-			case indexedHeading.MatchString(line):
-				m := indexedHeading.FindStringSubmatch(line)
-				number, title = m[2], m[3]
-			case cardHeading.MatchString(line):
-				m := cardHeading.FindStringSubmatch(line)
-				number, title = m[1], m[2]
-			default:
+			m := numberedHeading.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			marker, number, title := m[1], m[2], m[3]
+			if !inHeadingDomain(marker, number, indexedNumbers) {
 				continue
 			}
 			inScope++
@@ -506,6 +532,110 @@ func TestHeadingWalkerFailsOnAnUnreadableCoverageRegister(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.wantErr) {
 				t.Errorf("error %q does not name %q", err.Error(), c.wantErr)
+			}
+		})
+	}
+}
+
+// headingWalkerKeyedWith renders the fixture spec map with one additional key,
+// for the deeper heading a domain case adds to the fixture spec file.
+func headingWalkerKeyedWith(number, title string) string {
+	return `{"version": 1, "sections": {"28": {"title": "Communication Channels"},` +
+		` "28.9": {"title": "Worked subsection"},` +
+		fmt.Sprintf(` %q: {"title": %q}}}`, number, title)
+}
+
+// spec: 28.1 (N8, a citation names a heading), 28.2 (citable handles)
+// diagnosis: the walker's domain selector no longer matches the depths the
+// index is written to. Either a deeper heading the index carries is skipped, in
+// which case a section a reader can reach from the index records no coverage,
+// or a deeper heading the index does not carry is evaluated, in which case the
+// gate demands an index the specification does not have.
+func TestHeadingWalkerDomainFollowsTheDepthsTheIndexCarries(t *testing.T) {
+	t.Parallel()
+	const (
+		baseInDomain = 2 // `## 28` and `### 28.9`, both indexed and keyed.
+		deeperSpec   = headingWalkerFixtureSpec +
+			"\n#### 28.9.1 Worked sub-subsection\n\nProse.\n"
+		deeperRow = "    - [28.9.1 Worked sub-subsection]" +
+			"(28_communication-channels.md#2891-worked-sub-subsection)\n"
+		cardSpec = headingWalkerFixtureSpec +
+			"\n#### 28.5.1 Gateway-to-pod\n\nProse.\n"
+	)
+	cases := []struct {
+		name        string
+		spec        string
+		index       string
+		specMap     string
+		wantInScope int
+		wantNumber  string
+		wantMissing string
+	}{
+		{
+			name:        "a deeper heading the index carries and the spec map keys passes",
+			spec:        deeperSpec,
+			index:       headingWalkerFixtureIndex + deeperRow,
+			specMap:     headingWalkerKeyedWith("28.9.1", "Worked sub-subsection"),
+			wantInScope: baseInDomain + 1,
+		},
+		{
+			name:        "a deeper heading the index carries with no spec-map key fails",
+			spec:        deeperSpec,
+			index:       headingWalkerFixtureIndex + deeperRow,
+			specMap:     headingWalkerFixtureKeyed,
+			wantInScope: baseInDomain + 1,
+			wantNumber:  "28.9.1",
+			wantMissing: "no " + specMapPath + " key and no " + specMapExceptionsPath + " entry",
+		},
+		{
+			name:        "a deeper heading whose index row does not resolve fails",
+			spec:        deeperSpec,
+			index:       headingWalkerFixtureIndex + "    - [28.9.1 Worked sub-subsection](28_communication-channels.md#28.9.1)\n",
+			specMap:     headingWalkerKeyedWith("28.9.1", "Worked sub-subsection"),
+			wantInScope: baseInDomain + 1,
+			wantNumber:  "28.9.1",
+			wantMissing: "no index entry",
+		},
+		{
+			name:        "a deeper heading the index does not carry is outside the domain",
+			spec:        deeperSpec,
+			index:       headingWalkerFixtureIndex,
+			specMap:     headingWalkerFixtureKeyed,
+			wantInScope: baseInDomain,
+		},
+		{
+			name:        "a contract card heading with no index row fails",
+			spec:        cardSpec,
+			index:       headingWalkerFixtureIndex,
+			specMap:     headingWalkerKeyedWith("28.5.1", "Gateway-to-pod"),
+			wantInScope: baseInDomain + 1,
+			wantNumber:  "28.5.1",
+			wantMissing: "no index entry",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr := newHeadingWalkerTree(t, c.specMap, headingWalkerFixtureNoException)
+			tr.write(headingWalkerFixtureFile, c.spec)
+			tr.write(specIndexPath, c.index)
+			findings, inScope, err := tr.run()
+			if err != nil {
+				t.Fatalf("run the heading walker over the fixture tree: %v", err)
+			}
+			if inScope != c.wantInScope {
+				t.Errorf("the walk read %d in-domain heading(s), want %d", inScope, c.wantInScope)
+			}
+			var reported []string
+			for _, f := range findings {
+				reported = append(reported, fmt.Sprintf("§%s: %s", f.Number, f.Missing))
+			}
+			want := []string(nil)
+			if c.wantMissing != "" {
+				want = []string{fmt.Sprintf("§%s: %s", c.wantNumber, c.wantMissing)}
+			}
+			if strings.Join(reported, "; ") != strings.Join(want, "; ") {
+				t.Errorf("the walk reported %v, want %v", reported, want)
 			}
 		})
 	}
