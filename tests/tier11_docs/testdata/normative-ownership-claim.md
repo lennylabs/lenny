@@ -1,0 +1,1 @@
+The artifacts are versioned by Lenny release tag. **This section (15.4 and its subsections) remains the normative prose description**; any discrepancy between the artifacts and this prose is a bug that must be reconciled before release.
