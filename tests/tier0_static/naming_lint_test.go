@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -184,6 +185,141 @@ func TestNamingLintPassesTheNormativeStatementOfN3(t *testing.T) {
 	}
 	for _, s := range sites {
 		t.Errorf("%s", namingLintSite{Path: target, Line: s.Line, Text: s.Text})
+	}
+}
+
+// TestNamingLintPassesTheAgentFacingStatementOfTheNamingLaw pins the
+// other document the naming law points at. §28.1 states that the
+// literal spellings are held outside the prohibition's domain, in the
+// lint's matcher and in the agent-facing naming rules under .claude, so
+// that document carries every spelling the ban covers, written out. It
+// sits outside the carrier predicate, which admits the specification,
+// the documentation, the schemas, a tracked Go file, and a tracked
+// root-level markdown document, so the lint never opens it.
+//
+// The accept has to be the domain's doing. The case therefore drives the
+// same landed body from a path inside the domain and requires the run to
+// report it, so a matcher that had stopped selecting, or a walk that had
+// stopped reading, cannot produce the accept above.
+//
+// spec: §28.1 N3 (reserved-word ban)
+func TestNamingLintPassesTheAgentFacingStatementOfTheNamingLaw(t *testing.T) {
+	t.Parallel()
+
+	const target = ".claude/rules/channel-naming.md"
+	body, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), filepath.FromSlash(target)))
+	if err != nil {
+		t.Fatalf("read the agent-facing naming rules: %v", err)
+	}
+	if scope.ReservedPhraseCarrier(target) {
+		t.Fatalf("the carrier predicate admits %s, so the specimen it holds is a site the lint reports", target)
+	}
+
+	outside := newNamingLintTree(t)
+	outside.clean()
+	outside.file(target, string(body))
+	assertNamingLintSites(t, runNamingLint(t, outside.lint()))
+
+	inside := newNamingLintTree(t)
+	inside.clean()
+	inside.file("docs/reference/channel-naming.md", string(body))
+	if len(runNamingLint(t, inside.lint()).Sites) == 0 {
+		t.Fatalf("the same body inside the domain reported no site, so the accept above is the matcher reading nothing")
+	}
+
+	assertMatcherReadsEverySpecimen(t, string(body))
+}
+
+// reservedSpecimenHeading opens the section of the agent-facing naming
+// rules that writes the banned spellings out, and reservedSpecimenAfter
+// opens the section after it. The specimen table runs between the two.
+const (
+	reservedSpecimenHeading = "## Reserved spellings"
+	reservedSpecimenAfter   = "\n## "
+)
+
+// codeSpan matches one backtick-quoted span, which is how the specimen
+// table writes each spelling.
+var codeSpan = regexp.MustCompile("`([^`\n]+)`")
+
+// reservedSpecimens returns every spelling the agent-facing naming rules
+// write out, read off the table rows of the section that carries them.
+//
+// The spellings are read from the document rather than restated here.
+// Every tracked Go file is a carrier of the prohibition through its doc
+// comments, so a specimen written in this source would be a site of the
+// class the lint reports. Reading them also makes the document and the
+// matcher one statement of the ban: a spelling added to the table that
+// the matcher does not recognize fails the case below, and so does a
+// matcher that stops recognizing one the table carries.
+//
+// A section that yields no row is an error rather than an empty answer,
+// because a loop over no specimen checks the matcher against nothing.
+func reservedSpecimens(body string) ([]string, error) {
+	start := strings.Index(body, reservedSpecimenHeading)
+	if start < 0 {
+		return nil, fmt.Errorf("the naming rules carry no section %q", reservedSpecimenHeading)
+	}
+	section := body[start+len(reservedSpecimenHeading):]
+	if end := strings.Index(section, reservedSpecimenAfter); end >= 0 {
+		section = section[:end]
+	}
+	var specimens []string
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+			continue
+		}
+		for _, m := range codeSpan.FindAllStringSubmatch(line, -1) {
+			specimens = append(specimens, m[1])
+		}
+	}
+	if len(specimens) == 0 {
+		return nil, fmt.Errorf("the specimen table states no spelling")
+	}
+	sort.Strings(specimens)
+	return specimens, nil
+}
+
+// assertMatcherReadsEverySpecimen holds the matcher to the specimen the
+// naming law points at. §28.1 describes the two reserved words instead
+// of writing them, and states that the literal spellings are held in the
+// lint's matcher and in the agent-facing naming rules. The two are one
+// statement of the ban only if the matcher reads every spelling the
+// document writes out, so each specimen is driven through the matcher on
+// its own, from a path inside the prohibition's domain.
+//
+// Driving the whole document at once does not answer this. One spelling
+// the matcher had stopped reading would leave the other three reporting,
+// and the run would still be non-empty.
+//
+// spec: §28.1 N3 (reserved-word ban)
+func assertMatcherReadsEverySpecimen(t *testing.T, body string) {
+	t.Helper()
+
+	specimens, err := reservedSpecimens(body)
+	if err != nil {
+		t.Fatalf("read the specimens the naming rules write out: %v", err)
+	}
+	// The prohibition covers two reserved words in two spellings each.
+	if len(specimens) != 4 {
+		t.Fatalf("the specimen table states %d spelling(s) (%v), and the ban covers two words in two spellings",
+			len(specimens), specimens)
+	}
+	const target = "docs/reference/specimen.md"
+	for _, specimen := range specimens {
+		sites, err := name.Sites(target, "The runtime opens the "+specimen+".\n")
+		if err != nil {
+			t.Errorf("read the sites of the %q specimen: %v", specimen, err)
+			continue
+		}
+		if len(sites) != 1 {
+			t.Errorf("the matcher read %d site(s) in the %q specimen, and the specimen is one site", len(sites), specimen)
+			continue
+		}
+		if !strings.EqualFold(sites[0].Text, specimen) {
+			t.Errorf("the matcher read %q where the naming rules write %q, so the two state different bans",
+				sites[0].Text, specimen)
+		}
 	}
 }
 
