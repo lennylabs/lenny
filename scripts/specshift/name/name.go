@@ -170,7 +170,10 @@ func (r *Rewriter) DeferredFiles() []string {
 // LoadRegister reads and validates the per-site senses that drive the
 // pass. A missing or malformed register fails rather than loading as an
 // empty one: a run with no senses would rewrite no file and report the
-// zero work of a completed migration.
+// zero work of a completed migration. A register that declares an empty
+// list of entries loads, because that is what the change running the
+// pass over the whole write domain leaves behind once no site is left,
+// and a run driven by it still aborts at every site the tree carries.
 func (r *Rewriter) LoadRegister(path string) error {
 	senses, err := loadSenses(path)
 	if err != nil {

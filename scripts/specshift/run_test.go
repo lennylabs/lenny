@@ -6150,10 +6150,12 @@ func TestNamePassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
 
 // TestNamePassRejectsAMalformedOrMissingSenseRegister pins that the pass
 // refuses to run rather than reporting the zero substitutions of a
-// completed migration. A register that loaded as empty would abort at
-// the first site in the tree, which reads as a register nobody seeded,
-// and over an already-rewritten tree it would report a migration it
-// never performed.
+// completed migration. A register that degraded to empty on a read or a
+// parse failure would abort at the first site in the tree, which reads
+// as a register nobody seeded, and over an already-rewritten tree it
+// would report a migration it never performed. A document that declares
+// an empty list of entries is a separate state, which the loader admits
+// and the case below covers.
 //
 // spec: §28.1 (N3, the naming law: the removal is driven by the register
 // of senses)
@@ -6167,7 +6169,6 @@ func TestNamePassRejectsAMalformedOrMissingSenseRegister(t *testing.T) {
 		{"a missing register", "absent.yaml"},
 		{"a malformed register", "malformed.yaml"},
 		{"a register with no entries block", "no-entries-block.yaml"},
-		{"a register with no entry", "empty-entries.yaml"},
 		{"a register of another kind", "wrong-kind.yaml"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -6181,6 +6182,70 @@ func TestNamePassRejectsAMalformedOrMissingSenseRegister(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNamePassRunsOverTheEmptiedSenseRegisterAndStillFailsClosed pins
+// the terminal state of the register. The change that runs the pass over
+// the whole write domain empties it, on a criterion measured against the
+// tree, so the emptied document is the state a tree with no site left
+// carries and the loader admits it.
+//
+// The two cases are what keeps that admission from standing in for a
+// rewrite the pass never performed. Over a tree carrying no site, the
+// run plans nothing and exits clean, which is the completed migration.
+// Over a tree that still carries sites, every one of them is unresolved,
+// so the run aborts and the tree is left byte-identical rather than the
+// emptied register reporting the same clean exit at a tree the pass has
+// not rewritten. A register nobody seeded and an emptied one are the
+// same document, and the tree is what separates them.
+//
+// spec: §28.1 (N3, the naming law: every site is resolved from the
+// register of senses, and the register is emptied once no site is left)
+func TestNamePassRunsOverTheEmptiedSenseRegisterAndStillFailsClosed(t *testing.T) {
+	t.Parallel()
+	t.Run("over a tree the pass has rewritten", func(t *testing.T) {
+		t.Parallel()
+		// The carrier of this tree holds its one matcher position inside
+		// a markdown anchor identifier, which N3 exempts, so the tree
+		// carries no site and stands for the rewritten domain.
+		root := nameTree(t, "anchoronly")
+		before := treeSnapshot(t, root)
+		planned, err := planNamePass(t, root, "empty-entries.yaml")
+		if err != nil {
+			t.Fatalf("the name pass refused the emptied sense register over a tree with no site: %v", err)
+		}
+		if paths := planned.Paths(); len(paths) != 0 {
+			t.Errorf("the run planned %v over a tree with no site, want no file", paths)
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the run wrote to the tree")
+		}
+	})
+	t.Run("over a tree that still carries sites", func(t *testing.T) {
+		t.Parallel()
+		root := nameTree(t, "fail/unregistered")
+		before := treeSnapshot(t, root)
+		_, err := applyNamePassErr(t, root, "empty-entries.yaml")
+		if err == nil {
+			t.Fatal("the name pass reported a clean run over a tree the emptied register resolves no site of")
+		}
+		sites, ok := pass.AllAborts(err)
+		if !ok {
+			t.Fatalf("the sites were not reported as fail-closed aborts: %v", err)
+		}
+		reported := make(map[string]bool, len(sites))
+		for _, site := range sites {
+			reported[site.Path] = true
+		}
+		for _, want := range []string{"pkg/carrier/registered.go", "pkg/carrier/unregistered.go"} {
+			if !reported[want] {
+				t.Errorf("the run does not report the unresolved site in %s; it reported %v", want, reported)
+			}
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the aborted run wrote to the tree")
+		}
+	})
 }
 
 // TestNamePassDryRunOutputEqualsTheAppliedDiff pins the entry criterion

@@ -78,9 +78,8 @@ type senseDocument struct {
 	Version int    `yaml:"version"`
 	// Entries is a pointer so a document that declares no entries block
 	// is distinguishable from one that declares an empty list. The first
-	// is malformed; the second is a register with no site left, which
-	// the loader still refuses, because a pass driven by it would report
-	// the zero work of a completed migration.
+	// is malformed; the second is the terminal state the rewrite leaves
+	// the register in, which the loader admits.
 	Entries *[]Entry `yaml:"entries"`
 }
 
@@ -92,6 +91,15 @@ type senseDocument struct {
 // run at the first site in the tree, which reads as a register that has
 // not been seeded, and a run over a tree the pass had already rewritten
 // would report a completed migration it never performed.
+//
+// A register that declares an empty list of entries is loaded, because
+// that is the state the change which runs the pass over the whole write
+// domain leaves it in, and the register is emptied only once the tree
+// carries no site for an entry to resolve. The pass is still driven per
+// occurrence and still fails closed: a site with no entry aborts the run
+// whatever the register holds, so the emptied register resolves nothing
+// and the run reports the zero files of a tree with no site left rather
+// than standing in for a rewrite it did not perform.
 func loadSenses(path string) (map[string]map[int]Entry, error) {
 	data, err := os.ReadFile(filepath.FromSlash(path))
 	if err != nil {
@@ -109,9 +117,6 @@ func loadSenses(path string) (map[string]map[int]Entry, error) {
 	}
 	if doc.Entries == nil {
 		return nil, fmt.Errorf("reserved-phrase sense register %s: carries no entries block", path)
-	}
-	if len(*doc.Entries) == 0 {
-		return nil, fmt.Errorf("reserved-phrase sense register %s: carries no entry", path)
 	}
 	senses := map[string]map[int]Entry{}
 	for i, entry := range *doc.Entries {

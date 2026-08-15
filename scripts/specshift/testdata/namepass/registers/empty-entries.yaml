@@ -1,4 +1,9 @@
 # SPDX-License-Identifier: MIT
+#
+# The terminal state of the sense register: the pass has run over the
+# whole write domain, no site is left for an entry to resolve, and the
+# entries list is empty. The loader admits it, and a run driven by it
+# still aborts at every site a tree carries.
 kind: reserved-phrase-senses
 version: 1
 entries: []

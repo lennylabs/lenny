@@ -147,8 +147,18 @@ pass takes on the command line and which sits at
 
 | File | Pass that reads it | Schema | What empties it |
 |:--|:--|:--|:--|
-| `reserved-phrase-senses.yaml` | The `specshift` name pass. | `kind: reserved-phrase-senses`, `version: 1`, and an `entries` list keyed by `file` and 1-based `occurrence`, each naming the canonical identifiers the site denotes and, where it names more than one, the `replacement` text they sit in. | The change that runs the pass over the whole write domain, which leaves no site for an entry to resolve. |
+| `reserved-phrase-senses.yaml` | The `specshift` name pass. | `kind: reserved-phrase-senses`, `version: 1`, and an `entries` list keyed by `file` and 1-based `occurrence`, each naming the canonical identifiers the site denotes and, where it names more than one, the `replacement` text they sit in. | The change that runs the pass over the whole write domain, which leaves no site for an entry to resolve. That change has run, and the list is empty. |
 | `pinned-spec-literals.yaml` | The `specshift` name pass. | `kind: pinned-spec-literals`, `version: 1`, and an `entries` list keyed by `file` and by the 1-based `literal` position among every string literal that file carries in source order. | Nothing. The pass requires the register whenever the tree carries a Go carrier under `tests/tier11_docs/`, and reads it as the filter admitting the literals that pin specification prose. |
 | `identifier-senses.yaml` | The `specshift` identifier pass. | `kind: identifier-senses`, `version: 1`, and an `entries` list keyed by `file` and 1-based `occurrence`, each carrying either the `channel` the occurrence denotes or `not-a-channel: true`. An entry keyed by `path: true` instead resolves the retired spelling in the carrier's own file name. | It carries the occurrences under `spec/` alone, and the occurrences over the rest of the write domain, the file-name carriers included, are outstanding. The change that appends them and runs the pass over the remainder of the tree empties it. |
 | `anchor-senses.yaml` | The `specshift` anchor pass. | `kind: anchor-senses`, `version: 1`, and an `entries` list keyed by `file` and by the 1-based `occurrence` among the retired-section citations that file carries in source order, each naming the `destination` heading in the `<path>#<anchor>` spelling. | The change that runs the pass over the whole write domain, which leaves no retired-section citation for an entry to resolve. |
 | `../spec-anchor-moves.json` | The `specshift` anchor pass, which takes it as `-register`. | `kind: spec-anchor-moves`, `version: 1`, and a `moves` list of `{anchor, successor: {file, anchor}}`, keyed by the retired anchor a markdown fragment link names. | The same change, which leaves no link into a retired anchor. |
+
+A sense map is emptied when the tree carries no site of its class left,
+measured over the whole write domain rather than by the sub-step
+finishing, so the emptied file records a rewrite that completed. The
+name pass loads its emptied register and resolves nothing from it,
+because a site with no entry aborts the run whatever the register holds,
+so a run over a tree that still carries a site fails closed rather than
+reporting the zero work of a completed migration. The class's residual
+register is what records a member its broad predicate still matches
+after the pass has run.
