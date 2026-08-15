@@ -3129,6 +3129,24 @@
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces \u00a716.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed \u00a716.1 metrics catalog (name, type, help) cross-checked for completeness against the \u00a716.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
     },
+    "16.1.1": {
+      "title": "Attribute Naming",
+      "spec_file": "spec/16_observability.md",
+      "tests": [
+        "pkg/observability/metrics/metrics_test.go::TestValidateRejectsForbiddenLabels",
+        "pkg/observability/metrics/metrics_test.go::TestForbiddenLabelsCatalog",
+        "pkg/gateway/sessionserver/expiry_metric_internal_test.go",
+        "cmd/lenny-gateway/llmproxy_usage_test.go"
+      ],
+      "packages": [
+        "pkg/observability/metrics"
+      ],
+      "depends_on_sections": [
+        "16.1"
+      ],
+      "blocked_until_phase": "2.5",
+      "notes": "The attribute table is the source of truth for metric labels and trace attributes. The forbidden-label validator and the per-metric label assertions hold emitters to it."
+    },
     "16.2": {
       "title": "Key Latency Breakpoints",
       "spec_file": "spec/16_observability.md",
@@ -3821,6 +3839,21 @@
       ],
       "blocked_until_phase": "14",
       "notes": "lenny-ctl local stack subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands. The Docker-backed embedded-substrate bring-up (k3s container, host-rewritten kubeconfig, container status probe) is exercised by tests/tier2_component/embedded/bringup_test.go."
+    },
+    "24.19.1": {
+      "title": "Image Management",
+      "spec_file": "spec/24_lenny-ctl-command-reference.md",
+      "tests": [
+        "pkg/embedded/localcli/image_test.go"
+      ],
+      "packages": [
+        "pkg/embedded/localcli"
+      ],
+      "depends_on_sections": [
+        "24.19"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "lenny image import, list, and rm bridge the host image store into the embedded containerd store. The localcli tests cover reference parsing, the tarball path, the namespace override, and the exit codes the section states."
     },
     "24.20": {
       "title": "Installation Wizard",
@@ -4712,6 +4745,129 @@
       ],
       "blocked_until_phase": "5",
       "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface."
+    },
+    "28": {
+      "title": "Communication Channels",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier11_docs/spec_28_ownership_test.go",
+        "tests/tier11_docs/spec_28_index_rows_test.go",
+        "tests/tier11_docs/spec_28_taxonomy_test.go",
+        "tests/tier11_docs/spec_28_register_writers_test.go",
+        "tests/tier11_docs/spec_28_reserved_phrase_test.go"
+      ],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "Chapter-level structure of the channel specification: the sections it owns, its index rows, its taxonomy, the registers it carries, and the reserved phrases its prose is held to."
+    },
+    "28.1": {
+      "title": "Naming law",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier0_static/naming_lint_test.go",
+        "tests/tier0_static/identifier_resolution_test.go",
+        "tests/tier0_static/residual_gate_test.go",
+        "tests/tier0_static/spec_citation_resolution_test.go",
+        "tests/tier0_static/line_citation_ratchet_test.go",
+        "tests/tier0_static/fragment_link_test.go",
+        "tests/tier11_docs/spec_28_reserved_phrase_test.go"
+      ],
+      "packages": [],
+      "depends_on_sections": [
+        "28.3"
+      ],
+      "blocked_until_phase": "0",
+      "notes": "One gate per rule of the naming law: the banned-phrase lint, one canonical identifier per channel, the residual sweep over retired spellings, and the citation rules that make a citation name a heading rather than a line."
+    },
+    "28.2": {
+      "title": "Taxonomy and axes",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier11_docs/spec_28_taxonomy_test.go",
+        "tests/tier0_static/heading_walker_test.go",
+        "tests/tier0_static/gate_integrity_test.go",
+        "tests/tier11_docs/successor_pointer_test.go"
+      ],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "The closed axis sets every register row and contract card is keyed by, the citable handles the index and the spec map have to carry for them, and the successor pointers a superseded document carries."
+    },
+    "28.3": {
+      "title": "Registers",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier0_static/identifier_resolution_test.go",
+        "tests/tier0_static/matrix_completeness_test.go",
+        "tests/tier11_docs/spec_28_register_writers_test.go",
+        "tests/tier11_docs/spec_28_ownership_test.go"
+      ],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "The channel, link, register-entry, and naming registers. Every identifier in the tree resolves to one register row, every register row has a stated writer, and the downstream matrix is keyed by the channel register."
+    },
+    "28.4": {
+      "title": "Claim register",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier0_static/claim_register_test.go",
+        "tests/tier0_static/citation_document_test.go"
+      ],
+      "packages": [],
+      "depends_on_sections": [
+        "28.3"
+      ],
+      "blocked_until_phase": "0",
+      "notes": "The schema of tests/claim-map.json and the resolution of the citations its rows carry: a claim that is not WIRED names the step that wires it, and a spec_anchor resolves to a heading of this section's file."
+    },
+    "28.5.3": {
+      "title": "Intra-pod",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "pkg/adapter/slotframe_test.go",
+        "pkg/outputtype/outputtype_test.go",
+        "pkg/sessionrecord/record_test.go",
+        "pkg/degradation/annotations_test.go",
+        "cmd/runtimes/echo-concurrent/main_test.go",
+        "tests/tier3_contract/adapter_jsonl/messages_test.go"
+      ],
+      "packages": [
+        "pkg/adapter",
+        "pkg/outputtype",
+        "pkg/sessionrecord",
+        "pkg/degradation"
+      ],
+      "depends_on_sections": [
+        "28.5",
+        "4.7.4"
+      ],
+      "blocked_until_phase": "2",
+      "notes": "The adapter-to-runtime JSONL contract: the canonical output-type registry, the per-slot frame demultiplexer, the degradation annotations an ingress attaches, and the crash record a runtime that exits non-zero produces."
+    },
+    "28.7": {
+      "title": "Wire-contract artifact register",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier11_docs/artifact_register_supersession_test.go"
+      ],
+      "packages": [],
+      "depends_on_sections": [
+        "28.3"
+      ],
+      "blocked_until_phase": "0",
+      "notes": "Every wire-contract artifact the registers name resolves, and a superseded artifact carries the pointer to the artifact that replaces it."
+    },
+    "28.8": {
+      "title": "Failure and degradation matrix",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "tests/tier0_static/matrix_completeness_test.go"
+      ],
+      "packages": [],
+      "depends_on_sections": [
+        "28.3"
+      ],
+      "blocked_until_phase": "0",
+      "notes": "The matrix carries exactly one row per channel identifier in the channel register, so a channel added to the register without a failure row fails tier 0."
     }
   }
 }
