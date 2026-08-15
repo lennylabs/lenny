@@ -36,7 +36,8 @@
       "title": "High-Level Architecture",
       "spec_file": "spec/03_high-level-architecture.md",
       "tests": [
-        "tests/tier3_contract/workspaceplan/sources_test.go"
+        "tests/tier3_contract/workspaceplan/sources_test.go",
+        "tests/tier11_docs/architecture_overview_channel_pointer_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",

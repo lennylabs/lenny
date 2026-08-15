@@ -26,7 +26,10 @@
                     │   OAuth tokens (encrypted,           └──────▲───────┘
                     └──  cached in Redis) ────────────────────────┘
 
-         Gateway ←──mTLS──→ Pods (gRPC control protocol)
+    Gateway ──mTLS gRPC──→ Pods    LNK-POD-GRPC, dialled by the gateway
+    Gateway ←──mTLS gRPC── Pods    LNK-GWCONTROL, dialled by the adapter
+      (channels on each link, and the intra-pod, pod-egress,
+       gateway-to-store, and control-plane boundaries: see Section 28)
 
 ┌─────────────────────────────────────────────────────────────────┐
 │  Warm Pool Controller (pod lifecycle, agent-sandbox CRDs)       │
@@ -44,4 +47,12 @@
     │└───────┘│    │└─────────┘│    │└─────────┘│
     └─────────┘    └───────────┘    └───────────┘
 ```
+
+Each arrow between the gateway and a pod is a transport connection carrying several typed conversations.
+[Section 28](28_communication-channels.md#28-communication-channels) is the normative home for those
+conversations: [§28.3](28_communication-channels.md#283-registers) registers every link and every channel
+with its participants, plane, dial direction, and transport, and
+[§28.5](28_communication-channels.md#285-contract-cards) states the contract card for each boundary,
+including the intra-pod, pod-egress, gateway-to-store, and control-plane boundaries this diagram does not
+draw.
 
