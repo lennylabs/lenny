@@ -134,6 +134,47 @@ func TestMessagePartExamplesValidate(t *testing.T) {
 	}
 }
 
+// runtimeOpsEventSchema is the JSON Schema for the CH-RUNTIMEOPS
+// envelope, and runtimeOpsEventExamples are the committed fixtures that
+// carry one frame each. The two are named here rather than inside the
+// validation test so the bijection test asserts over the same list the
+// validation test consumes; a fixture added to the directory and left
+// out of the list is a fixture nothing validates.
+//
+// The file-name stem tracks the schema's own stem (§28.3 naming table),
+// so a reader who has the schema path can predict the fixture path.
+//
+// spec: §15.4.3, §15.4.6, §28.3
+const runtimeOpsEventSchema = "schemas/runtime-ops-events.schema.json"
+
+// runtimeOpsEventExamplesDir is the directory the fixtures live in, read
+// by the bijection test so an uncommitted-to-the-list fixture is caught.
+const runtimeOpsEventExamplesDir = "schemas/examples"
+
+// runtimeOpsEventExamplesPrefix is the fixture file-name stem the
+// CH-RUNTIMEOPS frames are written under. The examples directory holds
+// the fixtures of several schemas, so the bijection is over the files
+// carrying this prefix rather than over the whole directory.
+const runtimeOpsEventExamplesPrefix = "runtime-ops."
+
+var runtimeOpsEventExamples = []string{
+	"schemas/examples/runtime-ops.lifecycle_capabilities.json",
+	"schemas/examples/runtime-ops.lifecycle_support.json",
+	"schemas/examples/runtime-ops.checkpoint_request.json",
+	"schemas/examples/runtime-ops.checkpoint_ready.json",
+	"schemas/examples/runtime-ops.checkpoint_complete.json",
+	"schemas/examples/runtime-ops.interrupt_request.json",
+	"schemas/examples/runtime-ops.interrupt_acknowledged.json",
+	"schemas/examples/runtime-ops.credentials_rotated.json",
+	"schemas/examples/runtime-ops.deadline_approaching.json",
+	"schemas/examples/runtime-ops.terminate.json",
+	// spec: §4.7 — llm_request_completed without token counts (a
+	// runtime that cannot extract them omits both fields) and with
+	// the optional direct-mode inputTokens/outputTokens source.
+	"schemas/examples/runtime-ops.llm_request_completed.json",
+	"schemas/examples/runtime-ops.llm_request_completed.tokens.json",
+}
+
 // spec: 15.4.3, 15.4.6, 4.7 (llm_request_completed direct-mode token
 //
 //	fields), 11.2 (direct-mode usage source)
@@ -144,28 +185,12 @@ func TestMessagePartExamplesValidate(t *testing.T) {
 //	shape, the `type` discriminator, and the capability enum.
 //	The llm_request_completed.tokens example exercises the
 //	optional §4.7 inputTokens/outputTokens direct-mode source.
-func TestLifecycleEventExamplesValidate(t *testing.T) {
+func TestRuntimeOpsEventExamplesValidate(t *testing.T) {
 	t.Parallel()
-	validator := schematest.Compile(t, "schemas/runtime-ops-events.schema.json")
+	validator := schematest.Compile(t, runtimeOpsEventSchema)
 
 	root := schematest.RepoRoot(t)
-	for _, name := range []string{
-		"schemas/examples/lifecycle.lifecycle_capabilities.json",
-		"schemas/examples/lifecycle.lifecycle_support.json",
-		"schemas/examples/lifecycle.checkpoint_request.json",
-		"schemas/examples/lifecycle.checkpoint_ready.json",
-		"schemas/examples/lifecycle.checkpoint_complete.json",
-		"schemas/examples/lifecycle.interrupt_request.json",
-		"schemas/examples/lifecycle.interrupt_acknowledged.json",
-		"schemas/examples/lifecycle.credentials_rotated.json",
-		"schemas/examples/lifecycle.deadline_approaching.json",
-		"schemas/examples/lifecycle.terminate.json",
-		// spec: §4.7 — llm_request_completed without token counts (a
-		// runtime that cannot extract them omits both fields) and with
-		// the optional direct-mode inputTokens/outputTokens source.
-		"schemas/examples/lifecycle.llm_request_completed.json",
-		"schemas/examples/lifecycle.llm_request_completed.tokens.json",
-	} {
+	for _, name := range runtimeOpsEventExamples {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
 			t.Parallel()
@@ -174,6 +199,72 @@ func TestLifecycleEventExamplesValidate(t *testing.T) {
 				t.Errorf("expected %s to validate, got: %v", name, err)
 			}
 		})
+	}
+}
+
+// spec: 15.4.3, 15.4.6, 28.3
+// diagnosis: the CH-RUNTIMEOPS example fixtures on disk and the list the
+//
+//	validation test walks have diverged. A fixture reported as
+//	unvalidated is committed under schemas/examples and absent
+//	from runtimeOpsEventExamples, so nothing checks it against
+//	schemas/runtime-ops-events.schema.json. A fixture reported as
+//	missing is listed and not committed, so the validation test
+//	is asserting over a file that is not there. A fixture
+//	reported under the retired stem was renamed on one carrier
+//	and not the other.
+func TestRuntimeOpsEventExamplesBijection(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, runtimeOpsEventExamplesDir))
+	if err != nil {
+		t.Fatalf("read %s: %v", runtimeOpsEventExamplesDir, err)
+	}
+
+	listed := make(map[string]bool, len(runtimeOpsEventExamples))
+	for _, name := range runtimeOpsEventExamples {
+		base := filepath.Base(name)
+		if !strings.HasPrefix(base, runtimeOpsEventExamplesPrefix) {
+			t.Errorf("listed fixture %s does not carry the %q stem the §28.3 naming table fixes for CH-RUNTIMEOPS",
+				name, runtimeOpsEventExamplesPrefix)
+		}
+		if listed[base] {
+			t.Errorf("fixture %s is listed twice in runtimeOpsEventExamples", base)
+		}
+		listed[base] = true
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Errorf("listed fixture %s is not committed: %v", name, err)
+		}
+	}
+	if len(listed) == 0 {
+		t.Fatal("runtimeOpsEventExamples is empty, so the validation test asserts nothing")
+	}
+
+	// The retired stem is composed rather than written whole so this
+	// assertion does not itself reintroduce the spelling it forbids.
+	retiredPrefix := "lifecycle" + "."
+	onDisk := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), retiredPrefix) {
+			t.Errorf("fixture %s/%s carries the retired stem; the CH-RUNTIMEOPS fixtures are named for %s",
+				runtimeOpsEventExamplesDir, entry.Name(), runtimeOpsEventSchema)
+			continue
+		}
+		if !strings.HasPrefix(entry.Name(), runtimeOpsEventExamplesPrefix) {
+			continue
+		}
+		onDisk++
+		if !listed[entry.Name()] {
+			t.Errorf("fixture %s/%s is committed and absent from runtimeOpsEventExamples, so nothing validates it against %s",
+				runtimeOpsEventExamplesDir, entry.Name(), runtimeOpsEventSchema)
+		}
+	}
+	if onDisk != len(listed) {
+		t.Errorf("the examples directory carries %d CH-RUNTIMEOPS fixtures and the validation list carries %d", onDisk, len(listed))
 	}
 }
 

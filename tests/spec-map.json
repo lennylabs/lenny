@@ -2791,7 +2791,7 @@
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterToolResultCorrelation",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterResponseShorthandNormalised",
         "tests/tier3_contract/adapter_jsonl/messages_test.go::TestAdapterLocalToolsRejectPathTraversal",
-        "tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate",
+        "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
         "cmd/lenny-compliance/full.go::checkLifecycleHandshake",
         "cmd/lenny-compliance/full.go::checkCheckpointQuiesce",
         "cmd/lenny-compliance/full.go::checkInterruptAck",
@@ -2981,7 +2981,8 @@
       "title": "Runtime Integration Levels \u2014 Full",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate"
+        "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
+        "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
