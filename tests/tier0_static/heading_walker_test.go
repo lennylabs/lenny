@@ -258,6 +258,11 @@ func runHeadingWalker(list scope.Lister, read scope.FileReader) ([]headingWalker
 			}
 		}
 	}
+	if inScope == 0 {
+		return nil, 0, fmt.Errorf("run the heading walker: no in-scope heading was read; "+
+			"a report of no finding over an unread tree certifies nothing (%d tracked file(s) listed)",
+			len(files))
+	}
 	sort.Slice(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File
@@ -285,9 +290,6 @@ func TestEverySpecificationHeadingCarriesAnIndexEntry(t *testing.T) {
 	findings, inScope, err := runHeadingWalker(scope.GitLister(root), scope.DirReader(root))
 	if err != nil {
 		t.Fatalf("heading walker: %v", err)
-	}
-	if inScope == 0 {
-		t.Fatalf("the walk found no in-scope heading; a walker that read nothing certifies nothing")
 	}
 	for _, f := range findings {
 		t.Errorf("%s §%s %q has %s (index anchor %q)",
@@ -460,12 +462,9 @@ func TestHeadingWalkerRequiresSpecMapCoverageOrAnException(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			tr := newHeadingWalkerTree(t, c.specMap, c.exceptions)
-			findings, inScope, err := tr.run()
+			findings, _, err := tr.run()
 			if err != nil {
 				t.Fatalf("run the heading walker over the fixture tree: %v", err)
-			}
-			if inScope == 0 {
-				t.Fatalf("the walk found no in-scope heading; a walker that read nothing certifies nothing")
 			}
 			var reported []string
 			for _, f := range findings {
@@ -532,6 +531,105 @@ func TestHeadingWalkerFailsOnAnUnreadableCoverageRegister(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.wantErr) {
 				t.Errorf("error %q does not name %q", err.Error(), c.wantErr)
+			}
+		})
+	}
+}
+
+// spec: 28.1 (N8, a citation names a heading), 28.2 (citable handles)
+// diagnosis: the walker's index conjunct no longer holds. Either a subsection
+// the index does not list, or lists behind an anchor that resolves nowhere,
+// passes, in which case a reader working from the index cannot reach the
+// section and nothing reports it, or a listed subsection is reported, in which
+// case the gate is red on an index that satisfies it.
+func TestHeadingWalkerRequiresAResolvingIndexRow(t *testing.T) {
+	t.Parallel()
+	const indexWithoutTheSubsection = "# Specification\n\n" +
+		"- [28. Communication Channels](28_communication-channels.md)\n"
+	cases := []struct {
+		name  string
+		index string
+		want  string
+	}{
+		{
+			name:  "a subsection whose index row resolves passes",
+			index: headingWalkerFixtureIndex,
+		},
+		{
+			name:  "a subsection the index does not list fails",
+			index: indexWithoutTheSubsection,
+			want:  "no index entry",
+		},
+		{
+			name: "a subsection whose index anchor resolves nowhere fails",
+			index: indexWithoutTheSubsection +
+				"  - [28.9 Worked subsection](28_communication-channels.md#289-worked-section)\n",
+			want: "no index entry",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr := newHeadingWalkerTree(t, headingWalkerFixtureKeyed, headingWalkerFixtureNoException)
+			tr.write(specIndexPath, c.index)
+			findings, _, err := tr.run()
+			if err != nil {
+				t.Fatalf("run the heading walker over the fixture tree: %v", err)
+			}
+			var reported []string
+			for _, f := range findings {
+				// The finding names the heading, which is how an author
+				// reading the failure knows which index row to write.
+				if f.Number != headingWalkerFixtureSection || f.Title != "Worked subsection" {
+					t.Errorf("finding %q does not name §%s %q",
+						f.Missing, headingWalkerFixtureSection, "Worked subsection")
+				}
+				reported = append(reported, f.Missing)
+			}
+			switch {
+			case c.want == "" && len(reported) > 0:
+				t.Errorf("§%s reported %v, want no finding", headingWalkerFixtureSection, reported)
+			case c.want != "" && len(reported) != 1:
+				t.Errorf("§%s reported %v, want exactly %q", headingWalkerFixtureSection, reported, c.want)
+			case c.want != "" && reported[0] != c.want:
+				t.Errorf("§%s reported %q, want %q", headingWalkerFixtureSection, reported[0], c.want)
+			}
+		})
+	}
+}
+
+// spec: 28.1 (N8, a citation names a heading), 28.2 (citable handles)
+// diagnosis: the walker reports green over a tree in which it read no heading
+// at all, so a selector that stops matching, or a walk whose specification
+// files move out from under it, certifies the index rather than checking it.
+func TestHeadingWalkerFailsWhenItReadsNoHeading(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		mutate func(tr *headingWalkerTree)
+	}{
+		{
+			name:   "a tree that carries no specification file",
+			mutate: func(tr *headingWalkerTree) { tr.remove(headingWalkerFixtureFile) },
+		},
+		{
+			name: "a specification file that carries no numbered heading",
+			mutate: func(tr *headingWalkerTree) {
+				tr.write(headingWalkerFixtureFile, "# Communication Channels\n\nProse.\n")
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			tr := newHeadingWalkerTree(t, headingWalkerFixtureKeyed, headingWalkerFixtureNoException)
+			c.mutate(tr)
+			_, inScope, err := tr.run()
+			if err == nil {
+				t.Fatalf("the walker certified %s, reading %d in-scope heading(s)", c.name, inScope)
+			}
+			if !strings.Contains(err.Error(), "no in-scope heading was read") {
+				t.Errorf("error %q does not state that the walk read no heading", err.Error())
 			}
 		})
 	}
