@@ -90,12 +90,6 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      cmd/lenny-ctl/runtimescaffold/scaffold.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       cmd/lenny-ctl/runtimescaffold/templates/binary-minimal.main.go.tmpl: lifecycle channel
     class: reserved-phrases
     disposition: excluded
@@ -156,12 +150,6 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      cmd/lenny-gateway/flags.go: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       docs/api/internal.md: lifecycle-channel
     class: reserved-phrases
     disposition: excluded
@@ -173,12 +161,6 @@ entries:
     disposition: excluded
     reason: |-
       a markdown anchor identifier, which the ban places outside its matcher because rewriting one breaks every inbound link
-  - member: |-
-      pkg/ctlcli/runtime.go: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
   - member: |-
       pkg/embedded/stack/bootstrap_seed_admin_test.go: lifecycle channel
     class: reserved-phrases

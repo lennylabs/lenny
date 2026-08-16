@@ -289,7 +289,8 @@ func Generate(spec Spec, baseDir string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr,
 			"lenny runtime init: --language %s --template %s is not a supported "+
 				"combination. The binary language emits a Basic-level skeleton with "+
-				"no MCP client or lifecycle channel, which the %s template requires. "+
+				"no MCP client and no CH-RUNTIMEOPS socket, which the %s template "+
+				"requires. "+
 				"Use --language binary --template minimal for a Basic-level binary, "+
 				"or choose --language {go|python|typescript} for the %s template. "+
 				"See the Language x Template matrix in the lenny-ctl command "+

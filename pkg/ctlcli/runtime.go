@@ -421,7 +421,7 @@ specification's repository expectations.
 
 When --binary names a locally-built adapter binary, the validator runs
 the §15.4.6 conformance battery against it and reconciles the declared
-integration level against the observed level (lifecycle-channel connect,
+integration level against the observed level (CH-RUNTIMEOPS connect,
 MCP nonce handshake). It exits non-zero when the runtime under-performs
 its declared level and prints a WARN when it under-declares. Without
 --binary the validator runs static checks only and reports the observed
