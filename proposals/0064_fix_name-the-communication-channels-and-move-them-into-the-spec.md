@@ -5,7 +5,16 @@
   sub-step that was part of this proposal now lives there, for the sequencing reason §3.5 states. Applying
   this proposal against a tree without `scripts/specshift` and the registers means hand-editing the sites
   this document deliberately does not enumerate, which is how both earlier application attempts failed.
-- **Status:** **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
+- **Status:** **Implemented green (2026-08-16), independently verified on tier 0 and tier 11 after the
+  final change.** A conformance audit decomposed this document into 775 checkable obligations and found
+  40 deviations between what it stages and what the tree held. 37 were fixed, each behind a
+  design-conformance, invariance, and completeness review and a scoped verification run. Two,
+  `TestReportUsageRequestWireContract`'s widened descriptor pin and the publishing guide's schema
+  sentence, were already satisfied at the time they were reached and needed no further change. One is an
+  accepted divergence recorded at §9: the citation grammar admits a parenthesized, quoted, or backticked
+  trailing gloss and deliberately refuses the bare-word form §4.6 also states, because the citation
+  baselines are drained, the residual gate's broader predicate selects such a site anyway, and hand
+  correction is the route out. **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
   adversarial review rounds (16 findings fixed) across 4 full-pool sweeps, the certifying sweep running
   every lens complete with zero confirmed findings. This supersedes the sign-off of 2026-07-29, which was
   withdrawn after the application that followed it did not converge; the split that followed is what

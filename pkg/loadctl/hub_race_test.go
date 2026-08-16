@@ -80,7 +80,8 @@ func TestHubPublishRacesCloseOnTerminalRun(t *testing.T) {
 					if e.Type == "post" {
 						errs <- fmt.Errorf(
 							"round %d subscriber %d: received %q published after Close returned",
-							round, i, e.Type)
+							round, i, e.Type,
+						)
 						return
 					}
 				}
