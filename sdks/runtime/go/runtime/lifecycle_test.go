@@ -70,7 +70,7 @@ func (fa *fakeLifecycleAdapter) send(t *testing.T, v any) {
 	conn := fa.conn
 	fa.mu.Unlock()
 	if conn == nil {
-		t.Fatal("lifecycle channel not connected")
+		t.Fatal("the runtime has not connected to CH-RUNTIMEOPS")
 	}
 	if err := json.NewEncoder(conn).Encode(v); err != nil {
 		t.Fatalf("lifecycle send: %v", err)
@@ -84,7 +84,7 @@ func (fa *fakeLifecycleAdapter) recv(t *testing.T, d time.Duration) map[string]a
 	conn, r := fa.conn, fa.r
 	fa.mu.Unlock()
 	if conn == nil {
-		t.Fatal("lifecycle channel not connected")
+		t.Fatal("the runtime has not connected to CH-RUNTIMEOPS")
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(d))
 	line, err := r.ReadBytes('\n')
@@ -164,7 +164,7 @@ func TestFullLevelHandshake(t *testing.T) {
 	}()
 
 	if !waitFor(t, 3*time.Second, fa.connected) {
-		t.Fatal("runtime did not dial the lifecycle channel")
+		t.Fatal("runtime did not dial CH-RUNTIMEOPS")
 	}
 	support := fa.recv(t, 3*time.Second)
 	if support["type"] != "lifecycle_support" {
@@ -210,7 +210,7 @@ func TestFullLevelCheckpoint(t *testing.T) {
 	}()
 
 	if !waitFor(t, 3*time.Second, fa.connected) {
-		t.Fatal("runtime did not dial the lifecycle channel")
+		t.Fatal("runtime did not dial CH-RUNTIMEOPS")
 	}
 	_ = fa.recv(t, 3*time.Second) // lifecycle_support
 
@@ -244,7 +244,7 @@ func TestFullLevelInterrupt(t *testing.T) {
 	}()
 
 	if !waitFor(t, 3*time.Second, fa.connected) {
-		t.Fatal("runtime did not dial the lifecycle channel")
+		t.Fatal("runtime did not dial CH-RUNTIMEOPS")
 	}
 	_ = fa.recv(t, 3*time.Second) // lifecycle_support
 

@@ -237,7 +237,7 @@ func (s *session) run(ctx context.Context) error {
 	}
 	defer s.closeChannels()
 
-	// A lifecycle-channel terminate event cancels ctx while the frame
+	// A CH-RUNTIMEOPS terminate event cancels ctx while the frame
 	// loop may be blocked on a stdin read. Closing the transport on
 	// cancellation unblocks that read so the loop observes EOF and the
 	// runtime exits. For the stdin/stdout transport Close is a no-op and
@@ -326,7 +326,7 @@ func (s *session) startChannels(ctx context.Context, cancel context.CancelFunc) 
 	if s.cfg.level >= levelFull {
 		switch {
 		case !s.manifestHasLifecycle():
-			s.cfg.logf("runtime: no lifecycle channel in the manifest; lifecycle features disabled")
+			s.cfg.logf("runtime: the manifest advertises no CH-RUNTIMEOPS socket; lifecycle features disabled")
 		default:
 			lc, err := s.dialLifecycle(ctx, cancel)
 			if err != nil {

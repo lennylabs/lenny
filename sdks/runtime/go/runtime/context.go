@@ -6,8 +6,8 @@ import "context"
 
 // The §15.7 Handler interface keeps OnCreate, OnMessage, and
 // OnTerminate to a context and one value argument. The Standard-level
-// platform MCP tools and the Full-level lifecycle channel reach a
-// handler through the context the SDK passes to those methods. This
+// platform MCP tools and the Full-level CH-RUNTIMEOPS surface reach
+// a handler through the context the SDK passes to those methods. This
 // keeps the Handler signature stable across integration levels: a
 // Basic-level handler ignores the context extras, a Standard-level
 // handler reads Tools, a Full-level handler reads both.

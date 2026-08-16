@@ -186,36 +186,6 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      sdks/runtime/go/runtime/context.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      sdks/runtime/go/runtime/lifecycle.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      sdks/runtime/go/runtime/lifecycle_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      sdks/runtime/go/runtime/runtime.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      sdks/runtime/go/runtime/runtime.go: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       sdks/runtime/python/lenny_runtime/__init__.py: lifecycle channel
     class: reserved-phrases
     disposition: excluded

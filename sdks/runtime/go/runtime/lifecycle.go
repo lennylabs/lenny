@@ -107,7 +107,7 @@ func WithLifecycleHandlers(opts ...LifecycleOption) Option {
 // the frame loop when the adapter sends a terminate event.
 func (s *session) dialLifecycle(ctx context.Context, cancel context.CancelFunc) (*Lifecycle, error) {
 	if s.manifest == nil || s.manifest.RuntimeOps == nil || s.manifest.RuntimeOps.Socket == "" {
-		return nil, errors.New("adapter manifest has no lifecycle channel socket")
+		return nil, errors.New("adapter manifest has no CH-RUNTIMEOPS socket")
 	}
 	conn, err := dialUnixSocket(ctx, s.manifest.RuntimeOps.Socket, s.cfg.dialTimeout)
 	if err != nil {
@@ -313,13 +313,13 @@ func (lc *Lifecycle) handleTerminate(ctx context.Context, line []byte, s *sessio
 // escape hatch for lifecycle messages the SDK does not model.
 func (lc *Lifecycle) Send(frame any) error {
 	if lc == nil {
-		return errors.New("lifecycle channel not open")
+		return errors.New("CH-RUNTIMEOPS connection not open")
 	}
 	lc.mu.Lock()
 	closed := lc.closed
 	lc.mu.Unlock()
 	if closed {
-		return errors.New("lifecycle channel closed")
+		return errors.New("CH-RUNTIMEOPS connection closed")
 	}
 	return lc.w.write(frame)
 }
