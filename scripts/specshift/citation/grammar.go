@@ -273,6 +273,22 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // deletion for every embedded citation in the tree, which is the trade the
 // paragraph above rejects.
 //
+// So the spellings this matcher consumes behind a member are the parenthesized
+// phrase, the double-quoted fragment, the single-quoted fragment, and the
+// backticked fragment, and no others. The written statement of the retired
+// citation form also admits a bare word or two there, which makes this matcher
+// narrower than that statement. The narrowing is deliberate and stays. A bare
+// word is left to the residual gate and to hand correction rather than
+// consumed, and that is safe for three reasons. Both citation baselines stand
+// drained to zero entries, so admitting the bare word would rewrite nothing in
+// the tree as it stands. The residual gate's predicate is broader than this
+// grammar and overlaps rather than matches it, so a site whose gloss this
+// grammar refuses is still selected there and still reported. A site the pass
+// refuses is corrected by hand, which is the sanctioned route for the handful
+// of carriers written that way. Widening the alternatives here to close the
+// difference would buy those sites nothing and would cost the deletion the
+// paragraphs above reject.
+//
 // A gloss is bounded by its closing delimiter and by the line it opened on, and
 // the scanner bounds every alternative at the head of the next citation. A gloss
 // alternative that admitted a newline and closed on nothing would run from an

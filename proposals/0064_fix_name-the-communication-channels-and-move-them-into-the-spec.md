@@ -6185,6 +6185,26 @@ applicability or plan coverage.
   through 2478. The citation is split accordingly, and the parallel citation in this pass's own record
   above is corrected to lines 2468 through 2472.
 
+### Accepted divergences
+
+- **The citation matcher consumes a narrower gloss form than §4.6 states, and the difference is accepted.**
+  §4.6 states that a member of a retired citation may carry a short trailing gloss "written as a
+  parenthesized phrase, a quoted fragment, or a bare word or two", and TEST-1 binds the resolver and the
+  ratchet to that form in every spelling it covers. The `glossExpr` alternatives in
+  `scripts/specshift/citation/grammar.go` consume the parenthesized phrase and the double-quoted,
+  single-quoted, and backticked fragment, and refuse the bare word, which the `gloss-bare`,
+  `gloss-dotted-word`, and `gloss-run-words-plus-member` fixtures under
+  `scripts/specshift/testdata/citations` pin. The refusal is retained rather than corrected, on three
+  grounds. `tests/registers/line-citations.yaml` and `tests/registers/line-citation-resolution.yaml`
+  are both drained to zero entries, so widening the alternatives would rewrite nothing in the tree as it
+  stands. The residual gate's predicate is broader than the form and overlaps it rather than matching it,
+  which `coveredByCitationForm` in `tests/tier0_static/residual_gate_test.go` states in as many words, so a
+  site whose gloss the grammar refuses is still selected and still reported there. A site the pass refuses
+  is corrected by hand, which is the sanctioned route the line pass's post-condition already routes such a
+  carrier to. Admitting the bare word would also reinstate the deletion risk the grammar's own commentary
+  rejects, because a bare word behind a member is not distinguishable from the sentence's own noun phrase.
+  The divergence is written down at `glossExpr` so the next reader of the grammar meets it there.
+
 ## 10. Open decisions for review
 
 **All decisions below were RATIFIED on the 2026-07-29 sign-off and remain settled. None is open.** The
