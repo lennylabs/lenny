@@ -149,7 +149,7 @@ func main() {
 		"abstract Unix socket the adapter binds for the §4.7 sidecar runtime transport; "+
 			"the runtime container dials it")
 	lifecycleSocket := flag.String("runtime-ops-socket", "",
-		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
+		"Unix socket path for the §15.4.6 CH-RUNTIMEOPS runtime operations socket; empty disables it")
 	mcpSocket := flag.String("mcp-socket", "",
 		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent "+
 			"runtime (the @lenny-platform-mcp socket the manifest names); empty disables it")
@@ -380,7 +380,7 @@ func main() {
 	// spec: §4.7 (ReportUsage), §11.2 (direct-mode usage) — install the
 	// direct-mode usage path: construct the UsageMeter, assign it to
 	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
-	// production (F-15.3.7), and, when a lifecycle channel is configured,
+	// production (F-15.3.7), and, when CH-RUNTIMEOPS is configured,
 	// wire the token sink that folds each llm_request_completed frame's
 	// direct-mode token counts into it. The sink resolves the pod's active
 	// session (§6.1 one session per pod) at fold time via CurrentSessionID.
@@ -396,7 +396,7 @@ func main() {
 	if lifecycle != nil {
 		go func() {
 			if err := lifecycle.Run(context.Background()); err != nil {
-				log.Printf("lenny-adapter: lifecycle channel stopped: %v", err)
+				log.Printf("lenny-adapter: runtime operations channel (CH-RUNTIMEOPS) stopped: %v", err)
 			}
 		}()
 	}

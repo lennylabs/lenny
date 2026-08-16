@@ -59,8 +59,8 @@ const (
 func main() {
 	// §4.7: resolve the §28.5.3 transport. LENNY_ADAPTER_SOCKET selects
 	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
-	// The Full-level lifecycle channel is a separate Unix socket
-	// resolved from the adapter manifest, unaffected by this choice.
+	// The Full-level CH-RUNTIMEOPS conversation runs on a separate Unix
+	// socket resolved from the adapter manifest, unaffected by this choice.
 	transport, err := runtimekit.Open(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -84,17 +84,17 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Optional lifecycle channel. Resolved from the manifest path in
-	// $LENNY_ADAPTER_MANIFEST (falling back to /run/lenny/adapter-manifest.json).
-	// A missing manifest is not fatal: streaming-echo can be exercised in
-	// the Basic-only test paths without a manifest. The lifecycle channel
-	// is opened in a background goroutine so a slow connect does not block
-	// stdin processing.
+	// Optional CH-RUNTIMEOPS runtime operations socket. Resolved from the
+	// manifest path in $LENNY_ADAPTER_MANIFEST (falling back to
+	// /run/lenny/adapter-manifest.json). A missing manifest is not fatal:
+	// streaming-echo can be exercised in the Basic-only test paths without
+	// a manifest. The socket is opened in a background goroutine so a slow
+	// connect does not block stdin processing.
 	manifest, manifestErr := loadManifest(os.Getenv("LENNY_ADAPTER_MANIFEST"))
 	if manifestErr == nil && manifest.RuntimeOps.Socket != "" {
 		go runRuntimeOps(ctx, manifest.RuntimeOps.Socket, stdoutWriter, stderr, cancel)
 	} else if manifestErr != nil {
-		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); lifecycle channel disabled\n", manifestErr)
+		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); runtime operations channel disabled\n", manifestErr)
 	}
 
 	scanner := bufio.NewScanner(stdin)
@@ -173,7 +173,7 @@ func loadManifest(path string) (adapterManifest, error) {
 func runRuntimeOps(ctx context.Context, socket string, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
 	conn, err := dialLifecycleSocket(ctx, socket)
 	if err != nil {
-		fmt.Fprintf(stderr, "streaming-echo: lifecycle channel dial failed: %v\n", err)
+		fmt.Fprintf(stderr, "streaming-echo: runtime operations channel dial failed: %v\n", err)
 		return
 	}
 	defer conn.Close()
