@@ -508,6 +508,31 @@ bind (`pkg/gateway/podlifecycle/podsession/slotbinder.go:270`), which is wrong t
 under this proposal: a concurrent pod has no such path, and §1.2's own subject is a value that means one
 thing and is populated as another. It is defaulted to the bind's slot root.
 
+**The gateway half of the resume, handed here by proposal 0070.** The adapter changes above are half of a
+resume: they let the adapter restore into the right tree once it is told which slot. The gateway must
+supply one. `Binder.Resume` returns a `BindResult` carrying neither `SlotID` nor `MaxConcurrentSessions`
+(`pkg/gateway/podlifecycle/podsession/binder.go:1608-1616`), because `connect` issues a whole-pod
+`podclaim.ClaimRequest` that reserves no slot (`binder.go:1652-1670`,
+`pkg/gateway/podlifecycle/podsession/podclaim/claimer.go:63-74`). Two consequences follow, and this
+proposal owns both. A resumed session on a concurrent pool holds a whole-pod claim and no slot, so it has
+no slot root to restore into whatever the adapter is told. And the §7.2 fail-closed gate
+(`pkg/gateway/session/executor/pod.go:146`) evaluates `0 > 1` on that path and never fires, so the
+unresolved-slot invariant it exists to enforce is unenforced exactly where a resumed session would breach
+it.
+
+The resume therefore reserves a slot as the start path does, through the same claim, and the returned
+`BindResult` carries that slot together with the concurrency of the pod it holds, resolved from the
+`PoolMatch` the caller already has at `pkg/gateway/sessionserver/start.go:3876` and normalized to a
+minimum of 1. The gate then evaluates a true value for the first time on the resume path, and a
+checkpoint-restore resume onto a concurrent-workspace pool restores into the slot it reserved.
+
+Proposal 0070 §1.3 states this defect and hands it here rather than correcting it, because the correction
+its own review arrived at was to refuse such a resume outright, with a client-visible
+`422 CONCURRENT_POOL_RESUME_UNSUPPORTED` and the specification text to match, on the ground that no
+slot-aware resume path exists. This proposal builds that path, so the refusal would be staged and deleted
+within two proposals. Nothing of 0070's is duplicated here: it keeps the tracing-handler fix, which is
+independent.
+
 ### CODE-3. Arm hold state per slot
 
 `pkg/adapter/holdstate.go:91-96` arms from the slot registry rather than from the pod-global
@@ -596,6 +621,13 @@ rather than being accepted against a slot root, so the migration's completeness 
 assumed. A workspace finalization followed by a resume covers the interaction between `promoteStaging`'s
 rename of `current` and the recorded root.
 
+**Tier 2, the resume bind.** `Binder.Resume` returns a bind carrying a slot and the pod's concurrency,
+against the package's envtest harness rather than a fake client, since a completed `Resume` reaches the
+kube-apiserver. The case that matters is the one the §7.2 gate was written for and has never been able to
+run: a resumed session on a concurrent pool is driven through `PodExecutor.streamFor`, and the gate is
+shown to admit a bind that resolved a slot and to refuse one that did not, on a path where it previously
+evaluated a zero and never fired.
+
 **Tier 10.** `tests/tier10_conformance/concurrent_slot_conformance_test.go:230` asserts the literal slot
 cwd a runtime derives, and `:238` asserts no doubled separator. Both are restated for a single-slot pod,
 so the conformance battery covers the path a Basic runtime on an ordinary pool now receives.
@@ -641,6 +673,9 @@ takes the same inversion.
   `docs/reference/glossary.md`, `docs/reference/configuration.md`.
 - `pkg/adapter/` (`slot.go`, `slotlayout/`, `resume.go`, `exportpaths.go`, `holdstate.go`, `session.go`,
   `checkpoint.go`, `staging.go`, `credentials.go`).
+- `pkg/gateway/podlifecycle/podsession/binder.go` and `podclaim/`, for the slot the resume reserves and
+  the concurrency the resume `BindResult` reports, with `pkg/gateway/sessionserver/start.go` populating it
+  from the resolved `PoolMatch`.
 - `pkg/gateway/runtime/adapterclient/client.go`, `pkg/gateway/session/executor/pod.go`,
   `pkg/gateway/checkpoint/` (`partialmanifeststore/`, `checkpointer/`),
   `pkg/gateway/sessionserver/` (`derive.go`, `messages.go`), `pkg/gateway/podlifecycle/podsession/`.

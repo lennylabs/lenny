@@ -1,6 +1,10 @@
 # Proposal: Bind a platform-tool call to the session that made it
 
-- **Status:** Verified (2026-08-16). Converged after 10 adversarial review rounds (22 findings fixed); awaiting sign-off.
+- **Status:** Draft for review. Converged after 10 adversarial review rounds (22 findings fixed) on
+  2026-08-16, then reduced in scope: the resume correction the review reshaped CODE-2 into is withdrawn and
+  handed to proposal 0073, which builds the slot-aware resume that correction assumed absent. §7 records
+  the handoff and §9 the pass. The convergence certified text this document no longer carries, so it is
+  re-entering review rather than claiming that certificate.
 - **Date:** 2026-08-13
 - **Scope:** Stages fixes for three defects found while reviewing proposal 0069, each one a
   security-relevant decision that reads a value its decider never verified. A platform-tool handler takes the session it writes from the
@@ -147,39 +151,21 @@ produces the answer the gate exists to refuse.
    alone marks `sessionId` required. Leaving a required argument the handler ignores invites a caller to
    believe it means something.
 
-3. **§1.3 is fixed at the resume call site, and the gate's predicate is left correct as it stands.** The
-   gate keeps `MaxConcurrentSessions > 1 && SlotID == ""`. Zero is the ordinary value of `MaxConcurrentSessions` on
-   the exclusive whole-pod path rather than a missing value: the whole-pod `Bind` return literal
+3. **§1.3 is stated and handed to proposal 0073 rather than corrected here.** The gate's predicate is
+   correct as it stands and is left alone. Zero is the ordinary value of `MaxConcurrentSessions` on the
+   exclusive whole-pod path rather than a missing value: the whole-pod `Bind` return literal
    (`pkg/gateway/podlifecycle/podsession/binder.go:1021-1035`), the gateway's re-adopt literal
    (`cmd/lenny-gateway/coordination_seams.go:242-248`), and `foldPoolPolicy` for a pool with no §5.2
    policy mirror row (`pkg/gateway/podlifecycle/podsession/resolve.go:359-369`) all leave it zero, and
-   `Registry.Put` normalizes nothing (`pkg/gateway/podlifecycle/podsession/registry.go:25-29`). Refusing
+   `Registry.Put` normalizes nothing (`pkg/gateway/podlifecycle/podsession/registry.go:25-29`). Refusing a
    zero at the gate would refuse the first `Send` or Attach on every exclusive session and every
    re-adopted session. §5.2's minimum of 1 is a CEL rule on the CRD field
    (`spec/04_system-components.md:426`) and says nothing about this Go struct, whose zero value records
    the absence of a gateway-side mirror.
 
-   The correction refuses the resume before it commits rather than at the gate. The gate lives in
-   `PodExecutor.streamFor` (`pkg/gateway/session/executor/pod.go:128, 146`), which runs on the first
-   `Send` or Attach and is not on the resume path. A refusal that only reaches the gate would let
-   `resumeOnPod` publish the binding (`pkg/gateway/sessionserver/start.go:3936`), bump the recovery
-   generation (`:3941`), fence the pod (`:3946`), and return a mode, after which the handler transitions
-   the row to `running` (`:3416-3418`, `transitionResume` at
-   `pkg/gateway/sessionserver/sessionserver.go:3256`), records `outcome="success"` (`:3429`), writes the
-   `session.resumed` audit row (`:3437-3446`), and returns 200. The session would be reported as
-   successfully resumed, hold a whole-pod claim nothing releases, and fail every subsequent message with
-   `ErrSlotIDRequired`. The refusal therefore sits in `resumeOnPod` between the pool resolution at
-   `start.go:3876` and the `Resume` call at `:3898`, where returning an error claims no pod and travels
-   the handler's existing failure branch (`:3388-3411`).
-
-   The refusal is permanent for the pool rather than retryable, so it uses the typed-error and 422
-   convention the resume path already carries for its permanent causes
-   (`RuntimeLevelUnderperforms` at `pkg/gateway/podlifecycle/podsession/integrationlevel.go:35`, with its
-   `writePodClaimError` branch at `pkg/gateway/sessionserver/start.go:107-119`) rather than the retryable
-   `RESUME_FAILED` 503 fallback. Reusing the fallback would return a `Retry-After` envelope for a
-   condition no retry clears, and would pair it with the terminal `failed` row
-   `holdOrFailOnResumeError` writes for a non-transient cause (`start.go:3502-3512`), which is exactly the
-   envelope-versus-row mismatch that function's own doc comment says the split exists to avoid.
+   What remains is that `Binder.Resume` reports neither the concurrency nor a slot, so on the resume path
+   the gate evaluates `0 > 1` and never fires. Correcting that means either forbidding the resume or
+   giving it a slot, and 0073 gives it a slot. §7 states the handoff and what 0073 must carry.
 
 4. **The unverified `session_id` is stated, scoped, and not patched here.** Binding a platform-tool call to
    its peer's mesh identity requires a pod-to-session mapping the gateway does not currently consult, and
@@ -217,96 +203,6 @@ A caller with no principal session and no `sessionId` argument therefore still r
 The tool's input schema drops `sessionId` from `required` and documents it as a transport fallback the
 principal overrides, matching the wording its siblings already carry.
 
-### CODE-2. Refuse a checkpoint-restore resume onto a concurrent-workspace pool before it commits
-
-CODE-2 has two parts. The refusal is at the resume call site, where the resume can still fail closed. The
-concurrency plumbing onto the resume `BindResult` is the backstop behind it, so a bind that reaches the
-§7.2 gate reports the concurrency of the pod it holds rather than a zero.
-
-**CODE-2a, the refusal.** `resumeOnPod` refuses a checkpoint-restore resume whose resolved pool sets
-`match.MaxConcurrentSessions > 1`, immediately after the `podsession.ResolvePool` call at
-`pkg/gateway/sessionserver/start.go:3876` and before the `podBinder.Resume` call at `:3898`. Refusing
-there claims no pod, so there is nothing to release and `rollbackBinding` is not involved. The returned
-error is a new typed `podsession.ConcurrentPoolResumeUnsupported` carrying the pool name and the bound,
-declared alongside `RuntimeLevelUnderperforms`
-(`pkg/gateway/podlifecycle/podsession/integrationlevel.go:35`).
-
-The error travels the handler's existing failure branch. `handleResume` increments
-`lenny_session_resume_attempts_total{pool, outcome="failure"}` (`start.go:3394`), bumps the coordination
-generation, calls `holdOrFailOnResumeError` (`:3402`), and writes the envelope (`:3410`). Because the
-error is not in the transient set (`isTransientPodClaimError`, `start.go:3541-3574`),
-`holdOrFailOnResumeError` routes to `failSession` (`start.go:3307`) and the row becomes terminal `failed`
-rather than advancing to `running`. `writePodClaimError` (`start.go:86`) gains a case for the new type
-that writes `422 CONCURRENT_POOL_RESUME_UNSUPPORTED`, matching the permanent-cause branches already
-beside it (`:97-137`). No binding is published, no recovery generation is bumped, no `session.resumed`
-audit row or SSE event is emitted, and no pod claim is held.
-
-The new code also gains an explicit entry in the shared classifier table,
-`"CONCURRENT_POOL_RESUME_UNSUPPORTED": {CategoryPermanent, false}`, beside `SETUP_COMMAND_FAILED`
-(`pkg/gateway/externalapi/errorclassify/errorclassify.go:476`). The table is what makes the REST and MCP
-envelopes agree. REST derives the pair from the status through `ClassifyStatus(code, 422)`
-(`pkg/gateway/sessionserver/sessionserver.go:3302`, with the status branch at `errorclassify.go:67-75`),
-so a 422 resolves to `PERMANENT` and `retryable: false` even for an unlisted code. The MCP surface does
-not see the status: `lenny/resume_session` proxies `POST /v1/sessions/{id}/resume` in-process
-(`pkg/gateway/mcpfabric/mcptools/client_tools.go:104`), discards the REST envelope's category and
-retryable fields when it rebuilds the error from the code alone (`client_tools.go:51-52`), and
-`handleToolCall` classifies through the code-only `Classify` (`pkg/gateway/mcpfabric/mcp/mcp.go:501, :84`),
-whose unknown-code fallback is `(CategoryTransient, true)` (`errorclassify.go:44-48`). Without the entry
-the same refusal would read `PERMANENT`/not retryable on REST and `TRANSIENT`/retryable over MCP, which
-contradicts the `PERMANENT` row SPEC-2 stages in `spec/15_external-api-surface.md` and the §15.2.1 rule
-5(d) requirement that the category and retryable flags be identical across REST and every adapter surface
-(`spec/15_external-api-surface.md:1434`). Every sibling permanent cause `writePodClaimError` emits carries
-such an entry (`RUNTIME_LEVEL_UNDERPERFORMS` at `errorclassify.go:342`, `INVALID_POOL_PROXY_DIALECT` at
-`:341`, `SDK_DEMOTION_NOT_SUPPORTED` at `:358`, and `SETUP_COMMAND_FAILED` at `:476`), and the
-classifier's own doc comment states that new codes are added to the table explicitly so the fallback
-stays informational (`errorclassify.go:41-42`).
-
-The other caller of `resumeOnPod` is `sessionNodeReattacher.ReattachNode`
-(`pkg/gateway/sessionserver/treerecovery.go:29`), which returns the error to the §8.10 traversal without
-transitioning the node to `running`, so the traversal's own terminal disposition applies.
-
-**CODE-2b, the backstop.** `BindResult` gains no field and `pkg/gateway/session/executor/pod.go:146`
-keeps its predicate unchanged, for the reasons in decision 3. This part carries the resolved pool's §5.2
-bound onto the resume path's `BindResult` so the published bind states the concurrency of the pod it
-holds, and so the §7.2 gate refuses any resume bind that reaches it past CODE-2a.
-
-`ResumeRequest` (`pkg/gateway/podlifecycle/podsession/binder.go:611-659`) gains a
-`MaxConcurrentSessions int32` field, documented as the resolved pool's §5.2 bound and as the input to the
-§7.2 gate. `resumeOnPod` populates it from the `PoolMatch` it has already resolved
-(`pkg/gateway/sessionserver/start.go:3876`) at the `Resume` call site (`:3898`), which is the same
-`match.MaxConcurrentSessions` the create and start paths branch on (`start.go:2111`).
-`Binder.Resume`'s return literal (`binder.go:1608-1616`) sets
-`MaxConcurrentSessions: req.MaxConcurrentSessions` and leaves `SlotID` empty, with a comment stating that
-`Resume` resolves no slot and that the field is what the §7.2 gate reads. `Resume` resolves no slot
-because it acquires its pod through `b.connect` (`binder.go:1581`), which issues a whole-pod
-`podclaim.ClaimRequest{Pool, SessionID, TenantID}` (`binder.go:1652-1670`,
-`pkg/gateway/podlifecycle/podclaim/claimer.go:63-74`) carrying no slot, and it calls
-`adapterclient.ResumeParams` with no `SlotID`. The slot-aware bind path is a different method on the same
-binder, `Binder.BindSlot` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:128`), which reserves
-through `podclaim.SlotClaimer` and returns a `BindResult` carrying both `SlotID` and
-`MaxConcurrentSessions` (`slotbinder.go:319-331`).
-
-A resume onto a single-session pool routes whole-pod exactly as it does today, because the bound the
-`PoolMatch` carries is 1, or 0 when the pool has no §5.2 policy mirror row. On that path CODE-2a lets the
-resume through and CODE-2b hands the gate the same answer it reads today.
-
-Stamping a constant 1 on the resume bind was considered and rejected. Nothing keeps the resumed pod free
-of sibling slots: the per-pod occupancy claim records no whole-pod marker and `ClaimSlot` Pass 1 places
-slots on it (§1.3). A constant 1 would assert an isolation property the tree does not enforce and would
-tell a fail-closed gate that a possibly shared pod is exclusive.
-
-Together the two parts make a checkpoint-restore resume onto a concurrent-workspace pool fail where it
-currently returns a stream. The snapshotless resume-rebuild on such a pool is out of both parts' path: it
-never reaches the `ResolvePool` at `pkg/gateway/sessionserver/start.go:3876` or `Binder.Resume`, because
-`resumeOnPod` routes a row with no `WorkspaceSnapshot.Ref` through `startOnPod` (`start.go:3837, 3845`),
-which resolves the pool itself and mints a slot through `bindConcurrentSlot` (`start.go:2312-2314`). That
-resume already satisfies the §7.2 gate and is left as it stands. That is the fail-closed correction rather than a retirement of the §5.2 per-slot checkpoint
-contract: the checkpoint is still taken and recorded per slot, and the session is refused rather than
-served from a pod whose frames it would read unfiltered. Restoring the resume needs a slot-aware resume
-that reserves a slot for the restored session through `podclaim.SlotClaimer` and reports both `SlotID`
-and the bound. That is a new bind path rather than a correction, so §7 states it as a non-goal here and
-SPEC-2 records the gap in the spec for as long as it stands.
-
 ### SPEC-1. State the binding rule §1.1 breaks
 
 `spec/08_recursive-delegation.md` §8.3 states the rule CODE-1 makes true, qualified to the caller it holds
@@ -323,55 +219,6 @@ defect in the change that preserves it. The spec is silent on the fallback today
 what makes the landed §8.3 text and the shipped gateway agree.
 
 The platform-tool row at `:540` keeps its signature, which already omits the session parameter.
-
-### SPEC-2. Record that a concurrent-workspace pool has no checkpoint-restore resume path
-
-CODE-2 removes a recovery the spec currently promises without qualification, so the spec states the
-restriction in the same change. §7.3's resume flow (`spec/07_session-lifecycle.md:401-413`) is written for
-every retryable pod failure and names no concurrency condition, and §5.2's per-slot checkpoint paragraph
-(`spec/05_runtime-registry-and-pool-model.md:542`) defines per-slot and per-slot eviction checkpoints for
-`maxConcurrentSessions > 1` pods, whose purpose is that restore. §29.6 traces the client-driven
-`POST /v1/sessions/{id}/resume` end to end to a session `running` again on a replacement pod with its
-workspace restored from a checkpoint (`spec/29_communication-scenarios.md:986-989`), and §29.10 states
-that each of §29.2 through §29.9 holds on a pod whose pool sets `sessionPolicy.maxConcurrentSessions`
-above 1 (`:1421`, with the condition at `:1429-1430`). Landing CODE-2 with no spec edit would leave each
-of those sections asserting a guarantee the shipped gateway can no longer honour, and §29.10's own stated
-method, that it says so where the specification does not state whether something is partitioned per slot
-(`:1425-1427`), makes the §29.10 sentence a contradiction of the §7.3 qualifier rather than an incidental
-silence.
-
-Four edits:
-
-- `spec/07_session-lifecycle.md` §7.3 gains a qualifier on the resume flow stating that a session on a
-  pool whose `sessionPolicy.maxConcurrentSessions` exceeds 1 cannot currently be restored from a
-  workspace checkpoint onto a replacement pod, that such a resume is refused before any pod is claimed
-  with the permanent `CONCURRENT_POOL_RESUME_UNSUPPORTED` (422) and the row transitions to `failed`, and
-  that the restriction stands until a slot-aware resume reserves a slot for the restored session. The
-  qualifier also states what is unaffected: a session on such a pool that carries no workspace checkpoint
-  takes the snapshotless resume-rebuild, which resolves a slot through the ordinary start path and
-  resumes as it does today. The reason is
-  the §7.2 unresolved-slot fail-closed invariant (`spec/07_session-lifecycle.md:333`): a slot-less bind on
-  such a pod would read the pod's output unfiltered.
-- `spec/05_runtime-registry-and-pool-model.md` §5.2's per-slot checkpoint paragraph (`:542`) cross-
-  references that §7.3 qualifier, so a reader of the checkpoint contract learns that the checkpoints are
-  taken and retained but are not restorable onto a replacement pod today.
-- `spec/15_external-api-surface.md`'s error-code table gains a `CONCURRENT_POOL_RESUME_UNSUPPORTED`
-  row (`PERMANENT`, 422), placed beside the retryable `RESUME_FAILED` row (`:1133`) and worded like the
-  permanent `SETUP_COMMAND_FAILED` row (`:1136`), which is the other resume-path cause the table already
-  marks non-retryable.
-  `docs/reference/error-catalog.md` gains the mirrored row in its `## PERMANENT errors` table (`:63`)
-  beside `SETUP_COMMAND_FAILED` (`:129`), which is where the operator-facing catalog carries the permanent
-  resume-path causes. The operator catalog partitions its codes into a table per category and carries the
-  category in the section heading rather than in a column (`:133` opens `## TRANSIENT errors`, which is
-  where `RESUME_FAILED` sits at `:157`), so filing a 422 permanent code beside `RESUME_FAILED` would
-  contradict the `PERMANENT` row the same change adds to `spec/15_external-api-surface.md`.
-- `spec/29_communication-scenarios.md` §29.10 gains the exception on its statement that each of §29.2
-  through §29.9 holds on a concurrent-session pod (`:1421`): §29.6's client-driven checkpoint restore does
-  not hold on such a pod for a session that carries a workspace checkpoint, because the resume is refused
-  with `CONCURRENT_POOL_RESUME_UNSUPPORTED` before the pod allocation §29.6 traces, and only the
-  snapshotless resume-rebuild, which resolves a slot through the ordinary start path, holds. §29.6's own
-  introduction (`:987-989`) gains the pointer to the §7.3 qualifier, which also covers §29.9's eviction
-  rebuild, since §29.9 routes it into "the same restore §29.6 traces" (`:1411-1413`).
 
 ## 4. Testing
 
@@ -410,62 +257,7 @@ and an exclusive bind with an empty `SlotID` and `MaxConcurrentSessions` 1 or 0 
 (`pkg/gateway/session/executor/pod_test.go:286` and `:344`). No case is retired and none of these fails against
 the current tree.
 
-**Tier 1, `pkg/gateway/sessionserver` (internal).** The refusal itself returns before any pod claim, so
-it runs against the existing fake-client harness `concurrentClaimServer`
-(`pkg/gateway/sessionserver/start_preclaim_internal_test.go:746`), whose pool mirror already sets
-`maxConcurrentSessions: 4` (`:766-769`). The case calls `resumeOnPod` for a row carrying a
-`WorkspaceSnapshot.Ref` and asserts that it returns `podsession.ConcurrentPoolResumeUnsupported`, that no
-binding is published through `podRegistry.Put`, and that the row is not `running`. It carries a
-`// spec: §5.2, §7.2, §7.3` annotation. The harness's own doc comment states that its fake client cannot
-serve a successful slot reservation (`:741-743`), which is why the assertions that require a completed
-bind sit in the tier-2 case below.
-
-**Tier 2, `pkg/gateway/sessionserver` (envtest component).** This is the case that observes CODE-2a end to
-end and the `resumeOnPod` call-site edit CODE-2b makes, and without it CODE-2 can land inert with every
-other listed case green. The package already builds a gateway whose binder runs against an envtest cluster
-(`podBindEnvtestClient`, `pkg/gateway/sessionserver/start_pod_test.go:104`, wired as
-`concurrentRoutingServer` does at `pkg/gateway/sessionserver/messages_component_test.go:118`), which is
-the harness a completed `Binder.Resume` needs because the §5.2 claim path uses SSA Apply. The case drives
-`POST /v1/sessions/{id}/resume` for a row carrying a `WorkspaceSnapshot.Ref` against a pool whose §5.2
-mirror row sets `maxConcurrentSessions: 4` and asserts the `422 CONCURRENT_POOL_RESUME_UNSUPPORTED`
-envelope, the terminal `failed` row, the `outcome="failure"` resume-attempt counter, the absence of a
-`session.resumed` audit row, and that no pod was claimed. The single-session counterpart resumes and
-asserts that the `BindResult` the test reads back from the `podsession.Registry` it supplied
-(`pkg/gateway/podlifecycle/podsession/registry.go:33`) carries `MaxConcurrentSessions` 1, or 0 when the
-pool has no mirror row, which is the assertion that pins the call-site edit CODE-2b depends on. The
-`ResumeRequest` the call site populates reaches no injectable seam, because `Server.podBinder` is the
-concrete `*podsession.Binder` (`pkg/gateway/sessionserver/sessionserver.go:188`), so the published bind is
-where the populated bound is observable. The case carries a `// spec: §5.2, §7.2, §7.3` annotation and a
-`// diagnosis:` comment. Every assertion fails against the current tree, which resumes onto a
-concurrent-workspace pool and reports success.
-
-**Tier 1, `pkg/gateway/externalapi/errorclassify`.** The existing
-`TestClassifySessionLifecycleFallbackCodes` case list (`errorclassify_test.go:176-188`), which already
-carries `RESUME_FAILED` and `SETUP_COMMAND_FAILED`, gains
-`{"CONCURRENT_POOL_RESUME_UNSUPPORTED", CategoryPermanent, false}`. The case asserts that `Known` reports
-the code and that `Classify` returns `(PERMANENT, false)`, so the MCP `lenny/resume_session` envelope
-carries the same category and retryable pair as the REST 422 and the `PERMANENT` row SPEC-2 adds to
-`spec/15_external-api-surface.md`. It fails against the current tree, where the code is absent from the
-table and falls through to `(TRANSIENT, true)`.
-
-**Tier 2, `pkg/gateway/podlifecycle/podsession` (envtest component).** `Binder.Resume` returns a
-`BindResult` whose `MaxConcurrentSessions` is the bound its `ResumeRequest` carried and whose `SlotID` is
-empty: 1 for a single-session pool and 4 for a `ResumeRequest` carrying 4. Driving each returned bind
-through `PodExecutor.streamFor` admits the first and refuses the second with `ErrSlotIDRequired`, which
-pins the backstop behind CODE-2a for the isolation outcome §1.3 states. The case builds its binder over
-the package's `k8sClient` envtest harness (`pkg/gateway/podlifecycle/podsession/binder_test.go:174`, used
-by `TestResumeClaimsAndRestoresTheSession` at `:483`), because a completed `Binder.Resume` claims its pod
-through the §4.6.3 SSA Apply path and the package has no fake-client harness that serves a bind or a
-resume. It therefore carries a `// diagnosis:` comment alongside its `// spec: §5.2, §7.2` annotation,
-which `.claude/rules/test-coverage.md` requires from tier 2 up. Both assertions fail against the current
-tree, which reports 0 on every resume and admits both binds.
-
-**Tier 11.** The §8.3 sentence SPEC-1 adds resolves against the tool signature at `:540`. The §7.3
-qualifier SPEC-2 adds resolves against the §5.2 cross-reference, against the §29.10 exception and the
-§29.6 pointer, and against the §7.2 unresolved-slot invariant it cites. The
-`CONCURRENT_POOL_RESUME_UNSUPPORTED` row is present in `spec/15_external-api-surface.md` marked
-`PERMANENT` with HTTP 422, and in `docs/reference/error-catalog.md` under the `## PERMANENT errors`
-heading with the same HTTP status, which is where that catalog records a code's category.
+**Tier 11.** The §8.3 sentence SPEC-1 adds resolves against the tool signature at `:540`.
 
 ## 5. Out of scope: what a fix for §1.2 must satisfy
 
@@ -487,58 +279,51 @@ the symptom.
 
 ## 6. Application order
 
-CODE-1 and SPEC-1 land first and alone: the defect is live, permanent, and needs no recovery migration
-because the fix prevents new writes rather than repairing old ones. CODE-2 and SPEC-2 land second and are
-independent of them. CODE-2 changes a client-visible outcome, because after it lands a
-`POST /v1/sessions/{id}/resume` for a session on a concurrent-workspace pool that carries a workspace
-checkpoint returns `422 CONCURRENT_POOL_RESUME_UNSUPPORTED` and the row becomes terminal `failed`, where
-today it returns 200 and a session served from a pod whose sibling slots it can read. A resume for a
-session on such a pool that carries no checkpoint is unaffected: it takes the snapshotless resume-rebuild
-through `startOnPod`, which resolves a slot through `bindConcurrentSlot`
-(`pkg/gateway/sessionserver/start.go:2312-2314`) and returns 200 both before and after CODE-2. SPEC-2 lands with CODE-2 because it is
-the statement of that restriction in §7.3, §5.2, and the error-code table. A reviewer evaluates that
-outcome on its own rather than as a by-product of CODE-1. §1.2 follows in its own proposal.
-
-There is no remediation for tracing contexts already written by this path, because the tree has no delete
+CODE-1 and SPEC-1 land together and are the whole of this proposal. The defect is live and permanent, and
+the fix needs no recovery migration because it prevents new writes rather than repairing old ones. There
+is no remediation for tracing contexts already written by this path, because the tree has no delete
 surface for them. Whether one is needed is a question for the operator-facing side and is not staged here.
+
+§1.2 and §1.3 are stated here and corrected elsewhere. §5 says what a fix for §1.2 must satisfy. §1.3 is
+handed to proposal 0073, for the reason §7 gives.
 
 ## 7. Non-goals
 
 This proposal does not add a delete or repair surface for `tracingContext`. It does not change `Merge`'s
 no-overwrite rule or the 32-entry bound, both of which are §8.3 requirements and correct. It does not bind
 `req.session_id` to mesh identity, per §5. It stages no change to the JSONL leg, which already injects the
-adapter's bound session and is the subject of proposal 0069. It does not add a slot-aware resume, which
-would reserve a slot for the restored session and let a checkpoint-restore resume onto a
-concurrent-workspace pool succeed again; that is a new bind path and belongs in its own proposal, and SPEC-2 records the restriction in the
-spec for as long as that path is absent. It does not mark the per-pod occupancy
+adapter's bound session and is the subject of proposal 0069.
+
+**It does not correct §1.3, which proposal 0073 owns.** An earlier revision of this document refused a
+checkpoint-restore resume onto a concurrent-workspace pool, on the ground that no slot-aware resume path
+exists and a resume that cannot reserve a slot should fail loudly rather than serve a session a pod whose
+sibling slots it can read. That refusal is withdrawn here because 0073 builds the path it assumed absent:
+0073 makes restore resolve against the slot root and carries a slot identifier on every session-scoped
+message, so the resume that this document would have forbidden becomes the resume that works. Landing a
+client-visible `422` and its specification text, and removing both one proposal later, costs more than
+waiting. What 0073 must therefore also carry, and what this document hands it, is the gateway half: a
+resumed session reserves a slot, and the resume `BindResult` reports the concurrency of the pod it holds
+rather than a zero, so the §7.2 gate at `pkg/gateway/session/executor/pod.go:146` evaluates a true value
+for the first time on that path. Until 0073 lands, the behaviour §1.3 describes stands unchanged.
+
+It does not mark the per-pod occupancy
 claim as whole-pod, which is the other way to make a resumed pod exclusive and which would add a field to
 the `SandboxClaim` CRD and a placement filter to `ClaimSlot` Pass 1.
 
 ## 8. Files touched on application
 
 - `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` (CODE-1, the handler and the tool schema).
-- `pkg/gateway/podlifecycle/podsession/integrationlevel.go` (CODE-2a, the
-  `ConcurrentPoolResumeUnsupported` typed error beside `RuntimeLevelUnderperforms`) and
-  `pkg/gateway/podlifecycle/podsession/binder.go` (CODE-2b, the `MaxConcurrentSessions` field on
-  `ResumeRequest` and the `Resume` return literal).
-- `pkg/gateway/sessionserver/start.go` (CODE-2a, the refusal in `resumeOnPod` between `:3876` and
-  `:3898` and the `writePodClaimError` case at `:86`; CODE-2b, the `Resume` call site at `:3898`, which
-  populates the field from the already-resolved `PoolMatch`). `pkg/gateway/session/executor/pod.go` is
-  not edited: the gate's predicate is unchanged.
-- `pkg/gateway/externalapi/errorclassify/errorclassify.go` (CODE-2a, the
-  `CONCURRENT_POOL_RESUME_UNSUPPORTED` table entry beside `SETUP_COMMAND_FAILED`, which keeps the MCP
-  envelope's category and retryable pair identical to the REST 422).
-- `spec/08_recursive-delegation.md` §8.3 (SPEC-1). `spec/07_session-lifecycle.md` §7.3,
-  `spec/05_runtime-registry-and-pool-model.md` §5.2, `spec/29_communication-scenarios.md` §29.6 and
-  §29.10, `spec/15_external-api-surface.md`'s error-code table, and `docs/reference/error-catalog.md`'s
-  `## PERMANENT errors` table (SPEC-2).
-- `tests/tier9_security`, `pkg/gateway/mcpfabric/mcptools` (including
-  `pkg/gateway/mcpfabric/mcptools/schema_alignment_test.go` for the descriptor case),
-  `pkg/gateway/sessionserver` (the tier-1 internal CODE-2a case and the tier-2 envtest component case),
-  `pkg/gateway/externalapi/errorclassify` (the classification case), and
-  `pkg/gateway/podlifecycle/podsession` (the tier-2 envtest component case over the package's
-  `k8sClient` harness), each as described in §4, and their `tests/spec-map.json` entries. The existing cases in `pkg/gateway/session/executor` and
-  the existing `set_tracing_missing_sessionid` case are retained as they stand.
+- `spec/08_recursive-delegation.md` §8.3 (SPEC-1).
+- `tests/tier9_security` and `pkg/gateway/mcpfabric/mcptools`, including
+  `pkg/gateway/mcpfabric/mcptools/schema_alignment_test.go` for the descriptor case, each as described in
+  §4, and their `tests/spec-map.json` entries. The existing `set_tracing_missing_sessionid` case is
+  retained as it stands, and the existing cases in `pkg/gateway/session/executor` are untouched, since
+  the gate's predicate is unchanged.
+
+`pkg/gateway/session/executor/pod.go`, `pkg/gateway/podlifecycle/podsession/`,
+`pkg/gateway/sessionserver/start.go`, and `pkg/gateway/externalapi/errorclassify/` are not edited. An
+earlier revision staged a resume refusal across them; §7 records why it was withdrawn and what proposal
+0073 carries in its place.
 
 ## 9. Resolved in adversarial review
 
@@ -750,3 +535,17 @@ the `SandboxClaim` CRD and a placement filter to `ClaimSlot` Pass 1.
   correction pass 5 already applied to the sibling sessionserver case. §4 now labels the case tier 2
   (envtest component), names the harness, and requires the `// diagnosis:` comment, and §8 names it as
   the package's tier-2 case.
+
+### Pass 11 (2026-08-16, hand-authored after the scope split)
+
+- **CODE-2 and SPEC-2 withdrawn; §1.3 handed to proposal 0073.** The convergence reshaped CODE-2 from a
+  gate predicate change into a refusal of any checkpoint-restore resume onto a concurrent-workspace pool,
+  carrying a new client-visible `422 CONCURRENT_POOL_RESUME_UNSUPPORTED`, its typed error, its shared
+  classifier entry, and specification text in §7.3, §5.2, §29.6, §29.10, and the error-code table. That
+  correction rests on there being no slot-aware resume path. Proposal 0073 builds one: it carries a slot
+  identifier on every session-scoped message and resolves restore against the slot root, which turns the
+  forbidden resume into a working one. Landing the refusal and its client-visible contract, then deleting
+  both when 0073 lands, costs more than handing the defect over, so §1.3 stays stated here and is
+  corrected there. The gateway half 0073 must now also carry is named in §7: a resumed session reserves a
+  slot, and the resume `BindResult` reports its pod's concurrency, so the §7.2 gate evaluates a true value
+  on that path. CODE-1 and SPEC-1 are untouched by the split and keep the review that certified them.
