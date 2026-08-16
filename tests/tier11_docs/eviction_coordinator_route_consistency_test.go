@@ -5,7 +5,8 @@
 // reaches the gateway replica that can drive its eviction checkpoint. §4.6.1
 // states the preStop cannot open the gateway-driven `Checkpoint` stream
 // itself, so it signals its coordinating gateway replica over the per-pod
-// adapter-to-gateway control channel (the same transport that carries the
+// adapter-to-gateway `CH-ADAPTEREVENTS` channel (the same transport that
+// carries the
 // §4.7 `AdapterTerminating` event); the coordinating replica is the
 // session-coordination-lease holder and drives the existing `Checkpoint` RPC
 // with the `TriggerEviction` trigger under its held lease; an unreachable
@@ -13,7 +14,7 @@
 // and no unfenced replica ever drives the checkpoint.
 //
 // The clarification names two surfaces a reader must be able to trace: the
-// control-channel event (the §4.7 `AdapterTerminating` transport, which
+// `CH-ADAPTEREVENTS` event (the §4.7 `AdapterTerminating` transport, which
 // pkg/adapter/adapterevents.go emits) and the checkpoint trigger (the
 // existing `CheckpointWithTrigger` path in
 // pkg/gateway/checkpoint/checkpointer/checkpointer.go, which references
@@ -21,14 +22,14 @@
 // resolves to those real current surfaces and that its inline anchor links
 // (the §4.7 self-link and the §10.1 cross-file link) point at live headings.
 // The non-happy path it guards is a §4.6.1 sentence referencing a
-// control-channel event or a checkpoint trigger the spec and code do not
+// `CH-ADAPTEREVENTS` event or a checkpoint trigger the spec and code do not
 // define, which a reader cannot trace.
 //
 // The test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
 //
-// spec: 4.6.1 (agent-pod disruption protection), 4.7 (adapter-to-gateway
-// control channel), 4.4 (eviction checkpoint).
+// spec: 4.6.1 (agent-pod disruption protection), 4.7 (runtime adapter),
+// 4.4 (eviction checkpoint).
 
 package tier11_docs_test
 
@@ -64,10 +65,11 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 	disruptionPara := requireLine(t, s461, "Disruption protection for agent pods")
 	requireAllContain(t, "§4.6.1 disruption-protection paragraph", disruptionPara, []string{
 		// The coordinator-direct route: the preStop cannot open the stream and
-		// signals its coordinating replica over the control channel.
+		// signals its coordinating replica over CH-ADAPTEREVENTS.
 		"cannot open the gateway-driven `Checkpoint` stream itself",
 		"signals its coordinating gateway replica over the per-pod adapter-to-gateway CH-ADAPTEREVENTS",
-		// The control-channel transport it reuses is the §4.7 AdapterTerminating one.
+		// The CH-ADAPTEREVENTS transport it reuses is the §4.7
+		// AdapterTerminating one.
 		"the same channel that carries `AdapterTerminating`",
 		"[§4.7](#47-runtime-adapter)",
 		// The coordinating replica is the session-coordination-lease holder.
@@ -81,7 +83,7 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 		"no unfenced replica ever drives the checkpoint",
 	})
 
-	// The control-channel event the §4.6.1 sentence names is the §4.7
+	// The CH-ADAPTEREVENTS event the §4.6.1 sentence names is the §4.7
 	// `AdapterTerminating` transport. §4.7 must declare it as the adapter's
 	// self-initiated terminal notification.
 	s47 := specSection(t, filepath.Join(specDir, "04_system-components.md"), "### 4.7 ")
@@ -147,7 +149,7 @@ func TestEvictionCoordinatorRouteCrossRefsResolve(t *testing.T) {
 	s461 := specSection(t, filepath.Join(specDir, "04_system-components.md"), "#### 4.6.1 ")
 	disruptionPara := requireLine(t, s461, "Disruption protection for agent pods")
 	if !strings.Contains(disruptionPara, "[§4.7](#47-runtime-adapter)") {
-		t.Error("§4.6.1 disruption-protection paragraph does not self-link to §4.7; the control-channel transport must cross-reference the runtime-adapter section")
+		t.Error("§4.6.1 disruption-protection paragraph does not self-link to §4.7; the CH-ADAPTEREVENTS transport must cross-reference the runtime-adapter section")
 	}
 	if !strings.Contains(disruptionPara, "[§10.1](10_gateway-internals.md#101-horizontal-scaling)") {
 		t.Error("§4.6.1 disruption-protection paragraph does not link to §10.1; the coordinating-lease holder and TTL-driven handoff must cross-reference the horizontal-scaling section")

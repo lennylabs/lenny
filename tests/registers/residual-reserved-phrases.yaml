@@ -306,24 +306,6 @@ entries:
     reason: |-
       an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
   - member: |-
-      tests/tier11_docs/budget_extension_trigger_consistency_test.go: control-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier11_docs/eviction_coordinator_route_consistency_test.go: control channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier11_docs/eviction_coordinator_route_consistency_test.go: control-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       tests/tier3_contract/sdks/runtime_sdk_test.go: lifecycle channel
     class: reserved-phrases
     disposition: excluded
