@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -317,6 +319,37 @@ func TestAttachKeepalive_spec_15_2(t *testing.T) {
 	}
 }
 
+// stalledSubscriberSocketBuffer is the TCP send and receive buffer size
+// pinned on both ends of the stalled-subscriber connection below. Any small
+// value works; the point is that it is fixed rather than autotuned.
+const stalledSubscriberSocketBuffer = 4096
+
+// pinSmallSocketBuffers fixes the TCP send and receive buffers on c to
+// stalledSubscriberSocketBuffer, which also turns off the kernel's buffer
+// autotuning for the connection.
+//
+// The stalled-subscriber test needs the server's write to block once the
+// client stops reading. How much the server can write before that happens is
+// otherwise the sum of an autotuned send buffer and an autotuned receive
+// buffer, which on loopback grows into the megabytes, so whether the write
+// blocks inside a fixed stall window depends on how fast the handler can
+// marshal frames. Under the race detector it cannot marshal fast enough to
+// fill an autotuned buffer, the write never blocks, and the test asserts
+// against a condition it never created. Pinning the buffers makes the block
+// a function of the backlog size alone.
+//
+// A non-TCP conn is left alone; the buffer size is an optimization of the
+// test's setup rather than a precondition the assertion depends on being
+// applied to any particular transport.
+func pinSmallSocketBuffers(c net.Conn) {
+	tc, ok := c.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	_ = tc.SetReadBuffer(stalledSubscriberSocketBuffer)
+	_ = tc.SetWriteBuffer(stalledSubscriberSocketBuffer)
+}
+
 // diagnosis: a failure here means the SSE attach transport no longer
 // bounds a write to a stalled subscriber, so a single slow client can
 // block the handler goroutine writing into a full socket buffer forever
@@ -330,18 +363,19 @@ func TestAttachKeepalive_spec_15_2(t *testing.T) {
 // would block, the gateway closes the connection within the bounded send
 // timeout rather than blocking indefinitely.
 //
-// The test publishes a backlog large enough to exceed any realistic TCP
-// socket buffer, opens the real attach stream over a real connection, and
-// then reads nothing at all for a stall period — long enough for a
-// genuinely blocked write to hit the bounded send timeout several times
-// over, but not long enough to depend on ever fully draining the backlog.
-// Only after the stall does the test start draining, and it asserts that
-// draining completes (a clean EOF, meaning the server already closed the
-// connection during the stall) within a bound comfortably below the time
-// a full, un-terminated backlog transfer would take. A server that never
-// bounds its writes keeps the handler goroutine parked in the still-open
-// connection's live-event loop indefinitely once the backlog eventually
-// drains, so the drain in that case never reaches EOF within the bound.
+// The test pins the socket buffers on both ends of the connection to a few
+// kilobytes (see pinSmallSocketBuffers), publishes a backlog that exceeds
+// them by three orders of magnitude, opens the real attach stream over a
+// real connection, and then reads nothing at all for a stall period —
+// long enough for a genuinely blocked write to hit the bounded send timeout
+// several times over. Only after the stall does the test start draining,
+// and it asserts that draining completes (a clean EOF, meaning the server
+// already closed the connection during the stall) within a bound
+// comfortably below the time a full, un-terminated backlog transfer would
+// take. A server that never bounds its writes keeps the handler goroutine
+// parked in the still-open connection's live-event loop indefinitely once
+// the backlog eventually drains, so the drain in that case never reaches
+// EOF within the bound.
 // spec: §7.2 "SSE back-pressure policy" (spec/07_session-lifecycle.md);
 // §15 "Normative back-pressure policy for OutboundChannel
 // implementations", bounded-error policy (spec/15_external-api-surface.md).
@@ -350,20 +384,40 @@ func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *test
 	attachSendTimeout = 30 * time.Millisecond
 	defer func() { attachSendTimeout = origTimeout }()
 
-	bus := sessionevents.NewBus(30000)
-	// A large enough backlog (well past any realistic kernel socket
-	// buffer, including macOS/Linux TCP autotuning ceilings in the low
-	// single-digit megabytes) so the replay loop's write genuinely blocks
-	// once the subscriber below stalls.
+	bus := sessionevents.NewBus(1024)
+	// A backlog three orders of magnitude past the pinned socket buffers,
+	// so the replay loop's write genuinely blocks within the first handful
+	// of frames once the subscriber below stalls.
 	payload := `{"type":"text","text":"` + strings.Repeat("A", 3000) + `"}`
-	for i := 0; i < 7000; i++ {
+	for i := 0; i < 512; i++ {
 		bus.PublishForTenant("acme", "sess-1", "response", payload, streamTS())
 	}
 
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewUnstartedServer(srv.Handler())
+	ts.Config.ConnState = func(c net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			pinSmallSocketBuffers(c)
+		}
+	}
+	ts.Start()
 	defer ts.Close()
+
+	// A dedicated client (rather than http.DefaultClient) so the pinned
+	// receive buffer applies to this connection alone and the connection is
+	// not pooled for reuse by another test.
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, fmt.Errorf("dial attach stream: %w", err)
+			}
+			pinSmallSocketBuffers(c)
+			return c, nil
+		},
+	}}
+	defer client.CloseIdleConnections()
 
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(attachBody(t, "sess-1", 0)))
 	if err != nil {
@@ -371,7 +425,7 @@ func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *test
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("do request: %v", err)
 	}
