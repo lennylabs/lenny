@@ -59,7 +59,7 @@ var checkLevel = map[string]compliance.Level{
 	"connector_mcp_server_reachability": compliance.LevelStandard,
 	"tool_call_tool_result_correlation": compliance.LevelStandard,
 	// Full categories (§15.4.6).
-	"lifecycle_channel_opening":         compliance.LevelFull,
+	"runtime_ops_handshake":             compliance.LevelFull,
 	"checkpoint_quiesce_resume":         compliance.LevelFull,
 	"interrupt_acknowledgement":         compliance.LevelFull,
 	"credential_rotation_no_disruption": compliance.LevelFull,
@@ -92,7 +92,7 @@ func deriveObservedLevel(checks []compliance.Check) compliance.Level {
 	for _, c := range checks {
 		pass[c.Name] = c.Pass
 	}
-	if pass["lifecycle_channel_opening"] {
+	if pass["runtime_ops_handshake"] {
 		return compliance.LevelFull
 	}
 	if pass["mcp_nonce_handshake"] {

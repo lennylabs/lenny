@@ -38,12 +38,12 @@ func TestDeriveObservedLevel(t *testing.T) {
 		{"full when lifecycle passes", fullPassChecks(), compliance.LevelFull},
 		{
 			"standard when only nonce passes",
-			[]compliance.Check{chk("mcp_nonce_handshake", true), chk("lifecycle_channel_opening", false)},
+			[]compliance.Check{chk("mcp_nonce_handshake", true), chk("runtime_ops_handshake", false)},
 			compliance.LevelStandard,
 		},
 		{
 			"basic when neither gate passes",
-			[]compliance.Check{chk("mcp_nonce_handshake", false), chk("lifecycle_channel_opening", false)},
+			[]compliance.Check{chk("mcp_nonce_handshake", false), chk("runtime_ops_handshake", false)},
 			compliance.LevelBasic,
 		},
 		{"basic on an empty set", nil, compliance.LevelBasic},
@@ -82,12 +82,12 @@ func TestMissingCapabilities(t *testing.T) {
 	checks := []compliance.Check{
 		chk("mcp_nonce_handshake", true),
 		chk("platform_mcp_tool_invocation", true),
-		chk("lifecycle_channel_opening", false),
+		chk("runtime_ops_handshake", false),
 		chk("checkpoint_quiesce_resume", false),
 		chk("interrupt_acknowledgement", true),
 	}
 	got := missingCapabilities(checks, compliance.LevelStandard, compliance.LevelFull)
-	want := map[string]bool{"lifecycle_channel_opening": true, "checkpoint_quiesce_resume": true}
+	want := map[string]bool{"runtime_ops_handshake": true, "checkpoint_quiesce_resume": true}
 	if len(got) != len(want) {
 		t.Fatalf("missing = %v, want the two failing full-level checks", got)
 	}
@@ -100,9 +100,9 @@ func TestMissingCapabilities(t *testing.T) {
 
 func TestFailuresAtOrBelow(t *testing.T) {
 	checks := []compliance.Check{
-		chk("heartbeat_emits_ack", false),       // basic, failing
-		chk("mcp_nonce_handshake", false),       // standard, failing
-		chk("lifecycle_channel_opening", false), // full, failing
+		chk("heartbeat_emits_ack", false),   // basic, failing
+		chk("mcp_nonce_handshake", false),   // standard, failing
+		chk("runtime_ops_handshake", false), // full, failing
 	}
 	// At declared=basic, only the basic failure counts.
 	if got := failuresAtOrBelow(checks, compliance.LevelBasic); len(got) != 1 || got[0] != "heartbeat_emits_ack" {

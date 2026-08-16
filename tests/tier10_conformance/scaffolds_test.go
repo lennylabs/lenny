@@ -302,7 +302,7 @@ func TestFullLevel(t *testing.T) {
 	assertAllPass(t, "streaming-echo", "full", report)
 	// The five §15.4.6 Full categories are present.
 	wantFull := map[string]bool{
-		"lifecycle_channel_opening":         false,
+		"runtime_ops_handshake":             false,
 		"checkpoint_quiesce_resume":         false,
 		"interrupt_acknowledgement":         false,
 		"credential_rotation_no_disruption": false,

@@ -612,8 +612,8 @@ func shippedCanonicalArtifactsSection(t *testing.T, root string) string {
 	return "## Canonical artifacts" + section
 }
 
-// artifactCorrectedSites holds the corrected text of the enumerations
-// TEST-1 names as accept cases. Each is quoted at the state the
+// artifactCorrectedSites holds the corrected text of the artifact
+// enumerations this gate accepts. Each is quoted at the state the
 // supersession lands them in, because the exemption is stated over the
 // corrected enumeration rather than over an earlier one.
 var artifactCorrectedSites = map[string]string{
