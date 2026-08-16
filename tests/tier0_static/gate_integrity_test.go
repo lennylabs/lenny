@@ -53,6 +53,13 @@ type tierZeroGate struct {
 
 // tierZeroGates is the fixed list. A gate added to tier 0 by a later step of the
 // migration is added here in the same change.
+//
+// The list covers the gates the migration lands itself, the running tier-0 gates
+// whose predicate it rewrites or widens, and the pre-existing tooling gates it
+// makes green by seeding a baseline register. A tooling gate the migration
+// neither lands, rewrites, nor seeds a baseline for is outside the list: the
+// proto no-drift check is the one such gate, and it holds no population this
+// migration closed.
 var tierZeroGates = []tierZeroGate{
 	{"TestNamingLintReportsNoBareReservedNounPhraseInTheTree", "naming_lint_test.go", "the naming law over channel identifiers"},
 	{"TestIdentifierResolutionCertifiesTheTree", "identifier_resolution_test.go", "one live spelling per canonical identifier"},
@@ -66,6 +73,19 @@ var tierZeroGates = []tierZeroGate{
 	{"TestSpecCitationResolutionCertifiesTheTree", "spec_citation_resolution_test.go", "a line citation resolves inside the section it names"},
 	{"TestLineCitationRatchetCertifiesTheTree", "line_citation_ratchet_test.go", "the line-citation population does not grow"},
 	{"TestCoordinatorHoldAllowlistNamesMethodsTheAdapterServes", "coordinator_hold_allowlist_test.go", "every coordinator-hold allowlist entry names a method the adapter serves"},
+	{"TestSpec254DegradationWarningLineCitationsAreFresh", "degradation_lock_line_citation_test.go", "each §25.4 citation names a heading whose body still carries the cited sentence"},
+	{"TestSkipReasonClassifierCertifiesTheTree", "skip_reason_classifier_test.go", "every skipped test names a classified skip reason"},
+	// The two checks below run on the second hard-gated channel, inside
+	// runValidateMaps, so they are named by the file that carries that
+	// function rather than by a tier-0 test file.
+	{"validateChangeGraphCompleteness", validateMapsFile, "every tracked source path is covered by the change graph"},
+	{"validateSpecMapExceptionsYAML", validateMapsFile, "every spec-map exception is well-formed, which is the heading walker's escape hatch"},
+	// The meta-gate names itself, because the list is the whole set of gates the
+	// migration registers at tier 0 and nothing in the domain split excludes it.
+	// The entry catches a rename or a move of the meta-gate's own registration.
+	// It cannot catch the file's deletion, which stops the meta-gate running at
+	// all; that is a limit of any self-check rather than a gap in the list.
+	{"TestEveryMigrationGateIsRegisteredAtTierZero", "gate_integrity_test.go", "every gate the migration registers at tier 0 is still hard-gated"},
 }
 
 // gatesOutsideTierZero are registered by the migration through another tier's
