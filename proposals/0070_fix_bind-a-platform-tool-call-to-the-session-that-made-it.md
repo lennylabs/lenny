@@ -1,26 +1,30 @@
 # Proposal: Bind a platform-tool call to the session that made it
 
-- **Status:** Draft for review. Converged after 10 adversarial review rounds (22 findings fixed) on
-  2026-08-16, then reduced in scope: the resume correction the review reshaped CODE-2 into is withdrawn and
-  handed to proposal 0073, which builds the slot-aware resume that correction assumed absent. §7 records
-  the handoff and §9 the pass. The convergence certified text this document no longer carries, so it is
-  re-entering review rather than claiming that certificate.
+- **Status:** **Approved (2026-08-16) by jaf sign-off.** Verified (2026-08-16). Converged after 3
+  adversarial review rounds (1 finding fixed) following the scope reduction, and after 10 rounds
+  (22 findings fixed) on the text that preceded it. The proposal is reduced in scope: the resume
+  correction the review reshaped CODE-2
+  into is withdrawn and handed to proposal 0073, which builds the slot-aware resume that correction
+  assumed absent. §7 records the handoff and §9 the pass history.
 - **Date:** 2026-08-13
-- **Scope:** Stages fixes for three defects found while reviewing proposal 0069, each one a
-  security-relevant decision that reads a value its decider never verified. A platform-tool handler takes the session it writes from the
-  caller's own arguments; the principal those arguments are checked against is itself derived from an
-  unverified request field; and a fail-closed gate reads a field one of its callers never populates, so it
-  admits a resumed session onto a pod that may host other sessions' slots. The first is live and has no
-  recovery path. None is caused by 0069 and none should wait behind it.
+- **Scope:** States three defects found while reviewing proposal 0069, each one a
+  security-relevant decision that reads a value its decider never verified. A platform-tool handler takes
+  the session it writes from the caller's own arguments; the principal those arguments are checked against
+  is itself derived from an unverified request field; and a fail-closed gate reads a field one of its
+  callers never populates, so it admits a resumed session onto a pod that may host other sessions' slots.
+  This document stages the fix for the first, which is live and has no recovery path. §5 states what a fix
+  for the second must satisfy, and §7 records that proposal 0073 corrects the third. None is caused by 0069
+  and none should wait behind it.
 
 This document stages the proposed code and specification changes. It does not modify any spec, code, or
 doc file. Apply the changes in the "Proposed changes" section after sign-off.
 
 ## 0. Context an implementor should read first
 
-The three defects sit at three different depths of the same question: *what proves that a caller is the
-session it says it is?* They are proposed together because fixing only the shallowest would read as
-closing the question, and it does not. They are separable in application, and §6 states the order.
+The three defects sit at three different depths of one question: what proves that a caller is the session
+it says it is. All three are stated here so that the correction of the shallowest is not read as closing
+that question, which it does not. Only §1.1 is corrected in this document. §1.2 is scoped for a later
+proposal under decision 4, §1.3 is handed to proposal 0073 under decision 3, and §6 states what lands.
 
 ## 1. Problem
 
@@ -66,9 +70,9 @@ traces and every descendant's stitch under a value the caller chose. And `MaxEnt
 (`tracing.go:24-25, 63`): filling it makes every later registration on that session, and on every child it
 delegates to, fail permanently. No audit event records any of it.
 
-The same-tenant constraint applies and does not suffice on its own. §8.3 grants write authority over a session's
-tracing context to that session's runtime, and `spec/04_system-components.md:951` requires a pod's local
-MCP servers never to expose other sessions. The write violates the actor model those state.
+The same-tenant constraint applies and does not suffice on its own. §8.3 grants write authority over a
+session's tracing context to that session's runtime, and `spec/04_system-components.md:951` requires a
+pod's local MCP servers never to expose other sessions. The write violates the actor model those state.
 
 ### 1.2 The principal is only as good as the field it is built from
 
@@ -136,8 +140,7 @@ Concurrent-workspace pools reach this path. Checkpoints on such a pool are taken
 `:471`), which §5.2 states is the defined behaviour for `maxConcurrentSessions > 1`; `resumeOnPod` branches
 into `Binder.Resume` on the presence of `WorkspaceSnapshot.Ref` alone, with no test of the pool's
 concurrency (`pkg/gateway/sessionserver/start.go:3836, 3898`); and it publishes the returned bind directly
-(`:3936`). The unset zero therefore does not happen to produce the right answer on a concurrent pool. It
-produces the answer the gate exists to refuse.
+(`:3936`). On a concurrent pool the unset zero therefore produces the answer the gate exists to refuse.
 
 ## 2. Decisions
 
@@ -172,8 +175,8 @@ produces the answer the gate exists to refuse.
    choosing where that mapping lives is a design question rather than a correction. §5 states what a
    solution must satisfy so the next proposal does not restate the analysis.
 
-5. **The three land in severity order and are independently revertible.** §6 states it. A reviewer who
-   accepts only the first change should be able to take it alone.
+5. **CODE-1 and SPEC-1 land together as one revertible change, and are the whole of what this document
+   applies.** §6 states it. §1.2 and §1.3 are stated here and corrected elsewhere, under decisions 4 and 3.
 
 ## 3. Proposed changes
 
@@ -222,11 +225,11 @@ The platform-tool row at `:540` keeps its signature, which already omits the ses
 
 ## 4. Testing
 
-**Tier 9, `tests/tier9_security`.** Two sessions in one tenant. A caller authenticated as session A
-invokes `lenny/set_tracing_context` naming session B: B's `tracingContext` is unchanged and A's carries
-the identifiers. This is the regression test for §1.1 and it fails against the current tree. A second case
-drives the same call with no `sessionId` argument at all and asserts it registers against A, pinning the
-handler's resolution of the session from the principal when the argument is absent.
+**Tier 9, `tests/tier9_security`.** The case runs two sessions in one tenant. A caller authenticated as
+session A invokes `lenny/set_tracing_context` naming session B: B's `tracingContext` is unchanged and A's
+carries the identifiers. This is the regression test for §1.1 and it fails against the current tree. A
+second case drives the same call with no `sessionId` argument at all and asserts it registers against A,
+pinning the handler's resolution of the session from the principal when the argument is absent.
 
 **Tier 1, `pkg/gateway/mcpfabric/mcptools/schema_alignment_test.go`.** A case in the existing alignment
 family reads `lenny/set_tracing_context` off the live `tools/list` surface through `toolListedSchema`
@@ -254,8 +257,8 @@ case does not read.
 **Tier 1, `pkg/gateway/session/executor`.** The gate's predicate is unchanged, so its existing cases
 stand: a bind with `MaxConcurrentSessions > 1` and an empty `SlotID` is refused with `ErrSlotIDRequired`,
 and an exclusive bind with an empty `SlotID` and `MaxConcurrentSessions` 1 or 0 is admitted
-(`pkg/gateway/session/executor/pod_test.go:286` and `:344`). No case is retired and none of these fails against
-the current tree.
+(`pkg/gateway/session/executor/pod_test.go:286` and `:344`). No case is retired and none of these fails
+against the current tree.
 
 **Tier 11.** The §8.3 sentence SPEC-1 adds resolves against the tool signature at `:540`.
 
@@ -265,8 +268,8 @@ This section states what a fix must satisfy so the next proposal starts from the
 the symptom.
 
 - The gateway must resolve the caller's session from the peer's verified identity rather than from the
-  request body. The peer certificate identifies a pod; the mapping from pod to its bound sessions exists in the
-  session store and the claim records but is not consulted on this path.
+  request body. The peer certificate identifies a pod; the mapping from pod to its bound sessions exists
+  in the session store and the claim records but is not consulted on this path.
 - A pod serving several slots holds several sessions at once, so the mapping is one-to-many and the
   request must still name which of the caller's own sessions it means. The check is membership rather
   than equality.
@@ -306,9 +309,9 @@ resumed session reserves a slot, and the resume `BindResult` reports the concurr
 rather than a zero, so the §7.2 gate at `pkg/gateway/session/executor/pod.go:146` evaluates a true value
 for the first time on that path. Until 0073 lands, the behaviour §1.3 describes stands unchanged.
 
-It does not mark the per-pod occupancy
-claim as whole-pod, which is the other way to make a resumed pod exclusive and which would add a field to
-the `SandboxClaim` CRD and a placement filter to `ClaimSlot` Pass 1.
+It does not mark the per-pod occupancy claim as whole-pod, which is the other way to make a resumed pod
+exclusive and which would add a field to the `SandboxClaim` CRD and a placement filter to `ClaimSlot`
+Pass 1.
 
 ## 8. Files touched on application
 
@@ -549,3 +552,17 @@ earlier revision staged a resume refusal across them; §7 records why it was wit
   corrected there. The gateway half 0073 must now also carry is named in §7: a resumed session reserves a
   slot, and the resume `BindResult` reports its pod's concurrency, so the §7.2 gate evaluates a true value
   on that path. CODE-1 and SPEC-1 are untouched by the split and keep the review that certified them.
+
+### Pass 12 (2026-08-16, automated)
+
+- The Scope line, §0, and decision 5 still described three ordered staged changes that the scope reduction
+  had removed. §6 states that CODE-1 and SPEC-1 land together and are the whole of this proposal, decision
+  3 hands §1.3 to proposal 0073, decision 4 scopes §1.2 to a later proposal, and §8 lists one code file and
+  one spec file, so there is no severity order for §6 to state and no second or third change to accept or
+  revert on its own. The §0 rationale was also inverted, arguing against correcting only the shallowest
+  defect, which is what the document does. The Scope line now states that the document states three defects
+  and stages the fix for the first, and names §5 and §7 as the dispositions of the other two. §0 now states
+  that all three are stated so the correction of the shallowest is not read as closing the question, that
+  only §1.1 is corrected here, and that decisions 4 and 3 carry the other dispositions. Decision 5 now
+  records that CODE-1 and SPEC-1 land together as one revertible change and are the whole of what this
+  document applies.
