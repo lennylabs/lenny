@@ -151,7 +151,7 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 
 	lc, err := adapter.NewRuntimeOps(socketPath)
 	if err != nil {
-		t.Fatalf("new lifecycle channel: %v", err)
+		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

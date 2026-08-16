@@ -294,48 +294,6 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      tests/tier10_conformance/scaffolds_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier3_contract/sdks/runtime_sdk_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier4_integration/credential_lifecycle_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier4_integration/credential_lifecycle_test.go: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier8_chaos/credential_rotation_ceiling_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       tests/tier9_security/pentest/v1-baseline-bundle.json: lifecycle channel
     class: reserved-phrases
     disposition: excluded

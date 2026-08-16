@@ -133,9 +133,10 @@ func (p *runtimePeer) expectSilence(d time.Duration) {
 	}
 }
 
-// startAdapter brings up a real adapter.Server bound to a real CH-RUNTIMEOPS on a Unix socket, with credentials assigned for one direct-mode
-// provider. It returns the server, the socket path, and the recording audit
-// emitter wired to the §4.9.2 EventStore hook.
+// startAdapter brings up a real adapter.Server bound to a real
+// CH-RUNTIMEOPS on a Unix socket, with credentials assigned for one
+// direct-mode provider. It returns the server, the socket path, and the
+// recording audit emitter wired to the §4.9.2 EventStore hook.
 func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordingCeilingAudit) {
 	t.Helper()
 	// t.TempDir() embeds the (long) test name, so a socket path under it can
@@ -149,7 +150,7 @@ func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordin
 	socketPath := filepath.Join(sockDir, "lc.sock")
 	lc, err := adapter.NewRuntimeOps(socketPath)
 	if err != nil {
-		t.Fatalf("new lifecycle channel: %v", err)
+		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

@@ -8,14 +8,14 @@
 // terminated"). It drives the full direct-delivery credential lifecycle of
 // one session against a REAL Full-level runtime process
 // (cmd/runtimes/streaming-echo) connected to the production adapter over the
-// real §4.7 lifecycle channel (a live Unix socket):
+// real §4.7 CH-RUNTIMEOPS (a live Unix socket):
 //
 //  1. Assignment — the credential-assignment service mints a direct-mode
 //     lease from a §4.9 pool and the adapter materializes it into the
 //     runtime credential file.
 //  2. Rotation + runtime re-bind — the adapter runs the §4.7 Full-level
-//     rotation protocol: it sends credentials_rotated on the lifecycle
-//     channel, the real streaming-echo runtime rebinds and replies
+//     rotation protocol: it sends credentials_rotated on CH-RUNTIMEOPS,
+//     the real streaming-echo runtime rebinds and replies
 //     credentials_acknowledged, and the adapter rewrites the credential
 //     file to the rotated lease. This is the credentials_rotated /
 //     credentials_acknowledged handshake through a real runtime process.
@@ -156,7 +156,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	defer cancel()
 
 	// A real Full-level runtime (streaming-echo) connected to the production
-	// adapter over a live lifecycle-channel Unix socket.
+	// adapter over a live CH-RUNTIMEOPS Unix socket.
 	rt := startLifecycleRuntime(t, ctx)
 	if !rt.channel.Supports("credential_rotation") {
 		t.Fatalf("streaming-echo did not advertise credential_rotation on the lifecycle handshake")

@@ -293,8 +293,8 @@ func TestStandardLevel(t *testing.T) {
 func TestFullLevel(t *testing.T) {
 	a := buildArtifacts(t)
 
-	// streaming-echo is the reference Full runtime: it opens the
-	// lifecycle channel and answers every §15.4.6 lifecycle event.
+	// streaming-echo is the reference Full runtime: it opens
+	// CH-RUNTIMEOPS and answers every §15.4.6 lifecycle event.
 	report := runCompliance(t, a, a.streamingEcho, "full")
 	if report.Level != "full" {
 		t.Errorf("report level = %q, want full", report.Level)
@@ -319,7 +319,7 @@ func TestFullLevel(t *testing.T) {
 		}
 	}
 
-	// echo has no lifecycle channel; the Full lifecycle checks must
+	// echo has no CH-RUNTIMEOPS; the Full lifecycle checks must
 	// fail it while the inherited Basic checks still pass.
 	basicReport := runCompliance(t, a, a.echo, "full")
 	if basicReport.Summary.Failed == 0 {

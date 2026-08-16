@@ -6,7 +6,7 @@
 // (sdks/runtime/go), Python (sdks/runtime/python), and TypeScript
 // (sdks/runtime/typescript). Each SDK wraps the §28.5.3 adapter binary
 // protocol, the §15.4.3 intra-pod MCP integration, the §8.5 platform
-// MCP tool surface, and the Full-level lifecycle channel.
+// MCP tool surface, and CH-RUNTIMEOPS at the Full level.
 //
 // The implemented tests build an SDK-based example runtime
 // (echo at Basic level, delegate at Standard level, lifecycle at Full
