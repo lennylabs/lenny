@@ -5,8 +5,11 @@
 - **Scope:** Retires the rule that a slot identifier is carried only on a pod whose pool sets
   `sessionPolicy.maxConcurrentSessions > 1`. Every session-scoped message on the gateway-to-adapter
   control plane carries a slot identifier, whatever the pool's concurrency; every pod-scoped message
-  carries no such field at all. Corrects the defects the rule has produced, the register rows that
-  mis-record them, and the divergence between what the specification states and what the code branches on.
+  carries no such field at all. The pod filesystem layout follows the same rule: a slot is the unit a
+  session's files are materialized into, so the per-slot tree is the only layout and the pod-global
+  `/workspace/current` is retired rather than kept as a second name for it. Corrects the defects the rule
+  has produced, the register rows that mis-record them, and the divergence between what the specification
+  states and what the code branches on.
 
 This document stages the proposed specification, code, schema, and register changes. It does not modify
 any spec, code, or doc file. Apply the changes in the "Proposed changes" section after sign-off.
@@ -185,6 +188,26 @@ mode and concurrency-derived in the other.
    rejected for the recycle-residue reason, and an ordinal is rejected because it needs a per-pod
    allocator and breaks reconstructability.
 
+4a. **The pod filesystem layout is the slot layout, on every pod.** A slot is the unit a session's files
+   are materialized into, whatever the pool's concurrency, so there is one layout rather than a pair
+   selected by `maxConcurrentSessions`. A pod serving one session at a time holds one slot and
+   materializes into `/workspace/slots/{slotId}/current` exactly as a pod serving four holds four. The
+   per-tree paths are unchanged from what concurrent pods use today:
+   `/workspace/slots/{slotId}/{current,staging}`, `/sessions/{slotId}`, `/artifacts/{slotId}`, and
+   `/run/lenny/slots/{slotId}`. What changes is that they are no longer conditional.
+
+   Two alternative arrangements were measured against the tree and rejected; §5 records the evidence
+   under "Where the slot identifier sits in the path".
+   Putting the slot identifier above the trees, so that one root holds everything a slot owns
+   (`/slots/{slotId}/workspace`, `/slots/{slotId}/sessions`), reads better to a consumer and is the more
+   natural statement of the model, but the four trees are distinguished by mount path and carry different
+   media: `/sessions` is a memory-backed `emptyDir` whose medium §6.4 states the data-at-rest guarantee
+   on, `/workspace/shared` takes its immutability from a nested read-only mount, and `/run/lenny` carries
+   a tmpfs and a group-ownership boundary. Collapsing them into one volume regresses a normative
+   guarantee; preserving them puts the slot identifier back under each tree, which is this decision.
+   Dropping the `slots/` segment, giving `/workspace/{slotId}/current`, collides with the `shared` mount
+   point and the pod-global `staging` and `.staging` directories that live in the same namespace.
+
 4. **Slot directories are created at assignment, which is what concurrent pods already do.** This resolves
    the ordering problem that a slot identifier equal to the session identifier cannot exist at warm time.
    A warm pod pre-creates `/workspace/slots/` and `/workspace/staging` and holds no slot tree, and the
@@ -192,11 +215,17 @@ mode and concurrency-derived in the other.
    new mechanism is introduced, and workspace materialization already happens at assignment, so §6.3's
    latency accounting is unchanged. §5 records this as the decision most worth a second opinion.
 
-5. **`/workspace/current` survives as a non-normative debugging symlink.** On a pod holding exactly one
-   slot the adapter links `/workspace/current` to that slot's `current` tree. The contract is uniform and
-   the runtime obligation is stated against the slot path; the symlink exists so an operator's
-   `kubectl exec` and the documentation corpus keep working. Runtimes MUST NOT depend on it, and it is
-   absent on a pod holding more than one slot.
+5. **`/workspace/current` is retired rather than kept as a symlink.** An earlier draft of this decision
+   kept it as a non-normative debugging link on a pod holding one slot. Two mechanical facts retire it.
+   `promoteStaging` renames the `current` directory on every workspace finalization
+   (`pkg/adapter/workspace/materialize.go:391-408` renames `current` to a backup and the build directory
+   into its place), so a symlink there is replaced by a real directory the first time a session
+   materializes files, and the link would have to be recreated after every promotion to stay true. And
+   `tests/tier4_integration/concurrent_workspace_test.go:196-199` already asserts that nothing writes
+   `/workspace/current` on a concurrent pod, which a link into a live slot tree contradicts. A path that
+   is sometimes a link, sometimes a directory, and sometimes stale is worse for the operator it was meant
+   to serve than no path at all. The adapter stops creating `/workspace/current`, and an operator reaching
+   a workspace by `kubectl exec` reaches it at its slot path like every other consumer.
 
 6. **The `'default'` sentinel is removed rather than promoted.** With a real identifier on every path the
    fabrication in §1.4 has no purpose. The persisted `(session_id, slot_id)` key, the two indexes, and the
@@ -305,7 +334,46 @@ This split is what keeps the change from promoting §29.10's three remaining uns
 platform-wide open questions: they are gaps about two slots interacting, and they stay in the co-tenancy
 half.
 
-## 5. The decision this proposal does not make
+## 5. The decisions this proposal does not make
+
+### Where the slot identifier sits in the path
+
+Decision 4a keeps the identifier under each tree. The arrangement that puts it above them was measured
+against the pod builder rather than argued from taste, and the measurements are these.
+
+The agent pod's volumes are built in Go at `pkg/controller/sandbox/podspec/podspec.go`, not in the chart,
+and `podVolumes()` (`:926-961`) declares each tree as its own volume: `/workspace` and `/artifacts` are
+disk-backed `emptyDir`s (`:933-934`), `/sessions` is `Medium: Memory` with a 256Mi limit (`:950-952`),
+`/tmp` likewise (`:947-949`), and `/workspace/shared` is a separate volume mounted over `/workspace`
+(`:939`) specifically so that the runtime container's `readOnly` mount (`:557`) is enforced by the kernel
+rather than by file mode, which the comment at `:124-128` states. Both containers run with
+`ReadOnlyRootFilesystem: true` (`:1276`), so every writable path is a declared mount.
+
+A single `/slots` volume holding each slot's workspace, sessions, and artifacts is therefore not a
+rename. It withdraws the memory medium from `/sessions`, which is where §6.4's "data is guaranteed gone"
+statement rests, and it withdraws the kernel-enforced immutability of `/workspace/shared`, which cannot
+move under a slot root in any case: it is pod-wide, populated once before any slot exists, and one
+read-only mount is what makes it immutable. Credentials are in the same position, carrying both a tmpfs
+and the `lenny-cred-readers` group boundary (`podspec.go:59-67, 940-942, 1000`), so they would stay
+outside the slot root and break the premise that one root holds everything a slot owns. Keeping every
+medium and mounting the four trees where they are now returns the identifier to a position under each
+one, which is decision 4a.
+
+Dynamic identity is not what blocks the arrangement, and the distinction matters for anyone revisiting
+this. Slot trees are directories the adapter creates inside already-mounted volumes
+(`pkg/adapter/slotlayout/tree.go:22-45`), so a slot identifier unknown at pod-render time is no obstacle
+to them. It would only block a design that needed a distinct *mount* per slot, which neither arrangement
+does.
+
+Dropping the `slots/` segment instead, giving `/workspace/{slotId}/current`, saves one path element and
+introduces a namespace hazard: `shared` is a real mount point inside `/workspace` (`podspec.go:123`),
+`.staging` is a pod-global directory there (`:152`), and `current` and `staging` are created there at warm
+time (`pkg/adapter/warmlayout.go:96-113`). `slotlayout.ValidateSlotID` (`slotlayout.go:113-134`) rejects
+separators and dot segments and nothing else, so no rule prevents an identifier colliding with a mount
+point. The same constant builds the credential path (`slotlayout.go:64`, used at `:151`), where dropping
+the segment collides with `credentials.json`.
+
+### The warm-time ordering
 
 Decision 4 resolves the warm-pod ordering problem by creating slot trees at assignment. The reasoning is
 that concurrent pods already do exactly this, so the alternative is not a simpler design but a second
@@ -359,10 +427,22 @@ of the term, and `spec/05:519`'s service-mode usage is stated as an instance of 
 
 ### SPEC-3. Collapse the two filesystem layouts
 
-`spec/06_warm-pod-model.md` §6.4 states one layout. Lines `:373` and `:395`, the "does not apply" and
-"applies when 1" pair, are deleted. `:392`'s runtime obligation is stated unconditionally. `:11-12`'s
-warm-pod checklist asserts `/workspace/slots/` and `/workspace/staging` per decision 4, and the
-non-normative symlink from decision 5 is stated with its MUST NOT.
+`spec/06_warm-pod-model.md` §6.4 states one layout, per decision 4a. The base-layout block and the
+per-slot block collapse into a single tree, and lines `:373` and `:395`, the "does not apply" and
+"applies when 1" pair, are deleted with them. `:392`'s runtime obligation is stated unconditionally
+against `/workspace/slots/{slotId}/current`, and the sentence telling a runtime not to assume a global
+`/workspace/current` "when `maxConcurrentSessions > 1`" loses its condition and becomes a statement that
+no such path exists. `:11-12`'s warm-pod checklist asserts `/workspace/slots/` and `/workspace/staging`
+per decision 4 and stops asserting `/workspace/current`, which decision 5 retires.
+
+§6.4's "`/workspace/shared/` population and enforcement" paragraph states that the gateway populates the
+directory during pod initialization. The adapter does, at warm time, before READY and before any slot
+exists (`pkg/adapter/warmlayout.go:127-152`, from the `--shared-assets-dir` and `--shared-assets` flags
+rendered at `pkg/controller/sandbox/podspec/podspec.go:816-821`). The paragraph is corrected to name the
+adapter, and its "when `maxConcurrentSessions > 1`" qualifier is dropped, because the directory is
+mounted and populated on every pod. This divergence predates this proposal; it is corrected here because
+the same paragraph is being rewritten for the uniform layout and leaving one half stale would be worse
+than either state.
 
 The `/workspace/current` references at `spec/04:263`, `spec/29:835`, `spec/15:2268`, `spec/10:171`, and the
 remaining sites across `spec/07`, `spec/08`, `spec/13`, `spec/14`, `spec/24`, `spec/26`, and
@@ -407,6 +487,26 @@ Restore takes the slot identifier from `ResumeRequest` and resolves through `che
 (`pkg/adapter/resume.go:179`). `ExportPaths` resolves against the slot root
 (`pkg/adapter/exportpaths.go:39, 48`). The §7.3 step (d) guard compares against the slot root
 (`pkg/adapter/resume.go:61`), which makes the assertion load-bearing for the first time.
+
+The recorded workspace root moves with the layout. `sessions.workspace_root`
+(`migrations/0089_sessions_workspace_root.up.sql:10`) stores the absolute path the adapter reported, the
+gateway replays it as `ExpectedWorkspaceRoot` (`pkg/gateway/sessionserver/start.go:3917`), and the adapter
+rejects a session whose stored root does not match the one it holds (`pkg/adapter/resume.go:61-67`). Under
+the uniform layout a row written before the change records `/workspace/current` while the pod now reports
+a slot path, so every such session fails to resume. Two constants carry the stale default and change with
+it: `DefaultExpectedWorkspaceRoot` (`pkg/gateway/sessionserver/lifecycle.go:38`) and
+`archive.DefaultWorkspaceRoot` (`pkg/upload/archive/archive.go:39`). The platform is pre-deployment and
+carries no sessions written under the old layout, so the migration converging the `slot_id` columns
+rewrites the column rather than teaching the guard a second accepted value; a compatibility branch here
+would be a shim for a population that does not exist. The stored checkpoint bytes need no migration:
+`ArchiveTree` writes entries under the relative prefixes `workspace/` and `sessions/`
+(`pkg/adapter/workspace/tree.go:41-42, 52-55`), so a checkpoint tar is layout-independent and replays into
+whatever root receives it.
+
+`ArchivePolicy.workspace_root` is defaulted to the pod-global `/workspace/current` even on a concurrent
+bind (`pkg/gateway/podlifecycle/podsession/slotbinder.go:270`), which is wrong today rather than only
+under this proposal: a concurrent pod has no such path, and §1.2's own subject is a value that means one
+thing and is populated as another. It is defaulted to the bind's slot root.
 
 ### CODE-3. Arm hold state per slot
 
@@ -481,6 +581,25 @@ loses the pod, and resumes onto a replacement with the workspace intact. Closes 
 covers the same round trip on a pool with `maxConcurrentSessions: 1`, which under this proposal exercises
 the identical path.
 
+**Tier 2, the layout.** A warm pod holds `/workspace/slots` and `/workspace/staging` and no
+`/workspace/current`, on a pool of either concurrency, which pins decision 4a against the branch it
+removes and decision 5 against the path it retires. A slot's tree appears at assignment and is gone after
+cleanup, asserted over all four trees the adapter creates, since `RemoveTree` removing three of four would
+leak state a later slot could read. `tests/tier4_integration/concurrent_workspace_test.go:196-199`, which
+asserts nothing writes `/workspace/current` on a concurrent pod, is restated over every pod rather than
+deleted: the property it protects outlives the condition it was written under.
+
+**Tier 2, the workspace root round trip.** A session started under the uniform layout records a slot root
+in `sessions.workspace_root` and resumes against it. The negative case is the one that would have shipped
+silently: a row holding the retired `/workspace/current` is rejected at resume by the §7.3 step (d) guard
+rather than being accepted against a slot root, so the migration's completeness is asserted rather than
+assumed. A workspace finalization followed by a resume covers the interaction between `promoteStaging`'s
+rename of `current` and the recorded root.
+
+**Tier 10.** `tests/tier10_conformance/concurrent_slot_conformance_test.go:230` asserts the literal slot
+cwd a runtime derives, and `:238` asserts no doubled separator. Both are restated for a single-slot pod,
+so the conformance battery covers the path a Basic runtime on an ordinary pool now receives.
+
 **Tier 9.** A credential rotation on a concurrent pod rewrites only the rotating slot's credential file and
 leaves the co-tenant slot's lease intact. This is §1.3, and it belongs in the security tier because the
 defect is a cross-session credential read.
@@ -498,7 +617,16 @@ takes the same inversion.
 - **`RevokeCredentials`.** Whether the adapter's handler should gain a gateway caller or be removed. The
   Token Service path (`pkg/gateway/credassign/client.go:306`) may be the only intended revocation, in
   which case the adapter handler is dead code and CODE-4 shrinks.
-- **Decision 4.** §5 states the reasoning and the one assertion it invalidates.
+- **Decision 4.** §5, under "The warm-time ordering", states the reasoning and the one assertion it
+  invalidates.
+- **Decision 4a's path arrangement.** §5 records the measurements behind keeping the slot identifier
+  under each tree rather than above them. The arrangement that reads better to a consumer is available at
+  the price of one volume topology change and a §6.4 data-at-rest amendment, and review may take that
+  trade rather than the one staged here.
+- **Decision 5.** Retiring `/workspace/current` leaves an operator reaching a workspace by its slot path.
+  Whether the adapter should still create the empty directory, so that a `kubectl exec` into a warm pod
+  finds a familiar path rather than nothing, is a question this proposal answers with no and review may
+  answer differently.
 - **The runtime-channel boundary.** Decision 2 keeps `slotId` advisory on the JSONL channel. If review
   prefers uniformity there too, the cost is that every third-party runtime implements slot dispatch, and
   `cmd/runtimes/echo` and `cmd/runtimes/echo-concurrent` collapse into one reference rather than two.
@@ -517,7 +645,17 @@ takes the same inversion.
   `pkg/gateway/checkpoint/` (`partialmanifeststore/`, `checkpointer/`),
   `pkg/gateway/sessionserver/` (`derive.go`, `messages.go`), `pkg/gateway/podlifecycle/podsession/`.
 - `sdks/client/go/`, `sdks/client/python/`, `sdks/client/typescript/`.
-- A new migration converging the three `slot_id` columns.
+- `pkg/adapter/warmlayout.go`, for the warm-time layout decision 4 changes and the shared-assets
+  directory the corrected §6.4 paragraph describes.
+- `pkg/gateway/sessionserver/lifecycle.go` and `pkg/upload/archive/archive.go`, for the two
+  `/workspace/current` default constants CODE-2 moves to the slot root.
+- `cmd/runtimes/echo-concurrent/slot.go:124-126`, whose reference implementation derives a slot cwd, and
+  `cmd/runtimes/echo`, `cmd/runtimes/echo-embedded`, and `cmd/runtimes/preconnect-echo`, whose workspace
+  flags default to the retired path.
+- `cmd/lenny-adapter/main.go`, whose `WorkspaceBase` is derived by taking the parent of `--workspace-root`
+  (`:272`), a derivation that only holds while the workspace root is one level under the base.
+- A new migration converging the three `slot_id` columns and rewriting `sessions.workspace_root` to the
+  slot path.
 - `tests/claim-map.json`, `scripts/seed-claim-register.py`, `PROPOSAL-QUEUE.md`, `TEST-GAPS.md`,
   `proposals/0072_fix_correct-the-inconsistencies-the-scenario-authoring-surfaced.md`.
 - The tier-0, 1, 3, 4, 9, 10, and 11 cases in §8 and their `tests/spec-map.json` entries.
