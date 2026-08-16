@@ -930,7 +930,7 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/set_tracing_context",
 		Description: "Register §8.3 tracing identifiers on a session for propagation through delegation.",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId","context"],"properties":{"sessionId":{"type":"string"},"context":{"type":"object","additionalProperties":{"type":"string"}}}}`),
+		InputSchema: json.RawMessage(`{"type":"object","required":["context"],"properties":{"context":{"type":"object","additionalProperties":{"type":"string"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.

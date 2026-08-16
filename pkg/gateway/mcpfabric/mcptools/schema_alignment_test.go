@@ -220,6 +220,28 @@ func TestSendMessageSchemaMatchesSpec_spec_8_5_F_8_5_16(t *testing.T) {
 	}
 }
 
+// TestSetTracingContextSchemaMatchesSpec asserts the §8.5 contract:
+// `lenny/set_tracing_context(context)`. The session is resolved from
+// the caller's principal, so `sessionId` is a §15.2.1
+// transport-fallback property and MUST NOT be required.
+// spec: §8.3; §8.5.
+func TestSetTracingContextSchemaMatchesSpec_spec_8_3_8_5(t *testing.T) {
+	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/set_tracing_context")
+	req := requiredSet(t, schema)
+	if !req["context"] {
+		t.Errorf("schema.required = %v, want context (§8.5)", req)
+	}
+	if req["sessionId"] {
+		t.Errorf("schema.required includes sessionId; only `context` is required by §8.5")
+	}
+	props, _ := schema["properties"].(map[string]any)
+	sid, _ := props["sessionId"].(map[string]any)
+	const wantDesc = "§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."
+	if got, _ := sid["description"].(string); got != wantDesc {
+		t.Errorf("sessionId.description = %q, want %q", got, wantDesc)
+	}
+}
+
 // TestMemoryWriteRejectsNonStringMetadata asserts the §8.5
 // schema constraint (`metadata.additionalProperties = string`) is
 // enforced at runtime. A numeric metadata value is rejected before the
