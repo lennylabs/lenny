@@ -190,9 +190,9 @@ var referenceRuntimes = []ReferenceRuntime{
 		"cursor/cli"),
 	{
 		// spec: §26.1 / §26.7 — chat is the minimum useful runtime:
-		// Full level (hotRotation: true requires the Full-only lifecycle
-		// channel per §15.4.3), the small resource class only, multi_turn
-		// with immediate (no queued) injection.
+		// Full level (hotRotation: true requires the Full-only
+		// CH-RUNTIMEOPS per §15.4.3), the small resource class only,
+		// multi_turn with immediate (no queued) injection.
 		Name:                   "chat",
 		Image:                  "ghcr.io/lennylabs/runtime-chat:1.0.0" + placeholderDigest,
 		IntegrationLevel:       "full",

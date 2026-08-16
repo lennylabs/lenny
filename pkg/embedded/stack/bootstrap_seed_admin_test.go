@@ -86,7 +86,7 @@ func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.
 	}
 
 	// spec: §26.1 / §26.7 — chat is Full (hotRotation: true
-	// requires the Full-only lifecycle channel) and carries the small
+	// requires the Full-only CH-RUNTIMEOPS) and carries the small
 	// resource class only.
 	chat, err := runtimes.Get(context.Background(), "chat")
 	if err != nil {

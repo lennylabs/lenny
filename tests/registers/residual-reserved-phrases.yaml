@@ -162,24 +162,6 @@ entries:
     reason: |-
       a markdown anchor identifier, which the ban places outside its matcher because rewriting one breaks every inbound link
   - member: |-
-      pkg/embedded/stack/bootstrap_seed_admin_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      pkg/embedded/stack/catalog.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      pkg/gateway/runtime/adapterclient/client_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       scripts/seed-claim-register.py: lifecycle channel
     class: reserved-phrases
     disposition: excluded

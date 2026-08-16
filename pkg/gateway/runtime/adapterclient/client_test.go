@@ -645,7 +645,7 @@ func TestSignalDeadlineReportsNotDelivered_spec_11_3_240(t *testing.T) {
 		t.Fatalf("SignalDeadline: %v", err)
 	}
 	if delivered {
-		t.Error("delivered = true, want false for a runtime without a lifecycle channel")
+		t.Error("delivered = true, want false for a runtime that never opened CH-RUNTIMEOPS")
 	}
 }
 
