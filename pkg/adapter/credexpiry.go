@@ -18,7 +18,7 @@ import (
 // a local timer for each direct-mode lease's expiresAt; when the timer
 // fires without a replacement lease having been delivered via
 // RotateCredentials, the adapter deletes that provider's entry from the
-// credential file and reports AUTH_EXPIRED on the control channel,
+// credential file and reports AUTH_EXPIRED on CH-ADAPTEREVENTS,
 // triggering the standard fallback flow. This caps a long-lived key
 // (e.g. anthropic_direct, whose key does not itself expire) at the lease
 // boundary. Proxy-mode leases get no timer: the gateway rejects expired

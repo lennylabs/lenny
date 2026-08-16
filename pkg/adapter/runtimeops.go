@@ -48,8 +48,8 @@ var errLifecycleVersionIncompatible = errors.New("lifecycle protocol version inc
 var lifecycleCapabilities = []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"}
 
 var (
-	errLifecycleClosed       = errors.New("lifecycle channel is closed")
-	errLifecycleNotConnected = errors.New("lifecycle channel has no runtime connection")
+	errLifecycleClosed       = errors.New("CH-RUNTIMEOPS is closed")
+	errLifecycleNotConnected = errors.New("CH-RUNTIMEOPS has no runtime connection")
 )
 
 // lifecycleFrame is one JSONL frame on the §4.7 runtime↔adapter
@@ -134,7 +134,7 @@ type tokenSink interface {
 func NewRuntimeOps(socketPath string) (*RuntimeOps, error) {
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("lifecycle channel listen %s: %w", socketPath, err)
+		return nil, fmt.Errorf("CH-RUNTIMEOPS listen %s: %w", socketPath, err)
 	}
 	return &RuntimeOps{
 		listener: l,
@@ -183,7 +183,7 @@ func (lc *RuntimeOps) Run(ctx context.Context) error {
 			if lc.isClosed() || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
-			return fmt.Errorf("lifecycle channel accept: %w", err)
+			return fmt.Errorf("CH-RUNTIMEOPS accept: %w", err)
 		}
 		if err := lc.serveConn(conn); err != nil && !errors.Is(err, errLifecycleClosed) {
 			// A per-connection handshake or read error ends this runtime

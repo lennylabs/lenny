@@ -45,9 +45,9 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 	defer release()
 
 	// §4.7: a clean interrupt of a Full-level runtime is delivered over
-	// the lifecycle channel; the runtime acknowledges at a safe stop
-	// point. A hard interrupt, or any runtime without the lifecycle
-	// channel, uses the signal path.
+	// CH-RUNTIMEOPS; the runtime acknowledges at a safe stop point. A
+	// hard interrupt, or any runtime without CH-RUNTIMEOPS, uses the
+	// signal path.
 	if mode == adapterv1.InterruptRequest_MODE_CLEAN && s.Lifecycle != nil && s.Lifecycle.Supports("interrupt") {
 		return s.interruptViaLifecycle(ctx, req)
 	}
@@ -78,7 +78,7 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 		return nil, err
 	}
 	if s.Lifecycle == nil || !s.Lifecycle.Supports("deadline_signal") {
-		// spec: §15 — without the lifecycle channel the runtime
+		// spec: §15 — without CH-RUNTIMEOPS the runtime
 		// receives only `shutdown` at expiry with no advance notice.
 		return &adapterv1.SignalDeadlineResponse{Delivered: false}, nil
 	}

@@ -93,7 +93,7 @@ func (s *Server) AdapterEvents(stream adapterv1.Adapter_AdapterEventsServer) err
 	if s.controlSink != nil {
 		s.controlMu.Unlock()
 		return status.Error(codes.FailedPrecondition,
-			"lifecycle control channel already open for this pod")
+			"CH-ADAPTEREVENTS stream already open for this pod")
 	}
 	s.controlSink = sink
 	s.controlMu.Unlock()

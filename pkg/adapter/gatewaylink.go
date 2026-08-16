@@ -56,18 +56,18 @@ func (s *Server) ConnectGateway(mcpSocket, gatewayAddr, certFile, keyFile, clien
 		return nil, fmt.Errorf("§9.1 dial gateway %s: %w", gatewayAddr, err)
 	}
 	s.PlatformForwarder = gwClient
-	// §9.3 — the same gateway-control channel forwards a
+	// §9.3 — the same LNK-GWCONTROL connection forwards a
 	// type:agent runtime's per-connector tool calls (against the intra-pod
 	// @lenny-connector-<id> sockets) to the gateway, which dials the external
 	// endpoint with the gateway-held credential. F-9.1.2.
 	s.ConnectorForwarder = gwClient
-	// §5.2 whole-pod scrub — the same gateway-control channel carries the
+	// §5.2 whole-pod scrub — the same LNK-GWCONTROL connection carries the
 	// recycle-boundary ReportPodScrub the adapter emits after running the
 	// whole-pod scrub. Retain the dialed client as the PodScrubReporter so the
 	// recycle-scrub driver can report the outcome. spec: §4.7 (ReportPodScrub);
 	// §5.2. F-5.2.15.
 	s.PodScrubReporter = gwClient
-	// §5.2 per-slot cleanup — the same gateway-control channel carries the
+	// §5.2 per-slot cleanup — the same LNK-GWCONTROL connection carries the
 	// per-session-release ReportSessionScrub the adapter emits on every slot
 	// release, so the gateway advances sessions_served (feeding the
 	// maxSessionsPerPod retirement) and feeds a leaked outcome into the

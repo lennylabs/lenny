@@ -149,7 +149,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 
 	// spec: §4.4 — Full-level runtimes quiesce cooperatively over
-	// the lifecycle channel: checkpoint_request → checkpoint_ready before the
+	// CH-RUNTIMEOPS: checkpoint_request → checkpoint_ready before the
 	// first chunk is archived, checkpoint_complete after the stream ends. The
 	// runtime stays quiesced for the whole chunked archive, and the completion
 	// frame carries status ok only when Summary is reached; a terminal Failed

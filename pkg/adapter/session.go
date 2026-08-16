@@ -250,12 +250,12 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	// control stream before the stream closes, so the gateway can run
 	// budget_return.lua (§8.3) with the session's complete token totals.
 	s.emitFinalUsage(ctx, sessionID)
-	// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through the
-	// lifecycle channel (the DRAINING state) before the hard runtime
+	// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through
+	// CH-RUNTIMEOPS (the DRAINING state) before the hard runtime
 	// close: the adapter sends `terminate` so the runtime finishes the
 	// current exchange and exits within the gateway's grace window rather
 	// than only observing the stdin/socket EOF. Basic/Standard runtimes
-	// have no lifecycle channel (Lifecycle == nil) and a not-yet-connected
+	// have no CH-RUNTIMEOPS (Lifecycle == nil) and a not-yet-connected
 	// runtime is a no-op; the drain is best-effort and never fails the
 	// shutdown.
 	s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
