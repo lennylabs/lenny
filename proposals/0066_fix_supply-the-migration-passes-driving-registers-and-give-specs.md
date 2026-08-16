@@ -1,6 +1,15 @@
 # Proposal: Supply the migration passes' driving registers and give specshift a write-confinement option so proposal 0064 can be applied
 
-- **Status:** **Approved (2026-08-04) by jaf sign-off.** Verified (2026-08-03), converged after 10
+- **Status:** **Implemented (2026-08-16).** Every artifact this proposal stages is present and in use:
+  the reserved-phrase, pinned-literal, identifier, and anchor sense registers, the anchor-move map, the
+  register README rows, the repeatable `-only` and `-except` flags with their `stringList` value, the
+  confinement predicate carried on `Harness` and applied through the name, identifier, line, and anchor
+  passes, and the confined command lines AMEND-1 adds to proposal 0064. Proposal 0064's remediation drove
+  these passes over the whole tree and drained the registers they seed, in the order this document
+  predicts. The check that recorded this confirmed each artifact exists and is wired rather than
+  re-deriving each seeded entry from the staged text. This proposal stages no `spec/` edit, so it carries
+  no separate applied-to-spec state.
+  **Approved (2026-08-04) by jaf sign-off.** Verified (2026-08-03), converged after 10
   adversarial review rounds (25 findings fixed) across three full-pool sweeps, the certifying sweep running
   every lens complete with zero confirmed findings. This is the second convergence: the first predated the
   landing of `spec/28`, and the re-run corrected the premises that landing made stale. The sign-off covers

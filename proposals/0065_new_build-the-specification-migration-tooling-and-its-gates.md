@@ -1,6 +1,15 @@
 # Proposal: Build the specification-migration tooling and the gates that prove a migration complete
 
-- **Status:** **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
+- **Status:** **Implemented (2026-08-16).** Every artifact this proposal stages is present and in use:
+  `scripts/specshift` with its passes and `run_test.go`, the `cmd/lenny-test/verdictstatus` package and
+  the `UNVERIFIED` verdict state, the residual gate, the skip-reason classifier and the proto no-drift
+  test under `tests/tier0_static/`, the registers and change-graph baselines under `tests/`, the amended
+  `TESTING.md` sentences, `tests/tier11_docs/verdict_enum_test.go`, and the proto-producer binaries and
+  restore-only caches across the five CI workflows. Proposal 0064's remediation exercised the passes and
+  the gates against the whole tree and they behaved as this document states. The check that recorded this
+  confirmed each artifact exists and is wired rather than re-deriving each gate case from the staged text.
+  This proposal stages no `spec/` edit, so it carries no separate applied-to-spec state.
+  **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
   adversarial review rounds (20 findings fixed) across 3 full-pool sweeps, the certifying sweep running
   every lens complete with zero confirmed findings. One change landed after that sweep and so carries no
   adversarial review: §3.3 recorded a divergence from proposal 0064 over the `testdata/` exclusion, and
