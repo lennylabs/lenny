@@ -63,7 +63,7 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	<-done
 
 	if !s.inHoldState() {
-		t.Fatal("expected hold state after control-channel loss with a live session")
+		t.Fatal("expected hold state after CH-ADAPTEREVENTS loss with a live session")
 	}
 	if holdGauge() != 1 {
 		t.Errorf("coordinator-hold gauge = %v, want 1", holdGauge())

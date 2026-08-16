@@ -119,7 +119,7 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
 
-	// A Basic-level adapter has no lifecycle channel; the manifest omits
+	// A Basic-level adapter has no CH-RUNTIMEOPS; the manifest omits
 	// the runtimeOps object entirely.
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-basic"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
@@ -132,7 +132,7 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 		t.Error("Basic-level manifest should omit runtimeOps")
 	}
 
-	// With a lifecycle channel configured, the manifest advertises its
+	// With CH-RUNTIMEOPS configured, the manifest advertises its
 	// socket so a Full-level runtime can dial it.
 	lc, err := NewRuntimeOps(shortSocketName(t, "lifecycle.sock"))
 	if err != nil {

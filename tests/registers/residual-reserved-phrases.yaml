@@ -186,30 +186,6 @@ entries:
     reason: |-
       a markdown anchor identifier, which the ban places outside its matcher because rewriting one breaks every inbound link
   - member: |-
-      pkg/adapter/holdstate_test.go: control-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      pkg/adapter/lifecycle_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      pkg/adapter/manifest_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      pkg/adapter/usage_test.go: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       pkg/ctlcli/runtime.go: lifecycle-channel
     class: reserved-phrases
     disposition: excluded

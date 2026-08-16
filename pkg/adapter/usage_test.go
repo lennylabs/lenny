@@ -216,7 +216,7 @@ func TestReportUsageWithMeterIsImplemented_spec_4_7(t *testing.T) {
 // both effects; a nil-channel call still installs the meter (the
 // Basic/Standard path).
 func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
-	// Nil lifecycle channel: the meter is still installed so ReportUsage is
+	// Nil CH-RUNTIMEOPS: the meter is still installed so ReportUsage is
 	// implemented, and no sink is wired (the Basic/Standard path).
 	sNoLC := New("served")
 	meter := WireDirectModeUsage(sNoLC, nil)
@@ -227,7 +227,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 		t.Fatal("WireDirectModeUsage did not install the meter on s.Usage; ReportUsage would return Unimplemented")
 	}
 
-	// With a lifecycle channel, the sink is wired onto it before Run, and a
+	// With CH-RUNTIMEOPS, the sink is wired onto it before Run, and a
 	// completed-LLM frame folds its tokens into the wired meter under the
 	// pod's current session.
 	s := New("served")
@@ -241,10 +241,10 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	t.Cleanup(func() { _ = lc.Close() })
 	m := WireDirectModeUsage(s, lc)
 	if s.Usage == nil {
-		t.Fatal("WireDirectModeUsage did not install the meter with a lifecycle channel present")
+		t.Fatal("WireDirectModeUsage did not install the meter with CH-RUNTIMEOPS present")
 	}
 	if lc.usage == nil {
-		t.Fatal("WireDirectModeUsage did not wire the token sink onto the lifecycle channel")
+		t.Fatal("WireDirectModeUsage did not wire the token sink onto CH-RUNTIMEOPS")
 	}
 
 	// The wired sink folds into the returned meter under the current session.
