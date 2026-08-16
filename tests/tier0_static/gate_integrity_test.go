@@ -3,6 +3,8 @@
 package tier0_static
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,77 +85,107 @@ var gatesOutsideTierZero = []tierZeroGate{
 // goTestFunc matches a Go test declaration.
 var goTestFunc = regexp.MustCompile(`(?m)^func (Test\w+)\(`)
 
+// validateMapsBody matches the body of runValidateMaps, up to the first
+// closing brace in the first column.
+var validateMapsBody = regexp.MustCompile(`(?s)func runValidateMaps\(.*?\n}`)
+
+// validateCheck matches a check invoked inside runValidateMaps.
+var validateCheck = regexp.MustCompile(`\b(validate\w+)\(`)
+
 // scriptInvocation matches a gate invoked from a shell script, which is not a
 // channel the repository hard-gates.
 var scriptInvocation = regexp.MustCompile(`\.sh\b`)
 
-// spec: 28.2 (the gates the naming law needs), 28.4 (claim register)
-// diagnosis: a gate the channel migration relies on is no longer registered at
-// tier 0. Either its file was deleted, its test was renamed, or it moved to a
-// channel whose failure the harness tolerates. Whatever population that gate
-// held is now unguarded.
-func TestEveryMigrationGateIsRegisteredAtTierZero(t *testing.T) {
-	t.Parallel()
-	root := schematest.RepoRoot(t)
-	dir := filepath.Join(root, "tests", "tier0_static")
+// tierZeroPackage is the tier-0 Go test package, relative to a tree root.
+var tierZeroPackage = filepath.Join("tests", "tier0_static")
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read the tier-0 package: %v", err)
+// validateMapsFile is the file that carries runValidateMaps, relative to a
+// tree root, in the slash-separated form a gate names it by.
+const validateMapsFile = "cmd/lenny-test/cmd_validate.go"
+
+// gateFilePath resolves a gate's File to a path under root. A name with no
+// separator is a file in the tier-0 package; a slash-separated name is
+// relative to the root, which is how the runValidateMaps channel is named.
+func gateFilePath(root string, g tierZeroGate) string {
+	if strings.Contains(g.File, "/") {
+		return filepath.Join(root, filepath.FromSlash(g.File))
 	}
+	return filepath.Join(root, tierZeroPackage, g.File)
+}
+
+// hardGatedGates enumerates every gate the two channels the repository
+// hard-gates carry under root, mapped to the file that carries it: a Go test
+// declared in the tier-0 package, and a check invoked inside runValidateMaps.
+// It takes a root and returns the enumeration so that the meta-gate's own
+// cases can drive it over a fixture tree rather than over the live repository.
+func hardGatedGates(root string) (map[string]string, error) {
 	declared := map[string]string{}
+
+	entries, err := os.ReadDir(filepath.Join(root, tierZeroPackage))
+	if err != nil {
+		return nil, fmt.Errorf("read the tier-0 package: %w", err)
+	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
 			continue
 		}
-		body, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		body, err := os.ReadFile(filepath.Join(root, tierZeroPackage, e.Name()))
 		if err != nil {
-			t.Fatalf("read %s: %v", e.Name(), err)
+			return nil, fmt.Errorf("read %s: %w", e.Name(), err)
 		}
 		for _, m := range goTestFunc.FindAllStringSubmatch(string(body), -1) {
 			declared[m[1]] = e.Name()
 		}
 	}
-	if len(declared) == 0 {
-		t.Fatalf("the tier-0 package declares no test; the meta-gate would pass vacuously")
+
+	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(validateMapsFile)))
+	switch {
+	case err == nil:
+		for _, m := range validateCheck.FindAllStringSubmatch(validateMapsBody.FindString(string(body)), -1) {
+			declared[m[1]] = validateMapsFile
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// A tree that carries no runValidateMaps has only the one channel.
+		// The registration check below reports any gate that named it.
+	default:
+		return nil, fmt.Errorf("read %s: %w", validateMapsFile, err)
 	}
 
-	var missing, misfiled []string
-	for _, g := range tierZeroGates {
+	return declared, nil
+}
+
+// unregisteredGates returns one finding per named gate that the hard-gated
+// channels do not carry, or that they carry in a file other than the one the
+// gate names. The findings are sorted so the report is stable.
+func unregisteredGates(declared map[string]string, gates []tierZeroGate) []string {
+	var findings []string
+	for _, g := range gates {
 		file, ok := declared[g.Test]
 		if !ok {
-			missing = append(missing, g.Test+" ("+g.What+"), expected in "+g.File)
+			findings = append(findings, fmt.Sprintf(
+				"no hard-gated channel registers %s (%s), expected in %s", g.Test, g.What, g.File,
+			))
 			continue
 		}
 		if file != g.File {
-			misfiled = append(misfiled, g.Test+" is in "+file+", expected "+g.File)
+			findings = append(findings, fmt.Sprintf(
+				"%s is in %s, expected %s", g.Test, file, g.File,
+			))
 		}
 	}
-	sort.Strings(missing)
-	sort.Strings(misfiled)
-	for _, m := range missing {
-		t.Errorf("no tier-0 test registers %s", m)
-	}
-	for _, m := range misfiled {
-		t.Errorf("%s", m)
-	}
-	t.Logf("%d gate(s) named, %d tier-0 test(s) declared, %d gate(s) registered outside tier 0",
-		len(tierZeroGates), len(declared), len(gatesOutsideTierZero))
+	sort.Strings(findings)
+	return findings
 }
 
-// spec: 28.2 (the gates the naming law needs)
-// diagnosis: a gate the meta-gate names is invoked from a shell script, whose
-// absence or non-zero exit the repository tolerates, so the gate no longer
-// fails anything.
-func TestNoMigrationGateIsInvokedThroughATolerantChannel(t *testing.T) {
-	t.Parallel()
-	root := schematest.RepoRoot(t)
-	dir := filepath.Join(root, "tests", "tier0_static")
-	for _, g := range tierZeroGates {
-		body, err := os.ReadFile(filepath.Join(dir, g.File))
+// tolerantChannelInvocations returns one finding per named gate whose file
+// under root reaches its check by shelling out to a script. A gate whose file
+// is absent produces no finding here, because unregisteredGates reports that
+// absence and a second voice on one finding is noise.
+func tolerantChannelInvocations(root string, gates []tierZeroGate) []string {
+	var findings []string
+	for _, g := range gates {
+		body, err := os.ReadFile(gateFilePath(root, g))
 		if err != nil {
-			// The registration test above reports the absence; here it would
-			// only be a second voice on the same finding.
 			continue
 		}
 		for i, line := range strings.Split(string(body), "\n") {
@@ -167,10 +199,46 @@ func TestNoMigrationGateIsInvokedThroughATolerantChannel(t *testing.T) {
 			if !strings.Contains(line, "exec.Command") && !strings.Contains(line, "exec.CommandContext") {
 				continue
 			}
-			t.Errorf("%s:%d invokes a shell script; a script that is absent exits zero, so the gate "+
-				"would stop failing without anything reporting it\n    %s",
-				g.File, i+1, strings.TrimSpace(line))
+			findings = append(findings, fmt.Sprintf(
+				"%s:%d invokes a shell script; a script that is absent exits zero, so the gate "+
+					"would stop failing without anything reporting it\n    %s",
+				g.File, i+1, trimmed,
+			))
 		}
+	}
+	sort.Strings(findings)
+	return findings
+}
+
+// spec: 28.2 (the gates the naming law needs), 28.4 (claim register)
+// diagnosis: a gate the channel migration relies on is no longer registered at
+// tier 0. Either its file was deleted, its test was renamed, or it moved to a
+// channel whose failure the harness tolerates. Whatever population that gate
+// held is now unguarded.
+func TestEveryMigrationGateIsRegisteredAtTierZero(t *testing.T) {
+	t.Parallel()
+	declared, err := hardGatedGates(schematest.RepoRoot(t))
+	if err != nil {
+		t.Fatalf("enumerate the hard-gated channels: %v", err)
+	}
+	if len(declared) == 0 {
+		t.Fatalf("the hard-gated channels carry no gate; the meta-gate would pass vacuously")
+	}
+	for _, finding := range unregisteredGates(declared, tierZeroGates) {
+		t.Errorf("%s", finding)
+	}
+	t.Logf("%d gate(s) named, %d gate(s) carried by a hard-gated channel, %d gate(s) registered outside tier 0",
+		len(tierZeroGates), len(declared), len(gatesOutsideTierZero))
+}
+
+// spec: 28.2 (the gates the naming law needs)
+// diagnosis: a gate the meta-gate names is invoked from a shell script, whose
+// absence or non-zero exit the repository tolerates, so the gate no longer
+// fails anything.
+func TestNoMigrationGateIsInvokedThroughATolerantChannel(t *testing.T) {
+	t.Parallel()
+	for _, finding := range tolerantChannelInvocations(schematest.RepoRoot(t), tierZeroGates) {
+		t.Errorf("%s", finding)
 	}
 }
 
@@ -190,6 +258,169 @@ func TestGatesNamedOutsideTierZeroAreWhereTheyAreSaidToBe(t *testing.T) {
 		if !strings.Contains(string(body), "func "+g.Test+"(") {
 			t.Errorf("%s does not declare %s, which the meta-gate names as its %s registration",
 				g.File, g.Test, g.What)
+		}
+	}
+}
+
+// The meta-gate's own cases follow. They drive the enumeration over the
+// fixture trees under testdata/gate-integrity/ so that each condition the
+// meta-gate exists to detect is observed against a tree that holds it, rather
+// than inferred from a green run over the live repository, which holds none of
+// them.
+//
+// They carry no `// spec:` tie. The meta-gate asserts a property of the
+// repository's gate registrations rather than a behavior the specification
+// defines, so there is no section for a case to name.
+
+// gateIntegrityFixtures is the fixture tree root, relative to this package.
+const gateIntegrityFixtures = "testdata/gate-integrity"
+
+// exampleGate is the tier-0 Go test the fixture trees register, or fail to.
+var exampleGate = tierZeroGate{
+	"TestExampleGateCertifiesTheTree",
+	"example_gate_test.go",
+	"the fixture gate",
+}
+
+// exampleRegisterCheck is the runValidateMaps check the fixture trees
+// register, which is the second channel the repository hard-gates.
+var exampleRegisterCheck = tierZeroGate{
+	"validateExampleRegister",
+	validateMapsFile,
+	"the fixture register check",
+}
+
+func TestAGateOnEitherHardGatedChannelIsRegistered(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(gateIntegrityFixtures, "registered")
+	declared, err := hardGatedGates(root)
+	if err != nil {
+		t.Fatalf("enumerate the hard-gated channels: %v", err)
+	}
+	if got := declared[exampleGate.Test]; got != exampleGate.File {
+		t.Errorf("the tier-0 Go test channel carries %s in %q, expected %q",
+			exampleGate.Test, got, exampleGate.File)
+	}
+	if got := declared[exampleRegisterCheck.Test]; got != exampleRegisterCheck.File {
+		t.Errorf("the runValidateMaps channel carries %s in %q, expected %q",
+			exampleRegisterCheck.Test, got, exampleRegisterCheck.File)
+	}
+	gates := []tierZeroGate{exampleGate, exampleRegisterCheck}
+	if findings := unregisteredGates(declared, gates); len(findings) != 0 {
+		t.Errorf("a gate on each hard-gated channel is registered, and the meta-gate reported %d finding(s): %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+	if findings := tolerantChannelInvocations(root, gates); len(findings) != 0 {
+		t.Errorf("neither fixture gate shells out, and the meta-gate reported %d finding(s): %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+}
+
+func TestADeletedGateFileFailsAndNamesTheGate(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(gateIntegrityFixtures, "deleted")
+	declared, err := hardGatedGates(root)
+	if err != nil {
+		t.Fatalf("enumerate the hard-gated channels: %v", err)
+	}
+	// The tree still carries a second tier-0 test and the register check, so
+	// the deletion is the only difference from the registered tree.
+	if len(declared) == 0 {
+		t.Fatalf("the fixture tree carries no gate, so the deletion is not what this case observes")
+	}
+	findings := unregisteredGates(declared, []tierZeroGate{exampleGate, exampleRegisterCheck})
+	if len(findings) != 1 {
+		t.Fatalf("a deleted gate file is one finding, and the meta-gate reported %d: %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+	if !strings.Contains(findings[0], exampleGate.Test) || !strings.Contains(findings[0], exampleGate.File) {
+		t.Errorf("the finding names neither the gate nor its file: %s", findings[0])
+	}
+
+	t.Run("a tree with no tier-0 package fails rather than certifying", func(t *testing.T) {
+		t.Parallel()
+		if _, err := hardGatedGates(t.TempDir()); err == nil {
+			t.Errorf("the enumeration read a tree with no tier-0 package and returned no error, " +
+				"so a tree that lost the package would certify as green")
+		}
+	})
+}
+
+func TestAGateReachedOnlyThroughAShellScriptFails(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(gateIntegrityFixtures, "script-invoked")
+	declared, err := hardGatedGates(root)
+	if err != nil {
+		t.Fatalf("enumerate the hard-gated channels: %v", err)
+	}
+	gates := []tierZeroGate{exampleGate}
+	// The gate is registered as a tier-0 Go test, so the registration check
+	// passes and the shell-script condition is the only one left to detect.
+	if findings := unregisteredGates(declared, gates); len(findings) != 0 {
+		t.Fatalf("the fixture gate is registered, and the registration check reported %d finding(s): %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+	findings := tolerantChannelInvocations(root, gates)
+	if len(findings) != 1 {
+		t.Fatalf("a gate that shells out to a script is one finding, and the meta-gate reported %d: %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+	if !strings.Contains(findings[0], exampleGate.File) || !strings.Contains(findings[0], "scripts/") {
+		t.Errorf("the finding names neither the gate's file nor the script it reaches: %s", findings[0])
+	}
+}
+
+func TestTheFixedListNamesExactlyTheTierZeroGates(t *testing.T) {
+	t.Parallel()
+	// One side: a name on the fixed list that no hard-gated channel carries
+	// fails, which is what makes the list a predicate rather than a comment.
+	declared, err := hardGatedGates(schematest.RepoRoot(t))
+	if err != nil {
+		t.Fatalf("enumerate the hard-gated channels: %v", err)
+	}
+	unregistered := tierZeroGate{
+		"TestNoChannelOfThisTreeCarriesThisGate",
+		"absent_gate_test.go",
+		"a gate this tree does not register",
+	}
+	findings := unregisteredGates(declared, append(append([]tierZeroGate{}, tierZeroGates...), unregistered))
+	if len(findings) != 1 {
+		t.Fatalf("the live list plus one unregistered name is one finding, and the meta-gate reported %d: %s",
+			len(findings), strings.Join(findings, "; "))
+	}
+	if !strings.Contains(findings[0], unregistered.Test) {
+		t.Errorf("the finding does not name the unregistered gate: %s", findings[0])
+	}
+
+	// The other side: the gates the migration registers through another tier's
+	// channel are absent from the tier-0 list rather than unsatisfiable entries
+	// on it, and each is named as living outside tier 0.
+	named := map[string]bool{}
+	for _, g := range tierZeroGates {
+		named[g.Test] = true
+	}
+	outside := map[string]string{}
+	for _, g := range gatesOutsideTierZero {
+		outside[g.Test] = g.What
+	}
+	for _, g := range []struct{ test, tier string }{
+		{"TestReducedSectionsPointAtTheHeadingThatOwnsTheirContent", "tier 11"},
+		{"TestSpec287RegisterSupersedesEveryArtifactEnumerationInItsDomain", "tier 11"},
+		{"TestReferenceDocumentIsFrozen_spec_28_1", "tier 11"},
+		{"TestServedClientArtifactsCarryNoRetiredLineCitation", "tier 3"},
+	} {
+		if named[g.test] {
+			t.Errorf("%s is registered at %s, and the tier-0 list names it, where it can never be satisfied",
+				g.test, g.tier)
+		}
+		tier, ok := outside[g.test]
+		if !ok {
+			t.Errorf("%s is registered at %s, and the meta-gate names it neither as a tier-0 gate "+
+				"nor as a gate outside tier 0, so the domain reads as an omission", g.test, g.tier)
+			continue
+		}
+		if tier != g.tier {
+			t.Errorf("%s is registered at %s, and the meta-gate names it as %s", g.test, g.tier, tier)
 		}
 	}
 }
