@@ -1217,7 +1217,9 @@
         "tests/tier7a_load_local/tracing_context_release_race_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
         "tests/tier9_security/delegation_child_materialization_cred_test.go::TestDelegatedChildMaterializationCredentialDelivery",
-        "tests/tier9_security/delegation_credential_deny_leakage_test.go::TestDenyDelegationDeliversNoLeaseToken"
+        "tests/tier9_security/delegation_credential_deny_leakage_test.go::TestDenyDelegationDeliversNoLeaseToken",
+        "tests/tier9_security/tracing_context_platform_tool_isolation_test.go::TestPlatformTracingToolRefusesToWriteAnotherSession",
+        "tests/tier9_security/tracing_context_platform_tool_isolation_test.go::TestPlatformTracingToolRegistersTheCallerWithNoSessionArgument"
       ],
       "packages": [
         "pkg/delegation/lease",
