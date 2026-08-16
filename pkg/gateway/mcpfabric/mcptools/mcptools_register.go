@@ -920,7 +920,11 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 
 // registerTracingTool installs lenny/set_tracing_context, which records
 // the §8.3 tracing identifiers on a session for propagation through
-// delegation. spec: §8.3.
+// delegation. The session written is resolved from the authenticated
+// caller's principal whenever that principal carries a session id, so a
+// session-bound caller cannot register tracing context against another
+// session; the `sessionId` argument is the transport fallback for a
+// caller that binds no session-scoped principal. spec: §8.3.
 func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	tenant := env.tenant
 	srv.RegisterTool(mcp.Tool{
@@ -932,22 +936,28 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// principal. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
 		var in struct {
-			SessionID string            `json:"sessionId"`
+			// SessionID is the transport fallback used when the
+			// principal carries no SessionID claim. spec: §8.3.
+			SessionID string            `json:"sessionId,omitempty"`
 			Context   map[string]string `json:"context"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		if in.SessionID == "" {
+		// spec: §8.3 / §9.1 — the registration writes the calling
+		// session, resolved from the principal; the argument is only
+		// consulted when the principal carries no session id.
+		sessionID := callerSessionID(ctx, in.SessionID)
+		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"sessionId is required", nil)
+				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
 			return mcp.ToolResult{}, errSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
-			return mcp.ToolResult{}, errSessionTerminalState(in.SessionID, row.State)
+			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
 		}
 		// §8.3: new entries merge with the inherited context and cannot
 		// overwrite or remove existing (parent) entries.
@@ -960,7 +970,7 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// callers reach this handler for the same session on independent
 		// goroutines, so the lost update is reachable rather than theoretical.
 		var mergeErr error
-		updated, err := deps.Store.Update(ctx, tenant, in.SessionID, func(row *sessionstore.Session) error {
+		updated, err := deps.Store.Update(ctx, tenant, sessionID, func(row *sessionstore.Session) error {
 			merged := tracing.Merge(row.TracingContext, in.Context)
 			if err := tracing.Validate(merged); err != nil {
 				// spec: §8.3 — a validation failure carries a stable
