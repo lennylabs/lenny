@@ -354,24 +354,6 @@ entries:
     reason: |-
       an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
   - member: |-
-      tests/tier9_security/agent_egress_test.go: control channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier9_security/agent_egress_test.go: control-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
-      tests/tier9_security/budget_extension_failclosed_test.go: control channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      an occurrence in a Go carrier outside the doc comment the ban governs, which the name pass does not write
-  - member: |-
       tests/tier9_security/pentest/v1-baseline-bundle.json: lifecycle channel
     class: reserved-phrases
     disposition: excluded

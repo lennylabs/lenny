@@ -209,7 +209,7 @@ func TestExtensionDenyPathsFailClosed_F866(t *testing.T) {
 					DeploymentBase: 2_000_000, DeploymentMax: 4_000_000,
 					ApprovalMode: leasecontrol.ApprovalModeAuto,
 				})
-				svc := newExtendService(t, src, errTenants{err: errors.New("gateway control channel unreachable")})
+				svc := newExtendService(t, src, errTenants{err: errors.New("tenant resolver unreachable")})
 				return svc, src, root
 			},
 		},

@@ -86,10 +86,10 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 	siblingIP := createSiblingTenantTarget(t, c)
 
 	// Positive control: allow-pod-egress-base grants every managed
-	// agent pod egress to the gateway's control-channel port
-	// (gateway.grpcPort, 50051) regardless of egress profile. The
-	// gateway speaks gRPC there, not HTTP, so curl cannot complete a
-	// clean HTTP round trip (exit 0) — but a genuine NetworkPolicy
+	// agent pod egress to the gateway port the pod adapter dials for
+	// LNK-GWCONTROL (gateway.grpcPort, 50051) regardless of egress
+	// profile. The gateway speaks gRPC there, not HTTP, so curl cannot
+	// complete a clean HTTP round trip (exit 0) — but a genuine NetworkPolicy
 	// block always manifests as curl exit 28 (connect timeout), so any
 	// other outcome (here, a fast protocol-mismatch error once the TCP
 	// handshake succeeds) proves the connection was not dropped by the
@@ -101,10 +101,10 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 	res := curlFromPodInNamespace(t, c, agentEgressProbeNamespace, pod, gatewayTarget, 8*time.Second)
 	if res.exitCode == 28 {
 		t.Fatalf("positive control failed: an agent-namespace probe pod (lenny.dev/managed: \"true\") could not "+
-			"reach the gateway control-channel port at %s (curl exit 28, connection timed out). "+
+			"reach the gateway's LNK-GWCONTROL port at %s (curl exit 28, connection timed out). "+
 			"allow-pod-egress-base should permit this path.\noutput:\n%s", gatewayTarget, res.output)
 	}
-	t.Logf("positive control: agent-namespace probe reached the gateway control channel at %s "+
+	t.Logf("positive control: agent-namespace probe reached the gateway's LNK-GWCONTROL port at %s "+
 		"(curl exit %d, not a CNI timeout)", gatewayTarget, res.exitCode)
 
 	cases := []struct {
@@ -123,7 +123,7 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 			if res.exitCode == 0 {
 				t.Fatalf("TESTING.md §12.9.4 violation: an agent pod reached the forbidden %s endpoint at %s. "+
 					"default-deny-all plus the restricted-profile allow-list must block every destination "+
-					"other than the gateway control channel and cluster DNS.\noutput:\n%s",
+					"other than the gateway's LNK-GWCONTROL port and cluster DNS.\noutput:\n%s",
 					tc.name, tc.target, res.output)
 			}
 			if res.exitCode != 28 {
