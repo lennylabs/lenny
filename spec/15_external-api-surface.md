@@ -1457,7 +1457,7 @@ Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-comp
 
 ### 15.4 Runtime Adapter Specification
 
-The runtime adapter contract is published as four machine-readable artifacts committed to the repository and released alongside each Lenny release:
+The runtime adapter contract is published as the machine-readable artifacts listed below, committed to the repository and released alongside each Lenny release:
 
 - **`schemas/lenny-adapter.proto`** — Protobuf service and message definitions for the gateway ↔ adapter gRPC surface ([Section 4.7](04_system-components.md#47-runtime-adapter) RPC table). Includes the structured error code enum with categories (transient, permanent, policy), the `Attach` bidirectional streaming messages, the version negotiation protocol (adapter advertises capabilities at startup; gateway selects a compatible protocol version), and the gRPC Health Checking Protocol binding.
 - **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.

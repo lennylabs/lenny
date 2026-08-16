@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 documentation check over the three published statements of the
+// Tier-11 documentation check over the published statements of the
 // artifact set the external-adapter compliance suite asserts against: the
-// §24.8 compliance-suite row, the "Canonical artifacts" table in the
-// adapter-contract reference, and the schema list in the runtime-author
-// publishing guide. Each is scoped to one consumer, so the §28.7
-// supersession gate exempts all three and reports nothing when one of
-// them omits an artifact the suite is required to assert against. These
-// tests read the enumerations themselves.
+// §24.8 compliance-suite row, the §15.4 specification of the published
+// wire artifacts, the "Canonical artifacts" table in the adapter-contract
+// reference, and the schema list in the runtime-author publishing guide.
+// Each is scoped to one consumer, so the §28.7 supersession gate exempts
+// them and reports nothing when one of them omits an artifact the suite is
+// required to assert against. These tests read the enumerations
+// themselves.
 //
 // The frame attribution is checked from the schema artifacts rather than
 // from a hand-written list, so a frame added to either artifact moves the
@@ -53,10 +54,51 @@ var complianceSuiteArtifacts = []string{
 var frameTypeConstPattern = regexp.MustCompile(`"type"\s*:\s*\{\s*"const"\s*:\s*"([a-z_]+)"`)
 
 // artifactCountPattern matches a sentence that fixes the size of the
-// artifact set in words. A count goes stale the moment the table gains a
-// row, which is the defect that left the adapter-contract lead sentence
-// naming three artifacts over a four-row table.
-var artifactCountPattern = regexp.MustCompile(`(?i)\b(one|two|three|four|five|six|\d+)\s+published schema artifacts\b`)
+// artifact set in words. A count goes stale the moment the set gains a
+// member, which is the defect that left the adapter-contract lead
+// sentence naming three artifacts over a four-row table. The pattern
+// covers the noun phrase each carrier uses for the set, so a count
+// reintroduced in any of them is reported.
+var artifactCountPattern = regexp.MustCompile(`(?i)\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:published\s+|canonical\s+|machine-readable\s+|schema\s+)*(?:artifacts|schemas)\b`)
+
+// artifactSetCountFindings reports a count of the published artifact set
+// stated in text. The artifacts each carrier names are the statement of
+// the set; a count beside them adds nothing and goes stale when the set
+// changes.
+func artifactSetCountFindings(text string) []string {
+	m := artifactCountPattern.FindString(text)
+	if m == "" {
+		return nil
+	}
+	return []string{fmt.Sprintf("the statement fixes the artifact set at %q, which the artifacts it names rather than a count state", strings.TrimSpace(m))}
+}
+
+// specArtifactSetFindings reports where the §15.4 lead sentence over the
+// published wire artifacts drifts from the artifact set, either by
+// omitting an artifact from the bullets beneath it or by fixing the set's
+// size with a count.
+func specArtifactSetFindings(content string, artifacts []string) []string {
+	const lead = "The runtime adapter contract is published as"
+	start := strings.Index(content, lead)
+	if start < 0 {
+		return []string{"the lead sentence over the published wire artifacts is absent, so the specification states no artifact set"}
+	}
+	section := content[start:]
+	if next := strings.Index(section, "\nThe artifacts are versioned"); next >= 0 {
+		section = section[:next]
+	}
+	sentence := section
+	if end := strings.Index(sentence, "\n"); end >= 0 {
+		sentence = sentence[:end]
+	}
+	findings := artifactSetCountFindings(sentence)
+	for _, artifact := range artifacts {
+		if !strings.Contains(section, "`"+artifact+"`") {
+			findings = append(findings, fmt.Sprintf("the artifact list does not name %s, so the specification and the published statements of the set disagree", artifact))
+		}
+	}
+	return findings
+}
 
 // tableRowFirstCellPattern captures the backticked artifact name in a
 // markdown table row's first cell.
@@ -141,9 +183,7 @@ func canonicalArtifactsFindings(content string, opsFrames, stdioFrames []string)
 	if table := strings.Index(section, "\n|"); table >= 0 {
 		lead = section[:table]
 	}
-	if m := artifactCountPattern.FindString(lead); m != "" {
-		findings = append(findings, fmt.Sprintf("the lead sentence fixes the artifact set at %q, which the table's rows rather than a count state", strings.TrimSpace(m)))
-	}
+	findings = append(findings, artifactSetCountFindings(lead)...)
 
 	rows := canonicalArtifactRows(section)
 	if _, ok := rows[runtimeOpsArtifact]; !ok {
@@ -191,7 +231,7 @@ func publishingSchemaListFindings(content string) []string {
 	if sentence == "" {
 		return []string{"the compliance-suite sentence is absent, so the publishing guide states no schema list"}
 	}
-	var findings []string
+	findings := artifactSetCountFindings(sentence)
 	for _, artifact := range []string{stdioFrameArtifact, "messagepart.schema.json", runtimeOpsArtifact} {
 		if !strings.Contains(sentence, "`"+artifact+"`") {
 			findings = append(findings, fmt.Sprintf("the publishing guide's schema list does not name %s", artifact))
@@ -201,19 +241,23 @@ func publishingSchemaListFindings(content string) []string {
 }
 
 // The compliance suite gates a third-party adapter from
-// pending_validation to active against a stated artifact set, and the two
-// published runtime-author pages restate that set. All three name the
-// runtime-operations events schema, and the frames each artifact admits
-// are attributed to that artifact alone.
+// pending_validation to active against a stated artifact set, the §15.4
+// specification of the published wire artifacts states the same set, and
+// the two published runtime-author pages restate it. Every carrier names
+// the runtime-operations events schema, the frames each artifact admits
+// are attributed to that artifact alone, and each statement that
+// introduces the set does so by naming its artifacts rather than by
+// counting them.
 //
-// diagnosis: a failure means one of the three published statements of the
+// diagnosis: a failure means one of the published statements of the
 // compliance-suite artifact set has drifted from the artifacts under
-// schemas/. Either a carrier omits the runtime-operations events schema,
-// in which case the suite it describes asserts the CH-RUNTIMEOPS frames
-// against nothing, or the adapter-contract table credits one artifact
-// with frames another artifact's oneOf admits, in which case a runtime
-// author validating against the named artifact gets no coverage of those
-// frames.
+// schemas/. A carrier that omits the runtime-operations events schema
+// describes a suite that asserts the CH-RUNTIMEOPS frames against
+// nothing. An adapter-contract table row credited with frames another
+// artifact's oneOf admits leaves a runtime author validating against the
+// named artifact with no coverage of those frames. A statement that
+// counts the artifacts goes stale as soon as the set changes, leaving the
+// count and the list beneath it in disagreement.
 //
 // spec: §24.8 (external adapter management), §15.4 (runtime adapter specification), §28.7 (wire-contract artifact register)
 func TestPublishedComplianceArtifactSetsNameTheRuntimeOpsEventsSchema(t *testing.T) {
@@ -227,6 +271,9 @@ func TestPublishedComplianceArtifactSetsNameTheRuntimeOpsEventsSchema(t *testing
 	for _, f := range complianceSuiteRowFindings(readRepoFile(t, root, "spec", "24_lenny-ctl-command-reference.md"), complianceSuiteArtifacts) {
 		t.Errorf("spec/24_lenny-ctl-command-reference.md: %s", f)
 	}
+	for _, f := range specArtifactSetFindings(readRepoFile(t, root, "spec", "15_external-api-surface.md"), complianceSuiteArtifacts) {
+		t.Errorf("spec/15_external-api-surface.md: %s", f)
+	}
 	for _, f := range canonicalArtifactsFindings(readRepoFile(t, root, "docs", "reference", "adapter-contract.md"), opsFrames, stdioFrames) {
 		t.Errorf("docs/reference/adapter-contract.md: %s", f)
 	}
@@ -235,7 +282,7 @@ func TestPublishedComplianceArtifactSetsNameTheRuntimeOpsEventsSchema(t *testing
 	}
 }
 
-// The three predicates have to report an enumeration that omits an
+// The enumeration predicates have to report an enumeration that omits an
 // artifact or misattributes a frame while accepting the corrected text,
 // and neither direction is exercised by the tree once the correction has
 // landed. These cases pin both.
@@ -285,6 +332,46 @@ func TestComplianceArtifactEnumerationPredicates(t *testing.T) {
 			}
 			if !tc.reject && len(findings) != 0 {
 				t.Errorf("predicate reported the corrected enumeration: %v", findings)
+			}
+		})
+	}
+
+	correctedSpecSection := "The runtime adapter contract is published as the machine-readable artifacts listed below, committed to the repository and released alongside each Lenny release:\n" +
+		"\n" +
+		"- **`schemas/lenny-adapter.proto`** — Protobuf service and message definitions.\n" +
+		"- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema for the stdin/stdout frames.\n" +
+		"- **`schemas/messagepart.schema.json`** — JSON Schema for the `MessagePart` envelope.\n" +
+		"- **`schemas/runtime-ops-events.schema.json`** — JSON Schema for the runtime-operations frames.\n" +
+		"\n" +
+		"The artifacts are versioned by Lenny release tag.\n"
+
+	specSectionCases := []struct {
+		name    string
+		content string
+		reject  bool
+	}{
+		{name: "the corrected lead sentence names the set without counting it", content: correctedSpecSection},
+		{
+			name:    "a lead sentence fixing the artifact count is reported",
+			content: strings.Replace(correctedSpecSection, "as the machine-readable artifacts listed below", "as four machine-readable artifacts", 1),
+			reject:  true,
+		},
+		{
+			name:    "a list omitting the runtime-operations events schema is reported",
+			content: strings.Replace(correctedSpecSection, "- **`schemas/runtime-ops-events.schema.json`** — JSON Schema for the runtime-operations frames.\n", "", 1),
+			reject:  true,
+		},
+		{name: "an absent lead sentence is reported", content: "### 15.4 Runtime Adapter Specification\n", reject: true},
+		{name: "empty content is reported", content: "", reject: true},
+	}
+	for _, tc := range specSectionCases {
+		t.Run("published wire artifacts section: "+tc.name, func(t *testing.T) {
+			findings := specArtifactSetFindings(tc.content, complianceSuiteArtifacts)
+			if tc.reject && len(findings) == 0 {
+				t.Errorf("predicate accepted an artifact statement it must report")
+			}
+			if !tc.reject && len(findings) != 0 {
+				t.Errorf("predicate reported the corrected artifact statement: %v", findings)
 			}
 		})
 	}
@@ -344,6 +431,11 @@ func TestComplianceArtifactEnumerationPredicates(t *testing.T) {
 		{
 			name:    "a sentence omitting the runtime-operations events schema is reported",
 			content: strings.Replace(correctedSentence, ", and `runtime-ops-events.schema.json` for the Full-level runtime-operations frames", "", 1),
+			reject:  true,
+		},
+		{
+			name:    "a sentence fixing the schema count is reported",
+			content: strings.Replace(correctedSentence, "against the canonical schemas", "against the three canonical schemas", 1),
 			reject:  true,
 		},
 		{name: "an absent sentence is reported", content: "## Publish\n", reject: true},
