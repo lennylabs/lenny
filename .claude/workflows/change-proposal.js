@@ -1111,6 +1111,13 @@ const churnMinFindings = input.churnMinFindings || 5;
 const churnStrikes = input.churnStrikes || 3;
 const redesignsAllowed = input.maxRedesigns === undefined ? 2 : input.maxRedesigns;
 let redesignsRun = 0;
+// Set when the introspection pass concludes the run should not continue without a
+// human decision. It ends the loop rather than the process, so everything already
+// fixed is kept and reported.
+let stoppedByIntrospection = null;
+// Stops the introspection pass proposed and the panel did not uphold. Fed back to
+// the pass so it does not re-reach the same verdict on the same evidence.
+const overruledStops = [];
 // area -> [{round, kind, introducedBy}]
 const areaLog = new Map();
 const redesignHistory = [];
@@ -1346,6 +1353,368 @@ async function runRedesign(areas, rnd, why) {
   });
   log("REDESIGN " + tag + " applied; resuming review");
   return true;
+}
+
+
+// ---- Section growth: the signal the counters cannot produce ----
+//
+// Counting findings says where reviewers looked. Measuring the document says what
+// the loop has been doing. A section that tripled while the document grew a tenth
+// is the shape of over-specification, and no finding count shows it, because each
+// individual addition was a reasonable answer to a real finding.
+function sectionSizes() {
+  try {
+    const text = require("fs").readFileSync(path, "utf8").split("\n");
+    const out = new Map();
+    let cur = "(preamble)";
+    let n = 0;
+    for (const line of text) {
+      const m = /^(#{2,3}) (.+)$/.exec(line);
+      if (m) {
+        out.set(cur, (out.get(cur) || 0) + n);
+        cur = m[2].trim().slice(0, 70);
+        n = 0;
+      } else n++;
+    }
+    out.set(cur, (out.get(cur) || 0) + n);
+    return out;
+  } catch (e) {
+    return new Map();
+  }
+}
+
+function growthSince(before) {
+  const now = sectionSizes();
+  const rows = [];
+  let totalBefore = 0;
+  let totalNow = 0;
+  for (const [k, v] of now) totalNow += v;
+  for (const [k, v] of before) totalBefore += v;
+  for (const [k, v] of now) {
+    const was = before.get(k) || 0;
+    if (v - was <= 0) continue;
+    rows.push({
+      section: k,
+      was,
+      now: v,
+      added: v - was,
+      pct: was ? Math.round((100 * (v - was)) / was) : null,
+    });
+  }
+  rows.sort((a, b) => b.added - a.added);
+  return {
+    documentWas: totalBefore,
+    documentNow: totalNow,
+    documentPct: totalBefore
+      ? Math.round((100 * (totalNow - totalBefore)) / totalBefore)
+      : null,
+    grew: rows.slice(0, 8),
+  };
+}
+
+const INTROSPECTION = {
+  type: "object",
+  required: ["observations", "caseHealthy", "caseUnhealthy", "verdict", "reasoning"],
+  properties: {
+    observations: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "What you found, each with its evidence, written BEFORE you reach a verdict. One per question you were asked, plus anything else the evidence shows.",
+    },
+    caseHealthy: {
+      type: "string",
+      description: "The strongest argument that this run is converging and should continue unchanged. State it at its best even if you do not believe it.",
+    },
+    caseUnhealthy: {
+      type: "string",
+      description: "The strongest argument that it is not. State it at its best even if you do not believe it.",
+    },
+    verdict: {
+      type: "string",
+      enum: ["healthy", "redesign", "prune", "reframe", "halt"],
+    },
+    reasoning: { type: "string", description: "Which case wins and why." },
+    areas: {
+      type: "array",
+      items: { type: "string" },
+      description: "For redesign: the area slugs to specify whole. Name the mechanism, not the symptom.",
+    },
+    sections: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "For prune: the sections that have grown past their value, each with what should be deleted and what constraint an IMPLEMENTOR'S CHOICE blank would carry in its place.",
+    },
+    questionForHuman: {
+      type: "string",
+      description: "For reframe or halt: the decision a human must take, stated so it can be answered without reading the whole proposal.",
+    },
+    prediction: {
+      type: "string",
+      description:
+        "What you expect the next few rounds to look like if the run continues. The next introspection is shown this and held to it, so make it falsifiable.",
+    },
+  },
+};
+
+
+// ---- Second opinion on a decision to stop ----
+//
+// Halting is the one verdict the loop cannot take back cheaply: it ends the run
+// and puts the question to a human. It is also the verdict where a single agent's
+// error is most expensive in both directions, so the decision is separated from
+// the observation. The introspection pass observes; a panel decides.
+//
+// The asymmetry is deliberate. A wrong "continue" self-corrects, because the next
+// introspection fires within introspectEvery rounds and sees more evidence. A
+// wrong "stop" costs a human interruption and the run's momentum, and nothing
+// self-corrects it. So the burden of proof is on stopping, and a panel that
+// cannot agree takes the least disruptive verdict any member reached.
+const PANEL_VOTE = {
+  type: "object",
+  required: ["verdict", "reasoning", "whatWouldChangeMyMind"],
+  properties: {
+    verdict: {
+      type: "string",
+      enum: ["healthy", "redesign", "prune", "reframe", "halt"],
+    },
+    reasoning: { type: "string" },
+    whatWouldChangeMyMind: {
+      type: "string",
+      description:
+        "The specific evidence that would move you to the adjacent verdict. A vote nothing could change is a vote that did not examine the evidence.",
+    },
+  },
+};
+
+const DISRUPTION = ["healthy", "prune", "redesign", "reframe", "halt"];
+
+async function reviewStopDecision(rnd, verdict, growth, churn) {
+  log(
+    "Round " + rnd + ": introspection returned " + verdict.verdict +
+      "; putting the decision to a panel before stopping",
+  );
+  const brief =
+    READ_ONLY +
+    "\n\nPROPOSAL: " + path + ". Round " + rnd + ".\n\n" +
+    "An introspection pass has concluded that this adversarial convergence run should STOP and put a " +
+    "question to a human, rather than continue reviewing. You are one of three reviewers of that decision. " +
+    "The panel's majority decides; the pass does not decide alone.\n\n" +
+    "RATIFYING IS THE FAILURE MODE HERE. You have been handed a conclusion and asked to check it, which is " +
+    "the situation in which reviewers agree most and examine least. Reach your own verdict from the evidence " +
+    "and let the pass's reasoning inform it rather than set it.\n\n" +
+    "THE BURDEN IS ON STOPPING, and the reason is asymmetric cost rather than optimism. A wrong decision to " +
+    "continue corrects itself: the next introspection runs within a few rounds, sees more evidence, and can " +
+    "stop then. A wrong decision to stop costs a human's attention and the run's momentum, and nothing " +
+    "corrects it. So vote to stop only if the evidence convinces you, and prefer the least disruptive verdict " +
+    "that answers what the evidence actually shows.\n\n" +
+    "YOU MAY DOWNGRADE RATHER THAN VETO. If the pass is right that something is wrong but wrong about how " +
+    "serious it is, say so with the verdict that fits: `redesign` when a named mechanism is being repaired a " +
+    "facet at a time, `prune` when a section has grown past its value, `healthy` when the run is draining and " +
+    "the pass has over-read a rough patch. `reframe` and `halt` both stop the run.\n\n" +
+    "THE PASS'S FULL OUTPUT, including the case it made for the run being healthy:\n" +
+    JSON.stringify(verdict, null, 2) +
+    "\n\nHOW THE DOCUMENT GREW since the previous introspection:\n" +
+    JSON.stringify(growth, null, 2) +
+    "\n\nCONFIRMED FINDINGS BY AREA, over the whole run, each with its round, kind, and whether it corrected " +
+    "text this loop itself wrote:\n" +
+    JSON.stringify(Object.fromEntries([...areaLog].map(([a, es]) => [a, es])), null, 2).slice(0, 10000) +
+    "\n\nMECHANISMS THIS LOOP'S FIXER INVENTED, and how many later findings each caused:\n" +
+    JSON.stringify(introducedMechanisms, null, 2) +
+    "\n\nROUND HISTORY:\n" +
+    JSON.stringify(
+      history.map((h) => ({
+        round: h.round,
+        sweep: h.sweep,
+        confirmed: h.confirmed,
+        newMechanisms: h.newMechanisms,
+      })),
+      null,
+      2,
+    ).slice(0, 8000) +
+    (churn && churn.length ? "\n\nCOUNTERS THAT TRIPPED:\n" + JSON.stringify(churn, null, 2) : "") +
+    "\n\nRead the proposal yourself before voting. The evidence above is a summary and the document is the " +
+    "subject.";
+
+  const lenses = [
+    "You are the TRAJECTORY reviewer. Judge only the direction of travel. Are findings per round falling, and " +
+      "are deep defects giving way to shallow ones? A run whose confirmed counts are dropping and whose late " +
+      "findings are citations and companion sites is draining, however large it has become. A run whose design " +
+      "defects arrive late, or whose counts are flat across several rounds, is not. Say which pattern this run " +
+      "shows, with the numbers.",
+    "You are the DESIGN reviewer. Ignore the trajectory and judge the document. Read the sections the pass " +
+      "names and decide whether the design in front of you is sound, whether a mechanism is described more " +
+      "than once in different words, and whether the accumulated fixes still satisfy the proposal's own " +
+      "Decisions. A proposal can be converging numerically onto something that should not be built.",
+    "You are the COST reviewer. Judge what continuing buys against what it costs. How much has this run spent " +
+      "and what has the recent spend produced? What would the next several rounds plausibly find, given what " +
+      "the last several found? And what does stopping cost: is the question the pass wants to ask a human " +
+      "one that a human can actually answer, or would it come back with the same problem unresolved?",
+  ];
+
+  const votes = (
+    await parallel(
+      lenses.map((l, i) => () =>
+        robustAgent(brief + "\n\nYOUR LENS. " + l, {
+          label: "stop-review:" + (i + 1) + ":r" + rnd,
+          phase: "Round " + rnd + ": introspect",
+          schema: PANEL_VOTE,
+        }),
+      ),
+    )
+  ).filter(Boolean);
+
+  if (votes.length < 2) {
+    log(
+      "Round " + rnd + ": only " + votes.length +
+        " of 3 stop-decision reviewers returned, which is no quorum; continuing, because a wrong continue " +
+        "self-corrects at the next introspection and a wrong stop does not",
+    );
+    return { decision: "healthy", votes, quorum: false };
+  }
+
+  const tally = new Map();
+  for (const v of votes) tally.set(v.verdict, (tally.get(v.verdict) || 0) + 1);
+  let decision = null;
+  for (const [k, n] of tally) if (n > votes.length / 2) decision = k;
+  if (!decision) {
+    // No majority. Take the least disruptive verdict any reviewer reached, on the
+    // same asymmetry: continuing is recoverable and stopping is not.
+    decision = [...tally.keys()].sort(
+      (a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b),
+    )[0];
+    log(
+      "Round " + rnd + ": stop-decision panel split " +
+        [...tally].map(([k, n]) => k + "×" + n).join(", ") +
+        "; taking the least disruptive, " + decision,
+    );
+  } else {
+    log(
+      "Round " + rnd + ": stop-decision panel returned " + decision + " (" +
+        [...tally].map(([k, n]) => k + "×" + n).join(", ") + ")",
+    );
+  }
+  return { decision, votes, quorum: true };
+}
+
+const introspectEvery = input.introspectEvery || 5;
+const introspections = [];
+let lastSizes = sectionSizes();
+let lastIntrospectRound = 0;
+
+// The agent decides; the counters only wake it. A counter cannot judge whether a
+// mechanism is under-designed or a section is over-specified, and an agent that
+// only ran on a fixed cadence would miss a runaway between its turns. Together:
+// the counter cannot miss, the agent can judge.
+async function introspect(rnd, reason, churn) {
+  const growth = growthSince(lastSizes);
+  lastSizes = sectionSizes();
+  lastIntrospectRound = rnd;
+  const windowStart = Math.max(1, rnd - introspectEvery);
+  const recent = history.filter((h) => h.round >= windowStart);
+
+  const res = await robustAgent(
+    "You are the introspection pass of an adversarial convergence loop running on a change proposal. Your " +
+      "subject is THE LOOP AND THE DOCUMENT, not the correctness of any individual finding. Every other agent " +
+      "here reads the proposal to improve it; you read it to judge whether improving it this way is still " +
+      "working.\n\n" +
+      READ_ONLY +
+      "\n\nPROPOSAL: " + path + ".\nRound " + rnd + ". Woken because: " + reason + ".\n\n" +
+      "HOW THE DOCUMENT HAS GROWN since the last introspection. The document as a whole grew " +
+      (growth.documentPct === null ? "n/a" : growth.documentPct + "%") +
+      ", from " + growth.documentWas + " to " + growth.documentNow + " lines. The sections that grew most:\n" +
+      JSON.stringify(growth.grew, null, 2) +
+      "\n\nWHAT THE REVIEWERS FOUND, by area, over the whole run. Each entry is one confirmed finding with " +
+      "the round it was confirmed in, the kind of defect, and whether the text it corrected was written by " +
+      "this loop itself:\n" +
+      JSON.stringify(
+        Object.fromEntries([...areaLog].map(([a, es]) => [a, es])),
+        null,
+        2,
+      ).slice(0, 12000) +
+      "\n\nMECHANISMS THIS LOOP'S OWN FIXER INVENTED, and how many later findings each has caused:\n" +
+      JSON.stringify(introducedMechanisms, null, 2) +
+      "\n\nTHE LAST " + recent.length + " ROUNDS, with what each fixed:\n" +
+      JSON.stringify(
+        recent.map((h) => ({
+          round: h.round,
+          sweep: h.sweep,
+          confirmed: h.confirmed,
+          fixed: h.confirmedTitles,
+          newMechanisms: h.newMechanisms,
+        })),
+        null,
+        2,
+      ).slice(0, 12000) +
+      (churn && churn.length
+        ? "\n\nA COUNTER TRIPPED, which is why you were woken early. It is a crude instrument and it is often " +
+          "wrong in both directions, so adjudicate rather than ratify:\n" + JSON.stringify(churn, null, 2)
+        : "") +
+      (overruledStops.length
+        ? "\n\nSTOPS YOU PROPOSED THAT A REVIEW PANEL DID NOT UPHOLD. You reached these verdicts on evidence " +
+          "much like today's and three reviewers disagreed. That is not a reason to avoid the verdict now, but " +
+          "it is a reason to say what has changed since, and to answer the panel's reasoning rather than " +
+          "restate your own:\n" + JSON.stringify(overruledStops, null, 2)
+        : "") +
+      (introspections.length
+        ? "\n\nYOUR OWN PREVIOUS VERDICTS, with the predictions you made. You are accountable to these: say " +
+          "whether each prediction held, because a prediction that failed is evidence your reading of this run " +
+          "is wrong.\n" +
+          JSON.stringify(
+            introspections.map((i) => ({
+              round: i.round,
+              verdict: i.verdict,
+              prediction: i.prediction,
+            })),
+            null,
+            2,
+          )
+        : "") +
+      "\n\nANSWER THESE, each with evidence, in observations, BEFORE you reach a verdict:\n" +
+      "1. Which sections grew most, and did each growth buy something proportionate to its size? Growth that " +
+      "answered real findings is the loop working; growth that restates a mechanism a third time is not.\n" +
+      "2. Is any mechanism now described in more than one place, in different words? Read the sections that " +
+      "grew and check. Two deliverables staging different rewrites of the same text is the defect this " +
+      "question exists to catch, and it is invisible to the reviewers because each reads its own section.\n" +
+      "3. Do the accumulated fixes still satisfy the proposal's Decisions and its Summary's fixed decisions, " +
+      "or has a decision been eroded by fixes that each looked local? Read them and check against what the " +
+      "document now stages.\n" +
+      "4. Is any area quiet because it is clean, or because no lens is examining it? A flat finding rate reads " +
+      "identically in both cases and they are opposite conditions.\n" +
+      "5. If you were writing this proposal fresh today, knowing everything the findings have taught, what " +
+      "would you do differently? Answer concretely. This is the question the round-by-round process cannot ask " +
+      "itself, and the one most likely to surface a design that is being repaired when it should be replaced.\n\n" +
+      "THEN state the strongest case that this run is healthy and should continue unchanged, and the strongest " +
+      "case that it is not, each at its best. Only then choose:\n" +
+      "  healthy — the loop is draining. Say what makes you confident, and predict what the next rounds hold.\n" +
+      "  redesign — one or more mechanisms are being repaired a facet at a time and should be specified whole. " +
+      "Name the areas by mechanism rather than by symptom.\n" +
+      "  prune — a section has grown past its value. Name it, say what should be deleted, and say what " +
+      "constraint an IMPLEMENTOR'S CHOICE blank should carry in its place. Over-specification is a defect: it " +
+      "is where two sections drift apart, and detail an implementor does not need costs more to keep true than " +
+      "it is worth.\n" +
+      "  reframe — the proposal's scope or framing is wrong, and no amount of reviewing fixes that. Say what " +
+      "the framing should be.\n" +
+      "  halt — something needs a human decision before more rounds are worth spending.\n\n" +
+      "DEFAULT TO healthy ONLY IF THE EVIDENCE SUPPORTS IT. A run that is converging looks like this: findings " +
+      "per round falling, deep defects giving way to shallow ones, growth concentrated where work is genuinely " +
+      "being added. A run that is not looks like this: findings flat or rising, design defects appearing late, " +
+      "growth concentrated in sections that were already large, and the loop repeatedly correcting text it " +
+      "wrote itself. Saying healthy when the second pattern holds costs far more than a false alarm.",
+    { label: "introspect:r" + rnd, phase: "Round " + rnd + ": introspect", schema: INTROSPECTION },
+  );
+  if (!res) {
+    log("Round " + rnd + ": introspection did not return; continuing unchanged");
+    return null;
+  }
+  introspections.push({ round: rnd, ...res });
+  history[history.length - 1].introspection = {
+    verdict: res.verdict,
+    reasoning: res.reasoning,
+  };
+  log("Round " + rnd + " introspection: " + res.verdict + " — " + (res.reasoning || "").slice(0, 180));
+  return res;
 }
 
 phase("Review");
@@ -1864,26 +2233,149 @@ while (round < maxRounds && !converged) {
   // Churn test, after the round's fixes have landed. Running it here rather than
   // before the fixes means the decision is taken on the text the next round will
   // actually read.
-  if (redesignsRun < redesignsAllowed) {
-    const churn = churningAreas(round);
-    if (churn.length) {
-      history[history.length - 1].churnDetected = churn.map((c) => c.area);
-      const did = await runRedesign(
-        churn,
-        round,
-        "detected after round " + round,
+  // The counters wake the introspection agent; they no longer act on their own.
+  // A counter cannot tell a churning mechanism from a large area being drained,
+  // and cannot see over-specification at all, so its output is a reason to look
+  // rather than a decision. The agent also runs on a cadence, because a runaway
+  // between counter trips would otherwise go unexamined.
+  const churn = churningAreas(round);
+  if (churn.length) history[history.length - 1].churnDetected = churn.map((c) => c.area);
+  const dueByCadence = round - lastIntrospectRound >= introspectEvery;
+  const dueBySweep = isSweep && confirmed.length > 0;
+  if (churn.length || dueByCadence || dueBySweep) {
+    const why = churn.length
+      ? "a churn counter tripped on " + churn.map((c) => c.area).join(", ")
+      : dueBySweep
+        ? "a full sweep confirmed findings, which is when the loop learns most about itself"
+        : introspectEvery + " rounds since the last introspection";
+    const verdict = await introspect(round, why, churn);
+
+    if (verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
+      const named = (verdict.areas || []).map((a) => {
+        const hit = churn.find((c) => c.area === String(a).toLowerCase().trim());
+        return (
+          hit || {
+            area: String(a).toLowerCase().trim(),
+            findings: 0,
+            designDefects: 0,
+            selfInflicted: 0,
+            reason: verdict.reasoning || "named by the introspection pass",
+          }
+        );
+      });
+      if (named.length) {
+        const did = await runRedesign(named, round, verdict.reasoning || why);
+        if (did) {
+          // The document in front of the lenses is materially different, so no
+          // lens may stay retired on the strength of having read the old one.
+          retired.clear();
+          history[history.length - 1].redesignApplied = true;
+        }
+      }
+    } else if (verdict && verdict.verdict === "redesign") {
+      log(
+        "Round " + round + ": introspection asked for a redesign but the budget of " +
+          redesignsAllowed + " is spent; recording instead",
       );
-      if (did) {
-        // The document in front of the lenses is materially different, so no
-        // lens may stay retired on the strength of having read the old one.
-        retired.clear();
-        history[history.length - 1].redesignApplied = true;
+    }
+
+    if (verdict && verdict.verdict === "prune" && (verdict.sections || []).length) {
+      // Over-specification is a defect in its own right: it is where two sections
+      // drift apart, and detail an implementor does not need costs more to keep
+      // true than it is worth. The cure is deletion with a stated constraint,
+      // which is what the blanks convention exists for.
+      await robustAgent(
+        "Prune over-specified sections of a change proposal.\n\n" +
+          "HARD CONSTRAINT: the only file you may edit is " + path +
+          ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+          "An introspection pass judged these sections to have grown past their value:\n" +
+          JSON.stringify(verdict.sections, null, 2) +
+          "\n\nIts reasoning: " + (verdict.reasoning || "") +
+          "\n\nDelete the detail it names and replace each deletion with the blanks convention: " +
+          FORMAT_BLANKS +
+          "\nDelete nothing the convention bars from delegation, and nothing another section depends on: " +
+          "check before each deletion whether any other part of the proposal cites the text you are removing, " +
+          "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
+          "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
+          'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
+          "Follow " + repo + "/.claude/rules/doc-style.md.",
+        { label: "prune:r" + round, phase: "Round " + round + ": prune" },
+      );
+      history[history.length - 1].pruned = verdict.sections;
+      // Pruned text is text the lenses have not read in its new form.
+      retired.clear();
+      log("Round " + round + ": pruned " + verdict.sections.length + " section(s)");
+    }
+
+    if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
+      // The pass observes; a panel decides. It may uphold the stop, downgrade it
+      // to a redesign or a prune, or find the run healthy.
+      const panel = await reviewStopDecision(
+        round,
+        verdict,
+        growthSince(lastSizes),
+        churn,
+      );
+      history[history.length - 1].stopDecision = {
+        proposed: verdict.verdict,
+        decision: panel.decision,
+        quorum: panel.quorum,
+        votes: panel.votes.map((v) => ({ verdict: v.verdict, reasoning: v.reasoning })),
+      };
+
+      if (panel.decision === "halt" || panel.decision === "reframe") {
+        stoppedByIntrospection = {
+          round,
+          verdict: panel.decision,
+          proposedBy: verdict.verdict,
+          question: verdict.questionForHuman || verdict.reasoning,
+          reasoning: verdict.reasoning,
+          caseHealthy: verdict.caseHealthy,
+          caseUnhealthy: verdict.caseUnhealthy,
+          panel: panel.votes,
+        };
+        break;
+      }
+
+      // Overruled. Record it against the pass so the next introspection sees that
+      // it called a stop and was not upheld, together with why. Without that the
+      // pass would re-reach the same verdict on the same evidence every time it
+      // ran, and the panel would re-litigate it every time.
+      overruledStops.push({
+        round,
+        proposed: verdict.verdict,
+        decidedInstead: panel.decision,
+        panelReasoning: panel.votes.map((v) => v.verdict + ": " + v.reasoning),
+      });
+      log(
+        "Round " + round + ": the panel overruled a " + verdict.verdict + " with " +
+          panel.decision + "; the run continues",
+      );
+
+      // Carry out the downgrade the panel chose, rather than dropping it.
+      if (panel.decision === "redesign" && redesignsRun < redesignsAllowed) {
+        const named = (verdict.areas || []).length
+          ? verdict.areas.map((a) => ({
+              area: String(a).toLowerCase().trim(),
+              findings: 0,
+              designDefects: 0,
+              selfInflicted: 0,
+              reason: "downgraded from " + verdict.verdict + " by the stop-decision panel",
+            }))
+          : churn;
+        if (named && named.length) {
+          const did = await runRedesign(named, round, "panel downgrade from " + verdict.verdict);
+          if (did) {
+            retired.clear();
+            history[history.length - 1].redesignApplied = true;
+          }
+        }
       }
     }
   }
 }
 
-converged = converged && !reviewersFailed;
+converged = converged && !reviewersFailed && !stoppedByIntrospection;
 
 // One verification pass over the implementation checklist and the Summary, after
 // convergence and before the proposal is marked verified. Both are maintained as
@@ -1945,6 +2437,9 @@ return {
       ? { kept: keptTitles, dropped: droppedChanges.map((d) => d.title) }
       : undefined,
   introspection: {
+    passes: introspections,
+    stoppedBy: stoppedByIntrospection,
+    overruledStops,
     byArea: Object.fromEntries(
       [...areaLog].map(([a, es]) => [
         a,
