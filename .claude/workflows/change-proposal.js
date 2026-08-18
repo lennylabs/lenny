@@ -275,6 +275,47 @@ const DEDUP_FINDINGS = {
   },
 };
 
+// The fixer's structured result. It returns a summary as before, and now also
+// declares any mechanism it had to invent to close a finding. Inventing is
+// allowed and is part of the job; doing it silently is what this loop measured as
+// its largest self-inflicted defect source. A mechanism introduced to close one
+// finding has repeatedly gone on to produce several more over later rounds,
+// because it arrives unspecified and no agent reviews it as a design until a
+// sweep stumbles on it. Declaring it routes it to the post-fix reviewer in the
+// same round, while the fixer's reasoning is still recoverable.
+const FIX_RESULT = {
+  type: "object",
+  required: ["summary", "newMechanisms"],
+  properties: {
+    summary: {
+      type: "string",
+      description: "Each finding and the exact edit made for it.",
+    },
+    newMechanisms: {
+      type: "array",
+      description:
+        "One entry per mechanism this round introduced that the proposal did not already contain: a new field, flag, report, compensating action, RPC, frame, or interface change. Empty when the round only corrected existing text.",
+      items: {
+        type: "object",
+        required: ["name", "why", "state", "callers", "failureMode", "test"],
+        properties: {
+          name: { type: "string" },
+          why: { type: "string", description: "the finding it closes, and why correcting existing text could not close it" },
+          state: { type: "string", description: "the state it reads, and EVERY site that sets and clears that state" },
+          callers: { type: "string", description: "every caller, and every type satisfying an interface it changes" },
+          failureMode: { type: "string", description: "what happens when it does not fire, and what observes that" },
+          test: { type: "string", description: "the test that pins it, and the tier that owns it" },
+        },
+      },
+    },
+    escalated: {
+      type: "array",
+      items: { type: "string" },
+      description: "Findings closed by recording an open decision rather than by editing, with the constraint any solution must satisfy.",
+    },
+  },
+};
+
 const VERDICT = {
   type: "object",
   required: ["confirmed", "reason"],
@@ -867,7 +908,7 @@ function materialityPrompt(f) {
   );
 }
 
-function fixPrompt(confirmed, round) {
+function fixPrompt(confirmed, round, strikes) {
   return (
     "You are the fixer for round " +
     round +
@@ -882,6 +923,11 @@ function fixPrompt(confirmed, round) {
     "- Make the smallest change that corrects each finding. Do not expand scope. Do not change design decisions beyond what the findings require; when a finding forces a design choice, pick the option most consistent with the cited spec precedent and the project principles (" +
     PRINCIPLES +
     "), and record the rationale in the proposal.\n" +
+    "- READ EVERY FINDING BEFORE YOU EDIT ANYTHING. Group the findings that touch the same text, the same section, or the same mechanism, and fix each group as one change. Findings that look independent often share a root, and closing them separately produces edits that contradict each other and become findings of their own in a later round.\n" +
+    "- INVENTING A MECHANISM IS ALLOWED AND IS SOMETIMES THE ONLY CORRECT FIX, BUT IT IS THE MOST DANGEROUS EDIT YOU CAN MAKE. This loop has measured that a mechanism introduced to close one finding goes on to produce several more over later rounds, because it lands unspecified and nothing reviews it as a design. So when a finding cannot be closed by correcting existing text, and you must add a field, a flag, a report, a compensating action, an RPC, a frame, or an interface change, specify it WHOLE in the same edit, before you write it: the state it reads and EVERY site that sets and clears that state; every caller and every type that satisfies an interface you change; what happens when it does not fire and what observes that; and the test that pins it. Then declare it in newMechanisms with those same four properties filled in. An unspecified mechanism is a defect you are handing to a later round.\n" +
+    "- Where a finding genuinely needs a decision rather than an edit, record it in the proposal's open-decisions section with the constraint any solution must satisfy, and list it in escalated. That is a complete fix, not a deferral. Prefer a specified mechanism to an escalation, and an escalation to an unspecified mechanism.\n" +
+    "- NEVER WRITE A COUNT of staged edits, sites, statements, rewrites, or files. Name the set, or point at the enumeration that carries it. A count goes stale the moment another fix adds one, and in this loop a stale count becomes a finding, a round, and two verification agents. The documentation rules ban counts for the same reason.\n" +
+    "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
     "- When a fix changes a trigger predicate or invariant, propagate the exact same predicate to every section that states it (design sections, summary tables, constant comments, proposed spec text, and tests) so no drift is introduced.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
     '- Append a new subsection to the proposal\'s "Resolved in adversarial review" section titled "### Pass <N> (' +
@@ -908,8 +954,16 @@ function fixPrompt(confirmed, round) {
 // The scope is deliberately the edit PLUS its blast radius rather than the edit
 // alone. Predicate drift is by definition an inconsistency between changed text
 // and text that did not change, so a reviewer confined to the edit cannot see it.
-function postFixPrompt(confirmed, fixSummary, round) {
+function postFixPrompt(confirmed, fixSummary, round, mechanisms) {
   return (
+    (mechanisms && mechanisms.length
+      ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
+        + "check against the tree that the state it reads is actually set AND cleared at the sites named; that "
+        + "the caller list is complete, including every type satisfying a changed interface; that the failure "
+        + "mode is observable; and that the named test would fail without it. A mechanism that fails any of "
+        + "these is a finding now, while its author's reasoning is still on the page, rather than three rounds "
+        + "from now when a sweep finds one facet of it.\n" + JSON.stringify(mechanisms, null, 2) + "\n\n"
+      : "") +
     "You are the post-fix reviewer for round " +
     round +
     ". A fixer has just edited the proposal " +
@@ -951,6 +1005,11 @@ function followUpFixPrompt(findings, round) {
     "\n\nReturn a short summary of each edit you made."
   );
 }
+
+// Mechanisms the fixer has invented, and how many later findings each has caused.
+// Fed back to the fixer as a strike table so a mechanism on its second failure is
+// specified whole or escalated rather than repaired one facet at a time.
+const introducedMechanisms = [];
 
 phase("Review");
 
@@ -1268,9 +1327,24 @@ while (round < maxRounds && !converged) {
         ": some verifiers failed after retries; round INCONCLUSIVE",
     );
   }
+  // Credit a later finding back to the mechanism it is about, so the strike table
+  // the next fixer sees reflects which of its own inventions keep failing.
+  const creditStrikes = (fs) => {
+    for (const m of introducedMechanisms) {
+      if (m.round >= round) continue;
+      const needle = String(m.name).toLowerCase();
+      if (needle.length < 4) continue;
+      for (const f of fs) {
+        const hay = (f.title + " " + f.where + " " + f.claim + " " + f.why_wrong).toLowerCase();
+        if (hay.includes(needle)) { m.strikes++; break; }
+      }
+    }
+  };
+
   const confirmed = live
     .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
     .map((v) => v.f);
+  creditStrikes(confirmed);
   live
     .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
     .forEach((v) => {
@@ -1359,10 +1433,34 @@ while (round < maxRounds && !converged) {
     continue;
   }
 
-  const fixSummary = await robustAgent(fixPrompt(confirmed, round), {
-    label: "r" + round + ":fix",
-    phase: "Round " + round + ": fix",
-  });
+  // Strike table: mechanisms this loop introduced in earlier rounds, with the
+  // number of later findings each has caused. The loop already has this
+  // information and has never used it, so a fixer repairing a mechanism for the
+  // third time has been doing so blind.
+  const strikeLines = introducedMechanisms
+    .filter((m) => m.strikes > 0)
+    .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
+    .join("\n");
+  const fixOut = await robustAgent(
+    fixPrompt(confirmed, round, strikeLines || null),
+    { label: "r" + round + ":fix", phase: "Round " + round + ": fix", schema: FIX_RESULT },
+  );
+  const fixSummary = fixOut && fixOut.summary ? fixOut.summary : fixOut;
+  const roundMechanisms = (fixOut && fixOut.newMechanisms) || [];
+  roundMechanisms.forEach((m) =>
+    introducedMechanisms.push({ name: m.name, round, strikes: 0 }),
+  );
+  if (roundMechanisms.length) {
+    log(
+      "Round " + round + ": fixer introduced " + roundMechanisms.length +
+      " new mechanism(s): " + roundMechanisms.map((m) => m.name).join(", "),
+    );
+  }
+  if (fixOut && fixOut.escalated && fixOut.escalated.length) {
+    log("Round " + round + ": " + fixOut.escalated.length + " finding(s) closed by escalation");
+    history[history.length - 1].escalated = fixOut.escalated;
+  }
+  history[history.length - 1].newMechanisms = roundMechanisms.map((m) => m.name);
   confirmed.forEach((f) => fixedTitles.push(f.title));
   history[history.length - 1].fixSummary = fixSummary || "fixer unavailable";
 
@@ -1372,7 +1470,7 @@ while (round < maxRounds && !converged) {
   // genuinely contested edit inside a round instead of surfacing it to the next
   // round's lenses and, ultimately, to the sweep.
   const postFix = await robustAgent(
-    postFixPrompt(confirmed, fixSummary, round),
+    postFixPrompt(confirmed, fixSummary, round, roundMechanisms),
     {
       label: "r" + round + ":post-fix-review",
       phase: "Round " + round + ": fix",
