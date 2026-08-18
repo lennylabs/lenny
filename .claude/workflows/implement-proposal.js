@@ -67,6 +67,30 @@ const SPEC_RULES =
   "- Apply staged prose as written otherwise; do not restyle it.\n" +
   "- These rules govern text you author from a staged block. For a mechanical edit you do not author the text: if the script's output violates one of them, that is a defect in the script or its register, so record it as a deviation and stop, rather than hand-correcting the output, which would put the tree and the register out of step.";
 
+// The proposal's Summary orients the spec-apply agents the same way it orients the
+// build agents: what changes, which decisions are closed, and the traps. An
+// applier that knows a decision is closed does not relitigate it in a sub-step.
+let proposalSummary = "";
+try {
+  const m = require("fs")
+    .readFileSync(proposal, "utf8")
+    .match(/\n## Summary\n([\s\S]*?)(?=\n## )/);
+  if (m) proposalSummary = m[1].trim();
+} catch (e) {
+  proposalSummary = "";
+}
+const SUMMARY_BLOCK = proposalSummary
+  ? "\n\nTHE PROPOSAL'S SUMMARY. It states the top-level changes, the decisions that are closed and must not " +
+    "be reopened, and the traps this change has already fallen into.\n\n" +
+    proposalSummary +
+    "\n"
+  : "";
+const BLANKS_BLOCK =
+  "\n\nA proposal may delegate a detail with an explicit **IMPLEMENTOR'S CHOICE:** marker naming what is open " +
+  "and the constraint any answer must satisfy. That is a delegation rather than an unappliable edit: make the " +
+  "choice, satisfy the constraint, and record it in your result. An UNMARKED gap in a staged edit is still " +
+  "unappliable and still stops the sub-step.\n";
+
 const PLAN = {
   type: "object",
   required: ["approved", "alreadyApplied", "statusLine", "specEdits", "nonSpecStaged", "findingIds"],
@@ -330,7 +354,7 @@ if (plan.specEdits.length === 0) {
               "\n\nEdits carry a method and are handled differently.\n" +
               "AUTHORED edits: read the proposal subsection, locate the anchor in the target file by its quoted text and section heading, and apply the staged text exactly as written (fenced blocks verbatim; replacement instructions replace exactly the text they name).\n" +
               "MECHANICAL edits: the proposal stages a script run rather than text, and deliberately enumerates no edit sites. Run the command the edit names. Do NOT hand-apply, hand-reproduce, or hand-correct what the script would write: the script resolves each site from a register and fails closed on a site the register does not carry, and hand-editing substitutes a guess for that guarantee, which is the failure this branch exists to prevent. Before applying, run the command's dry-run form when it has one, read its output, and confirm it touches only files this sub-step targets; then apply, and confirm the applied diff for this file matches what the dry run predicted. If the script exits non-zero, or the applied diff does not match the dry run, or the command is absent from the tree, record the edit as unappliable with that reason and STOP; never fall back to editing by hand.\n" +
-              SPEC_RULES +
+              SPEC_RULES + SUMMARY_BLOCK + BLANKS_BLOCK +
               "\n\nIf an anchor cannot be located with certainty, STOP: record that edit as unappliable with the reason, apply NOTHING FURTHER in this file, and return what you applied up to that point. Never guess a location, and never skip an edit in order to continue with the ones after it. Skipping leaves a file in which a later discrepancy cannot be told apart from an edit that never ran, and that is the state the verification loop cannot converge out of; a clean stop at the first unappliable edit is diagnosable, a partially applied file is not. Return the applied edit ids, the unappliable edits, and every rule-forced deviation.",
             { schema: APPLY_RESULT, label: "apply:" + ss + ":" + f.split("/").pop(), phase: "Apply spec" },
           );
@@ -452,7 +476,7 @@ if (plan.specEdits.length === 0) {
       ". Never modify the proposal or any other file.\n\nProposal: " +
       proposal +
       ".\n" +
-      SPEC_RULES +
+      SPEC_RULES + SUMMARY_BLOCK + BLANKS_BLOCK +
       "\n\nDiscrepancies to fix (the expected text is authoritative except where a content rule forces a deviation, which you record in your reply):\n" +
       JSON.stringify(found, null, 2) +
       "\n\nMake the smallest edits that resolve each discrepancy. Return a short summary of each fix.";

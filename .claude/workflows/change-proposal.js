@@ -20,8 +20,13 @@ for (const k of ["mode", "date", "exemplar", "repoRoot"]) {
   if (!input[k]) throw new Error("args." + k + " is required and missing");
 }
 const mode = input.mode;
-if (mode !== "new" && mode !== "review") {
-  throw new Error('args.mode must be "new" or "review"');
+if (mode !== "new" && mode !== "review" && mode !== "redesign") {
+  throw new Error('args.mode must be "new", "review", or "redesign"');
+}
+// redesign is review that opens with a caller-named redesign pass, so it takes the
+// same inputs and follows the same review loop once the redesign has been applied.
+if (mode === "redesign" && !(Array.isArray(input.focusAreas) && input.focusAreas.length)) {
+  throw new Error("args.focusAreas must name at least one area in redesign mode");
 }
 if (mode === "new") {
   for (const k of ["problem", "nextNumber"]) {
@@ -29,7 +34,9 @@ if (mode === "new") {
       throw new Error("args." + k + " is required in new mode and missing");
   }
 } else if (!input.proposalPath) {
-  throw new Error("args.proposalPath is required in review mode and missing");
+  throw new Error(
+    "args.proposalPath is required in " + mode + " mode and missing",
+  );
 }
 
 const repo = input.repoRoot;
@@ -135,6 +142,42 @@ const PREMISE_VERDICT = {
   },
 };
 
+
+// The two unnumbered sections every proposal opens with, and the marker that lets
+// a proposal leave a detail to the implementor without becoming loose. They are
+// defined once and injected into the writer, the fixer, the lenses that would
+// otherwise fight them, and the end-of-run verifier, so one statement of the
+// format reaches every agent that reads or writes it.
+const FORMAT_SUMMARY =
+  'A "## Summary" section, unnumbered, immediately after the staging boilerplate and before "## 0." or "## 1.". ' +
+  "It is the section every implementor agent reads first and the only one all of them read, so it orients rather than argues. Three labelled parts:\n" +
+  '  **What changes.** Three to six bullets, one per top-level change, each naming the surface it lands on.\n' +
+  '  **Fixed decisions.** The decisions an implementor must not revisit, one line each. This is distinct from the Decisions section, which says why a decision was taken; this says which are closed.\n' +
+  '  **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n';
+
+const FORMAT_CHECKLIST =
+  'An "## Implementation checklist" section, unnumbered, immediately after the Summary. It is the implementation sequence, ' +
+  "written as the proposal is written rather than derived afterwards by whoever implements it. Each step is one commit, and the steps are ordered so an implementor can take the lowest unchecked one and work independently of whoever takes the next.\n" +
+  "Format, exactly:\n" +
+  "```\n" +
+  "- [ ] **S1 · spec** — SPEC-1. One line saying what lands.\n" +
+  "      Tiers 0, 11. Depends on: —\n" +
+  "- [ ] **S2 · code** — CODE-1, CODE-2. One line saying what lands.\n" +
+  "      Tiers 0, 1, 3. Depends on: S1\n" +
+  "```\n" +
+  "Rules for the list:\n" +
+  "  Name the staged deliverables by their ids (SPEC-1, CODE-2, SCHEMA-1, MIG-1, REG-1). Every staged deliverable appears in exactly one step, and no step names one that does not exist.\n" +
+  "  Prefer one deliverable per step. Bundle two only when separating them gains nothing, which means they touch the same file and the same reader would review them together.\n" +
+  "  The lane after the step id is spec, code, schema, migration, test, or docs. Spec steps come first and code steps follow, which is the order the implementation pipeline applies them and the order to prefer. Interleaving a code step before a remaining spec step is allowed where it is genuinely more efficient, and a step that does so states why on its line, so an interleave is a deliberate and reviewable act rather than an accident.\n" +
+  '  "Tiers" lists the test tiers that step must run, per .claude/rules/test-coverage.md. "Depends on" lists earlier step ids, or an em dash when the step has none.\n' +
+  "  Keep every box unchecked. The implementation pipeline ticks them as it lands each step.\n";
+
+const FORMAT_BLANKS =
+  "A proposal may leave a detail to the implementor rather than specifying it, which keeps the document shorter and removes a place for two sections to drift apart. Every such gap is marked explicitly, in this form:\n" +
+  "  **IMPLEMENTOR'S CHOICE:** what is left open — the constraint any answer must satisfy.\n" +
+  "The constraint is not optional. Without it the marker is a licence rather than a delegation, and the implementor has nothing to satisfy or to be checked against.\n" +
+  "A blank is allowed only where the choice is local, reversible, and has no consequence in another section. A blank is NEVER allowed for a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering that another step depends on, a name that appears in more than one place, or anything a test must assert. Specify those.\n";
+
 const DRAFT = {
   type: "object",
   required: [
@@ -198,6 +241,9 @@ const FINDINGS = {
           "why_wrong",
           "evidence",
           "suggested_fix",
+          "area",
+          "kind",
+          "introducedBy",
         ],
         properties: {
           title: {
@@ -223,6 +269,33 @@ const FINDINGS = {
               "Exact file:line citations with short quotes for both the proposal claim and the contradicting source",
           },
           suggested_fix: { type: "string" },
+          area: {
+            type: "string",
+            description:
+              "Short stable slug for the part of the design this finding is about, lowercase and hyphenated: runtime-teardown, docs-corpus, test-inventory, credential-path, wire-schema. Reuse a slug another finding already used for the same subject rather than coining a near-synonym; the loop aggregates on this string to find where churn is concentrated.",
+          },
+          kind: {
+            type: "string",
+            enum: [
+              "design-defect",
+              "unstaged-site",
+              "contradiction",
+              "missing-test",
+              "test-disposition",
+              "bookkeeping",
+              "citation",
+              "attribution",
+              "other",
+            ],
+            description:
+              "design-defect: the staged mechanism does not work. unstaged-site: a spec, docs, schema, or code surface that becomes wrong and is in no edit list. contradiction: two parts of the proposal state incompatible things. missing-test: a staged behavior change nothing pins. test-disposition: an existing test filed under a description of the change that misstates what it asserts. bookkeeping: a count, enumeration, or cross-reference inside the proposal gone stale. citation: a cited line or section that does not say what is claimed. attribution: a code site or document misidentified. other: none of these.",
+          },
+          introducedBy: {
+            type: "string",
+            enum: ["pre-existing", "this-run", "unknown"],
+            description:
+              "Whether the defect is in text this review loop itself wrote. this-run: the text was added or rewritten by a fix round, which the proposal's own pass history records; a correction of a mechanism a fixer invented is this-run even when the mechanism is several rounds old. pre-existing: the text predates the loop, which covers every omission in the original staging. unknown only when the pass history genuinely does not settle it. This field measures how much of the loop's work is repairing itself, so guessing pre-existing to be safe defeats it.",
+          },
         },
       },
     },
@@ -578,7 +651,9 @@ if (mode === "new") {
       "Date: " +
       date +
       "\n" +
-      "Format: follow the structure of " +
+      "Format. Two unnumbered sections open the proposal, before the numbered ones:\n\n" +
+      FORMAT_SUMMARY + "\n" + FORMAT_CHECKLIST + "\n" + FORMAT_BLANKS +
+      "\nThen follow the structure of " +
       exemplar +
       ' exactly (read it first): the "# Proposal:" title; Status ("Draft for review."), Date, and Scope bullets; the staging boilerplate paragraph; numbered sections (Problem with file:line citations and any finding IDs the input named; Decisions; design sections; Edge cases and accepted failure modes (every edge case or failure mode the design accepts or defers — not only those it changes — each row naming the observable outcome and the exact spec text and docs/ page that states it, so a deferred mechanism still records its accepted behavior and stages the sentence that documents it; omit only when the change has no accepted or deferred failure mode); Proposed changes with one subsection per target (spec file and section, code package, or test) and an anchor instruction plus a fenced block of the exact text to insert or a precise change description; Non-goals; Testing (list the specific, insightful, relevant new tests to add during implementation — one per behavior the proposal changes, mapped to the tiers the change reaches per .claude/rules/test-coverage.md, each covering the non-happy-path it needs (empty, error, concurrent, boundary, and spec-named-failure) and carrying a // spec: tie, rather than a vague "add tests" note); Findings closed on application; Resolved in adversarial review, initially noting that review rounds populate it; Open decisions for review when the draft has open questions; Files touched on application consistent with the staged changes).\n' +
       "Prose rules: follow " +
@@ -638,6 +713,7 @@ const BAR =
   "(d) The proposal misses an edit site: a spec/, docs/, schemas/, or charts/ surface that would become wrong after the proposed edits are applied and that is absent from the proposal's edit lists. Editing a generated artifact instead of its authoring source counts.\n" +
   "(e) A described mechanism cannot work: race conditions, bypassable mandatory gates, unreachable trigger states, wrong defaults, mismatched granularity, predicate drift between sections, or ordering problems.\n" +
   "(f) The proposal changes behavior but does not list the tests that behavior requires: the Testing section is absent, omits a tier the change plainly reaches, names no concrete test for a behavior the proposal changes, or lists only a happy-path test where the change introduces an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (see .claude/rules/test-coverage.md). A proposal must list the specific, insightful, relevant new tests to add during implementation.\n\n" +
+  "A PROPERLY MARKED BLANK IS NOT A FINDING. A proposal may delegate a detail to the implementor with an explicit \"IMPLEMENTOR'S CHOICE:\" marker that names what is open AND the constraint any answer must satisfy. Do not report such a marker as an underspecified target, a missing edit site, or an unresolvable anchor: it is the format working as intended. Three things about a blank ARE findings, and you should report them. A marker with no constraint, because that delegates without bounding. A blank over something the format bars from delegation, which is a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. And a gap that is left unmarked, which is the ordinary underspecified-target finding and is unaffected by this rule.\n\n" +
   "DO NOT report: style or wording, documentation polish, optional improvements, additional nice-to-have tests beyond the coverage the change requires, hypothetical hardening, redundancy, preferences between workable designs, or anything whose absence does not make the applied spec or implementation wrong. If you are unsure whether something meets the bar, do not report it. An empty findings list is a fully acceptable answer and is the expected answer for a converged proposal.\n\n" +
   'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. Sections recording deliberately open decisions for the human reviewer are not findings.\n\n' +
   "Every finding MUST carry evidence: exact file paths with line numbers and short quotes for both the proposal's claim and the contradicting source. Read the files to verify line numbers; never cite from memory.\n\n" +
@@ -704,6 +780,8 @@ const LENSES = [
       "    Two signals make it near-certain and are worth grepping for: the proposal says it enumerates no edit sites, or states that completeness is proven by gates rather than by review, while still staging spec edits. Both mean the spec edits have no hand-appliable form by design.\n" +
       "    The resolution is a split (the code lands as its own proposal, first) or an explicit entry criterion, so state the gap and let the author choose. A proposal that already records such a prerequisite is conformant and is NOT a finding. Do not report ordinary sequencing inside one phase, which is class 4; this class is only the spec-before-code boundary the pipeline imposes from outside the document.\n\n" +
       "Method: read the proposal's staged-changes section in full and in order, then open the actual target files to confirm each anchor and each referenced artifact. Build the existence model as you go; a forward reference is only visible if you track what each sub-step creates. That model and class 2's step-1 worklist are the same enumeration read two ways, so build it once: for each created artifact ask both WHEN it exists relative to the edits that reference it (class 1) and WHETHER every property those edits need is stated (class 2). Do not report an edit as unappliable because you would have written it differently, and do not report ordinary implementation judgment (choosing a variable name, formatting a table) as underspecification. The test is whether a competent implementor would be forced to guess at something the proposal was responsible for stating.",
+      + "\n(CHECKLIST) THE IMPLEMENTATION CHECKLIST IS THE APPLICATION ORDER, so this lens owns it. Read it against the staged deliverables and report: a staged deliverable that appears in no step; a deliverable named by two steps; a step naming a deliverable the proposal does not stage; a Depends-on that names a later step or a step that does not exist; a step whose lane is code while a spec step it depends on comes after it, unless the step's line states why the interleave is deliberate; and a step whose tier list omits a tier its deliverable plainly reaches. Simulate the checklist as the order of application: if applying the steps in their stated order would hit a forward reference that applying them in another order would not, the checklist is the defect rather than the edit.\n" +
+      "A checked box is a finding. The proposal is not implemented, so every box is unchecked until the implementation pipeline ticks it."
   },
   {
     key: "test-coverage",
@@ -930,6 +1008,9 @@ function fixPrompt(confirmed, round, strikes) {
     "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
     "- When a fix changes a trigger predicate or invariant, propagate the exact same predicate to every section that states it (design sections, summary tables, constant comments, proposed spec text, and tests) so no drift is introduced.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
+    "- KEEP THE IMPLEMENTATION CHECKLIST CURRENT. It is maintained as the proposal changes rather than derived at the end. Any edit that adds, removes, merges, splits, or resequences a staged deliverable changes the checklist in the same edit: add or remove its step, correct the deliverable ids a step names, and correct any Depends-on that the change reorders. Every staged deliverable appears in exactly one step and no step names one that does not exist. Leave every box unchecked.\n" +
+    "- KEEP THE SUMMARY TRUE. If a fix changes a top-level change, closes or reopens a decision the Summary lists as fixed, or creates a trap an implementor would fall into, update the Summary in the same edit. It is the one section every implementor agent reads, so a stale line there misleads every one of them.\n" +
+    "- You may leave a detail to the implementor rather than specifying it, and doing so is often better than adding text that two sections then have to keep agreeing about. " + FORMAT_BLANKS +
     '- Append a new subsection to the proposal\'s "Resolved in adversarial review" section titled "### Pass <N> (' +
     date +
     ', automated)", where <N> continues the existing pass numbering (read the section to determine it; create the section before the open-decisions section if it does not exist), with one bullet per finding fixed, matching the format of any existing entries.\n' +
@@ -1010,6 +1091,262 @@ function followUpFixPrompt(findings, round) {
 // Fed back to the fixer as a strike table so a mechanism on its second failure is
 // specified whole or escalated rather than repaired one facet at a time.
 const introducedMechanisms = [];
+
+
+// ---- Introspection: where the loop's own effort is going ----
+//
+// Every confirmed finding carries an area, a kind, and a judgement of whether the
+// text it corrects was written by this loop. Aggregating those turns the loop's
+// output into a measurement of itself, which is what distinguishes a proposal
+// that is draining from one that is circling.
+//
+// A run measured before this existed spent 73% of its tokens on full-pool sweeps
+// at roughly 2M tokens per finding, and a quarter of its late findings were
+// corrections of text a fixer had written one round earlier, concentrated in
+// three mechanisms that a fixer had invented one finding at a time. None of that
+// was visible from inside the loop. The point of this block is that it now is,
+// and that the loop can stop and redesign rather than keep repairing.
+const churnWindow = input.churnWindow || 6;
+const churnMinFindings = input.churnMinFindings || 5;
+const churnStrikes = input.churnStrikes || 3;
+const redesignsAllowed = input.maxRedesigns === undefined ? 2 : input.maxRedesigns;
+let redesignsRun = 0;
+// area -> [{round, kind, introducedBy}]
+const areaLog = new Map();
+const redesignHistory = [];
+
+function recordFindings(rnd, fs) {
+  for (const f of fs) {
+    const area = (f.area || "unclassified").toLowerCase().trim();
+    if (!areaLog.has(area)) areaLog.set(area, []);
+    areaLog.get(area).push({
+      round: rnd,
+      kind: f.kind || "other",
+      introducedBy: f.introducedBy || "unknown",
+    });
+  }
+}
+
+// An area is churning when the loop keeps finding DESIGN problems there and the
+// rate is not falling. Volume alone is not churn: a large but draining area is
+// the loop working. What distinguishes churn is that the findings are about the
+// mechanism rather than about the text describing it, and that the most recent
+// window is no smaller than the one before it.
+function churningAreas(rnd) {
+  const out = [];
+  for (const [area, entries] of areaLog) {
+    if (area === "unclassified") continue;
+    const recent = entries.filter((e) => e.round > rnd - churnWindow);
+    if (recent.length < churnMinFindings) continue;
+    const deep = recent.filter(
+      (e) => e.kind === "design-defect" || e.kind === "contradiction",
+    ).length;
+    if (deep * 2 < recent.length) continue;
+    const prior = entries.filter(
+      (e) => e.round > rnd - 2 * churnWindow && e.round <= rnd - churnWindow,
+    );
+    if (prior.length && recent.length < prior.length) continue;
+    const selfInflicted = recent.filter((e) => e.introducedBy === "this-run").length;
+    out.push({
+      area,
+      findings: recent.length,
+      designDefects: deep,
+      selfInflicted,
+      reason:
+        recent.length +
+        " finding(s) in the last " +
+        churnWindow +
+        " rounds, " +
+        deep +
+        " of them design defects or contradictions, " +
+        selfInflicted +
+        " of them in text this run wrote, and the rate is not falling",
+    });
+  }
+  // A mechanism the fixer invented and has since had to repair repeatedly is
+  // churning by definition, whatever its area's totals say.
+  for (const m of introducedMechanisms) {
+    if (m.strikes < churnStrikes) continue;
+    if (out.some((o) => o.area === m.name.toLowerCase())) continue;
+    out.push({
+      area: m.name,
+      findings: m.strikes,
+      designDefects: m.strikes,
+      selfInflicted: m.strikes,
+      reason:
+        "a mechanism this loop introduced in round " +
+        m.round +
+        " and has since had to repair " +
+        m.strikes +
+        " times, one facet at a time",
+    });
+  }
+  return out;
+}
+
+
+// ---- Back to the drawing board ----
+//
+// When an area churns, more review rounds are the wrong instrument. The loop's
+// fixer answers one finding at a time and cannot see a mechanism whole, so it
+// repairs a facet and leaves the next one to be found. This subworkflow stops
+// the review, designs the churning areas once, and resumes.
+//
+// It writes a SUBPROPOSAL: a temporary document whose target is the main
+// proposal and whose content is a list of targeted edits to it. The subproposal
+// is reviewed on its own before it is applied, because a redesign that lands
+// unreviewed is the same defect at a larger grain.
+async function runRedesign(areas, rnd, why) {
+  redesignsRun++;
+  const tag = redesignsRun;
+  const sub =
+    repo +
+    "/scratchpad/redesign/" +
+    path.split("/").pop().replace(/\.md$/, "") +
+    "-redesign-" +
+    tag +
+    ".md";
+  log(
+    "REDESIGN " + tag + ": " + areas.map((a) => a.area).join(", ") + " — " + why,
+  );
+  phase("Redesign " + tag);
+
+  // One specification per area, in parallel. Each establishes ground truth in the
+  // tree BEFORE reading what the proposal says, because specifying against the
+  // proposal's own prose is how the mechanism got into this state.
+  const specs = (
+    await parallel(
+      areas.map((a) => () =>
+        robustAgent(
+          "Specify one mechanism of a change proposal properly, once, so that an adversarial review loop " +
+            "stops finding a new facet of it every round.\n\n" +
+            READ_ONLY +
+            "\n\nPROPOSAL: " + path + ". MECHANISM: " + a.area + ".\n\n" +
+            "WHY YOU ARE HERE. " + a.reason + ". Repairing it one finding at a time has not converged.\n\n" +
+            "The findings so far in this area, with the kind and provenance the reviewers assigned:\n" +
+            JSON.stringify((areaLog.get(a.area) || []).slice(-20), null, 2) +
+            "\n\nWHAT TO DO. Establish the ground truth in the repository FIRST, before you read what the " +
+            "proposal says about the mechanism: read the code it governs, enumerate exhaustively every type, " +
+            "caller, and call site it touches, and write down what is actually true. Only then read the " +
+            "proposal's current text and quote it. Then specify the mechanism whole: what it decides and on " +
+            "what state; every site that sets and every site that clears that state; every caller and every " +
+            "type satisfying an interface it changes; what happens when it does not fire and what observes " +
+            "that; and the test that pins it, named, at the tier that owns it.\n\n" +
+            "PREFER NOT HAVING A MECHANISM. The strongest outcome available to you is finding that some or " +
+            "all of what is there is unnecessary and should be deleted rather than specified. Say so plainly " +
+            "if you find it, with the evidence. A smaller mechanism beats a better-specified larger one.\n\n" +
+            "OUTPUT a numbered list of targeted edits to the proposal. Each names the deliverable or section " +
+            "it changes, quotes an anchor from the CURRENT proposal text, says whether it replaces, deletes, " +
+            "or inserts, and gives the exact replacement text. Precede the list with a short statement of the " +
+            "mechanism as you have specified it, so a reader can judge the edits against one coherent design. " +
+            "Flag any edit whose text another area's specification is likely to touch.",
+          { label: "redesign" + tag + ":spec:" + a.area, phase: "Redesign " + tag },
+        ),
+      ),
+    )
+  ).filter(Boolean);
+
+  if (!specs.length) {
+    log("REDESIGN " + tag + ": no specification returned; resuming review unchanged");
+    return false;
+  }
+
+  // Consolidate. Parallel specifications of overlapping mechanisms contradict each
+  // other, and applying them as written reintroduces the incoherence the redesign
+  // exists to end.
+  await robustAgent(
+    "Reconcile parallel specifications of a change proposal's churning mechanisms into ONE conflict-free " +
+      "list of targeted edits, and write it to " + sub + ". Create the directory if needed. That file is the " +
+      "only one you may write; never edit " + path + " or anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+      "THE SPECIFICATIONS, produced in parallel by agents that did not see each other's work:\n\n" +
+      specs.map((t, i) => "=== SPECIFICATION " + (i + 1) + " ===\n" + t).join("\n\n") +
+      "\n\nWhere two specifications conflict, prefer the one whose claim you can verify in the repository, " +
+      "and verify it rather than trusting either. Where both are defensible, prefer the smaller mechanism, and " +
+      "prefer deleting what was invented over specifying it. Where the conflict is a genuine design choice " +
+      "rather than a factual disagreement, do not pick silently: record it as an open decision with both " +
+      "options, their consequences, and your default.\n\n" +
+      "Check every anchor against the proposal's current text: an anchor that does not appear, or appears " +
+      "twice, or has been rewritten by an earlier edit in your own list, is a defect in the list. Order the " +
+      "edits so no edit's anchor is destroyed by one before it. Confirm no edit leaves a dangling reference " +
+      "to a deliverable, section, or identifier another edit deletes.\n\n" +
+      "WRITE: a statement of the mechanisms as reconciled; the conflicts with their resolutions and evidence; " +
+      "the ordered numbered edit list; the open decisions with defaults; and a plain list of what the " +
+      "consolidation deletes outright. Prose follows " + repo + "/.claude/rules/doc-style.md.",
+    { label: "redesign" + tag + ":consolidate", phase: "Redesign " + tag },
+  );
+
+  // Review the subproposal before it lands. Lighter than the main pool: this
+  // document is short, its subject is one design, and its edits are about to be
+  // read again by the main loop's own lenses once applied.
+  for (let r = 1; r <= (input.redesignReviewRounds || 2); r++) {
+    const revs = (
+      await parallel(
+        ["mechanism", "applicability", "edit-sites"].map((k) => () =>
+          robustAgent(
+            "Adversarially review a redesign subproposal before it is applied to its target.\n\n" +
+              READ_ONLY +
+              "\n\nSUBPROPOSAL: " + sub + ". TARGET: " + path + ".\n\n" +
+              (k === "mechanism"
+                ? "Judge the design. Does each reconciled mechanism work? Read the code it governs and check the state it reads is really set and cleared where claimed, the caller enumeration is complete, the failure mode is observable, and the named test would fail without it."
+                : k === "applicability"
+                  ? "Judge whether the edit list can be applied. Every anchor must appear in the target's current text exactly once and must survive every earlier edit in the list. Report any anchor that is absent, duplicated, or destroyed by a prior edit, and any edit whose replacement text references something another edit deletes."
+                  : "Judge completeness. Does the list touch every place the target states the mechanisms it changes? A mechanism respecified in one deliverable and left standing in another is the defect this redesign exists to end.") +
+              "\n\n" + BAR,
+            { label: "redesign" + tag + ":review:" + k + ":r" + r, phase: "Redesign " + tag, schema: FINDINGS },
+          ),
+        ),
+      )
+    ).filter(Boolean);
+    const fs = revs.flatMap((x) => x.findings || []);
+    log("REDESIGN " + tag + " review round " + r + ": " + fs.length + " finding(s)");
+    if (!fs.length) break;
+    await robustAgent(
+      "Correct a redesign subproposal. The only file you may edit is " + sub + ".\n\n" +
+        "Findings:\n" + JSON.stringify(fs, null, 2) +
+        "\n\nApply exactly these. Re-verify every citation you touch against the repository. Keep the edit " +
+        "list ordered so no anchor is destroyed by an earlier edit.",
+      { label: "redesign" + tag + ":fix:r" + r, phase: "Redesign " + tag },
+    );
+  }
+
+  // Apply to the main proposal.
+  await robustAgent(
+    "Apply a reviewed redesign to its target proposal.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + path + ". Never modify anything under spec/, docs/, " +
+      "pkg/, charts/, or schemas/, and do not edit " + sub + ".\n\n" +
+      "The redesign is at " + sub + ". Read it in full, then apply its edits in the order it gives, checking " +
+      "each anchor against the current text before you write. An anchor that does not appear is a defect in " +
+      "the redesign rather than a licence to guess: skip that edit, apply the rest, and say which you skipped " +
+      "and why.\n\n" +
+      "Then reconcile the proposal with what you changed: the Summary's fixed decisions and watch-outs, the " +
+      "implementation checklist's steps and their dependencies, the files-touched section, and the testing " +
+      "section. A redesign that deletes a mechanism leaves its steps, its tests, and its files behind unless " +
+      "you remove them.\n\n" +
+      'Append a subsection to the proposal\'s "Resolved in adversarial review" section titled "### Redesign ' +
+      tag + " (" + date + ', automated)", recording which areas were redesigned, why, what the redesign ' +
+      "deleted, and any open decisions it recorded. Prose follows " + repo + "/.claude/rules/doc-style.md.",
+    { label: "redesign" + tag + ":apply", phase: "Redesign " + tag },
+  );
+
+  // The areas were just redesigned, so their history no longer describes the text
+  // in front of the loop. Keeping it would re-trigger the detector immediately on
+  // evidence the redesign has already answered.
+  for (const a of areas) {
+    areaLog.delete(a.area);
+    for (const m of introducedMechanisms) {
+      if (m.name.toLowerCase() === a.area.toLowerCase()) m.strikes = 0;
+    }
+  }
+  redesignHistory.push({
+    tag,
+    round: rnd,
+    areas: areas.map((a) => a.area),
+    why,
+    subproposal: sub,
+  });
+  log("REDESIGN " + tag + " applied; resuming review");
+  return true;
+}
 
 phase("Review");
 
@@ -1147,6 +1484,24 @@ function applyRetirement(lenses, lensResults, survivors, round, note) {
         back.join(", ") +
         " (a finding of its own survived verification)",
     );
+  }
+}
+
+// Redesign as an entry mode. The caller names the areas, so the loop does not
+// have to discover the churn first: a human who already knows which mechanism is
+// wrong should not have to pay six rounds for the detector to agree.
+if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length)) {
+  const named = (input.focusAreas || []).map((a) => ({
+    area: String(a).toLowerCase().trim(),
+    findings: 0,
+    designDefects: 0,
+    selfInflicted: 0,
+    reason: "named by the caller as an area to redesign before review begins",
+  }));
+  if (named.length) {
+    await runRedesign(named, 0, "requested by the caller");
+  } else {
+    log("Redesign mode with no focusAreas; nothing to redesign, entering review");
   }
 }
 
@@ -1345,6 +1700,7 @@ while (round < maxRounds && !converged) {
     .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
     .map((v) => v.f);
   creditStrikes(confirmed);
+  recordFindings(round, confirmed);
   live
     .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
     .forEach((v) => {
@@ -1504,9 +1860,60 @@ while (round < maxRounds && !converged) {
     history[history.length - 1].followUpFixSummary =
       followUp || "follow-up fixer unavailable";
   }
+
+  // Churn test, after the round's fixes have landed. Running it here rather than
+  // before the fixes means the decision is taken on the text the next round will
+  // actually read.
+  if (redesignsRun < redesignsAllowed) {
+    const churn = churningAreas(round);
+    if (churn.length) {
+      history[history.length - 1].churnDetected = churn.map((c) => c.area);
+      const did = await runRedesign(
+        churn,
+        round,
+        "detected after round " + round,
+      );
+      if (did) {
+        // The document in front of the lenses is materially different, so no
+        // lens may stay retired on the strength of having read the old one.
+        retired.clear();
+        history[history.length - 1].redesignApplied = true;
+      }
+    }
+  }
 }
 
 converged = converged && !reviewersFailed;
+
+// One verification pass over the implementation checklist and the Summary, after
+// convergence and before the proposal is marked verified. Both are maintained as
+// the proposal changes rather than written at the end, so this confirms the
+// maintenance held rather than producing them from scratch.
+if (converged) {
+  await robustAgent(
+    "Verify one proposal's Summary and implementation checklist against the rest of the document, and " +
+      "correct them where they have drifted.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " +
+      path +
+      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+      "THE CHECKLIST. Every staged deliverable appears in exactly one step. No step names a deliverable the " +
+      "proposal does not stage. Every Depends-on names an earlier step that exists. Spec steps precede the code " +
+      "steps that consume them, and any step whose lane breaks that order states on its own line why the " +
+      "interleave is deliberate. Each step's tier list covers the tiers its deliverables reach. Every box is " +
+      "unchecked. Then read the steps as an order of application: if applying them in sequence would hit a " +
+      "forward reference that another order would not, resequence.\n\n" +
+      "THE SUMMARY. Its top-level changes match what the proposal now stages. Every decision it lists as fixed " +
+      "is one the document still takes, and no decision the document treats as settled is missing from it. Its " +
+      "watch-outs still describe traps the current design has, rather than ones an earlier revision had.\n\n" +
+      "Correct what has drifted, in place. Change nothing else: this is a reconciliation pass, not a review " +
+      "round, and the design is settled. Follow " +
+      repo +
+      "/.claude/rules/doc-style.md.",
+    { label: "verify-checklist", phase: "Review" },
+  );
+  log("Checklist and Summary verified against the converged proposal");
+}
+
 if (converged) {
   await robustAgent(
     "Update one proposal's Status bullet to record verification.\n\n" +
@@ -1537,6 +1944,21 @@ return {
     mode === "new"
       ? { kept: keptTitles, dropped: droppedChanges.map((d) => d.title) }
       : undefined,
+  introspection: {
+    byArea: Object.fromEntries(
+      [...areaLog].map(([a, es]) => [
+        a,
+        {
+          total: es.length,
+          design: es.filter((e) => e.kind === "design-defect").length,
+          selfInflicted: es.filter((e) => e.introducedBy === "this-run").length,
+          rounds: [...new Set(es.map((e) => e.round))],
+        },
+      ]),
+    ),
+    mechanisms: introducedMechanisms,
+    redesigns: redesignHistory,
+  },
   review: {
     converged,
     reviewersFailed,

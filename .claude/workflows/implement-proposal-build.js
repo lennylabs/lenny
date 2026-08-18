@@ -99,6 +99,37 @@ const RULES =
   "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kubebuilder-envtest 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
   "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `impl/v1-initial` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
 
+// The proposal's Summary is the one section every agent in this phase reads. It
+// carries the top-level changes, the decisions that are closed, and the traps, so
+// an implementer building step nine orients the same way as one building step one.
+let proposalSummary = "";
+try {
+  const m = require("fs")
+    .readFileSync(proposal, "utf8")
+    .match(/\n## Summary\n([\s\S]*?)(?=\n## )/);
+  if (m) proposalSummary = m[1].trim();
+} catch (e) {
+  proposalSummary = "";
+}
+
+const SUMMARY_BLOCK = proposalSummary
+  ? "\n\nTHE PROPOSAL'S SUMMARY. Read this before anything else. It states the top-level changes, the " +
+    "decisions that are closed and must not be reopened, and the traps this change has already fallen into.\n\n" +
+    proposalSummary +
+    "\n"
+  : "";
+
+const BLANKS_BLOCK =
+  "\n\nBLANKS THE PROPOSAL LEAVES TO YOU. A proposal may delegate a detail rather than specify it, marked as " +
+  "**IMPLEMENTOR'S CHOICE:** naming what is open and the constraint any answer must satisfy. When you reach " +
+  "one: make the choice, satisfy the constraint, and record in your commit message and your result which " +
+  "choice you made and how it satisfies the constraint. A marked blank is a delegation, so it is not a defect " +
+  "and not a reason to stop. An UNMARKED gap is different: the proposal neither says what to do nor delegates " +
+  "it, so report it rather than guessing.\n";
+
+// Everything the per-step agents need beyond their own instructions.
+const RULES_FULL = RULES + SUMMARY_BLOCK + BLANKS_BLOCK;
+
 // One build step, shared by the initial plan and the tail re-plan.
 const STEP_ITEM = {
   type: "object",
@@ -115,6 +146,26 @@ const STEP_ITEM = {
       description: "test tiers this step must create and run (e.g. unit, component, integration)",
     },
     specRefs: { type: "array", items: { type: "string" } },
+    checklistStep: {
+      type: "string",
+      description:
+        "the id of the proposal's implementation-checklist step this step carries across, when the proposal has a checklist",
+    },
+    alreadyDone: {
+      type: "boolean",
+      description:
+        "the step's surface is already present in the tree; keep it in the sequence so dependencies still resolve, but build nothing",
+    },
+    needsIntent: {
+      type: "boolean",
+      description:
+        "the step cannot be built literally as the checklist words it; the implementer works from the proposal's stated intent, recorded in work",
+    },
+    blocked: {
+      type: "string",
+      description:
+        "why this step cannot be built at all, when even its intent could not be recovered; steps that do not depend on it still run",
+    },
   },
 };
 
@@ -134,6 +185,12 @@ const PLAN = {
       items: STEP_ITEM,
     },
     risks: { type: "array", items: { type: "string" } },
+    deviations: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "every place the proposal's implementation checklist did not match the tree: a step already done, a step re-sequenced because its prerequisite was elsewhere, a step whose deliverable is missing, or the absence of a checklist entirely. Reported so the proposal can be corrected; an imperfect checklist is expected and is not a reason to stop.",
+    },
   },
 };
 
@@ -241,19 +298,41 @@ const SHA = {
 phase("Plan");
 log("Planning the blast radius and build sequence for " + proposal);
 let plan = skipBuild ? { steps: [] } : await agentTry(
-  "Plan the code implementation of an applied spec proposal.\n\n" +
+  "Turn a proposal's implementation checklist into the build sequence for its code phase.\n\n" +
     "You are a read-only planner; do not edit any file. Work in " +
     repo +
-    ".\n\n" +
-    "Proposal: " +
+    ".\n\nProposal: " +
     proposal +
-    ". The proposal's spec edits are ALREADY applied to spec/. Read the proposal in full — every section, especially Detailed design, CRD and RBAC changes, Observability, Proposed spec changes (now landed in spec/), Testing, and Files touched. The finding(s) that reference this proposal are entry points; the proposal defines the complete change.\n\n" +
-    "Then map the full blast radius: grep spec/, pkg/, cmd/, charts/, schemas/, and migrations/ for every existing surface the change touches (call sites, builders, stores, controllers, reconcilers, CRD types, proto/JSONL schemas, chart templates, alert rules) and every new surface it adds. " +
-    "The blast radius and the build sequence MUST include the surfaces the proposal REMOVES, not only those it adds or changes: for every mode, field, RPC, frame, metric, enum value, function, or whole file the proposal eliminates, include an explicit removal step that deletes it plus the code paths, tests, fixtures, schema entries, and chart templates orphaned by its removal, sequenced so the removal lands without breaking the build (remove consumers before the surface, or in the same step). A surface the proposal eliminates that has no removal step is a planning gap. " +
-    "Produce blastRadius (one entry per surface) and an ORDERED build sequence of steps where each step is independently implementable once its dependencies are done. For each step give the work, the target files or packages, dependsOn (earlier step ids), the test tiers it must create and run (per " +
+    ". Its spec edits are ALREADY applied to spec/.\n\n" +
+    "READ THE PROPOSAL'S SUMMARY AND ITS IMPLEMENTATION CHECKLIST FIRST. The checklist is an ordered list of " +
+    "steps, each naming the staged deliverables it lands, the test tiers it must run, and the earlier steps it " +
+    "depends on. It was written and maintained while the proposal was reviewed, so it is the sequence, and you " +
+    "are not being asked to invent one. Carry its steps across in order, keeping their ids, their deliverable " +
+    "ids, their tiers, and their dependencies.\n\n" +
+    "THEN CHECK IT AGAINST THE TREE, because a checklist written during review can be stale or wrong in three " +
+    "ways, and the run must survive all three rather than stopping at them.\n" +
+    "  A step whose surface is ALREADY PRESENT. Grep-confirm before you assume; a proposal can be partially " +
+    "implemented from an interrupted run or from work that landed by another route. Mark such a step " +
+    "alreadyDone with the evidence, and keep it in the sequence so the dependency graph stays intact.\n" +
+    "  A step that DEPENDS ON SOMETHING ABSENT that the checklist says an earlier step provides. The checklist " +
+    "is mis-ordered. Re-sequence locally: move the step after whatever genuinely provides its prerequisite, and " +
+    "record the move in deviations. Do not stop.\n" +
+    "  A step that CANNOT BE BUILT AS WRITTEN, because a deliverable it names does not exist in the proposal, or " +
+    "its target is gone. Keep the step, mark it needsIntent, and say what the proposal's own text says the step " +
+    "is for; the implementer will work from the intent. Only when the intent cannot be recovered either does the " +
+    "step become blocked, and a blocked step does not stop the steps that do not depend on it.\n\n" +
+    "A checklist that is imperfect is expected. Your job is to produce a runnable sequence from it and a clear " +
+    "record of where it was wrong, so the proposal can be corrected afterwards. Never abandon the checklist and " +
+    "derive your own order from scratch: the order encodes review decisions you cannot see.\n\n" +
+    "IF THE PROPOSAL HAS NO IMPLEMENTATION CHECKLIST, say so in deviations and derive the sequence yourself, " +
+    "the way a planner had to before checklists existed: map the blast radius by grepping spec/, pkg/, cmd/, " +
+    "charts/, schemas/, and migrations/ for every surface the change touches and every surface it REMOVES, and " +
+    "emit an ordered sequence with an explicit removal step for each eliminated mode, field, RPC, frame, metric, " +
+    "enum value, function, or file, including the code, tests, fixtures, and templates orphaned by it.\n\n" +
+    "Either way, produce blastRadius (one entry per surface the change touches) and the ordered steps, each with " +
+    "its work, target files or packages, dependsOn, test tiers per " +
     repo +
-    "/.claude/rules/test-coverage.md), and the spec sections it implements. Sequence so foundational changes (CRD fields, schemas, shared types) come before the code that consumes them, and tests for each step land within that step." +
-    " A proposal may be partially implemented already, from an earlier interrupted run or from work that landed by another route. Before emitting a step, grep-confirm that its surface is genuinely absent from the current code, and read `git log --oneline -40` on the branch to see what has landed. Emit no step for a surface that is already present, and say in the step list which surfaces you checked and found already done.",
+    "/.claude/rules/test-coverage.md, and the spec sections it implements.",
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
@@ -340,8 +419,37 @@ if (!baseRef) {
 const stepResults = [];
 let priorContext = "";
 let replanCount = 0;
+const skippedSteps = [];
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
+  // A step the planner found already present builds nothing. It stays in the
+  // sequence so later steps' dependencies still resolve, and it is reported so
+  // the proposal's checklist can be corrected.
+  if (step.alreadyDone) {
+    log("Step " + step.id + ": already present in the tree; nothing to build");
+    skippedSteps.push({ id: step.id, why: "already present" });
+    stepResults.push({ step: step.id, skipped: "already present" });
+    continue;
+  }
+  // A blocked step does not stop the ones that do not depend on it. Only when
+  // nothing remains runnable does the sequence end, which the tail check below
+  // reports.
+  if (step.blocked) {
+    log("Step " + step.id + ": BLOCKED — " + step.blocked);
+    skippedSteps.push({ id: step.id, why: step.blocked });
+    stepResults.push({ step: step.id, blocked: step.blocked });
+    continue;
+  }
+  const blockedDeps = (step.dependsOn || []).filter((d) =>
+    stepResults.some((r) => r.step === d && r.blocked),
+  );
+  if (blockedDeps.length) {
+    const why = "depends on blocked step(s) " + blockedDeps.join(", ");
+    log("Step " + step.id + ": skipped, " + why);
+    skippedSteps.push({ id: step.id, why });
+    stepResults.push({ step: step.id, blocked: why });
+    continue;
+  }
   const stepHeader =
     "Step " +
     step.id +
@@ -392,7 +500,7 @@ for (let i = 0; i < plan.steps.length; i++) {
             stepHeader +
             priorContext +
             "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). If this step CORRECTS existing behavior, add a regression test that asserts the corrected outcome and would fail against the pre-fix code (see RULES below) — not merely a test that line-covers the changed lines. Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
-            RULES +
+            RULES_FULL +
             "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run."
         : "Continue one build step of an applied spec proposal that is not yet green-and-conformant.\n\n" +
             "HARD CONSTRAINT: work only on this step. Do not start later steps. Do not edit spec/. Work in " +
@@ -405,7 +513,7 @@ for (let i = 0; i < plan.steps.length; i++) {
             "\n\nThe prior attempt left this step not done. Address this:\n" +
             issues +
             "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code to match the proposal's design where the issue is a divergence), run tier 0, tier 1, and this step's listed tiers to green (skip only a tier that genuinely needs a cloud-only resource, noting it), then commit on the current branch. " +
-            RULES +
+            RULES_FULL +
             "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
       { schema: STEP, label: "build:" + step.id + (attempt > 1 ? ":fix" + attempt : ""), phase: "Build" },
     );
@@ -506,6 +614,26 @@ for (let i = 0; i < plan.steps.length; i++) {
           ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
             JSON.stringify(stepFindings, null, 2)
           : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
+    }
+  }
+
+  // Tick the proposal's checklist box for this step once it is green and
+  // conformant. The box is the resumption record: a later run reads it to find
+  // where to continue, which is what the pipeline previously had no way to know.
+  if (stepGreen && stepReviewClean && step.checklistStep) {
+    try {
+      const fs = require("fs");
+      const before = fs.readFileSync(proposal, "utf8");
+      const re = new RegExp(
+        "^- \\[ \\](\\s+\\*\\*" + step.checklistStep + "\\s)",
+        "m",
+      );
+      if (re.test(before)) {
+        fs.writeFileSync(proposal, before.replace(re, "- [x]$1"));
+        log("Checklist: ticked " + step.checklistStep);
+      }
+    } catch (e) {
+      log("Checklist: could not tick " + step.checklistStep + " (" + e.message + ")");
     }
   }
 
@@ -953,6 +1081,11 @@ return {
   status: finalGreen && reviewClean ? "implemented" : "implemented-not-green",
   blastRadius: plan.blastRadius,
   steps: stepResults,
+  // Where the proposal's implementation checklist did not match the tree. An
+  // imperfect checklist is expected and does not stop the run, so this is the
+  // record that lets the proposal be corrected afterwards.
+  checklistDeviations: plan.deviations || [],
+  skippedSteps,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
   green: finalGreen,
   reviewClean,
