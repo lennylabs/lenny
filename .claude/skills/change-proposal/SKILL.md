@@ -52,6 +52,10 @@ These design points come from convergence runs on prior proposals in this reposi
 - **Retirement is credited per lens, through the dedup merge.** The script stamps each finding with the lens that produced it before any model sees it, and the dedup step must return a `lenses` union for every merged entry, because a merge collapses several reviewers' findings into one and the loop has to credit a survivor back to all of them. If dedup drops the union, the round falls back to the weaker rule of retiring only a lens that reported nothing, and logs that it did; retiring on an empty survivor set would otherwise retire the whole pool on a round that confirmed real defects.
 - **Retirement is keyed on a genuine result, never on a failure.** A lens dropped by a transient API failure contributes zero findings and is indistinguishable from a satisfied lens, so retiring on failure would let an outage certify a proposal. A failed lens keeps its prior state and runs again.
 - **The fixer's own edits get a narrow review, then at most one follow-up fix.** Fix-stage text is the newest and least-examined text in the proposal, and this loop's history records that fixers introduce their own errors. Before this step the only scrutiny it received was the next round's whole-document lenses, which are told the TITLES of what was fixed but never what the fixer actually wrote; under lens retirement that gap widens, because a retired lens does not re-read anything until the sweep. The post-fix reviewer asks exactly three questions: did each fix land, did any edit leave a parallel statement stale (drift, the highest-yield check), and is every newly written citation real. Its scope is the edit plus its blast radius rather than the edit alone, because drift is by definition an inconsistency between changed text and text that did not change. The follow-up is capped at one pass: this is a correction on fresh text, not a second convergence loop, and an unbounded cycle here would bury a contested edit inside a round instead of surfacing it to the next round's lenses and to the sweep.
+- **The fixer declares any mechanism it invents, and specifies it whole.** Inventing one is often the only correct fix, and it is also the most dangerous edit in the loop: a mechanism added to close a single finding lands unspecified, nothing reads it as a design, and later rounds discover its facets one at a time. One measured run produced most of its late defects from three such mechanisms. So a fixer that must add a field, flag, report, compensating action, RPC, frame, or interface change states, in the same edit, the state it reads and every site that sets and clears that state, every caller and every type satisfying a changed interface, the failure mode and what observes it, and the test that pins it. It declares the mechanism in its structured result, and the post-fix reviewer that already runs each round then reads it as a design rather than as a diff. Escalating to an open decision instead is a complete fix; the preference order is a specified mechanism, then an escalation, and never an unspecified mechanism.
+- **The fixer is shown which of its own mechanisms keep failing.** The loop records every mechanism a fixer introduced and counts the later findings each has caused, then hands that table to the next fixer. A fixer repairing a mechanism for the third time was previously doing so blind. The same counter feeds the churn detector, where `churnStrikes` marks an area as churning by definition.
+- **The fixer may not write counts, and reconciles enumerations after editing.** Nine of twenty self-inflicted findings in one measured run were stale counts: a section saying "three staged edits" after another fix made it four. Counts in prose are banned outright, which removes the category by construction, and after editing the fixer reconciles every enumeration and cross-reference that names a section it touched, because a fix correcting one section and leaving another section's list of its contents stale is two findings rather than one.
+- **The fixer reads the whole batch before editing.** Findings that look independent often share a root, and closing them separately produces edits that contradict each other and become findings of their own a round later. Findings touching the same text, section, or mechanism are grouped and fixed as one change.
 - **Reviewers are told to be exhaustive in one pass.** Because a lens may not run again before certification, a withheld finding costs an entire extra round for every other reviewer. The finding bar is unchanged: exhaustiveness applies within it, and a speculative finding still wastes two verifiers and pollutes the refuted list.
 - **Two skeptics per finding, both must confirm.** One re-derives the evidence from the files; one judges materiality assuming the evidence is true, with instructions to default to refuted. The split kills plausible-but-wrong findings and nitpicks separately.
 - **Refuted findings are remembered and injected into later rounds.** Without the memory, a refuted finding resurfaces in a later round, wastes verification, and can block convergence.
@@ -67,6 +71,10 @@ These design points come from convergence runs on prior proposals in this reposi
 - **When an area churns, the loop stops reviewing and redesigns it.** More rounds are the wrong instrument for a mechanism that is under-designed: the fixer answers one finding at a time and cannot see a mechanism whole, so it repairs a facet and leaves the next to be found. An area is churning when, over the last `churnWindow` rounds, it produced at least `churnMinFindings` findings, at least half of them design defects or contradictions, and its rate is not falling; a mechanism the fixer invented and has since had to repair `churnStrikes` times is churning by definition. The counter does not act on that judgement itself: it wakes the introspection pass, which adjudicates and may find the area is simply large and draining. When the pass does call for a redesign, the loop runs the redesign subworkflow, resumes, and clears that area's history so the detector does not immediately re-fire on evidence the redesign has answered. Every lens is un-retired after a redesign, because the document in front of them is materially different from the one they last read.
 - **A redesign produces a reviewed subproposal rather than an edit.** One agent per churning area establishes ground truth in the repository *before* reading what the proposal says, since specifying against the proposal's own prose is how the mechanism reached this state, and each is explicitly permitted to conclude that what is there should be deleted rather than specified. A consolidation agent reconciles the parallel specifications, which contradict each other by construction, verifies every anchor is present and unique and survives the edits ordered before it, and writes the subproposal under `scratchpad/redesign/`. The subproposal is reviewed by a lighter pool (mechanism, applicability, edit-sites) before it is applied, because a redesign that lands unreviewed is the same defect at a larger grain. Applying it reconciles the Summary, the checklist, the files-touched section, and the testing section, since a redesign that deletes a mechanism otherwise leaves its steps and tests behind.
 - **A rotating extra lens, on top of the fixed set.** The fixed lenses develop shared blind spots over rounds because they re-read the same document. One extra lens rotates per round (operational consistency, then fresh holistic read) and has found confirmed errors in rounds the fixed lenses passed.
+
+## The end-of-run reconciliation
+
+After a run converges and before the Status bullet is written, one pass reconciles the Summary and the implementation checklist against the rest of the document. Both are maintained round by round, so this confirms the maintenance held rather than producing them from scratch: every staged deliverable appears in exactly one step, no step names a deliverable that does not exist, every dependency names an earlier step, spec steps precede the code steps that consume them unless a step states why it interleaves, tier lists cover the tiers their deliverables reach, every box is unchecked, and the Summary's fixed decisions still match what the document stages. It corrects drift and changes nothing else, because the design is settled by then and this is not another review round.
 
 ## Error classes with a record of surviving verification
 
@@ -147,7 +155,14 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
   "lensPrompt": "<optional: appended to every review lens prompt>",
   "startLenses": ["<optional: lens keys for round 1 only>"],
-  "excludeLenses": ["<optional: lens keys never run>"]
+  "excludeLenses": ["<optional: lens keys never run>"],
+  "introspectEvery": 5,
+  "churnWindow": 6,
+  "churnMinFindings": 5,
+  "churnStrikes": 3,
+  "maxRedesigns": 2,
+  "redesignReviewRounds": 2,
+  "focusAreas": ["<optional: slug, or {area, reason}; required in redesign mode>"]
 }
 ```
 
@@ -163,9 +178,33 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
   "lensPrompt": "<optional: appended to every review lens prompt>",
   "startLenses": ["<optional: lens keys for round 1 only>"],
-  "excludeLenses": ["<optional: lens keys never run>"]
+  "excludeLenses": ["<optional: lens keys never run>"],
+  "introspectEvery": 5,
+  "churnWindow": 6,
+  "churnMinFindings": 5,
+  "churnStrikes": 3,
+  "maxRedesigns": 2,
+  "redesignReviewRounds": 2,
+  "focusAreas": ["<optional: slug, or {area, reason}; required in redesign mode>"]
 }
 ```
+
+```json
+{
+  "mode": "redesign",
+  "proposalPath": "proposals/<file>.md",
+  "focusAreas": [
+    { "area": "<mechanism slug>", "reason": "<what keeps going wrong there, and the evidence>" }
+  ],
+  "date": "<YYYY-MM-DD>",
+  "exemplar": "proposals/<highest-numbered other proposal>.md",
+  "repoRoot": "<absolute repo root>",
+  "maxReviewRounds": 16
+}
+```
+
+Redesign mode runs the redesign subworkflow over the named areas, applies the result, and then enters the review loop exactly as review mode does. Supplying `focusAreas` in review mode does the same thing; the separate mode exists to make the intent explicit.
+
 
 Pass `args` as a JSON object value in the tool call. The script tolerates a JSON-encoded object string by parsing it; anything else aborts on the args guard.
 
