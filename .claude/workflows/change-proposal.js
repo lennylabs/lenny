@@ -28,6 +28,17 @@ if (mode !== "new" && mode !== "review" && mode !== "redesign") {
 if (mode === "redesign" && !(Array.isArray(input.focusAreas) && input.focusAreas.length)) {
   throw new Error("args.focusAreas must name at least one area in redesign mode");
 }
+if (Array.isArray(input.focusAreas)) {
+  for (const a of input.focusAreas) {
+    const ok =
+      (typeof a === "string" && a.trim()) ||
+      (a && typeof a === "object" && typeof a.area === "string" && a.area.trim());
+    if (!ok)
+      throw new Error(
+        'each args.focusAreas entry must be a slug or { area, reason }',
+      );
+  }
+}
 if (mode === "new") {
   for (const k of ["problem", "nextNumber"]) {
     if (!input[k])
@@ -667,6 +678,68 @@ if (mode === "new") {
   path = input.proposalPath.startsWith("/")
     ? input.proposalPath
     : repo + "/" + input.proposalPath;
+}
+
+
+// ---- Bootstrap: give an existing proposal the two sections it predates ----
+//
+// The writer produces the Summary and the implementation checklist in new mode.
+// A proposal written before those existed has neither, and everything downstream
+// assumes both: the fixer is told to keep the checklist current, the
+// applicability lens to validate it, and the end-of-run pass to reconcile it.
+// Without this step each of those improvises separately.
+//
+// The sections are created ONCE, here, and then maintained and lens-checked like
+// any other section for the rest of the run. That is the whole point of doing it
+// at round zero rather than at the end: a checklist asserted after convergence is
+// a guess at a sequence dressed as a decision, while one created here is
+// validated by every round that follows it.
+if (mode !== "new") {
+  let needsBootstrap = false;
+  try {
+    const text = require("fs").readFileSync(path, "utf8");
+    needsBootstrap =
+      !/^## Summary\s*$/m.test(text) ||
+      !/^## Implementation checklist\s*$/m.test(text);
+  } catch (e) {
+    needsBootstrap = false;
+  }
+  if (needsBootstrap) {
+    phase("Bootstrap");
+    log("Proposal predates the Summary and checklist sections; creating them");
+    await robustAgent(
+      "Give an existing change proposal the two sections it was written before, deriving both from what the " +
+        "document already says rather than inventing anything new.\n\n" +
+        "HARD CONSTRAINT: the only file you may edit is " +
+        path +
+        ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. Add the two sections and " +
+        "change nothing else: no decision is reopened here, no staged change is edited, and no wording " +
+        "elsewhere is improved. This is a structural addition.\n\n" +
+        "Read the whole proposal first. Then insert both sections, unnumbered, after the staging boilerplate " +
+        "paragraph and before the first numbered section, in this order.\n\n" +
+        FORMAT_SUMMARY +
+        "\nDerive the Summary from the document. Its top-level changes are the staged deliverables grouped by " +
+        "what they accomplish rather than listed one by one. Its fixed decisions are the proposal's own " +
+        "Decisions, reduced to the line an implementor needs and stripped of the reasoning. Its watch-outs come " +
+        "from the recorded limits, the open questions, the accepted failure modes, and the review history: a " +
+        "trap the loop already fell into is exactly what an implementor needs warning about, and the pass log " +
+        "is where those are recorded.\n\n" +
+        FORMAT_CHECKLIST +
+        "\nDerive the checklist from the staged deliverables and the dependencies the document states between " +
+        "them. Read the Proposed changes section, the detailed design, and the files-touched section together: " +
+        "a deliverable that edits a file another deliverable creates depends on it, and a code deliverable that " +
+        "consumes a specification statement depends on the deliverable that states it. Where the document " +
+        "already records an application order or a precondition, follow it rather than deriving your own.\n\n" +
+        "WHERE THE DOCUMENT DOES NOT SETTLE AN ORDER, say so rather than guessing silently: put the step where " +
+        "it seems to belong and note on its line that the order is inferred. The review rounds that follow will " +
+        "check it, and a marked inference is something they can check, while a confident guess is not.\n\n" +
+        "Follow " +
+        repo +
+        "/.claude/rules/doc-style.md.",
+      { label: "bootstrap-sections", phase: "Bootstrap" },
+    );
+    log("Summary and implementation checklist created");
+  }
 }
 
 // ---- Conventions pass (shared, one-shot, outside the error loop) ----
@@ -1860,13 +1933,25 @@ function applyRetirement(lenses, lensResults, survivors, round, note) {
 // have to discover the churn first: a human who already knows which mechanism is
 // wrong should not have to pay six rounds for the detector to agree.
 if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length)) {
-  const named = (input.focusAreas || []).map((a) => ({
-    area: String(a).toLowerCase().trim(),
-    findings: 0,
-    designDefects: 0,
-    selfInflicted: 0,
-    reason: "named by the caller as an area to redesign before review begins",
-  }));
+  // focusAreas takes either a bare slug or {area, reason}. A caller who already
+  // knows which mechanism is wrong usually knows why, and the per-area agents are
+  // briefed from that reason. On a run that has not yet classified any findings
+  // the reason is the only evidence they get, so a bare slug leaves them starting
+  // cold against a document the loop has not measured.
+  const named = (input.focusAreas || []).map((a) => {
+    const isObj = a && typeof a === "object";
+    return {
+      area: String(isObj ? a.area : a)
+        .toLowerCase()
+        .trim(),
+      findings: 0,
+      designDefects: 0,
+      selfInflicted: 0,
+      reason:
+        (isObj && a.reason) ||
+        "named by the caller as an area to redesign before review begins",
+    };
+  });
   if (named.length) {
     await runRedesign(named, 0, "requested by the caller");
   } else {

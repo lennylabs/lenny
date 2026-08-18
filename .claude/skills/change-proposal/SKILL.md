@@ -23,6 +23,8 @@ The review loop is shared: rounds of multi-lens adversarial review, two-skeptic 
 - New proposal file names are `NNNN_[new|fix]_<kebab-slug>.md`. `NNNN` is the next free zero-padded number among existing numbered proposals. `fix` is for proposals that correct or reconcile existing behavior — spec text, core-product code, or test infrastructure (contradictions, wrong ownership assignments, unreachable features, code-to-spec divergences). `new` is for proposals that add a capability or component the spec or implementation does not yet provide.
 - Review findings are real errors only: false citations, infeasible actor assignments, contradictions, missing edit sites, broken mechanisms, and a Testing section that omits the tests the changed behavior requires. Style preferences, optional improvements, additional nice-to-have tests, and hypothetical hardening are excluded by construction (the materiality skeptic refuses them); conventions are handled by a dedicated one-shot pass outside the error loop.
 
+A proposal written before the Summary and the implementation checklist existed gets both at the start of a review or redesign run, derived from what the document already says. They are created once, at round zero, and then maintained by the fixer and validated by the `applicability` lens like any other section. Creating them there rather than after convergence is the point: a checklist asserted at the end is a guess at a sequence dressed as a decision, while one created at the start is checked by every round that follows. Where the document does not settle an order, the bootstrap marks the step as inferred rather than guessing silently, so the review rounds have something to check.
+
 ## Proposal format conventions
 
 The writer and reviewer agents receive these conventions. They are derived from the existing files in `proposals/`; when those files and this list disagree, the existing files win.
@@ -97,7 +99,7 @@ The lens prompts in the script enumerate these. They are the classes that have p
    - `date`: today's date as `YYYY-MM-DD` (workflow scripts cannot call Date).
    - `repoRoot`: the absolute repository root.
    - `exemplar`: the path of the highest-numbered existing proposal (in review mode, excluding the proposal under review).
-   - `focusAreas` (required in redesign mode, optional otherwise): area slugs to redesign before review begins. Supplying it in review mode runs one redesign pass first, which is the same thing redesign mode does.
+   - `focusAreas` (required in redesign mode, optional otherwise): the areas to redesign before review begins, each either a bare slug or `{area, reason}`. Pass the reason whenever you have one: on a run that has not yet classified any findings it is the only evidence the per-area agents get, and a bare slug leaves them starting cold against a document the loop has not measured. Supplying it in review mode runs one redesign pass first, which is the same thing redesign mode does.
    - `introspectEvery` (default 5): rounds between introspection passes, which also run after any sweep that confirmed findings and whenever a churn counter trips.
    - `churnWindow` (default 6), `churnMinFindings` (default 5), `churnStrikes` (default 3), `maxRedesigns` (default 2), `redesignReviewRounds` (default 2): the churn detector's thresholds and the redesign budget. The defaults were calibrated on a single run and are expected to need tuning.
    - `maxReviewRounds`: default 16. Sweeps spend rounds from this budget, so leave headroom above the number of review cycles you expect.
