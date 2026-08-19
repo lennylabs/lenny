@@ -363,6 +363,15 @@ The gateway component that manages session state in Postgres and Redis. Handles 
 
 A command executed in the pod after workspace materialization but before the agent session starts. Used for dependency installation, compilation, or other workspace-specific preparation. Setup commands are bounded and logged.
 
+### Slot
+{: #slot }
+
+A unit of per-pod capacity. The term carries one sense in each execution mode.
+
+In `session` mode, a slot is the unit of per-pod session capacity. It owns a workspace subtree, a credential lease, and a lifecycle, and it is identified by the identifier of the session bound to it: the gateway mints one identifier at claim time, and that single value is both the session's identifier and its slot's identifier. Every session is bound to a slot on every pod, whatever the pool's concurrency. A pod holds between zero and `sessionPolicy.maxConcurrentSessions` slots, and a warm pod serving no session holds none. A slot is a pod-side resource rather than a synonym for a session: leaked and failed slots are retained until the pod terminates and still count against pod occupancy. See [Execution Modes](execution-modes).
+
+In `service` mode, a slot is unnamed per-pod request capacity counted against the pool's `maxConcurrent`: an in-flight request with no identifier, no session binding, no workspace subtree, no credential lease, and no tracked lifecycle.
+
 ### Streamable HTTP
 {: #streamable-http }
 

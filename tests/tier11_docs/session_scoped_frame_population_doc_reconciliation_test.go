@@ -121,7 +121,7 @@ func TestSessionModeGuideStatesTheSlotRuleOnEveryPod(t *testing.T) {
 	root := repoRoot(t)
 	page := readDocPage(t, filepath.Join(root, "docs", "runtime-author-guide", "lifecycle.md"))
 
-	mode := section(page, "Session Mode")
+	mode := stripInlineMarkdownLinks(section(page, "Session Mode"))
 	if mode == "" {
 		t.Fatal("docs/runtime-author-guide/lifecycle.md: Session Mode section not found (renamed or removed?)")
 	}
@@ -163,7 +163,7 @@ func TestConceptsPageStatesTheSlotRuleOnEveryPod(t *testing.T) {
 	root := repoRoot(t)
 	page := readDocPage(t, filepath.Join(root, "docs", "getting-started", "concepts.md"))
 
-	modes := section(page, "Execution modes")
+	modes := stripInlineMarkdownLinks(section(page, "Execution modes"))
 	if modes == "" {
 		t.Fatal("docs/getting-started/concepts.md: Execution modes section not found (renamed or removed?)")
 	}

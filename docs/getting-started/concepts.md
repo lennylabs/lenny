@@ -166,7 +166,7 @@ Runtimes declare capabilities that affect platform behavior. `capabilities.inter
 
 Each runtime is configured with an **execution mode** that determines how pods are used:
 
-**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a slot on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a [slot](../reference/glossary#slot) on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
 - In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
 - With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`.

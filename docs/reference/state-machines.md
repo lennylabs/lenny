@@ -227,7 +227,7 @@ The reserved hold extends an occupancy episode across an idle gap: a recycled po
 
 ### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
 
-A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while per-slot sub-states track each slot's progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
+A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while per-slot sub-states track each [slot](glossary#slot)'s progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
 
 | From | To | Trigger |
 |:-----|:---|:--------|

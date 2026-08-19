@@ -331,7 +331,7 @@ The configurations the `sessionPolicy` settings express:
 | Concurrent | N | `true` | The pod serves up to N simultaneous sessions in per-slot workspaces and recycles when occupancy reaches zero. |
 | Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
 
-**`service`** -- The gateway routes each message to any ready tenant-pinned replica, creating no claim and materializing no workspace. The pool keeps a per-pod slot bound through `maxConcurrent`. Service mode provides no cross-message conversation continuity, and `sessionPolicy` does not apply:
+**`service`** -- The gateway routes each message to any ready tenant-pinned replica, creating no claim and materializing no workspace. The pool keeps a per-pod [slot](../reference/glossary#slot) bound through `maxConcurrent`. Service mode provides no cross-message conversation continuity, and `sessionPolicy` does not apply:
 
 ```yaml
 pools:

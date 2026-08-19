@@ -80,7 +80,7 @@ For pools configured with `deliveryMode: proxy` (the default), the gateway's LLM
 
 ### sessionPolicy (session mode)
 
-The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurrentWorkspacePolicy` are removed; their fields are relocated here. Service mode does not use `sessionPolicy`; it keeps a per-pod slot bound through `pool.maxConcurrent`.
+The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurrentWorkspacePolicy` are removed; their fields are relocated here. Service mode does not use `sessionPolicy`; it keeps a per-pod [slot](glossary#slot) bound through `pool.maxConcurrent`.
 
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|

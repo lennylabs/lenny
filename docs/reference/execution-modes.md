@@ -37,7 +37,7 @@ sessionPolicy:                    # session mode only
   maxQueueWaitSeconds: 30
 ```
 
-`service` mode does not use `sessionPolicy`; it keeps a per-pod slot bound through the pool-level `maxConcurrent` field and routes by readiness.
+`service` mode does not use `sessionPolicy`; it keeps a per-pod [slot](glossary#slot) bound through the pool-level `maxConcurrent` field and routes by readiness.
 
 ---
 
