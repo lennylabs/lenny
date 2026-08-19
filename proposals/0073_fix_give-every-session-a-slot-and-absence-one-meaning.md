@@ -17,6 +17,182 @@
 This document stages the proposed specification, code, schema, and register changes. It does not modify
 any spec, code, or doc file. Apply the changes in the "Proposed changes" section after sign-off.
 
+## Summary
+
+**What changes.**
+
+- The specification states one rule where the concurrency conditional stood: every session is bound to a
+  slot on every pod, a slot is defined in both its senses, a request message's scope is declared in a table
+  rather than derived from its field set, and the identity invariant that a session-mode slot's identifier
+  is its session's identifier becomes normative. This lands across `spec/04` through `spec/29`,
+  `spec/README.md`, and the reader-facing mirrors under `docs/`.
+- The gRPC leg drops the duplicate address. The seventeen `slot_id` fields in `schemas/lenny-adapter.proto`
+  are removed in both directions, `CheckpointStart` gains a session field, `ShutdownRequest` loses its
+  discriminator, the `SlotId` wrapper is deleted, and `pkg/proto/adapter/v1/` is regenerated.
+- The JSONL leg carries the per-session identifier on every session-scoped frame on every pod, and the
+  frame field is renamed `slotId` to `sessionId` in `schemas/lenny-adapter-jsonl.schema.json`, the adapter
+  frame helpers, the gateway envelopes, the three runtime SDKs, and the reference runtimes.
+- The adapter resolves every root through the slot layout. `useSlot` and the pod-global fallback are
+  deleted, `checkSession` and `checkSlotSession` merge into `checkSessionBound`, `Server.sessionID` is
+  retired behind `soleSession()`, the `Shutdown` handler becomes three ordered clauses carrying the whole
+  per-session teardown, hold state arms from the slot registry, and credential operations address a
+  session. This is `pkg/adapter` plus its gateway producers under `pkg/gateway/runtime/adapterclient` and
+  `pkg/gateway/podlifecycle`.
+- The per-slot filesystem tree becomes the only layout, the documented placeholder becomes `{sessionId}`,
+  and `/workspace/current` is retired rather than kept as a second name for it.
+- The persistence layer drops `session_checkpoints.slot_id` and `checkpoint_manifest.slot_id`, re-keys the
+  three indexes on `session_id`, and removes the `SlotDefault` sentinel and the Go surface of the dropped
+  columns. The client SDKs and the HTTP and SSE payloads drop `slotId`, and the register rows the removed
+  fields drive are retired.
+
+**Fixed decisions.**
+
+- D1. Every session is bound to a slot on every pod, and absence of an address is an error rather than a
+  scope.
+- D2. The wire addresses a session by its session identifier on both legs. "Slot" names the pod-side
+  resource, which the gateway mints and allocates and the adapter registers.
+- D3. The duplicate `slot_id` fields come off both gRPC services, message by message, per the five groups in
+  §4.5.
+- D4. The JSONL leg populates the per-session identifier on every session-scoped frame, and the frame field
+  is named `sessionId`.
+- D5. A session-mode slot's identifier is its session's identifier, minted as one value at claim time. A
+  service-mode slot is unnamed per-pod request capacity and is a separate thing.
+- D6. Message scope is declared in the specification table rather than derived from which address field a
+  message carries.
+- D7. The pod filesystem layout is the slot layout on every pod, with the identifier under each of the four
+  trees rather than above them.
+- D8. Slot directories are created at assignment, which is what concurrent pods already do.
+- D9. `/workspace/current` is retired rather than kept as a symlink or an empty directory.
+- D10. The persisted `slot_id` columns are dropped rather than converged and backfilled, and there is no
+  backfill because no row carries a value worth preserving.
+- D11. The specification's attribution of slot assignment to the adapter is corrected to the gateway at the
+  five sentences and nine code comments §1.6 names.
+- D12. Ordinal examples are replaced by session identifiers, and the promotion and upload rules are restated
+  as a lexicographic tie-break over opaque identifiers.
+- D13. The adapter's session validation unifies on the slot registry, and `Server.sessionID` is retired with
+  `useSlot`.
+- D14. The register rows proposal 0072 would correct are retired here, and neither proposal makes the status
+  correction.
+- D15. This proposal supersedes C-53's scope and closes T-4.4.21.
+- The earlier draft's decision 1 and decision 2 are replaced rather than qualified, and the alternatives in
+  §9 under "Considered and rejected" are refused. Neither is reopened during implementation.
+
+**Watch out for.**
+
+- The fifteen §4.5(b) field removals are atomic with CODE-1. Re-pointing a consumer onto `session_id` while
+  `useSlot` survives flips every single-session pod onto the per-slot layout, so SCHEMA-1 and CODE-1 land
+  together (§4.5, "Precondition").
+- Removing a proto field breaks the build at every producer and consumer of it. It does not break the build
+  at the pod-global session-check sites, which never referenced the field and regress only at runtime. Those
+  sites are covered by §4.11 and CODE-1 rather than by the field removal.
+- Ordering inside the merged `Shutdown` handler is load-bearing. The drain decision is taken inside the same
+  `s.mu` critical section that deregisters the ending session, the drain signal is sent after that section
+  and before `Runtime.Close`, and the tree removal runs after `Runtime.Close`. Sending the drain after the
+  close reaches a dead runtime and `drainViaLifecycle` swallows the error, so the regression is silent.
+- Clause two of that handler is a conditional registry test rather than a guard. Returning an error for a
+  session the registry no longer holds makes every revoked session hold its slot for the life of the pod,
+  because `SlotClaimer.ReleaseSlot` returns early on `leaked` without decrementing.
+- `soleSession()` reads the `coTenanted` bit as well as the entry count, and the bit clears only when the
+  registry empties. A predicate reading the live count alone charges a released session's token fold to its
+  co-tenant's budget and stamps the survivor's identifier on the co-tenant's events. Review pass 26 reached
+  that defect before the sticky reading replaced it.
+- MIG-1's SQL is string literals, so a partial edit is not caught by the compiler and fails at runtime on
+  every checkpoint insert and rotation. The Go readers and writers of the two columns land with the columns.
+- CODE-2 derives the §7.3 step (d) expectation at three sites and not at `start.go:3917`, which replays the
+  persisted column. Deriving it there compares a value against itself and reinstates the vacuity §1.2
+  records. Review pass 18 staged that fourth site before it was withdrawn.
+- `Binder.Resume` reserves its slot through the pod-targeted `ReserveSlotOnPod` against the pod `connect`
+  already claimed. `SlotClaimer.ClaimSlot` scans the pool and picks its own pod, so using it there leaves the
+  resumed session on a pod with no reservation. Review pass 26 reached that defect.
+- Several existing tests assert the retired contract and will mislead. `pkg/gateway/session/executor/pod.go`
+  rejects an empty slot on a concurrent bind and runs the opposite direction from the specification;
+  `tests/tier4_integration/concurrent_workspace_test.go` asserts that nothing writes `/workspace/current`;
+  `tests/tier3_contract/adapter_slot_identity/slot_identity_wire_test.go` is retired rather than updated; the
+  tier-10 concurrent-slot battery is rewritten rather than extended; and the exact-count assertion in
+  `tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go` is restored to its pre-01d19af0 form.
+- Commit 01d19af0, landed for proposal 0064, added five of the fields SCHEMA-1 removes. Its premise held only
+  under the two-namespace reading D2 retires, so those five removals are a revert and §7 records the
+  amendment to 0064.
+- Redesign 1 deleted four mechanisms that earlier passes had staged: the `ShutdownSlotRequest` and
+  `ShutdownPodRequest` split, the `last`/`closed` parameters on `Runtime.Close`, the reclaimer for an
+  abandoned bind's registry entry, and the sticky pod-level MCP refusal flag. None of them is reintroduced.
+- The recorded limits in §9 are accepted outcomes rather than defects to close in flight. A bind that fails
+  at credential assignment or at `StartSession` leaves a bound registry entry no adapter path removes, which
+  pins the drain gate false and holds `coTenanted` armed for the life of the pod. The drain gate keeps a
+  read-then-act window between the decision and the send. The adapter manifest and the intra-pod MCP surface
+  stay pod-global, so Standard- and Full-level runtimes remain unusable on a concurrent pod. The in-flight
+  rotation gate and its ceiling stay pod-wide per provider.
+- Five questions in §9 are open and review may answer them differently: whether `RevokeCredentials` gains a
+  gateway caller or is removed, D7's path arrangement, D8's warm-time ordering, whether the adapter still
+  creates an empty `/workspace/current`, and whether §4.1's table covers the `GatewayControl` requests.
+
+## Implementation checklist
+
+- [ ] **S1 · spec** — SPEC-1. The presence conditions in `spec/15`, `spec/28`, `spec/05`, and `spec/29` are
+      replaced by §4.2's value rule and §4.6.1's population rule.
+      Tiers 0, 11. Depends on: —
+- [ ] **S2 · spec** — SPEC-2. §5.2 defines a session-mode slot and a service-mode slot, and the glossary
+      gains an entry carrying both senses.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S3 · spec** — SPEC-7. §4.1 gains the message-scope classification table, the §28.5.3 addressing rule
+      is stated, and the `Terminate` sentences are restated on the `Shutdown` wire name in the specification
+      and in `docs/reference/adapter-contract.md`.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S4 · spec** — SPEC-8. §5.2 states D5's identity invariant, and the five specification sentences and
+      nine code comments that attribute slot assignment to the adapter are corrected.
+      Tiers 0, 1, 11. Depends on: S2
+- [ ] **S5 · spec** — SPEC-3. §6.4 collapses the two filesystem layouts into one, the placeholder becomes
+      `{sessionId}`, `/workspace/current` is retired, and `spec/18:532` drops the Phase 12c conditional.
+      Tiers 0, 11. Depends on: S1, S4 (the layout text names the gateway as the minter). Order relative to S4
+      is inferred; the document states no application order between the two.
+- [ ] **S6 · spec** — SPEC-4. The two `spec/06` credential paragraphs merge into one per-slot
+      credential-lease paragraph on the renamed path, recording what the rotation delivers per session and
+      what stays pod-wide.
+      Tiers 0, 11. Depends on: S5
+- [ ] **S7 · spec** — SPEC-5. §29.10 is split, its addressing mechanisms move to the owning sections, the
+      heading is retitled, and the two inbound references take the new fragment.
+      Tiers 0, 11. Depends on: S1, S3
+- [ ] **S8 · spec** — SPEC-6. The `slot_01` examples, the four `"slotId": null` examples, and the
+      identifier-order rules are corrected in the specification and the documentation.
+      Tiers 0, 11. Depends on: S1, S10 (the two example sites spell the key SCHEMA-2 publishes). The
+      dependency on a later schema step is stated in SPEC-6 itself; the step sits here to keep the spec lane
+      together, and the order is inferred.
+- [ ] **S9 · spec** — SPEC-9. The `spec/10` scoping key, supersede rule, and reassembly predicate are re-keyed
+      on `session_id`, the sentinel sentence is deleted, and `spec/12` and `spec/16` take the matching rows.
+      Tiers 0, 11. Depends on: S4
+- [ ] **S10 · schema** — SCHEMA-2. The JSONL schema states §4.6.1's population rule on all six session-scoped
+      frames, renames `slotId` to `sessionId`, adds the field to `status`, and updates the frame example.
+      Tiers 0, 3. Depends on: S1
+- [ ] **S11 · schema, code** — SCHEMA-1, CODE-1. The duplicate `slot_id` fields come off both gRPC services
+      and the adapter resolves one address through one session check with no presence branch. The two land as
+      one step because §4.5's precondition states the removals are atomic with CODE-1.
+      Tiers 0, 1, 2, 3, 4, 7a, 9. Depends on: S1, S3, S5, S9
+- [ ] **S12 · code** — CODE-2. Restore, `ExportPaths`, and the workspace-root derivation resolve the slot
+      root from the session identifier, and `Binder.Resume` reserves its slot on the pod `connect` claimed.
+      Tiers 0, 1, 2, 4. Depends on: S5, S11
+- [ ] **S13 · code** — CODE-3. Hold state arms from the slot registry, and the timeout terminates once per
+      bound session with a per-session `AdapterTerminating` notification.
+      Tiers 0, 1, 7a. Depends on: S9, S11
+- [ ] **S14 · code** — CODE-4. Rotation, lease extension, and revocation address the session the request
+      already carries, and the merged handler keeps the §4.7 Full-level protocol.
+      Tiers 0, 1, 8, 9. Depends on: S6, S11
+- [ ] **S15 · migration, code** — MIG-1, CODE-5. The two persisted `slot_id` columns are dropped, the three
+      indexes are re-keyed, `sessions.workspace_root` is rewritten to the slot path, and the `SlotDefault`
+      sentinel and the Go surface of the dropped columns go with them. The two land as one step because the
+      SQL naming the columns is string literals, so a step that drops the columns without the Go half fails at
+      runtime on every checkpoint insert.
+      Tiers 0, 1, 2. Depends on: S9, S12
+- [ ] **S16 · code** — CODE-6. The adapter frame helpers, the demultiplexer, the gateway envelopes, the three
+      runtime SDKs, and the two reference runtimes take the `sessionId` rename and the unconditional
+      population.
+      Tiers 0, 1, 3, 5, 10. Depends on: S10, S12
+- [ ] **S17 · code** — CODE-7. The client SDKs, the tool-approval detail, the SSE payload, and the `/start`
+      422 body drop `slotId`, and `SlotFailedError` carries the session identifier.
+      Tiers 0, 1, 3. Depends on: S3, S11
+- [ ] **S18 · test** — REG-1. The six register rows the removed fields drive are retired, three rows are added
+      for the per-slot credential addressing, and the generator is held to the register by a tier-0 case.
+      Tiers 0. Depends on: S11, S14
+
 ## 0. Context an implementor should read first
 
 Four facts overturn the way this question is usually posed, and the design in §4 rests on them.
