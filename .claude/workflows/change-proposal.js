@@ -2048,8 +2048,8 @@ if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.
 }
 
 while (round < maxRounds && !converged) {
-  const roundStartSnap = await snapshot("r" + round + "-start");
   round++;
+  const roundStartSnap = await snapshot("r" + round + "-start");
   const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
   const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
   const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
