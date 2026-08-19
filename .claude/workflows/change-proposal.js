@@ -991,7 +991,108 @@ if (startSet) {
   );
 }
 
-function reviewPrompt(lens, round, fixedTitles, rejected) {
+
+// ---- What actually changed, rather than what the fixer says changed ----
+//
+// The post-fix reviewer's highest-yield question is drift: did an edit leave a
+// parallel statement stale somewhere it did not touch. It was being asked to
+// answer that from the fixer's own summary of its work, which is precisely the
+// document that omits an edit the fixer did not notice making. And the next
+// round's lenses were told only the TITLES of what was fixed, so a lens
+// re-reading a rewritten section had no signal that the text was new, though
+// fix-stage text is the least-examined in the proposal.
+//
+// A `git diff` was suggested to the reviewer as a locator, hedged because the
+// proposal is committed only at checkpoints so the diff spans every round since.
+// Snapshotting around each edit gives the real per-round diff instead.
+function readProposal() {
+  try {
+    return require("fs").readFileSync(path, "utf8");
+  } catch (e) {
+    return "";
+  }
+}
+
+// Split on headings so a diff is reported per section. A reviewer checking drift
+// works section by section, and scoping the diff that way keeps it readable on a
+// document of several thousand lines.
+function splitSections(text) {
+  const out = new Map();
+  let cur = "(preamble)";
+  let buf = [];
+  for (const line of text.split("\n")) {
+    const m = /^(#{2,6}) (.+)$/.exec(line);
+    if (m) {
+      out.set(cur, (out.get(cur) || []).concat(buf));
+      cur = m[2].trim().slice(0, 90);
+      buf = [line];
+    } else buf.push(line);
+  }
+  out.set(cur, (out.get(cur) || []).concat(buf));
+  return out;
+}
+
+// Trim the common head and tail, then report what is left. Within one section
+// that is almost always the edited region, and it costs nothing on a document
+// this size; a full LCS over ten thousand lines would not be affordable here.
+function lineDelta(before, after, cap) {
+  let a = 0;
+  while (a < before.length && a < after.length && before[a] === after[a]) a++;
+  let b = 0;
+  while (
+    b < before.length - a &&
+    b < after.length - a &&
+    before[before.length - 1 - b] === after[after.length - 1 - b]
+  )
+    b++;
+  const removed = before.slice(a, before.length - b);
+  const added = after.slice(a, after.length - b);
+  const clip = (arr, mark) =>
+    arr
+      .slice(0, cap)
+      .map((l) => mark + l)
+      .concat(arr.length > cap ? [mark + "… " + (arr.length - cap) + " more line(s)"] : []);
+  return { removed, added, text: clip(removed, "- ").concat(clip(added, "+ ")).join("\n") };
+}
+
+function proposalDelta(before, after, opts) {
+  const cap = (opts && opts.linesPerSection) || 40;
+  const maxSections = (opts && opts.maxSections) || 12;
+  if (!before || !after || before === after) return null;
+  const bs = splitSections(before);
+  const as = splitSections(after);
+  const parts = [];
+  let changed = 0;
+  for (const [name, lines] of as) {
+    const was = bs.get(name);
+    if (was === undefined) {
+      changed++;
+      parts.push("### SECTION ADDED: " + name + " (" + lines.length + " lines)");
+      continue;
+    }
+    if (was.join("\n") === lines.join("\n")) continue;
+    changed++;
+    if (parts.length < maxSections) {
+      const d = lineDelta(was, lines, cap);
+      parts.push(
+        "### SECTION CHANGED: " + name +
+          " (" + was.length + " → " + lines.length + " lines)\n" + d.text,
+      );
+    }
+  }
+  for (const [name] of bs) {
+    if (!as.has(name)) {
+      changed++;
+      parts.push("### SECTION REMOVED: " + name);
+    }
+  }
+  if (!changed) return null;
+  if (parts.length < changed)
+    parts.push("… and " + (changed - parts.length) + " further changed section(s)");
+  return { changed, text: parts.join("\n\n") };
+}
+
+function reviewPrompt(lens, round, fixedTitles, rejected, roundDelta) {
   let history = "";
   if (fixedTitles.length > 0) {
     history +=
@@ -1023,6 +1124,16 @@ function reviewPrompt(lens, round, fixedTitles, rejected) {
         "focus; it does not lower the finding bar above, and it does not make " +
         "something a finding that the bar excludes:\n" +
         lensPrompt
+      : "") +
+    (roundDelta
+      ? "\n\nWHAT CHANGED IN THE PROPOSAL SINCE THE LAST ROUND, as a diff of the sections a fix touched. Read " +
+        "these sections first and hardest. Fix-stage text is the newest and least-examined in the document, and " +
+        "this loop's history records that fixers introduce their own errors, so text written a round ago " +
+        "deserves more scrutiny than text that has survived many. This is a READING ORDER, not a scope limit: " +
+        "your lens still owns the whole proposal, and the defect a rewrite leaves in text nobody touched is " +
+        "exactly the drift this loop exists to catch.\n\n" +
+        roundDelta +
+        "\n"
       : "") +
     "\n\nWork method: read the proposal fully, then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
   );
@@ -1108,7 +1219,7 @@ function fixPrompt(confirmed, round, strikes) {
 // The scope is deliberately the edit PLUS its blast radius rather than the edit
 // alone. Predicate drift is by definition an inconsistency between changed text
 // and text that did not change, so a reviewer confined to the edit cannot see it.
-function postFixPrompt(confirmed, fixSummary, round, mechanisms) {
+function postFixPrompt(confirmed, fixSummary, round, mechanisms, fixDelta) {
   return (
     (mechanisms && mechanisms.length
       ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
@@ -1130,9 +1241,14 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms) {
     "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
     "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
-    "Locating the edits: the fixer's summary below names them. `git diff -- " +
-    path +
-    "` also shows changed regions, though it spans every uncommitted round rather than this one alone, so treat it as a locator and not as this round's diff.\n\n" +
+    (fixDelta
+      ? "THE EDITS THIS ROUND ACTUALLY MADE, diffed from a snapshot taken immediately before the fixer ran. " +
+        "This is what changed, rather than what the fixer reports changing, and the difference between the two " +
+        "is where question 2 lives: an edit the fixer did not mention making is the one most likely to have " +
+        "left a parallel statement stale.\n\n" +
+        fixDelta +
+        "\n\n"
+      : "Locating the edits: the fixer's summary below names them, and no diff was available for this round.\n\n") +
     "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer.\n\n" +
     "Findings the fixer was asked to correct (JSON):\n" +
     JSON.stringify(confirmed, null, 2) +
@@ -1837,6 +1953,12 @@ async function robustAgent(prompt, opts, attempts = 4) {
 }
 
 const fixedTitles = [];
+// Snapshot boundaries for the two diffs. roundStartText is taken at the top of a
+// round and yields the delta the NEXT round's lenses read; beforeFixText is taken
+// immediately before the fixer and yields the delta the post-fix reviewer reads.
+// They differ because a round can also prune, apply a redesign, and run a
+// follow-up fix after the post-fix review.
+let lastRoundDelta = null;
 const rejected = [];
 const history = [];
 let round = 0;
@@ -1960,6 +2082,7 @@ if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.
 }
 
 while (round < maxRounds && !converged) {
+  const roundStartText = readProposal();
   round++;
   const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
   const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
@@ -2004,7 +2127,7 @@ while (round < maxRounds && !converged) {
   const lensResults = await parallel(
     lenses.map(
       (l) => () =>
-        robustAgent(reviewPrompt(l, round, fixedTitles, rejected), {
+        robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundDelta), {
           label: "r" + round + ":review:" + l.key,
           phase: "Round " + round + ": review",
           schema: REVIEW_FINDINGS,
@@ -2251,11 +2374,22 @@ while (round < maxRounds && !converged) {
     .filter((m) => m.strikes > 0)
     .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
     .join("\n");
+  const beforeFixText = readProposal();
   const fixOut = await robustAgent(
     fixPrompt(confirmed, round, strikeLines || null),
     { label: "r" + round + ":fix", phase: "Round " + round + ": fix", schema: FIX_RESULT },
   );
   const fixSummary = fixOut && fixOut.summary ? fixOut.summary : fixOut;
+  // What the fixer actually did, as against what it says it did.
+  const fixDelta = proposalDelta(beforeFixText, readProposal(), {
+    linesPerSection: 40,
+    maxSections: 12,
+  });
+  const fixDeltaText = fixDelta ? fixDelta.text : null;
+  if (fixDelta)
+    log(
+      "Round " + round + ": the fix touched " + fixDelta.changed + " section(s)",
+    );
   const roundMechanisms = (fixOut && fixOut.newMechanisms) || [];
   roundMechanisms.forEach((m) =>
     introducedMechanisms.push({ name: m.name, round, strikes: 0 }),
@@ -2280,7 +2414,7 @@ while (round < maxRounds && !converged) {
   // genuinely contested edit inside a round instead of surfacing it to the next
   // round's lenses and, ultimately, to the sweep.
   const postFix = await robustAgent(
-    postFixPrompt(confirmed, fixSummary, round, roundMechanisms),
+    postFixPrompt(confirmed, fixSummary, round, roundMechanisms, fixDeltaText),
     {
       label: "r" + round + ":post-fix-review",
       phase: "Round " + round + ": fix",
@@ -2458,6 +2592,17 @@ while (round < maxRounds && !converged) {
       }
     }
   }
+
+  // The delta the NEXT round's lenses read. Taken at the end of the round rather
+  // than after the fixer, so it also carries a follow-up fix, a prune, and an
+  // applied redesign, all of which rewrite text a lens is about to re-read.
+  const endDelta = proposalDelta(roundStartText, readProposal(), {
+    linesPerSection: 30,
+    maxSections: 16,
+  });
+  lastRoundDelta = endDelta ? endDelta.text : null;
+  if (endDelta) history[history.length - 1].sectionsChanged = endDelta.changed;
+
 }
 
 converged = converged && !reviewersFailed && !stoppedByIntrospection;
