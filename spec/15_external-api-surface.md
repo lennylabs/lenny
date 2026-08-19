@@ -2171,7 +2171,7 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
     - **Binary protocol (all levels).** Line-delimited JSON (JSON Lines) framing and readline over **stdin/stdout** per [§28.5.3](28_communication-channels.md#2853-intra-pod), including the stdout-flushing requirement. This is the entire Basic-level wire surface.
     - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-runtime-ops` (Full: agent-side CH-RUNTIMEOPS). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
     - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the CH-RUNTIMEOPS), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
-    - **Credential delivery.** Read-only access patterns for `/run/lenny/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
+    - **Credential delivery.** Read-only access patterns for `/run/lenny/slots/{sessionId}/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
     - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) and [§28.5.3](28_communication-channels.md#2853-intra-pod).
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
 - **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined by the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. The `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) is authoritative for the platform MCP tool set and [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the adapter manifest; this list tracks the tool set. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
@@ -2195,7 +2195,7 @@ type Handler interface {
 // Run wires up stdin/stdout framing, dials the manifest-advertised
 // abstract Unix sockets (platform MCP, connector MCP, CH-RUNTIMEOPS)
 // with the manifest-nonce handshake, refreshes credentials from
-// /run/lenny/credentials.json, and drives the lenny.runtime.* dispatch
+// /run/lenny/slots/{sessionId}/credentials.json, and drives the lenny.runtime.* dispatch
 // loop. Blocks until the adapter closes stdin or sends `terminate`.
 func Run(h Handler, opts ...Option) error
 ```
@@ -2208,7 +2208,7 @@ func Run(h Handler, opts ...Option) error
 // assembles this value from (a) the adapter manifest written to
 // /run/lenny/adapter-manifest.json before the runtime binary is spawned
 // ([§4.7](04_system-components.md#47-runtime-adapter)), (b) the credential
-// file written by AssignCredentials at /run/lenny/credentials.json
+// file written by AssignCredentials at /run/lenny/slots/{sessionId}/credentials.json
 // ([§4.7](04_system-components.md#47-runtime-adapter) item 4), and (c) the
 // StartSession RPC parameters the gateway forwarded to the adapter (see the
 // Startup Sequence in [§4.7](04_system-components.md#47-runtime-adapter)).
@@ -2248,7 +2248,7 @@ type CreateRequest struct {
     WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
 
     // Credentials is the current credential bundle delivered via
-    // AssignCredentials and materialized at /run/lenny/credentials.json
+    // AssignCredentials and materialized at /run/lenny/slots/{sessionId}/credentials.json
     // ([§4.7](04_system-components.md#47-runtime-adapter) item 4 — Runtime
     // credential file contract). The SDK parses the file into this value;
     // on `credentials_rotated` lifecycle messages the SDK re-reads the file

@@ -258,8 +258,8 @@ state that the READY signal is one of them.
     once the session is ready ([§7.1](07_session-lifecycle.md#71-normal-flow)).
 
 20. `agent pod`, `internal`. The credential map is delivered to the agent as a tmpfs-backed file at
-    `/run/lenny/credentials.json`, mode `0440`, rather than through environment variables
-    ([§4.7](04_system-components.md#47-runtime-adapter),
+    `/run/lenny/slots/{sessionId}/credentials.json`, mode `0440`, rather than through environment
+    variables ([§4.7](04_system-components.md#47-runtime-adapter),
     [§4.9](04_system-components.md#49-credential-leasing-service)).
 
 21. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
