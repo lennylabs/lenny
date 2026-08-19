@@ -392,9 +392,10 @@ Pools are configured with an execution mode that determines how sessions map to 
 
 A managed session is bound to a claimed pod for the session's lifetime. Session mode is parameterized by the `sessionPolicy` block:
 
+- Every session is bound to a slot on every pod, whatever `maxConcurrentSessions`. Your runtime implements a **dispatch loop keyed on the per-session identifier**: every session-scoped binary protocol message carries it, the adapter populates it on the frames it writes, and your runtime echoes the identifier it was handed on the frames it emits, at every integration level. Each session's workspace is `/workspace/slots/{sessionId}/current/` on every pod; no global `/workspace/current` path exists and your runtime must NOT assume one.
 - In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. No special runtime code is needed beyond the base adapter contract for your integration level. The pod is never reused for a different session.
 - With `recycle.enabled: true` the pod is reused across sequential sessions (see the recycle lifecycle above). Recycling requires no runtime cooperation and works at every integration level.
-- With `maxConcurrentSessions > 1` multiple sessions run simultaneously on one pod. Your runtime must implement a **dispatch loop keyed on `slotId`** --- all binary protocol messages (inbound and outbound) carry a `slotId` field. Each slot gets its own workspace under `/workspace/slots/{slotId}/current/`; your runtime must NOT assume a global `/workspace/current` path. Cross-slot isolation is process-level and filesystem-level only, explicitly weaker than the default. CPU and memory are shared across slots (no per-slot cgroup subdivision). `preConnect` is admitted only when `maxConcurrentSessions` is 1.
+- With `maxConcurrentSessions > 1` multiple sessions run simultaneously on one pod. Cross-slot isolation is process-level and filesystem-level only, explicitly weaker than the default. CPU and memory are shared across slots (no per-slot cgroup subdivision). `preConnect` is admitted only when `maxConcurrentSessions` is 1.
 
 ### Service Mode
 

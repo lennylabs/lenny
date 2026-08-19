@@ -15,11 +15,11 @@
 // result at registration, and the registered context is attached to the child's
 // delegation lease.
 //
-// §28.5.3 also gives the frame an optional `slotId` and an addressing rule: the
-// adapter resolves the frame against the stream that delivered it, and drops,
-// counts, and logs a frame it cannot address to that stream's own live session.
-// Both pages must carry that rule so a runtime author on a concurrent pod knows
-// the frame has to name its slot.
+// §28.5.3 also addresses the frame to a session and states the addressing rule:
+// the adapter resolves the frame against the stream that delivered it, and
+// drops, counts, and logs a frame it cannot address to that stream's own live
+// session. Both pages must carry that rule so a runtime author knows the frame
+// names the session it belongs to.
 //
 // This test pins the corrected statements on both pages together, so a later
 // edit to one page cannot reintroduce the contradiction on its own. It reads the
@@ -109,13 +109,14 @@ func TestTracingContextRegistrationMechanismAgreesAcrossDocs(t *testing.T) {
 // diagnosis: docs/reference/adapter-contract.md or
 //
 //	docs/runtime-author-guide/platform-tools.md has lost the `set_tracing_context`
-//	addressing rule. The frame carries an optional `slotId` on a pod serving more
-//	than one concurrent session, the adapter resolves it against the stream that
-//	delivered it, and it drops, counts, and logs a frame it cannot address to
-//	that stream's own live session. A failure here means a runtime author on a
-//	concurrent pod would emit an untagged frame and read the silent drop as a
-//	platform defect, or would expect an untagged frame to reach every slot as it
-//	did before the frame was addressed.
+//	addressing rule. The frame carries the per-session identifier on every pod,
+//	the adapter resolves it against the stream that delivered it, an identifier
+//	the frame omits resolves to that stream's own binding on a pod holding at
+//	most one slot and is rejected on a pod holding more, and the adapter drops,
+//	counts, and logs a frame it cannot address to that stream's own live
+//	session. A failure here means a runtime author would read the silent drop as
+//	a platform defect, or would expect an unaddressed frame to reach every slot
+//	as it did before the frame was addressed.
 func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 	root := repoRoot(t)
 
@@ -125,27 +126,32 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/reference/adapter-contract.md: `set_tracing_context` entry not found (renamed or removed?)")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
-		// The documented frame carries the optional slot address in the
+		// The documented frame carries the session address in the
 		// wire form the published JSONL schema accepts: a string.
-		`"slotId": "slot_01"`,
 		"| `slotId` | string, optional |",
-		"`sessionPolicy.maxConcurrentSessions > 1`",
 		// The addressing rule and its outcome.
 		"resolves the frame against the stream that delivered it",
-		"the frame's `slotId` matches the stream's slot",
-		// The untagged side of the address comparison is the empty string,
-		// the form the schema and the adapter's decoder both produce.
-		"an absent or empty `slotId` matching a stream bound to no slot",
-		"still binds that address to the stream's session",
-		// The fail-closed second term: an untagged frame is rejected on a pod
-		// that holds registered slots, where the address names no one session.
-		"the address is unambiguous",
-		"untagged frame is applied only on a pod that holds no registered slot",
+		"matches the stream's session",
+		"still holds that address with a bound session",
+		// Absence resolves rather than selects a scope: it is the receiving
+		// stream's own binding on a pod holding at most one slot, and an
+		// error on a pod holding more.
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"on a pod holding more than one slot it is rejected and relayed to no stream",
 		"dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
 		// The drop outcome is stated on the page rather than deferred to a
 		// behavior the page never describes.
 		"the runtime receives no error for a dropped frame",
+	})
+	// The presence condition the value rule replaced: the identifier was
+	// documented as carried only on a pod whose pool set
+	// `sessionPolicy.maxConcurrentSessions > 1`, and an unaddressed frame as
+	// applied on a pod holding no registered slot.
+	requireNoneContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
+		"`sessionPolicy.maxConcurrentSessions > 1`",
+		"Omit the field on a pod that serves one session at a time",
+		"untagged frame is applied only on a pod that holds no registered slot",
 	})
 
 	tools := platformToolsDoc(t, root)

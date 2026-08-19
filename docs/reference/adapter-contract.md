@@ -153,7 +153,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `threadId` | string or null | Standard+ | Thread label. One implicit thread per session in v1. |
 | `delivery` | string or null | Standard+ | `"immediate"` or `"queued"` (default). Controls interrupt behavior. |
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
-| `slotId` | string or null | Concurrent | Present only when `sessionPolicy.maxConcurrentSessions > 1`. Identifies the slot. |
+| `slotId` | string | All | Names the session this message is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
 **Basic-level runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
 
@@ -187,7 +187,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
 | `id` | string | Matches the `id` of the `tool_call` this result responds to |
 | `content` | MessagePart[] | Result content |
 | `isError` | boolean | `true` if tool execution failed. Default `false`. |
-| `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1` |
+| `slotId` | string | Names the session this result is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
 **Correlation:** Every `tool_result.id` matches a previously emitted `tool_call.id`. Results may arrive in any order when you have multiple outstanding tool calls. Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` --- your runtime must handle interleaved delivery.
 
@@ -278,7 +278,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
 | `id` | string | Unique call identifier. Used to correlate the inbound `tool_result`. Recommended format: `tc_` prefix with monotonic counter or random suffix. |
 | `name` | string | Tool name (e.g., `read_file`, `write_file`) |
 | `arguments` | object | Tool-specific parameters |
-| `slotId` | string or null | Present only when `sessionPolicy.maxConcurrentSessions > 1` |
+| `slotId` | string, optional | Names the session this call belongs to. Echo the identifier the adapter handed you on the frame you are responding to. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
 
 **Built-in adapter-local tools:**
 
@@ -321,11 +321,11 @@ Informational. The adapter forwards status updates to the gateway for client vis
 |-------|------|-------------|
 | `type` | string | Always `"set_tracing_context"` |
 | `context` | object | Map of string keys to string values carrying opaque, non-sensitive tracing identifiers |
-| `slotId` | string, optional | Present only when `sessionPolicy.maxConcurrentSessions > 1`. Names the slot whose session is registering the identifiers. Omit the field on a pod that serves one session at a time. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
+| `slotId` | string, optional | Names the session registering the identifiers. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
 
 Registers tracing identifiers for the session that emitted the frame. The gateway merges the submitted context into that session's recorded context, validates the merged result against the tracing-context rules at registration time, and attaches the registered context to each child's delegation lease when the session delegates. The adapter itself stores no context and attaches none to later requests. The frame is available at all integration levels.
 
-**Addressing.** The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and, on a pod serving more than one concurrent session, to that session's slot. The adapter applies the frame only when the frame's `slotId` matches the stream's slot (an absent or empty `slotId` matching a stream bound to no slot), the adapter still binds that address to the stream's session, and the address is unambiguous: an untagged frame is applied only on a pod that holds no registered slot, because on a pod holding slots an untagged frame names no single session. The comparison is exact string equality. A frame the adapter cannot address to the stream's own live session is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame.
+**Addressing.** The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and to that session's slot, on every pod. The adapter applies the frame only when the frame's `slotId` matches the stream's session and the adapter's registry still holds that address with a bound session. The comparison is exact string equality. A frame that carries no `slotId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream. A frame the adapter cannot address to the stream's own live session is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame.
 
 ---
 
