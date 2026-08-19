@@ -313,7 +313,7 @@ Informational. The adapter forwards status updates to the gateway for client vis
 {
   "type": "set_tracing_context",
   "context": { "langsmith_run_id": "run_abc123" },
-  "slotId": "slot_01"
+  "slotId": "sess_abc"
 }
 ```
 

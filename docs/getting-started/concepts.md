@@ -166,11 +166,11 @@ Runtimes declare capabilities that affect platform behavior. `capabilities.inter
 
 Each runtime is configured with an **execution mode** that determines how pods are used:
 
-**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a slot on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease, and no pod-global `/workspace/current` path exists. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
 - In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
 - With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`.
-- With `maxConcurrentSessions > 1` the pod serves multiple simultaneous sessions, each in its own workspace directory (`/workspace/slots/{slotId}/current/`) with an independent credential lease. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
+- With `maxConcurrentSessions > 1` the pod serves multiple sessions simultaneously. Those sessions share the pod's process namespace, `/tmp`, cgroup memory, and network stack, so isolation between them is process-level and filesystem-level only. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
 
 **`service`** -- The gateway routes each message to any ready replica rather than binding a session to a pod. Pods serve successive requests with no scrub and share process space, network stack, `/tmp`, and page cache across same-tenant concurrent requests. Service mode provides no cross-message conversation continuity: every message is self-contained. Service-mode pools are pinned to a single tenant by the tenant-affinity routing layer. Useful for high-throughput stateless workloads. See [Execution Modes and Pod Lifecycle](../reference/execution-modes.md) for the full settings matrix.
 
