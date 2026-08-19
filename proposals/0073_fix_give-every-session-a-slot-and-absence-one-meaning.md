@@ -1,6 +1,8 @@
 # Proposal: Give every session a slot and absence one meaning
 
-- **Status:** Verified (2026-08-19). Converged after 13 adversarial review rounds (57 findings fixed); awaiting sign-off.
+- **Status:** Approved (2026-08-19) by jaf sign-off, with the five §9 questions resolved to the base case
+  this document stages. Verified (2026-08-19). Converged after 13 adversarial review rounds (57 findings
+  fixed).
 - **Date:** 2026-08-13
 - **Scope:** Every session is bound to a slot on every pod, whatever the pool's concurrency, so that the
   absence of a slot has exactly one meaning. The wire addresses that session by its session identifier on
@@ -176,9 +178,20 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
   The adapter manifest and the intra-pod MCP surface stay pod-global, so Standard- and Full-level runtimes
   remain unusable on a concurrent pod. The in-flight rotation gate and its ceiling stay pod-wide per
   provider.
-- Five questions in §9 are open and review may answer them differently: whether `RevokeCredentials` gains a
-  gateway caller or is removed, D7's path arrangement, D8's warm-time ordering, whether the adapter still
-  creates an empty `/workspace/current`, and whether §4.1's table covers the `GatewayControl` requests.
+- The five questions §9 raised are settled on sign-off, each taking the base case this document already
+  stages: `RevokeCredentials` keeps its handler and is addressed by session, D7 keeps the identifier under
+  each tree, D8 creates slot trees at assignment, the adapter does not create an empty `/workspace/current`,
+  and §4.1's table takes choice (a) and covers both services. §9 records each resolution against the
+  reasoning that produced it.
+- A test may fail on a pod holding more than one session because the sessions carry different coordination
+  generations and the adapter fences them against one value it holds for the whole process. That is a
+  pre-existing mis-scoping this proposal neither creates nor cures: the specification and Postgres carry the
+  generation per session while the adapter holds one per pod, and §4.11's `checkSessionBound` merge repairs
+  the guard that masks it today, so a failure of this kind may surface here for the first time. Proposal
+  0076 moves the fenced generation onto the per-session entry. An implementor who meets such a failure
+  should confirm it has this cause and then leave it to 0076 rather than repairing it here, because a fix
+  staged in this proposal would collide with that one. A failure that does not turn on co-tenant sessions
+  holding different generations is not this case and is in scope.
 
 ## Implementation checklist
 
@@ -842,7 +855,7 @@ pod-scoped.
 classifies the `GatewayControl` request messages and why they are outside the gate.
 
 Under (b) the limit in §9 applies: the `GatewayControl` request messages are outside the tier-0 gate
-entirely. Choice (a) has no such limit and is the base case this proposal takes; review may take (b).
+entirely. Choice (a) has no such limit, and it is the choice this proposal takes and sign-off confirmed.
 
 The table is written out below in the form the specification takes it. Its unit is a request message the
 proto declares, spelled exactly as the proto spells it, so the tier-0 gate in §8 can reconcile the two
@@ -6517,22 +6530,36 @@ above states rather than a deletion, and whose only deleted subject is the pod-g
 
 **Whole-pod-scrub expectation.** The two sites take different dispositions. `pkg/gateway/podlifecycle/podsession/slotbinder_test.go:649-651` calls `recycleReq.GetSlotId().GetValue()`, and SCHEMA-1 removes `slot_id = 4` from `ShutdownRequest`, so the generated type loses `GetSlotId()` and the file stops compiling: that assertion is deleted with the field, while the `:653-656` session assertion and the recycle-disposition assertions below it stand. `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go:480-481` reads the gateway-side spy field `spy.sawSlotID` rather than the proto, so it takes the §4.5(c) spy-field disposition instead. The fixture rewrite at `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:48` belongs to the tier-3 block above and is unconditional.
 
-## 9. Open questions, and what was considered and rejected
+## 9. Questions resolved on sign-off, and what was considered and rejected
 
-### Open
+### Resolved on sign-off
 
-- **`RevokeCredentials`.** Whether the adapter's handler should gain a gateway caller or be removed. The
-  Token Service path (`pkg/gateway/credentials/credassign/client.go:306`) may be the only intended revocation, in which
-  case the adapter handler is dead code and CODE-4 shrinks.
-- **D8.** §5, under "The warm-time ordering", states the reasoning and the one assertion it invalidates.
-- **D7's path arrangement.** §5 records the measurements behind keeping the identifier under each tree
-  rather than above them. The arrangement that reads better to a consumer is available at the price of one
-  volume topology change and a §6.4 data-at-rest amendment, and review may take that trade.
-- **D9.** Retiring `/workspace/current` leaves an operator reaching a workspace by its slot path. Whether
-  the adapter should still create the empty directory, so that a `kubectl exec` into a warm pod finds a
-  familiar path rather than nothing, is a question this proposal answers with no and review may answer
-  differently.
-- **§4.1's table coverage.** Choice (a) is the base case. Review may take (b) and accept the limit below.
+The five questions below were open through adversarial review and were settled on sign-off (2026-08-19),
+each taking the base case this document already stages. They are kept here with the reasoning that produced
+them, because the reasoning is what a later reader needs in order to reopen one of them deliberately rather
+than by accident.
+
+- **`RevokeCredentials`.** The adapter's handler is kept and addressed by session, which is what CODE-4
+  stages. The alternative was to remove it as dead code on the ground that the Token Service path
+  (`pkg/gateway/credentials/credassign/client.go:306`) is the only intended revocation. Removing a
+  credential-revocation path on an unverified premise is the riskier direction, so the handler stands.
+  Whether the gateway ever gains its own caller is left to the proposal that establishes the answer.
+- **D8.** Slot directories are created at assignment. §5, under "The warm-time ordering", states the
+  reasoning and the one assertion it invalidates. The warm pod's checklist stops asserting that
+  `/workspace/current` exists and is empty and asserts `/workspace/slots/` instead, and §8 stages the one
+  test that pins the retired assertion as a hand-rewrite.
+- **D7's path arrangement.** The identifier stays under each tree. §5 records the measurements: hoisting it
+  into a single `/slots` volume withdraws the memory medium from `/sessions`, where §6.4's data-is-gone
+  statement rests, and withdraws the kernel-enforced immutability of `/workspace/shared`, which is pod-wide
+  and cannot move under a slot root. The arrangement that reads better to a consumer is available at the
+  price of one volume topology change and a §6.4 data-at-rest amendment, and that price is not taken here.
+- **D9.** Retiring `/workspace/current` leaves an operator reaching a workspace by its slot path, and the
+  adapter does not create the empty directory to preserve a familiar `kubectl exec` target. A path that
+  exists and holds nothing is its own trap, because it reads as an empty workspace rather than as a retired
+  name.
+- **§4.1's table coverage.** Choice (a): the table classifies every request message on both services and
+  carries a direction column. Choice (b) would have left the `GatewayControl` request messages outside the
+  tier-0 gate entirely, which is the limit §9 records against it.
 
 ### Considered and rejected
 
