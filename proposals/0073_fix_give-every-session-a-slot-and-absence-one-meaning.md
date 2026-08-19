@@ -1,8 +1,8 @@
 # Proposal: Give every session a slot and absence one meaning
 
-- **Status:** Approved (2026-08-19) by jaf sign-off, with the five §9 questions resolved to the base case
-  this document stages. Verified (2026-08-19). Converged after 13 adversarial review rounds (57 findings
-  fixed).
+- **Status:** Applied to spec (2026-08-19). Approved by jaf sign-off, with the §9 questions resolved to the
+  base case this document stages. Verified (2026-08-19). Converged after 13 adversarial review rounds (57
+  findings fixed).
 - **Date:** 2026-08-13
 - **Scope:** Every session is bound to a slot on every pod, whatever the pool's concurrency, so that the
   absence of a slot has exactly one meaning. The wire addresses that session by its session identifier on
