@@ -220,7 +220,7 @@ When the registry CI validates a submission, it runs the same `lenny runtime val
 | Shutdown exceeds `deadline_ms` | Runtime does not exit within the deadline | Ensure your shutdown handler finishes work and exits within `deadline_ms`. |
 | `tool_call` fails schema validation | Missing required fields in `tool_call` | Ensure `type`, `id`, `name`, and `arguments` are all present. |
 | MCP connection refused on macOS or Windows | A runtime run under `make run` reaches the platform MCP server over a Linux abstract Unix socket, which the host process cannot use off Linux | Validate with `lenny runtime validate`, which carries its own fixtures, or run the runtime end-to-end with `lenny up` or `docker compose up`. |
-| MCP nonce rejected | The runtime cached a stale manifest | Re-read `/run/lenny/adapter-manifest.json` at startup. The nonce is regenerated per session. |
+| MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then. The intra-pod MCP servers are pod-wide and started at most once per pod, so a server validates against the nonce the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server. |
 | Manifest not found | Manifest path incorrect | The manifest is at `/run/lenny/adapter-manifest.json`, not under `/workspace/`. |
 | Checkpoint quiesce times out | `checkpoint_ready` not sent within the deadline | Ensure your checkpoint handler quiesces state and replies with `checkpoint_ready` within `deadlineMs`. |
 

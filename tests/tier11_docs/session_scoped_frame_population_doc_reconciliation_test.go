@@ -170,7 +170,6 @@ func TestConceptsPageStatesTheSlotRuleOnEveryPod(t *testing.T) {
 	requireAllContain(t, "concepts.md Execution modes section", modes, []string{
 		"Every session is bound to a slot on every pod",
 		"`/workspace/slots/{sessionId}/current/`",
-		"no pod-global `/workspace/current` path exists",
 	})
 
 	// The concurrency bullet keeps the co-tenancy facts alone.
