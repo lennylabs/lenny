@@ -788,8 +788,8 @@ This means the parent controls what slice of its workspace becomes the child's w
 
 **Validation:**
 
-- Source glob resolution must not follow symlinks outside `/workspace/current`. The gateway resolves each matched path to its real path (`realpath`) and rejects any file whose resolved path is outside the workspace root. This prevents an agent from creating a symlink (e.g., `./data → /etc/passwd`) that would be included in the export.
-- Source globs are resolved inside the parent's `/workspace/current` only — no traversal outside the workspace
+- Source glob resolution must not follow symlinks outside `/workspace/slots/{sessionId}/current`. The gateway resolves each matched path to its real path (`realpath`) and rejects any file whose resolved path is outside the workspace root. This prevents an agent from creating a symlink (e.g., `./data → /etc/passwd`) that would be included in the export.
+- Source globs are resolved inside the parent's `/workspace/slots/{sessionId}/current` only — no traversal outside the workspace
 - `destPrefix` must be a relative path, no `..`, no absolute paths
 - Total exported size is checked against `fileExportLimits` in the delegation lease
 - File count is checked against `fileExportLimits.maxFiles`

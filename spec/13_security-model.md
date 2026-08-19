@@ -746,7 +746,7 @@ For the complete credential subsystem specification — including threat model c
   - Maximum path depth: **32** components.
   - Maximum path length: **4 096 bytes** (UTF-8).
   - `hardlink`, `character-device`, `block-device`, `FIFO`, and `socket` entries rejected outright.
-  - Symlinks rejected by default; if a Runtime opts in via `allowSymlinks: true`, the target must canonicalize inside `/workspace/current` and must not traverse `/proc`, `/sys`, `/dev`, or `/run/lenny`. Post-promotion symlink re-validation applies.
+  - Symlinks rejected by default; if a Runtime opts in via `allowSymlinks: true`, the target must canonicalize inside `/workspace/slots/{sessionId}/current` and must not traverse `/proc`, `/sys`, `/dev`, or `/run/lenny`. Post-promotion symlink re-validation applies.
 - Validator violations surface to clients as `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with `details.reason` carrying the specific sub-code (see [§15.1](15_external-api-surface.md#151-rest-api) error reference). Abort causes are counted in `lenny_upload_extraction_aborted_total{error_type}` ([§16.1](16_observability.md#161-metrics)).
 
 ### 13.5 Delegation Chain Content Security

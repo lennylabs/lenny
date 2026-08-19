@@ -1150,8 +1150,8 @@ The adapter normalizes this to the canonical form `{"type": "response", "output"
   ([§9.1](09_mcp-integration.md#91-where-mcp-is-used)). Lease extension is an internal gateway operation
   and is not exposed as a tool on this channel
   ([§8.6](08_recursive-delegation.md#86-lease-extension)). There is no workspace MCP server: the
-  workspace is materialized to `/workspace/current` before the runtime starts and the runtime reaches it
-  through the filesystem directly ([§4.7](04_system-components.md#47-runtime-adapter)).
+  workspace is materialized to `/workspace/slots/{sessionId}/current` before the runtime starts and the
+  runtime reaches it through the filesystem directly ([§4.7](04_system-components.md#47-runtime-adapter)).
   The servers speak MCP 2025-03-26 and also accept MCP 2024-11-05, and the adapter never advertises the
   `sampling` MCP capability to the local server
   ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),

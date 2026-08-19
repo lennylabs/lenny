@@ -8,7 +8,7 @@ A warm pod is either **pod-warm** (default) or **SDK-warm** (optional, per runti
 - Selected `RuntimeClass` active (runc/gVisor/Kata)
 - Runtime adapter listening and health-checked
 - Agent binary dependencies installed and loaded
-- `/workspace/current` exists but is empty
+- `/workspace/slots/` exists and is empty (a session's slot tree is created at slot assignment)
 - `/workspace/staging` exists for upload staging
 - `/sessions` directory present for session files
 - Projected service account token mounted (audience: deployment-specific, see [Section 10.3](10_gateway-internals.md#103-mtls-pki))
@@ -361,40 +361,32 @@ The TTFT SLO is P95 < 10s (from session start request to first streaming event, 
 
 ### 6.4 Pod Filesystem Layout
 
-```
-/workspace/
-  current/      # Agent's actual cwd — populated during workspace finalization
-  staging/      # Upload staging area — files land here first
-/sessions/      # Session files (e.g., conversation logs, runtime state)        [tmpfs]
-/artifacts/     # Logs, outputs, checkpoints
-/tmp/           # tmpfs writable area                        [tmpfs]
-```
-
-**Per-slot layout (`maxConcurrentSessions > 1`).** When `sessionPolicy.maxConcurrentSessions > 1`, the single `/workspace/current` layout above does not apply. Instead, the adapter creates a per-slot directory tree under `/workspace/slots/`:
+**One layout on every pod.** Every session is bound to a slot on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`, so the per-slot tree below is the pod filesystem layout on every pod. No pod-global `/workspace/current` path exists.
 
 ```
 /workspace/
   slots/
-    {slotId}/
-      current/    # This slot's cwd — populated during per-slot workspace finalization
-      staging/    # Per-slot upload staging area
+    {sessionId}/
+      current/    # This session's cwd — populated during workspace finalization
+      staging/    # This session's upload staging area — files land here first
+  staging/        # Pod-global staging area, created at warm time
   shared/         # Optional read-only shared assets (populated once at pod start, read-only mount)
 /sessions/
-  {slotId}/       # Per-slot session files (conversation logs, runtime state)    [tmpfs]
+  {sessionId}/    # Per-session session files (conversation logs, runtime state)  [tmpfs]
 /artifacts/
-  {slotId}/       # Per-slot logs, outputs, checkpoints
-/tmp/             # tmpfs writable area (shared across slots)                    [tmpfs]
+  {sessionId}/    # Per-session logs, outputs, checkpoints
+/tmp/             # tmpfs writable area (shared across the pod's sessions)        [tmpfs]
 ```
+
+**The `{sessionId}` placeholder.** The `slots/` directory names the pod-side resource class and its `{sessionId}` leaf names that resource's occupant: a session-mode slot's identifier is the identifier of the session bound to it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The container directory keeps the name `slots` rather than `sessions` because it holds the pod-side slots and their subtrees, and because `/sessions/` already names the session-file tree at the pod root.
 
 **Responsibility split:**
 
-- **Adapter** — creates and removes per-slot directory trees (`/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`). The adapter creates the slot directory on `slotId` assignment and removes it during slot cleanup ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The adapter sets each slot's `cwd` to `/workspace/slots/{slotId}/current/` when dispatching a task to the runtime.
-- **Runtime** — derives `cwd` per slot from `slotId` using the pattern `/workspace/slots/{slotId}/current/`. The runtime MUST NOT assume a global `/workspace/current` path when `maxConcurrentSessions > 1`. All file operations use the slot-derived `cwd` for the corresponding `slotId`.
-- **Gateway** — addresses per-slot workspace finalization and checkpoint export using the `slotId`-qualified paths. `FinalizeWorkspace` materializes files from `/workspace/slots/{slotId}/staging/` to `/workspace/slots/{slotId}/current/`. Checkpoint export ([Section 4.4](04_system-components.md#44-event--checkpoint-store)) targets `/workspace/slots/{slotId}/current/` for the specific slot.
+- **Adapter** — creates and removes per-session directory trees (`/workspace/slots/{sessionId}/`, `/sessions/{sessionId}/`, `/artifacts/{sessionId}/`). The adapter creates the slot directory on `sessionId` assignment and removes it during slot cleanup ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The adapter sets each session's `cwd` to `/workspace/slots/{sessionId}/current/` when dispatching a task to the runtime.
+- **Runtime** — derives `cwd` per session from `sessionId` using the pattern `/workspace/slots/{sessionId}/current/`. No global `/workspace/current` path exists, and the runtime MUST NOT assume one. All file operations use the session-derived `cwd` for the corresponding `sessionId`.
+- **Gateway** — addresses per-session workspace finalization and checkpoint export using the `sessionId`-qualified paths. `FinalizeWorkspace` materializes files from `/workspace/slots/{sessionId}/staging/` to `/workspace/slots/{sessionId}/current/`. Checkpoint export ([Section 4.4](04_system-components.md#44-event--checkpoint-store)) targets `/workspace/slots/{sessionId}/current/` for the specific session.
 
-The base layout (`/workspace/current`) applies when `maxConcurrentSessions` is 1.
-
-**`/workspace/shared/` population and enforcement.** When `maxConcurrentSessions > 1`, the `/workspace/shared/` directory is populated by the gateway during pod initialization (before any slot is assigned) from the Runtime's `sharedAssets` configuration: a list of artifact references or inline file specs. Once populated, `/workspace/shared/` is mounted read-only at the container level: the pod spec uses a separate `emptyDir` volume for `/workspace/shared/` with a `readOnly: true` volumeMount on the runtime container. This enforces immutability at the kernel level — any write attempt by the runtime process returns `EROFS` (read-only filesystem). The adapter does not create or modify files under `/workspace/shared/` after initial population. If no `sharedAssets` are configured on the Runtime, the `/workspace/shared/` directory is still mounted (empty, read-only) to prevent runtimes from using it as writable scratch space.
+**`/workspace/shared/` population and enforcement.** The `/workspace/shared/` directory is mounted on every pod and is populated by the adapter at warm time, before the pod reports ready and before any slot exists, from the Runtime's `sharedAssets` configuration: a list of artifact references or inline file specs. Once populated, `/workspace/shared/` is mounted read-only at the container level: the pod spec uses a separate `emptyDir` volume for `/workspace/shared/` with a `readOnly: true` volumeMount on the runtime container. This enforces immutability at the kernel level — any write attempt by the runtime process returns `EROFS` (read-only filesystem). The adapter does not create or modify files under `/workspace/shared/` after initial population. If no `sharedAssets` are configured on the Runtime, the `/workspace/shared/` directory is still mounted (empty, read-only) to prevent runtimes from using it as writable scratch space.
 
 **Data-at-rest protection:**
 

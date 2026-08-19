@@ -2013,7 +2013,7 @@ Runtime-author information is distributed across this specification. The followi
    with **[Section 15.4.1](#1541-message-format-and-binary-io-requirements)** for the stdout flushing requirement, which stays here.
 3. **[Section 15.4.2](#1542-rpc-lifecycle-state-machine)** — RPC Lifecycle State Machine. Read for context: the adapter (not your binary) owns this state machine. Knowing it helps you understand when your binary will start receiving messages (`ACTIVE`), and that `shutdown` arrives only during `DRAINING` — your binary never drives these transitions.
 4. **[Section 15.4.3](#1543-runtime-integration-levels)** — Runtime Integration Levels. Level definitions and the capability comparison matrix — confirms what Basic-level runtimes can skip.
-5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/current/`, `/tmp/`, `/artifacts/`).
+5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/slots/{sessionId}/current/`, `/tmp/`, `/artifacts/`).
 6. **[Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)** — Local Development Mode (`lenny-dev`). Use `lenny up` (Embedded Mode, the primary path for runtime authors — exercises the real Kubernetes code path via the embedded stack and registers your runtime through the production admin API; on macOS and Windows the embedded k3s runs under Docker Desktop's Linux VM) or `make run` (Source Mode, for platform contributors who need to modify the gateway or controller source alongside their runtime).
 
 **Standard-level (add MCP integration):**
@@ -2241,11 +2241,10 @@ type CreateRequest struct {
     // WorkspacePlan is a reference to the materialized workspace plan for
     // this task ([§14](14_workspace-plan-schema.md)). The files and
     // directories described here have already been staged under
-    // `/workspace/current` (or the per-slot path when the pool sets
-    // `maxConcurrentSessions > 1`) before OnCreate is invoked; runtimes
-    // typically read this value
-    // for metadata (sources, setup commands actually run) rather than to
-    // drive materialization themselves.
+    // `/workspace/slots/{sessionId}/current` before OnCreate is invoked;
+    // runtimes typically read this value for metadata (sources, setup
+    // commands actually run) rather than to drive materialization
+    // themselves.
     WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
 
     // Credentials is the current credential bundle delivered via

@@ -100,7 +100,7 @@ defaultPoolConfig:
   warmCount: 5
   resourceClass: medium
   egressProfile: restricted
-sharedAssets:  # files populated into /workspace/shared/ (read-only) during pod init; only meaningful when sessionPolicy.maxConcurrentSessions > 1
+sharedAssets:  # files populated into /workspace/shared/ (read-only) by the adapter at warm time, before READY; mounted and populated on every pod
   - type: artifact
     ref: "lenny-blob://tenant_acme/shared/models.tar.gz"
     destPath: models/
@@ -211,7 +211,7 @@ When the gateway resolves a derived runtime, it applies the following per-field 
 | `sessionPolicy` | **Override** — derived value replaces base if set | |
 | `capabilityInferenceMode` | **Override** — derived value replaces base if set; otherwise base value applies | Derived runtimes may relax to `permissive` for third-party tools; does not affect tools with explicit `toolCapabilityOverrides` |
 | `labels` | **Merge** — derived labels merged into base labels; conflicting keys replaced by derived | |
-| `sharedAssets` | **Append** — derived assets appended to base assets; conflicting `destPath` entries replaced by derived | Populates `/workspace/shared/` (read-only) during pod initialization ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)). Only meaningful when `sessionPolicy.maxConcurrentSessions` exceeds 1. |
+| `sharedAssets` | **Append** — derived assets appended to base assets; conflicting `destPath` entries replaced by derived | Populates `/workspace/shared/` (read-only) ([Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)). The adapter populates the directory at warm time, before READY and before any slot is assigned. The directory is mounted and populated on every pod. |
 
 **Merge behavior definitions:**
 - **Prohibited** — field must not be present in derived runtime definition. Gateway returns `INVALID_DERIVED_RUNTIME` at registration if present.
@@ -253,7 +253,7 @@ If the derived definition includes any `capabilities` field, the gateway rejects
 
 #### Derived Runtime Instantiation
 
-Registered via admin API as static configuration, not instantiated per-session. `workspaceDefaults` is the workspace plan the gateway materializes into every pod. Small files inline in `workspaceDefaults`, large files via MinIO reference. Session creation clients upload additional files on top of derived defaults. Workspace materialization order: base defaults → derived defaults → client uploads → file exports from parent delegation. Before materializing, the adapter MUST remove all files from `/workspace/current` to prevent residual state from prior tasks — this applies regardless of whether the pod has a `scrub_warning` annotation from a prior failed cleanup.
+Registered via admin API as static configuration, not instantiated per-session. `workspaceDefaults` is the workspace plan the gateway materializes into every pod. Small files inline in `workspaceDefaults`, large files via MinIO reference. Session creation clients upload additional files on top of derived defaults. Workspace materialization order: base defaults → derived defaults → client uploads → file exports from parent delegation. Before materializing, the adapter MUST remove all files from the session's `/workspace/slots/{sessionId}/current` to prevent residual state from prior tasks — this applies regardless of whether the pod has a `scrub_warning` annotation from a prior failed cleanup.
 
 Derived runtimes have **fully independent pool settings**. Constraint: resource classes cannot exceed base runtime's configured classes. If no pool registered for a derived runtime, gateway falls back to base runtime's pool.
 

@@ -235,7 +235,8 @@ state that the READY signal is one of them.
 
 16. `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The `FinalizeWorkspace`
-    RPC validates the staging area and materializes it to `/workspace/current`
+    RPC validates the staging area and materializes it to the session's
+    `/workspace/slots/{sessionId}/current`
     ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
@@ -835,9 +836,8 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
 
 5. `agent pod`, `internal`. The adapter takes its pod-level operation lock, which serializes `Checkpoint`
    and `Interrupt` across the pod's slots and must be free or must promote this checkpoint from its
-   queue, and resolves the workspace roots the attempt covers: `/workspace/current`, and
-   `/workspace/slots/{slotId}/current/` on a pod whose pool sets `sessionPolicy.maxConcurrentSessions`
-   greater than 1 (§28.5.1 `CH-CHECKPOINT`, §28.6,
+   queue, and resolves the workspace root the attempt covers, which is the session's
+   `/workspace/slots/{sessionId}/current/` on every pod (§28.5.1 `CH-CHECKPOINT`, §28.6,
    [§4.4](04_system-components.md#44-event--checkpoint-store),
    [§4.7](04_system-components.md#47-runtime-adapter),
    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
@@ -886,7 +886,8 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
    [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
 
 9. `agent pod`, `internal`. The adapter captures the checkpoint's contents, which are a tar of the
-   resolved workspace roots and a copy of the `/sessions/` contents, and splits the stream into
+   resolved workspace root and a copy of the session's own `/sessions/{sessionId}` tree, so a
+   checkpoint captures no co-tenant's session files, and splits the stream into
    fixed-size chunks of `chunk_size_bytes` under the attempt's `chunk_encoding`
    ([§4.4](04_system-components.md#44-event--checkpoint-store),
    [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
@@ -1095,8 +1096,9 @@ stamp on every gateway-to-pod RPC and rejects a stale one
    ascending order against the capabilities the `Resume` call carried, holding no object-store credential
    and no `LIST`, `DELETE`, or multipart capability, and concatenates the bodies into a single byte stream
    fed end to end into one decompress-and-untar pipeline whose decoder is selected from the manifest's
-   `chunk_encoding` column. The pipeline writes into the staging directory `/workspace/current.partial`,
-   which is renamed onto `/workspace/current` only once end truncation is the sole observed error; a fetch
+   `chunk_encoding` column. The pipeline writes into the staging directory
+   `/workspace/slots/{sessionId}/current.partial`, which is renamed onto
+   `/workspace/slots/{sessionId}/current` only once end truncation is the sole observed error; a fetch
    error on a non-final chunk, a decode error away from the end of the stream, or a mid-stream tar header
    parse error aborts reassembly, deletes the staging directory whole, and falls back to the last
    successful full checkpoint (§28.5.5 `CH-OBJSTORE`,
@@ -1527,8 +1529,9 @@ independent in them.
   concurrent slots and is the occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
   on first claim (§28.3, [§6.2](06_warm-pod-model.md#62-pod-state-machine)). The specification states no
   per-slot claim object.
-- The shared asset tree. `/workspace/shared/` is populated by the gateway during pod initialization
-  before any slot is assigned, is mounted read-only at the container level so a write returns `EROFS`,
+- The shared asset tree. `/workspace/shared/` is populated by the adapter at warm time, before the pod
+  reports READY and before any slot is assigned, is mounted read-only at the container level so a write
+  returns `EROFS`,
   and is not modified by the adapter afterwards
   ([§6.4](06_warm-pod-model.md#64-pod-filesystem-layout)).
 - The pod's health and its disposition. The pod-level phase is the coarse `claimed` whenever occupancy is

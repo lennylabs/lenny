@@ -37,12 +37,12 @@ The four coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cl
 
 **Isolation profile.** The reference coding-agent runtimes set `isolationProfile: sandboxed` (gVisor) as their runtime-level default ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), because agents execute untrusted shell commands on behalf of the user and gVisor provides host-kernel isolation. An operator can override the profile per pool. A `microvm` (Kata) pool provides stronger isolation, and `standard` (runc) is permitted under the generic [§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles) `allowStandardIsolation` opt-in. An operator that overrides the default accepts the resulting isolation tradeoff.
 
-**Workspace layout.** Per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), each session's workspace lives at `/workspace/current/`. Coding-agent runtimes add the following conventions:
+**Workspace layout.** Per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), each session's workspace lives at `/workspace/slots/{sessionId}/current/`. Coding-agent runtimes add the following conventions:
 
-- `/workspace/current/` is the **repo root** (`pwd` inside the shell defaults here).
+- `/workspace/slots/{sessionId}/current/` is the **repo root** (`pwd` inside the shell defaults here).
 - `.git/` is materialized by the gateway when the client's `WorkspacePlan` includes a `sources[].type: gitClone` entry; otherwise the workspace is a plain directory.
-- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is used only on pools with `sessionPolicy.maxConcurrentSessions > 1`; coding-agent runtimes default to `executionMode: session` with one session per pod and do not use it.
-- `/workspace/output/` is provided for agents to write artifacts that should survive session teardown and be recoverable via `GET /v1/sessions/{id}/artifacts` ([§15.1](15_external-api-surface.md#151-rest-api)). Agents MUST write intended outputs here; the rest of `/workspace/current/` is ephemeral.
+- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is mounted and populated on every pod by the adapter at warm time; coding-agent runtimes do not use it.
+- `/workspace/output/` is provided for agents to write artifacts that should survive session teardown and be recoverable via `GET /v1/sessions/{id}/artifacts` ([§15.1](15_external-api-surface.md#151-rest-api)). Agents MUST write intended outputs here; the rest of `/workspace/slots/{sessionId}/current/` is ephemeral.
 
 **Pre-installed tools.** The reference image for every coding-agent runtime includes: `bash`, `sh`, `git`, `curl`, `jq`, `ripgrep`, `fd`, `python3`, `node` (current LTS), `go` (current stable), `rustc`/`cargo`, `make`. Language toolchains for less-common ecosystems (Ruby, Java, Swift) are not pre-installed; `setupCommands` or user-supplied `sources[]` install them per-session. The pre-installed set is chosen to cover the top languages without bloating the image beyond ~1.5 GB.
 
@@ -216,7 +216,7 @@ The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-
 
 1. Warm-pool controller pulls the image and starts the pod in INIT state.
 2. Adapter binary boots, registers with the gateway, and signals READY.
-3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/current/`; runs any `setupCommands`; emits `session.created`.
+3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; emits `session.created`.
 4. On first `message`: adapter invokes `claude --no-tty --print --session-id=<id>` and pipes the message to stdin. All subsequent messages for the session reuse the same `claude` process (multi-turn).
 5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§28.5.3](28_communication-channels.md#2853-intra-pod)); tool results are injected back via `tool_result`.
 6. On session termination: adapter sends SIGTERM to `claude`; waits up to 5s for graceful shutdown; force-kills on timeout. Any files written under `/workspace/output/` are sealed as session artifacts.
@@ -381,7 +381,7 @@ LangGraph (Python) agent runtime. Framework-specific: the runtime loads a LangGr
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's graph definition (uploaded as `sources[]`) plus a `requirements.txt` or `pyproject.toml`.
+- `/workspace/slots/{sessionId}/current/` contains the user's graph definition (uploaded as `sources[]`) plus a `requirements.txt` or `pyproject.toml`.
 - `setupCommands` typically runs `pip install -r requirements.txt` or `poetry install` before the graph module is importable. Allowlist covers both.
 - Checkpointing (when `runtimeOptions.checkpointBackend: postgres` or `redis`) uses Lenny's platform Postgres/Redis, scoped to the session's tenant. The runtime's adapter connects via short-lived credentials issued by the credential leasing service with scope `datastore.checkpoint.rw`.
 
@@ -411,7 +411,7 @@ Mastra (TypeScript) agent framework runtime.
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's agent definition (`src/agent.ts` or similar) plus `package.json`.
+- `/workspace/slots/{sessionId}/current/` contains the user's agent definition (`src/agent.ts` or similar) plus `package.json`.
 - `setupCommands` typically runs `npm ci` or `pnpm install`. Allowlist covers both.
 - The adapter is a Node process; it imports the user module via `ts-node`/`tsx` (bundled in the image) and wraps the Mastra agent's message handling.
 
@@ -442,7 +442,7 @@ Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle
 **Workspace conventions:**
 
 - Assistants API manages its own file store; file uploads from the client are forwarded to OpenAI via the Files API using the pool's provider identity. Sealed Lenny artifacts at session end include any files produced by the assistant.
-- No `/workspace/current/` usage — the runtime is stateless relative to local filesystem.
+- No `/workspace/slots/{sessionId}/current/` usage — the runtime is stateless relative to local filesystem.
 
 **Bootstrap:** on session start, adapter creates a `Thread` on OpenAI with the assistant ID from `runtimeOptions`; on each `message`, adapter appends to the thread and starts a `Run`; streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes.
 
@@ -471,7 +471,7 @@ CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/del
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's crew definition (`crew.py` or similar) plus `requirements.txt`.
+- `/workspace/slots/{sessionId}/current/` contains the user's crew definition (`crew.py` or similar) plus `requirements.txt`.
 - `setupCommands` runs `pip install -r requirements.txt`.
 
 **Bootstrap:** adapter imports the module specified by `runtimeOptions.crewModule`; resolves the `Crew` object; on `message`, invokes `crew.kickoff(inputs={"message": ...})`; streams agent-internal thoughts and tool calls; maps any `Task.delegate` calls to `lenny/delegate_task` invocations that create Lenny sub-sessions under the parent's delegation budget.
