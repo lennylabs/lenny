@@ -42,6 +42,14 @@ type fencedBlock struct {
 // extractFencedBlocks walks the file and yields every fenced code
 // block whose info string declares a language.
 func extractFencedBlocks(path string) ([]fencedBlock, error) {
+	return extractFencedBlocksIncluding(path, false)
+}
+
+// extractFencedBlocksIncluding walks the file and yields its fenced code
+// blocks. With includeUntagged set it also yields the blocks whose info string
+// declares no language, which carry the annotated protocol traces the doc
+// pages write as plain fences.
+func extractFencedBlocksIncluding(path string, includeUntagged bool) ([]fencedBlock, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -60,7 +68,7 @@ func extractFencedBlocks(path string) ([]fencedBlock, error) {
 		if !in {
 			if strings.HasPrefix(strings.TrimSpace(line), "```") {
 				lang := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "```"))
-				if lang == "" {
+				if lang == "" && !includeUntagged {
 					continue // unmarked block; skip
 				}
 				cur = fencedBlock{Path: path, Language: lang, StartLine: lineNo}

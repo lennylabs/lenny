@@ -74,24 +74,87 @@ func TestBasicLevelRuntimeSamplesEchoTheSessionIdentifier(t *testing.T) {
 
 	for _, rel := range basicLevelRuntimeSamplePages {
 		page := filepath.Join(root, rel)
-		blocks, err := extractFencedBlocks(page)
+		// The annotated protocol traces are written as fences with no
+		// language tag, and they emit the same session-scoped frames the
+		// source blocks do, so they are read here too.
+		blocks, err := extractFencedBlocksIncluding(page, true)
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
 		emitting := 0
 		for _, b := range blocks {
-			if !sessionScopedEmission.MatchString(b.Body) {
-				continue
-			}
-			emitting++
-			if !echoedIdentifier.MatchString(b.Body) {
-				t.Errorf("%s:%d: the code block emits a session-scoped frame (`response` or `tool_call`) and names no per-session identifier; a Basic-level runtime echoes the identifier the adapter handed it", rel, b.StartLine)
+			for _, e := range sessionScopedEmissions(b.Body) {
+				emitting++
+				if echoedIdentifier.MatchString(e.Text) {
+					continue
+				}
+				t.Errorf("%s:%d: this `response` or `tool_call` construction names no per-session identifier; a Basic-level runtime echoes the identifier the adapter handed it on every session-scoped frame it emits\n%s", rel, b.StartLine+e.Offset, e.Text)
 			}
 		}
 		if emitting == 0 {
 			t.Errorf("%s: no code block emits a `response` or a `tool_call` (page restructured?); the echo obligation is no longer held on this page", rel)
 		}
 	}
+}
+
+// emission is one `response` or `tool_call` construction inside a code block,
+// with its offset in lines from the block's fence.
+type emission struct {
+	Offset int
+	Text   string
+}
+
+// sessionScopedEmissions returns one entry per `response` or `tool_call`
+// construction in a code block, each carrying the extent of that construction
+// alone. Scanning the whole block instead would let one addressed frame
+// satisfy the assertion for every unaddressed frame beside it.
+func sessionScopedEmissions(body string) []emission {
+	lines := strings.Split(body, "\n")
+	var out []emission
+	for i, line := range lines {
+		if !sessionScopedEmission.MatchString(line) {
+			continue
+		}
+		start := i
+		if i > 0 && opensConstruction(lines[i-1]) {
+			// The construction's own opener sits on the line above, which is
+			// where a call that stamps the identifier is written.
+			start = i - 1
+		}
+		end := constructionEnd(lines, start)
+		out = append(out, emission{Offset: start + 1, Text: strings.Join(lines[start:end+1], "\n")})
+	}
+	return out
+}
+
+// opensConstruction reports whether a line ends by opening a composite value,
+// which makes the line below it a continuation of the same construction.
+func opensConstruction(line string) bool {
+	trimmed := strings.TrimRight(line, " \t")
+	return strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "(")
+}
+
+// constructionEnd returns the index of the line on which the construction
+// opened at or after `start` closes, tracking brace and parenthesis depth. A
+// construction written on one line ends on that line.
+func constructionEnd(lines []string, start int) int {
+	depth := 0
+	opened := false
+	for i := start; i < len(lines); i++ {
+		for _, r := range lines[i] {
+			switch r {
+			case '{', '(', '[':
+				depth++
+				opened = true
+			case '}', ')', ']':
+				depth--
+			}
+		}
+		if opened && depth <= 0 {
+			return i
+		}
+	}
+	return len(lines) - 1
 }
 
 // spec: 4.1, 4.7
@@ -120,6 +183,109 @@ func TestAdapterContractNamesTheShutdownRPCUnderItsWireName(t *testing.T) {
 	})
 	if strings.Contains(page, "| `Terminate` |") {
 		t.Error("docs/reference/adapter-contract.md still carries a `Terminate` RPC row; the gateway-to-adapter teardown request is declared under the single name `Shutdown`")
+	}
+}
+
+// addressOmittedWhenAbsent records, per sample page, the construct that keeps
+// the per-session address off a frame when the inbound envelope carried none.
+// A frame carrying the key bound to a null value fails the published JSON Lines
+// schema, which accepts a string there; a frame that omits the key resolves to
+// the binding of the stream that delivered it on a pod holding at most one
+// slot.
+var addressOmittedWhenAbsent = []struct {
+	page      string
+	construct string
+}{
+	{filepath.Join("docs", "runtime-author-guide", "echo-runtime.md"), "`json:\"sessionId,omitempty\"`"},
+	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "go.md"), "`json:\"sessionId,omitempty\"`"},
+	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "python.md"), "if current_session_id is not None:"},
+	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "typescript.md"), "let currentSessionId: string | undefined;"},
+	{filepath.Join("docs", "tutorials", "build-a-runtime.md"), "`json:\"sessionId,omitempty\"`"},
+	{filepath.Join("docs", "tutorials", "recursive-delegation.md"), "`json:\"sessionId,omitempty\"`"},
+}
+
+// spec: 4.6.1, 15.1, 28.5.3
+// diagnosis: a reader-facing runtime sample writes the per-session address
+//
+//	unconditionally, so a frame emitted before the runtime has read an inbound
+//	envelope, or in response to one that carried no address, goes out with the
+//	key bound to a null value. The published JSON Lines schema accepts a string
+//	there, so such a frame is rejected outright, while a frame that omits the
+//	key resolves against the stream's own binding on a pod holding at most one
+//	slot. The sample teaches the rejected form.
+func TestBasicLevelRuntimeSamplesOmitTheAddressWhenAbsent(t *testing.T) {
+	root := repoRoot(t)
+
+	for _, sample := range addressOmittedWhenAbsent {
+		page := readDocPage(t, filepath.Join(root, sample.page))
+		if !strings.Contains(page, sample.construct) {
+			t.Errorf("%s: the sample does not keep the per-session address off a frame that has none (expected %q); a null address fails the published JSON Lines schema", sample.page, sample.construct)
+		}
+	}
+}
+
+// contractAddressKey matches the per-session address key in the spelling the
+// adapter-contract reference page carries for it. The page spells the frame key
+// `slotId` until the frame-key rename lands, and the assertions below travel
+// with the page when it takes the wire spelling.
+var contractAddressKey = regexp.MustCompile(`slotId|sessionId`)
+
+// spec: 4.6.1, 15.1, 28.5.3
+// diagnosis: docs/reference/adapter-contract.md grants a Basic-level runtime
+//
+//	an unqualified permission to ignore every envelope field outside `type`,
+//	`id`, and `input`. The adapter addresses every session-scoped frame by the
+//	session it belongs to on every pod, so the address is excepted from that
+//	permission and the runtime echoes it on the frames it emits in response. An
+//	unqualified permission tells the author to discard the field the same page's
+//	field table says the adapter populates two lines above it.
+func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *testing.T) {
+	root := repoRoot(t)
+	page := adapterContractDoc(t, root)
+
+	line := lineContaining(page, "**Basic-level runtimes:**")
+	if line == "" {
+		t.Fatal("docs/reference/adapter-contract.md: no `message` field table states what a Basic-level runtime reads (renamed or removed?)")
+	}
+	if !contractAddressKey.MatchString(line) {
+		t.Errorf("docs/reference/adapter-contract.md: the Basic-level permission names no per-session address field: %q", line)
+	}
+	requireAllContain(t, "adapter-contract.md Basic-level permission", line, []string{
+		"echoes it",
+	})
+	if strings.Contains(line, "Ignore all other fields safely.") {
+		t.Errorf("docs/reference/adapter-contract.md: the Basic-level permission is unqualified; the per-session address is excepted from it: %q", line)
+	}
+}
+
+// spec: 4.6.1, 28.5.3
+// diagnosis: a `response` or `tool_call` literal on
+//
+//	docs/reference/adapter-contract.md carries no per-session address. Every
+//	session-scoped frame is addressed on every pod, so the page's shorthand
+//	examples and its annotated wire traces spell the same field set its frame
+//	reference does. A worked trace showing an unaddressed frame demonstrates the
+//	page's own field reference being violated.
+func TestAdapterContractFrameLiteralsCarryTheAddress(t *testing.T) {
+	root := repoRoot(t)
+	rel := filepath.Join("docs", "reference", "adapter-contract.md")
+
+	blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	emitting := 0
+	for _, b := range blocks {
+		for _, e := range sessionScopedEmissions(b.Body) {
+			emitting++
+			if contractAddressKey.MatchString(e.Text) {
+				continue
+			}
+			t.Errorf("%s:%d: this frame literal carries no per-session address; every session-scoped frame is addressed on every pod\n%s", rel, b.StartLine+e.Offset, e.Text)
+		}
+	}
+	if emitting == 0 {
+		t.Errorf("%s: no code block carries a `response` or `tool_call` literal (page restructured?); the addressing rule is no longer held on this page", rel)
 	}
 }
 

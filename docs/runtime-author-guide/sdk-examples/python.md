@@ -81,16 +81,28 @@ def write_json(obj):
     sys.stdout.flush()
 
 
+def with_session_id(frame):
+    """Stamp the session identifier on a session-scoped frame.
+
+    The key is omitted when the inbound envelope carried none, so the frame is
+    never emitted with a null address: the published JSON Lines schema accepts
+    a string here, and a frame that omits the key resolves to the binding of
+    the stream that delivered it on a pod holding at most one slot.
+    """
+    if current_session_id is not None:
+        frame["sessionId"] = current_session_id
+    return frame
+
+
 def write_response(text):
     """Send a response message signaling task completion."""
     global phase
-    write_json({
+    write_json(with_session_id({
         "type": "response",
-        "sessionId": current_session_id,
         "output": [
             {"type": "text", "inline": text}
         ]
-    })
+    }))
     phase = 0
 
 
@@ -115,13 +127,12 @@ def list_dir(path):
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
-        "sessionId": current_session_id,
         "name": "list_dir",
         "arguments": {"path": path}
-    })
+    }))
 
 
 def read_file(path):
@@ -129,13 +140,12 @@ def read_file(path):
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
-        "sessionId": current_session_id,
         "name": "read_file",
         "arguments": {"path": path}
-    })
+    }))
 
 
 # ---- Message handlers ----

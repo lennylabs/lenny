@@ -155,7 +155,7 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
 | `slotId` | string | All | Names the session this message is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
-**Basic-level runtimes:** Read only `type`, `id`, and `input`. Ignore all other fields safely.
+**Basic-level runtimes:** Read `type`, `id`, `input`, and `slotId`. The remaining envelope fields may be ignored safely. `slotId` is excepted from that permission: it names the session the message is addressed to, the adapter populates it on every pod, and a Basic-level runtime echoes it on the session-scoped frames it emits in response.
 
 **The `input` array contains MessagePart objects.** The simplest MessagePart is:
 
@@ -233,10 +233,10 @@ The primary output message. Signals task completion.
 }
 ```
 
-**Simplified shorthand** (Basic-level convenience --- adapter normalizes to the full form):
+**Simplified shorthand** (Basic-level convenience --- adapter normalizes to the full form). A Basic-level runtime echoes the identifier the adapter handed it on the shorthand form as well:
 
 ```json
-{ "type": "response", "text": "The answer is 42." }
+{ "type": "response", "slotId": "sess_abc", "text": "The answer is 42." }
 ```
 
 **Error reporting via `response`.** Include an optional `error` field for structured error reporting:
@@ -244,6 +244,7 @@ The primary output message. Signals task completion.
 ```json
 {
   "type": "response",
+  "slotId": "sess_abc",
   "output": [
     { "type": "text", "inline": "Partial results before failure..." }
   ],
@@ -256,7 +257,7 @@ The primary output message. Signals task completion.
 
 When `error` is present, the adapter maps the task to `failed` state. When `error` is absent and the process exits with code 0, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
 
-**Relationship with `lenny/output`:** At the Standard and Full levels, you may emit output parts incrementally via the `lenny/output` platform tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "output": []}`.
+**Relationship with `lenny/output`:** At the Standard and Full levels, you may emit output parts incrementally via the `lenny/output` platform tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "slotId": "sess_abc", "output": []}`.
 
 #### `tool_call` --- Request Tool Execution
 
@@ -386,13 +387,13 @@ Setting both `inline` and `ref` on the same part is a validation error (`400 MES
 
 ### Simplified text shorthand (Basic level)
 
-Basic-level runtimes may emit a `response` with a top-level `text` field instead of a full `output` array:
+Basic-level runtimes may emit a `response` with a top-level `text` field instead of a full `output` array, echoing on it the per-session identifier the adapter handed them:
 
 ```json
-{ "type": "response", "text": "The answer is 42." }
+{ "type": "response", "slotId": "sess_abc", "text": "The answer is 42." }
 ```
 
-The adapter normalizes this to the canonical form `{"type": "response", "output": [{"type": "text", "inline": "The answer is 42."}]}` before forwarding. Use the full form when you have more than one part or need a non-text type.
+The adapter normalizes this to the canonical form `{"type": "response", "slotId": "sess_abc", "output": [{"type": "text", "inline": "The answer is 42."}]}` before forwarding. Use the full form when you have more than one part or need a non-text type.
 
 ### Examples
 
@@ -581,12 +582,12 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 1. Adapter starts agent binary, stdin/stdout pipes open.
 
 2. Adapter writes to stdin:
-   {"type":"message","id":"msg_001","input":[{"type":"text","inline":"Hello"}],"from":{"kind":"client","id":"client_8f3a2b"},"threadId":"t_01"}
+   {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Hello"}],"from":{"kind":"client","id":"client_8f3a2b"},"threadId":"t_01"}
 
-3. Agent reads line from stdin, parses JSON, reads type/id/input (ignores other fields).
+3. Agent reads line from stdin, parses JSON, reads type/id/input/slotId (ignores the other fields, and echoes slotId on what it emits).
 
 4. Agent writes to stdout:
-   {"type":"response","text":"Echo: Hello"}
+   {"type":"response","slotId":"sess_abc","text":"Echo: Hello"}
 
 5. Adapter reads line from stdout, delivers response to gateway.
 
@@ -608,21 +609,21 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 
 ```
 Agent writes to stdout:
-{"type":"tool_call","id":"tc_001","name":"read_file","arguments":{"path":"/workspace/current/README.md"}}
+{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/README.md"}}
 
 Adapter reads file and writes to stdin:
-{"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"# My Project\nThis is a sample project."}],"isError":false}
+{"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"# My Project\nThis is a sample project."}],"isError":false}
 ```
 
 ### Multiple Outstanding Tool Calls
 
 ```
 Agent writes:
-{"type":"tool_call","id":"tc_001","name":"read_file","arguments":{"path":"src/main.go"}}
-{"type":"tool_call","id":"tc_002","name":"read_file","arguments":{"path":"go.mod"}}
+{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"src/main.go"}}
+{"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"go.mod"}}
 
 Adapter may respond in any order:
-{"type":"tool_result","id":"tc_002","content":[{"type":"text","inline":"module example.com/myapp\ngo 1.22"}],"isError":false}
+{"type":"tool_result","id":"tc_002","slotId":"sess_abc","content":[{"type":"text","inline":"module example.com/myapp\ngo 1.22"}],"isError":false}
 
 A heartbeat may arrive between tool results:
 {"type":"heartbeat","ts":1717430420}
@@ -631,7 +632,7 @@ Agent acks immediately:
 {"type":"heartbeat_ack"}
 
 Then the other result arrives:
-{"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
+{"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
 ```
 
 ### Full-level checkpoint handshake
