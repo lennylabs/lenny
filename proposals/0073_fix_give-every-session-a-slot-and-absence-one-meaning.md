@@ -1,6 +1,6 @@
 # Proposal: Give every session a slot and absence one meaning
 
-- **Status:** Draft for review.
+- **Status:** Verified (2026-08-19). Converged after 13 adversarial review rounds (57 findings fixed); awaiting sign-off.
 - **Date:** 2026-08-13
 - **Scope:** Every session is bound to a slot on every pod, whatever the pool's concurrency, so that the
   absence of a slot has exactly one meaning. The wire addresses that session by its session identifier on
@@ -40,6 +40,10 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
   `pkg/gateway/podlifecycle`.
 - The per-slot filesystem tree becomes the only layout, the documented placeholder becomes `{sessionId}`,
   and `/workspace/current` is retired rather than kept as a second name for it.
+- The gateway derives a session's workspace root from the base the adapter reports and the session
+  identifier, so restore, `ExportPaths`, the §13.4 archive containment root, and the persisted
+  `sessions.workspace_root` all name the slot tree, and `Binder.Resume` reserves its slot on the pod
+  `connect` already claimed.
 - The persistence layer drops `session_checkpoints.slot_id` and `checkpoint_manifest.slot_id`, re-keys the
   three indexes on `session_id`, and removes the `SlotDefault` sentinel and the Go surface of the dropped
   columns. The client SDKs and the HTTP and SSE payloads drop `slotId`, and the register rows the removed
@@ -118,7 +122,7 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
 - `soleSession()` is the one accessor that names the session a pod-global surface may act as. It is empty
   whenever another session's code may still be resident in the pod's shared runtime process, so a released
   session's token fold is never charged to a co-tenant's budget and no tool call is dispatched under another
-  session's principal. Review pass 26 and pass 65 each reached a defect in a weaker predicate. CODE-1's
+  session's principal. Review passes 26, 65, and 66 each reached a defect in a weaker predicate. CODE-1's
   paragraph on the intra-pod MCP surface is the only definition of the accessor: the pod-level
   runtime-generation state it reads, the two sites that write that state, and the predicate. The state
   counts the sessions given to the pod's current shared runtime process rather than the entries held in the
@@ -127,9 +131,9 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
   disagreement between such a section and CODE-1 is resolved in CODE-1's favor.
 - MIG-1's SQL is string literals, so a partial edit is not caught by the compiler and fails at runtime on
   every checkpoint insert and rotation. The Go readers and writers of the two columns land with the columns.
-- CODE-2 derives the §7.3 step (d) expectation at three sites and not at `start.go:3917`, which replays the
-  persisted column. Deriving it there compares a value against itself and reinstates the vacuity §1.2
-  records. Review pass 18 staged that fourth site before it was withdrawn.
+- CODE-2 derives `<base>/slots/{sessionId}/current` at two sites and not at `start.go:3917`, which replays
+  the persisted column. Deriving it there compares a value against itself and reinstates the vacuity §1.2
+  records. Review pass 18 staged the replay as a further derivation site before it was withdrawn.
 - `Binder.Resume` reserves one counted slot on the pod `connect` already claimed, on the pools the start
   path reserves one on. `SlotClaimer.ClaimSlot` scans the pool and picks its own pod, so using it there
   leaves the resumed session on a pod with no reservation, which review pass 26 reached. CODE-2's counter
@@ -164,6 +168,11 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
   at credential assignment or at `StartSession` leaves a bound registry entry no adapter path removes, which
   pins the drain gate false. Neither class reaches `Runtime.Start`, so neither touches CODE-1's
   runtime-generation state. The drain gate keeps a read-then-act window between the decision and the send.
+  A `Runtime.Start` still in flight when the hold timeout terminates its member leaves an unsupervised agent
+  process on a pod where that member was the only started entry. On a pod holding a started co-tenant the
+  same start either fails in `accept` or leaves the shared runtime child, its connection, and its listener
+  up carrying both agents. §8 pins the first state at tier 1 and the co-tenant interleaving at tier 7a, and
+  §9 records both.
   The adapter manifest and the intra-pod MCP surface stay pod-global, so Standard- and Full-level runtimes
   remain unusable on a concurrent pod. The in-flight rotation gate and its ceiling stay pod-wide per
   provider.
@@ -213,8 +222,10 @@ rather than from text dependency alone.
 Where a deliverable's documentation text and the code that makes it true fall on opposite sides of either
 rule, the text moves to the code's step, and the step that carries it names the part it takes.
 
-- [ ] **S1 · spec** — SPEC-1. The presence conditions in `spec/15`, `spec/28`, `spec/05`, and `spec/29` are
-      replaced by §4.2's value rule and §4.6.1's population rule.
+- [ ] **S1 · spec** — SPEC-1. The presence conditions in `spec/15`, `spec/28`, `spec/05`, `spec/06`,
+      `spec/07`, and `spec/29` are replaced by §4.2's value rule and §4.6.1's population rule, and the
+      intra-pod MCP nonce statements and the §4.7.5 manifest stability sentence are restated on the
+      pod-wide surface CODE-1's start-side merge leaves.
       Depends on: —
 - [ ] **S2 · spec** — SPEC-2. §5.2 defines a session-mode slot and a service-mode slot, and the glossary
       gains an entry carrying both senses.
@@ -243,10 +254,15 @@ rule, the text moves to the code's step, and the step that carries it names the 
       heading is retitled, and the two inbound references take the new fragment.
       Depends on: S1, S3
 - [ ] **S8 · spec** — SPEC-6. The `slot_01` examples, the four `"slotId": null` examples, and the
-      identifier-order rules are corrected in the specification and the documentation.
-      Depends on: S1, S10
+      identifier-order rules are corrected in the specification and the documentation. The specification
+      examples spell the key SCHEMA-2 publishes at S10 and land here with the rest of the spec phase,
+      because ordering rule 2 does not reach `spec/`; the documentation examples take their key rename
+      with CODE-6 at S16 under §4.6.2(i), so this step corrects their value alone.
+      Depends on: S1
 - [ ] **S9 · spec** — SPEC-9. The `spec/10` scoping key, supersede rule, and reassembly predicate are re-keyed
       on `session_id`, the sentinel sentence is deleted, and `spec/12` and `spec/16` take the matching rows.
+      The step also stages the `spec/10:58` sentence recording what the coordinator hold's timeout
+      terminates and emits, which is the specification half of CODE-3.
       Depends on: S4
 - [ ] **S10 · schema** — SCHEMA-2. The JSONL schema states §4.6.1's population rule on all six session-scoped
       frames, renames `slotId` to `sessionId`, adds the field to `status`, and updates the frame example.
@@ -275,8 +291,8 @@ rule, the text moves to the code's step, and the step that carries it names the 
       report, `Runtime.Close`, tree removal, and `AdapterTerminating`. The arming read moves from
       S11's `anyStartedSession()` onto `hasStartedSession()`, `holdState.session` and
       `enterHoldState`'s parameter are deleted, and `pkg/adapter/holdstate_test.go` is rewritten onto
-      the registry. The step takes §8's tier-1 coordinator-hold termination cases, its tier-7a
-      concurrent-`Shutdown` case, and the tier-9 arm that drives the termination pass, whose predicates
+      the registry. The step takes §8's tier-1 coordinator-hold termination cases, its two tier-7a
+      hold-termination race cases, and the tier-9 arm that drives the termination pass, whose predicates
       read the two passes together with SCHEMA-1's clause two and CODE-1's runtime-generation
       membership, all of which land at S11.
       Depends on: S9, S11
@@ -2948,9 +2964,21 @@ labelled "Basic-level convenience", four lines below the full-form example at `:
 The same page states the shorthand once more in its own section, "Simplified text shorthand (Basic level)"
 at `docs/reference/adapter-contract.md:385-393`, whose lead-in at `:387` names the form a Basic-level
 runtime may emit, whose literal at `:390` carries no identifier, and whose `:393` normalization target
-spells the canonical form without one, 150 lines below the `:232` full form that carries it. The
+spells the canonical form without one, 150 lines below the `:232` full form that carries it.
+`spec/15:1781` is the **Simplified response shorthand** row of the same §15.4.3 capability matrix whose
+`:1783` row this deliverable rewrites, two rows above it, and its parenthetical literal
+`{type: "response", text: "..."}` carries no identifier. That literal is restated to carry the per-session
+identifier, and the row's Basic-level cell is restated so the canonical `MessagePart` form it names the
+adapter normalizes to is the form carrying the identifier the `spec/28:665` block declares. Left alone, the
+matrix would state at `:1783` that a Basic-level runtime echoes the identifier and show the accepted
+Basic-level `response` form without it two rows above, which is the contradiction this deliverable stages
+the reader-facing mirror of that matrix to avoid. Neither §8 literal sweep reaches the line, because it
+carries neither `/workspace/current` nor `/run/lenny/credentials.json`, and the tier-11 frame reconciliation
+covers each frame's §28.5.3 block and the `docs/reference/adapter-contract.md` reference sections rather
+than a capability-matrix row. The
 runtime-author guide states it three more times:
-`docs/runtime-author-guide/integration-levels.md:21` carries the shorthand literal in the Basic/Standard/Full
+`docs/runtime-author-guide/integration-levels.md:21`, the reader-facing mirror of `spec/15:1781`, carries
+the shorthand literal in the Basic/Standard/Full
 matrix whose row at `:23` this deliverable already restates, two rows above it,
 `docs/runtime-author-guide/index.md:150` states it again in the Basic level's "Included" list on the guide's
 landing page, and `docs/runtime-author-guide/testing.md:77` states it in the `message` / `response`
@@ -4060,12 +4088,18 @@ CODE-1's `noteRuntimeClosed(sessionID)` is the no-op the helper's membership key
 the generation never counted the session. What a `Runtime.Start` landing after that close reaches
 depends on the pod. Neither of the socket runtime's early returns closes its listener (`:466`), which
 is bound from the process's construction (`:161`), so on a pod where that member was the only started
-entry the start spawns and accepts on the still-bound socket (`:202`), or re-adds the session to the
-active set (`:183-186`) and makes the last member's close find a sibling and return (`:440-444`),
-leaving an agent process with no coordinator and no registry entry naming it. On a pod that also held
-a started co-tenant, that co-tenant's close is the last one and does reach `:466`, so the late start
-fails in `accept` (`:285`) and leaves no agent process behind. §9 records both outcomes beside the
-claim window it already carries. Keying
+entry `p.connected` is false, the start spawns and accepts on the still-bound socket (`:202`), and it
+leaves an agent process with no coordinator and no registry entry naming it. On a pod that also held a
+started co-tenant the outcome depends on where the late start falls relative to that co-tenant's close.
+A start landing after it finds the listener closed at `:466` and fails in `accept` (`:285`), leaving no
+agent process behind. A start landing before it finds `p.connected` still true, takes the fast path that
+re-adds the session to the active set and returns (`:182-187`), and the co-tenant's close then finds that
+sibling and returns at `:440-445` without closing the connection, waiting on or killing the child, or
+closing the listener, so the shared runtime child survives carrying both agents with no coordinator and
+no registry entry naming either. Pass 2 cannot order around that interleaving, because the arming flag
+records the claim rather than the start and no adapter-side state distinguishes a member whose
+`Runtime.Start` has run from one whose has not. §9 records all three outcomes beside the claim window it
+already carries. Keying
 the flag on `Runtime.Start` instead would place the write outside the claim's critical section and
 reopen the second-start admission §4.11 closes. The flag is written under `s.mu` in each of those critical sections and
 discarded with the entry by `releaseSlot`, per §4.11, so this deliverable adds no state of its own. What the stale entry still holds is unchanged by the hold and
@@ -5189,6 +5223,21 @@ entry for either session before either runtime is closed, which is the single de
 CODE-3 states. It observes the ordering through the runtime double's close hook, and a loop that
 deregisters per member after each close fails it.
 
+`TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1` pins the filesystem half of
+pass 2, which no other case in this block reads. It seeds, for each of two started members, that member's
+`/workspace/slots/{sessionId}` tree and its `/run/lenny/slots/{sessionId}/credentials.json`, seeds the same
+pair for a bound-not-started co-tenant, drives the timeout, and asserts that after it returns neither
+started member's workspace tree nor credential file exists and that the co-tenant's pair is untouched. It
+also asserts the ordering, reading the runtime double's close hook: each member's removal follows that
+member's `Runtime.Close`, so the shared agent process is dead before the last member's credential file is
+unlinked, while an earlier member's file is unlinked with that process still resident, because a non-last
+close returns without touching the child (`pkg/adapter/socketruntime.go:440-445`). Without it a
+pass 2 that omits `removeSlotTree` (`pkg/adapter/slot.go:177-179`) ships green, because today's
+`onHoldTimeout` (`pkg/adapter/holdstate.go:154-183`) reaches no filesystem work and nothing else in the
+suite reads those paths on this path. What that leaves is each hold-terminated session's credential lease
+readable by every later slot's agent process on a pod the leaked-entry limit in §9 records as still taking
+placements, which is the exposure `spec/13:30` names. The case carries a `// spec:` tie to §6.4 and §10.1.
+
 `TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1` takes that pod on to the next session and
 asserts the adapter-side recovery the pass buys: a session bound after the timeout takes the
 `CH-RUNTIMEOPS` drain signal and the hard close on its own `Shutdown`, and an unaddressed inbound
@@ -6214,6 +6263,18 @@ does, because the case starts no further session for a reset cohort to name. Bot
 `-race` with the hold timer driven through the `HoldAfterFunc` seam (`pkg/adapter/holdstate.go:62-68`)
 and carry a `// spec:` tie to §10.1 and §5.2.
 
+A fifth case, `TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1`, pins the co-tenant
+interleaving §9 records as an open window, so the limit is a measured state rather than an assumed one. It
+drives the timeout on a pod holding a never-started member and a started co-tenant, and releases the
+never-started member's in-flight `Runtime.Start` after that member's `Runtime.Close` has returned and
+before the co-tenant's, at the seam pass 2 opens for the co-tenant's post-mortem write. It asserts the state the code produces: the late start takes the connected fast
+path (`pkg/adapter/socketruntime.go:182-187`), the co-tenant's close returns at `:440-445`, and the shared
+connection, the child process, and the listener are all still up when the loop returns, with the registry
+holding no entry for either session. It runs under `-race` through the same `HoldAfterFunc` seam and
+carries a `// spec:` tie to §10.1 and §5.2. Its value is that a later change which claims to close the
+window turns it red rather than leaving §9's limit silently stale, and a change that closes the window
+edits this case in the same commit.
+
 **Tier 10, the credential path a runtime resolves.** A Basic-level runtime built on each shipped SDK reads
 the manifest's `credentialsPath` and loads the credential bundle at it, on a pool of either concurrency.
 This is the case that fails today's code once the pod-global path is retired, because every SDK reads a
@@ -6704,8 +6765,9 @@ nothing and is not a client-facing surface carrying the field.
   resolved (`:246`): the pass collects its entry, and the termination pass closes its runtime,
   writes its post-mortem, and emits its `AdapterTerminating`. The window is the interval between those
   two lock acquisitions. Closing it would require the interceptor's admission and the deregistration
-  pass to be one critical section, which would put an RPC admission decision under `s.mu`. §2's C1 and
-  D4 state why the per-member re-read widens this window rather than closing it. No §8 case pins the
+  pass to be one critical section, which would put an RPC admission decision under `s.mu`. CODE-3's
+  "What the timeout terminates" paragraph and the preceding bullet state why the per-member re-read
+  widens this window rather than closing it. No §8 case pins the
   window, because driving it requires a claim to land between two adjacent statements.
 - A member whose claim landed before the deregistration pass and whose `Runtime.Start` has not run when
   the termination pass closes it is terminated in the registry and not in the runtime, because §4.11's
@@ -6713,15 +6775,26 @@ nothing and is not a client-facing surface carrying the field.
   `Close` returns at `pkg/adapter/socketruntime.go:436-438` when the process holds no connection and at
   `:440-445` while a sibling remains, neither of which reaches the listener close at `:466`, and CODE-1's
   `noteRuntimeClosed` is the no-op its membership keying states. What the `Runtime.Start` then finds
-  depends on the pod. When that member was the pod's only started entry the listener is still bound, so
-  the start accepts on it (`:202`), or re-adds the session to the active set
-  (`:183-186`) and makes the last member's close find a sibling and return (`:440-444`), leaving an agent
+  depends on the pod. When that member was the pod's only started entry `p.connected` is false and the
+  listener is still bound, so the start spawns and accepts on it (`:202`), leaving an agent
   process running with no coordinator and no registry entry naming it. When a started co-tenant shared
-  the pod, that co-tenant's close is the last one and does reach `:466`, so the late start fails in
-  `accept` (`:285`) and leaves no agent process behind. The window is the interval between
+  the pod there are two interleavings. A late start landing after that co-tenant's close finds the
+  listener closed at `:466` and fails in `accept` (`:285`), leaving no agent process behind. A late start
+  landing before that close finds `p.connected` still true, takes the fast path that re-adds the session
+  to the active set and returns (`:182-187`), so the co-tenant's close is no longer the last one: it
+  returns at `:440-445` and leaves the connection, the child, and the listener up, with the shared runtime
+  process carrying both agents, no coordinator, and no registry entry naming either session. The interval
+  pass 2 leaves open between the two closes is not vanishing, because it spans that member's warn,
+  post-mortem write, final usage report, `noteRuntimeClosed`, recursive tree removal, and
+  `AdapterTerminating`. Nothing in the tree reclaims that process: the orphan-session reconciler matches
+  only a session whose pod is at terminated phase
+  (`pkg/gateway/session/orphansession/orphansession.go:290`) and the hold timeout leaves the pod alive,
+  which is the leaked-entry limit above. The window is the interval between
   the claim's `s.mu` release and `Runtime.Start`'s return. Closing it would require holding `s.mu` across
-  the 10-second `Runtime.Close`, the same lock the claim window above cannot afford. §8 pins the state at
-  tier 1.
+  the 10-second `Runtime.Close`, the same lock the claim window above cannot afford, and pass 2 cannot
+  order around it because no adapter-side state distinguishes a member whose `Runtime.Start` has run from
+  one whose has not. §8 pins the single-started-entry state at tier 1 and the co-tenant interleaving at
+  tier 7a.
 - `spec/10:58` states that the hold timeout "sends `terminate` on the CH-RUNTIMEOPS", and
   `onHoldTimeout` (`pkg/adapter/holdstate.go:154-182`) sends none. The divergence is pre-existing,
   this proposal keeps today's disposition on both pod classes, and neither the specification nor the
@@ -6820,7 +6893,9 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   `spec/15` takes two further sites of that same restatement, the §15.4.3 lead statement of the
   handshake at `:1734` and the §15.4.3
   nonce-validation sentence at `:1750`, beside its other edits, and also takes SPEC-7's echo stamp in the
-  §15.4.4 sample-runtime pseudocode (`:1815-1841`, `:1892`, `:1989`). `spec/24` takes SPEC-7's restatement
+  §15.4.4 sample-runtime pseudocode (`:1815-1841`, `:1892`, `:1989`) and SPEC-7's identifier restatement of
+  the §15.4.3 **Simplified response shorthand** row at `:1781`, two rows above the `:1783` row SPEC-7
+  rewrites in the same matrix. `spec/24` takes SPEC-7's restatement
   of the `binary`/`minimal` Basic-level-skeleton sentence at `:253` beside its two literal sweeps.
 - `docs/getting-started/` (including `concepts.md`, whose "Staging" paragraph at `:360` takes SPEC-3's
   per-slot staging restatement beside its swept lines and whose session-file snapshot line at `:437` takes
@@ -11049,3 +11124,60 @@ re-reads the registry per member, which stays at the single fire-time read, beca
 cannot tell a member of the original set from a session the pod accepted after the hold resolved. Where
 clause two's bound test lives, which stays at the outcome of the handler's own locked step. How
 `noteRuntimeClosed` is guarded, which stays at the generation's membership.
+
+### Pass 70 (2026-08-19, automated)
+
+- **§9's near-side claim-window bullet grounded its refusal of a per-member registry re-read on "§2's C1
+  and D4", neither of which resolves.** §2's preamble fixes its label set at D1 through D15, the document
+  carries no C1, and D4 is the JSONL-leg decision, which says nothing about the coordinator hold. The
+  labels came from the redesign working document, whose §2 is a conflicts section. The bullet now points at
+  the two places in this document that carry the argument, CODE-3's "What the timeout terminates" paragraph
+  and the preceding §9 bullet.
+- **`spec/15:1781`'s Basic-level `response` shorthand literal was in no edit list, two rows above the
+  `:1783` row SPEC-7 rewrites in the same §15.4.3 matrix.** Applying the staged edits would have left the
+  matrix stating at `:1783` that a Basic-level runtime echoes the per-session identifier while showing the
+  accepted Basic-level `response` form without it at `:1781`, which is the contradiction SPEC-7 already
+  gives as its ground for staging `docs/runtime-author-guide/integration-levels.md:21`, that line's
+  reader-facing mirror. Neither §8 literal sweep is keyed on the line and the tier-11 frame reconciliation
+  does not cover a capability-matrix row. SPEC-7's shorthand-site enumeration now names `spec/15:1781`,
+  restating its parenthetical literal with the identifier and its normalization clause onto the canonical
+  form the `spec/28:665` block declares, and §10's `spec/15` entry names the line.
+- **The hold timeout's new per-slot tree removal, which deletes each terminated session's credential lease,
+  was pinned by no case.** Pass 2 calls `removeSlotTree` (`pkg/adapter/slot.go:177-179`), which removes the
+  session's workspace root, sessions and artifacts trees, and its `/run/lenny/slots/{sessionId}` credential
+  directory (`pkg/adapter/slotlayout/tree.go:57-58`); today's `onHoldTimeout` reaches no filesystem work
+  (`pkg/adapter/holdstate.go:154-183`), so an implementation that omits the call ships green while leaving
+  each terminated session's credential lease readable by every later slot's agent process, which is the
+  exposure `spec/13:30` names, on a pod §9 records as still taking placements. §8's tier-1 coordinator-hold
+  block gains `TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1`, which seeds each
+  started member's workspace tree and credential file plus a bound-not-started co-tenant's pair, drives the
+  timeout, and asserts both started members' pairs are gone, the co-tenant's is untouched, and each removal
+  follows that member's `Runtime.Close`.
+- **The stated outcome for a never-started member on a co-tenanted pod was contradicted by
+  `SocketRuntimeProcess.Start`'s connected fast path.** CODE-3 and §9 attached the active-set re-add arm to
+  the single-started-entry pod, where `p.connected` is false by construction, and claimed the co-tenanted
+  pod always reaches the listener close at `pkg/adapter/socketruntime.go:466`. A late `Runtime.Start`
+  landing before the co-tenant's close takes the fast path at `:182-187`, so that close returns at
+  `:440-445` and leaves the shared connection, the child, and the listener up with two unsupervised agents
+  and no registry entry naming either. Both statements now carry the arms the code produces: the
+  single-started-entry pod spawns and accepts on the still-bound listener, and the co-tenanted pod has two
+  interleavings, one failing in `accept` and one leaving the shared process alive. Pass 2 cannot order
+  around the second, because no adapter-side state distinguishes a member whose `Runtime.Start` has run
+  from one whose has not, so §9 records it as an open window with the leaked-entry limit as its only
+  reclaimer, and §8 gains the tier-7a case
+  `TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1`, which releases the late start between
+  the two closes and asserts the resulting connection, child, and listener state. S13 names both tier-7a
+  hold-termination race cases.
+- **The new tree-removal case's ordering rationale claimed every member's agent process is dead before
+  its credential file is unlinked, which contradicts the shared runtime's non-last close.** On the socket
+  runtime only the last member's `Close` reaches the child; a non-last close returns as soon as a sibling
+  is still active (`pkg/adapter/socketruntime.go:440-445`), which is the property CODE-3's close-context
+  paragraph and the neighbouring tier-1 case already state. The clause now reads that the shared agent
+  process is dead before the last member's credential file is unlinked, and that an earlier member's file
+  is unlinked with that process still resident.
+- **The new tier-7a case named a seam that falls outside the interval it describes.** Pass 2 runs each
+  member's post-mortem before that member's `Runtime.Close`, and the fixture's never-started member is
+  closed first, so releasing the late `Runtime.Start` at that member's post-mortem write lands it before
+  the first close rather than between the two, which does not produce the connection, child, and listener
+  state the case asserts. The case now releases the start after the never-started member's `Runtime.Close`
+  has returned and before the co-tenant's, at the seam pass 2 opens for the co-tenant's post-mortem write.
