@@ -146,6 +146,49 @@ This calibration must be completed as a Phase 2 exit criterion. Phase 13.5 load 
 
 Until those triggers are hit, a single binary with internal boundaries is preferred for operational simplicity.
 
+#### Request Message Scope
+
+Each request message on the gateway-adapter protocol is either session-scoped or pod-scoped. The classification is declared in the table below rather than derived from a message's field set, because `session_id` appears on messages of both classes. The unit of the table is a request message the protocol declares, spelled exactly as the protocol spells it, so the classification and the protocol definition can be reconciled without a naming convention of its own. Every request message either service declares is a row, and no row names a message neither service declares. `CheckpointRequest` is the stream envelope rather than an addressed request, and it is classified for the scope of the `CheckpointStart` frame that opens the stream, with `CheckpointStart` carrying its own row.
+
+| Request message | Service | Direction | Scope |
+|:--|:--|:--|:--|
+| `PrepareWorkspaceRequest` | `Adapter` | gateway → adapter | session |
+| `FinalizeWorkspaceRequest` | `Adapter` | gateway → adapter | session |
+| `RunSetupRequest` | `Adapter` | gateway → adapter | session |
+| `StartSessionRequest` | `Adapter` | gateway → adapter | session |
+| `ConfigureWorkspaceRequest` | `Adapter` | gateway → adapter | session |
+| `SendMessageRequest` | `Adapter` | gateway → adapter | session |
+| `AttachRequest` | `Adapter` | gateway → adapter | session |
+| `AssignCredentialsRequest` | `Adapter` | gateway → adapter | session |
+| `RotateCredentialsRequest` | `Adapter` | gateway → adapter | session |
+| `ExtendCredentialLeaseRequest` | `Adapter` | gateway → adapter | session |
+| `RevokeCredentialsRequest` | `Adapter` | gateway → adapter | session |
+| `InterruptRequest` | `Adapter` | gateway → adapter | session |
+| `CheckpointRequest` | `Adapter` | gateway → adapter | session (stream envelope; scope of its `CheckpointStart`) |
+| `CheckpointStart` | `Adapter` | gateway → adapter | session |
+| `SignalDeadlineRequest` | `Adapter` | gateway → adapter | session |
+| `ResumeRequest` | `Adapter` | gateway → adapter | session |
+| `CheckpointBarrierRequest` | `Adapter` | gateway → adapter | session |
+| `ExportPathsRequest` | `Adapter` | gateway → adapter | session |
+| `ReportUsageRequest` | `Adapter` | gateway → adapter | session |
+| `ShutdownRequest` | `Adapter` | gateway → adapter | session |
+| `CoordinatorFenceRequest` | `Adapter` | gateway → adapter | pod |
+| `DemoteSDKRequest` | `Adapter` | gateway → adapter | pod |
+| `NegotiateVersionRequest` | `Adapter` | gateway → adapter | pod |
+| `GetObservedIntegrationLevelRequest` | `Adapter` | gateway → adapter | pod |
+| `AdapterEventsRequest` | `Adapter` | gateway → adapter | pod |
+| `ListPlatformToolsRequest` | `GatewayControl` | adapter → gateway | session |
+| `CallPlatformToolRequest` | `GatewayControl` | adapter → gateway | session |
+| `ListSessionConnectorsRequest` | `GatewayControl` | adapter → gateway | session |
+| `ListConnectorToolsRequest` | `GatewayControl` | adapter → gateway | session |
+| `CallConnectorToolRequest` | `GatewayControl` | adapter → gateway | session |
+| `ReportSessionScrubRequest` | `GatewayControl` | adapter → gateway | session |
+| `ReportPodScrubRequest` | `GatewayControl` | adapter → gateway | pod |
+
+`CoordinatorFenceRequest` carries `session_id` and stays pod-scoped, which is why the classification is declared rather than derived. `DemoteSDKRequest`, `NegotiateVersionRequest`, `GetObservedIntegrationLevelRequest`, and `AdapterEventsRequest` carry no session field at all and address the pod's adapter process.
+
+`ShutdownRequest` is session-scoped and carries one address. The per-slot teardown and the whole-pod teardown are the same operation on the same address, and what remains is the recycle disposition the request carries beside it. The handler runs the per-session teardown when the adapter holds a bound entry for the named session and runs the whole-pod scrub when the recycle disposition is set, so neither operation is selected by a field's presence standing in for a scope.
+
 ### 4.2 Session Manager
 
 **Role:** Source of truth for all session and task metadata.
@@ -673,14 +716,14 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `ExtendCredentialLease`        | Re-arm a still-valid direct-mode credential lease's expiry timer to a later deadline without delivering credential material (§4.9 Token Service unavailability guard) |
 | `Resume`             | Restore from checkpoint on a replacement pod                                                                                                           |
 | `ReportUsage`        | Report LLM token counts extracted from provider responses; gateway increments quota counters and persists to Postgres on the next sync interval (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)) |
-| `Terminate` (proto `Shutdown`) | Graceful end-of-session shutdown of the pod's runtime. On the default disposition the adapter closes the session runtime and the pod is replaced. On the **recycle disposition** (occupancy zero on a recycling pod, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter closes the ending session's runtime, keeps the pod process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
+| `Shutdown` | Graceful end-of-session teardown of the named session: the adapter closes that session's runtime and releases the session's slot. The request carries the recycle disposition beside that teardown rather than selecting a scope. On the default disposition the pod is replaced. On the **recycle disposition** (occupancy zero on a recycling pod, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter keeps the pod process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
 
 *Adapter → Gateway RPCs:*
 
 | RPC              | Description                                                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ReportSessionScrub` | Report the outcome of the per-slot cleanup at a session release (`released` or `leaked`, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The gateway increments `sessionsServed` on the pod's `agent_pod_state` row, and `leaked` outcomes feed the unhealthy-threshold ledger behind the `lenny.dev/drain-request` annotation ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). |
-| `ReportPodScrub` | Report the binary outcome of the whole-pod scrub that runs when occupancy reaches zero on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On failure the gateway increments `scrubFailureCount` on the pod's `agent_pod_state` row and computes the disposition against `sessionPolicy` ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). On success on a `standard` or `in-place` pool: on a preConnect pool the gateway records the `rewarmStartedAt` stamp on `SandboxClaim.status` and coordinates the SDK re-warm; on a non-preConnect pool it patches the claim directly to `reserved`. A `vm-restart` pool instead takes the terminal retire (draining → released) after a successful scrub report rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A missing report is bounded by a gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period), after which the pod is retired. |
+| `ReportSessionScrub` | Report the outcome of the per-slot cleanup at a session release (`released` or `leaked`, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). The gateway increments `sessionsServed` on the pod's `agent_pod_state` row, and `leaked` outcomes feed the unhealthy-threshold ledger behind the `lenny.dev/drain-request` annotation ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). The request is session-scoped: it is addressed by the identifier of the released session and names no slot. |
+| `ReportPodScrub` | Report the binary outcome of the whole-pod scrub that runs when occupancy reaches zero on a recycling pool ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On failure the gateway increments `scrubFailureCount` on the pod's `agent_pod_state` row and computes the disposition against `sessionPolicy` ([Section 4.6.3](#463-crd-field-ownership-and-write-boundaries)). On success on a `standard` or `in-place` pool: on a preConnect pool the gateway records the `rewarmStartedAt` stamp on `SandboxClaim.status` and coordinates the SDK re-warm; on a non-preConnect pool it patches the claim directly to `reserved`. A `vm-restart` pool instead takes the terminal retire (draining → released) after a successful scrub report rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). A missing report is bounded by a gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period), after which the pod is retired. The request is pod-scoped. |
 
 #### 4.7.2 Checkpoint and Interrupt Mutual Exclusion
 

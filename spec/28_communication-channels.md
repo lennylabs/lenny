@@ -586,7 +586,7 @@ envelope those messages carry. Both are stated below.
 
 **Message schemas**
 
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`, `slotId`) can be safely ignored.
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod.
 
 **Inbound: `message`**
 
@@ -602,7 +602,7 @@ All **content** messages on stdin (type `message`) use the full `MessageEnvelope
 }
 ```
 
-Basic-level: read `type`, `id`, `input`. Ignore all other fields. `sessionId` names the session this message is addressed to, and the adapter populates it on every pod.
+Basic-level: read `type`, `id`, `input`, and `sessionId`. Ignore all other fields. `sessionId` names the session this message is addressed to, and the adapter populates it on every pod, and a Basic-level runtime echoes it on the frames it emits in response, on every pod.
 
 **Inbound: `heartbeat`**
 
@@ -828,18 +828,25 @@ Example:
 
 The frame is available at all integration levels.
 
-**Addressing.** The adapter resolves the frame against the Attach stream that delivered it. A stream is
-bound to a session and, on a pod serving more than one concurrent session, to that session's slot. The
-adapter handles the frame if and only if both of the following hold.
+**Addressing.** The adapter resolves the frame against the Attach stream that delivered it. This rule
+governs the session-scoped frame types alone, `message`, `tool_result`, `response`, `tool_call`,
+`set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which carry no
+per-session identifier. A stream is bound to a session and to that session's slot, on every pod. The
+adapter handles a session-scoped frame if and only if both of the following hold.
 
-1. **Address equality.** The frame's `slotId` equals the stream's `slotId`, compared as exact string
-   equality, with an absent or empty `slotId` counting as the empty string on both sides. A frame
-   carrying a `slotId` on a stream that holds none is therefore not handled, and neither is an untagged
-   frame on a stream bound to a slot.
-2. **Live-binding confirmation.** The adapter's registry still binds that address to this stream's
-   session, and the address is unambiguous. When the stream carries no `slotId`, the pod's session is
-   still this stream's session and the pod holds no registered slot. When the stream carries a `slotId`,
-   the registry entry for that slot still names this stream's session.
+1. **Address equality.** The frame's `sessionId` equals the stream's session, compared as exact string
+   equality. A frame that carries no `sessionId` resolves to the receiving stream's own binding on a pod
+   holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no
+   stream. This condition governs all six session-scoped frame types, because each Attach stream's
+   demultiplexer resolves and compares the address on every session-scoped frame before relaying it.
+2. **Live-binding confirmation.** The adapter's registry still holds that address, and the entry it holds
+   carries a bound session. Both reasons this condition may fail are stated: the registry holds no entry
+   for the address, because the binding was released or was never registered, and the entry it holds is
+   registered but not yet bound to a session, so it names no session to confirm. This condition governs
+   the `set_tracing_context` handling path alone. Of the two reasons, only the missing entry rejects a
+   frame in practice today, because address equality already rejects a frame whose address is not the
+   stream's own and a stream is never bound to an entry that carries no session. The bound-session
+   conjunct is stated as the invariant the adapter holds and as defence in depth.
 
 Otherwise the adapter drops the frame, counts it, and logs a protocol error. It relays nothing onward and
 returns nothing to the runtime, because the inbound message set on this channel admits no report frame,
@@ -847,7 +854,9 @@ which is the same outcome this card states for a `tool_result` whose `id` is unk
 
 Address equality is the only condition that names a session. Live-binding confirmation reads state that
 changes over the session's lifetime and may only reject a frame, so a released binding drops the frame
-rather than routing it elsewhere.
+rather than routing it elsewhere. Because live-binding confirmation governs the `set_tracing_context`
+handling path alone, a `status` frame that satisfies address equality on a pod whose registry entry for
+that session has already been released is still relayed to the draining stream.
 
 **Registration.** The adapter registers the identifiers by calling the platform tool with the addressed
 session's id injected. The gateway merges the submitted context into that session's recorded context and
@@ -856,9 +865,9 @@ validates the result against the rules in
 registered, and it attaches the registered context to the child's delegation lease. See
 [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model.
 
-**Non-guarantee.** One runtime process serves every slot on a concurrent pod, so the `slotId` a frame
-carries is whatever that process stamped on it. The addressing rule removes ambiguity between the slots
-of one pod. It does not detect a frame the runtime process itself addressed to the wrong slot, and it is
+**Non-guarantee.** One runtime process serves every slot on a pod, so the `sessionId` a frame carries
+is whatever that process stamped on it, on every pod. The addressing rule removes ambiguity between the
+slots of one pod. It does not detect a frame the runtime process itself addressed to the wrong slot, and it is
 not an isolation guarantee against a misbehaving runtime.
 
 **Exit Codes**

@@ -693,7 +693,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
-    `Terminate`, the graceful end-of-session shutdown of the pod's runtime. On the default disposition the
+    `Shutdown`, the graceful end-of-session shutdown of the pod's runtime. On the default disposition the
     adapter closes the session runtime and the pod is replaced. On the recycle disposition, which applies
     when occupancy reaches zero on a recycling pod, the request also carries the pod identity and the
     whole-pod scrub parameters, and the adapter keeps the pod process alive across the recycle boundary

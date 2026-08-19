@@ -47,7 +47,7 @@
 
 19. Session completes or client disconnects
 20. Gateway → Pod:       Seal workspace — export final workspace snapshot to Artifact Store
-21. Gateway → Pod:       Terminate
+21. Gateway → Pod:       Shutdown
 22. Gateway → Store:     Mark session completed, persist final state, record artifact refs
 23. Gateway:             Release credential lease back to pool
 24. Warm Pool:           Release pod to draining → eventual cleanup
