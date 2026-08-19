@@ -1566,7 +1566,7 @@ All inbound **content** messages (type `message`) use a unified `MessageEnvelope
   "threadId": "thread_001",
   "delivery": "immediate",
   "delegationDepth": 0,
-  "slotId": "slot_01",
+  "sessionId": "sess_01J5K9...",
   "input": ["MessagePart[]"]
 }
 ```
@@ -2279,7 +2279,7 @@ type Message struct {
     // Envelope is the canonical MessageEnvelope as defined in
     // [§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified
     // Message Format". All message semantics (from, delivery, threadId,
-    // inReplyTo, delegationDepth, slotId, input MessagePart[]) live on this
+    // inReplyTo, delegationDepth, sessionId, input MessagePart[]) live on this
     // field. Basic-level handlers typically only read `Envelope.Input`.
     Envelope *MessageEnvelope `json:"envelope"`
 

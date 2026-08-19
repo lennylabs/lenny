@@ -808,9 +808,9 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
    index or one of them observes no affected rows on the conditional `UPDATE` and rolls back, so the
    database never holds two active partial rows for the same session and slot at once
    ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Above that, the adapter's pod-level
-   operation lock admits one pending checkpoint per distinct `slotId` and coalesces a checkpoint whose
-   `slotId` is already pending, and the coordination lease and the generation stamp exclude a second
-   replica (§28.5.1 `CH-CHECKPOINT`, §28.6,
+   operation lock admits one pending checkpoint per distinct session identifier and coalesces a checkpoint
+   whose session identifier is already pending, and the coordination lease and the generation stamp
+   exclude a second replica (§28.5.1 `CH-CHECKPOINT`, §28.6,
    [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 3. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The gateway opens the bidirectional
@@ -1526,10 +1526,11 @@ here by inference from the partitioned or the shared list.
   (§28.5.1, §28.6, [§10.1](10_gateway-internals.md#101-horizontal-scaling)). It does not state whether a
   fence driven for one slot's session holds the RPCs of a sibling slot's session.
 - Whether the adapter's `Interrupt` RPC under the operation lock and the drain barrier are addressed to a
-  slot. The specification qualifies checkpoint admission by `slotId` and states that the lock serializes
-  `Interrupt` across the pod's slots ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). §7.2
-  does state the slot qualification for the `delivery: immediate` interrupt, which targets the specific
-  slot's tool-call context ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The
+  slot. The specification qualifies checkpoint admission by the session identifier and states that the
+  lock serializes `Interrupt` across the pod's slots
+  ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). §7.2 does state the slot qualification for
+  the `delivery: immediate` interrupt, which targets the specific slot's tool-call context
+  ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The
   specification states no slot qualification for the `Interrupt` RPC the operation lock admits or for the
   drain barrier `CH-BARRIER` carries (§28.5.1).
 - Which replica's connection carries an event on `CH-ADAPTEREVENTS` when more than one replica holds a

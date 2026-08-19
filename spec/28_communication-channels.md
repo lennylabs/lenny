@@ -289,10 +289,10 @@ connection.
   `periodicCheckpointIntervalSeconds`, default 600s
   ([§4.4](04_system-components.md#44-event--checkpoint-store)).
 - **Exclusivity.** Pod-level. The adapter maintains an operation lock that serializes `Checkpoint` and
-  `Interrupt` across the pod's slots, admitting one pending checkpoint per distinct `slotId` and coalescing
-  a checkpoint whose `slotId` is already pending; on a single-session pod at most one operation may be
-  queued ([§4.7](04_system-components.md#47-runtime-adapter)). Above that lock, the session-coordination
-  lease `REG-COORDLEASE` and the generation stamp restrict the channel to the coordinating replica
+  `Interrupt` across the pod's slots, admitting one pending checkpoint per distinct session identifier and
+  coalescing a checkpoint whose session identifier is already pending
+  ([§4.7](04_system-components.md#47-runtime-adapter)). Above that lock, the session-coordination lease
+  `REG-COORDLEASE` and the generation stamp restrict the channel to the coordinating replica
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
 - **Degradation.** An attempt that ends before every declared byte is confirmed leaves a manifest row
   flagged `partial = true`, which is not a valid checkpoint. A deadline fire on a drain, preStop, or
@@ -598,7 +598,7 @@ All **content** messages on stdin (type `message`) use the full `MessageEnvelope
   "from": { "kind": "client", "id": "client_8f3a2b" },
   "threadId": "t_01",
   "delivery": "queued",
-  "slotId": "slot_01"
+  "sessionId": "sess_abc123"
 }
 ```
 
@@ -641,7 +641,8 @@ Example:
   "type": "tool_result",
   "id": "tc_001",
   "content": [{ "type": "text", "inline": "file contents here" }],
-  "isError": false
+  "isError": false,
+  "sessionId": "sess_abc123"
 }
 ```
 
@@ -698,7 +699,8 @@ Example:
   "type": "tool_call",
   "id": "tc_001",
   "name": "read_file",
-  "arguments": { "path": "/workspace/foo.txt" }
+  "arguments": { "path": "/workspace/foo.txt" },
+  "sessionId": "sess_abc123"
 }
 ```
 
@@ -819,7 +821,8 @@ Example:
 ```json
 {
   "type": "set_tracing_context",
-  "context": { "langsmith_run_id": "run_abc123" }
+  "context": { "langsmith_run_id": "run_abc123" },
+  "sessionId": "sess_abc123"
 }
 ```
 
@@ -1679,14 +1682,14 @@ specification states outside the channel register by the adapter's pod-level ope
 
 **One operation per pod.** Below the per-session constraint sits one per-pod constraint. The adapter's
 operation lock serializes `Checkpoint` and `Interrupt` across the pod's slots, admits one pending checkpoint
-per distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and on a single-session pod
-holds at most one queued operation ([§4.7](04_system-components.md#47-runtime-adapter)). Its unit is the
-pod, and admission to its queue is counted per slot. It is the one guard that spans boundaries: it bounds
-`CH-CHECKPOINT` on the gateway-to-pod boundary (§28.5.1), the `checkpoint_request` and `interrupt_request`
+per distinct session identifier, and coalesces a checkpoint whose session identifier is already pending
+([§4.7](04_system-components.md#47-runtime-adapter)). Its unit is the pod, and admission to its queue is
+counted per slot. It is the one guard that spans boundaries: it bounds `CH-CHECKPOINT`
+on the gateway-to-pod boundary (§28.5.1), the `checkpoint_request` and `interrupt_request`
 frames of `CH-RUNTIMEOPS` on the intra-pod boundary (§28.5.3), and the transfer `CH-OBJSTORE` carries on the
-pod-egress boundary (§28.5.5). A checkpoint whose `slotId` is already pending coalesces, while an interrupt
-arriving while another interrupt is already queued, and any checkpoint or interrupt arriving while an
-interrupt is pending on a concurrent-session pod, is dropped with a `BUSY` status
+pod-egress boundary (§28.5.5). A checkpoint whose session identifier is already pending coalesces, while an
+interrupt arriving while another interrupt is already queued, and any checkpoint or interrupt arriving
+while an interrupt is pending on a concurrent-session pod, is dropped with a `BUSY` status
 ([§4.7](04_system-components.md#47-runtime-adapter)). The gateway retries a dropped interrupt with backoff
 ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no retry rule for a
 checkpoint dropped with `BUSY` on a concurrent-session pod. The specification states no pod-level barrier lock
