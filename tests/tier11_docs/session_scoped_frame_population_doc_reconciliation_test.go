@@ -28,9 +28,16 @@
 package tier11_docs_test
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// sessionScopedFrameAddressField is the JSONL frame property that names the
+// session a session-scoped frame is addressed to, as
+// schemas/lenny-adapter-jsonl.schema.json publishes it.
+const sessionScopedFrameAddressField = "slotId"
 
 // sessionScopedFrameSections are the frame reference sections of
 // docs/reference/adapter-contract.md whose field table declares the
@@ -148,4 +155,66 @@ func TestSessionModeGuideStatesTheSlotRuleOnEveryPod(t *testing.T) {
 		"CPU and memory are shared across slots",
 		"`preConnect` is admitted only when `maxConcurrentSessions` is 1",
 	})
+}
+
+// spec: 4.7, 28.5.3
+// diagnosis: a documented frame example in docs/reference/adapter-contract.md
+//
+//	carries the per-session identifier as JSON null or as an empty string. The
+//	field tables on the same page state the adapter populates the identifier on
+//	every pod and the published JSONL schema types it as a string, so a null
+//	example both contradicts the table above it and fails schema validation. A
+//	runtime author copying the example emits a frame the adapter rejects. A
+//	failure here means the page's examples and its field tables disagree about
+//	whether a session-scoped frame is addressed.
+func TestDocumentedFrameExamplesCarryAnIdentifierValue(t *testing.T) {
+	page := filepath.Join(repoRoot(t), "docs", "reference", "adapter-contract.md")
+
+	blocks := documentedFrameExamples(t, page)
+	if len(blocks) == 0 {
+		t.Fatalf("%s: no documented frame example carries a per-session identifier (renamed or removed?)", page)
+	}
+
+	for _, b := range blocks {
+		frame := map[string]any{}
+		if err := json.Unmarshal([]byte(b.Body), &frame); err != nil {
+			t.Errorf("%s:%d: documented frame example is not a JSON object: %v", page, b.StartLine, err)
+			continue
+		}
+		value, ok := frame[sessionScopedFrameAddressField].(string)
+		if !ok {
+			t.Errorf("%s:%d: documented frame example addresses no session: %q is %#v, and the published JSONL schema types it as a string",
+				page, b.StartLine, sessionScopedFrameAddressField, frame[sessionScopedFrameAddressField])
+			continue
+		}
+		if strings.TrimSpace(value) == "" {
+			t.Errorf("%s:%d: documented frame example carries an empty %q", page, b.StartLine, sessionScopedFrameAddressField)
+		}
+	}
+}
+
+// documentedFrameExamples returns the JSON code blocks of the adapter contract
+// page that carry the session-scoped frames' per-session address field. Those
+// are the examples the field tables on the same page describe, so they are the
+// examples that must agree with the population rule and with the published
+// schema.
+func documentedFrameExamples(t *testing.T, page string) []fencedBlock {
+	t.Helper()
+
+	blocks, err := extractFencedBlocks(page)
+	if err != nil {
+		t.Fatalf("read %s: %v", page, err)
+	}
+
+	var carrying []fencedBlock
+	for _, b := range blocks {
+		if normalize(b.Language) != "json" {
+			continue
+		}
+		if !strings.Contains(b.Body, `"`+sessionScopedFrameAddressField+`"`) {
+			continue
+		}
+		carrying = append(carrying, b)
+	}
+	return carrying
 }
