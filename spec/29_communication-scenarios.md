@@ -1450,7 +1450,7 @@ multiple simultaneous sessions of the same tenant on one pod and requires the de
 that sets the first without the second
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Each simultaneous session occupies one
-slot, identified by a `slotId` the adapter assigns, and every mechanism below is keyed by that identifier
+slot, identified by a `slotId` the gateway mints, and every mechanism below is keyed by that identifier
 or is not. Nothing in this subsection applies to a pod serving one session at a time, because the
 co-tenancy it analyses requires two sessions sharing one pod. SDK-warm mode is not
 available under this condition: a pool that combines `capabilities.preConnect: true` with
