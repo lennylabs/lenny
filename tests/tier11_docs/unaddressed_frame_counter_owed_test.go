@@ -9,16 +9,9 @@
 // `lenny_adapter_unaddressed_frame_rejected_total`, and a frame whose
 // identifier names no live binding on the receiving stream is dropped and
 // counted on `lenny_adapter_set_tracing_context_dropped_total`. The two
-// counters partition the rejections, so a reader page that names one of them
-// has to name the other, or say nothing about how the rejections are counted.
-//
-// The unaddressed counter is cataloged in §16.1 and has no
-// docs/reference/metrics.md row yet, and a reader-facing page may not name a
-// series the catalog it links to does not carry (see
-// runtime_page_metric_names_resolve_test.go). This case holds the resulting
-// obligation in both directions: while the catalog row is absent, no reader
-// page may claim a count it cannot name; once the row lands, every one of the
-// three reader-facing statements of the rejection names the series.
+// counters partition the rejections, so every reader-facing statement of one
+// disposition's count states the other's, and both series resolve in the
+// catalog the pages link to.
 //
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
@@ -35,14 +28,17 @@ import (
 
 // unaddressedRejectionSeries is the §16.1 counter for a session-scoped frame
 // rejected for carrying no per-session identifier on a pod holding more than
-// one slot.
-const unaddressedRejectionSeries = "lenny_adapter_unaddressed_frame_rejected_total"
+// one slot. misaddressedDropSeries is the §16.1 counter for the other
+// rejecting disposition.
+const (
+	unaddressedRejectionSeries = "lenny_adapter_unaddressed_frame_rejected_total"
+	misaddressedDropSeries     = "lenny_adapter_set_tracing_context_dropped_total"
+)
 
 // unaddressedRejectionStatements returns the three reader-facing sentences
 // that state what happens to an unaddressed session-scoped frame, keyed by the
-// label a failure reports. Each one already names the drop counter for the
-// other rejecting disposition, so each one is a site where the unaddressed
-// counter is owed.
+// label a failure reports. Each one also states the other rejecting
+// disposition, so each one names both counters.
 func unaddressedRejectionStatements(t *testing.T, root string) map[string]string {
 	t.Helper()
 
@@ -65,33 +61,29 @@ func unaddressedRejectionStatements(t *testing.T, root string) map[string]string
 // spec: 16.1, 28.5.3
 // diagnosis: the reader-facing statements of a session-scoped frame's two
 //
-//	rejecting dispositions disagree with the metrics catalog they link to.
-//	Either a page claims the rejections are counted separately while naming
-//	only one series, so a reader is told a second count exists and cannot find
-//	it, or docs/reference/metrics.md has gained the row for
-//	`lenny_adapter_unaddressed_frame_rejected_total` and the pages still leave
-//	the unaddressed rejection attributed to no counter, so the two counters no
-//	longer visibly partition the rejections. A failure here means the change
-//	that lands the catalog row did not carry the reader pages with it, or a
-//	page reintroduced an unresolvable count.
+//	rejecting dispositions disagree with the metrics catalogs. Either a page
+//	attributes one disposition to a counter and leaves the other attributed to
+//	none, so the two counters no longer visibly partition the rejections, or a
+//	series a page names is missing from a catalog and a reader following the
+//	page's own link cannot look it up. A failure here means a change to the
+//	rejection rule, to a catalog row, or to one of the three reader pages did
+//	not carry the others with it.
 func TestUnaddressedFrameRejectionCounterIsNamedWithItsCatalogRow(t *testing.T) {
 	root := repoRoot(t)
 
-	if specCatalog := readRepoFile(t, root, "spec", "16_observability.md"); !strings.Contains(specCatalog, unaddressedRejectionSeries) {
-		t.Fatalf("spec/16_observability.md: §16.1 carries no row for %q; the counter this case tracks is no longer cataloged", unaddressedRejectionSeries)
+	series := []string{unaddressedRejectionSeries, misaddressedDropSeries}
+	specCatalog := readRepoFile(t, root, "spec", "16_observability.md")
+	reference := readDocPage(t, filepath.Join(root, "docs", "reference", "metrics.md"))
+	for _, name := range series {
+		if !strings.Contains(specCatalog, name) {
+			t.Errorf("spec/16_observability.md: §16.1 carries no row for %q", name)
+		}
+		if !strings.Contains(reference, name) {
+			t.Errorf("docs/reference/metrics.md: carries no row for %q, so the reader pages that name it link to a catalog it is missing from", name)
+		}
 	}
 
-	statements := unaddressedRejectionStatements(t, root)
-	cataloged := strings.Contains(readDocPage(t, filepath.Join(root, "docs", "reference", "metrics.md")), unaddressedRejectionSeries)
-
-	for label, body := range statements {
-		if cataloged {
-			requireAllContain(t, label, body, []string{unaddressedRejectionSeries})
-			continue
-		}
-		requireNoneContain(t, label, body, []string{unaddressedRejectionSeries})
-		// The catalog row is owed, so the page states the disposition
-		// without asserting a count it cannot name.
-		requireNoneContain(t, label, body, []string{"counted separately"})
+	for label, body := range unaddressedRejectionStatements(t, root) {
+		requireAllContain(t, label, body, series)
 	}
 }
