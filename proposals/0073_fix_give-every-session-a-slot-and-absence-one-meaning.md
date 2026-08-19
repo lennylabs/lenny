@@ -88,7 +88,10 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
 - Ordering inside the merged `Shutdown` handler is load-bearing. The drain decision is taken inside the same
   `s.mu` critical section that deregisters the ending session, the drain signal is sent after that section
   and before `Runtime.Close`, and the tree removal runs after `Runtime.Close`. Sending the drain after the
-  close reaches a dead runtime and `drainViaLifecycle` swallows the error, so the regression is silent.
+  close reaches a dead runtime and `drainViaLifecycle` swallows the error, so the regression is silent. The
+  same critical section cancels the ending session's direct-mode expiry timers, which `releaseSlot` does not
+  do today, so a split that carries its body alone strands an armed timer per provider on every ended
+  session.
 - Clause two of that handler is a conditional registry test rather than a guard. Returning an error for a
   session the registry no longer holds makes every revoked session hold its slot for the life of the pod,
   because `SlotClaimer.ReleaseSlot` returns early on `leaked` without decrementing.
@@ -175,7 +178,7 @@ any spec, code, or doc file. Apply the changes in the "Proposed changes" section
       Tiers 0, 1, 7a. Depends on: S9, S11
 - [ ] **S14 · code** — CODE-4. Rotation, lease extension, and revocation address the session the request
       already carries, and the merged handler keeps the §4.7 Full-level protocol.
-      Tiers 0, 1, 8, 9. Depends on: S6, S11
+      Tiers 0, 1, 8, 9, 10. Depends on: S6, S11
 - [ ] **S15 · migration, code** — MIG-1, CODE-5. The two persisted `slot_id` columns are dropped, the three
       indexes are re-keyed, `sessions.workspace_root` is rewritten to the slot path, and the `SlotDefault`
       sentinel and the Go surface of the dropped columns go with them. The two land as one step because the
@@ -1245,10 +1248,14 @@ Sites, beyond the two cwd-derivation sentences §4.6.2 lists:
 - `spec/13_security-model.md:30`.
 - `spec/14_workspace-plan-schema.md:5`.
 - The remaining occurrences under `spec/04`, `spec/29`, `docs/runtime-author-guide/lifecycle.md`,
-  `docs/getting-started/concepts.md`, and `schemas/lenny-adapter.proto`. The token occurs at twenty-five
-  sites under `spec/`, `docs/`, and `schemas/`, enumerated in the deliverable. Two of them,
+  and `docs/getting-started/concepts.md`. The token occurs at twenty-five
+  sites under `spec/`, `docs/`, and `schemas/`, enumerated in the deliverable, and they take three
+  dispositions. Two of them,
   `spec/29:1448` and `spec/29:1458`, sit inside the §29.10 workspace-subtree and credential-lease bullets
-  that SPEC-5 removes under §4.4, so they are deleted with those bullets and twenty-three sites take the
+  that SPEC-5 removes under §4.4, so they are deleted with those bullets. Eight of them,
+  `schemas/lenny-adapter.proto:681, 713, 714, 835, 913, 995, 1166, 1167`, sit inside the doc comments on the
+  `slot_id` fields SCHEMA-1 removes, so they are deleted with those fields rather than renamed and
+  `schemas/lenny-adapter.proto` carries no in-place placeholder rename. The remaining fifteen sites take the
   in-place rename. `spec/29:835` is the only spec/29 occurrence outside the removed bullets, and it takes
   the rename here.
 - `pkg/adapter/slotlayout/slotlayout.go:11-18, :44-48, :74-76, :95-96`, whose package doc is the stated
@@ -1511,8 +1518,11 @@ whole job is to undo the claim: `pkg/adapter/session.go:138`, `:151`, and `:161`
 `ConfigureWorkspace`. Every one of them calls the registry release, `releaseSlot`
 (`pkg/adapter/slotsession.go:102-112`), for the claiming session's entry, which deletes the entry the claim
 bound and removes its per-slot tree, so the pod's occupancy returns to what it was before the call. Each
-calls SCHEMA-1's two release steps, the locked deregistration and the tree removal, in immediate
-succession, which is the same pair of effects `releaseSlot` performs in one call today. Naming
+calls SCHEMA-1's two release steps, the locked step that cancels the entry's direct-mode expiry timers and
+deregisters it, and the tree removal, in immediate
+succession, which is what `releaseSlot` performs in one call today together with the expiry-timer
+cancellation `releaseSession` performs at these sites through `cancelAllExpiryTimers`
+(`pkg/adapter/session.go:398-400`, `pkg/adapter/credexpiry.go:140-147`). Naming
 the replacement is what keeps the compensation: nothing else removes the entry, because `releaseSlot` holds
 the only `delete(s.slots, slotID)` and the gateway sends no adapter RPC on a failed bind or a failed resume
 (`pkg/gateway/podlifecycle/podsession/binder.go:1598-1601` returns after `cl.Close()`, and CODE-2 has every
@@ -1742,7 +1752,7 @@ then `Runtime.Close` at `:263`), and the last session's `Close` tears the shared
 (`pkg/adapter/socketruntime.go:434-466`). A `terminate` frame sent after that reaches a dead runtime, and
 `drainViaLifecycle` swallows `errLifecycleNotConnected` and `errLifecycleClosed`
 (`pkg/adapter/session.go:294-301`), so the regression would be silent and the §15.4.2 graceful drain would
-be a no-op on every pod. The full sequence in the merged handler is the usage flush, the critical section that deregisters and decides, the drain signal when the section left no bound entry, `Runtime.Close(closeCtx, sessionID)`, the release's second step, which removes the per-slot tree and clears CODE-1's `coTenanted` bit when the registry is still empty at that point, and the `ReportSessionScrub` emission. `shutdownSlot`'s current order, which closes the
+be a no-op on every pod. The full sequence in the merged handler is the usage flush, the critical section that cancels the ending session's direct-mode expiry timers, deregisters, and decides, the drain signal when the section left no bound entry, `Runtime.Close(closeCtx, sessionID)`, the release's second step, which removes the per-slot tree and clears CODE-1's `coTenanted` bit when the registry is still empty at that point, and the `ReportSessionScrub` emission. `shutdownSlot`'s current order, which closes the
 runtime at `pkg/adapter/slotsession.go:82-84` before `releaseSlot` deregisters at `:86`, is what the merge
 reorders.
 
@@ -1754,7 +1764,7 @@ the drain would carry the tree removal ahead of the drain with it, so the draine
 `/run/lenny/slots/{sessionId}` trees, including the credential file the agent process is still reading,
 would be removed while that process is finishing its current exchange inside the §15.4.2 grace window
 (`pkg/adapter/session.go:253-259`). CODE-1 therefore divides the function into two package-internal steps.
-The first is the locked deregister-and-decide step: under `s.mu` it deletes the entry, computes whether any bound entry remains, and returns the bound-entry result together with the deregistered `slotState`. The second is the unlocked completion step the caller makes after the lock is released: it removes the tree with `removeSlotTree` (`pkg/adapter/slot.go:177-179`) on the returned state, and it then re-takes `s.mu` briefly and clears CODE-1's `coTenanted` bit when the registry is still empty at that point. The clear belongs to this step rather than to the first, because the first runs before `Runtime.Close` and the departing session's agent code is still live inside the shared process there (`pkg/adapter/socketruntime.go:434-445` returns before touching the connection or the child on a non-last call). Clearing the bit that early would let a session claiming a slot in that interval be named by `soleSession()` while another session's agent was still running. The merged handler calls the first as its deciding critical section and the second
+The first is the locked cancel-deregister-and-decide step: under `s.mu` it cancels every direct-mode lease-expiry timer armed on the entry, by calling `cancelSlotExpiryTimerLocked(st, provider)` for each provider in `st.timers` (`pkg/adapter/slotcreds.go:208-215`), deletes the entry, computes whether any bound entry remains, and returns the bound-entry result together with the deregistered `slotState`. The cancellation belongs to this step because both paths the merge replaces perform it before the runtime close, `shutdownSlot` under the same `s.mu` hold (`pkg/adapter/slotsession.go:75-77`) and `releaseSession` over the pod-global set (`pkg/adapter/session.go:398-400`), and because an armed timer left behind fires `AUTH_EXPIRED` against a session that has already ended (`pkg/adapter/credexpiry.go:140-147`). `releaseSlot` cancels nothing today (`pkg/adapter/slotsession.go:102-112`), so a split that carried its body alone would drop the cancellation at every caller of the two steps, including the twelve §4.11 rollback sites that call them where `releaseSession` runs today. The second is the unlocked completion step the caller makes after the lock is released: it removes the tree with `removeSlotTree` (`pkg/adapter/slot.go:177-179`) on the returned state, and it then re-takes `s.mu` briefly and clears CODE-1's `coTenanted` bit when the registry is still empty at that point. The clear belongs to this step rather than to the first, because the first runs before `Runtime.Close` and the departing session's agent code is still live inside the shared process there (`pkg/adapter/socketruntime.go:434-445` returns before touching the connection or the child on a non-last call). Clearing the bit that early would let a session claiming a slot in that interval be named by `soleSession()` while another session's agent was still running. The merged handler calls the first as its deciding critical section and the second
 after `Runtime.Close`, which is the order the sentence above enumerates. Every other caller calls the two
 in immediate succession and so keeps the semantics `releaseSlot` has today: `startSessionSlot`'s
 `Runtime.Start` failure path (`pkg/adapter/slotsession.go:49`), the twelve §4.11 rollback sites, CODE-3's per-member hold-termination loop, and `pkg/adapter/export_test.go:27-29`'s `ReleaseSlotForTest`, which keeps its one-call signature and performs both steps. The drain decision counts bound entries alone rather than every registry entry, for the reason the paragraph above gives, so it reads a different number from §4.6.1's inbound rule and from CODE-1's `soleSession()`.
@@ -1980,7 +1990,7 @@ materialization, so they are not the destination. Neither §8 sweep reaches the 
 `/workspace` string is the REST route at `spec/18:229`) and no `/run/lenny/credentials.json`, so the line is
 staged by name.
 
-The placeholder token is renamed `{slotId}` to `{sessionId}` at every site §4.7 lists, with the rule stated
+The placeholder token is renamed `{slotId}` to `{sessionId}` at the fifteen in-place sites §4.7 lists, with the rule stated
 once at the §6.4 layout block, and the reason the container directory is not renamed to `sessions` is
 recorded there.
 
@@ -2186,6 +2196,14 @@ tree and credential lease have been removed, with the pod-wide directories the d
 scrub's step 2, because deferring it would leave an ended session's credential lease and workspace readable
 by a co-tenant and by the deployer's cleanup code, which is the exposure step 0 exists to prevent.
 `spec/05:461`'s ordering of the phase is unchanged.
+
+`docs/reference/glossary.md:99`, the reader-facing Credential Lease entry, is staged by name in the same
+edit. It states the lease as "assigned per session, including each session served by a recycling pod, and
+per slot when `sessionPolicy.maxConcurrentSessions > 1`", which is the concurrency conditional D1 retires,
+and neither §8 literal sweep reaches the line because it carries neither `/workspace/current` nor
+`/run/lenny/credentials.json`. The entry is restated as a fresh lease assigned per session on every pod,
+including each session served by a recycling pod, materialized at that session's own
+`/run/lenny/slots/{sessionId}/credentials.json`, with the `maxConcurrentSessions > 1` qualifier dropped.
 
 The runtime-facing contract moves with them. `spec/28_communication-channels.md:1048` describes the
 `credentials_rotated` frame's `credentialsPath` as "path to updated `/run/lenny/credentials.json`", and
@@ -2865,7 +2883,8 @@ and returns `InvalidArgument` on empty. The adapter-side consumers listed in §4
 
 `checkSession` and `checkSlotSession` collapse into `checkSessionBound(sessionID)` per §4.11.
 `Server.sessionID` is retired, `claimSession` and `claimSessionForConfigure` become slot-registry claims,
-and Shutdown's recycle-scrub guard is re-keyed on registry occupancy. `slotState`
+and Shutdown's recycle-scrub guard (`pkg/adapter/session.go:242-245`) is deleted, with SCHEMA-1's clause two
+supplying the conditional registry test that replaces both it and the pod-global `checkSession` comparison. `slotState`
 (`pkg/adapter/slot.go:22-35`) gains the `started` boolean §4.11 states, the merged claim sets it in
 the same critical section that binds `st.sessionID`, and the refusal at `pkg/adapter/slotsession.go:40-43`
 is re-pointed from the entry's `sessionID` onto that flag, so the credentials-first bind order is admitted
@@ -4269,6 +4288,14 @@ while it finishes its current exchange. The split is not compiler-caught in that
 two-step form and the one-call form both compile at every caller and §4.11 has the twelve rollback sites,
 CODE-3's hold-termination loop and `ReleaseSlotForTest` call the two steps in immediate succession. The case runs the one surviving message and carries a `// spec:` tie to §15.4.2 and §6.4.
 
+A seventh case in the same file, `TestShutdownCancelsTheEndingSessionsExpiryTimers_spec_4_9`, pins the
+cancellation the first release step performs. It assigns a direct-mode lease to a session on a pod holding a
+co-tenant, drives the ending session's `Shutdown`, and asserts that the ending session's entry holds no
+armed timer and that no `AUTH_EXPIRED` control event is emitted for it once the lease deadline passes on the
+`AfterFunc` seam, while the co-tenant's armed timer survives. A handler that carried `releaseSlot`'s body
+without the cancellation passes every case above and fails this one. It carries a `// spec:` tie to §4.9 and
+§5.2.
+
 `pkg/adapter/drain_test.go` is the existing tier-1 pin of that drain signal and is a hand-rewrite. `TestShutdownDrainsViaLifecycle_spec_15_4_2` (`:16`) claims the pod through the retired
 `claimSession` (`:24`) and drives the deleted `ShutdownRequest` (`:28`) to assert the `terminate` frame
 (`:36-38`), so it breaks twice over, and its premise that a Shutdown always drains is the premise the
@@ -5140,6 +5167,21 @@ This is the case that fails today's code once the pod-global path is retired, be
 construction-time default. The non-happy path is a session with no active lease, where the file is absent
 and the runtime starts without credentials rather than failing.
 
+**Tier 10, the credential path a rotation lands on.** A second case pins the rotation half CODE-4 stages in
+`sdks/runtime/go/runtime/lifecycle.go:246-256`, which the case above does not reach: it drives a Go-SDK
+runtime through a `credentials_rotated` frame whose `credentialsPath` names a second file distinct from the
+path the runtime resolved at startup, and asserts that the bundle the `OnCredentialsRotated` callback
+receives is the one at the frame's path and that `credentials_acknowledged` is still written for the frame's
+`leaseId` and provider. Today's handler decodes only `type`, `provider`, and `leaseId` and calls
+`reloadCredentials`, so it acknowledges the rotation while continuing to hold the pre-rotation bundle, which
+is a silent credential-staleness failure on the path SPEC-4 makes universal. Nothing else in the tree
+reaches it: the tier-8 rotation cases drive the adapter's `RotateCredentials` rather than an SDK runtime,
+and the tier-4 rotation pin runs against `streaming-echo`, which imports no runtime SDK
+(`tests/tier4_integration/credential_lifecycle_test.go:169`,
+`cmd/runtimes/streaming-echo/main.go`). The non-happy path is a frame whose `credentialsPath` is absent or names
+a file the runtime cannot read, where the runtime keeps the bundle it holds, acknowledges the frame,
+and logs the failure rather than terminating. The case carries a `// spec:` tie to §4.7 and §4.9.
+
 **Tier 10.** `tests/tier10_conformance/concurrent_slot_conformance_test.go` is rewritten rather than
 inverted: its whole-pod-default premise disappears under §4.6.1, its cwd assertions at `:225-238` are
 restated for a pod holding one slot, and its "a single-session pod's response carries no identifier"
@@ -5643,8 +5685,9 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
 - `charts/lenny/templates/admission-policies/ephemeral-container-cred-guard-webhook.yaml`, whose comment
   names the retired pod-global credential path.
 - `pkg/adapter/` (`slot.go`, `slotframe.go`, `slotsession.go`, which also splits `releaseSlot` into the
-  locked deregister-and-decide step and the separate `removeSlotTree` call SCHEMA-1 orders after
-  `Runtime.Close`, and moves each of its other callers onto the two steps in succession,
+  locked cancel-deregister-and-decide step, which cancels the entry's direct-mode expiry timers before
+  deleting it, and the separate `removeSlotTree` call SCHEMA-1 orders after `Runtime.Close`, and moves each
+  of its other callers onto the two steps in succession,
   `slotcreds.go`, `slotlayout/`, `resume.go`,
   `exportpaths.go`, `holdstate.go`, `session.go`, `sdkwarm.go`, `checkpoint.go`, `oplock.go`, `staging.go`,
   `credentials.go`, `credexpiry.go` for the pod-global lease-expiry path that goes dead with
@@ -9049,3 +9092,50 @@ residue recorded as a limit, and the alternatives are a reclaim path for the aba
 should be started at all on a co-tenanted pod; the default taken here is to start it and refuse per call,
 because an arming precondition alone forfeits the third tier-9 arm, where an established `ServeConn`
 outlives the cancel that closes the listener.
+
+### Pass 60 (2026-08-18, automated)
+
+- **The merged `Shutdown` handler's enumerated sequence dropped the per-slot expiry-timer cancellation.**
+  SCHEMA-1 stated that the merged handler carries every effect the two current paths perform, then
+  enumerated a sequence with no timer step, and the two staged release steps were a split of `releaseSlot`
+  (`pkg/adapter/slotsession.go:102-112`), which cancels nothing. `shutdownSlot` cancels the entry's timers
+  under `s.mu` before the close (`:75-77`) and `releaseSession` cancels the pod-global set
+  (`pkg/adapter/session.go:398-400`), so an implementor following the enumeration would leave one armed
+  timer per direct-mode provider on every ended and every rolled-back session, firing `AUTH_EXPIRED`
+  against a session that has already ended. The first release step is now the locked
+  cancel-deregister-and-decide step and cancels every provider in `st.timers` through
+  `cancelSlotExpiryTimerLocked` before deleting the entry, the full-sequence sentence names the
+  cancellation, §4.11's twelve rollback sites inherit it, the Summary's ordering watch-out states it, and a
+  seventh tier-1 case, `TestShutdownCancelsTheEndingSessionsExpiryTimers_spec_4_9`, pins it against a
+  co-tenant whose own timer survives.
+- **§4.7 counted eight proto `{slotId}` placeholders as in-place renames while SCHEMA-1 deletes them with
+  their fields.** The eight occurrences at `schemas/lenny-adapter.proto:681, 713, 714, 835, 913, 995, 1166,
+  1167` sit in the doc comments on `slot_id` fields SCHEMA-1 removes, so SPEC-3's rename would have found no
+  anchor at those sites, which is the condition §4.6's pipeline model stops the run on. §4.7 now states
+  three dispositions over the twenty-five sites, two deleted with the §29.10 bullets, eight deleted with the
+  proto fields, and fifteen renamed in place, drops `schemas/lenny-adapter.proto` from the files carrying an
+  in-place rename, and SPEC-3 renames the fifteen in-place sites.
+- **The glossary's Credential Lease entry kept the per-slot condition SPEC-4 retires.**
+  `docs/reference/glossary.md:99` states the per-slot lease as conditional on
+  `sessionPolicy.maxConcurrentSessions > 1`, no deliverable staged the line, and neither §8 literal sweep
+  reaches it because it carries neither `/workspace/current` nor `/run/lenny/credentials.json`. SPEC-4 now
+  stages the line by name and restates the entry as a fresh lease assigned per session on every pod and
+  materialized at `/run/lenny/slots/{sessionId}/credentials.json`.
+- **CODE-1 instructed the implementor to re-key Shutdown's recycle-scrub guard.** §4.11, SCHEMA-1, and §8
+  all delete the guard, and a retained occupancy guard reproduces today's early return, so the recycle path
+  would skip the usage flush, the `CH-RUNTIMEOPS` drain, `Runtime.Close`, the tree removal, and the
+  `ReportSessionScrub` emission the applied specification describes. CODE-1 now states the deletion and
+  names clause two's registry test as the replacement for both the guard and the pod-global `checkSession`
+  comparison.
+- **CODE-4's Go SDK rotation re-read had no test at any tier.** The handler at
+  `sdks/runtime/go/runtime/lifecycle.go:246-256` decodes only `type`, `provider`, and `leaseId` today, so an
+  omitted re-read acknowledges a rotation while holding the pre-rotation bundle. §8 gains a tier-10 case
+  driving a Go-SDK runtime through a `credentials_rotated` frame whose `credentialsPath` names a second
+  file, asserting the callback receives the bundle at the frame's path and that the acknowledgment is still
+  written, with the unreadable-path arm keeping the held bundle. The checklist's S14 gains tier 10.
+- **§10's blast-radius entry still described the release split under its pre-fix name and content.** The
+  files-touched list called the first step the locked deregister-and-decide step and named tree removal as
+  the only other effect, which is the split as it stood before the timer-cancellation correction above.
+  §10 now names the locked cancel-deregister-and-decide step and its cancellation of the entry's
+  direct-mode expiry timers, matching SCHEMA-1, the full-sequence sentence, §4.11, and the Summary
+  watch-out.
