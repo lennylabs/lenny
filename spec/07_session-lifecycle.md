@@ -159,7 +159,7 @@ The gateway emits `children_reattached` as a single SSE event immediately after 
 
 **Session state machine:**
 
-> **Note:** This is a summary of session-level state transitions as visible to external clients. For the complete pod and session state machine, including pre-attached states and the per-slot sub-states used when `sessionPolicy.maxConcurrentSessions > 1`, see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).
+> **Note:** This is a summary of session-level state transitions as visible to external clients. For the complete pod and session state machine, including pre-attached states and the per-slot sub-states, see [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).
 
 ```
 created → failed           (derive failure under gateway.persistDeriveFailureRows: true only — audit-only terminal row written by POST /v1/sessions/{id}/derive when the workspace copy fails after admission; no intermediate visible created state, no pod attached, no event stream, not targetable by POST /terminate, POST /start, POST /resume, or DELETE — see §7.1 derive rule 2 and §15.1. The default path (persistDeriveFailureRows: false) does NOT take this edge; the derive returns an error response with no session_id and no row.)

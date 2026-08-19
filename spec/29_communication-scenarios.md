@@ -14,10 +14,11 @@ card owns it, and the matrix is the normative statement of off-holder behaviour 
 resume rows are the exception: they restate the forwarding and inbox-buffering requirement §7.2 states and
 cite §7.2 as the section that owns it.
 
-This section also carries §29.10, the structural analysis of the concurrent-session pod, which states which
-part of a pod serving more than one session is partitioned per slot and which part is shared by the whole
-pod. It is stated outside the traced form and carries no numbered steps, because a pod serving several
-sessions is a condition under which the traces run rather than an operation carried from end to end.
+This section also carries §29.10, the co-tenancy analysis of the concurrent-session pod, which states
+which part of a pod serving more than one session is partitioned per slot and which part is shared by the
+whole pod. It is stated outside the traced form and carries no numbered steps, because a pod serving
+several sessions is a condition under which the traces run rather than an operation carried from end to
+end.
 
 A trace restates behaviour the specification states elsewhere and cites the section that states it. Where
 a trace and a cited section disagree, the cited section is the normative statement and the trace is the
@@ -1420,7 +1421,18 @@ and be persisted to object storage
    ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
    [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
-### 29.10 The concurrent-session pod
+### 29.10 Co-tenancy on a concurrent-session pod
+
+The addressing mechanisms this subsection previously stated apply to a pod of either concurrency and are
+now owned by the sections that state them:
+[§28.5.3](28_communication-channels.md#2853-intra-pod) carries `CH-MSGSOCK`, its addressing key, and its
+buffering and replay policy; [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout) carries the per-slot
+workspace subtree; [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) and
+[§4.9](04_system-components.md#49-credential-leasing-service) carry the per-slot credential lease;
+[§6.2](06_warm-pod-model.md#62-pod-state-machine) carries the slot's lifecycle state;
+[§7.2](07_session-lifecycle.md#72-interactive-session-model) carries the per-slot inbox and the
+delivery-path evaluation; and [§4.7](04_system-components.md#47-runtime-adapter) carries checkpoint
+admission and the operation lock.
 
 This subsection departs from the traced form the rest of §29 carries, and states no numbered steps. A pod
 serving more than one concurrent session is a condition under which the traces above run rather than an
@@ -1439,9 +1451,8 @@ that sets the first without the second
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Each simultaneous session occupies one
 slot, identified by a `slotId` the adapter assigns, and every mechanism below is keyed by that identifier
-or is not. On a pod whose pool sets `maxConcurrentSessions` to 1 no message carries
-`slotId`, so nothing in this subsection applies to it
-([§15.4](15_external-api-surface.md#154-runtime-adapter-specification), §28.6). SDK-warm mode is not
+or is not. Nothing in this subsection applies to a pod serving one session at a time, because the
+co-tenancy it analyses requires two sessions sharing one pod. SDK-warm mode is not
 available under this condition: a pool that combines `capabilities.preConnect: true` with
 `maxConcurrentSessions` above 1 is rejected at validation time, because each slot requires independent
 workspace materialization and independent agent initialization
@@ -1450,42 +1461,6 @@ workspace materialization and independent agent initialization
 **Partitioned per slot.** The following are stated per slot, and a reader may treat two slots on one pod
 as independent in each of them.
 
-- The workspace subtree. The adapter creates and removes a per-slot directory tree at
-  `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, and `/artifacts/{slotId}/`, the runtime derives
-  each slot's `cwd` from its `slotId` and may not assume the single-slot `/workspace/current` layout, and
-  the gateway addresses workspace finalization and checkpoint export by the slot-qualified path
-  ([§6.4](06_warm-pod-model.md#64-pod-filesystem-layout)). The plan behind those trees is not
-  partitioned: the `WorkspacePlan` serves as a shared template whose sources, setup commands, and options
-  are materialized independently for every slot, and per-slot workspace differentiation is out of scope,
-  so all slots on one pod are assigned sessions that share one plan
-  ([§14](14_workspace-plan-schema.md)).
-- The credential lease. Each active slot holds an independent lease obtained by its own
-  `AssignCredentials` call at slot assignment, written to a per-slot credential file at
-  `/run/lenny/slots/{slotId}/credentials.json`, revoked independently when the slot completes or fails,
-  and rotated independently, so the in-flight gate and the `credentials_rotated` acknowledgement apply to
-  the slot being rotated and a sibling slot's model calls are unaffected. Each lease counts separately
-  against the credential pool's concurrency limit
-  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like),
-  [§4.9](04_system-components.md#49-credential-leasing-service)). What a slot may read is not partitioned
-  with it, which the shared list below states.
-- The slot's lifecycle state. Beneath the pod-level coarse phase, per-slot sub-states track each slot
-  through workspace materialization, execution, and cleanup, and the gateway applies the per-slot retry
-  policy independently for each failed slot ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
-- The session inbox and the delivery-path evaluation. Each active slot maintains its own independent inbox
-  on the coordinating gateway replica, the `slotId` on the `MessageEnvelope` selects which slot's inbox
-  receives a message, and the §7.2 delivery paths are evaluated per slot, with `ready_for_input`,
-  `input_required`, and `await_children` tracked for each slot rather than for the pod. A message that does
-  not resolve to an active slot fails closed internally and is never routed, and the `delivery: immediate`
-  interrupt targets the specific slot's tool-call context rather than the whole pod
-  ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
-- The addressing key on the agent message plane. Every `message`, `tool_result`, `response`, `tool_call`,
-  and `set_tracing_context` on `CH-MSGSOCK` carries the slot's `slotId`, and a runtime serving such a
-  pool implements a dispatch loop keyed on it (§28.5.3). The key is per slot and the channel it rides is
-  not.
-- Admission of a checkpoint to the adapter's operation lock. The lock admits one pending checkpoint per
-  distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and promotes the pending
-  checkpoints in slot-ID order ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). The lock
-  itself is not partitioned, which the shared list below states.
 - The coordination lease and the fence that guards it. `REG-COORDLEASE` admits one holder per tenant and
   session (§28.3), and the exclusivity constraint on `CH-CHECKPOINT`, `CH-ATTACH`, `CH-FENCE`, and
   `CH-BARRIER` is one coordinating replica per session, guarded by that lease together with the
@@ -1501,19 +1476,11 @@ independent in them.
   `LNK-GWCONTROL` one connection per pod process to one replica (§28.3), so the connections beneath
   `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, `CH-PODHEALTH`, and `CH-ADAPTEREVENTS` are
   established per replica and pod, with no per-slot connection stated.
-- The agent message plane itself. `CH-MSGSOCK` is one channel over which a pod serving more than one
-  concurrent session multiplexes every slot's stream, keyed by `slotId` (§28.5.3, §28.6), which §28.5.3
+- The agent message plane itself. `CH-MSGSOCK` is one channel over which a pod multiplexes every session's
+  stream, keyed on the session identifier, whatever the pod's concurrency (§28.5.3, §28.6), which §28.5.3
   states as multiple independent concurrent session streams through a single stdin channel. It is a
   scoping constraint rather than an exclusivity constraint, and the specification states no exclusivity
   constraint on this channel and names no guard that enforces one (§28.6).
-- The adapter's operation lock. It is pod-level and serializes `Checkpoint` and `Interrupt` across the
-  pod's slots, and while an interrupt is pending it holds the whole-pod queue, so any further checkpoint
-  or interrupt is dropped with a `BUSY` status ([§4.7](04_system-components.md#47-runtime-adapter),
-  §28.6). One slot's operation therefore delays or refuses another slot's. It is also the one guard that
-  spans boundaries, bounding `CH-CHECKPOINT` on the gateway-to-pod boundary, the `checkpoint_request` and
-  `interrupt_request` frames of `CH-RUNTIMEOPS` on the intra-pod boundary, and the transfer `CH-OBJSTORE`
-  carries on the pod-egress boundary (§28.6). The specification states no pod-level barrier lock beyond
-  it, and no retry rule for a checkpoint dropped with `BUSY` on a concurrent-session pod (§28.6).
 - The process-level co-tenancy the deployer acknowledged. Concurrent slots share the pod's process
   namespace, `/tmp`, cgroup memory, and network stack, and each slot's credential file is group-readable
   by every slot's agent process through the shared `lenny-cred-readers` supplementary group, which is not
@@ -1543,6 +1510,11 @@ independent in them.
   rejects a request whose peer SPIFFE URI does not match the lease record, which is a cross-pod replay
   control whose unit is the pod (§28.6,
   [§4.9](04_system-components.md#49-credential-leasing-service)).
+- The intra-pod MCP surface. The pod exposes one platform socket and one per-connector socket set for the
+  whole pod, served by providers that resolve the calling session from the pod's shared runtime process
+  and refuse the call unless that process has been given exactly one session and that session is the
+  caller, because on any other pod the shared runtime has been given a session other than the caller
+  ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.3).
 
 **What the specification does not state.** Each of the following is a question a reader of the traces
 above reaches on a concurrent-session pod and the specification does not answer. None of them is answered
@@ -1568,5 +1540,3 @@ here by inference from the partitioned or the shared list.
   `REG-COORDLEASE` is keyed per tenant and session and `REG-CLAIM` is per pod (§28.3), so no register
   entry ties one slot's holder to another's, and the specification states no rule requiring the slots of
   one pod to share a coordinating replica.
-- A buffering or replay policy for a message the adapter holds on `CH-MSGSOCK` while the runtime is
-  absent, which the specification does not state on a pod of either kind (§28.5.3, §28.8).
