@@ -16,10 +16,13 @@
 // delegation lease.
 //
 // §28.5.3 also addresses the frame to a session and states the addressing rule:
-// the adapter resolves the frame against the stream that delivered it, and
-// drops, counts, and logs a frame it cannot address to that stream's own live
-// session. Both pages must carry that rule so a runtime author knows the frame
-// names the session it belongs to.
+// the frame carries the per-session identifier on every pod, the adapter
+// resolves it against the stream that delivered it, an identifier the frame
+// omits resolves to that stream's own binding on a pod holding at most one slot
+// and is rejected on a pod holding more, and an identifier that names no live
+// binding on the receiving stream is dropped. The two rejections are counted on
+// separate series. Both pages must carry that rule so a runtime author knows the
+// frame names the session it belongs to on every pod.
 //
 // This test pins the corrected statements on both pages together, so a later
 // edit to one page cannot reintroduce the contradiction on its own. It reads the
@@ -113,10 +116,13 @@ func TestTracingContextRegistrationMechanismAgreesAcrossDocs(t *testing.T) {
 //	the adapter resolves it against the stream that delivered it, an identifier
 //	the frame omits resolves to that stream's own binding on a pod holding at
 //	most one slot and is rejected on a pod holding more, and the adapter drops,
-//	counts, and logs a frame it cannot address to that stream's own live
-//	session. A failure here means a runtime author would read the silent drop as
-//	a platform defect, or would expect an unaddressed frame to reach every slot
-//	as it did before the frame was addressed.
+//	counts, and logs a frame whose identifier names no live binding on the
+//	receiving stream. The two rejections are counted on separate series, so a
+//	page that attributes the unaddressed rejection to the drop counter is a
+//	failure too. A failure here means a runtime author would read the silent
+//	drop as a platform defect, would expect an unaddressed frame to reach every
+//	slot as it did before the frame was addressed, or would read the identifier
+//	as required only on a pod running concurrent slots.
 func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 	root := repoRoot(t)
 
@@ -138,7 +144,11 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// error on a pod holding more.
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
 		"on a pod holding more than one slot it is rejected and relayed to no stream",
-		"dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
+		// The two rejections are counted on separate series, and the
+		// drop counter covers only the frame whose identifier names no
+		// live binding on the receiving stream.
+		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
+		"A frame that carries a `slotId` the receiving stream's live binding does not match is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
 		// The drop outcome is stated on the page rather than deferred to a
 		// behavior the page never describes.
@@ -160,7 +170,14 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/runtime-author-guide/platform-tools.md: `lenny/set_tracing_context` entry not found (renamed or removed?)")
 	}
 	requireAllContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
-		"the JSONL frame must carry the emitting slot's `slotId`",
+		"The JSONL frame carries the per-session identifier in `slotId` on every pod",
+		"the runtime echoes the identifier the adapter handed it",
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
+		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
+	})
+	requireNoneContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
+		"On a pod running concurrent slots",
 		"dropped and logged rather than applied",
 	})
 
@@ -172,7 +189,16 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/runtime-author-guide/platform-tools.md: no paragraph states the JSONL set_tracing_context frame is available at every level (renamed or removed?)")
 	}
 	requireAllContain(t, "platform-tools.md tool-availability paragraph", availability, []string{
-		"the frame must carry the emitting slot's `slotId`",
+		"The frame carries the per-session identifier in `slotId` on every pod",
+		// The echo obligation reaches a Basic-level author here and
+		// nowhere else on the page.
+		"a Basic-level runtime echoes the identifier the adapter handed it",
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
+		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
+	})
+	requireNoneContain(t, "platform-tools.md tool-availability paragraph", availability, []string{
+		"On a pod running concurrent slots",
 		"dropped and logged rather than applied",
 	})
 }
