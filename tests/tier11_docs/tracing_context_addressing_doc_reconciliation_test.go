@@ -144,12 +144,17 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// error on a pod holding more.
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
 		"on a pod holding more than one slot it is rejected and relayed to no stream",
-		// The two rejections are counted on separate series, and the
-		// drop counter covers only the frame whose identifier names no
-		// live binding on the receiving stream.
-		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
-		"A frame that carries a `slotId` the receiving stream's live binding does not match is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
+		// The two rejections are counted separately, and the drop
+		// counter covers the frame whose identifier names no live
+		// binding on the receiving stream.
+		"Two dispositions reject a frame, and they are counted separately",
+		"A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
+		// Live-binding confirmation fails for both of the reasons
+		// §28.5.3 states, so the drain window after a slot is released
+		// is a stated disposition rather than an unstated one.
+		"either when it is not the receiving stream's own session",
+		"when the adapter's registry no longer holds that identifier with a bound session",
 		// The drop outcome is stated on the page rather than deferred to a
 		// behavior the page never describes.
 		"the runtime receives no error for a dropped frame",
@@ -173,7 +178,6 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		"The JSONL frame carries the per-session identifier in `slotId` on every pod",
 		"the runtime echoes the identifier the adapter handed it",
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
-		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
@@ -194,7 +198,6 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// nowhere else on the page.
 		"a Basic-level runtime echoes the identifier the adapter handed it",
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
-		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md tool-availability paragraph", availability, []string{

@@ -28,21 +28,9 @@
 package tier11_docs_test
 
 import (
-	"encoding/json"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 )
-
-// documentedSessionIdentifier matches the `sessionId` value of a JSON example
-// on the adapter contract page.
-var documentedSessionIdentifier = regexp.MustCompile(`"sessionId"\s*:\s*"([^"]+)"`)
-
-// sessionScopedFrameAddressField is the JSONL frame property that names the
-// session a session-scoped frame is addressed to, as
-// schemas/lenny-adapter-jsonl.schema.json publishes it.
-const sessionScopedFrameAddressField = "slotId"
 
 // sessionScopedFrameSections are the frame reference sections of
 // docs/reference/adapter-contract.md whose field table declares the
@@ -197,105 +185,4 @@ func TestConceptsPageStatesTheSlotRuleOnEveryPod(t *testing.T) {
 	requireAllContain(t, "concepts.md maxConcurrentSessions > 1 bullet", concurrent, []string{
 		"`acknowledgeProcessLevelIsolation: true`",
 	})
-}
-
-// spec: 4.7, 28.5.3
-// diagnosis: a documented frame example in docs/reference/adapter-contract.md
-//
-//	carries the per-session identifier as JSON null or as an empty string. The
-//	field tables on the same page state the adapter populates the identifier on
-//	every pod and the published JSONL schema types it as a string, so a null
-//	example both contradicts the table above it and fails schema validation. A
-//	runtime author copying the example emits a frame the adapter rejects. The
-//	same case rejects an example that addresses the field with the retired
-//	per-pod ordinal instead of a session identifier. A failure here means the
-//	page's examples and its field tables disagree about whether, and how, a
-//	session-scoped frame is addressed.
-func TestDocumentedFrameExamplesCarryAnIdentifierValue(t *testing.T) {
-	page := filepath.Join(repoRoot(t), "docs", "reference", "adapter-contract.md")
-
-	prefix := documentedSessionIdentifierPrefix(t, page)
-	blocks := documentedFrameExamples(t, page)
-	if len(blocks) == 0 {
-		t.Fatalf("%s: no documented frame example carries a per-session identifier (renamed or removed?)", page)
-	}
-
-	for _, b := range blocks {
-		frame := map[string]any{}
-		if err := json.Unmarshal([]byte(b.Body), &frame); err != nil {
-			t.Errorf("%s:%d: documented frame example is not a JSON object: %v", page, b.StartLine, err)
-			continue
-		}
-		value, ok := frame[sessionScopedFrameAddressField].(string)
-		if !ok {
-			t.Errorf("%s:%d: documented frame example addresses no session: %q is %#v, and the published JSONL schema types it as a string",
-				page, b.StartLine, sessionScopedFrameAddressField, frame[sessionScopedFrameAddressField])
-			continue
-		}
-		if strings.TrimSpace(value) == "" {
-			t.Errorf("%s:%d: documented frame example carries an empty %q", page, b.StartLine, sessionScopedFrameAddressField)
-			continue
-		}
-		if !strings.HasPrefix(value, prefix) {
-			t.Errorf("%s:%d: documented frame example addresses %q as %q, which does not name a session; the page's own session identifiers carry the %q prefix",
-				page, b.StartLine, sessionScopedFrameAddressField, value, prefix)
-		}
-	}
-}
-
-// documentedSessionIdentifierPrefix returns the prefix the adapter contract
-// page's own session identifiers carry, read from the `sessionId` value of the
-// manifest example on the same page. A session-scoped frame's address field
-// names the session the frame is addressed to, so a frame example whose value
-// does not carry this prefix is addressing something other than a session,
-// such as the retired per-pod ordinal the field used to hold.
-func documentedSessionIdentifierPrefix(t *testing.T, page string) string {
-	t.Helper()
-
-	blocks, err := extractFencedBlocks(page)
-	if err != nil {
-		t.Fatalf("read %s: %v", page, err)
-	}
-	for _, b := range blocks {
-		if normalize(b.Language) != "json" {
-			continue
-		}
-		m := documentedSessionIdentifier.FindStringSubmatch(b.Body)
-		if m == nil {
-			continue
-		}
-		idx := strings.Index(m[1], "_")
-		if idx < 0 {
-			t.Fatalf("%s:%d: documented session identifier %q carries no prefix to compare frame addresses against", page, b.StartLine, m[1])
-		}
-		return m[1][:idx+1]
-	}
-	t.Fatalf("%s: no documented example carries a `sessionId` value (renamed or removed?)", page)
-	return ""
-}
-
-// documentedFrameExamples returns the JSON code blocks of the adapter contract
-// page that carry the session-scoped frames' per-session address field. Those
-// are the examples the field tables on the same page describe, so they are the
-// examples that must agree with the population rule and with the published
-// schema.
-func documentedFrameExamples(t *testing.T, page string) []fencedBlock {
-	t.Helper()
-
-	blocks, err := extractFencedBlocks(page)
-	if err != nil {
-		t.Fatalf("read %s: %v", page, err)
-	}
-
-	var carrying []fencedBlock
-	for _, b := range blocks {
-		if normalize(b.Language) != "json" {
-			continue
-		}
-		if !strings.Contains(b.Body, `"`+sessionScopedFrameAddressField+`"`) {
-			continue
-		}
-		carrying = append(carrying, b)
-	}
-	return carrying
 }

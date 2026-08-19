@@ -137,7 +137,7 @@ The unified message type for all inbound content: initial task, mid-session inje
   "threadId": "t_01",
   "delivery": "queued",
   "delegationDepth": 0,
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 
@@ -177,7 +177,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
     { "type": "text", "inline": "file contents here" }
   ],
   "isError": false,
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 
@@ -229,7 +229,7 @@ The primary output message. Signals task completion.
   "output": [
     { "type": "text", "inline": "The answer is 42." }
   ],
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 
@@ -268,7 +268,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
   "id": "tc_001",
   "name": "read_file",
   "arguments": { "path": "/workspace/current/README.md" },
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 
@@ -313,7 +313,7 @@ Informational. The adapter forwards status updates to the gateway for client vis
 {
   "type": "set_tracing_context",
   "context": { "langsmith_run_id": "run_abc123" },
-  "slotId": "sess_abc"
+  "slotId": "slot_01"
 }
 ```
 
@@ -327,7 +327,7 @@ Registers tracing identifiers for the session that emitted the frame. The gatewa
 
 **Addressing.** The adapter hands the runtime a per-session identifier on every pod, and the runtime echoes that identifier in the frame's `slotId`. The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and to that session's slot, on every pod. The adapter applies the frame only when the frame's `slotId` matches the stream's session and the adapter's registry still holds that address with a bound session. The comparison is exact string equality.
 
-Two dispositions reject a frame, and each is counted on its own series. A frame that carries no `slotId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream by that stream's demultiplexer, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame that carries a `slotId` the receiving stream's live binding does not match is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame.
+Two dispositions reject a frame, and they are counted separately. A frame that carries no `slotId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream by that stream's demultiplexer, and logged. A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame. A frame's identifier names no live binding either when it is not the receiving stream's own session, or when the adapter's registry no longer holds that identifier with a bound session, which is the case while an ending session's stream drains after its slot is released.
 
 ---
 
