@@ -146,9 +146,11 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		"on a pod holding more than one slot it is rejected and relayed to no stream",
 		// Both rejecting dispositions are stated, and the drop counter
 		// covers the frame whose identifier names no live binding on the
-		// receiving stream. Whether each disposition also names its
-		// counter is pinned by the catalog-owed case in
-		// unaddressed_frame_counter_owed_test.go.
+		// receiving stream. The unaddressed rejection names no counter
+		// here: its series is registered and cataloged with the
+		// demultiplexer that takes the rejection, and
+		// runtime_page_metric_names_resolve_test.go holds a reader page to
+		// naming only a series that is registered and cataloged.
 		"Two dispositions reject a frame.",
 		"A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
