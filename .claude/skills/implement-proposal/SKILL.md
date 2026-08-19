@@ -41,6 +41,8 @@ A converged proposal carries two sections written for this skill, and the pipeli
 - The code phase writes to the proposal file, which nothing before it did: it ticks a checklist box when a step lands green and conformant, and that is the only edit it makes there. The ticks are how a later run finds where to resume, so a run that is interrupted leaves its progress recorded in the document rather than only in the branch log.
 - Findings close only after the implementation verifies green. The skill never opens or re-opens a finding. A proposal with no referencing finding still implements; the close step is a no-op.
 
+- The workflow sandbox gives a script only `agent`, `parallel`, `pipeline`, `phase`, `log`, `workflow`, `budget`, and `args`. There is no `require` and no filesystem access, so a script cannot read or write a file; anything that touches one goes through an agent, which has Bash and Read. Run `node scripts/check-workflow-scripts.mjs .claude/workflows/*.js` after editing a workflow: it parses each script the way the runtime does and rejects a `require(` call, both of which `node --check` misses.
+
 ## Procedure
 
 ### Step 1: Preconditions (inline, before the workflow)

@@ -10,6 +10,17 @@ for (const f of process.argv.slice(2)) {
     new Function("args", "agent", "parallel", "pipeline", "phase", "log", "workflow", "budget",
       "return (async () => {\n" + src + "\n})();");
     console.log("PARSE OK   " + f);
+    // The sandbox's globals are agent, parallel, pipeline, phase, log, workflow,
+    // budget, and args. `require` is not among them, so a `require("fs")` call
+    // throws at runtime; wrapped in a try/catch, as file access here always was,
+    // it degrades silently and disables whatever depended on it. File work
+    // belongs in an agent, which has Bash and Read.
+    const uses = src.split("\n").map((l, i) => [i + 1, l])
+      .filter(([, l]) => /(^|[^.\w])require\s*\(/.test(l) && !/^\s*(\/\/|\*)/.test(l));
+    for (const [n, l] of uses) {
+      console.log("SANDBOX FAIL " + f + ":" + n + " :: require() is not defined in the workflow sandbox — " + l.trim());
+      bad++;
+    }
   } catch (e) {
     console.log("PARSE FAIL " + f + " :: " + e.message.split("\n")[0]);
     bad++;

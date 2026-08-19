@@ -694,20 +694,17 @@ if (mode === "new") {
 // at round zero rather than at the end: a checklist asserted after convergence is
 // a guess at a sequence dressed as a decision, while one created here is
 // validated by every round that follows it.
+//
+// Whether the sections are already there is decided by the agent rather than by
+// this script, because the script cannot read the proposal (see the note on the
+// sandbox above `snapshot` below). The step runs on every review-mode run and
+// returns immediately when both sections exist.
 if (mode !== "new") {
-  let needsBootstrap = false;
-  try {
-    const text = require("fs").readFileSync(path, "utf8");
-    needsBootstrap =
-      !/^## Summary\s*$/m.test(text) ||
-      !/^## Implementation checklist\s*$/m.test(text);
-  } catch (e) {
-    needsBootstrap = false;
-  }
-  if (needsBootstrap) {
-    phase("Bootstrap");
-    log("Proposal predates the Summary and checklist sections; creating them");
-    await robustAgent(
+  phase("Bootstrap");
+  await robustAgent(
+      "FIRST, read " + path + " and check whether it already contains BOTH a `## Summary` section AND an " +
+        "`## Implementation checklist` section. If both are present, change NOTHING, edit no file, and reply " +
+        "with the single word SKIPPED. Only if one or both are missing, do the following.\n\n" +
       "Give an existing change proposal the two sections it was written before, deriving both from what the " +
         "document already says rather than inventing anything new.\n\n" +
         "HARD CONSTRAINT: the only file you may edit is " +
@@ -737,9 +734,7 @@ if (mode !== "new") {
         repo +
         "/.claude/rules/doc-style.md.",
       { label: "bootstrap-sections", phase: "Bootstrap" },
-    );
-    log("Summary and implementation checklist created");
-  }
+  );
 }
 
 // ---- Conventions pass (shared, one-shot, outside the error loop) ----
@@ -1005,94 +1000,61 @@ if (startSet) {
 // A `git diff` was suggested to the reviewer as a locator, hedged because the
 // proposal is committed only at checkpoints so the diff spans every round since.
 // Snapshotting around each edit gives the real per-round diff instead.
-function readProposal() {
-  try {
-    return require("fs").readFileSync(path, "utf8");
-  } catch (e) {
-    return "";
-  }
+// The workflow sandbox exposes only agent, parallel, pipeline, phase, log,
+// workflow, budget, and args. There is no `require`, so a script here cannot read
+// a file. An earlier version of this section called `require("fs")` inside a
+// try/catch and silently produced an empty result, which disabled this diff, the
+// bootstrap step, and the growth signal at once without ever failing. Anything
+// that touches a file therefore goes through an agent, which has Bash and Read.
+//
+// Diff text is never relayed through the script. A snapshot is copied to a known
+// path and the agent that needs the diff runs `diff` against it itself. Carrying
+// a few thousand lines of diff through an agent's return value would cost more
+// than the review it feeds, and an agent asked to return that much verbatim
+// summarises it instead.
+const SNAPDIR = repo + "/scratchpad/cp-snap";
+
+async function snapshot(name) {
+  const dest = SNAPDIR + "/" + name + ".md";
+  const ok = await robustAgent(
+    "Run exactly this command and reply with the single word DONE:\n\n" +
+      "mkdir -p " + SNAPDIR + " && cp " + path + " " + dest + "\n\n" +
+      "Do nothing else. Do not read, summarise, or edit either file.",
+    { label: "snap:" + name, model: "haiku" },
+  );
+  return ok ? dest : null;
 }
 
-// Split on headings so a diff is reported per section. A reviewer checking drift
-// works section by section, and scoping the diff that way keeps it readable on a
-// document of several thousand lines.
-function splitSections(text) {
-  const out = new Map();
-  let cur = "(preamble)";
-  let buf = [];
-  for (const line of text.split("\n")) {
-    const m = /^(#{2,6}) (.+)$/.exec(line);
-    if (m) {
-      out.set(cur, (out.get(cur) || []).concat(buf));
-      cur = m[2].trim().slice(0, 90);
-      buf = [line];
-    } else buf.push(line);
-  }
-  out.set(cur, (out.get(cur) || []).concat(buf));
-  return out;
+// A count of changed hunks, for the history record and the churn signal. The
+// number is small enough to relay; the diff it summarises is not.
+async function diffHunks(snapPath) {
+  if (!snapPath) return 0;
+  const out = await robustAgent(
+    "Run exactly this command and reply with ONLY the number it prints, and no other text:\n\n" +
+      "diff -u '" + snapPath + "' '" + path + "' | grep -c '^@@'\n\n" +
+      "`diff` exits non-zero when the files differ and `grep -c` exits non-zero on a zero count; both are " +
+      "expected here and neither is an error. If nothing is printed, reply 0.",
+    { label: "diffcount", model: "haiku" },
+  );
+  const m = String(out || "").trim().match(/\d+/);
+  return m ? parseInt(m[0], 10) : 0;
 }
 
-// Trim the common head and tail, then report what is left. Within one section
-// that is almost always the edited region, and it costs nothing on a document
-// this size; a full LCS over ten thousand lines would not be affordable here.
-function lineDelta(before, after, cap) {
-  let a = 0;
-  while (a < before.length && a < after.length && before[a] === after[a]) a++;
-  let b = 0;
-  while (
-    b < before.length - a &&
-    b < after.length - a &&
-    before[before.length - 1 - b] === after[after.length - 1 - b]
-  )
-    b++;
-  const removed = before.slice(a, before.length - b);
-  const added = after.slice(a, after.length - b);
-  const clip = (arr, mark) =>
-    arr
-      .slice(0, cap)
-      .map((l) => mark + l)
-      .concat(arr.length > cap ? [mark + "… " + (arr.length - cap) + " more line(s)"] : []);
-  return { removed, added, text: clip(removed, "- ").concat(clip(added, "+ ")).join("\n") };
+// How a reviewer is told to find what changed. It gets a path and runs the diff
+// itself, so it can widen the context when a hunk is not self-explanatory.
+function diffInstruction(snapPath) {
+  return (
+    "A snapshot of the proposal as it stood before those edits is at " +
+    snapPath +
+    ". Run `diff -u " +
+    snapPath +
+    " " +
+    path +
+    "` to see exactly what changed. Widen the context with `-U 20` on any hunk whose surroundings matter."
+  );
 }
 
-function proposalDelta(before, after, opts) {
-  const cap = (opts && opts.linesPerSection) || 40;
-  const maxSections = (opts && opts.maxSections) || 12;
-  if (!before || !after || before === after) return null;
-  const bs = splitSections(before);
-  const as = splitSections(after);
-  const parts = [];
-  let changed = 0;
-  for (const [name, lines] of as) {
-    const was = bs.get(name);
-    if (was === undefined) {
-      changed++;
-      parts.push("### SECTION ADDED: " + name + " (" + lines.length + " lines)");
-      continue;
-    }
-    if (was.join("\n") === lines.join("\n")) continue;
-    changed++;
-    if (parts.length < maxSections) {
-      const d = lineDelta(was, lines, cap);
-      parts.push(
-        "### SECTION CHANGED: " + name +
-          " (" + was.length + " → " + lines.length + " lines)\n" + d.text,
-      );
-    }
-  }
-  for (const [name] of bs) {
-    if (!as.has(name)) {
-      changed++;
-      parts.push("### SECTION REMOVED: " + name);
-    }
-  }
-  if (!changed) return null;
-  if (parts.length < changed)
-    parts.push("… and " + (changed - parts.length) + " further changed section(s)");
-  return { changed, text: parts.join("\n\n") };
-}
-
-function reviewPrompt(lens, round, fixedTitles, rejected, roundDelta) {
+function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
   let history = "";
   if (fixedTitles.length > 0) {
     history +=
@@ -1125,15 +1087,14 @@ function reviewPrompt(lens, round, fixedTitles, rejected, roundDelta) {
         "something a finding that the bar excludes:\n" +
         lensPrompt
       : "") +
-    (roundDelta
-      ? "\n\nWHAT CHANGED IN THE PROPOSAL SINCE THE LAST ROUND, as a diff of the sections a fix touched. Read " +
-        "these sections first and hardest. Fix-stage text is the newest and least-examined in the document, and " +
-        "this loop's history records that fixers introduce their own errors, so text written a round ago " +
-        "deserves more scrutiny than text that has survived many. This is a READING ORDER, not a scope limit: " +
-        "your lens still owns the whole proposal, and the defect a rewrite leaves in text nobody touched is " +
-        "exactly the drift this loop exists to catch.\n\n" +
-        roundDelta +
-        "\n"
+    (prevSnap
+      ? "\n\nWHAT CHANGED IN THE PROPOSAL SINCE THE LAST ROUND. " +
+        diffInstruction(prevSnap) +
+        " Read the changed sections first and hardest. Fix-stage text is the newest and least-examined in the " +
+        "document, and this loop's history records that fixers introduce their own errors, so text written a " +
+        "round ago deserves more scrutiny than text that has survived many. This is a READING ORDER, not a " +
+        "scope limit: your lens still owns the whole proposal, and the defect a rewrite leaves in text nobody " +
+        "touched is exactly the drift this loop exists to catch.\n"
       : "") +
     "\n\nWork method: read the proposal fully, then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
   );
@@ -1219,7 +1180,7 @@ function fixPrompt(confirmed, round, strikes) {
 // The scope is deliberately the edit PLUS its blast radius rather than the edit
 // alone. Predicate drift is by definition an inconsistency between changed text
 // and text that did not change, so a reviewer confined to the edit cannot see it.
-function postFixPrompt(confirmed, fixSummary, round, mechanisms, fixDelta) {
+function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap) {
   return (
     (mechanisms && mechanisms.length
       ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
@@ -1241,14 +1202,14 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, fixDelta) {
     "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
     "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
-    (fixDelta
-      ? "THE EDITS THIS ROUND ACTUALLY MADE, diffed from a snapshot taken immediately before the fixer ran. " +
-        "This is what changed, rather than what the fixer reports changing, and the difference between the two " +
-        "is where question 2 lives: an edit the fixer did not mention making is the one most likely to have " +
-        "left a parallel statement stale.\n\n" +
-        fixDelta +
-        "\n\n"
-      : "Locating the edits: the fixer's summary below names them, and no diff was available for this round.\n\n") +
+    (preFixSnap
+      ? "THE EDITS THIS ROUND ACTUALLY MADE. " +
+        diffInstruction(preFixSnap) +
+        " The snapshot was taken immediately before the fixer ran, so the diff is what changed rather than " +
+        "what the fixer reports changing, and the difference between the two is where question 2 lives: an " +
+        "edit the fixer did not mention making is the one most likely to have left a parallel statement " +
+        "stale.\n\n"
+      : "Locating the edits: the fixer's summary below names them, and no snapshot was available this round.\n\n") +
     "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer.\n\n" +
     "Findings the fixer was asked to correct (JSON):\n" +
     JSON.stringify(confirmed, null, 2) +
@@ -1551,53 +1512,59 @@ async function runRedesign(areas, rnd, why) {
 // the loop has been doing. A section that tripled while the document grew a tenth
 // is the shape of over-specification, and no finding count shows it, because each
 // individual addition was a reasonable answer to a real finding.
-function sectionSizes() {
-  try {
-    const text = require("fs").readFileSync(path, "utf8").split("\n");
-    const out = new Map();
-    let cur = "(preamble)";
-    let n = 0;
-    for (const line of text) {
-      const m = /^(#{2,3}) (.+)$/.exec(line);
-      if (m) {
-        out.set(cur, (out.get(cur) || 0) + n);
-        cur = m[2].trim().slice(0, 70);
-        n = 0;
-      } else n++;
-    }
-    out.set(cur, (out.get(cur) || 0) + n);
-    return out;
-  } catch (e) {
-    return new Map();
-  }
-}
+const GROWTH = {
+  type: "object",
+  required: ["documentWas", "documentNow", "grew"],
+  properties: {
+    documentWas: { type: "integer", description: "Total line count of the BEFORE file" },
+    documentNow: { type: "integer", description: "Total line count of the AFTER file" },
+    grew: {
+      type: "array",
+      description:
+        "The sections that gained the most lines, largest gain first, at most eight. Omit sections that did not grow.",
+      items: {
+        type: "object",
+        required: ["section", "was", "now", "added"],
+        properties: {
+          section: { type: "string", description: "Heading text" },
+          was: { type: "integer" },
+          now: { type: "integer" },
+          added: { type: "integer" },
+        },
+      },
+    },
+  },
+};
 
-function growthSince(before) {
-  const now = sectionSizes();
-  const rows = [];
-  let totalBefore = 0;
-  let totalNow = 0;
-  for (const [k, v] of now) totalNow += v;
-  for (const [k, v] of before) totalBefore += v;
-  for (const [k, v] of now) {
-    const was = before.get(k) || 0;
-    if (v - was <= 0) continue;
-    rows.push({
-      section: k,
-      was,
-      now: v,
-      added: v - was,
-      pct: was ? Math.round((100 * (v - was)) / was) : null,
-    });
-  }
-  rows.sort((a, b) => b.added - a.added);
+const NO_GROWTH = { documentWas: 0, documentNow: 0, documentPct: null, grew: [] };
+
+async function growthSince(snapPath) {
+  if (!snapPath) return NO_GROWTH;
+  const res = await robustAgent(
+    "Measure how a document grew between two revisions of itself, by section. This is a measurement: do not " +
+      "read either file for meaning, do not judge its content, and do not edit anything.\n\n" +
+      "BEFORE: " + snapPath + "\nAFTER:  " + path + "\n\n" +
+      "Use Bash. In each file, attribute every line to the nearest `##` or `###` heading above it and total " +
+      "the lines per heading; lines before the first heading belong to a section named `(preamble)`. An awk " +
+      "one-liner does this. Report each file's total line count, and the sections that gained the most lines, " +
+      "largest gain first, at most eight. Match sections by heading text; a heading present only in AFTER was " +
+      "zero lines before.",
+    { label: "growth", schema: GROWTH },
+  );
+  if (!res) return NO_GROWTH;
+  const was = res.documentWas || 0;
+  const now = res.documentNow || 0;
   return {
-    documentWas: totalBefore,
-    documentNow: totalNow,
-    documentPct: totalBefore
-      ? Math.round((100 * (totalNow - totalBefore)) / totalBefore)
-      : null,
-    grew: rows.slice(0, 8),
+    documentWas: was,
+    documentNow: now,
+    documentPct: was ? Math.round((100 * (now - was)) / was) : null,
+    grew: (res.grew || []).map((r) => ({
+      section: r.section,
+      was: r.was,
+      now: r.now,
+      added: r.added,
+      pct: r.was ? Math.round((100 * r.added) / r.was) : null,
+    })),
   };
 }
 
@@ -1789,7 +1756,7 @@ async function reviewStopDecision(rnd, verdict, growth, churn) {
 
 const introspectEvery = input.introspectEvery || 5;
 const introspections = [];
-let lastSizes = sectionSizes();
+let lastGrowthSnap = null;
 let lastIntrospectRound = 0;
 
 // The agent decides; the counters only wake it. A counter cannot judge whether a
@@ -1797,8 +1764,8 @@ let lastIntrospectRound = 0;
 // only ran on a fixed cadence would miss a runaway between its turns. Together:
 // the counter cannot miss, the agent can judge.
 async function introspect(rnd, reason, churn) {
-  const growth = growthSince(lastSizes);
-  lastSizes = sectionSizes();
+  const growth = await growthSince(lastGrowthSnap);
+  lastGrowthSnap = await snapshot("introspect-r" + rnd);
   lastIntrospectRound = rnd;
   const windowStart = Math.max(1, rnd - introspectEvery);
   const recent = history.filter((h) => h.round >= windowStart);
@@ -1953,12 +1920,11 @@ async function robustAgent(prompt, opts, attempts = 4) {
 }
 
 const fixedTitles = [];
-// Snapshot boundaries for the two diffs. roundStartText is taken at the top of a
-// round and yields the delta the NEXT round's lenses read; beforeFixText is taken
-// immediately before the fixer and yields the delta the post-fix reviewer reads.
-// They differ because a round can also prune, apply a redesign, and run a
+// Snapshot boundaries for the two diffs. The round-start copy yields the diff the
+// NEXT round's lenses read; the pre-fix copy yields the diff the post-fix reviewer
+// reads. They differ because a round can also prune, apply a redesign, and run a
 // follow-up fix after the post-fix review.
-let lastRoundDelta = null;
+let lastRoundSnap = null;
 const rejected = [];
 const history = [];
 let round = 0;
@@ -2082,7 +2048,7 @@ if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.
 }
 
 while (round < maxRounds && !converged) {
-  const roundStartText = readProposal();
+  const roundStartSnap = await snapshot("r" + round + "-start");
   round++;
   const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
   const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
@@ -2127,7 +2093,7 @@ while (round < maxRounds && !converged) {
   const lensResults = await parallel(
     lenses.map(
       (l) => () =>
-        robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundDelta), {
+        robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
           label: "r" + round + ":review:" + l.key,
           phase: "Round " + round + ": review",
           schema: REVIEW_FINDINGS,
@@ -2374,22 +2340,14 @@ while (round < maxRounds && !converged) {
     .filter((m) => m.strikes > 0)
     .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
     .join("\n");
-  const beforeFixText = readProposal();
+  const preFixSnap = await snapshot("r" + round + "-prefix");
   const fixOut = await robustAgent(
     fixPrompt(confirmed, round, strikeLines || null),
     { label: "r" + round + ":fix", phase: "Round " + round + ": fix", schema: FIX_RESULT },
   );
   const fixSummary = fixOut && fixOut.summary ? fixOut.summary : fixOut;
-  // What the fixer actually did, as against what it says it did.
-  const fixDelta = proposalDelta(beforeFixText, readProposal(), {
-    linesPerSection: 40,
-    maxSections: 12,
-  });
-  const fixDeltaText = fixDelta ? fixDelta.text : null;
-  if (fixDelta)
-    log(
-      "Round " + round + ": the fix touched " + fixDelta.changed + " section(s)",
-    );
+  // What the fixer actually did, as against what it says it did: the post-fix
+  // reviewer diffs against the pre-fix snapshot rather than trusting the summary.
   const roundMechanisms = (fixOut && fixOut.newMechanisms) || [];
   roundMechanisms.forEach((m) =>
     introducedMechanisms.push({ name: m.name, round, strikes: 0 }),
@@ -2414,7 +2372,7 @@ while (round < maxRounds && !converged) {
   // genuinely contested edit inside a round instead of surfacing it to the next
   // round's lenses and, ultimately, to the sweep.
   const postFix = await robustAgent(
-    postFixPrompt(confirmed, fixSummary, round, roundMechanisms, fixDeltaText),
+    postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap),
     {
       label: "r" + round + ":post-fix-review",
       phase: "Round " + round + ": fix",
@@ -2532,7 +2490,7 @@ while (round < maxRounds && !converged) {
       const panel = await reviewStopDecision(
         round,
         verdict,
-        growthSince(lastSizes),
+        await growthSince(lastGrowthSnap),
         churn,
       );
       history[history.length - 1].stopDecision = {
@@ -2596,12 +2554,8 @@ while (round < maxRounds && !converged) {
   // The delta the NEXT round's lenses read. Taken at the end of the round rather
   // than after the fixer, so it also carries a follow-up fix, a prune, and an
   // applied redesign, all of which rewrite text a lens is about to re-read.
-  const endDelta = proposalDelta(roundStartText, readProposal(), {
-    linesPerSection: 30,
-    maxSections: 16,
-  });
-  lastRoundDelta = endDelta ? endDelta.text : null;
-  if (endDelta) history[history.length - 1].sectionsChanged = endDelta.changed;
+  history[history.length - 1].sectionsChanged = await diffHunks(roundStartSnap);
+  lastRoundSnap = roundStartSnap;
 
 }
 

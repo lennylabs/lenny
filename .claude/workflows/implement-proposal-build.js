@@ -102,22 +102,14 @@ const RULES =
 // The proposal's Summary is the one section every agent in this phase reads. It
 // carries the top-level changes, the decisions that are closed, and the traps, so
 // an implementer building step nine orients the same way as one building step one.
-let proposalSummary = "";
-try {
-  const m = require("fs")
-    .readFileSync(proposal, "utf8")
-    .match(/\n## Summary\n([\s\S]*?)(?=\n## )/);
-  if (m) proposalSummary = m[1].trim();
-} catch (e) {
-  proposalSummary = "";
-}
-
-const SUMMARY_BLOCK = proposalSummary
-  ? "\n\nTHE PROPOSAL'S SUMMARY. Read this before anything else. It states the top-level changes, the " +
-    "decisions that are closed and must not be reopened, and the traps this change has already fallen into.\n\n" +
-    proposalSummary +
-    "\n"
-  : "";
+// The script cannot read the proposal: the workflow sandbox has no `require` and
+// no filesystem access, so the agent reads its own Summary.
+const SUMMARY_BLOCK =
+  "\n\nTHE PROPOSAL'S SUMMARY. Read the `## Summary` section of " +
+  proposal +
+  " before anything else. It states the top-level changes, the decisions that are closed and must not be " +
+  "reopened, and the traps this change has already fallen into. A proposal written before that section " +
+  "existed may not have one; when it is absent, read the Problem and Decisions sections in its place.\n";
 
 const BLANKS_BLOCK =
   "\n\nBLANKS THE PROPOSAL LEAVES TO YOU. A proposal may delegate a detail rather than specify it, marked as " +
@@ -621,20 +613,14 @@ for (let i = 0; i < plan.steps.length; i++) {
   // conformant. The box is the resumption record: a later run reads it to find
   // where to continue, which is what the pipeline previously had no way to know.
   if (stepGreen && stepReviewClean && step.checklistStep) {
-    try {
-      const fs = require("fs");
-      const before = fs.readFileSync(proposal, "utf8");
-      const re = new RegExp(
-        "^- \\[ \\](\\s+\\*\\*" + step.checklistStep + "\\s)",
-        "m",
-      );
-      if (re.test(before)) {
-        fs.writeFileSync(proposal, before.replace(re, "- [x]$1"));
-        log("Checklist: ticked " + step.checklistStep);
-      }
-    } catch (e) {
-      log("Checklist: could not tick " + step.checklistStep + " (" + e.message + ")");
-    }
+    await agentTry(
+      "In " + proposal + ", find the implementation-checklist line for step " + step.checklistStep +
+        ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and change " +
+        "NOTHING else in the file: no wording, no other checkbox, no other line, and no file other than this " +
+        "one. If there is no such line, or its box is already `[x]`, change nothing. Reply DONE either way.",
+      { label: "tick:" + step.checklistStep, model: "haiku" },
+    );
+    log("Checklist: marked " + step.checklistStep + " complete");
   }
 
   stepResults.push({
