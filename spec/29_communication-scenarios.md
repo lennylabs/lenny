@@ -49,8 +49,8 @@ in the table, and this subsection introduces neither a participant nor a boundar
 A trace that needs two agent pods labels them `agent pod 1` and `agent pod 2`, on the same rule that
 distinguishes `replica A` from `replica B`. A trace that names more than one session labels the sessions
 `session 1` and `session 2`, and where those sessions are served by one agent pod each label is keyed to
-the `slotId` by which that pod multiplexes every slot's stream over the one `CH-MSGSOCK` channel (§28.5.3),
-so the labels separate two sessions on one pod as well as two sessions on two pods. No other participant
+the `sessionId` by which that pod multiplexes every session's stream over the one `CH-MSGSOCK` channel
+(§28.5.3), so the labels separate two sessions on one pod as well as two sessions on two pods. No other participant
 may be named: a mechanism
 that is not one of these is named as a mechanism of the participant that carries it, rather than as a
 participant of its own.
@@ -297,9 +297,14 @@ state that the READY signal is one of them.
 26a. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime: `runtime` → `adapter`,
     `CH-MCP-PLATFORM`, `intra-pod`. The runtime reads the manifest and connects to the platform MCP
     server, presenting the manifest's
-    `mcpNonce` as the top-level `_lennyNonce` field of the `initialize` request's `params` object; the
-    adapter validates it before any tool dispatch and closes a connection that does not present a valid
-    nonce (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
+    `mcpNonce` as the top-level `_lennyNonce` field of the `initialize` request's `params` object. The
+    manifest nonce authenticates a connection to the pod's intra-pod MCP servers. Those servers are
+    pod-wide and are started at most once per pod, the nonce a server validates against is the one the
+    manifest carried at the start that bound the server, and a later session's manifest write does not
+    re-arm it. The adapter validates the presented nonce before any tool dispatch and closes a connection
+    that does not present a valid nonce. The calling session is resolved at call time, and the call is
+    refused unless the pod's shared runtime process has been given exactly one session and that session is
+    the caller (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). A Basic-level runtime connects
     to no MCP server and this step does not occur
     ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
@@ -432,8 +437,7 @@ reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
 6. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The gateway sends the message envelope to the pod
    on the attach stream, whose §28.3 register row carries message delivery and agent output as its message
    vocabulary and whose messages are bidirectional (§28.5.1 `CH-ATTACH`, §28.3). The envelope carries the
-   gateway-injected `schemaVersion`, and it carries `slotId` only on a pod whose pool sets
-   `sessionPolicy.maxConcurrentSessions > 1`
+   gateway-injected `schemaVersion`, and it carries the session identifier `sessionId` on every pod
    ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On an
    inter-session message carried by `lenny/send_message` rather than by the client REST surface, the
