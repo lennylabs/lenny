@@ -7,7 +7,7 @@
 //   Workflow({ name: "implement-proposal", args: {
 //     proposalPath: "proposals/NNNN_*.md",  // required
 //     date: "YYYY-MM-DD",                    // required (scripts cannot call Date)
-//     repoRoot: "/abs/path",                 // optional; defaults to this project
+//     repoRoot: "/abs/path",                 // required: the repository root
 //     implementCode: true,                   // optional, default true; false = land + verify spec only
 //     maxApplyRounds: 5,                      // optional; spec apply-verify-fix rounds
 //   }})
@@ -47,7 +47,11 @@ if (typeof input === "string") input = JSON.parse(input);
 if (!input || !input.proposalPath || !input.date) {
   throw new Error("args.proposalPath and args.date are required");
 }
-const repo = input.repoRoot || "/Users/joan/projects/lenny";
+// Required rather than defaulted: a default is one machine's checkout, and a
+// workflow that silently runs against the wrong tree is worse than one that
+// stops. change-proposal.js requires it for the same reason.
+if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
+const repo = input.repoRoot;
 const date = input.date;
 const implementCode = input.implementCode !== false; // default true
 const maxApplyRounds = input.maxApplyRounds || 5;

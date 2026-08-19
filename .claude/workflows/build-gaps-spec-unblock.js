@@ -10,7 +10,7 @@ export const meta = {
 //
 //   Workflow({ name: "build-gaps-spec-unblock", args: {
 //     date: "YYYY-MM-DD",      // required (logging only; scripts cannot call Date)
-//     repoRoot: "/abs/path",   // optional; defaults to this project
+//     repoRoot: "/abs/path",   // required: the repository root
 //     maxIterations: 5,        // optional; safety cap on the outer loop
 //     buildMaxIter: 0          // optional; >0 passes --max-iter to close-build-gaps.sh
 //   }})
@@ -34,7 +34,11 @@ if (typeof input === "string") input = JSON.parse(input);
 if (!input || !input.date) {
   throw new Error("args.date is required (YYYY-MM-DD; workflow scripts cannot call Date)");
 }
-const repo = input.repoRoot || "/Users/joan/projects/lenny";
+// Required rather than defaulted: a default is one machine's checkout, and a
+// workflow that silently runs against the wrong tree is worse than one that
+// stops. change-proposal.js requires it for the same reason.
+if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
+const repo = input.repoRoot;
 const date = input.date;
 const maxIterations = input.maxIterations || 5;
 const buildMaxIter = input.buildMaxIter || 0;

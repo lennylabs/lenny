@@ -43,7 +43,11 @@ if (typeof input === "string") input = JSON.parse(input);
 if (!input || !input.proposalPath) {
   throw new Error("args.proposalPath is required");
 }
-const repo = input.repoRoot || "/Users/joan/projects/lenny";
+// Required rather than defaulted: a default is one machine's checkout, and a
+// workflow that silently runs against the wrong tree is worse than one that
+// stops. change-proposal.js requires it for the same reason.
+if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
+const repo = input.repoRoot;
 const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
