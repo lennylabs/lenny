@@ -304,7 +304,7 @@ removal set of fifteen, (b′) the adapter-to-gateway removal set of one, `Repor
 Sets (b), (b′), and (c) remove seventeen fields between them. There is no blanket property being asserted:
 `CheckpointStart` gains a session field before it loses its slot field, `ReportSessionScrubRequest`'s
 removal is behavior-preserving on its own because the consumer already discards the argument, and
-`ShutdownRequest`'s removal is conditional on the `ShutdownSlot`/`ShutdownPod` split landing.
+`ShutdownRequest`'s removal is conditional on the handler restatement in §4.5(d) landing with it.
 
 **D4. The JSONL leg carries the per-session identifier on every session-scoped frame on every pod, and the
 frame field is renamed `slotId` to `sessionId`.** The population change is forced by D1 and is separable
@@ -564,8 +564,7 @@ with `CheckpointStart` carrying its own row because §4.5(c) changes its address
 | `CheckpointBarrierRequest` | `Adapter` | gateway → adapter | session |
 | `ExportPathsRequest` | `Adapter` | gateway → adapter | session |
 | `ReportUsageRequest` | `Adapter` | gateway → adapter | session |
-| `ShutdownSlotRequest` | `Adapter` | gateway → adapter | session |
-| `ShutdownPodRequest` | `Adapter` | gateway → adapter | pod |
+| `ShutdownRequest` | `Adapter` | gateway → adapter | session |
 | `CoordinatorFenceRequest` | `Adapter` | gateway → adapter | pod |
 | `DemoteSDKRequest` | `Adapter` | gateway → adapter | pod |
 | `NegotiateVersionRequest` | `Adapter` | gateway → adapter | pod |
@@ -584,20 +583,7 @@ declared rather than derived. `DemoteSDKRequest` (`schemas/lenny-adapter.proto:1
 `NegotiateVersionRequest` (`:1642-1651`), `GetObservedIntegrationLevelRequest` (`:1674-1684`), and
 `AdapterEventsRequest` (`:1699-1701`) carry no session field at all and address the pod's adapter process.
 
-If review declines the `ShutdownSlot`/`ShutdownPod` split, the two shutdown rows collapse into one
-`ShutdownRequest` row classified as both, with a note naming `slot_id` presence as the discriminator, and
-§9 records that as the one row the declared classification does not resolve.
-
-`ShutdownRequest` is the one message that is genuinely both, and it is the case
-`pkg/gateway/podlifecycle/podsession/slotbinder_test.go:649-651` pins: a recycle shutdown is a whole-pod
-scrub rather than a per-slot teardown, and that is true on a concurrent pod as well as a single-session
-one, because a recycle returns the whole pod to the warm pool and scrubs every tree on it rather than
-releasing one occupant's slot.
-The base case is that it is split into a session-scoped `ShutdownSlotRequest` and a pod-scoped
-`ShutdownPodRequest`, so
-the distinction the test encodes is expressed in the type rather than in a field's presence. The split is
-the one part of this classification review may decline; §4.5(d) states what `ShutdownRequest` keeps if it
-does, §4.5(g) states the wrapper type's fate either way, and §9 records the choice as open.
+`ShutdownRequest` is session-scoped and carries one address. Under D1 and D5 the per-slot teardown and the whole-pod teardown are the same operation on the same address, and what remains is the recycle disposition the request carries beside it. The handler runs the per-session teardown when the registry holds a bound entry for the named session and runs the whole-pod scrub when `recycle` is set, so neither operation is selected by a field's presence standing in for a scope. `Binder.ReleaseSlot` sends two requests on the concurrent recycle edge, the ending session's teardown at `pkg/gateway/podlifecycle/podsession/slotbinder.go:538` and the whole-pod recycle at `:570`, both carrying `result.SessionID`, and `slotbinder_test.go:649-656` pins the recycle request carrying no `slot_id` and naming the last-released slot's session. That sequence is preserved rather than re-encoded. A `Shutdown` and `Shutdown` split was considered and rejected in §9.
 
 ### 4.2 The rule
 
@@ -659,9 +645,7 @@ is on the list because `spec/05:515` enumerates it among the properties
 already states it; CODE-4 addresses the rotation defect §1.3 records and leaves that read boundary where
 `spec/13:30` puts it. The MCP surface is new to the
 co-tenancy list, because CODE-1's start-side merge starts the servers on every pod; its authority rule is
-in CODE-1, which resolves the calling session from the slot registry, refuses the call when the pod holds
-other than one bound entry, and refuses it permanently once a release deregisters an entry whose session
-had started and leaves the registry non-empty, so the pod's shared runtime has outlived that session.
+in CODE-1, which resolves the calling session from the slot registry through CODE-1's `soleSession()`, and refuses the call unless the registry holds exactly one entry and has held no more than one since it was last empty, because on any other pod the shared runtime has served a session other than the caller.
 
 This split is what keeps the change from promoting §29.10's five unstated gaps into
 platform-wide open questions. Four of them are gaps about two slots interacting, and they stay in the
@@ -745,13 +729,7 @@ fold the bound test into the lookup test. Two other surfaces move with this chan
 `tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go:143, 153-156`, and the §10.1.7
 checkpoint-stream specification text.
 
-**(d) Conditional set, one message.** `ShutdownRequest` (`:1548-1572`) is not a duplicate. `slot_id`
-presence is the only wire-level discriminator between a per-slot teardown
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:538`) and a whole-pod shutdown or recycle scrub
-(`binder.go:1945`, `slotbinder.go:570`); both populate `session_id`, and `pkg/adapter/session.go:225-245`
-branches on that presence. Removing it is conditional on the `ShutdownSlot`/`ShutdownPod` split in §4.1
-landing first. Absent the split, `ShutdownRequest` keeps `slot_id`, and the split is a precondition this
-proposal carries forward rather than an independent option.
+**(d) Removal set, one message, conditional on the handler change.** `ShutdownRequest` (`:1548-1572`) carries `slot_id = 4` as the wire discriminator between a per-slot teardown (`pkg/gateway/podlifecycle/podsession/slotbinder.go:538`) and a whole-pod shutdown or recycle scrub (`binder.go:1945`, `slotbinder.go:570`). Both populate `session_id`, and `pkg/adapter/session.go:225-245` branches on the presence. Under D1 and D5 the two teardowns are one operation on one address, so the discriminator has nothing left to discriminate: `slot_id = 4` is removed with `reserved 4;` and `reserved "slot_id";`, and the handler is restated as the ordered clauses SCHEMA-1 states. The removal is atomic with that handler change, because removing the field while the presence branch survives would route every teardown into the pod-global arm.
 
 **(e) Mechanic, edit surface, and what the compiler does not catch.** The only mechanical part is the
 reserved markers: each removal adds `reserved <n>;` and `reserved "slot_id";` with a comment naming why the
@@ -809,12 +787,7 @@ and §7 records the amendment to 0064's deliverable the way D14 handles 0072.
 **(g) The wrapper type's fate.** `SlotId` (`schemas/lenny-adapter.proto:587`) exists only to wrap the field
 being removed. A repo-wide scan of the proto surface finds eighteen users, all of them `SlotId slot_id`
 fields (`:449, 684, 716, 837, 917, 948, 967, 999, 1018, 1039, 1057, 1091, 1170, 1275, 1361, 1444, 1539,
-1556`), and no other reference. Sets (b), (b′), and (c) remove seventeen. The type's survival is therefore
-conditional on the same precondition as (d). If the `ShutdownSlot`/`ShutdownPod` split lands,
-`ShutdownRequest.slot_id = 4` (`:1556`) goes with it and `SlotId` is deleted along with its doc comment;
-this is the base case. If the split does not land, `SlotId` is retained with exactly one user and its doc
-comment is rewritten to state that the field is the per-slot teardown discriminator on `ShutdownRequest`,
-dropping the "Empty when `maxConcurrentSessions: 1`" condition at `:584-586` that D1 retires. Deleting an
+1556`), and no other reference. Sets (b), (b′), and (c) remove seventeen. Set (d) removes the eighteenth. `SlotId` therefore has no user left and is deleted along with its doc comment at `:584-586`, whose "Empty when `maxConcurrentSessions: 1`" condition D1 retires in any case. Deleting an
 unused message type is a source-level change to a published artifact that runtime authors compile against
 and that the generated compliance suite reads, so it is announced in the schema deliverable. It is not a
 wire change and does not engage (e)'s refusal to recycle field numbers and names.
@@ -857,13 +830,10 @@ The rule, scoped by frame type:
   them, so no other deliverable re-edits those two ranges.
 - **Runtime to adapter.** For a frame in that set, an absent identifier on a pod holding at most one slot
   resolves to the stream's own binding. The slot count is every entry in the adapter's registry, bound or
-  registered-but-unbound, which is the quantity SCHEMA-1's drain gate reads, so the two decisions read one
-  number and both fail closed while a second session's workspace is being prepared; SCHEMA-1 states the
-  reclaimer that keeps a failed bind from holding that number above one for the pod's life. A count of zero
+  registered-but-unbound, so the rule fails closed while a second session's workspace is being prepared. SCHEMA-1's drain gate reads a different quantity, the bound entries alone, because it asks whether the shared runtime is still serving a session rather than whether an unaddressed frame can be resolved. A count of zero
   is reachable and falls in the same arm as a count of one: `releaseSlot` deletes the registry entry
   (`pkg/adapter/slotsession.go:102-112`) while the ending session's Attach stream is still draining the
-  shared runtime's output (`pkg/adapter/attach.go:63-73`), and SCHEMA-1's reclaim arm deletes the last
-  registered-but-unbound entry on the same path. Resolving on that pod hands the frame to the one stream
+  shared runtime's output (`pkg/adapter/attach.go:63-73`). Resolving on that pod hands the frame to the one stream
   still open, where condition 2 of §4.8 rejects it because the registry no longer holds a bound entry for
   the address, so a `set_tracing_context` frame arriving in that window is dropped on
   `lenny_adapter_set_tracing_context_dropped_total` as it is today and a `status` frame in that window still
@@ -1354,9 +1324,7 @@ retired, because a different session there arrives on its own slot and its own r
 remaining work, cancelling the pod's MCP servers and clearing `mcpHandshakeSeen`, moves onto the slot
 release path. The platform and connector MCP servers are pod-wide, because they bind the single socket the
 controller renders and are tracked by one `mcpCancel` and one `connectorCancels` slice
-(`pkg/adapter/server.go:126-131, :343-345`), so the cancellation runs when a `ShutdownSlot` leaves the pod
-with no other bound session rather than on every release. A release that leaves a co-tenant bound cancels
-nothing, since cancelling would take the co-tenant's own MCP surface down with it.
+(`pkg/adapter/server.go:126-131, :343-345`), so the cancellation runs on every release, of whichever session's entry, and the servers are re-armed only by a later claim that finds the registry holding no entry but its own. A release on a co-tenanted pod cancels a surface CODE-1's `soleSession()` predicate is already refusing every call on, so the cancellation costs a co-tenant nothing it could have used.
 
 The merged claim carries a matching release, and the rollback call sites move onto it rather than being
 left with a retired function. `releaseSession` is the compensating action on twelve failure paths whose
@@ -1372,22 +1340,12 @@ succession, which is the same pair of effects `releaseSlot` performs in one call
 the replacement is what keeps the compensation: nothing else removes the entry, because `releaseSlot` holds
 the only `delete(s.slots, slotID)` and the gateway sends no adapter RPC on a failed bind or a failed resume
 (`pkg/gateway/podlifecycle/podsession/binder.go:1598-1601` returns after `cl.Close()`, and CODE-2 has every
-resume failure call `ReleaseSlotReservation`, which issues no adapter RPC). Left uncompensated, a failed
-`Resume` would strand a bound, `started` entry for a session that never resumed: `ShutdownPod` would refuse
-with `FailedPrecondition` for the life of the pod, SCHEMA-1's critical section would never observe an empty
-registry so the §15.4.2 drain and the hard close would be withheld, §4.6.1's count would stay above one,
-CODE-1's MCP predicate would refuse every `tools/list` and `tools/call` on the pod, and the merged claim's
-`started` flag would refuse the retried `Resume` the checkpoint-restore failure exists to enable.
+resume failure call `ReleaseSlotReservation`, which issues no adapter RPC). Left uncompensated, a failed `Resume` would strand a bound, `started` entry for a session that never resumed: SCHEMA-1's critical section would never observe a registry with no bound entry, so the §15.4.2 drain would be withheld for the life of the pod, §4.6.1's count would stay above one, CODE-1's `soleSession()` would stay empty so the MCP providers, the direct-mode fold, and the control-event stamp would all give up, and the merged claim's `started` flag would refuse the retried `Resume` the checkpoint-restore failure exists to enable.
 
-That release also decides the pod-wide MCP teardown on the same predicate `ShutdownSlot` uses: it cancels
-the platform and connector MCP servers and clears `mcpHandshakeSeen` when it leaves the pod with no other
-bound entry, and cancels nothing when a co-tenant is still bound. Without that half, `resume.go:120` and
+That release also performs the pod-wide MCP teardown, on the same terms whichever path reaches it: it cancels the platform and connector MCP servers and clears `mcpHandshakeSeen` unconditionally. Without that half, `resume.go:120` and
 `:126` would leave the platform MCP server armed with the failed session's nonce while CODE-1's
 once-per-pod guard (`s.mcpCancel != nil`) refused every later session's re-arm, so every subsequent
-session's manifest nonce would be rejected at `pkg/adapter/manifest.go:118-125`. One predicate therefore
-governs the cancellation on both the `ShutdownSlot` path and the rollback path, and a
-`maxConcurrentSessions: 1` pod recovers from a failed `StartSession`, `Resume`, or `ConfigureWorkspace`
-exactly as it does today. CODE-1 stages the twelve call-site rewrites and §8 pins the `Resume` arms.
+session's manifest nonce would be rejected at `pkg/adapter/manifest.go:118-125`. The cancellation therefore runs on every release, whichever path reaches it, and the servers are re-armed only by a later claim that finds the registry holding no entry but its own. A `maxConcurrentSessions: 1` pod recovers from a failed `StartSession`, `Resume`, or `ConfigureWorkspace` exactly as it does today. CODE-1 stages the twelve call-site rewrites and §8 pins the `Resume` arms.
 
 A thirteenth call site, `pkg/adapter/sdkwarm.go:281`, is not a rollback and takes the same replacement for a
 different reason. It is the last statement of `DemoteSDK` on its success path, after `sw.DemoteSDK(ctx)`
@@ -1480,11 +1438,7 @@ directory instead of refusing. The merged resolution raises the same `FailedPrec
 message when the resolved per-slot staging path is empty, which keeps the fail-closed posture §4.11 takes
 everywhere else, and §8 pins both the destination and the refusal.
 
-`checkSessionBound` has one exception, stated in SCHEMA-1 and repeated here because this is the section
-that owns the check: the merged `ShutdownSlot` handler admits a registry entry that is registered and not
-yet bound when the entry is the named session's, and deletes it. Every other session-scoped RPC keeps the
-bound test. Without the exception a bind that fails after `PrepareWorkspace` would leave an entry no code
-path can ever remove, and the drain gate and §4.6.1's count both read the registry.
+`checkSessionBound` governs every session-scoped RPC but `Shutdown`, which makes no call to it: SCHEMA-1 states its clause two as a conditional registry test rather than a guard, so a request naming a session the registry holds no bound entry for is a no-op rather than a refusal, which is what keeps the §11.4 revoke and the concurrent recycle edge from leaking a slot. A bind that fails after `PrepareWorkspace` still leaves an entry no adapter path removes, registered-but-unbound when the failure preceded `AssignCredentials` and bound when it followed it, because `assignCredentialsSlot` writes `st.sessionID` (`pkg/adapter/slotcreds.go:33-34`) ahead of `StartSession`. §4.6.1's count reads both classes; SCHEMA-1's drain gate reads the bound class alone, so the second pins it and the first does not. §9 records both residues.
 
 Call sites split by what the compiler catches.
 
@@ -1496,13 +1450,9 @@ Call sites split by what the compiler catches.
   `slot_id` at all (D6), and `ResumeRequest`'s unread `slot_id` (§1.2) is handled by CODE-2 rather than here.
   All five compile unchanged after the proto field is removed and would fail at runtime for every session on
   every pod.
-- Branch collapses: `pkg/adapter/session.go:186/198` (SendMessage), `:246` (Shutdown), and
-  `pkg/adapter/attach.go:42/45` (Attach). The slot half already calls `checkSlotSession`; the merged path
-  keeps that check rather than the pod-global one.
+- Branch collapses: `pkg/adapter/session.go:186/198` (SendMessage) and `pkg/adapter/attach.go:42/45` (Attach). The slot half already calls `checkSlotSession`; the merged path keeps that check rather than the pod-global one. `pkg/adapter/session.go:246` (Shutdown) is not in this set: the merged handler drops both the pod-global comparison and the per-slot session check, keeping only §4.2's non-empty `session_id` refusal and clause two's conditional registry test, which is what makes a request naming a released session a no-op rather than a refusal.
 
-Shutdown's recycle-scrub guard at `pkg/adapter/session.go:242-245` fires when `s.currentSession() == ""`,
-which becomes universally true once no path writes `s.sessionID`. It is re-keyed on the slot registry's
-occupancy.
+Shutdown's recycle-scrub guard at `pkg/adapter/session.go:242-245` fires when `s.currentSession() == ""`, which becomes universally true once no path writes `s.sessionID`. It is deleted rather than re-keyed. Its job is to route a concurrent pod's recycle request around `checkSession`, as its comment at `:229-241` states, and SCHEMA-1's clause two replaces it with a registry test that both pod classes take.
 
 §1.2's coordinator-hold finding is the special case of this, and CODE-3 fixes only `holdstate.go`'s arming.
 This clause generalizes that fix to the validation path.
@@ -1578,104 +1528,45 @@ proposal has not found, the decision needs revisiting before SPEC-3 lands.
 `reserved "slot_id";` and a comment naming why. `CheckpointStart` gains `SessionId session_id` at a fresh
 field number before its `slot_id = 6` is removed, per §4.5(c).
 
-`ShutdownRequest` is split into `ShutdownSlotRequest` and `ShutdownPodRequest` per §4.1, and its `slot_id`
-goes with the split. The split is stated here in full so that no part of it is invented at application time.
-`ShutdownRequest` (`:1548-1572`) carries `session_id = 1`, `reason = 2`, `deadline_ms = 3`, `slot_id = 4`,
-`recycle = 5`, and `coordination_generation = 6`. `ShutdownSlotRequest` is a new message carrying
-`SessionId session_id = 1`, `string reason = 2`, `int32 deadline_ms = 3`, and
-`int64 coordination_generation = 4`; it carries no `slot_id`, because under D5 `session_id` is the address,
-and no `recycle`, because a recycle is a whole-pod operation. `ShutdownPodRequest` is a new message carrying
-`RecycleScrub recycle = 1`, `string reason = 2`, `int32 deadline_ms = 3`, and
-`int64 coordination_generation = 4`; it carries no `session_id`, because it addresses the pod. Field
-numbering restarts at 1 on both, which is permitted because both are new messages rather than edited ones,
-so §4.5(e)'s refusal to recycle a number on a published message does not apply. The single
-`rpc Shutdown(ShutdownRequest) returns (ShutdownResponse)` (`:195`) becomes two RPCs,
-`rpc ShutdownSlot(ShutdownSlotRequest) returns (ShutdownSlotResponse)` and
-`rpc ShutdownPod(ShutdownPodRequest) returns (ShutdownPodResponse)`. A oneof on one RPC is rejected: it
-would keep the scope encoded in a field's presence, which is what D6 retires. `ShutdownRequest` and
-`ShutdownResponse` are both deleted with the split.
+`ShutdownRequest` (`:1548-1572`) keeps `session_id = 1`, `reason = 2`, `deadline_ms = 3`, `recycle = 5`, and `coordination_generation = 6`, and loses `slot_id = 4` per §4.5(d), with `reserved 4;` and `reserved "slot_id";` and a comment naming why. `ShutdownResponse` (`:1601-1604`) keeps `exited_cleanly = 1` and `exit_code = 2` and gains no field. The `Shutdown` RPC (`:195`) is unchanged. The proto comment on `recycle` (`:1558-1564`) is rewritten to state that the field carries the occupancy-zero recycle disposition beside the named session's teardown rather than selecting a scope.
 
-The message names are fixed by the two constraints the toolchain imposes, and both were verified against
-`buf` before they were written here. A protobuf method name is a symbol in its service's own scope, so a
-relative type reference spelled `ShutdownSlot` inside `service Adapter` resolves to the method
-`lenny.adapter.v1.Adapter.ShutdownSlot` rather than to a message of that name, and the file does not parse
-(`expected message type, found service method`). The `<Rpc>Request` suffix the file already uses everywhere,
-as at `schemas/lenny-adapter.proto:195` over `:1548`, avoids the collision. The two responses are likewise
-distinct messages rather than one shared `ShutdownResponse`, because the module's lint configuration
-(`buf.yaml:11-19`) uses the `STANDARD` rule set with four exceptions, none covering RPC request or response
-naming, so a shared response fails `RPC_REQUEST_RESPONSE_UNIQUE` and `RPC_RESPONSE_STANDARD_NAME` once per
-RPC and turns the tier-0 `buf lint` check (`cmd/lenny-test/cmd_run.go:510-515`), which is green on the tree
-today, red. `ShutdownSlotResponse` and `ShutdownPodResponse` each carry the `bool exited_cleanly = 1` and
-`int32 exit_code = 2` that `ShutdownResponse` (`:1601-1604`) carries today, and `ShutdownSlotResponse`
-carries one field more, the `bool runtime_closed = 3` the drain compensation below keys on. Adding a lint exception instead
-is refused: the exception list is a shared module-wide setting, and widening it for one message would
-suppress the rule on every service in `schemas/`.
+The adapter's presence branch at `pkg/adapter/session.go:225-245` and the recycle dispatch at `:242-245` are both deleted, and the handler becomes three ordered clauses over one message. It refuses an empty `session_id` with `InvalidArgument` per §4.2. It then runs the merged per-session teardown when the slot registry holds a bound entry for the named session, and skips it in every other registry state. It then runs `startPodScrub` on the carried `RecycleScrub` when one is present.
 
-The adapter's presence branch at `pkg/adapter/session.go:225-245` splits into the two handlers with no
-shared dispatcher. `ShutdownSlot` validates a non-empty `session_id` per §4.2 and calls `shutdownSlot`.
-`ShutdownPod` refuses with `FailedPrecondition` while the slot registry still holds a bound slot, which is
-the re-keyed recycle-scrub guard §4.11 states, and otherwise runs `startPodScrub` on the carried
-`RecycleScrub` and performs no other work.
+Clause two is conditional rather than guarded, and the handler is idempotent for that reason. Two production paths reach it with no bound entry to release. On the concurrent occupancy-zero edge the gateway sends the ending session's teardown at `pkg/gateway/podlifecycle/podsession/slotbinder.go:538` and then the whole-pod recycle at `:570` naming that same released session, each carrying `result.SessionID`; `slotbinder_test.go:649-656` pins the recycle request of that pair carrying no `slot_id` and naming the last-released slot's session. On the §11.4 full revoke the pod-terminate fan-out tears the session down at `cmd/lenny-gateway/user_revocation.go:129` and removes no binding, so the session's later terminal release sends a second request for it through `Binder.ReleaseSlot`. On both, the handler returns `exited_cleanly` true, `Binder.ReleaseSlot` computes `leaked` false (`slotbinder.go:538-539`), and `SlotClaimer.ReleaseSlot` decrements the counter and takes the occupancy-zero disposition. Returning an error on a released session instead would make every revoked session hold its slot for the life of the pod, because `SlotClaimer.ReleaseSlot` returns early on `leaked` without decrementing (`slotclaimer.go:751-757`). Idempotent release is the posture the surrounding path already takes: the counter decrement is clamped at zero (`slotclaimer.go:759-761`), a `NotFound` from the recycling patch is a no-op (`:781-784`), the claim DELETE tolerates `NotFound` inside `DeleteClaim` (`pkg/gateway/podlifecycle/podclaim/claimer.go:329`), and `SocketRuntimeProcess.Close` is idempotent by its own doc (`pkg/adapter/socketruntime.go:426-428`).
 
-The handler has no third arm, because the terminate disposition is carried entirely by `ShutdownSlot`. What
-`pkg/adapter/session.go:246-286` calls the terminate path is per-session work keyed end to end on the
-request's `session_id`: `checkSession(sessionID)` (`:246`), `emitFinalUsage(ctx, sessionID)` (`:252`),
-`drainViaLifecycle` (`:261`), `Runtime.Close(closeCtx, sessionID)` (`:263`), and `releaseSession()` (`:265`),
-with the scrub at `:273` the only step the recycle disposition gates. `ShutdownPodRequest` carries no
-`session_id`, so none of those steps is expressible on it. No production caller sends a `ShutdownPodRequest`
-with no `RecycleScrub` either: CODE-1 re-points only `ShutdownRecycle` onto the `ShutdownPod` RPC
-(`pkg/gateway/podlifecycle/podsession/binder.go:1939` and `slotbinder.go:570`), while the retire disposition
-at `binder.go:1945` sends the request that collapses into `ShutdownSlot`. A `ShutdownPodRequest` arriving
-with no `RecycleScrub` is therefore a caller error rather than a scope, and the handler returns
-`InvalidArgument` for it rather than performing any teardown. §8's re-base of
-`TestShutdownTerminatePathRunsNoScrub_spec_4_7` onto `ShutdownSlot` and SPEC-7's §5.2 restatement both rest
-on this.
+Clause three carries no occupancy test. The gateway populates `recycle` only from `ShutdownRecycle`, which `binder.shutdownAdapter` sends on the base-mode recycle disposition (`binder.go:1939`) and `Binder.ReleaseSlot` sends only when `SlotClaimer.ReleaseSlot` returned `recycled` true (`slotbinder.go:566-575`), so every production call reaches clause three at occupancy zero. On the base-mode call clause two has already deregistered the ending session and removed its tree in the same handler, ahead of the scrub, which is stronger than the cross-request ordering a two-message split would have to rely on.
 
-`ShutdownSlot` is where the whole per-session teardown lands, on every pod. Today the base-mode path
+`Shutdown` is where the whole per-session teardown lands, on every pod. Today the base-mode path
 performs it inside the one `Shutdown` handler: `pkg/adapter/session.go:246-286` runs the final usage flush
 (`emitFinalUsage`), the `CH-RUNTIMEOPS` drain signal (`drainViaLifecycle`), `Runtime.Close(sessionID)`,
 `releaseSession`, and the `ReportSessionScrub` emission whose comment at `:274-282` states that it is what
 makes `maxSessionsPerPod` retirement functional in base mode. `shutdownSlot`
 (`pkg/adapter/slotsession.go:63-95`) performs the close, the timer cancellation, the tree removal, the
 deregistration, and the `ReportSessionScrub` emission, and it performs neither the usage flush nor the
-drain signal. The merged `ShutdownSlot` handler carries all of them, so a session's teardown is one
-sequence whatever the pool's concurrency, and `ShutdownPod` performs no per-session work.
+drain signal. The merged `Shutdown` handler carries all of them, so a session's teardown is one
+sequence whatever the pool's concurrency.
 
 One of the two added operations is pod-global rather than per-session, and the merged handler scopes it.
 `emitFinalUsage` and `Runtime.Close(sessionID)` name the ending session, but `drainViaLifecycle`
 (`pkg/adapter/session.go:294-300`) sends `s.Lifecycle.Terminate(...)` on the single pod-wide
 `CH-RUNTIMEOPS` connection to the one runtime process serving every slot, and it takes no session or slot
 argument. Sending it while a co-tenant slot is still bound would signal that runtime to terminate while it
-is still serving another session. The merged handler therefore deregisters the ending session's slot and
-sends the drain signal only when that deregistration leaves the slot registry with no entry at all and the
-runtime process is live, which the `Connected` predicate stated below reports. The paragraph on the
-reclaim arm states the second conjunct and why a drain sent without it terminates a runtime that has
-served nothing. That test is on live occupancy at the adapter, which
-is the same quantity the recycle-scrub guard is re-keyed onto in §4.11, and it is not the retired
-conditional: absence of an address never selects a scope, and the request's address is the ending session
-either way. On a pod holding one session at a time the deregistration empties the registry, so the
-base-mode sequence is unchanged.
+is still serving another session. The merged handler therefore deregisters the ending session's slot and sends the drain signal only when that deregistration leaves the registry holding no bound entry. A bound entry is one whose `sessionID` is non-empty (`pkg/adapter/slot.go:26`), written under `s.mu` at `pkg/adapter/slotcreds.go:33-34`, `pkg/adapter/slotsession.go:45`, and `pkg/adapter/resume.go:47`, and cleared by the single `delete(s.slots, slotID)` in `releaseSlot` (`pkg/adapter/slotsession.go:106`). Only a bound entry can be a session the shared runtime is serving, which is the question the drain asks. A registered-but-unbound entry is not counted, so a bind that fails before `AssignCredentials` does not pin the gate. A bind that fails at credential assignment or at `StartSession` does leave a bound entry, because the §4.7 bind sequence assigns credentials before it starts the session, and with no reclaimer that entry pins the gate false for the life of the pod; §9 records the residue. This is not the retired conditional: absence of an address never selects a scope, and the request's address is the ending session either way. On a pod holding one session at a time the deregistration leaves no bound entry, so the base-mode sequence is unchanged.
 
 The predicate reads shared mutable state and then performs a pod-global side effect, so it is evaluated
 atomically rather than as a check followed by an act. `shutdownSlot` (`pkg/adapter/slotsession.go:63-95`)
 releases `s.mu` at `:78` before closing the runtime at `:82-84` and deregistering the slot through
 `releaseSlot` at `:86`, and each ending session reaches the handler on its own gateway flow, since
-`Binder.ReleaseSlot` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:524-540`) issues one `ShutdownSlot`
+`Binder.ReleaseSlot` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:524-540`) issues one `Shutdown`
 per release with no cross-session serialization. An occupancy read taken before the deregistration therefore
 lets two co-tenants ending at once each observe the other and send no drain at all. The merged handler
-deregisters the ending slot and takes the drain decision in one critical section under `s.mu`, and sends the
-signal immediately after that section, when the section left the registry empty and the runtime is live,
-and before
-`Runtime.Close`. The order matters and the handler states it: the drain exists to precede the hard close,
+deregisters the ending slot and takes the drain decision in one critical section under `s.mu`, and sends the signal immediately after that section, when the section left no bound entry, and before `Runtime.Close`. The order matters and the handler states it: the drain exists to precede the hard close,
 which is the sequence the base-mode path runs today (`drainViaLifecycle` at `pkg/adapter/session.go:261`
 then `Runtime.Close` at `:263`), and the last session's `Close` tears the shared runtime down
 (`pkg/adapter/socketruntime.go:434-466`). A `terminate` frame sent after that reaches a dead runtime, and
 `drainViaLifecycle` swallows `errLifecycleNotConnected` and `errLifecycleClosed`
 (`pkg/adapter/session.go:294-301`), so the regression would be silent and the §15.4.2 graceful drain would
-be a no-op on every pod. The full sequence in the merged handler is the usage flush, the critical section
-that deregisters and decides, the drain signal when the registry is empty and the runtime is live,
-`Runtime.Close` carrying the same decision, the per-slot
-tree removal, and the `ReportSessionScrub` emission. `shutdownSlot`'s current order, which closes the
+be a no-op on every pod. The full sequence in the merged handler is the usage flush, the critical section that deregisters and decides, the drain signal when the section left no bound entry, `Runtime.Close(closeCtx, sessionID)`, the release's second step, which removes the per-slot tree and clears CODE-1's `coTenanted` bit when the registry is still empty at that point, and the `ReportSessionScrub` emission. `shutdownSlot`'s current order, which closes the
 runtime at `pkg/adapter/slotsession.go:82-84` before `releaseSlot` deregisters at `:86`, is what the merge
 reorders.
 
@@ -1687,327 +1578,20 @@ the drain would carry the tree removal ahead of the drain with it, so the draine
 `/run/lenny/slots/{sessionId}` trees, including the credential file the agent process is still reading,
 would be removed while that process is finishing its current exchange inside the §15.4.2 grace window
 (`pkg/adapter/session.go:253-259`). CODE-1 therefore divides the function into two package-internal steps.
-The first is the locked deregister-and-decide step: under `s.mu` it deletes the entry, computes the
-all-entries occupancy result, reads the deregistered entry's `started` flag, and arms CODE-1's pod-level
-flag, and it returns the registry-empty result together with the deregistered `slotState`. The second is
-the tree removal, `removeSlotTree` (`pkg/adapter/slot.go:177-179`) on the returned state, which the caller
-makes outside the lock. The merged handler calls the first as its deciding critical section and the second
+The first is the locked deregister-and-decide step: under `s.mu` it deletes the entry, computes whether any bound entry remains, and returns the bound-entry result together with the deregistered `slotState`. The second is the unlocked completion step the caller makes after the lock is released: it removes the tree with `removeSlotTree` (`pkg/adapter/slot.go:177-179`) on the returned state, and it then re-takes `s.mu` briefly and clears CODE-1's `coTenanted` bit when the registry is still empty at that point. The clear belongs to this step rather than to the first, because the first runs before `Runtime.Close` and the departing session's agent code is still live inside the shared process there (`pkg/adapter/socketruntime.go:434-445` returns before touching the connection or the child on a non-last call). Clearing the bit that early would let a session claiming a slot in that interval be named by `soleSession()` while another session's agent was still running. The merged handler calls the first as its deciding critical section and the second
 after `Runtime.Close`, which is the order the sentence above enumerates. Every other caller calls the two
 in immediate succession and so keeps the semantics `releaseSlot` has today: `startSessionSlot`'s
-`Runtime.Start` failure path (`pkg/adapter/slotsession.go:49`), the twelve §4.11 rollback sites, CODE-3's
-per-member hold-termination loop, SCHEMA-1's reclaim of a registered-but-unbound entry, and
-`pkg/adapter/export_test.go:27-29`'s `ReleaseSlotForTest`, which keeps its one-call signature and performs
-both steps. Occupancy for this decision counts every
-registry entry rather than the bound entries alone, because `ensureSlotStateLocked`
-(`pkg/adapter/slot.go:74-95`) registers an entry with an empty `sessionID` from the three workspace-prep RPCs
-before `StartSession` binds it (D2), and a session in that state is about to be served by the same runtime
-process. §4.6.1's inbound rule counts the same quantity for the same reason, so the two predicates read one
-number.
+`Runtime.Start` failure path (`pkg/adapter/slotsession.go:49`), the twelve §4.11 rollback sites, CODE-3's per-member hold-termination loop, and `pkg/adapter/export_test.go:27-29`'s `ReleaseSlotForTest`, which keeps its one-call signature and performs both steps. The drain decision counts bound entries alone rather than every registry entry, for the reason the paragraph above gives, so it reads a different number from §4.6.1's inbound rule and from CODE-1's `soleSession()`.
 
-The same number governs the hard close, and without that the withheld drain would protect nothing.
-`Runtime.Close` decides its own teardown from the runtime's active set, which only `Start` populates
-(`pkg/adapter/socketruntime.go:181-186`, `:372-376`, `:439-444`), and a registered-but-unbound entry has
-never reached `Start`, so it is not in that set. An ending session that is the set's last member would
-therefore close the shared connection and kill the spawned child (`socketruntime.go:452-465`) with no
-preceding `terminate`, which is the silent regression the ordering rule above exists to prevent, and the
-incoming session's later `Runtime.Start` would find no process serving the connection it already holds
-(`:181-205`, `:278-299`). `Runtime.Close` therefore takes a second teardown
-condition from the caller, beside the active-set result it reads itself. `Close` is a method on the `RuntimeProcess` interface (`pkg/adapter/session.go:62`)
-rather than a `SocketRuntimeProcess` helper, so the parameter is added to the interface and every
-implementation and caller moves with it:
-`Close(ctx context.Context, sessionID string, last bool) (closed bool, err error)`, where `last` states
-that no other session on the pod is being served by the process and `closed` states whether the call tore
-the shared runtime down. The interface gains one predicate beside it, `Connected() bool`, which reports
-whether the runtime process is live. Both members are needed and neither substitutes for the other: the
-drain precedes the close, so the drain gate cannot read the close's result and reads `Connected` instead,
-and the close's result is what the response reports, because a session that starts between the handler's
-critical section and the call leaves the active set non-empty and the close returns without tearing
-anything down. `SocketRuntimeProcess.Close`
-(`socketruntime.go:434`) removes the ending session from its active set under `p.mu` on every call, and it
-tears the shared connection down only when `last` is true and that removal left the set empty, returning
-early otherwise. The caller's flag is an additional withholding condition on top of the `releaseActiveLocked`
-result the method decides from today (`:440-446`) rather than a replacement for it. Keeping the active-set
-term is what preserves the atomicity the teardown holds today. `Start` adds a session to the active set
-under `p.mu` whenever the process is connected (`socketruntime.go:181-187`), and that is the same mutex
-`Close` takes at `:435`, so a session that starts while the ending session's handler sits between its own
-critical section and its close is still observed. A teardown decided from the caller's flag alone would be
-a read of one structure under `s.mu` followed by an act on another under `p.mu`, and an incoming session
-whose `Runtime.Start` returned during the intervening drain send would lose the connection under it, with
-every later send failing on `socket runtime is not connected` (`socketruntime.go:326, :344`) and its own
-`ShutdownSlot` finding nothing to close.
-`MCPRuntime.Close` (`pkg/adapter/mcpruntime.go:265`) and `InProcessRuntime.Close`
-(`pkg/adapter/embedded.go:188-204`) accept the parameter and ignore it, tearing down on every call as they
-do today and returning `closed` true when they did. `InProcessRuntime` implements `Connected` from the
-state its own `Start` sets and its own `Close` clears, the bound `r.session`
-(`pkg/adapter/embedded.go:74`, cleared at `:195`). `MCPRuntime.Close` clears no flag that its `Start` sets:
-its only flag write is `r.closed = true` (`pkg/adapter/mcpruntime.go:271`, declared at `:77`), and
-`r.started` (set at `:165`, declared at `:76`) is never cleared by any site in the file.
-`MCPRuntime.Connected` therefore reports `r.started && !r.closed` under `r.mu`, which leaves `r.started`
-set after a teardown so the second-start refusal at `:97-98` is preserved unchanged. A `Connected` derived
-from `r.started` alone would latch true for the life of the process, so a later reclaim `ShutdownSlot` on a
-torn-down MCP pod would send a `terminate` frame to a dead runtime and report `runtime_closed` from a
-`Close` that returned at its `r.closed` guard (`:267-270`) having torn nothing down. The withholding arm is confined to
-`SocketRuntimeProcess`, because the active set it protects is
-what makes a co-tenant's stream survive an ending session's teardown, and neither single-session
-implementation has one. Withholding their teardown would strand the ended session instead of protecting an
-incoming one: `InProcessRuntime.Close` holds the only write that clears `r.session`
-(`pkg/adapter/embedded.go:195`), and `InProcessRuntime.Start` refuses a second session while the first is
-still bound (`:69-71`), so a `Close` that returned early would leave the ended session bound and the
-incoming session's `Runtime.Start` would fail with `adapter: embedded runtime already bound to session ...`
-at the last step of `materializeSlot`. `MCPRuntime.Start` refuses a second start on the same
-`r.started` flag (`pkg/adapter/mcpruntime.go:98-99`), so a withheld teardown there keeps the ended
-session's MCP server process alive with no caller left to reap it, since the ended session's registry entry
-is already deleted and a second `ShutdownSlot` for it is refused by the handler's bound test. This is
-the same refusal §4.11 relies on at `pkg/adapter/embedded.go:69-71`. `SDKWarmInProcessRuntime` inherits `Close`
-from the embedded `InProcessRuntime` and calls it directly from `DemoteSDK`
-(`pkg/adapter/embedded_sdkwarm.go:57-63`), which exists to tear the pre-connected runtime down and so
-passes true.
+`Runtime.Close` is unchanged by this deliverable, in signature and in behavior. `SocketRuntimeProcess.Close` already decides its own teardown per session: `Start` registers the session in the process's active set under `p.mu` (`pkg/adapter/socketruntime.go:181-227`, `:372-377`) and `Close` removes it and tears the shared connection down only when that removal left the set empty (`:434-445`, `releaseActiveLocked` at `:379-386`). That is the same close-on-the-last-member behavior the merged handler and `onHoldTimeout` both want, decided under the mutex that `Start` also takes, so a session starting concurrently with an ending session's close is observed. Adding a caller-supplied teardown condition would replace an atomic decision on one structure with a read of a second structure under a different lock, and it would drag the parameter through `RuntimeProcess` (`pkg/adapter/session.go:62`) and every implementation of it: `*SocketRuntimeProcess`, `*InProcessRuntime` (`pkg/adapter/embedded.go:188`), `*MCPRuntime` (`pkg/adapter/mcpruntime.go:265`), `*SDKWarmInProcessRuntime` (`pkg/adapter/embedded_sdkwarm.go:62`), and `*executor.SubprocessExecutor`, which `cmd/lenny-adapter/main.go:363` assigns to `Server.Runtime` and whose `Close` is also `executor.Executor.Close` (`pkg/gateway/session/executor/executor.go:132`), plus the test doubles in ten further packages.
 
-A fifth production type satisfies `RuntimeProcess` without being declared against it:
-`*executor.SubprocessExecutor` is assigned to `Server.Runtime` on the adapter's developer loop
-(`cmd/lenny-adapter/main.go:363`), and its `Start`, `WriteEnvelope`, `Output`, `Interrupt`, and `Close`
-(`pkg/gateway/session/executor/subprocess.go:178`, `:189`, `:233`, `:208`, `:340`) are the whole interface.
-The same `Close` method is also `executor.Executor.Close`
-(`pkg/gateway/session/executor/executor.go:132`), which `PodExecutor` (`pod.go:313`) and `EchoExecutor`
-(`echo.go:56`) implement and the gateway calls, so the third parameter cannot be added to it without
-dropping the subprocess executor out of `executor.Executor` or dragging the gateway-side executors and
-every `Executor.Close` caller into a parameter neither of them can act on. The teardown-withholding
-condition is an adapter-side concern about a shared runtime process inside one pod, and the gateway's
-executor abstraction has no shared process to protect, so `executor.Executor` keeps its two-parameter
-`Close` and CODE-1 adapts the subprocess executor at the one site that installs it: `cmd/lenny-adapter/main.go`
-wraps it in a small `RuntimeProcess` implementation that forwards `Start`, `WriteEnvelope`, `Output`, and
-`Interrupt` unchanged and discards `last` on `Close`, tearing down on every call. That is the same
-unconditional arm `InProcessRuntime` and `MCPRuntime` take, and it is correct for the same reason: the
-subprocess executor tracks each session's child process in its own map (`subprocess.go:341-346`) and closes
-only the named session's child, so it holds no shared connection a co-tenant could lose. The wrapper derives
-both new members from a set of started sessions it keeps itself, adding the session on the forwarded `Start`
-and removing it on the forwarded `Close` under its own mutex: `closed` is true when that removal found the
-session in the set and false when it did not, and `Connected` is true when the set is non-empty, so a
-developer-loop pod on which no session has started takes the same withheld drain as a sidecar pod. Neither
-member can be read off the executor instead. `SubprocessExecutor.Close` returns a bare `error` and discards
-its own found-or-not result on both branches (`subprocess.go:340-349`), and `procs` is an unexported field
-of a type in package `executor` (`subprocess.go:41`) whose only accessor, `session`, is unexported as well
-(`subprocess.go:308`), so a wrapper declared in `package main` can read neither. The wrapper adds
-no behavior of its own beyond that set, and the adapter type-asserts `Server.Runtime` only for `SDKWarmRuntime`
-(`pkg/adapter/sdkwarm.go:139-142`), which the subprocess executor does not implement either way, so the
-wrapper hides nothing. `pkg/gateway/session/executor/subprocess.go` and its tests therefore take no edit
-under this deliverable. Two production
-callers survive the merge that removes `pkg/adapter/session.go:263`. The merged `ShutdownSlot` handler
-passes the registry-empty result of its critical section, and `onHoldTimeout`
-(`pkg/adapter/holdstate.go:180`) passes false on every member of the set CODE-3 reads from the registry
-when the timeout fires but the last, and true on the last, so the shared process is closed once, when the
-set is exhausted.
-Withholding both the drain and the hard close on one number fails closed on both, keeps the shared
-`SocketRuntimeProcess` connection the incoming session is about to be served over alive, and is discharged
-by the reclaimer the next paragraph adds, which performs the close that its own registry-emptying deletion
-earns. On the two single-session implementations the number withholds the drain alone, because their
-teardown is unconditional.
-A registry-empty result implies no other session is active, because a session enters the active set only
-through the `StartSession` that binds its registry entry, so the teardown arm is unaffected.
+The residual hazard the parameter was proposed against is not created here. `SocketRuntimeProcess.Close` tears the shared connection down when the ending session is the last member of its active set, and a registered-but-unbound entry has never reached `Start`, so an incoming session mid-materialization can already lose the shared runtime on today's `pkg/adapter/slotsession.go:83`. The drain the merged handler adds fires on the same condition and reaches the same outcome a moment earlier. What follows that outcome is a failed bind rather than a recovery in place: the same `Close` also closes the process-scoped listener the constructor bound (`pkg/adapter/socketruntime.go:161`, `:466`), and no later call re-binds it, so an incoming session's `Runtime.Start` on that pod fails in `accept` (`:285`), the failed bind is counted toward the §5.2 unhealthy-slot threshold (`pkg/gateway/sessionserver/start.go:2744-2770`), and the pod is drained once the count crosses it rather than serving the incoming session. That defect is pre-existing, is unchanged in either direction by this proposal, and is not remediated here; §9 records the outcome.
 
-A registered-but-unbound entry must therefore have a reclaimer, and today it has none. `releaseSlot`
-(`pkg/adapter/slotsession.go:102-112`) holds the only `delete(s.slots, slotID)`, and it is reached from
-two places: `shutdownSlot`, after its bound test passes (`:86`, with the test at `:70-74` returning
-`NotFound` first), and `startSessionSlot`'s `Runtime.Start` failure path (`:49`), which runs no bound test.
-The whole-pod scrub enumerates the on-disk children rather than the registry, so a recycle does not clear
-an entry either. An ordinary bind failure produces the state: `materializeSlot` returns on a
-workspace-prep, setup, credential-assignment, or `StartSession` failure
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:276-303`) after `PrepareWorkspace` has already created
-the entry through `ensureSlotPaths`. A `StartSession` that fails inside `Runtime.Start` reclaims its own
-entry on the `:49` path, so the unreclaimed set is the workspace-prep, setup, and credential-assignment
-failures. For those, the only compensation
-is `BindReservedSlot`'s `ReleaseSlotReservation` (`slotbinder.go:214`), which issues no adapter RPC and
-decrements with `leaked` false, so the pod keeps serving sessions. Left unreclaimed, one such failure makes
-the registry permanently non-empty, the drain gate and the teardown decision permanently false, the
-§15.4.2 drain a no-op on that pod for the rest of its life, and the runtime process alive after its last
-session ends, which is the outcome this paragraph exists to prevent, and it would be silent
-because `drainViaLifecycle` swallows its send errors (`pkg/adapter/session.go:294-301`). It would also hold
-§4.6.1's count above one forever, rejecting every unaddressed inbound frame from a Basic-level runtime on
-that pod.
+Two production callers survive the merge. The merged handler calls `Runtime.Close(closeCtx, sessionID)` after the drain, and `onHoldTimeout` (`pkg/adapter/holdstate.go:180`) calls it once per member of the set CODE-3 reads from the registry; the active set closes the shared process on the last member with no parameter. `pkg/adapter/session.go`, `socketruntime.go`, `mcpruntime.go`, `embedded.go`, `embedded_sdkwarm.go`, `cmd/lenny-adapter/main.go`, and `pkg/gateway/session/executor/` therefore take no `RuntimeProcess` edit under this deliverable.
 
-Two edits close it. On the adapter, the merged `ShutdownSlot` handler admits an entry that is registered
-and not yet bound when the entry is the named session's: under D1 and D2 the registry is keyed on the
-session identifier, so an unbound entry belongs unambiguously to the session that named it. The handler
-deletes the entry and removes its tree, takes the same drain decision, sends the drain and calls
-`Runtime.Close` carrying that same decision when `Connected` reports the runtime live, and skips the
-`ReportSessionScrub` emission, because no session was ever started on it. On a pod no session has ever started on, `Connected` is false
-and the handler sends no drain and calls no `Close`. There is nothing to close, because
-`SocketRuntimeProcess.Close` returns at its `!p.connected` guard (`pkg/adapter/socketruntime.go:436-439`)
-and `p.connected` is written only by `Start` after `accept` (`:218`), and a drain would be worse than
-a no-op on a Full-level runtime, whose `CH-RUNTIMEOPS` listener is created at adapter startup independent
-of any session (`cmd/lenny-adapter/main.go:371-373`), so the `terminate` frame is deliverable and would
-tell a warm runtime that has served nothing to exit. The deletion and the tree removal run on that arm as
-they do on every other, and the response reports `runtime_closed` false. The
-close is the arm that discharges a hard close an earlier co-tenant's teardown withheld, because a deletion
-that empties the registry ends the last reason to keep the shared process alive, and the conjunction stated
-above makes the call safe: whenever some other session is still being served, `releaseActiveLocked` reports
-the active set non-empty and `Close` returns early. Skipping the close on this arm instead would leave the
-pod with a drained runtime that nothing ever closes. `p.connected` is written false only inside `Close`
-(`socketruntime.go:449`), so once the runtime honours the `terminate` frame and exits, the spawned child is
-never reaped and the next session's `Runtime.Start` returns at `:182-187` against a dead process without
-spawning one, which is the silent failure the ordering rule above exists to prevent. That is the one
-exception to
-§4.11's `checkSessionBound`, and §4.11 states it beside the rule. On the gateway, each `materializeSlot`
-failure branch sends a best-effort `ShutdownSlot` for the session on the connection it already holds,
-before the `cl.Close()` it performs today, so the adapter-side entry is cleared on the same failure that
-`ReleaseSlotReservation` clears the counter on. `ReleaseSlotReservation` keeps its present job, the counter
-half of the release.
+No gateway caller changes its call sequence. `Binder.ReleaseSlot` keeps the two calls it makes today, the ending session's teardown at `slotbinder.go:538` and the whole-pod recycle at `:570` on the occupancy-zero edge. `binder.shutdownAdapter` (`binder.go:1934-1947`) keeps its single call on both dispositions, carrying `RecycleScrub` on the recycle branch and nothing on the retire branch, so the base-mode usage flush, the `CH-RUNTIMEOPS` drain, the runtime close, the `ReportSessionScrub` emission, and the scrub stay one in-handler sequence in the order they run today. The recycle-scrub guard at `pkg/adapter/session.go:242-245` is deleted rather than re-keyed: it exists to route a concurrent pod's recycle request around `checkSession`, as its comment at `:229-241` states, and clause two's registry test replaces both.
 
-SCHEMA-1 drops the listener close from `Close` with the same signature change, on a resource-ownership
-ground rather than on a recovery ground. `Close` ends at `return p.listener.Close()`
-(`socketruntime.go:466`), and the listener is bound once, in `NewSocketRuntimeProcess`
-(`socketruntime.go:156-161`), whose only production caller is `cmd/lenny-adapter/main.go:354` at adapter
-startup, and no path rebinds or replaces it. A per-session teardown must not destroy a resource the process
-bound once for its own lifetime, so `Close` closes the shared connection, reaps a spawned child, and
-returns, and the listener's lifetime becomes the adapter process's: it is bound before the first session
-and released when the process exits. The same argument covers every arm that reaches the close, including
-`onHoldTimeout`'s and the last bound session's on a recycling pool, so the change is not scoped to the
-reclaim arm.
-
-The drop does not by itself let a closed pod serve another session, and SCHEMA-1 does not claim that it
-does. `Close` closes the shared connection before it reaches the listener statement
-(`socketruntime.go:452-453`), and that connection close is the §15.4 clean-exit EOF the method's own doc
-names (`socketruntime.go:422-425`), which a conforming runtime answers by exiting
-(`cmd/runtimes/echo-concurrent/main_test.go:205-210`). Under the §4.7 sidecar model the runtime is a
-separate container that dials the adapter's socket once (`cmd/lenny-adapter/main.go:349-357`), `SpawnPath`
-is set in tests alone (`pkg/adapter/socketruntime_e2e_test.go:56`,
-`tests/tier4_integration/concurrent_workspace_test.go:123`, `concurrent_delegation_proxy_test.go:168`), and
-the agent pod is `RestartPolicyNever` (`pkg/controller/sandbox/podspec/podspec.go:978`), so nothing re-execs
-the runtime container and nothing re-dials the socket. On that transport a later `Runtime.Start` takes the
-not-connected path, spawns nothing (`socketruntime.go:188-198`), and blocks in `accept` until the
-30-second timeout (`socketruntime.go:194-196`, `:288-300`) instead of failing at once with `net.ErrClosed`
-(`socketruntime.go:285`). The drop changes the latency of that failure rather than its outcome; what it buys
-is the developer-loop transport, where `SpawnPath` is set and the next `Start` does spawn and accept, and
-the removal of an irreversible process-scoped side effect from a per-session call.
-
-The pod is therefore taken out of placement rather than left to fail every session placed on it, and the
-compensation belongs on the gateway, and it is owed only by the reclaim that actually tore a runtime down.
-A reclaim that drains and closes a live runtime ends the pod's ability to serve, because the drain tells
-the runtime to exit within `deadlineMs` (`pkg/adapter/runtimeops.go:481-491`) and the close takes the
-shared connection down behind it. A reclaim on a pod whose runtime was never connected ends nothing: it
-sends no drain, closes nothing, and leaves a warm pod that can still serve, so it is owed no
-compensation and takes none. The bind-failure reclaimer at
-`pkg/gateway/sessionserver/start.go:2740-2782` counts one windowed failure per failed bind and drains the
-pod through `binder.DrainSandbox` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:597-599`, the §4.6.3
-`lenny.dev/drain-request` stamp the WarmPoolController consumes) once `slothealth.Tracker.Unhealthy`
-reports the §5.2 `ceil(maxConcurrentSessions/2)` threshold crossed. On a pool of one or two sessions that
-threshold is one, so the pod is already retired on the first failure. On a wider pool it is not, and a
-failed bind whose reclaim closed a live runtime would leave a pod whose runtime is gone and whose failure
-count is below the threshold, still a placement candidate: `ReleaseSlotReservation` decrements with
-`leaked` false (`pkg/gateway/podlifecycle/podsession/slotbinder.go:498`) and the per-pod claim survives
-while sibling slots remain (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:766-769`).
-The gateway's own occupancy record cannot decide the drain, because the gateway's count and the adapter's
-registry diverge on the ordinary create-then-start flow. On a `maxConcurrentSessions > 1` pool the gateway
-reserves a slot at session create through `Binder.ClaimSlot`
-(`pkg/gateway/sessionserver/start.go:2111-2122`), which increments the Redis counter and then closes the
-adapter connection without issuing any workspace-prep RPC
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:176-179`, "ClaimSlot runs only the reservation and
-handshake"), so the adapter holds no registry entry for that session until `materializeSlot` runs at start:
-`ensureSlotStateLocked` (`pkg/adapter/slot.go:74`) is reached only through `ensureSlotPaths`
-(`pkg/adapter/staging.go:129`, `:181`, `:339`) from the three workspace-prep RPCs. A second session binding
-on the same pod therefore sees gateway occupancy two against adapter registry occupancy one, and when that
-bind fails the reclaim `ShutdownSlot` empties the registry, drains the pod, and closes the shared runtime
-while the post-rollback counter still reads one. Keying the drain on that counter would leave standing
-exactly the pod this compensation exists to retire: a closed shared runtime, a live create-time reservation
-whose start fails later, and a placement candidate `SlotClaimer.ClaimSlot`'s Pass 1
-(`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:411-469`) keeps placing further sessions of the same
-tenant on.
-
-The drain is therefore keyed on the fact the adapter observes rather than on the gateway's counter.
-`ShutdownSlotResponse` gains `bool runtime_closed = 3`, which the merged `ShutdownSlot` handler sets from
-what the teardown did rather than from what it decided: true when the handler drained the runtime and
-`Runtime.Close` returned `closed` true, and false otherwise. False therefore covers three cases: a sibling
-entry survived, so the teardown never reached the close; the close ran and `releaseActiveLocked` reported
-the active set non-empty, so it returned without tearing anything down; and `Connected` was false, so the
-handler skipped both the drain and the close on a pod no session had started on. Deriving the report from
-the registry-empty decision instead would report a close on the arm the compensation exists for, the
-pre-`StartSession` bind failure, where nothing was drained and `Close` returns at its `!p.connected` guard.
-Each of `materializeSlot`'s four failure branches
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:276-317`) stamps `lenny.dev/drain-request` through the
-existing `Binder.DrainSandbox` (`slotbinder.go:597-599`) when the best-effort
-reclaim `ShutdownSlot` it sent returned `runtime_closed` true, whatever the pod's windowed failure count,
-and stamps nothing when it returned false, which leaves that pod a placement candidate governed by the
-§5.2 windowed threshold exactly as it is today. Keying the stamp on the decision rather than on the
-outcome would retire a healthy warm pod on its first bind failure. A failing setup command is a routine
-tenant-controlled `SetupCommandFailure`
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:290-295`), so on a `maxConcurrentSessions: 8` pool the
-pod replacement rate would rise from one per `ceil(maxConcurrentSessions/2)` windowed failures to one per
-failure, each replacement being a Sandbox create and delete pair on the apiserver plus a warm-pool refill
-with its scheduling and image-pull cycle. It would also defeat the §5.2 requirement that the retry go to
-"a **new slot** on the same pod (if a slot is available)"
-(`spec/05_runtime-registry-and-pool-model.md:551`), because the pod would be stamped for drain in the same
-branch that releases the failed attempt. A
-reclaim whose RPC never returns reports nothing and takes no drain, because the gateway then knows neither
-that the entry was deleted nor that the runtime was closed, and such a pod is retired by the §5.2 windowed
-threshold as it is today. The field is a new one because no existing surface carries the distinction:
-`ShutdownResponse.ExitedCleanly` is already true on a per-slot close that returns early with a sibling
-alive (`pkg/adapter/slotsession.go:95`), and the gateway holds no record of which of its reserved slots the
-adapter has registered. If review declines the §4.5(d) split, the field is added to `ShutdownResponse`
-instead.
-
-`materializeSlot` has two callers, and both of them need the compensation. `BindSlot`
-(`pkg/gateway/podlifecycle/podsession/slotbinder.go:133`) fails through `applySlotRetryPolicy`, whose
-release is the one at `pkg/gateway/sessionserver/start.go:2744`. `bindReservedSlot` (`slotbinder.go:251`)
-fails through `BindReservedSlot`, which releases the create-time reservation itself at `slotbinder.go:214`
-and returns the error, and that path never enters the retry policy: `bindConcurrentSlot` dispatches
-straight to `BindReservedSlot` whenever the session row already carries a pod assignment
-(`pkg/gateway/sessionserver/start.go:2555-2557`), which is the ordinary create-then-start flow for a
-create-time reserved slot. Both callers are covered by one stamp site, because the stamp runs inside
-`materializeSlot` rather than in either caller. The reclaim's `ShutdownSlotResponse` never crosses the
-`materializeSlot` boundary: the four failure branches return `nil, b.slotBindError(...)`
-(`slotbinder.go:276-317`, `:479-480`), and `SlotBindError` carries `Pod`, `SlotID`, `Stage`, and `Err`
-alone (`pkg/gateway/podlifecycle/podsession/slotfailure.go:58-68`), which is the only value
-`applySlotRetryPolicy` reaches the failure through (`pkg/gateway/sessionserver/start.go:2730-2744`). Adding
-a `runtime_closed` member to `SlotBindError` purely to carry the report back to a caller that would call
-`b.DrainSandbox` anyway is a second surface for one concern, so the stamp stays where the report and the
-pod name are both in hand. `BindReservedSlot`'s doc's "The release runs exactly once here"
-sentence (`slotbinder.go:198-201`) gains the statement that the drain, when the reclaim earned one, has
-already been stamped by `materializeSlot` before the release runs. The other two
-`ReleaseSlotReservation` callers take no drain and send no reclaim: `ClaimSlot` (`slotbinder.go:169`) and
-`rollbackClaim` (`pkg/gateway/sessionserver/start.go:3155`) release a reservation whose failure preceded
-`materializeSlot`, so no reclaim `ShutdownSlot` ran, the adapter registry was never emptied, and the pod's
-shared runtime is untouched.
-
-The compensation changes no release signature. `SlotClaimer.ReleaseSlot` and `ReleaseSlotReservation` keep
-their present signatures and their present job, the counter half of the release, and the drain runs inside
-`materializeSlot`'s four failure branches, ahead of the release each of the two callers performs. The release keeps `leaked` false, so the
-slot counter still decrements and the pod is retired through the existing drain path rather than by holding
-a slot for the rest of the pod's life.
-
-Nothing asserts the listener close today, since every case in
-`pkg/adapter/socketruntime_test.go` binds its own process, so §8 states the added assertions rather than
-a rewrite.
-
-This is a different predicate from §4.11's recycle-scrub guard, which
-tests for a bound slot: a `ShutdownPod` arriving while any session is still bound is a gateway ordering error
-rather than a race the adapter has to absorb. §8 pins both interleavings at tier 7a.
-
-The gateway callers take the sequence the concurrent path already runs. `slotbinder.go:538` sends
-`ShutdownSlot` for the ending session and `slotbinder.go:570` sends `ShutdownPod` on the occupancy-zero
-recycle edge. `binder.shutdownAdapter` (`binder.go:1934-1947`), which today sends one `Shutdown` or
-`ShutdownRecycle` for a base-mode release, sends `ShutdownSlot` for the ending session first and then
-`ShutdownPod` on the recycle disposition, so the usage flush, the drain, the runtime close, and the
-`ReportSessionScrub` emission keep running and the slot registry is empty when `ShutdownPod` arrives.
-Without that ordering the base-mode recycle would lose its per-session teardown outright and, because
-under D1 every session holds a bound registry slot, would trip the occupancy refusal below on every
-release. §4.11's re-key of the recycle-scrub guard onto registry occupancy takes a
-different form on each branch of §4.5(d). With the split landed the guard's present form is unconstructible,
-because `ShutdownSlot` carries no recycle disposition to test and `ShutdownPod` carries no session: the
-`ShutdownPod` handler scrubs on the carried disposition without a session test, and the occupancy test
-becomes a refusal in that handler, so a `ShutdownPod` arriving while the registry still holds a bound slot
-returns `FailedPrecondition` rather than scrubbing a pod that is still serving a session. If review declines
-the split, `ShutdownRequest` survives and the re-keyed predicate is the whole of the guard: the recycle
-branch dispatches `startPodScrub` when the registry holds no bound slot and takes the per-session path when
-it does. The gateway callers split as stated above: `slotbinder.go:538` and `binder.go:1934-1947` call
-`ShutdownSlot`, and `slotbinder.go:570` and `binder.go:1934-1947` call `ShutdownPod`, which is what
-§4.5(g) rests on when it deletes the `SlotId` wrapper. §4.5(d) states what survives if review declines the
-split.
-
-Under the base case in §4.5(g) the `SlotId` wrapper message (`:587`) and its doc comment (`:584-586`) are
-deleted, along with the per-field comments that referenced them. Under the alternative, where the shutdown
-split does not land, `SlotId` is retained with one user and its doc comment is rewritten to state that the
-field is the per-slot teardown discriminator on `ShutdownRequest`, with the `maxConcurrentSessions: 1`
-condition dropped.
+The `SlotId` wrapper message (`:587`) and its doc comment (`:584-586`) are deleted, along with the per-field comments that referenced them, because set (d) removes its last user.
 
 `NegotiateVersionResponse` takes the reporting change CODE-2 states. `workspace_root = 5` (`:1664-1671`) is
 removed with `reserved 5;` and `reserved "workspace_root";`, and `string workspace_base = 6` is added with a
@@ -2137,10 +1721,7 @@ conditional. All eleven sites are restated together: the manifest nonce authenti
 connection to the pod's intra-pod MCP servers, the servers are pod-wide and started at most once per pod, the
 nonce a server validates against is the one the manifest carried at the start that bound the server and a
 later session's manifest write does not re-arm it, and
-the calling session is resolved from the adapter's slot registry, with the call refused when the pod holds
-other than one bound entry and refused permanently once a release deregisters an entry whose session had
-started and leaves the pod's slot registry non-empty, so the pod's shared runtime has outlived that
-session. Today the sentences are not false, because the concurrent path returns into
+the calling session is resolved from the adapter's slot registry through CODE-1's `soleSession()`, with the call refused unless the registry holds exactly one entry and has held no more than one since it was last empty, because on any other pod the shared runtime has served a session other than the caller. Today the sentences are not false, because the concurrent path returns into
 `startSessionSlot` before the manifest write and the MCP starts, so the channels do not exist on a concurrent
 pod. Without the restatement the applied specification would state per-session scoping in the channel cards
 `spec/04:709` directs a reader to for the intra-pod contracts, while the §29.10 bullet SPEC-5 adds states the
@@ -2420,8 +2001,7 @@ adapter to pick one.
 
 `spec/05:453`'s parenthetical that `cleanupCommands` execute "with access to session state but without the
 previous session's credential file" is restated in the same edit, because the ordering SCHEMA-1 states makes
-its first half false. Every ending session's `ShutdownSlot` precedes the pod's `ShutdownPod`, and
-`ShutdownSlot` removes that session's per-slot tree through `releaseSlot` and `RemoveTree`
+its first half false. Every ending session's teardown clause precedes the pod-scrub clause in the same handler, and the teardown removes that session's per-slot tree through `releaseSlot` and `RemoveTree`
 (`pkg/adapter/slotsession.go:86, :102-112`; `pkg/adapter/slotlayout/tree.go:50-57`), so no released session's
 workspace, session, artifact, or credential tree is on disk when the scrub's `cleanupCommands` run. The
 restatement is that the commands execute in the pod's workspace base, after every ended session's per-slot
@@ -2650,9 +2230,7 @@ and `/run/lenny/credentials.json` literals and the tier-11 frame reconciliation 
 
 The retained "Shared by the whole pod" list (`spec/29:1491-1502`) gains one bullet, per §4.4: the intra-pod
 MCP surface is one platform socket and one per-connector socket set for the pod, served by providers that
-resolve the calling session from the adapter's slot registry, refuse the call when the pod holds other
-than one bound entry, and refuse it permanently once a release deregisters an entry whose session had
-started and leaves the registry non-empty, so the pod's shared runtime has outlived that session. Without the bullet the list would omit a shared surface CODE-1's start-side merge
+resolve the calling session from the adapter's slot registry, and refuse the call unless the registry holds exactly one entry and has held no more than one since it was last empty, because on any other pod the shared runtime has served a session other than the caller. Without the bullet the list would omit a shared surface CODE-1's start-side merge
 brings onto every pod.
 
 One bullet inside that retained list states the wire key and the concurrency condition, so it is restated
@@ -2733,59 +2311,21 @@ no slot qualification for the `Interrupt` RPC the lock admits or for the drain b
 ### SPEC-7. Declare message scope and state the addressing rule
 
 `spec/04` §4.1 gains the classification table in §4.1 of this proposal, under choice (a) as the base case.
-Under that base case `spec/04:676`'s §4.7 RPC table row, which names "`Terminate` (proto `Shutdown`)" and
-describes the recycle disposition on that one request, splits into a `ShutdownSlot` row and a `ShutdownPod`
-row carrying the recycle disposition. `spec/05:457`'s sentence-run in the §5.2 Lenny scrub procedure
-splits the same way rather than taking a name substitution, because it both names the RPC that triggers the
-whole-pod scrub and states that on the recycle disposition "the adapter closes only the ending session's
-runtime". A rename alone would leave §5.2 asserting that the pod-scoped request closes a session's runtime,
-which `ShutdownPod` cannot do: it carries no `session_id` and performs no per-session work. The restatement
-is that the gateway sends `ShutdownSlot` for the ending session, on which the adapter closes that session's
-runtime and runs the rest of the per-session teardown SCHEMA-1 lands there, and then sends `ShutdownPod`
-carrying the recycle disposition, the pod identity (`podId`), and the pool's scrub parameters
-(`cleanupCommands` and `cleanupTimeoutSeconds`), on which the adapter keeps the pod process alive across the
-recycle boundary, runs the scrub asynchronously, and reports the outcome for `podId` via `ReportPodScrub` on
-its GatewayControl link. That ordering is the caller ordering SCHEMA-1 states for
-`binder.shutdownAdapter`. `spec/29:690-696`, the §29.4 step-12 restatement of that same
-§4.7 row, states that one request carries both dispositions and that on the recycle disposition "the
-request also carries the pod identity and the whole-pod scrub parameters". After the split no single
-request carries both, so the step splits the same way: `ShutdownSlot` is the graceful end-of-session
-shutdown of the ending session's runtime, and `ShutdownPod` carries the recycle disposition, the pod
-identity, and the scrub parameters. `spec/05:459` is the credential step 0 SPEC-4 stages and is
-not touched here.
+`spec/04:676`'s §4.7 RPC table row names "`Terminate` (proto `Shutdown`)" and describes the recycle disposition on that one request. It is restated under the RPC's wire name, `Shutdown`, as the graceful end-of-session teardown of the named session, with the recycle disposition carried beside it rather than selecting a scope. `spec/05:457`'s sentence-run in the §5.2 Lenny scrub procedure takes the same restatement: the gateway sends `Shutdown` for the ending session carrying the recycle disposition, the pod identity (`podId`), and the pool's scrub parameters (`cleanupCommands` and `cleanupTimeoutSeconds`), and the adapter closes the ending session's runtime, keeps the pod process alive across the recycle boundary, runs the scrub asynchronously, and reports the outcome for `podId` via `ReportPodScrub` on its GatewayControl link. `spec/29:690-696`, the §29.4 step-12 restatement of that same §4.7 row, keeps its statement that one request carries both dispositions and takes the name change alone. `spec/05:459` is the credential step 0 SPEC-4 stages and is not touched here.
 
-Three further specification sentences name the retired RPC and are staged here under the same base case.
-`spec/11_policy-and-controls.md:263` is step 2 of the §11.4 full-revoke propagation list, which sends a
-`Terminate` RPC to the pod for each session in the user's task tree; it names `ShutdownSlot` with reason
-`USER_REVOKED`, because the operation ends one session rather than the pod. `spec/11:270` is the §11.4
-propagation note, which names the same RPC three times, once for the synchronous local send with a
-hyperlink to §4.7, once for the bounded-call statement, and once for the step-2 request the gateway
-publishes on Redis pub/sub; all three name `ShutdownSlot`, so the §4.7 link resolves to a declared row.
-`spec/07_session-lifecycle.md:49` is step 21 of the §7.1 lifecycle sequence, `Gateway → Pod: Terminate`,
-which becomes `Gateway → Pod: ShutdownSlot`.
+Three further specification sentences name the retired RPC name and are staged here. `spec/11_policy-and-controls.md:263` is step 2 of the §11.4 full-revoke propagation list, which sends a `Terminate` RPC to the pod for each session in the user's task tree; it names `Shutdown` with reason `USER_REVOKED`. `spec/11:270` is the §11.4 propagation note, which names the same RPC three times, once for the synchronous local send with a hyperlink to §4.7, once for the bounded-call statement, and once for the step-2 request the gateway publishes on Redis pub/sub; all three name `Shutdown`, so the §4.7 link resolves to a declared row. `spec/07_session-lifecycle.md:49` is step 21 of the §7.1 lifecycle sequence, `Gateway → Pod: Terminate`, which becomes `Gateway → Pod: Shutdown`.
 
-The reader-facing mirror of the §4.7 RPC table takes the same split, because after SCHEMA-1 deletes the
-`Shutdown` RPC and its request and response messages the page would name a gateway-to-adapter RPC neither
-`schemas/lenny-adapter.proto` nor the rewritten §4.7 table declares. `docs/reference/adapter-contract.md:75`
-is the final row of that page's "Gateway-to-Adapter RPCs" table, which names `Terminate` and describes it
-as a graceful shutdown. It is replaced by two rows: a `ShutdownSlot` row describing the graceful end-of-session teardown of the named
-session, covering the usage flush, the drain signal, the runtime close, the removal of the session's slot
-tree, and the `ReportSessionScrub` emission, and a `ShutdownPod` row describing the whole-pod recycle scrub
-the carried `RecycleScrub` parameterizes, reported for `podId` via `ReportPodScrub`. Neither §8 literal
-sweep reaches the row, because both are keyed on the `/workspace/current` and
-`/run/lenny/credentials.json` literals, and the tier-11 gate anchored on the `Terminate` spelling
-(`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go:65`) reads spec §4.7 alone. If review declines
-the split, the six specification sentences and this row all stand unchanged.
+The reader-facing mirror of the §4.7 RPC table takes the same restatement, because the page names the RPC by a spelling the rewritten §4.7 table no longer uses. `docs/reference/adapter-contract.md:75` is the final row of that page's "Gateway-to-Adapter RPCs" table, which names `Terminate` and describes it as a graceful shutdown. It is restated as a `Shutdown` row describing the graceful end-of-session teardown of the named session, covering the usage flush, the drain signal, the runtime close, the removal of the session's slot tree, and the `ReportSessionScrub` emission, with the whole-pod recycle scrub the carried `RecycleScrub` parameterizes and reports for `podId` via `ReportPodScrub` stated as the disposition it carries beside that teardown. Neither §8 literal sweep reaches the row, because both are keyed on the `/workspace/current` and `/run/lenny/credentials.json` literals, and the tier-11 gate anchored on the `Terminate` spelling (`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go`) reads spec §4.7 and spec §5.2 rather than this page. That gate has three anchors, `requireLine` over §4.7 at `:65` and at `:139`, and `requireAllContain` over the §5.2 trigger paragraph at `:78-83` for the literals "`Terminate`" and "proto `Shutdown`", and all three move with SPEC-7's rename.
 
 The same page's `ReportSessionScrub` row, `docs/reference/adapter-contract.md:81` in the
 "Adapter-to-Gateway RPCs" table, is staged here as well, and it stands whether or not review takes the
 split, because SCHEMA-1 forces it rather than the RPC rename. The row today scopes the emission to "each
 session release on a recycling or concurrent pod", which is true of the current gate
 (`pkg/adapter/session.go:274` runs `reportSessionScrub` only inside the `req.GetRecycle() != nil` arm,
-stated in its comment at `:280-282`). SCHEMA-1 puts the emission on every `ShutdownSlot` unconditionally, so
+stated in its comment at `:280-282`). SCHEMA-1 puts the emission on every `Shutdown` unconditionally, so
 a session release on a non-recycling single-concurrency pod emits one too, and §8's
 `sessionscrub_emit_test` disposition records the same consequence. Left unchanged the row would be false,
-and it would contradict the `ShutdownSlot` row this deliverable writes two tables above it on the same
+and it would contradict the `Shutdown` row this deliverable writes two tables above it on the same
 page. It is restated so the emission runs at each session release on a pod of any concurrency and any
 recycle setting. The specification side is already unconditional and takes no edit here:
 `spec/05_runtime-registry-and-pool-model.md:451` states that "a per-slot cleanup runs on every session
@@ -3172,30 +2712,9 @@ and billing input. `emitControlEvent` (`adapterevents.go:149-152`) stamps the `s
 `CH-ADAPTEREVENTS` envelope that carries no identifier of its own. That set is every emitter that
 constructs a `controlEvent` without a `SessionID`: RATE_LIMITED (`:187`), AUTH_EXPIRED (`:193`),
 PROVIDER_UNAVAILABLE (`:198`), LEASE_REJECTED (`:204`), ADAPTER_TERMINATING (`:217`), FINAL_USAGE_REPORT
-(`:224`), and `EmitCheckpointBarrierAck` (`pkg/adapter/coordination.go:292-298`). Both re-point onto the
-same resolution the MCP providers take
-below, the pod's single bound registry entry: the fold and the stamp name that session when the registry
-holds exactly one bound entry, and the token frame is dropped and the event is emitted with an empty
-`sessionId` when it holds zero or more than one. The drop matches what the meter does on an idle pod
-today, where `Add` returns on an empty identifier (`usage.go:118-121`).
+(`:224`), and `EmitCheckpointBarrierAck` (`pkg/adapter/coordination.go:292-298`). Both re-point onto the same resolution CODE-1 gives the MCP providers below, `soleSession()`: the fold and the stamp name the sole entry's session when the registry holds exactly one entry and has held no more than one since it was last empty, and the token frame is dropped and the event is emitted with an empty `sessionId` otherwise. The drop matches what the meter does on an idle pod today, where `Add` returns on an empty identifier (`usage.go:118-121`).
 
-Both readers carry the same sticky pod-level flag CODE-1 gives the MCP providers below, for the same
-reason and on the same predicate. A live-occupancy count alone is insufficient here as well: the runtime
-frames carry no session, one runtime process serves every slot, and a per-session `Runtime.Close` returns
-before touching the connection or the child process on a non-last call
-(`pkg/adapter/socketruntime.go:440-445`), so an ended session's agent code keeps emitting
-`llm_request_completed` frames and control events on the pod's one `CH-RUNTIMEOPS` connection after its
-release. Resolving those to whatever single bound entry remains would fold one session's tokens into
-another's cumulative total, which is the §11.2 direct-mode budget input the gateway reads and the input to
-`budget_return.lua`, and would stamp RATE_LIMITED, AUTH_EXPIRED, PROVIDER_UNAVAILABLE, and LEASE_REJECTED
-envelopes with the wrong session. Once a release has deregistered an entry whose session had started and
-left the registry non-empty, the flag is set and stays set, the fold is dropped for the rest of the pod's life, and every
-event resolved rather than stamped at its call site carries an empty `sessionId`. Losing the attribution is
-the fail-closed outcome; charging it to a co-tenant is not. The misattribution is unreachable today and is
-introduced by this proposal's combination of the single-bound-entry resolution with SCHEMA-1's withheld
-`Close`: on a base-mode pod `releaseSession` clears `s.sessionID` and the single-member `Runtime.Close`
-tears the process down, and on a concurrent pod `s.sessionID` is empty for the pod's life so the fold is
-already dropped.
+That accessor is `Server.sessionID`'s semantics restated on the registry rather than a new one: it returns the sole entry's session identifier when the registry holds exactly one entry and the pod's `coTenanted` bit is unset, and the empty string otherwise. Neither predicate is a bound-entry count: a co-tenant's registered-but-unbound `PrepareWorkspace` entry empties it, and so does a release that leaves one bound entry on a pod that has held two. On a `maxConcurrentSessions: 1` pod the registry never holds a second entry, so the fold and the stamp name the same session `s.sessionID` names today. On a concurrent pod the bit is set by the second entry's creation, so the fold is dropped and the envelope is emitted with an empty `sessionId`, which is what the meter already does on that pod today, where `Add` returns on an empty identifier (`usage.go:118-121`). Neither reader changes behavior on any pod that exists today, so neither introduces a misattribution the proposal then has to close.
 
 One of the seven emitters already holds the session at the call site, and stamps the envelope explicitly
 rather than leaving it to the resolution. `emitFinalUsage(ctx, sessionID)` computes one session's totals
@@ -3204,14 +2723,11 @@ waits for that terminal report before running `budget_return.lua` (§8.3), so an
 concurrent pod loses a session's final token and wall-clock totals. `EmitFinalUsageReport` therefore takes
 the session identifier its caller already has. The per-member hold termination CODE-3 stages is the same
 case, and `EmitAdapterTerminating` takes the session identifier its loop holds for the reason CODE-3
-states. Attributing either
-of the two resolved outputs to an arbitrary co-tenant is what the resolution and its sticky flag together
-refuse, since the runtime frame carries no session and one runtime process serves every slot.
-§9 records the resulting limit for a pod holding more than one bound session and for a pod whose release
-deregistered a started entry and left the registry non-empty, and §8 pins both outputs on both predicates.
+states. Attributing either of the two resolved outputs to an arbitrary co-tenant is what `soleSession()` refuses, since the runtime frame carries no session and one runtime process serves every slot.
+§9 records the resulting limit for a pod that has held more than one registry entry since it was last empty, and §8 pins both outputs on that predicate.
 
 **The start-side merge, the counterpart of SCHEMA-1's teardown merge.** SCHEMA-1 moves the whole per-session
-teardown onto `ShutdownSlot` so a session's end is one sequence whatever the pool's concurrency. The start
+teardown onto `Shutdown` so a session's end is one sequence whatever the pool's concurrency. The start
 takes the same treatment, and without it D1 deletes work no other deliverable replaces. Today
 `StartSession` returns early into `startSessionSlot` (`pkg/adapter/session.go:103-106`), whose whole body is
 the registry claim and `Runtime.Start` (`pkg/adapter/slotsession.go:27-52`), while the base path below it
@@ -3308,108 +2824,11 @@ that: `spec/05:440` pins a concurrent pod to one tenant rather than to one user.
 today only because the concurrent path returns into `startSessionSlot` before the manifest write and the MCP
 starts, so the merge would create it.
 
-The providers therefore resolve the calling session at call time from the slot registry rather than
-carrying a captured identifier, which is also what replaces the retired `Server.sessionID` (D13) as their
-source. The resolution is the pod's single bound session: when the registry holds exactly one bound entry
-the call dispatches under that session, and when it holds zero or more than one the provider refuses the
-`tools/list` or `tools/call` with `FailedPrecondition` and forwards nothing. This predicate reads the
-registry's bound entries, which is a different quantity from the all-entries count SCHEMA-1's drain gate
-and §4.6.1's inbound rule read. A registered-but-unbound entry carries no session identifier, so there is
-no session to dispatch the call under, and counting it here would refuse a call the pod's one bound session
-is entitled to make while its co-tenant's workspace is being prepared. Resolving per
-connection is not available, because the one runtime process holds the connection for every slot, and
-naming the session on the MCP call itself is a new runtime-facing protocol surface this proposal rules out
-with the per-session socket and per-session manifest below.
+The providers therefore resolve the calling session at call time from `soleSession()` rather than carrying a captured identifier, which is also what replaces the retired `Server.sessionID` (D13) as their source. Both providers hold `*Server` instead of the `sessionID` each captures at construction today (`pkg/adapter/platformtoolprovider.go:27-38`, `pkg/adapter/connectortoolprovider.go:30-42`), and the two forwarder interfaces keep their per-call session parameter unchanged. `soleSession()` reads two values under `s.mu`: the registry's entry count, and one pod-level boolean `coTenanted` recording that the registry has held more than one entry since it was last empty. It returns the sole entry's session identifier when the count is one and the bit is unset, and the empty string otherwise, in which case the provider refuses the `tools/list` or `tools/call` with `FailedPrecondition` and forwards nothing. A non-empty result is the statement that the pod's one shared runtime process has served no session but this one since the registry was last empty, which is the condition under which a forwarded identifier cannot name a session other than the caller. The count alone is not that statement, because a pod can return to one entry after holding two. The bit is what makes the two-entry history survive the return. Resolving per connection is not available, because the one runtime process holds the connection for every slot, and naming the session on the MCP call itself is a new runtime-facing protocol surface this proposal rules out with the per-session socket and per-session manifest below. The check is evaluated on each `List` and `Call` rather than at server start or at connection accept, because `mcp.Server.Serve`'s cancel closes the listener and leaves an established `ServeConn` running (`pkg/adapter/mcp/server.go:137-154`), so a connection opened while the pod was sole-occupied outlives that state.
 
-The live occupancy count is not the whole predicate, because a caller can age out of it. One runtime process
-serves every slot and a per-session `Runtime.Close` does not stop the ended session's agent code inside it:
-`SocketRuntimeProcess.Close` returns before touching the connection or the child process on a non-last call
-(`pkg/adapter/socketruntime.go:440-445`), and SCHEMA-1's withholding arm keeps that shared connection and
-its child alive whenever the registry is still occupied. On a pod holding sessions for two different users, the moment the first session's `ShutdownSlot`
-completes the registry holds exactly one bound entry, the occupancy refusal stops firing, and a `tools/call`
-still issued by the ended session's agent code resolves to the survivor and is forwarded, at which point the
-gateway installs the survivor's user and tenant as the authenticated principal
-(`pkg/gateway/gatewaycontrol/platformtools/platformtools.go:114-123`;
-`pkg/gateway/connectors/connectortools/connectortools.go:166-176`). Tenant pinning does not bound it and
-`acknowledgeProcessLevelIsolation` does not cover it: `spec/05:515` enumerates the shared process namespace,
-`/tmp`, cgroup memory, network stack, and credential-file group-read access, and names no tool-invocation
-authority.
+Two routes reach a pod whose shared process has outlived a session's release, and the bit covers both because it is written where the registry's cardinality changes rather than in the handler that ends a session. `ensureSlotStateLocked` (`pkg/adapter/slot.go:74-95`) holds the only `s.slots[slotID] = st` (`:93`) and is reached from `PrepareWorkspace`, `FinalizeWorkspace`, and `RunSetup` through `ensureSlotPaths` (`staging.go:129, :181, :339`) as well as from the merged claim, so a co-tenant's registered-but-unbound entry sets the bit at the moment it appears, before any session ends. `releaseSlot`'s locked deregistration (`pkg/adapter/slotsession.go:102-112`) holds the only `delete(s.slots, slotID)` (`:106`), and the bit is cleared in the release's second step, after `Runtime.Close` has returned, under a short re-take of `s.mu` that clears it only when the registry is still empty at that point. Clearing it inside the deregistration would be a hole rather than a simplification: that section runs before `Runtime.Close`, so at the instant the registry empties the departing session's agent code is still live inside the shared process, which `Close` on a non-last call returns without touching (`pkg/adapter/socketruntime.go:434-445`). A session claiming a slot in that interval would leave the registry holding one entry with the bit already unset, and `soleSession()` would name the incoming session while the previous session's agent was still running, which is the cross-session dispatch the predicate exists to refuse. Deferring the clear closes that interval in the fail-closed direction: a session that claims inside it leaves the registry non-empty when the second step runs, the bit is not cleared, and `soleSession()` stays empty until the registry empties again, so the intra-pod MCP surface over-refuses rather than forwarding one session's call under another's principal.
 
-Counting bound entries for the sticky predicate would miss the same exposure by a second route, so the
-predicate reads the number SCHEMA-1's teardown decision reads. A pod need never hold two bound entries at
-once to reach the state that keeps an ended session's agent code alive. Session A is bound and running;
-session B's bind reaches `PrepareWorkspace`, which registers an entry with an empty `sessionID` through
-`ensureSlotStateLocked` (`pkg/adapter/slot.go:74-95`, reached from `pkg/adapter/staging.go:129, :181, :339`);
-A's `ShutdownSlot` arrives in that window, its critical section leaves the registry non-empty, `last` is
-false, and `Runtime.Close` returns before touching the connection or the child process, leaving A's agent
-code running. B's `StartSession` then binds and the pod holds one bound entry. The window spans B's whole
-workspace-prep phase, and on a pool that configures neither a credential pool nor a user credential
-provider it runs right up to `StartSession`, because `assignSlotCredentials` returns without issuing the
-RPC in that case (`pkg/gateway/podlifecycle/podsession/slotbinder.go:367-371`). A bound-entry high-water
-mark is never reached on that sequence, and A's surviving code would have its `tools/call` dispatched under
-B's principal.
-
-The refusal is therefore sticky at the pod, on the occupancy number the release itself computes. The trigger
-is the deregistration rather than the RPC that performs it: whenever a release deregisters an entry whose
-session had started and leaves the adapter's slot registry non-empty, a pod-level flag is set and stays set, and
-every subsequent
-`tools/list` and `tools/call` on that pod's platform and connector sockets is refused with
-`FailedPrecondition` whatever the current bound count. Keying the flag on `ShutdownSlot` alone would leave
-CODE-3's per-member hold termination bypassing it, because that loop reaches the identical state by a
-second route: it closes each member with SCHEMA-1's teardown decision false on every member but the last,
-which returns before touching the connection or the child (`pkg/adapter/socketruntime.go:440-445`), and
-deregisters that member with `releaseSlot` in the same iteration, leaving the terminated session's agent
-code running while the registry holds one bound entry the loop has not yet reached. Nothing else gates that
-window: the hold-state interceptor is a gRPC `UnaryServerInterceptor` covering the adapter's gRPC surface
-rather than the intra-pod MCP sockets (`pkg/adapter/holdstate.go:245-249`), and `onHoldTimeout` clears
-`s.hold.active` before the loop runs (`pkg/adapter/holdstate.go:161`). Keying on the release arms the flag
-on the loop's first non-last member exactly as it arms on `ShutdownSlot`. The occupancy conjunct is that
-number alone, whatever the runtime implementation. On `SocketRuntimeProcess` the same number withholds the hard close, so the flag
-marks a pod whose shared runtime has outlived a session's release, which is the state that creates the
-exposure. On the two single-session implementations, which SCHEMA-1 keeps out of the withholding arm,
-`InProcessRuntime.Close` and `MCPRuntime.Close` tear down on every call
-(`pkg/adapter/embedded.go:188-204`, `pkg/adapter/mcpruntime.go:265`), so no ended session's agent code
-survives its release and the flag is a fail-closed over-refusal there. That number is the same all-entries
-occupancy count SCHEMA-1's drain and close decision and §4.6.1's inbound rule read, so the three predicates
-read one quantity. On a pod where every session's release has
-found the registry empty, which is every pod on a `maxConcurrentSessions: 1` pool and a concurrent pod that
-never overlapped a release with another entry, the flag is never set and the call dispatches under the
-pod's one bound session. Refusing on the pool's
-ceiling instead is unavailable, because §4.11 establishes that the adapter is never told
-`maxConcurrentSessions`; the flag needs no configuration and no protocol surface, it is the fail-closed
-branch §4.11 takes everywhere else, and it keeps the posture a concurrent pod has today, where a Standard- or
-Full-level runtime cannot use the intra-pod surface at all. The flag is set inside the release's own
-critical section, under the same `s.mu` that computes the registry-empty result and reads the deregistered
-entry's `started` flag, so it is not itself a read-then-act. That critical section is the locked
-deregister-and-decide step SCHEMA-1 splits out of `releaseSlot` (`pkg/adapter/slotsession.go:102-112`),
-which is the one site holding `delete(s.slots, slotID)` (`:106`); the tree removal that today runs in the
-same call (`:110`) becomes the second step the caller makes after `Runtime.Close`, so
-the two paths that end a running session, the merged `ShutdownSlot` and CODE-3's hold-termination loop, arm
-the flag on one predicate, and both of the trigger's conjuncts are readable at that site.
-
-The started conjunct is stated on the deregistered entry's flag rather than on a preceding `Runtime.Close`,
-because SCHEMA-1 reorders the merged handler so that the critical section which deregisters runs before
-`Runtime.Close` rather than after it, reversing `shutdownSlot`'s current order
-(`pkg/adapter/slotsession.go:82-84` then `:86`) and splitting the tree removal out of the deregistration so
-it still follows the close. A trigger phrased on a preceding `Runtime.Close` would be
-unevaluable at the one site that performs the deregistration, and it would never arm on the merged
-`ShutdownSlot`, which is the path it exists for. The `started` boolean §4.11 adds to the registry entry
-carries the same fact at that point: the merged claim sets it under `s.mu` in the critical section that
-binds `st.sessionID` (`pkg/adapter/slotsession.go:45`), so an entry that carries it is one whose
-`StartSession` or `Resume` ran and whose agent code the shared process may still be running, and the flag is
-still on the entry when `releaseSlot` deletes it. The releases that do not arm the pod-level flag are the
-ones deregistering an entry the claim never reached: SCHEMA-1's reclaim of a registered-but-unbound entry,
-and the §4.11 rollback of a bind that failed before `StartSession`, where no runtime session was ever
-started, so no agent code survives the release and refusing the co-tenant's calls would be an over-refusal
-with no exposure to close. The rollback of a `StartSession` or a `Resume` whose own `Runtime.Start` failed
-does arm the flag, because the claim writes `started` before that call (`pkg/adapter/slotsession.go:45-49`,
-and `pkg/adapter/resume.go:47` ahead of `:125`). The release
-cannot see how far the failed start got, so the flag arms, which is the same fail-closed over-refusal the
-two single-session runtime implementations take above.
-
-Because the servers and the handshake signal are pod-wide,
-`ShutdownSlot` cancels them only when the departing session's release leaves the pod with no other bound
-session, and §4.11 and §8 state the teardown on that predicate rather than per session. A per-session MCP
+Because the servers and the handshake signal are pod-wide, the start is claimed once per pod and the cancellation is unconditional on every release. The merged claim decides the start inside its own `s.mu` critical section, returning a boolean when `mcpCancel` is nil and the registry holds no entry but the claimant's; the handler performs `startPlatformMCP(nonce)` and `startConnectorMCPServers` after the manifest write and outside `s.mu`, where both run today (`pkg/adapter/session.go:150`, `pkg/adapter/resume.go:119`), because the §15.4.3 nonce and the connector list are produced after the claim (`session.go:127`, `:129`) and `startPlatformMCP` takes `s.mu` itself (`pkg/adapter/platformmcp.go:40-42`, `:47-49`). The locked deregistration cancels `mcpCancel` and every entry of `connectorCancels` and clears `mcpHandshakeSeen` whichever session's entry it removes. No arming identifier is stored, because a release on a co-tenanted pod cancels a surface `soleSession()` is already refusing, and a release on a sole-occupied pod is the arming session's own. A later claim that finds the registry holding only its own entry re-arms on a fresh nonce, which is how a `maxConcurrentSessions: 1` pod recovers from a failed `StartSession`, `Resume`, or `ConfigureWorkspace` exactly as it does today, and a claim on a co-tenanted pod does not re-arm. A per-session MCP
 surface would need a per-session socket path and per-session manifest fields, which CODE-1 rules out of
 scope with the manifest path. The manifest keeps the path and contents it has today. It stays a single pod-global
 `adapter-manifest.json` in `ManifestDir` (`pkg/adapter/server.go:113-116`), because that path is a fixed
@@ -3473,12 +2892,7 @@ it to the workspace base the adapter runs with (`/workspace` under the rendered 
 base is chosen because it is the one workspace path that exists on every pod after D9 and it is the parent
 of every per-slot tree, so the deployer's commands run in a directory the pod always carries rather than in
 one an ended session owned. It does not preserve the "with access to session state" access `spec/05:453`
-states today: the ordering SCHEMA-1 fixes puts every ending session's `ShutdownSlot`, and therefore
-`releaseSlot`'s `RemoveTree` (`pkg/adapter/slotsession.go:86, :102-112`), before the `ShutdownPod` the scrub
-runs on, so no released session's per-slot tree survives to the `cleanupCommands` phase on any pod. SPEC-4
-restates that parenthetical for the new ordering rather than leaving the specification asserting an access
-the code does not give. The residue the enumeration above reaches is a leaked slot's, whose `ShutdownSlot`
-never arrived. The
+states today: the ordering SCHEMA-1 fixes puts every ending session's teardown clause, and therefore `releaseSlot`'s `RemoveTree` (`pkg/adapter/slotsession.go:86, :102-112`), before the pod-scrub clause in the same handler, so no released session's per-slot tree survives to the `cleanupCommands` phase on any pod. SPEC-4 restates that parenthetical for the new ordering rather than leaving the specification asserting an access the code does not give. The residue the enumeration above reaches is a leaked slot's, whose teardown request never arrived. The
 `WorkspaceDir` doc comment (`pkg/adapter/scrub/scrub.go:133-136`) names only the step 2 removal and the step
 6 verification, which is why the field reads as scrub-only; the two new comments state each member's whole
 use. SPEC-4 carries the matching §5.2 restatement of step 2 and of step 6's workspace half.
@@ -3500,51 +2914,9 @@ D7, so it may land on its own.
 for every RPC in §4.5(b), the eight `if slotID != ""` sites those methods carry (`:147, 205, 289, 364, 399,
 428, 845, 861`) are removed, and `sendUpload`'s `slot *adapterv1.SlotId` parameter (`:308`) goes with them.
 
-The ninth site, `:900`, is carved out of that instruction and routed to §4.5(d), because it is the
-population path for the one field whose presence is a discriminator rather than a duplicate. It sits inside
-`shutdown` (`:896-902`), which `Shutdown` (`:885`) and `ShutdownSlot` (`:892`) both call. The file declares
-four producers of `ShutdownRequest`, and the base case gives each one a fate. `shutdown` and its
-`if slotID != ""` are deleted with `ShutdownRequest`. `Shutdown` and `ShutdownSlot` collapse with
-`Terminate` (`:923-932`) into a single `ShutdownSlot(ctx, sessionID, reason string, deadline time.Duration)`
-method over the `ShutdownSlot` RPC, which is what the one-method-per-RPC instruction above requires: all
-three send the same request, and `Terminate` differs only in populating `reason` and `deadline_ms`, the two
-fields SCHEMA-1 keeps on `ShutdownSlot`. Retaining a second Go method over the same RPC would carry a
-duplicate implementation of one concern. The two callers that send no reason
-(`pkg/gateway/podlifecycle/podsession/binder.go:1945` and `slotbinder.go:538`) pass an empty reason and a
-zero deadline, which is the request `shutdown` sends today; `cmd/lenny-gateway/user_revocation.go:129`
-passes the `USER_REVOKED` reason and `userTerminateDeadline` it passes today.
+The ninth site, `:900`, takes the same removal for a different reason: the field it populates goes with §4.5(d), so the `if slotID != ""` inside `shutdown` (`:896-902`) is deleted with it. The file declares four producers of `ShutdownRequest` and CODE-1 gives each a fate. `shutdown` becomes the single unexported builder, taking `sessionID`, `reason`, `deadline`, and a `*RecycleScrub`, and populating the fields each caller supplies. `Shutdown` (`:885`), `Shutdown` (`:892`), and `Terminate` (`:923-932`) collapse into one exported `Shutdown(ctx, sessionID, reason string, deadline time.Duration) (cleanly bool, err error)`: all three send the same request and `Terminate` differs only in populating `reason` and `deadline_ms`. The two callers that send neither (`pkg/gateway/podlifecycle/podsession/binder.go:1945` and `slotbinder.go:538`) pass an empty reason and a zero deadline, which is the request `shutdown` sends today, and `cmd/lenny-gateway/user_revocation.go:129` passes the `USER_REVOKED` reason and `userTerminateDeadline` it passes today. `ShutdownRecycle` (`:969-981`) keeps its name, its `sessionID` parameter, and its callers unchanged, and routes through the same builder with the `RecycleScrub` populated. Two exported methods over one RPC is one implementation of one concern, because both delegate to the builder and neither duplicates the send.
 
-The collapse gives the §11.4 full revoke a per-session teardown it does not perform today, so CODE-1 states
-the release-side disposition with it. `terminateLocal` iterates `p.registry.Snapshot()` and removes no
-binding (`cmd/lenny-gateway/user_revocation.go:121-129`), so when the revoked session goes terminal
-`PodExecutor.Release` removes the binding and routes to `Binder.ReleaseSlot`, because a concurrent bind
-carries a non-empty `SlotID` (`pkg/gateway/session/executor/pod.go:328-333`). That second `ShutdownSlot`
-names a session whose entry the revoke already deleted, which the merged handler refuses with
-`FailedPrecondition` "no assigned session" (`pkg/adapter/slotsession.go:64-68`, the re-base §8 states).
-`Binder.ReleaseSlot` computes `leaked = err != nil || !cleanly` (`slotbinder.go:538-539`) and
-`SlotClaimer.ReleaseSlot` returns early on `leaked` without decrementing the counter or disposing the
-per-pod claim (`slotclaimer.go:751-757`), so every revoked session would hold its slot for the life of the
-pod, the pod would never reach occupancy zero, and the pool would lose one slot of capacity per revoke.
-Today the sequence is inert: `Client.Terminate` sends a `ShutdownRequest` with no `slot_id` (`:923-932`),
-`Server.Shutdown` skips the slot branch and fails `checkSession` on a concurrent pod
-(`pkg/adapter/session.go:225-247`), nothing is torn down, and the later release runs cleanly.
-`Binder.ReleaseSlot` therefore reads a `FailedPrecondition` or `NotFound` refusal naming a session the
-adapter does not hold as an already-released slot: `leaked` stays false, the counter decrements, and the
-per-pod claim takes its occupancy-zero disposition. `leaked` keeps its present meaning for a transport
-error and for an unclean exit the adapter reports, which are the two outcomes that leave the adapter
-possibly still holding the slot's resources, and which are what §6.2's leaked-slot rule exists to count. A
-slot the adapter has already torn down holds nothing a new assignment could collide with. The same
-disposition covers CODE-3's hold-terminated members, whose entries `onHoldTimeout` deregisters through
-`releaseSlot` before the `AdapterTerminating` emission drives each session's terminal release down the same
-path. `Terminate`'s doc comment
-(`:910-922`), which states that the §4.7 table names the RPC `Terminate` while the wire contract carries it
-as `Shutdown`, is rewritten to name `ShutdownSlot` on both sides, because SPEC-7 makes the mapping it
-records false. `ShutdownRecycle` (`:969-981`) re-points onto the `ShutdownPod` RPC and drops its
-`sessionID` parameter, which `ShutdownPod` carries no field for; its callers
-(`binder.go:1939` and `slotbinder.go:570`) send it after the `ShutdownSlot` for the ending session, per the
-ordering SCHEMA-1 states. If review declines the split, `:900` and all four producers are retained
-unchanged, because removing the site would leave a per-slot teardown indistinguishable from a whole-pod
-shutdown on the wire and would silently convert every teardown into a pod shutdown.
+The collapse gives the §11.4 full revoke a per-session teardown it does not perform today. `terminateLocal` removes no binding (`cmd/lenny-gateway/user_revocation.go:121-129`), so the revoked session's terminal release sends a second request for it through `Binder.ReleaseSlot`. SCHEMA-1's clause two makes that second request a no-op returning `exited_cleanly` true, so `leaked` stays false, the counter decrements, and the pool loses no capacity per revoke. `leaked` keeps its present meaning for a transport error and for an unclean exit the adapter reports, which are the two outcomes that leave the adapter possibly still holding the slot's resources, and which are what §6.2's leaked-slot rule exists to count. The same disposition covers CODE-3's hold-terminated members, whose entries `onHoldTimeout` deregisters through `releaseSlot` before the `AdapterTerminating` emission drives each session's terminal release down the same path. `Terminate`'s doc comment (`:910-922`), which states that the §4.7 table names the RPC `Terminate` while the wire contract carries it as `Shutdown`, is rewritten to name the collapsed `Shutdown` method on both sides, because SPEC-7 makes the mapping it records false.
 `pkg/gateway/session/executor/pod.go:146-148`'s concurrency-conditioned check becomes an unconditional
 non-empty check on the session identifier and `ErrSlotIDRequired` is renamed for what it now requires. That
 gate is the sole reader of `BindResult.MaxConcurrentSessions` anywhere in the tree
@@ -3556,6 +2928,8 @@ bound still reaches the claimer, on `SlotRequest.MaxConcurrentSessions` (`slotbi
 different member and keeps its population. `BindResult.SlotID` (`binder.go:490-494`) is untouched, because
 two gateway release paths dispatch on its presence and CODE-2 keeps the resume's reservation scoped to
 preserve that dispatch.
+
+`SlotClaimer.ReleaseSlot`'s `sessionID` parameter (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:739`) is deleted. The body reads it nowhere, and its two `podsession` callers pass different things into it: `Binder.ReleaseSlot` passes `result.SessionID` (`slotbinder.go:555`) and `Binder.ReleaseSlotReservation` passes `slotID` (`slotbinder.go:498`), which is the two-namespace fiction D5 retires, spelled in a parameter no code reads. The signature becomes `ReleaseSlot(ctx context.Context, sandboxName string, recycle, leaked bool) (recycled bool, err error)`. Those two call sites drop the argument, and so do the compiled tier-7a load scenario at `tests/tier7a_load_local/scenarios/slot_leaked_counted_race/scenario.go:179`, without which tier 0 does not build, and the six calls in the claimer's own unit tests (`pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go:410, :466, :478, :508, :559, :584`), without which tier 1 does not build in that package. No interface declares this method: `slotBinder` (`pkg/gateway/sessionserver/start.go:2678-2682`) declares `Binder.ReleaseSlotReservation`, a different method whose own signature is unchanged here. The doc paragraph at `:728-733`, which names `Binder.ReleaseSlot` as "the caller" while the tree has two, is restated as a return contract: `recycled` reports that this release crossed the occupancy-zero edge of a recycling pool, and a caller that sends the adapter a request acts on it. `Binder.ReleaseSlotReservation` is the second caller and passes `recycle` false, so it never receives it.
 
 The first three parts of this deliverable, the adapter's root resolution, the session-check merge, and the
 gateway producer removals, are atomic with each other, per §4.5's precondition. The (b′) clause is not:
@@ -3829,8 +3203,7 @@ independent.
 `pkg/adapter/holdstate.go:91-96` arms from the slot registry rather than from the pod-global `s.sessionID`,
 so the hold arms on a pod whose sessions all take the slot path, which is the §1.2 defect.
 `s.currentSession()` is removed with `Server.sessionID` under CODE-1 rather than left to be reintroduced,
-and CODE-1 re-points its two other production readers, the direct-mode token sink and
-`emitControlEvent`'s session stamp, onto the same single-bound-session resolution.
+and CODE-1 re-points its two other production readers, the direct-mode token sink and `emitControlEvent`'s session stamp, onto the same `soleSession()` accessor.
 
 The hold stays a property of the adapter process. `pkg/adapter/holdstate.go:246` rejects every inbound RPC
 outside `coordinatorHoldAllowedMethods` from the single `s.hold.active` flag (`:187-190`), which is what
@@ -3846,14 +3219,11 @@ action is single-valued today: `holdState` holds one `session` (`pkg/adapter/hol
 post-mortem and closes one session's runtime (`:175`, `:180`). Arming from the registry makes that action
 reachable on a pod holding more than one bound session for the first time, and one runtime process serves
 every slot, so a single-valued action would either terminate one session and leave every co-tenant's agent
-process running with no coordinator, or, passing SCHEMA-1's teardown decision as true on that one call,
-close the process out from under co-tenants for which no post-mortem was written. Both are what the
+process running with no coordinator, or close the process out from under co-tenants for which no post-mortem was written. Both are what the
 `spec/10:58` termination exists to prevent. Nothing else reaches that state, because the
 pod is alive and the 60-second orphan-session reconciler `spec/10:58` names as the backstop does not fire.
 The hold therefore terminates the set of bound sessions the slot registry holds at the moment
-`onHoldTimeout` fires, and runs the termination once per member of that set, one `Runtime.Close` and one
-post-mortem each, passing SCHEMA-1's teardown decision as false on every member but the last and true on
-the last, so the shared runtime process is closed when the last member is released.
+`onHoldTimeout` fires, and runs the termination once per member of that set, one `Runtime.Close` and one post-mortem each. The socket runtime's active set closes the shared process when the last member is released (`pkg/adapter/socketruntime.go:434-445`), so the loop passes nothing and the arity is the loop's alone.
 
 Each member is deregistered in the same iteration, after its post-mortem and its `AdapterTerminating` are
 written and its runtime is closed, by calling `releaseSlot` (`pkg/adapter/slotsession.go:102-112`) for that
@@ -3861,7 +3231,7 @@ member's entry, so the entry is deleted and its tree removed. The ordering is st
 and the post-mortem both name the session, and a deregistration ahead of them would leave
 `EmitAdapterTerminating`'s caller reading a session the registry no longer holds. The loop emits no
 `ReportSessionScrub` for a hold-terminated session, which keeps today's disposition: `onHoldTimeout` runs
-no per-session scrub, and the §5.2 report is the record of a scrub a `ShutdownSlot` teardown performed.
+no per-session scrub, and the §5.2 report is the record of a scrub a `Shutdown` teardown performed.
 Deregistering is not optional bookkeeping. `releaseSlot` holds the only `delete(s.slots, slotID)` in the
 package and is reached from `shutdownSlot` after its bound test (`pkg/adapter/slotsession.go:86`, test at
 `:70-74`) and from `startSessionSlot`'s `Runtime.Start` failure path (`:49`).
@@ -3872,10 +3242,7 @@ that state, because `SlotClaimer.ClaimSlot`'s Pass 1 places a slot on any pod wi
 same-tenant per-pod claim and free counter capacity
 (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:414-466`), and the WarmPoolController's orphan sweep
 cannot clear the claim either, because it reclaims only once Postgres reports no live session on the pod
-(`pkg/controller/warmpool/gc.go:233-238`) and the terminated sessions were never transitioned. The stale
-entries would then hold SCHEMA-1's drain gate and hard close permanently false, §4.6.1's inbound count
-permanently above one, and CODE-1's MCP providers permanently refusing every call, which is the same
-outcome set SCHEMA-1's reclaimer paragraph exists to prevent for the registered-but-unbound entry. §8 pins
+(`pkg/controller/warmpool/gc.go:233-238`) and the terminated sessions were never transitioned. The stale entries would then hold SCHEMA-1's drain gate permanently false, §4.6.1's inbound count permanently above one, and CODE-1's `soleSession()` permanently empty, so the MCP providers, the direct-mode fold, and the control-event stamp would all give up for the life of the pod, which is why CODE-3 deregisters each member in the same iteration. §8 pins
 the emptied registry and the recovery of the next session's teardown at tier 1. The set is read when
 the timeout fires rather than recorded when the hold arms, because `coordinatorHoldAllowedMethods`
 (`pkg/adapter/holdstate.go:53-59`) gates RPC admission rather than binding. `holdStateUnaryInterceptor`
@@ -3895,10 +3262,7 @@ from inside the same loop, and each one names the member it terminated. The enve
 session identifier: `controlEvent` declares a `SessionID` member
 serialized as `sessionId` (`pkg/adapter/adapterevents.go:60`) and `emitControlEvent`
 stamps it from the pod's bound session for every event that arrives without one
-(`:149-152`), which is the set `EmitAdapterTerminating` belongs to (`:216-217`). CODE-1's
-single-bound-session resolution yields no entry on a pod holding more than one, so leaving the stamp to the
-accessor would emit one envelope with an empty `sessionId` on exactly the pods this deliverable newly
-reaches. `EmitAdapterTerminating` therefore takes the session identifier its caller already holds,
+(`:149-152`), which is the set `EmitAdapterTerminating` belongs to (`:216-217`). CODE-1's `soleSession()` is empty on a pod that has held more than one registry entry since it was last empty, so leaving the stamp to the accessor would emit one envelope with an empty `sessionId` on exactly the pods this deliverable newly reaches. `EmitAdapterTerminating` therefore takes the session identifier its caller already holds,
 `EmitAdapterTerminating(sessionID, reason string)`, which is the change CODE-1 already makes to
 `EmitFinalUsageReport` for the same reason and at the same call site.
 
@@ -4099,8 +3463,7 @@ default scrape target set until a deployer wires an adapter scrape target. `docs
 the `lenny_adapter_set_tracing_context_dropped_total` mirror, is restated in the same change, because §4.8's
 rewrite changes what "does not address the Attach stream that delivered it" means; SPEC-9 restates its
 `spec/16:188` row. The slot count is read from the
-adapter's own registry rather than from a manifest value or a request field, and it counts every entry,
-bound or registered-but-unbound, which is the quantity SCHEMA-1's drain gate reads.
+adapter's own registry rather than from a manifest value or a request field, and it counts every entry, bound or registered-but-unbound.
 `demuxSlotOutput` (`pkg/adapter/attach.go:253-295`) keeps its pass-through for `heartbeat` and
 `heartbeat_ack` and narrows by frame type for the six session-scoped frames.
 
@@ -4204,24 +3567,9 @@ the restore behavior rather than a proto field, so SCHEMA-1's removal does not c
 surface names the corrected restore path (`pkg/adapter/resume.go` resolving the checkpoint roots from the
 request's session identifier) and the `deferral_id` `R22` is dropped with the deferral.
 
-The generation-fence row on the message SCHEMA-1 deletes moves with it, under the base case in §4.5(d).
-`tests/claim-map.json:404-410` carries "ShutdownRequest.coordination_generation generation fence field",
-whose `surface` is `schemas/lenny-adapter.proto`; `registerProtoDisagreements` matches it through
-`claimQualifiedField` and reports a row naming a field the proto does not declare
-(`tests/tier0_static/claim_register_proto_agreement_test.go:116-124`). The row is retired and two rows
-replace it, `ShutdownSlotRequest.coordination_generation generation fence field` and
-`ShutdownPodRequest.coordination_generation generation fence field`, each carrying `status: UNWIRED`,
-`spec_anchor: "#2851-gateway-to-pod"`, `surface: "schemas/lenny-adapter.proto"`, `deferral_id: "R16"`, and
-the note its sibling fence rows carry at `:419-426`, that the field is carried on the request and no
-production reader compares it until the generation fence lands. Both rows are required rather than
-optional: the fence loop at `:139-149` iterates every proto message declaring `coordination_generation`,
-exempts only `CoordinatorFenceRequest` (`:47`), and reports a declared fence field with no register row, so
-the two new messages would fail the gate twice over. If review declines the split, `ShutdownRequest`
-survives and the row stands unchanged.
+The generation-fence row at `tests/claim-map.json:404-410`, "ShutdownRequest.coordination_generation generation fence field", stands unchanged: SCHEMA-1 keeps the message and the field, so `registerProtoDisagreements` continues to match it through `claimQualifiedField` (`tests/tier0_static/claim_register_proto_agreement_test.go:116-124`) and the fence loop at `:139-149` continues to find its row.
 
-The rows that change status under this proposal are therefore the six retired outright, the fence row
-retired with `ShutdownRequest` under the base case, the restore row above, and the five rows added, three
-for credentials and two for the post-split fence fields.
+The rows that change status under this proposal are therefore the six retired outright, the restore row above, and the three credential rows added.
 
 Their removal leaves unused machinery in `tests/tier0_static/claim_register_proto_agreement_test.go`:
 `slotIDField` (`:41`), `claimSlotField` (`:59`), and the `claimSlotField` branch of `namedField`
@@ -4230,9 +3578,7 @@ field` row in the acceptance fixture at `:297` are dropped, and the two syntheti
 `:284-288`), which carry `SlotId slot_id = 5`, are updated to the post-removal message set. Nothing here
 fails to compile, because the synthetic protos are inlined, which is why the cleanup is staged rather than
 left to the gate to surface. The `ResumeRequest.slot_id` row is matched by `claimQualifiedField` (`:58`) and
-touches no slot-specific code. The generation-fence half of the gate (`:139-149, :216-219, :251-254`) keeps
-its code unchanged and is re-run against the post-split message set, which is what the two replacement rows
-above satisfy.
+touches no slot-specific code. The generation-fence half of the gate (`:139-149, :216-219, :251-254`) keeps its code unchanged and is re-run against the post-removal message set, which the surviving `ShutdownRequest` fence row already satisfies.
 
 Two refusal cases do turn red on the synthetic-proto update and are staged with it. The cases at `:238-243`
 and `:244-249` assert that a register row claiming the absence of a declared field is refused, and both are
@@ -4251,9 +3597,7 @@ next seeding run re-emitting every retired row and dropping every added one, whi
 
 - The `SLOT_BEARING` list (`:197-200`) and the loop that appends its four rows (`:314-323`) are deleted with
   the fields, and the explicit `ResumeRequest.slot_id` append (`:324-331`) is deleted with its field.
-- `"ShutdownRequest"` in `GENERATION_FENCE` (`:190-196`) is replaced by `"ShutdownSlotRequest"` and
-  `"ShutdownPodRequest"` under the base case in §4.5(d), which is what emits the two replacement fence rows
-  above. If review declines the split, the list is unchanged.
+
 - The `"Slot-qualified interrupt, deadline, usage, and barrier"` entry in `SURFACE_OVERRIDES` (`:145-152`)
   is deleted, and its `gateway-runtime-comms.md` §7.1 source row (`:2715`) is added to a new retirement set
   the seeding loop consults beside its existing `dropped` handling (`:265-277`), so the row is retired rather than
@@ -4314,11 +3658,7 @@ written for the register-to-proto agreement question. `protoFields`/`braceDelta`
 `protoMessageOpen`/`protoField` (`:52-55`) are extracted into a shared helper the two gates share rather
 than copied.
 
-The claim-register validator runs over the corrected rows, and the register-to-proto gate runs over the
-post-split message set: no row names a field the proto no longer declares, and each of
-`ShutdownSlotRequest` and `ShutdownPodRequest` carries the fence row REG-1 adds, which is what the gate's
-fence loop requires of every
-message declaring `coordination_generation`.
+The claim-register validator runs over the corrected rows, and the register-to-proto gate runs over the post-removal message set: no row names a field the proto no longer declares, and `ShutdownRequest` keeps the fence row it already carries, which is what the gate's fence loop requires of every message declaring `coordination_generation`.
 
 A second tier-0 case pins REG-1's generator edits to its register edits. The case runs
 `scripts/seed-claim-register.py --out` against a temporary file and requires the result to be byte-identical
@@ -4355,13 +3695,7 @@ pin the resolution itself: a `llm_request_completed` fold on a pod holding one b
 session's cumulative total and is dropped on a pod holding zero bound slots and on one holding two, and a
 RATE_LIMITED event emitted on a pod holding one bound slot carries that session's identifier while the
 same event on a pod holding two carries an empty `sessionId`. Without them the fold and the stamp would go
-to the empty session on every pod with no compiler error and no failing case. A third new case pins the
-sticky flag those two readers share with the MCP providers, which the bound-count cases above do not reach:
-after one of two bound sessions is torn down with `ShutdownSlot`, a subsequent `llm_request_completed` fold
-is dropped rather than landing in the surviving session's cumulative total, and a RATE_LIMITED event
-emitted in that window carries an empty `sessionId` rather than the survivor's. Without it a resolution
-that reads the live bound count alone passes every case above while charging the released session's tokens
-to its co-tenant's §11.2 budget. A fourth case covers the
+to the empty session on every pod with no compiler error and no failing case. A third new case, `TestSoleSessionRefusesOnCoTenantedPod_spec_9_1`, pins `soleSession()` itself, which the entry-count cases above do not reach, and is the one case both readers and both MCP providers share. It drives the registry through the four transitions that decide the predicate and asserts the accessor's value at each: one entry inserted on an empty registry yields that session; a second entry inserted, whether bound by a claim or created unbound by `PrepareWorkspace`, yields empty; the first entry deleted, leaving one, still yields empty; and the last entry deleted, emptying the registry, followed by a fresh insert, yields the new session. The third transition is the one a predicate reading the live count alone gets wrong, and it is the transition on which a released session's tokens would be charged to its co-tenant's §11.2 budget and a RATE_LIMITED envelope would carry the survivor's identifier. The case carries a `// spec:` tie to §4.7, §9.1, and §11.2. A fourth case covers the
 emitter CODE-1 stamps explicitly rather than resolving: `TestEmitFinalUsageOnShutdownPath_spec_4_7`
 (`:183-200`), which binds by writing the field at `:187` and drives `emitFinalUsage` at `:196`, is re-based
 onto a pod holding two bound slots, and asserts the FINAL_USAGE_REPORT envelope carries the ending
@@ -4427,10 +3761,7 @@ configuration fails releases the claim, so a fresh call for the same session suc
 Three further arms pin the `Resume` half of the same compensation, which §4.11 moves onto `releaseSlot` and
 which no case reaches today. A `Resume` that fails at the §7.3 step (d) workspace-root guard, one that fails
 in the checkpoint extract, and one that fails at `Runtime.Start` each leave the slot registry holding no
-entry for that session. Each arm then asserts the four consequences a stranded bound entry would falsify: a
-subsequent `ShutdownPod` is admitted rather than refused with `FailedPrecondition`, a later session's
-`ShutdownSlot` still sends the `CH-RUNTIMEOPS` drain and the hard close because the critical section
-observes an empty registry, a `tools/call` on the platform socket is dispatched rather than refused, and a
+entry for that session. Each arm then asserts the three consequences a stranded bound entry would falsify: a later session's `Shutdown` still sends the `CH-RUNTIMEOPS` drain because the critical section observes no surviving bound entry, a `tools/call` on the platform socket is dispatched rather than refused, and a
 retried `Resume` for the same session on the same pod is admitted rather than refused with `Unavailable` on
 the `started` flag. A fourth arm pins the MCP half on a `maxConcurrentSessions: 1` pod: after a `Resume`
 that fails at `Runtime.Start`, the next session's `Resume` re-arms the platform MCP server on its own freshly
@@ -4511,7 +3842,7 @@ handlers rather than running against an unbound registry. The break is compiler-
 so nothing surfaces the thirteen cases unless §8 states them.
 `pkg/adapter/integrationlevel_test.go`'s `TestObservedLevelResetOnReleaseSession_spec_5_1` (`:80-87`) is the
 existing tier-1 pin of exactly the work §4.11 moves off `releaseSession`, the clearing of
-`mcpHandshakeSeen`. It is re-based onto the `ShutdownSlot` release path that now performs that clearing,
+`mcpHandshakeSeen`. It is re-based onto the `Shutdown` release path that now performs that clearing,
 renamed for it, and keeps its assertion that the observed level falls back to `basic`. Without the re-base
 the only pin of the MCP-handshake reset would go with the helper it drives.
 `pkg/adapter/export_test.go:22`'s `ReleaseSessionForTest` wraps `releaseSession` and is retired with it, in
@@ -4521,12 +3852,7 @@ favour of the `ReleaseSlotForTest` the same file already exports. Its one consum
 tracing-context block below states that case's assertion disposition and repeats this mechanism move.
 
 `pkg/adapter/session_test.go` is therefore a hand-rewrite beyond the `sessionServer` helper stated below,
-and two further cases in it are re-based rather than inverted. `TestSendMessageRejectsUnknownSession`
-(`:289`) and `TestShutdownRejectsUnknownSession` (`:395`) each require `NotFound` for a session the pod
-never held, which the pod-global comparison returned and the merged handlers do not: a lookup for an
-unregistered identifier returns `FailedPrecondition` with "no assigned session"
-(`pkg/adapter/slotsession.go:64-68`, `:116-121`), which is the same re-base this block applies to the
-credential twin above and which the reclaimer paragraph already relies on. Both request literals carry no
+and two further cases in it take different dispositions. `TestSendMessageRejectsUnknownSession` (`:289`) is re-based: it requires `NotFound` for a session the pod never held, which the pod-global comparison returned and the merged handler does not, because a lookup for an unregistered identifier returns `FailedPrecondition` with "no assigned session" (`pkg/adapter/slotsession.go:116-121`), which is the same re-base this block applies to the credential twin above. `TestShutdownRejectsUnknownSession` (`:395`) is inverted rather than re-based, because SCHEMA-1's clause two makes the merged handler refuse nothing: it drives `Shutdown` for `sess-other` on a pod bound to `sess-1` and asserts `exited_cleanly` true with no teardown run and the bound co-tenant's entry, stream, and runtime untouched, which is the unit-level twin of `TestShutdownForReleasedSessionWithoutRecycleIsANoOp_spec_11_4` above. Leaving it asserting a refusal would re-introduce the §11.4 revoke slot leak this proposal exists to close. Both request literals carry no
 `SlotId`, so both compile unchanged and fail at runtime.
 
 `pkg/adapter/one_session_only_test.go`'s two credential cases and `pkg/adapter/credentials_test.go` are
@@ -4564,7 +3890,7 @@ session's credential file at `slotlayout.Resolve`'s `CredentialsDir` and onto th
 lease's `expires_at`, the expiry fire deleting the provider's entry and emitting AUTH_EXPIRED, revoke
 cancelling the timer, extension moving the deadline without rewriting the file, and per-provider
 independence within one slot. `TestReleaseSessionCancelsExpiryTimers_spec_4_9` (`:322-343`) drives the
-retired `releaseSession` directly and moves onto the slot release path, asserting that a `ShutdownSlot`
+retired `releaseSession` directly and moves onto the slot release path, asserting that a `Shutdown`
 stops that session's armed timers. Its slot-specific cases (`:406, 571, 610, 632`) collapse their distinct
 session and slot fixtures onto one identifier under D5. Without this disposition a fail-closed
 lease-expiry surface changes both its storage location and its timer set with every existing pin silently
@@ -4727,144 +4053,32 @@ drives `StartSession` with a traversal-bearing `session_id` and keeps its `Inval
 is the `StartSession` half of the malformed-identifier arm the "Tier 1, `pkg/adapter`" block above states.
 Its subject survives the merge because the session identifier is the path component of every per-session
 tree after CODE-1, so the refusal it pins is the same fail-closed control on the merged path. The
-file's remaining sites, including the `ShutdownSlot` call-site swap at `:290`, take the fixture collapse
+file's remaining sites, including the `Shutdown` call-site swap at `:290`, take the fixture collapse
 stated below.
 
-**Tier 1, the recycle-scrub guard.** §4.11 re-keys Shutdown's recycle-scrub guard from
-`s.currentSession() == ""` onto the slot registry's occupancy, and §1.9 names the regression the re-key
-prevents. Two cases pin the re-keyed predicate, against whichever message survives §4.5(d). Under the base
-case the message is `ShutdownPodRequest`, per SCHEMA-1: one against a pod whose slot registry holds no bound slot,
-which runs the whole-pod scrub, and one against a pod still holding a bound slot, which is refused with
-`FailedPrecondition` rather than scrubbing a pod that is still serving a session. If review declines the
-split, the same pair runs against a recycle `ShutdownRequest`: an empty registry dispatches
-`startPodScrub`, and a pod still holding a bound slot takes the per-session path instead, which is the
-branch that becomes universally taken if the guard is left on the pod-global read. The existing conformance case
-(`tests/tier10_conformance/recycle_scrub_conformance_test.go:272-274`) drives a pod with no registered slot
-at all, so it passes before and after the re-key and cannot detect the regression. Both cases carry a
-`// spec:` tie to §5.2 and §4.7.
+**Tier 1, the merged shutdown handler.** §4.11 deletes Shutdown's recycle-scrub guard rather than re-keying it, and §1.9 names the regression the deletion prevents. Three cases pin the three clauses, all in `pkg/adapter`, each carrying a `// spec:` tie to §4.7 and §5.2.
 
-A third case covers the base-mode release sequence SCHEMA-1 states, which is where the split could silently
-delete a session's teardown. A pod serving one session at a time is driven through `ShutdownSlot` followed
-by `ShutdownPod`, and the case asserts that the final usage report is flushed, the `CH-RUNTIMEOPS` drain
-signal is sent, the runtime is closed for that session, `ReportSessionScrub` is emitted for it, and
-`startPodScrub` then runs on the `ShutdownPod`. Without the `ShutdownSlot` leg the pod-scrub handler carries
-no session, so every one of those steps disappears and the occupancy refusal fires instead; the case fails
-in exactly that state.
+`TestShutdownRunsSessionTeardownThenPodScrub_spec_5_2` drives a pod serving one session at a time through one request carrying `session_id` and a `RecycleScrub`, and asserts that the final usage report is flushed, the `CH-RUNTIMEOPS` drain signal is sent, the runtime is closed for that session, `ReportSessionScrub` is emitted for it, and `startPodScrub` then runs, in that order. It is the case that fails if clause two is ever made conditional on the recycle disposition or moved behind the scrub.
 
-A fourth case runs the merged handler on a pod holding two bound slots, which is the arm the third case
-does not reach. A `ShutdownSlot` for one of the two flushes the final usage report for that session alone,
+`TestShutdownForReleasedSessionScrubsWithoutTeardown_spec_5_2` sends the same request to a pod whose registry holds no bound entry for the named session, which is the occupancy-zero recycle edge `pkg/gateway/podlifecycle/podsession/slotbinder.go:570` produces and the state `pkg/adapter/podscrub_test.go:284` already drives. It asserts that `startPodScrub` runs, that no `ReportSessionScrub` is emitted, that no drain signal is sent, and that the response reports `exited_cleanly` true. The existing conformance case (`tests/tier10_conformance/recycle_scrub_conformance_test.go:272-274`) drives the same state and continues to pass unchanged.
+
+`TestShutdownForReleasedSessionWithoutRecycleIsANoOp_spec_11_4` sends a request naming a released session with no `RecycleScrub`, which is what the §11.4 full revoke's later terminal release produces, and asserts `exited_cleanly` true, no scrub, and a co-tenant's registry entry, stream, and runtime untouched. Without it the revoke leak in CODE-1 reappears as a red tier-4 case rather than a red unit case.
+
+`pkg/adapter/podscrub_test.go`'s `TestShutdownRejectsRecycleWithEmptySessionID_spec_4_7` (`:331`), `TestShutdownTerminatePathRunsNoScrub_spec_4_7` (`:435`), and `TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2` (`:284`) survive unchanged, and the three wire cases in `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go` take the `slot_id` removal in their golden encodings alone.
+
+A fourth case, `TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2` in `pkg/adapter/slotsession_test.go`, runs the merged handler on a pod holding two bound slots, which is the arm the first case does not reach, and asserts that no `CH-RUNTIMEOPS` drain is sent while a co-tenant's bound entry survives. A `Shutdown` for one of the two flushes the final usage report for that session alone,
 closes that session's runtime, emits `ReportSessionScrub` for it, and sends no `CH-RUNTIMEOPS` drain
 signal, because the co-tenant's entry is still in the registry; the co-tenant's slot, its stream, and its
-runtime survive the teardown. A `ShutdownSlot` for the second session then sends the drain signal before
-closing that session's runtime, since deregistering it leaves the registry empty. Without the registry-occupancy test the first teardown signals
-the shared runtime to terminate and the surviving session loses its runtime, which is why the pair is
-pinned rather than inspected.
+runtime survive the teardown. A `Shutdown` for the second session then sends the drain signal before
+closing that session's runtime, since deregistering it leaves no bound entry. Without the bound-entry test the first teardown signals the shared runtime to terminate and the surviving session loses its runtime, which is why the pair is pinned rather than inspected.
 
-A fifth case pins the reclaimer SCHEMA-1 adds for a registered-but-unbound entry. A `PrepareWorkspace` for
-one session, followed by a bind failure that never reaches `StartSession`, followed by a `ShutdownSlot`
-naming that session, leaves the registry with no entry for it and its tree removed, with no
-`ReportSessionScrub` for a session that never started. A later session on the same pod then takes
-the drain signal on its own `ShutdownSlot`, and an unaddressed inbound frame on that pod resolves rather
-than being rejected. Without the reclaimer both stay wrong for the life of the pod, and neither failure
-raises an error, because `drainViaLifecycle` swallows its send errors.
+A fifth case in the same file, `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2`, pins the arm the change of quantity introduces: a pod holding one bound session and one registered-but-unbound entry created by `PrepareWorkspace` is driven through the bound session's `Shutdown`, and the drain is asserted sent, because the deregistration left no bound entry even though the registry is non-empty. That is the arm an all-entries count gets wrong, and it is the case that fails if the gate is ever re-keyed onto the registry's cardinality. The fourth and fifth cases both carry a `// spec:` tie to §5.2 and §15.4.2, and together they are the drain gate's tier-1 pin.
 
-A sixth case pins the close the reclaimer discharges, which is the half a reclaimer that only deleted the
-entry would leave undone. A pod holding one bound session and one registered-but-unbound entry is driven
-through the bound session's `ShutdownSlot`, which withholds the drain and the hard close because the
-registry is still occupied, and then through the reclaim `ShutdownSlot` for the unbound entry. The case
-asserts that the shared runtime process is closed once the reclaim empties the registry, and that the
-listener bound at adapter startup (`pkg/adapter/socketruntime.go:156-161`) is still open afterwards, which
-a later dial to `SocketPath()` reaches. It also asserts the `runtime_closed` each response carries, false
-on the bound session's teardown that the surviving unbound entry kept the runtime up for and true on the
-reclaim that emptied the registry, which is the report SCHEMA-1's drain compensation keys on. A third arm
-runs the reclaim on a pod no session has ever started on, which is the state every pre-`StartSession` bind
-failure leaves: the entry is deleted and its tree removed, `Runtime.Close` is never called, no `terminate`
-frame reaches the `CH-RUNTIMEOPS` stub the arm installs, the socket runtime is still able to accept a later
-`Start`, and the response reports `runtime_closed` false. Without that arm a handler that drains and
-reports a close on a runtime it never touched ships green, and the gateway retires a healthy warm pod on
-its first bind failure. Without the close on the reclaim arm the pod keeps a drained
-runtime that nothing ever closes, and no send reports it. All three arms are driven against the real
-`SocketRuntimeProcess` rather than a stub, because with the listener close left in place the second arm
-fails: a later `Start` returns from `accept` (`pkg/adapter/socketruntime.go:285`) with `net.ErrClosed`.
-
-The case runs both transports, because what a later `Runtime.Start` does after the close depends on which
-one is configured, and the disposition is different on each. With `SpawnPath` set (the developer-loop
-transport, the configuration `pkg/adapter/socketruntime_e2e_test.go:56` and the two tier-4 cases use) the
-later `Start` spawns a fresh process, accepts its connection, and serves it. With `SpawnPath` unset (the
-§4.7 sidecar transport `cmd/lenny-adapter/main.go:349-357` configures in production, where the runtime
-container dialed once and `RestartPolicyNever` (`pkg/controller/sandbox/podspec/podspec.go:978`) does not
-restart it after the clean-exit EOF) the later `Start` spawns nothing and blocks in `accept` until its
-timeout, so the arm sets `AcceptTimeout` short and asserts the timeout rather than a re-accept. The
-gateway compensation that keeps a later session off such a pod is pinned by the tier-2 case below. Filing
-the sidecar arm as a re-accept would pin a disposition only the test-only spawn configuration produces.
-
-A seventh case pins the listener property on the ordinary teardown, which reaches the same close: after the
-last bound session's `ShutdownSlot` on a pod whose claim survives, the listener is still open and
-`SocketPath()` still resolves to it. Both carry a `// spec:` tie to §5.2 and §4.7.
-
-An eighth case pins SCHEMA-1's scoping of the withholding arm to `SocketRuntimeProcess`, which the seven
-adapter cases above never reach because each is written against that implementation and its active set.
-`InProcessRuntime.Close` (`pkg/adapter/embedded.go:188-204`) and `MCPRuntime.Close`
-(`pkg/adapter/mcpruntime.go:265`) hold no active set and ignore `last`, and the `last` false call is
-reachable on their pods, because SCHEMA-1 counts every registry entry toward occupancy and an
-embedded-model or MCP-backed pod whose co-tenant entry is mid-workspace-prep passes false. Each
-implementation is driven twice, once with `last` true and once with `last` false, and both calls assert the
-same outcome: the loop ends, the output channel closes as today, and the call reports `closed` true. Both cases
-additionally assert `Connected` on all three sides of the teardown, because the merged `ShutdownSlot`
-gates the drain and the reclaim arm's close on that predicate on every pod class: false before any
-`Start`, true after a `Start` that bound a session, and false again after a `Close` that tore the runtime
-down. A reclaim `ShutdownSlot` on a pod of either class that has started no session therefore sends no
-`terminate` frame, calls no `Close`, and reports `runtime_closed` false, and a torn-down runtime takes the
-same disposition, while a live runtime of either class still takes the §15.4.2 drain before its close. On
-the MCP implementation the post-teardown assertion is what a `Connected` derived from `r.started` alone
-fails, since `MCPRuntime.Close` never clears that flag. On the embedded implementation the assertions read
-the bound `r.session` SCHEMA-1 derives the predicate from, set by `Start` at `pkg/adapter/embedded.go:74`
-and cleared by `Close` at `:195`; without them a derivation that latches true ships green on every
-embedded-model pod, and the drain it misdirects fails silently because `drainViaLifecycle` swallows the
-not-connected and closed errors (`pkg/adapter/session.go:294-301`). The embedded case then drives the
-property the scoping exists for, running `Start` for the co-tenant session after the `last` false `Close`
-and asserting that it binds and serves rather than returning `adapter: embedded runtime already bound to
-session ...` from `pkg/adapter/embedded.go:69-71`. Without the case a `Close` that withholds teardown on
-`last` false ships green, and every session placed on an embedded-model pod after the first fails at the
-last step of `materializeSlot`.
-
-A ninth case pins the fourth implementation of `RuntimeProcess`, the wrapper SCHEMA-1 puts around
-`*executor.SubprocessExecutor` at `cmd/lenny-adapter/main.go:363`. It runs in package `main`, where
-`cmd/lenny-adapter/main_test.go` already pins production wiring assigned in `main.go`
-(`TestNewScrubOpsWiresRealScrub_spec_5_2` at `:21`), and it drives the wrapper directly rather than through
-the adapter server. `Connected` is false before any `Start`, so a reclaim `ShutdownSlot` on a developer-loop
-pod that has started no session sends no drain, calls no close, and reports `runtime_closed` false. A
-forwarded `Start` for one session makes `Connected` true. `Close` for that session with `last` false still
-tears the named session's child down and reports `closed` true, because the removal found the session in
-the set, and a second `Close` for the same session reports `closed` false. With two sessions started,
-`Connected` stays true after the first session's `Close` and goes false after the second's. Neither value is
-readable from the executor, so no executor-level case can carry the obligation: `SubprocessExecutor.Close`
-returns a bare `error` and discards its own found-or-not result on both branches
-(`pkg/gateway/session/executor/subprocess.go:340-349`), and `procs` (`:41`) and `session` (`:308`) are
-unexported in package `executor`. The case runs under `-race`, since the set is mutex-guarded and a
-concurrent `Start` and `Close` are the reachable pattern on a pod serving more than one session. Without it
-the two values the merged `ShutdownSlot` handler acts on ship unpinned on this implementation, and the
-seven cases above cannot cover them because each is written against `SocketRuntimeProcess`: a wrapper that
-reported `Connected` true on an unstarted pod would send a `terminate` frame to a warm runtime that has
-served nothing, and one that reported `closed` true on a bind failure would retire a healthy pod through
-SCHEMA-1's drain compensation. The case carries a `// spec:` tie to §4.7 and §5.2.
-
-A tenth case pins the `ShutdownPod` handler's remaining arm, under the base case in §4.5(d), and runs only
-if the split lands. A `ShutdownPodRequest` carrying no `RecycleScrub`, sent to a pod whose slot registry
-holds no bound slot, is refused with `InvalidArgument`, no `startPodScrub` runs, and no `ReportPodScrub` is
-emitted. The arm is fail-closed and its omission is observable: `startPodScrub` reads the message only
-through `rc.GetPodId()` (`pkg/adapter/podscrub.go:36-61`), so a handler that fell through on a nil
-`RecycleScrub` would run a whole-pod scrub and report it under an empty pod id. No other case reaches the
-arm, since §8's `InvalidArgument` case is the empty-`session_id` refusal on the session-scoped handlers and
-`ShutdownPodRequest` carries no `session_id`, and the two re-based cases of
-`pkg/adapter/podscrub_test.go` below move onto `ShutdownSlot`.
-The case carries a `// spec:` tie to §5.2 and §4.7.
-
-An eleventh case pins the order of the tree removal against the drain and the close, which is the property
+A sixth case pins the order of the tree removal against the drain and the close, which is the property
 SCHEMA-1 splits `releaseSlot` to create and which no case above reaches. Every case above asserts the end
 state of the registry and the tree, and a handler that kept the one-call `releaseSlot`
 (`pkg/adapter/slotsession.go:102-112`) at the deciding critical section satisfies all of them while removing
-the ending session's tree before the `terminate` frame is sent. The case runs the merged `ShutdownSlot` for
+the ending session's tree before the `terminate` frame is sent. The case runs the merged `Shutdown` for
 the last bound session on a pod, against the `startRuntimeOps` peer `pkg/adapter/drain_test.go:17` already
 uses and a stub `RuntimeProcess` in the `holdRuntime` style, and takes its assertions inside the §15.4.2
 grace window rather than after it. At the moment the peer reads the `terminate` frame, and again on entry to
@@ -4877,57 +4091,20 @@ first two assertions, because `removeSlotTree` (`pkg/adapter/slot.go:177-179`) c
 `slotlayout.RemoveTree` over the same paths, so the agent process loses the credential file it is reading
 while it finishes its current exchange. The split is not compiler-caught in that direction, since the
 two-step form and the one-call form both compile at every caller and §4.11 has the twelve rollback sites,
-CODE-3's hold-termination loop, the reclaimer, and `ReleaseSlotForTest` call the two steps in immediate
-succession. The case runs whichever message survives §4.5(d) and carries a `// spec:` tie to §15.4.2 and
-§6.4.
+CODE-3's hold-termination loop and `ReleaseSlotForTest` call the two steps in immediate succession. The case runs the one surviving message and carries a `// spec:` tie to §15.4.2 and §6.4.
 
-`pkg/adapter/drain_test.go` is the existing tier-1 pin of that drain signal and is a hand-rewrite under the
-base case. `TestShutdownDrainsViaLifecycle_spec_15_4_2` (`:16`) claims the pod through the retired
+`pkg/adapter/drain_test.go` is the existing tier-1 pin of that drain signal and is a hand-rewrite. `TestShutdownDrainsViaLifecycle_spec_15_4_2` (`:16`) claims the pod through the retired
 `claimSession` (`:24`) and drives the deleted `ShutdownRequest` (`:28`) to assert the `terminate` frame
 (`:36-38`), so it breaks twice over, and its premise that a Shutdown always drains is the premise the
-occupancy gate qualifies. The rewrite binds the session's slot, sends `ShutdownSlot`, and keeps the frame
+occupancy gate qualifies. The rewrite binds the session's slot, sends `Shutdown`, and keeps the frame
 assertion as the registry-emptying arm of the gate; the two `drainViaLifecycle` cases at `:47` and `:56`
 keep their subjects. `pkg/adapter/platformmcp_test.go` (`:29, 89, 212, 289`) and
 `pkg/adapter/connectormcp_test.go` (`:69, 154`) construct the deleted message only to tear a session down
-between cases, so both are `ShutdownSlot` call-site swaps.
+between cases, so both are `Shutdown` call-site swaps.
 
-`pkg/adapter/podscrub_test.go` is the tier-1 pin of the whole-pod recycle scrub and is a hand-rewrite
-beyond the `Server.WorkspaceRoot` swap stated below. It constructs the deleted message at eight sites
-(`:195, :242, :292, :334, :366, :405, :442, :682`), none of them a call-site swap. Five bind a session
-through `startRecycleSession` (`:161-167`) and then send a recycle request on the same pod
-(`TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2` at `:190`,
-`TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2` at `:238`,
-`TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2` at `:362`,
-`TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2` at `:400`, and
-`TestShutdownRecycleScrubIsAsynchronous_spec_5_2` at `:666`), which SCHEMA-1 turns into a `ShutdownPod`
-that the occupancy refusal rejects while a bound slot remains, so under D1 each would hit the refusal
-instead of running the scrub. Each sends `ShutdownSlot` for the ending session first, which keeps the five
-spec-named §5.2 outcomes they own, the standard profile, the empty-cleanup-commands case, the two
-vm-restart cases, and the asynchronous scrub, pinned rather than silently uncovered.
-`TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2` (`:284`) takes no `ShutdownSlot`, because
-it starts no session and registers no slot (`:287-291`), so a `ShutdownSlot` for it would be refused with
-`FailedPrecondition` by the merged handler (`pkg/adapter/slotsession.go:64-68`) and the case would fail at
-its first call. It moves onto `ShutdownPod` alone, and it is the case pinning the admit arm of the re-keyed
-occupancy guard, where an empty registry runs the whole-pod scrub, beside the new refusal case for a pod
-still holding a bound slot.
-`TestShutdownRejectsRecycleWithEmptySessionID_spec_4_7` (`:331`) pins a non-empty-`session_id` guard on a
-recycle request, which `ShutdownPodRequest` cannot express, so it is re-based onto `ShutdownSlot`'s
-empty-`session_id` refusal under §4.2. `TestShutdownTerminatePathRunsNoScrub_spec_4_7` (`:435`) pins the
-terminate path on a request that after the split carries no recycle field, so it is re-based onto a
-`ShutdownSlot` that runs no pod scrub. If review declines the split, the file takes only the field swap.
+`pkg/adapter/podscrub_test.go` is the tier-1 pin of the whole-pod recycle scrub and takes the field swap alone beyond the `Server.WorkspaceRoot` swap stated below. It constructs the message at eight sites (`:195, :242, :292, :334, :366, :405, :442, :682`). The five cases that bind a session through `startRecycleSession` (`:161-167`) and then send a recycle request on the same pod (`TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2` at `:190`, `TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2` at `:238`, `TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2` at `:362`, `TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2` at `:400`, and `TestShutdownRecycleScrubIsAsynchronous_spec_5_2` at `:666`) send one request and keep their five spec-named §5.2 outcomes with no added call, because clause two and clause three run in one handler exactly as `pkg/adapter/session.go:246-286` runs them today. `TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2` (`:284`), `TestShutdownRejectsRecycleWithEmptySessionID_spec_4_7` (`:331`), and `TestShutdownTerminatePathRunsNoScrub_spec_4_7` (`:435`) take the field swap alone.
 
-`pkg/adapter/sessionscrub_emit_test.go` is the tier-1 pin of the §5.2 `ReportSessionScrub` emission and is
-a hand-rewrite for the same reason. Its four `shutdownSlotReq` fixtures (`:78-83`) pair a session with a
-distinct slot and collapse onto one identifier, and the calls move onto `ShutdownSlot`.
-`TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2` (`:216-244`) requires exactly one report on the recycle
-request and treats a non-empty slot id as a failure, which is the base-mode empty-slot emission D1 retires;
-it is re-based onto the `ShutdownSlot`-then-`ShutdownPod` sequence with the slot assertion deleted.
-`TestBaseTerminateShutdownEmitsNoSessionScrub_spec_5_2` (`:256-271`) requires a base-mode terminate Shutdown
-to emit zero reports, which SCHEMA-1 inverts by putting the emission on `ShutdownSlot` unconditionally, so
-it becomes a case asserting that a retire-disposition `ShutdownSlot` emits exactly one `ReportSessionScrub`.
-That inversion is a behavior change in its own right, since a retire release now advances `sessions_served`
-where it did not before, and the case states the `maxSessionsPerPod` accounting consequence. Neither edit is
-compiler-caught beyond the message construction.
+`pkg/adapter/sessionscrub_emit_test.go` is the tier-1 pin of the §5.2 `ReportSessionScrub` emission and is a hand-rewrite. Its four `shutdownSlotReq` fixtures (`:78-83`) pair a session with a distinct slot and collapse onto one identifier, and the calls move onto the surviving `Shutdown`. `TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2` (`:216-244`) requires exactly one report on the recycle request and treats a non-empty slot id as a failure, which is the base-mode empty-slot emission D1 retires; it keeps its single-request subject and loses only its slot assertion. `TestBaseTerminateShutdownEmitsNoSessionScrub_spec_5_2` (`:256-271`) requires a base-mode terminate Shutdown to emit zero reports, which SCHEMA-1 inverts by putting the emission on every teardown unconditionally, so it becomes a case asserting that a retire-disposition `Shutdown` emits exactly one `ReportSessionScrub`. That inversion is a behavior change in its own right, since a retire release now advances `sessions_served` where it did not before, and the case states the `maxSessionsPerPod` accounting consequence. Neither edit is compiler-caught beyond the message construction.
 
 **Tier 1, the MCP teardown on the slot release path.** §4.11 moves `releaseSession`'s remaining work onto
 the slot release path, and that path performs no MCP teardown today: `releaseSlot`
@@ -4935,12 +4112,7 @@ the slot release path, and that path performs no MCP teardown today: `releaseSlo
 `mcpCancel` nor `mcpHandshakeSeen` appears in `pkg/adapter/slotsession.go` or `pkg/adapter/slot.go`. The
 move is therefore new behavior on that path, and CODE-1's start-side merge starts the pod's platform MCP
 server on the §15.4.3 nonce of the session whose `StartSession` started it, so the failure mode §4.11 names
-is reachable on every pod. The servers are pod-wide, so the predicate is the departing session leaving the
-pod with none other bound: a `ShutdownSlot` on a pod holding one bound slot cancels the platform and
-per-connector MCP servers (`pkg/adapter/session.go:387-407`) and clears `mcpHandshakeSeen`, so a later
-session on the same pod is not observed at Standard on the prior session's handshake signal, which is the
-second case. The non-happy path is a co-tenant: a `ShutdownSlot` for one session on a pod holding two bound
-slots cancels nothing, and the co-tenant's MCP servers and its runtime stream survive.
+is reachable on every pod. The servers are pod-wide and the cancellation is unconditional, so the predicate is the release itself: a `Shutdown` cancels the platform and per-connector MCP servers (`pkg/adapter/session.go:387-407`) and clears `mcpHandshakeSeen` whichever session's entry it removes, so a later session on the same pod is not observed at Standard on the prior session's handshake signal, which is the second case. A third case pins the re-arm: a later claim that finds the registry holding no entry but its own starts the servers again on its own fresh §15.4.3 nonce, and a claim on a co-tenanted pod does not. The co-tenant arm asserts the cost rather than a survival: on a pod holding two bound slots the release cancels the pod-wide servers as well, the co-tenant's runtime stream survives, and the co-tenant's later `tools/list` and `tools/call` are refused by CODE-1's `soleSession()`, which was already refusing them before the cancellation.
 
 **Tier 1, `pkg/adapter/scrub`, the per-slot purge.** SPEC-4 re-states step 0 and step 6 over the per-slot
 credential files and CODE-1 re-points the scrub configuration onto them, so both arms are pinned. On a pod
@@ -4951,7 +4123,7 @@ ship silently: when one credential file survives the purge, step 6 marks the scr
 verifying an absent pod-global path and passing. A third case covers the residue a leaked slot leaves, whose
 registry entry is already gone at recycle time, so the enumeration reads the on-disk children rather than
 the registry. A fourth case pins the `cleanupCommands` working directory: on a pod that held two slots and
-whose two `ShutdownSlot` calls preceded the `ShutdownPod`, the commands run with the workspace base as their
+whose two sessions' teardowns preceded the pod scrub, the commands run with the workspace base as their
 working directory, observe it as `PWD`, and find no per-slot tree under `/workspace/slots` and no per-slot
 credential file under `/run/lenny/slots`, which is the state the ordering SCHEMA-1 states produces and the
 state SPEC-4 restates `spec/05:453` for. Without it the singular `CleanupDir` CODE-1 adds could be left
@@ -4976,16 +4148,13 @@ pod-wide unit `spec/10:57` states and CODE-3 does not change. A second case driv
 holding two bound slots and asserts that both sessions' runtimes are closed and both post-mortems written,
 which is the per-member termination CODE-3 states; without it one session is terminated and the
 co-tenant's agent process keeps running with no coordinator and no reconciler that reaches it. The case
-also asserts that the shared runtime process is closed once, on the last member, which is the teardown
-decision SCHEMA-1's `Close` signature takes from the loop, and that one `AdapterTerminating` envelope is
+also asserts that the shared runtime process is closed once, on the last member, which the socket runtime's own active set decides (`pkg/adapter/socketruntime.go:434-445`) with no parameter from the loop, and that one `AdapterTerminating` envelope is
 emitted per terminated session, each carrying that session's identifier, which is the arity CODE-3 states.
 The same case asserts that the slot registry is empty once the timeout returns, which is the per-member
 deregistration CODE-3 states; without it the two entries survive for the life of the pod. A third case
 takes that pod on to the next session and asserts the recovery the deregistration buys: a session bound
-after the timeout takes the `CH-RUNTIMEOPS` drain signal and the hard close on its own `ShutdownSlot`, and
-an unaddressed inbound frame on that pod resolves rather than being rejected under §4.6.1. That is the same
-pair the reclaimer's fifth tier-1 case asserts, and it fails silently without the deregistration, because
-`drainViaLifecycle` swallows its send errors. The termination cases drive it through the registry read CODE-3 takes
+after the timeout takes the `CH-RUNTIMEOPS` drain signal and the hard close on its own `Shutdown`, and
+an unaddressed inbound frame on that pod resolves rather than being rejected under §4.6.1. It fails silently without the deregistration, because `drainViaLifecycle` swallows its send errors. The termination cases drive it through the registry read CODE-3 takes
 when the timeout fires, so a session bound after the arming read is still terminated; tier 7a drives that
 interleaving concurrently. The non-happy paths: a
 pod whose only slot is registered and not yet bound arms no hold, and a fence exits the hold so a later RPC
@@ -5239,11 +4408,7 @@ field change. Four are hand-rewrites on other grounds this section states elsewh
 `tests/tier4_integration/concurrent_workspace_test.go`, and
 `pkg/gateway/runtime/adapterclient/client_test.go`, whose shutdown-surface rewrite this section states
 below. Eight more are subject re-bases for the two reasons the next two paragraphs give, and the rest are
-compile-only field swaps. "Compile-only" describes the `Server.WorkspaceRoot` swap alone. A holder that
-also defines a `RuntimeProcess` double takes the `Close` signature change and the `Connected` predicate
-SCHEMA-1 adds as well, and §10 enumerates every such double; the field swap on its own leaves those
-packages unbuildable. Until every holder takes both, tiers 1 through
-10 do not build in these packages.
+compile-only field swaps. "Compile-only" describes the `Server.WorkspaceRoot` swap alone. "Compile-only" is the whole of it for those holders: no `RuntimeProcess` double takes an interface edit under this deliverable, because `Runtime.Close` keeps its signature and its behavior and no `Connected` predicate is added, so the `Server.WorkspaceRoot` swap is all those packages need to build.
 
 Five holders outside `pkg/adapter` drive the real adapter through the binder or the HTTP surface and then
 read the materialized file back at the swapped root's top level, which is the same hazard this section
@@ -5346,25 +4511,7 @@ Without both halves no case in this section asserts the key an SDK
 emits, the echo obligation SPEC-7 stages goes unverified, and the tier-10 battery in
 `tests/tier10_conformance/concurrent_slot_conformance_test.go` reaches the Go reference runtime alone.
 
-**Tier 3, the shutdown split.** The split replaces two published messages and one RPC with four messages and
-two RPCs, which is a wire-contract change in its own right. A case pins the post-split descriptor:
-`ShutdownSlotRequest` carries `session_id`, `reason`, `deadline_ms`, and `coordination_generation` and no
-slot or recycle field; `ShutdownPodRequest` carries `recycle`, `reason`, `deadline_ms`, and
-`coordination_generation` and no session field; `ShutdownSlotResponse` and `ShutdownPodResponse` each carry
-`exited_cleanly` and `exit_code`, and `ShutdownSlotResponse` carries `runtime_closed` as well; both RPCs
-are declared on `service Adapter`; and none of `Shutdown`,
-`ShutdownRequest`, or `ShutdownResponse` survives in the descriptor. Two of the three cases in
-`tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go` are a hand-rewrite under the base
-case rather than a fixture swap: `TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7` (`:43`) and
-`TestShutdownRequestRecycleScrubRoundTrip_spec_5_2` (`:103`) each construct a `ShutdownRequest`, and the
-golden encoding at `:62-70` carries a hand-computed `slot_id` field-4 tag, so neither compiles once the
-message is deleted. The golden encoding and the `RecycleScrub` round trip move onto `ShutdownPodRequest`
-with that message's own field numbering. The file's third case,
-`TestRecycleScrubHasNoScrubProfileField_spec_5_2` (`:161`), reads the `RecycleScrub` descriptor and asserts
-that message's surviving field set (`pod_id` 1, `cleanup_commands` 2, and `cleanup_timeout_seconds` 3, with
-no field 4 and no `scrub_profile`). SCHEMA-1 carries `RecycleScrub` onto `ShutdownPodRequest` unchanged, so
-that case compiles and passes as written and takes no edit. The fixture swap at `:48` applies only if
-review declines the split.
+**Tier 3, the shutdown message.** A case pins the post-removal descriptor: `ShutdownRequest` carries `session_id`, `reason`, `deadline_ms`, `recycle`, and `coordination_generation`, reserves field 4 under the number and the name `slot_id`, and declares no field of type `SlotId`; `ShutdownResponse` carries `exited_cleanly` and `exit_code`; the `Shutdown` RPC is declared on `service Adapter`; and `SlotId` no longer appears in the descriptor. The three cases in `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go` take the field removal alone: `TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7` (`:43`) and `TestShutdownRequestRecycleScrubRoundTrip_spec_5_2` (`:103`) drop the hand-computed `slot_id` field-4 tag from the golden encoding at `:62-70` and the fixture at `:48`, and `TestRecycleScrubHasNoScrubProfileField_spec_5_2` (`:161`) reads the `RecycleScrub` descriptor, which SCHEMA-1 leaves unchanged, so it compiles and passes as written and takes no edit.
 
 **Tier 3, the handshake's workspace report.** SCHEMA-1 replaces `NegotiateVersionResponse.workspace_root`
 (`schemas/lenny-adapter.proto:1664-1671`) with `string workspace_base = 6` and reserves field 5 under both
@@ -5507,32 +4654,12 @@ one of CODE-2's two derivation sites whose value never reaches `sessions.workspa
 case above cannot detect it, and the defect it guards is the one §1.2 records: a session pointed at a tree
 no slot owns.
 
-**Tier 2, the base-mode release sequence at the producer.** The tier-1 case above drives the adapter through
-the two messages and cannot detect a binder that emits only one, so the sending side takes its own case
-against the package's envtest harness. A base-mode `Release` on a recycling pool emits `ShutdownSlot` for
-the ending session and then `ShutdownPod` carrying the `RecycleScrub`, in that order, and a release on the
-retire disposition emits `ShutdownSlot` alone. Without it the ordering SCHEMA-1 states rests on inspection
-of `binder.shutdownAdapter` (`pkg/gateway/podlifecycle/podsession/binder.go:1934-1947`) alone.
-`pkg/gateway/podlifecycle/podsession/binder_test.go` is a hand-rewrite under the base case: its
-`recordingShutdownAdapter.Shutdown` fake takes an `*adapterv1.ShutdownRequest` (`:1167`) that the split
-deletes, and `TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2` (`:1246`) and
-`TestReleaseFailedOnRecyclingPoolSendsPlainShutdown_spec_6_2` (`:1298`) each assert that exactly one
-Shutdown reaches the adapter, which the split makes wrong. The file also sets `srv.WorkspaceRoot` at 39
-sites (from `:329`) and so takes the CODE-2 field swap stated above. If review declines the split, only
-that field swap applies.
+**Tier 2, the base-mode release at the producer.** `binder.shutdownAdapter` keeps its single call on both dispositions, so no producer-side ordering case is owed and none is staged. `pkg/gateway/podlifecycle/podsession/binder_test.go` keeps its `recordingShutdownAdapter.Shutdown` fake and both single-request assertions as written, and takes the CODE-2 `srv.WorkspaceRoot` field swap at its 39 sites (from `:329`) alone.
 
-`pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go` is the second producer test on that path
-and is a hand-rewrite on the same terms. Its `recordingRecycleAdapter` serves the deleted `Shutdown` RPC
-over an `*adapterv1.ShutdownRequest` (`:33-45`), and `TestRecycleScrubConfigFoldsEndToEnd_spec_5_2`
-(`:184-200`) reads `rec.lastShutdown()` and requires the single captured request to carry the
-`RecycleScrub` with pod id `sbx-r`, the two deployer cleanup commands, and the 45-second cleanup timeout,
-all of which now ride on the `ShutdownPod` that follows the ending session's `ShutdownSlot`. The fake
-serves both RPCs and records each, `lastShutdown` (`:46-53`) returns the recorded `ShutdownPodRequest`, and the
-fold assertions move onto it, with the preceding `ShutdownSlot` asserted as the case's second requirement. The file also sets `adapterSrv.WorkspaceRoot` (`:94`) and so takes the CODE-2 field
-swap stated above. If review declines the split, only the field swap applies.
+`pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go` is the second producer test on that path and takes the field swap alone. Its `recordingRecycleAdapter` serves the surviving `Shutdown` RPC over the surviving `ShutdownRequest` (`:33-45`), and `TestRecycleScrubConfigFoldsEndToEnd_spec_5_2` (`:184-200`) keeps its fold assertions on the one captured request, which carries the `RecycleScrub` with pod id `sbx-r`, the two deployer cleanup commands, and the 45-second cleanup timeout. The file also sets `adapterSrv.WorkspaceRoot` (`:94`) and so takes the CODE-2 field swap stated above.
 
 The remaining constructions of the deleted message split two ways. Those that end one session and assert
-nothing about the teardown are call-site swaps onto `ShutdownSlot`:
+nothing about the teardown are call-site swaps onto `Shutdown`:
 `tests/tier4_integration/mcp_runtime_lifecycle_test.go` (`:138, :157`),
 `tests/tier9_security/adapter_mcp_nonce_test.go:149`, the two `pkg/adapter` MCP files named in the tier-1
 block above, `pkg/adapter/session_test.go` (`:332, :360, :385`, with `:400` taken by the re-based
@@ -5542,30 +4669,10 @@ unknown-session case above rather than by a swap), `pkg/adapter/mcpruntime_test.
 `tests/tier4_integration/concurrent_delegation_proxy_test.go:427`, and
 `tests/tier10_conformance/recycle_scrub_conformance_test.go` (`:186, :274, :457`, distinct from the
 `:378-415` rewrite the tier-10 block states).
-`tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go` is neither: its two
-`ShutdownRequest` entries (`:79`, `:150`) are rows in the per-message fence table it walks, so each becomes
-two rows, one per post-split message, matching the two register rows REG-1 adds. The two files that own the
+`tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go` is neither, and takes no edit at all: its two `ShutdownRequest` entries (`:79`, `:150`) are rows in the per-message fence table it walks, and both the message and its `coordination_generation` field survive, so the rows stand as written and REG-1 adds no fence row for them to match. The two files that own the
 teardown's subject are hand-rewrites, stated in the tier-1 block above.
 
-`pkg/gateway/runtime/adapterclient/client_test.go` is the only pin of the adapter client's shutdown method
-surface, and it is a hand-rewrite under the base case beyond the `Server.WorkspaceRoot` swap already stated, the three
-`PrepareWorkspace` cases the merged-upload-staging block above re-bases, and the
-`capturingAdapter` deletion the next paragraph states. Its `recordingAdapter` fake serves the deleted `Shutdown` RPC
-over the deleted `ShutdownRequest` (`:544`, `:571`) and serves both new RPCs after the split. Four
-`Terminate` cases (`:661`, `:686`, `:699`, `:722`) pin the `reason` and `deadline_ms` population CODE-1
-folds into the collapsed `ShutdownSlot` method and SPEC-7 re-points onto the §11.4 `USER_REVOKED` send;
-`TestTerminateSendsReasonAndDeadline` asserts `USER_REVOKED` and a 10s deadline (`:661-683`), and that
-assertion is what keeps the collapsed method's population pinned. Those four and the two surviving plain
-`Shutdown` calls (`:440` and `:527`) re-base onto the collapsed method.
-`TestShutdownRecyclePopulatesTheRecycleSubMessage` (`:744-763`) requires the recycle request to carry
-session id `sess-r` (`:762`), which `ShutdownPodRequest` has no field for, so the session assertion becomes
-an assertion that the request carries the `RecycleScrub` and no session.
-`TestShutdownLeavesTheRecycleSubMessageNil` (`:784`) exists to pin "the two dispositions apart on the same
-proto RPC" (`:783`), which is the presence-encoded scope D6 retires, so it is deleted with the encoding.
-`TestShutdownRecycleSurfacesRPCError` (`:811`) keeps its subject on the `ShutdownPod` RPC. Without this
-disposition nothing asserts that the collapsed method populates `reason` and `deadline_ms` or that
-`ShutdownRecycle` populates `RecycleScrub` and no session. If review declines the split, the file takes only
-the `Server.WorkspaceRoot` swap and the `capturingAdapter` deletion.
+`pkg/gateway/runtime/adapterclient/client_test.go` is the only pin of the adapter client's shutdown method surface, and it is a hand-rewrite beyond the `Server.WorkspaceRoot` swap already stated, the three `PrepareWorkspace` cases the merged-upload-staging block above re-bases, and the `capturingAdapter` deletion the next paragraph states. Its `recordingAdapter` fake keeps serving the surviving `Shutdown` RPC over the surviving `ShutdownRequest` (`:544`, `:571`). Four `Terminate` cases (`:661`, `:686`, `:699`, `:722`) pin the `reason` and `deadline_ms` population CODE-1 folds into the collapsed `Shutdown` method and SPEC-7 re-points onto the §11.4 `USER_REVOKED` send; `TestTerminateSendsReasonAndDeadline` asserts `USER_REVOKED` and a 10s deadline (`:661-683`), and that assertion is what keeps the collapsed method's population pinned. Those four and the two surviving plain `Shutdown` calls (`:440` and `:527`) re-base onto the collapsed method. `TestShutdownRecyclePopulatesTheRecycleSubMessage` (`:744-763`) keeps its `sess-r` session assertion (`:762`) unchanged, because the surviving request carries the session beside the `RecycleScrub`. `TestShutdownLeavesTheRecycleSubMessageNil` (`:784`) exists to pin "the two dispositions apart on the same proto RPC" (`:783`), which is the presence-encoded scope D6 retires, so it is deleted with the encoding. `TestShutdownRecycleSurfacesRPCError` (`:811`) is unchanged. Without this disposition nothing asserts that the collapsed method populates `reason` and `deadline_ms` or that `ShutdownRecycle` populates `RecycleScrub`.
 
 The same file's `capturingAdapter` (`:1363-1389`) is a deletion rather than a compile-only field drop, and
 it is a different fake from the `recordingAdapter` above. It exists to record the slot field on
@@ -5581,51 +4688,15 @@ the four. All four go, together with `capturingAdapter`, `dialCapturingAdapter`,
 `waitForAttachSlots`, which nothing else uses. The obligation they carried is carried afterwards by §8's
 tier-3 case that `session_id` is the sole per-session discriminator on the gRPC leg.
 
-**Tier 2, the drain on a reclaimed pod.** SCHEMA-1's gateway compensation is an annotation patch, so it runs
-against the package's envtest harness. The compensation sits inside `materializeSlot`'s four failure
-branches and is reached through both of that function's callers, so the case has a `BindSlot` arm, a `BindReservedSlot` arm, a create-time
-reservation arm, and two negative arms. Each arm drives a stub adapter whose `ShutdownSlot` returns the
-`runtime_closed` value the arm is written for. On the `BindSlot` arm a bind failure whose reclaim
-`ShutdownSlot` returns `runtime_closed` true stamps `lenny.dev/drain-request` on the pod even though the
-pod's windowed failure count is below the §5.2 `ceil(maxConcurrentSessions/2)` threshold. On the
-`BindReservedSlot` arm a session row that already carries a pod assignment is started, `bindConcurrentSlot`
-dispatches to `BindReservedSlot` rather than to the retry policy, the bind fails inside `materializeSlot`,
-and the same annotation is stamped; without this arm the ordinary
-create-then-start path ships uncompensated, because it never reaches the retry policy's release. Both
-positive arms assert the `lenny.dev/drain-request` annotation on the agent Pod, the object
-`podclaim.StampDrainRequest` patches (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:95-100`) and the
-object `PodReconciler` reads it from (`pkg/controller/warmpool/pod_reconciler.go:609-612`), rather than
-only that the stub reported `runtime_closed` true, which is what pins that the report reaches the stamp
-without crossing the `SlotBindError` boundary. Each arm also asserts that the Sandbox's `status.phase` is
-unwritten by the gateway, matching `TestBinderDrainSandbox_spec_4_6_3`
-(`pkg/gateway/podlifecycle/podsession/slotbinder_test.go:840`) and the §4.6.3 decomposition under which the
-WarmPoolController is the sole writer of `Sandbox.status`. On the
-create-time reservation arm the failing bind's only co-occupant is a slot reserved at session create and
-never materialized, so gateway occupancy after the rollback is one while the adapter registry the reclaim
-emptied is zero: the arm asserts that the annotation is stamped, which is the case a post-rollback
-occupancy test gets wrong. On the negative arm the pod holds a live co-tenant slot whose registry entry
-survives, the reclaim `ShutdownSlot` returns `runtime_closed` false, and nothing is stamped. On the second
-negative arm no session has ever started on the pod, which is the ordinary state of a first bind failure on
-a warm pod: the reclaim finds a runtime that was never connected, drains and closes nothing, returns
-`runtime_closed` false, and the arm asserts that no annotation is stamped and that the pod's windowed
-failure count is what governs it, on a `maxConcurrentSessions: 8` pool whose §5.2 threshold the single
-failure does not cross. Without the first four a `maxConcurrentSessions: 4` pod whose sessions failed to
-bind stays a placement candidate with a
-runtime that has already been drained and closed, and each later session placed on it fails at
-`Runtime.Start` and is released again. Without the fifth, one tenant-caused setup failure retires an
-eight-slot warm pod and the §5.2 threshold is bypassed. The case carries a `// diagnosis:` comment and a `// spec:` tie to
-§4.6.3, §5.2, and §6.2.
-
 **Tier 2, the double teardown a §11.4 revoke leaves behind.** The release-side disposition CODE-1 states
-for a `ShutdownSlot` naming a session the adapter no longer holds runs against the same envtest harness,
+for a `Shutdown` naming a session the adapter no longer holds runs against the same envtest harness,
 because the outcome is the Redis counter and the per-pod claim rather than a return value. A session on a
-`maxConcurrentSessions: 4` pod is bound, torn down by a §11.4 `ShutdownSlot` carrying `USER_REVOKED`
+`maxConcurrentSessions: 4` pod is bound, torn down by a §11.4 `Shutdown` carrying `USER_REVOKED`
 through the collapsed client method, and then released through `PodExecutor.Release`, which sends the
-second `ShutdownSlot` for the same session. The stub adapter refuses that second call with
-`FailedPrecondition` "no assigned session", and the case asserts that
+second `Shutdown` for the same session. The stub adapter answers that second call as clause two's no-op, reporting `exited_cleanly` true, and the case asserts that
 `lenny:pod:{pod_id}:active_slots` decremented exactly once across the pair, that the release did not mark
 the slot leaked, and that the pod reaches occupancy zero and takes its claim disposition once its remaining
-slots release. A second arm asserts the retained meaning of `leaked`: a `ShutdownSlot` that fails with a
+slots release. A second arm asserts the retained meaning of `leaked`: a `Shutdown` that fails with a
 transport error, and one that returns `exited_cleanly` false, each leave the slot counted and the claim
 undisposed. A third arm drives the same pair for a CODE-3 hold-terminated session, whose entry
 `onHoldTimeout` deregisters before the `AdapterTerminating` emission drives the terminal release, and
@@ -5665,13 +4736,6 @@ today. A resume whose adapter `Resume` RPC fails leaves `lenny:pod:{pod_id}:acti
 value, and a second attempt on the same pod does not double-count. A checkpoint-restore failure is the
 retryable case CODE-2 exists to enable, so an uncompensated reservation would leak one slot per attempt and
 cap the pod's real capacity with phantom occupancy until a Redis restart rehydrated the counter.
-
-A fifth case covers the bind failure SCHEMA-1's reclaimer depends on. A `materializeSlot` that fails after
-`PrepareWorkspace`, on any of its four failure branches, sends a `ShutdownSlot` for the session before it
-closes the connection, so the adapter holds no registry entry for that session afterwards, and
-`ReleaseSlotReservation` still decrements the counter exactly once. The case asserts both halves, because
-the counter half exists today and the adapter half is what this proposal adds, and a later session's drain
-on the same pod is what the missing half would break.
 
 `pkg/gateway/sessionserver/messages_component_test.go:315-347` is a hand-rewrite rather than a compile-only
 edit, because its premise inverts. `TestMessagesFailsClosedOnConcurrentBindWithNoSlot` (`:326`) builds a
@@ -5812,11 +4876,8 @@ and REG-1 flips the lease-extension register row on it, so it is pinned rather t
 carries a `// spec:` tie to §6.1 and §4.9.
 
 A second case covers what a session's teardown leaves running. On a pod holding one bound slot, a
-`ShutdownSlot` leaves no reachable platform or connector MCP endpoint authenticated with that session's
-§15.4.3 nonce, which is the surface an ended session must not keep. On a pod holding two bound slots the
-same `ShutdownSlot` leaves the pod's endpoints and the co-tenant's runtime stream serving, because the MCP
-servers are pod-wide, and the case asserts that the co-tenant is unaffected rather than that the departing
-session's nonce is revoked. That asymmetry is the limit §9 records for the single pod-global manifest and
+`Shutdown` leaves no reachable platform or connector MCP endpoint authenticated with that session's
+§15.4.3 nonce, which is the surface an ended session must not keep. On a pod holding two bound slots the same `Shutdown` cancels those pod-wide endpoints too, because CODE-1 makes the cancellation unconditional, and the case asserts that the co-tenant's runtime stream survives while its later `tools/list` and `tools/call` are refused by `soleSession()` rather than served, which is the refusal the co-tenanted pod was already under. That asymmetry is the limit §9 records for the single pod-global manifest and
 socket, so it is pinned rather than left to be discovered: one session's teardown must not reach another's
 surface, and an ended session's nonce survives on a co-tenant pod only because the manifest and the socket
 are pod-wide.
@@ -5826,36 +4887,10 @@ reachable on a concurrent pod for the first time. On a pod holding two bound slo
 `tools/call` arriving on the pod's platform socket, and a `tools/call` on a connector socket, are refused
 with `FailedPrecondition` and forward nothing to the gateway, so neither session's traffic dispatches under
 the other's principal. On a pod that has only ever held one bound slot the same calls are forwarded under
-that session's identifier, and after the session's `ShutdownSlot` the same calls are refused rather than
-forwarded under the ended session. A third arm drives the sequence a live-occupancy predicate alone would
-admit and is the case the sticky flag exists for: a pod holding two bound slots for two different users, the
-first session's `ShutdownSlot`, and then a `tools/call` on the platform socket and one on a connector socket,
-both asserted refused with `FailedPrecondition` and forwarding nothing, rather than dispatched under the
-surviving session's principal now that the registry holds one bound entry again. A fourth arm drives the
-same exposure by the route a bound-entry high-water mark would miss, which is why the flag reads the
-all-entries count: a pod holding one bound session for one user plus a co-tenant's registered-but-unbound
-entry created by `PrepareWorkspace`, the bound session's `ShutdownSlot`, the co-tenant's `StartSession`, and
-then a `tools/call` and a `tools/list` on the platform socket and a `tools/call` on a connector socket, all
-asserted refused with `FailedPrecondition` and forwarding nothing, on a pod that never held two bound
-entries at once. A fifth arm drives the second route to the same state, which is why CODE-1 keys the flag on
-the release rather than on `ShutdownSlot`: on a pod holding two bound sessions for two different users, a
-coordinator hold timeout is driven, and a `tools/call` issued on the platform socket between the loop's two
-terminations is asserted refused with `FailedPrecondition` rather than dispatched under the second session's
-principal. The window is real because the loop's non-last `Runtime.Close` returns before touching the shared
-connection or the child, the hold-state interceptor covers only the adapter's gRPC surface, and
-`onHoldTimeout` clears `s.hold.active` before the loop runs. A sixth arm drives the negative side of the
-trigger's started conjunct: on a pod holding one bound session, a second session's bind fails after
-`PrepareWorkspace`, so the §4.11 rollback release deletes a registered-but-unbound entry the claim never
-reached, leaving the registry non-empty with the deleted entry's `started` flag unset, and a `tools/list`
-and a `tools/call` on the platform socket are still dispatched under the surviving session. That arm is the
-only one that separates CODE-1's two-conjunct trigger from a trigger keyed on the release alone, and the
-existing single-session `Resume` rollback arm in tier 1 cannot reach it, because its pod's registry is empty
-after the rollback and both predicates agree there. Without it a flag armed by every non-emptying release would refuse a surviving co-tenant's tool
-calls for the life of the pod and still ship green. The case carries a
-`// spec:` tie to §4.7, §9.1, and §10.1. Without it a regression that
-restores a captured session identifier on the provider, or that drops the sticky flag for the live count
-alone, would execute one user's tool calls as another
-user's, inside the tenant the pod is pinned to, and no other case would see it.
+that session's identifier, and after the session's `Shutdown` the same calls are refused rather than
+forwarded under the ended session. The remaining arms of `TestSharedMCPSurfaceRefusesAfterCoTenancy_spec_9_1_10_1` drive the three routes by which a pod's shared runtime process outlives a session, each asserted to refuse with `FailedPrecondition` and forward nothing rather than dispatch under a surviving co-tenant's principal. A third arm takes the route a live entry count alone would admit: a pod holding two bound sessions for two different users, the first session's `Shutdown`, and then a `tools/call` on the platform socket and one on a connector socket, with the registry back to one entry. A fourth arm takes the route a bound-entry count would miss, on a pod that never held two bound entries at once: one bound session for one user plus a co-tenant's registered-but-unbound entry created by `PrepareWorkspace`, the bound session's `Shutdown`, the co-tenant's `StartSession`, and then a `tools/list` and a `tools/call` on the platform socket and a `tools/call` on a connector socket. A fifth arm takes the route through CODE-3's hold-termination loop: on a pod holding two bound sessions for two different users, a coordinator hold timeout is driven and a `tools/call` issued on the platform socket between the loop's two terminations is asserted refused. That arm passes without CODE-3 staging anything for it, because the pod's `coTenanted` bit was set when the second entry was created and the loop's releases do not clear it while the registry is non-empty; the arm is present to pin that independence rather than to pin a trigger. The window is real because the loop's non-last `Runtime.Close` returns before touching the shared connection or the child, the hold-state interceptor covers only the adapter's gRPC surface (`pkg/adapter/holdstate.go:245-249`), and `onHoldTimeout` clears `s.hold.active` before the loop runs (`:161`). The case carries a `// spec:` tie to §4.7, §9.1, and §10.1. Without it a regression that restores a captured session identifier on the provider, or that drops the co-tenancy bit for the live count alone, would execute one user's tool calls as another user's, inside the tenant the pod is pinned to, and no other case would see it.
+
+The sixth arm is deleted with the conjunct it separated. It asserted that a surviving co-tenant's calls stay dispatched after the rollback of a registered-but-unbound entry; under this predicate they are refused, which is a fail-closed over-refusal on a pod that has no usable intra-pod MCP surface today in any case.
 
 A third case asserts that no credential file is readable anywhere under `/run/lenny` at the moment a
 recycle scrub's `cleanupCommands` execute, on a pod that held two slots. This is the security-tier statement
@@ -5879,30 +4914,11 @@ reason, and takes a second independent break from the gRPC removal.
 
 Two new cases pin SCHEMA-1's drain gate, which is the one decision this proposal adds that reads shared
 adapter state and then performs a pod-global side effect. Both run against `pkg/adapter` under `-race`. In
-the first, two concurrent `ShutdownSlot` calls on a pod holding two bound slots produce exactly one
+the first, two concurrent `Shutdown` calls on a pod holding two bound slots produce exactly one
 `CH-RUNTIMEOPS` drain signal on either interleaving, and it is sent before the last session's runtime is
 closed, which is the order SCHEMA-1 states and the order the §15.4.2 drain depends on. A check-then-act
 evaluation produces no signal at all on the interleaving where each call reads the registry before either
-deregisters, and the case fails in that state. In the second, a `ShutdownSlot` for one session races the
-workspace-prep and `StartSession` of a second session on the same pod. No drain signal is sent while the
-incoming session's registry entry exists, which is the registered-but-unbound arm SCHEMA-1 counts toward
-occupancy, and the case additionally asserts that the shared runtime survives the teardown and that the
-incoming session's `StartSession` reaches a live `Runtime.Start`. That second assertion is what fails when
-the hard close reads the runtime's own active set rather than the number the drain gate reads: the ending
-session is the active set's only member, so `Runtime.Close` would tear the runtime down while the drain was
-being withheld to protect it. The same case carries the opposite interleaving,
-in which the ending session's critical section observes the registry empty, so `last` is true and the drain
-signal is sent, and the incoming session's `Runtime.Start` completes during that send. The property asserted
-there is the connection teardown alone: the ending session's `Close` leaves the shared connection open, and
-a send on the incoming session's stream succeeds afterwards. That is what fails when `Close` decides the
-teardown from `last` alone rather than from `last` and the active-set result together, which is the
-conjunction SCHEMA-1 states. The `terminate` frame the drain already sent on this interleaving is a separate
-exposure the conjunction does not cover, because a runtime that honours the frame exits and nothing reaps it
-(`pkg/adapter/runtimeops.go:481-491`, `pkg/adapter/socketruntime.go:449`), so the case runs against a
-runtime stub that ignores `terminate` and asserts nothing about the process being alive. §9 records the
-drain gate's read-then-act window as a limit. Both carry a `// spec:` tie to §6.4
-and §5.2. The tier-1 pair above drives the two teardowns
-sequentially and reaches neither interleaving.
+deregisters, and the case fails in that state. In the second, a `Shutdown` for one session races the workspace-prep and `StartSession` of a second session on the same pod. The drain signal is sent as soon as the deregistration leaves no bound entry, so the incoming session's registered-but-unbound entry does not withhold it, which is the arm the bound-entry quantity inverts and which an all-entries count gets wrong. The case additionally asserts what that teardown leaves behind for the incoming session. The ending session is the only member of `SocketRuntimeProcess`'s active set, so its `Close` tears the shared connection down and also closes the process-scoped listener the constructor bound (`pkg/adapter/socketruntime.go:161`, `:466`), which no later call re-binds. The incoming session's `Runtime.Start` therefore fails in `accept` (`:285`) rather than re-establishing the connection, and the assertion is that failure rather than a re-establishment or a withheld close. §9 records the pod-level consequence: the failed bind is counted toward the §5.2 unhealthy-slot threshold and the pod is drained rather than recovered in place. The same case carries the opposite interleaving, in which the incoming session's `Start` completes before the ending session's critical section runs, and the property asserted there is the connection's survival: the ending session's `Close` leaves the shared connection open because the incoming session is still in the active set, and a send on the incoming session's stream succeeds afterwards. The `terminate` frame the drain already sent on the first interleaving is a separate exposure, because a runtime that honours the frame exits and nothing reaps it (`pkg/adapter/runtimeops.go:481-491`, `pkg/adapter/socketruntime.go:449`), so the case runs against a runtime stub that ignores `terminate` and asserts nothing about the process being alive. §9 records the drain gate's read-then-act window as a limit. Both carry a `// spec:` tie to §6.4 and §5.2. The tier-1 pair above drives the two teardowns sequentially and reaches neither interleaving.
 
 A third case pins CODE-1's once-per-pod MCP start, which is the second decision this proposal adds that
 reads shared adapter state and then performs a pod-global side effect. Two concurrent `StartSession` calls
@@ -5937,7 +4953,7 @@ finds it in the runtime's active set and returns early (`pkg/adapter/socketrunti
 agent process running with no coordinator; the case fails in exactly that state. It asserts in addition that
 exactly two `AdapterTerminating` envelopes are emitted, one per terminated session, and that each carries
 that session's own `sessionId`, which is the per-member attribution CODE-3 states and `spec/10:58` gains a
-sentence for. An emitter left to `emitControlEvent`'s single-bound-session stamp produces one envelope with
+sentence for. An emitter left to `emitControlEvent`'s `soleSession()` stamp produces one envelope with
 an empty `sessionId` there, and the case fails in that state. It runs under `-race` with
 the hold timer driven through the `HoldAfterFunc` seam (`pkg/adapter/holdstate.go:62-68`) and carries a
 `// spec:` tie to §10.1 and §5.2.
@@ -6049,20 +5065,14 @@ the gate's column source away from migration 0178 is rejected, because that file
 statement of the created table and every remaining column would lose its bidirectional agreement with
 §10.1.
 
-`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go` is a hand-rewrite under the base case in
-§4.5(d). It anchors on the two spellings SPEC-7 renames: `requireLine` over §4.7 for the literal
+`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go` is a hand-rewrite. It anchors on the two spellings SPEC-7 renames: `requireLine` over §4.7 for the literal
 "`Terminate` (proto `Shutdown`)" at `:65` and again at `:139`, and `requireAllContain` over the §5.2 trigger
-paragraph for "`Terminate`" and "proto `Shutdown`" at `:78-83`. Both spellings disappear with the split, so the gate turns
-red at the spec commit and stays red. The rewrite re-anchors the §4.7 row on `ShutdownPod` and the §5.2
-assertions on the renamed trigger sentence, keeping the three recycle parameters and the §4.7-to-§5.2
-cross-reference the case exists to hold in agreement. If review declines the split, the file is untouched.
+paragraph for "`Terminate`" and "proto `Shutdown`" at `:78-83`. Both spellings disappear with SPEC-7's rename, so the gate turns red at the spec commit and stays red. All three anchors move to the `Shutdown` spelling SPEC-7 writes, keeping the three recycle parameters and the §4.7-to-§5.2 cross-reference the case exists to hold in agreement.
 
-`tests/tier11_docs/redis_key_prefix_registry_test.go` is a second tier-11 hand-rewrite under the base case.
+`tests/tier11_docs/redis_key_prefix_registry_test.go` is a second tier-11 hand-rewrite.
 Its `requireAllContain` over the §11.4 full-revoke propagation note anchors on the literal
 "publishes the step-2 `Terminate` request" (`:118-121`), which SPEC-7's rewrite of `spec/11:270` removes, so
-the gate turns red at the spec commit. The rewrite re-anchors on the `ShutdownSlot` spelling and keeps the
-Redis pub/sub fan-out assertion the case exists to hold. If review declines the split, the file is
-untouched.
+the gate turns red at the spec commit. The rewrite re-anchors on the `Shutdown` spelling and keeps the Redis pub/sub fan-out assertion the case exists to hold.
 
 `pkg/adapter/gatewaycontrol/scrubreport_test.go` is the §4.5(b′) producer-side hand-rewrite. It is the only
 test whose subject is the field the removal deletes, and neither of its two cases survives as a field drop.
@@ -6152,9 +5162,7 @@ exact-count assertion over `ReportUsageRequest`'s field set is restored to its p
 `pkg/adapter/slot_test.go` (its remaining `"slot-a"` sites, on top of the four cases the tier-1 block
 above states as hand-rewrites) and
 `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:48` (`"slot-3"`).
-`shutdown_recycle_wire_test.go:48` is a fixture swap only if review declines the split; under the base case
-the file's two `ShutdownRequest` cases (`:43` and `:103`) are the hand-rewrite the tier-3 block above states,
-and `TestRecycleScrubHasNoScrubProfileField_spec_5_2` (`:161`) takes no edit.
+In `shutdown_recycle_wire_test.go` the two `ShutdownRequest` cases (`:43` and `:103`) drop the hand-computed `slot_id` field-4 tag from the golden encoding at `:62-70` and from the fixture at `:48`, and `TestRecycleScrubHasNoScrubProfileField_spec_5_2` (`:161`) takes no edit.
 `pkg/adapter/credexpiry_test.go` is a hand-rewrite in the tier-1 credential block above rather than a
 fixture swap at its four slot sites.
 
@@ -6167,12 +5175,7 @@ above states rather than a deletion, and whose only deleted subject is the pod-g
 `tests/tier4_integration/checkpoint_concurrent_pool_test.go`, go with it per the tier-4 block above); and
 `tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go:143, 153-156`.
 
-**Whole-pod-scrub expectation.** `pkg/gateway/podlifecycle/podsession/slotbinder_test.go:649-651` is restated
-against `ShutdownPodRequest` per §4.1, and
-`tests/tier2_component/translators/openai_singleshot_lifecycle_test.go:480-481` takes the same treatment.
-Both restatements are conditional on the split landing, per §4.5(d). If review declines it, the two tests
-keep asserting on `ShutdownRequest` and its `slot_id` presence, and the fixture rewrite at
-`tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:48` is the only edit they need.
+**Whole-pod-scrub expectation.** The two sites take different dispositions. `pkg/gateway/podlifecycle/podsession/slotbinder_test.go:649-651` calls `recycleReq.GetSlotId().GetValue()`, and SCHEMA-1 removes `slot_id = 4` from `ShutdownRequest`, so the generated type loses `GetSlotId()` and the file stops compiling: that assertion is deleted with the field, while the `:653-656` session assertion and the recycle-disposition assertions below it stand. `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go:480-481` reads the gateway-side spy field `spy.sawSlotID` rather than the proto, so it takes the §4.5(c) spy-field disposition instead. The fixture rewrite at `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:48` belongs to the tier-3 block above and is unconditional.
 
 ## 9. Open questions, and what was considered and rejected
 
@@ -6190,12 +5193,12 @@ keep asserting on `ShutdownRequest` and its `slot_id` presence, and the fixture 
   familiar path rather than nothing, is a question this proposal answers with no and review may answer
   differently.
 - **§4.1's table coverage.** Choice (a) is the base case. Review may take (b) and accept the limit below.
-- **§4.5(d) and (g).** The base case is that the `ShutdownSlot`/`ShutdownPod` split lands and the `SlotId`
-  wrapper is deleted. Review may decline the split, in which case both survive with one user.
 
 ### Considered and rejected
 
 These were raised during review and refused, with the reason. Convergence should not re-litigate them.
+
+**Splitting `ShutdownRequest` into `ShutdownSlotRequest` and `ShutdownPodRequest`.** Two messages and two RPCs would let §4.1 classify each by type rather than by clause. It resolves nothing the single message leaves unresolved, because under D1 and D5 the message carries one address and its `recycle` field is a disposition rather than a second scope. It costs two request messages, two response messages, a duplicate `coordination_generation` fence row, an `InvalidArgument` arm for a pod request carrying no disposition, a `FailedPrecondition` occupancy refusal in the pod handler, and a mandated reordering of the base-mode release path from one call into two. That reordering is what would strip the base-mode teardown of its usage flush, its `CH-RUNTIMEOPS` drain, its runtime close, and its `ReportSessionScrub` emission if a caller sent the pod request alone. The occupancy refusal is the second cost: a `Shutdown` arriving while a session is still bound is a gateway ordering error the adapter would have to absorb, and the refusal exists only because the split invents a second message that carries no address and therefore cannot say which session it is not ending.
 
 **Preserving decision 2 by withholding the identifier on a single-slot pod.** This is the only rule that
 would keep the JSONL leg untouched under D1. It is a live-slot-count conditional on the adapter's outbound
@@ -6253,9 +5256,6 @@ nothing and is not a client-facing surface carrying the field.
 
 ### Recorded limits
 
-- §4.5(d) is conditional. If the shutdown split does not land, `ShutdownRequest` keeps `slot_id`, the gRPC
-  leg retains one message whose scope is encoded by field presence, and the `SlotId` wrapper survives with
-  one user.
 - D6 replaces a machine-derivable classification with a declared one. The tier-0 gate checks that every
   in-scope message is classified and that the table and the proto agree on the message set. It cannot check
   that a declared scope matches what the adapter handler does with the request. Under §4.1's choice (b) the
@@ -6263,21 +5263,10 @@ nothing and is not a client-facing surface carrying the field.
 - On the §4.7 sidecar transport a pod whose shared runtime has been drained and closed cannot be recovered
   in place. The connection close in `Close` is the §15.4 clean-exit EOF, the runtime container dialed the
   adapter's socket once, and `RestartPolicyNever` (`pkg/controller/sandbox/podspec/podspec.go:978`) does
-  not restart it, so no later `Runtime.Start` can re-accept whatever the listener's state. SCHEMA-1's
-  compensation is to retire such a pod through the existing drain path rather than to restore it. The same
-  property holds for the recycle boundary, where a pod is scrubbed and reused after its last session's
-  close: that reuse rests on a runtime container that has already answered the clean-exit EOF. This
-  proposal neither creates nor cures that pre-existing property, and dropping the listener close does not
-  change it.
-- SCHEMA-1's drain gate keeps a read-then-act window that the `Close` conjunction does not close. The
-  handler decides the drain inside its `s.mu` critical section and sends the `terminate` frame after
-  releasing the lock, so a session whose registry entry is created after the decision and before the send
-  is served by a runtime that has already been told to exit within `deadlineMs`
-  (`pkg/adapter/runtimeops.go:481-491`). The conjunction protects the connection object on that
-  interleaving, and the connection stays open, but nothing keeps the runtime process alive once it honours
-  the frame. Narrowing the window means taking the drain send inside the same lock hold as the decision, or
-  re-reading occupancy immediately before the send, and neither is staged here. §8's tier-7a case therefore
-  asserts the connection property and runs against a runtime stub that ignores `terminate`.
+  not restart it, so no later `Runtime.Start` can re-accept whatever the listener's state. Such a pod is retired through the existing drain and §4.6.1 orphan-GC paths, and nothing is staged here to restore it, because SCHEMA-1 stages no gateway drain compensation. The concurrent teardown edge reaches the same state: the ending session's `Close` closes the process-scoped listener the constructor bound (`pkg/adapter/socketruntime.go:161`, `:466`), no later call re-binds it, so a `Runtime.Start` for a session claiming a slot on that pod fails in `accept` (`:285`), the failed bind is counted toward the §5.2 unhealthy-slot threshold (`pkg/gateway/sessionserver/start.go:2744-2770`), and the pod is drained once the count crosses it. §8's tier-7a case asserts that failed `Start`. The same property holds for the recycle boundary, where a pod is scrubbed and reused after its last session's close: that reuse rests on a runtime container that has already answered the clean-exit EOF. This proposal neither creates nor cures that pre-existing property, and does not attempt to.
+- SCHEMA-1's drain gate keeps a read-then-act window. The handler decides the drain inside its `s.mu` critical section and sends the `terminate` frame after releasing the lock, so a session whose registry entry is bound after the decision and before the send is served by a runtime that has already been told to exit within `deadlineMs` (`pkg/adapter/runtimeops.go:481-491`). Narrowing the window means taking the drain send inside the same lock hold as the decision, or re-reading occupancy immediately before the send, and neither is staged here. The same interleaving already reaches the hard close on today's `pkg/adapter/slotsession.go:83`, and the two residues differ. The hard close leaves a pod whose next `Runtime.Start` fails and which §5.2 drains, as the sidecar-transport limit above states. A runtime that honours the `terminate` frame instead exits, and nothing reaps it, which is the residue the drain gate's read-then-act window newly exposes. §8's tier-7a case does not assert against that second residue: it asserts the connection property and runs against a runtime stub that ignores `terminate`.
+- A bind that fails after `PrepareWorkspace` leaves a registry entry that no adapter path removes, and its class depends on where the failure landed. A failure before `AssignCredentials` leaves a registered-but-unbound entry. A failure at credential assignment, or at the `StartSession` RPC before `Runtime.Start`, leaves a **bound** entry, because `assignCredentialsSlot` writes `st.sessionID` (`pkg/adapter/slotcreds.go:33-34`) and the §4.7 bind sequence runs it before `StartSession` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:298` precedes `:304`). Both classes hold §4.6.1's inbound count above one for the life of the pod. The bound class additionally pins SCHEMA-1's drain gate false for the life of the pod, so no later session on that pod is drained before its hard close. Either class holds the registry non-empty, so `coTenanted` never clears once a second entry appears, CODE-1's `soleSession()` is empty from that point on, and the intra-pod MCP providers refuse every `tools/list` and `tools/call`, the direct-mode token fold is dropped, and `emitControlEvent` stamps nothing for the rest of the pod's life. Discharging any of this is an obligation this proposal does not take.
+- §4.1 classifies `ShutdownRequest` by its address, which is a session, while the same handler also runs the pod-scoped recycle-scrub clause the `recycle` field carries. The tier-0 classification gate checks that every in-scope message is classified and that the table and the proto agree on the message set, and it cannot check that a declared scope covers everything the handler does with the request.
 - The §7.2 SLOT_ID_REQUIRED invariant is retired in its concurrency-conditioned form rather than enforced
   on the resume path for the first time. CODE-1 re-keys the gate onto a non-empty session identifier, which
   no longer reads the pod's concurrency or the resolved slot, so the property the gate held on a concurrent
@@ -6315,20 +5304,7 @@ nothing and is not a client-facing surface carrying the field.
   (`pkg/controller/sandbox/podspec/podspec.go:184, :835` rendering `--mcp-socket=@lenny-platform-mcp`), one
   nonce, one `mcpCancel` and one `connectorCancels` slice (`pkg/adapter/server.go:126-131, :343-345`), and
   one `mcpHandshakeSeen` flag. CODE-1 therefore starts the servers at most once per pod, under one critical
-  section, and cancels them only when a `ShutdownSlot` leaves the pod with no other bound session. The
-  consequences on a concurrent pod are that the shared server stays armed with the nonce of whichever
-  session started it, that a later session's manifest write invalidates that nonce for the runtime already
-  authenticated with it, and that the socket stays reachable after a session ends. What the shared surface
-  does not do is act as a session other than the caller: CODE-1 resolves the calling session from the slot
-  registry at call time, refuses the call when the pod holds zero or more than one bound entry, and refuses
-  it permanently once a release deregisters an entry whose session had started and leaves the registry
-  non-empty, on the merged `ShutdownSlot` and on CODE-3's per-member hold-termination loop alike, because
-  on a pod running `SocketRuntimeProcess` that number withholds the hard close and a
-  per-session `Runtime.Close` leaves the ended session's agent code running inside the shared process
-  (`pkg/adapter/socketruntime.go:440-445`) and a live-occupancy predicate alone would start dispatching that
-  code's calls under the surviving co-tenant's principal. That predicate is the all-entries occupancy count
-  SCHEMA-1's teardown decision reads, so a pod that overlaps a release with a registered-but-unbound
-  co-tenant entry sets the flag even though it never held two bound entries at once. A tool call from a pod
+  section, and cancels them on every release, re-arming only on a later claim that finds the registry holding no entry but its own. The consequences on a concurrent pod are that the shared server stays armed with the nonce of whichever session started it, that a later session's manifest write invalidates that nonce for the runtime already authenticated with it, and that the socket stays reachable after a session ends. What the shared surface does not do is act as a session other than the caller. CODE-1 resolves the calling session at call time from `soleSession()`, which names the sole registry entry's session when the registry holds exactly one entry and has held no more than one since it was last empty, and is empty otherwise, in which case the call is refused. The condition is the one under which the pod's single shared runtime process has served no session but the caller, which is what a per-session `Runtime.Close` does not establish on its own: that close returns before touching the connection or the child on a non-last call (`pkg/adapter/socketruntime.go:434-445`), so an ended session's agent code keeps running inside the shared process. Both entry-creating routes to that state are covered, the second bound session and the co-tenant's registered-but-unbound `PrepareWorkspace` entry, because the co-tenancy bit is written where the registry's cardinality changes rather than in any handler that ends a session, and it is cleared only when the registry empties, which is a pod whose last `Runtime.Close` tore the shared process down. A tool call from a pod
   whose shared runtime has outlived a release is
   therefore refused rather than dispatched under a neighbour's principal, and a Standard- or
   Full-level runtime remains unusable on a concurrent pod. A per-session MCP surface needs a per-session
@@ -6387,17 +5363,7 @@ nothing and is not a client-facing surface carrying the field.
   recovery. The wire contract is unchanged: the field already exists and `spec/04:704` already states it.
   SPEC-9 stages the `spec/10:58` sentence recording the concurrent case, and §8's tier-7a case pins the
   per-member arity and attribution.
-- Direct-mode token counts and unstamped control events are attributed only on a pod holding exactly one
-  bound session where no earlier release has deregistered a started entry and left the registry non-empty. The
-  `llm_request_completed` frame carries no session identifier
-  (`pkg/adapter/usage.go:200-206`) and one runtime process serves every slot, so once CODE-1 retires
-  `Server.sessionID` the fold and `emitControlEvent`'s stamp resolve from the registry's single bound
-  entry and give up on a pod holding more than one. They also give up for the rest of the pod's life once a
-  release deregisters an entry whose session had started and leaves the registry non-empty, on the merged
-  `ShutdownSlot` and on CODE-3's per-member hold-termination loop alike, because on a
-  `SocketRuntimeProcess` pod the hard close is withheld there, the released session's agent code is still running inside the
-  shared process, and folding its counts into the survivor's total would charge one session's tokens to
-  another's budget. The fold is dropped and the RATE_LIMITED, AUTH_EXPIRED,
+- Direct-mode token counts and unstamped control events are attributed only on a pod holding exactly one registry entry that has held no more than one since it was last empty. The `llm_request_completed` frame carries no session identifier (`pkg/adapter/usage.go:200-206`) and one runtime process serves every slot, so once CODE-1 retires `Server.sessionID` the fold and `emitControlEvent`'s stamp resolve `soleSession()`, which is that field's semantics restated on the registry. On a `maxConcurrentSessions: 1` pod the attribution is unchanged. On a concurrent pod it is absent from the moment a second entry appears, which is where it is absent today, so this proposal neither adds nor removes an attribution on any pod that exists. They stay absent for as long as the registry is non-empty, because the co-tenancy bit does not clear until the registry empties, so a fold arriving after one of two sessions is released is dropped rather than charged to the survivor's budget. The fold is dropped and the RATE_LIMITED, AUTH_EXPIRED,
   and PROVIDER_UNAVAILABLE envelopes carry an empty `sessionId` in both states, so §11.2 direct-mode
   accounting and
   the per-session attribution of those three events are absent on a concurrent pod. Carrying the session on
@@ -6434,8 +5400,7 @@ nothing and is not a client-facing surface carrying the field.
   §16.5 `OutstandingInflightAtRotationCeiling` row at `:455`. `spec/04` also takes SPEC-4's matching
   restatement of the §4.7 ceiling paragraph at `:828` and the `credential.rotation_ceiling_hit` catalog row
   at `:1756`, as well as two sites of SPEC-1's intra-pod MCP nonce restatement, the `mcpNonce`
-  manifest field row at `:782` and §4.7 invariant 7 at `:951`. `spec/11` takes SPEC-7's rename of the §11.4 full-revoke propagation step and note
-  (`:263`, `:270`) under the base case in §4.5(d), and `spec/07` takes the same rename at the §7.1 lifecycle
+  manifest field row at `:782` and §4.7 invariant 7 at `:951`. `spec/11` takes SPEC-7's rename of the §11.4 full-revoke propagation step and note (`:263`, `:270`), and `spec/07` takes the same rename at the §7.1 lifecycle
   step (`:49`) beside its other edits, as well as SPEC-5's restatement of the §7.2 cross-reference note at
   `:161`, which scopes the per-slot sub-states to `maxConcurrentSessions > 1` today. `spec/26` takes SPEC-3's shared-assets correction at `:44` as well as
   the `/workspace/current` sweep, `spec/05` takes SPEC-3's two further shared-assets restatements at `:103`
@@ -6507,16 +5472,8 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   `slotcreds.go`, `slotlayout/`, `resume.go`,
   `exportpaths.go`, `holdstate.go`, `session.go`, `sdkwarm.go`, `checkpoint.go`, `oplock.go`, `staging.go`,
   `credentials.go`, `credexpiry.go` for the pod-global lease-expiry path that goes dead with
-  `Server.credLeases`, `attach.go`, `tracingcontext.go`, `lifecycle.go`, `coordination.go`, `usage.go`
-  and `adapterevents.go` for the two readers of `s.currentSession()` CODE-1 re-points onto the pod's
-  single bound session,
-  `server.go`, `socketruntime.go`, and `mcpruntime.go`, `embedded.go`, and `embedded_sdkwarm.go` for the
-  `RuntimeProcess.Close` teardown-decision parameter, the `closed` return, and the `Connected` predicate
-  SCHEMA-1 adds to the interface in `session.go`,
-  with `socketruntime.go` also dropping the listener close from `SocketRuntimeProcess.Close` so a
-  per-session teardown does not destroy the process-scoped listener, and `cmd/lenny-adapter/main.go` (`:363`) for the
-  `RuntimeProcess` wrapper SCHEMA-1 puts around `*executor.SubprocessExecutor`, which keeps
-  `executor.Executor.Close` at two parameters and leaves `pkg/gateway/session/executor/` untouched,
+  `Server.credLeases`, `attach.go`, `tracingcontext.go`, `lifecycle.go`, `coordination.go`, `usage.go` and `adapterevents.go` for the two readers of `s.currentSession()` CODE-1 re-points onto `soleSession()`,
+  `server.go` for the `coTenanted` bit and the `soleSession()` accessor CODE-1 adds,
   `sessionscrubreporter.go`, `metrics.go` for CODE-6's rejection counter,
   `podscrub.go` and `scrub/` for the per-slot purge CODE-1 stages, `manifest.go` for the `credentialsPath`
   row CODE-4 adds, `platformmcp.go`, `platformtoolprovider.go`, and `connectormcp.go` for the once-per-pod
@@ -6544,18 +5501,11 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   eleven `Config` field sites move onto the plural members, its two step-6 verify cases and its
   purge-before-cleanup case are re-based over the per-slot sets, and `TestCleanupEnv_spec_5_2_424` moves
   onto the singular `CleanupDir`.
-- `pkg/adapter/podscrub_test.go` and `pkg/adapter/sessionscrub_emit_test.go` as hand-rewrites §8 states,
-  beyond the field swap listed below: the first owns five recycle cases that the occupancy refusal inverts
-  plus the empty-`session_id` and terminate-path cases the split retires, and the second owns the §5.2
-  `ReportSessionScrub` emission cases the teardown merge inverts.
+- `pkg/adapter/sessionscrub_emit_test.go` as a hand-rewrite §8 states, since it owns the §5.2 `ReportSessionScrub` emission cases the unconditional emission inverts. `pkg/adapter/podscrub_test.go` leaves the hand-rewrite list for the field-swap list below, because its five recycle cases keep their §5.2 outcomes on the surviving handler and its empty-`session_id` and terminate-path cases survive.
 - `pkg/adapter/usage_test.go` (`:157, 197, 235, 268`) and `pkg/adapter/adapterevents_test.go` (`:96, 187`)
   as hand-rewrites §8 states: each binds its session by writing the retired `Server.sessionID`, so both
-  break the `pkg/adapter` build, and each is re-based onto a bound registry slot with the fold and the
-  stamp resolved from the pod's single bound session.
-- `pkg/gateway/runtime/adapterclient/client_test.go` as a hand-rewrite §8 states, since its
-  `recordingAdapter` serves the deleted `Shutdown` RPC and its four `Terminate` cases are the only pin of
-  the `reason` and `deadline_ms` population the collapsed `ShutdownSlot` method carries, and since its
-  `capturingAdapter` and the four slot-stamping cases it serves are deleted with the field they record.
+  break the `pkg/adapter` build, and each is re-based onto a bound registry slot with the fold and the stamp resolved from `soleSession()`.
+- `pkg/gateway/runtime/adapterclient/client_test.go` as a hand-rewrite §8 states, since its four `Terminate` cases are the only pin of the `reason` and `deadline_ms` population the collapsed `Shutdown` method carries, and since its `capturingAdapter` and the four slot-stamping cases it serves are deleted with the field they record.
 - `cmd/lenny-compliance/full.go`, whose credential-path default takes CODE-4's manifest resolution, and
   `cmd/lenny-compliance/main.go` (`:388`, `:625-627`) and `standard.go:488`, whose inbound `message`
   literals gain `sessionId` so the Basic-level echo check CODE-6 adds has an identifier to echo, and
@@ -6571,26 +5521,10 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   scan, and `binder.go`'s `ResumeRequest` gains the `MaxConcurrentSessions` and `MaxPodUptimeSeconds` fields
   that entry point requires, the second so `reserveSlot` still delivers the
   `lenny.dev/max-pod-uptime-seconds` annotation onto the replacement pod (`slotclaimer.go:661-672`).
-  Each of `materializeSlot`'s four failure branches (`slotbinder.go:276-317`) drains the pod through the
-  existing `Binder.DrainSandbox`
-  (`slotbinder.go:597-599`) when the best-effort reclaim `ShutdownSlot` it sends returns
-  `runtime_closed` true, and stamps nothing when it returns false. That one site covers both callers: the
-  `BindSlot` failure `applySlotRetryPolicy` releases at `pkg/gateway/sessionserver/start.go:2744`, and the
-  `bindReservedSlot` failure `BindReservedSlot` releases at `slotbinder.go:214`, which
-  is the create-then-start path `bindConcurrentSlot` dispatches to at `start.go:2555-2557` and which never
-  enters the retry policy. `SlotBindError` (`slotfailure.go:58-68`) gains no member, because the reclaim's
-  report never has to cross the `materializeSlot` boundary. That is SCHEMA-1's compensation for a reclaim that drained and closed the pod's
-  live shared runtime, keyed on the adapter's report because the gateway's own occupancy
-  count reads one on a pod whose other slot is a create-time reservation the adapter never registered. The
-  release functions keep their signatures, and the pre-`materializeSlot` releases in `ClaimSlot`
-  (`slotbinder.go:169`) and `rollbackClaim` (`start.go:3155`) send no reclaim and take no drain.
-  `Binder.ReleaseSlot` (`slotbinder.go:538-539`) also takes CODE-1's release-side disposition for the
-  second `ShutdownSlot` a §11.4 revoke or a CODE-3 hold termination leaves behind: a `FailedPrecondition`
-  or `NotFound` refusal naming a session the adapter does not hold keeps `leaked` false, so
-  `SlotClaimer.ReleaseSlot` (`slotclaimer.go:751-757`) decrements the counter and disposes the claim
-  instead of holding the slot for the life of the pod.
+  
+  `Binder.ReleaseSlot` (`slotbinder.go:538-539`) also takes CODE-1's release-side disposition for the second `Shutdown` a §11.4 revoke or a CODE-3 hold termination leaves behind: clause two's no-op returns `exited_cleanly` true, so `leaked` stays false and `SlotClaimer.ReleaseSlot` (`slotclaimer.go:751-757`) decrements the counter and disposes the claim instead of holding the slot for the life of the pod. `pkg/gateway/podlifecycle/podclaim/slotclaimer.go` also takes CODE-1's deletion of `ReleaseSlot`'s unread `sessionID` parameter (`:739`), with the two `podsession` call sites (`slotbinder.go:498` and `:555`), the compiled tier-7a load scenario (`tests/tier7a_load_local/scenarios/slot_leaked_counted_race/scenario.go:179`), and the six calls in the claimer's own unit tests (`pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go:410, :466, :478, :508, :559, :584`) moving with it. No interface declares `SlotClaimer.ReleaseSlot`, so the `slotBinder` seam at `pkg/gateway/sessionserver/start.go:2678-2682` and its `ReleaseSlotReservation` row are untouched.
 - `cmd/lenny-gateway/user_revocation.go`, whose §11.4 full-revoke send (`:129`) calls the `Terminate`
-  method CODE-1 collapses into `ShutdownSlot`.
+  method CODE-1 collapses into `Shutdown`.
 - `pkg/gateway/runtime/adapterclient/client.go`, `pkg/gateway/session/executor/pod.go` and
   `subprocess.go`, `pkg/gateway/checkpoint/` (`partialmanifeststore/`, `checkpointretention/`,
   `checkpointer/`), `pkg/gateway/sessionserver/`
@@ -6641,59 +5575,7 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   absence-as-pod-scope case (`:340`), cross-session `SendMessage` arm (`:265-274`), duplicate-slot case
   (`:133`), which is deleted with its premise, and path-traversal refusal (`:316`), which is re-based so the
   malformed value is carried on the session identifier.
-- The `RuntimeProcess` test doubles and the direct `Close` callers, which move with the teardown-decision
-  parameter, the `closed` return, and the `Connected` predicate SCHEMA-1 adds: `pkg/adapter/session_test.go`'s `fakeRuntime` (`:137`),
-  `pkg/adapter/holdstate_test.go`'s `holdRuntime` (`:36`), `pkg/adapter/podscrub_test.go`'s
-  `recycleRuntime` (`:96`), `tests/tier10_conformance/recycle_scrub_conformance_test.go`'s
-  `scrubConformanceRuntime` (`:71`),
-  `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`'s `ssRespondingRuntime` (`:93`),
-  and the literal call sites in `pkg/adapter/mcpruntime_test.go`, `pkg/adapter/socketruntime_test.go`,
-  `pkg/adapter/socketruntime_e2e_test.go`, and `pkg/adapter/embedded_test.go`, which is the tier-1 pin of
-  `InProcessRuntime` and calls `rt.Close(context.Background(), "s1")` at `:37`, `:67`, `:87`, and `:111`, so
-  the package does not build until it takes the parameter, and whose
-  `TestInProcessRuntimeCloseEndsTheLoop` (`:56`) is the case §8's eighth tier-1 close case extends with the
-  `last` false call, the `Connected` assertions on both sides of the teardown, and the co-tenant `Start`
-  that follows it. `pkg/adapter/socketruntime_test.go`'s two-session cases
-  (`:258-294`) additionally assert the sibling-active early return the parameter replaces and are
-  re-based onto it.
-- The `RuntimeProcess` implementations outside `pkg/adapter`, which take the same interface change. Each is
-  a test double assigned to `adapter.Server.Runtime`, so each stops satisfying the interface when `Close`
-  gains the teardown-decision parameter and the `closed` return and the interface gains `Connected`, and
-  the package it lives in stops building. Every one of them returns `closed` true on a call that found the
-  session, since each is a single-session double that tears down unconditionally, and implements
-  `Connected` from the start and close state it already tracks. They are
-  `tests/testinfra/coordfixture/coordfixture.go`'s `fakeRuntime` (`:48-56`), edited first because the other
-  tiers dial their adapter through its `StartPod`;
-  `pkg/gateway/runtime/adapterclient/client_test.go`'s `fakeRuntime` (`:34-68`);
-  `pkg/gateway/sessionserver/start_pod_test.go`'s `podBindRuntime` (`:61-71`), which
-  `create_test.go`, `pool_exhaustion_queue_test.go`, `delegated_child_materialize_test.go`,
-  `pool_selection_component_test.go`, `recycle_scrub_fold_component_test.go`, and
-  `start_pod_lease_component_test.go` share;
-  `pkg/gateway/sessionserver/resume_external_effect_regression_test.go`'s `startRecordingRuntime`
-  (`:19-33`); `pkg/gateway/coordination/barrier/wiring_test.go`'s `fakeRuntime` (`:25-31`);
-  `pkg/gateway/podlifecycle/podsession/binder_test.go`'s `fakeRuntime` (`:49-66`), which
-  `binder_phases_test.go`'s `startFailRuntime` (`:45-49`) embeds, so the embedding type moves with it;
-  `pkg/gateway/session/executor/pod_test.go`'s `respondingRuntime` (`:24-40`) and that package's
-  `approval_test.go`'s `approvalRuntime` (`:21-60`), which `pod_test.go`'s `dialPodAdapter` assigns to
-  `Server.Runtime` at its three construction sites (`:84`, `:117`, and `:162`), so the package builds only
-  once both doubles return `closed` true on a call that found the session and implement `Connected` from
-  the start and close state they track;
-  `tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go`'s `closeStubRuntime` (`:92-111`);
-  `tests/tier4_integration/eager_claim_lifecycle_test.go`'s `eagerRuntime` (`:70-86`), which
-  `credential_delivery_gate_test.go:126` also constructs;
-  `tests/tier4_integration/cross_environment_delegation_test.go`'s `noopRuntime` (`:731-738`);
-  `tests/tier4_integration/delegation_child_materialization_test.go`'s `materializeRespondingRuntime`
-  (`:97-114`); `tests/tier4_integration/recycle_scrub_path_test.go`'s `recycleFakeRuntime` (`:305-312`);
-  `tests/tier9_security/adapter_mcp_nonce_test.go`'s `noopRuntime` (`:57-67`), which
-  `credential_delivery_gate_test.go`, `delegation_credential_deny_leakage_test.go`, and
-  `delegation_child_materialization_cred_test.go` in the same package share;
-  `tests/tier9_security/tracing_context_session_isolation_test.go`'s `tracingIsolationRuntime` (`:53-68`);
-  and `tests/tier7a_load_local/tracing_context_release_race_test.go`'s `raceRuntime` (`:119-138`). Until
-  each takes the change, `pkg/gateway/sessionserver`, `pkg/gateway/coordination/barrier`,
-  `pkg/gateway/podlifecycle/podsession`, `pkg/gateway/session/executor`,
-  `pkg/gateway/runtime/adapterclient`, `tests/testinfra/coordfixture`,
-  `tests/tier3_contract/gatewaycontrol_scrub`, `tests/tier4_integration`, `tests/tier9_security`, and
-  `tests/tier7a_load_local` do not build.
+
 - The `Server.WorkspaceRoot` holders outside `pkg/adapter`, per §8: `tests/testinfra/coordfixture/coordfixture.go`
   first, since other tiers dial their adapter through its `StartPod`; then
   `pkg/gateway/runtime/adapterclient/client_test.go` and `checkpointbarrier_test.go`, the second of which
@@ -6789,15 +5671,13 @@ paragraph at `:159` and the `spec/05` threshold it rests on take no edit. `spec/
   revocation cases drive the retired pod-global credential path and its `credSessionID` refusals;
   `pkg/adapter/credexpiry_test.go`, whose base-mode §4.9 lease-expiry cases read the pod-global credential
   file and the pod-global timer map and re-base onto the per-slot file and the slot's own timer set; and
-  `pkg/gateway/podlifecycle/podsession/binder_test.go`, whose shutdown fake and two single-request
-  assertions are written against the deleted `ShutdownRequest`;
+  
   `pkg/adapter/drain_test.go`, whose drain case claims the pod through the retired `claimSession` and
   drives the deleted `ShutdownRequest`, and whose premise the occupancy gate qualifies;
-  `pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go`, whose fake serves the deleted
-  `Shutdown` RPC and whose fold assertions move onto `ShutdownPod`;
+  
   `pkg/adapter/platformmcp_test.go`, `pkg/adapter/connectormcp_test.go`,
   `tests/tier4_integration/mcp_runtime_lifecycle_test.go`, and
-  `tests/tier9_security/adapter_mcp_nonce_test.go` as `ShutdownSlot` call-site swaps;
+  `tests/tier9_security/adapter_mcp_nonce_test.go` as `Shutdown` call-site swaps;
   `pkg/adapter/gatewaycontrol/scrubreport_test.go`, whose released case pairs a session with a distinct slot
   identifier and whose leaked case pins the base-mode empty-slot emission D1 retires;
   `pkg/gateway/sessionserver/messages_component_test.go`, whose fail-closed case is written against the
@@ -8321,9 +7201,9 @@ Corrections to this pass, from a review of its own edits.
   with `freshPod` false, so the reservation lands on the pod `connect` already claimed and the compensating
   release names that same pod; `ResumeRequest` gains `MaxConcurrentSessions`; §8's tier-2 resume case
   asserts the increment lands on the pod the resumed session is bound to; and §10 records both.
-- **The shared MCP surface's occupancy-keyed refusal is a property of the pod, not of the caller.** A pod
-  holding two bound sessions for two users refuses every `tools/list` and `tools/call`, but a per-session
-  `Runtime.Close` does not stop the ended session's agent code inside the one runtime process
+- **The shared MCP surface's occupancy-keyed refusal is a property of the pod rather than of the caller.**
+  A pod holding two bound sessions for two users refuses every `tools/list` and `tools/call`, but a
+  per-session `Runtime.Close` does not stop the ended session's agent code inside the one runtime process
   (`pkg/adapter/socketruntime.go:440-445`) and SCHEMA-1 keeps the servers up while a co-tenant is bound, so
   the moment the first session's `ShutdownSlot` completes the registry holds one bound entry, the refusal
   stops firing, and that code's calls are forwarded under the survivor's user and tenant
@@ -9916,3 +8796,80 @@ Corrections to this pass, from a review of its own edits.
   session, and false again after the teardown, and states the reclaim disposition each value produces.
   §10's `embedded_test.go` entry names the added assertions alongside the `last` false call and the
   co-tenant `Start`.
+
+### Redesign 1 (2026-08-18, automated)
+
+A consolidated redesign replaced three churning mechanisms with one design each. The areas redesigned were
+the shutdown message and its handler, the `CH-RUNTIMEOPS` drain gate and the runtime close it sat beside,
+and the intra-pod MCP surface's session resolution. Each had accumulated a conditional statement, a
+compensating mechanism, or both, across earlier passes.
+
+**The shutdown message.** `ShutdownRequest` is no longer split into `ShutdownSlotRequest` and
+`ShutdownPodRequest`. One message keeps `session_id`, `reason`, `deadline_ms`, `recycle`, and
+`coordination_generation`, loses `slot_id = 4` under `reserved`, and is handled as three ordered clauses:
+the empty-`session_id` refusal, the per-session teardown when the registry holds a bound entry for the
+named session, and the pod scrub when `recycle` is present. Clause two is a conditional registry test
+rather than a guard, so a request naming a released session is a no-op reporting `exited_cleanly` true,
+which is what stops the §11.4 full revoke and the concurrent occupancy-zero recycle edge from leaking a
+slot. `checkSessionBound` gains no exception, because `Shutdown` makes no call to it. §4.5(d) is no longer
+conditional on review's choice, and the split is recorded in §9 as considered and rejected.
+
+**The drain gate and `Runtime.Close`.** The gate reads the count of bound registry entries rather than
+every entry, on the ground that only a bound entry can be a session the shared runtime is serving. It is
+still evaluated inside the one critical section that performs the deregistration. `Runtime.Close` keeps its
+signature and its behavior: `SocketRuntimeProcess.Close` already removes the ending session from its own
+active set under `p.mu` and tears the shared connection down only when that removal left the set empty, so
+a caller-supplied teardown condition would restate a decision the method already makes.
+
+**The intra-pod MCP surface.** `Server` gains one boolean, `coTenanted`, set at the single registry insert
+when the insert leaves more than one entry, and cleared in the release's second step, after
+`Runtime.Close` has returned, only when the registry is still empty at that point. `soleSession()` returns
+the sole entry's session identifier when the registry holds one entry and the bit is unset, and the empty
+string otherwise. Both intra-pod MCP tool providers, the direct-mode token fold, and `emitControlEvent`'s
+session stamp resolve it, and the providers refuse `tools/list` and `tools/call` with `FailedPrecondition`
+when it is empty. The pod-wide MCP cancellation becomes unconditional on every release, with the servers
+re-armed only by a later claim that finds the registry holding no entry but its own.
+
+What the redesign deleted, with the steps, tests, and files-touched entries that went with each:
+
+- The `ShutdownSlotRequest`, `ShutdownPodRequest`, `ShutdownSlotResponse`, and `ShutdownPodResponse`
+  messages, the `ShutdownSlot` and `ShutdownPod` RPCs, the `ShutdownPod` handler with its
+  `FailedPrecondition` occupancy refusal and its `InvalidArgument` arm, and the two REG-1 replacement fence
+  rows and the generator's `GENERATION_FENCE` substitution. The surviving
+  `ShutdownRequest.coordination_generation` register row stands unchanged.
+- The `last bool` parameter, the `closed bool` return, the `Connected() bool` predicate, the
+  `bool runtime_closed = 3` response field, the `RuntimeProcess` wrapper around
+  `*executor.SubprocessExecutor`, and the drop of `p.listener.Close()` from `SocketRuntimeProcess.Close`.
+  §10 loses the two `RuntimeProcess` test-double bullets and loses `socketruntime.go`, `mcpruntime.go`,
+  `embedded.go`, `embedded_sdkwarm.go`, `cmd/lenny-adapter/main.go`, and `pkg/gateway/session/executor/`
+  from the adapter entry.
+- The reclaimer for a registered-but-unbound entry, in both its adapter and its gateway halves, and the
+  gateway drain compensation stamped inside `materializeSlot`'s failure branches.
+- The re-keyed recycle-scrub guard, which is deleted rather than relocated.
+- The sticky pod-level MCP refusal flag, its two-conjunct trigger, its arming site in the release, its
+  `started` conjunct, and its coupling to CODE-3's hold-termination loop. The `started` flag §4.11 adds for
+  the second-start refusal is unaffected.
+- `SlotClaimer.ReleaseSlot`'s unread `sessionID` parameter, which is deleted with its two `podsession` call
+  sites, the compiled tier-7a load scenario, and the six calls in the claimer's own unit tests.
+- In §8: the tier-1 reclaimer case, the reclaimer close case, the listener-property case, the `Connected`
+  scoping case, the subprocess-wrapper case, and the `ShutdownPod` `InvalidArgument` case; the tier-2
+  drain-on-a-reclaimed-pod case with its five arms; the tier-4 bind-failure reclaim case; the sixth tier-9
+  MCP arm; and the tier-3 post-split descriptor case, replaced by a field-removal case on the surviving
+  message.
+- In §9: the `§4.5(d) and (g)` open bullet and the `§4.5(d) is conditional` recorded limit.
+
+Three limits are recorded in §9 in their place. The drain gate keeps a read-then-act window between the
+decision under `s.mu` and the send after the lock is released. A bind that fails at credential assignment
+or at `StartSession` leaves a bound registry entry no adapter path removes, which pins the gate false and
+holds `coTenanted` armed for the life of the pod; bound-entry counting narrows that class to the
+credential-assignment and session-start failures rather than closing it. §4.1 classifies `ShutdownRequest`
+by its address while the same handler runs the pod-scoped scrub clause, which the tier-0 classification
+gate cannot check.
+
+The redesign recorded two open decisions beyond the ones §9 already carries. The first is whether an
+abandoned bind's registry entry gets a reclaimer at all; the default taken here is no reclaimer, with the
+residue recorded as a limit, and the alternatives are a reclaim path for the abandoned entry or giving
+§4.6.1's inbound rule the same bound-entry quantity. The second is whether the intra-pod MCP surface
+should be started at all on a co-tenanted pod; the default taken here is to start it and refuse per call,
+because an arming precondition alone forfeits the third tier-9 arm, where an established `ServeConn`
+outlives the cancel that closes the listener.
