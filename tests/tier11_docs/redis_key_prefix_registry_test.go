@@ -111,12 +111,13 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 	if strings.Contains(s124, "ops:events:stream") {
 		t.Errorf("§12.4 registers `ops:events:stream`; it is platform-scoped and owned by §25.5, not a tenant-datastore registry row")
 	}
-	// §11.4 documents the cross-replica Terminate pub/sub fan-out mechanism
-	// (the literal channel name lenny:session:terminate is not spelled in the
-	// spec; the note describes the mechanism). The disposition is prose, so
-	// assert the note describes the Redis pub/sub Terminate fan-out.
+	// §11.4 documents the cross-replica session-teardown pub/sub fan-out
+	// mechanism (the literal channel name lenny:session:terminate is not
+	// spelled in the spec; the note describes the mechanism). The disposition
+	// is prose, so assert the note describes the Redis pub/sub fan-out of the
+	// step-2 `Shutdown` request.
 	requireAllContain(t, "§11.4 full-revoke propagation note", s114, []string{
-		"publishes the step-2 `Terminate` request",
+		"publishes the step-2 `Shutdown` request",
 		"Redis pub/sub channels",
 	})
 

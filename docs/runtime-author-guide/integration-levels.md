@@ -18,9 +18,9 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **stdin/stdout JSON-lines protocol** | Yes | Yes | Yes |
 | **Heartbeat / shutdown handling** | Yes | Yes | Yes |
 | **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) | Yes | Yes | Yes |
-| **Simple response shorthand** (`{"type":"response","text":"..."}`) | Yes | Yes | Yes |
+| **Simple response shorthand** (`{"type":"response","sessionId":"...","text":"..."}`) | Yes | Yes | Yes |
 | **Minimal output part fields** (only `type` + `inline` required) | Yes | Yes | Yes |
-| **Minimal message fields** (only `type`, `id`, `input` needed) | Yes | Yes | Yes |
+| **Minimal message fields** (only `type`, `id`, `input`, and `sessionId` needed; a runtime echoes `sessionId` on the frames it emits in response) | Yes | Yes | Yes |
 | **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging, tracing-context propagation) | -- | Yes | Yes |
 | **Connector tool servers** (GitHub, Jira, Slack, etc.) | -- | Yes | Yes |
 | **CH-RUNTIMEOPS** | -- | -- | Yes |

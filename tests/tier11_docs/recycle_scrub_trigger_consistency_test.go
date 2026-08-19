@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-11 doc/spec-consistency checks for the §5.2 whole-pod scrub recycle
-// trigger (proposal 0031, F-5.2.15). Proposal S-A1 defined the recycle
-// disposition and its scrub-config delivery in two places: the §4.7
-// Gateway → Adapter `Terminate` (proto `Shutdown`) RPC row, and the §5.2
-// "Lenny scrub procedure" trigger paragraph. These two normative sites must
+// trigger (F-5.2.15). The recycle disposition and its scrub-config delivery
+// are defined in two places: the §4.7 Gateway → Adapter `Shutdown` RPC row,
+// and the §5.2 "Lenny scrub procedure" trigger paragraph. These two normative sites must
 // agree on the recycle disposition and the parameters the recycle Shutdown
 // carries (podId, cleanupCommands, cleanupTimeoutSeconds), and
 // their bidirectional cross-references must resolve to live headings. This
@@ -26,7 +25,7 @@ import (
 )
 
 // recycleScrubParams are the parameters the recycle-disposition Shutdown
-// carries. Both the §4.7 `Terminate` row and the §5.2 scrub-procedure trigger
+// carries. Both the §4.7 `Shutdown` row and the §5.2 scrub-procedure trigger
 // paragraph must name each one, so an adapter implementer reading either site
 // learns the same contract. Proposal 0034 removed the `scrub_profile` wire
 // field (the gateway holds the recycle scrub profile in its own runtime store
@@ -39,11 +38,11 @@ var recycleScrubParams = []string{
 }
 
 // spec: 4.7, 5.2
-// diagnosis: The §4.7 `Terminate` (proto `Shutdown`) row and the §5.2 "Lenny
+// diagnosis: The §4.7 `Shutdown` row and the §5.2 "Lenny
 //
 //	scrub procedure" trigger paragraph disagree on the recycle disposition or
-//	the parameters it carries. Proposal 0031 (S-A1) defined the same contract
-//	in both sites: the recycle disposition carries podId, cleanupCommands,
+//	the parameters it carries. Both sites state the same contract:
+//	the recycle disposition carries podId, cleanupCommands,
 //	and cleanupTimeoutSeconds, and the adapter reports the outcome via
 //	ReportPodScrub. Proposal 0034 removed the `scrub_profile` wire field, so
 //	the delivered request no longer carries scrubProfile. A failure here means
@@ -58,32 +57,32 @@ func TestRecycleTriggerConsistentAcrossSpec47And52_F5215(t *testing.T) {
 	s47 := specSection(t, filepath.Join(specDir, "04_system-components.md"), "### 4.7 ")
 	s52 := specSection(t, filepath.Join(specDir, "05_runtime-registry-and-pool-model.md"), "### 5.2 ")
 
-	// The §4.7 Gateway → Adapter table denotes the single proto Shutdown RPC as
-	// the `Terminate` row, extended with the recycle disposition. The whole §4.7
-	// section is large; scope the assertion to the `Terminate` (proto `Shutdown`)
-	// row so a match elsewhere in §4.7 does not mask a drift in the row itself.
-	terminateRow := requireLine(t, s47, "`Terminate` (proto `Shutdown`)")
+	// The §4.7 Gateway → Adapter table carries the session-scoped `Shutdown`
+	// RPC row, which states the recycle disposition beside the per-session
+	// teardown. The whole §4.7 section is large; scope the assertion to the
+	// `Shutdown` row so a match elsewhere in §4.7 does not mask a drift in the
+	// row itself.
+	shutdownRow := requireLine(t, s47, "| `Shutdown` |")
 
-	// The §5.2 trigger sentence names the `Terminate` RPC (proto `Shutdown`) as
-	// the whole-pod scrub trigger; scope the §5.2 assertions to the scrub-
-	// procedure paragraph that carries the trigger text.
+	// The §5.2 trigger sentence names the `Shutdown` RPC as the whole-pod scrub
+	// trigger; scope the §5.2 assertions to the scrub-procedure paragraph that
+	// carries the trigger text.
 	triggerParagraph := requireLine(t, s52, "The gateway triggers the whole-pod scrub")
 
 	// Both sites name the recycle disposition and carry every delivered scrub
 	// parameter.
-	requireAllContain(t, "§4.7 Terminate (proto Shutdown) row", terminateRow, []string{
+	requireAllContain(t, "§4.7 Shutdown row", shutdownRow, []string{
 		"recycle disposition",
 		"ReportPodScrub",
 	})
 	requireAllContain(t, "§5.2 scrub-procedure trigger paragraph", triggerParagraph, []string{
 		"recycle disposition",
 		"ReportPodScrub",
-		"`Terminate`",
-		"proto `Shutdown`",
+		"`Shutdown`",
 	})
 	for _, param := range recycleScrubParams {
-		if !strings.Contains(terminateRow, "`"+param+"`") {
-			t.Errorf("§4.7 Terminate (proto Shutdown) row does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all three (podId, cleanupCommands, cleanupTimeoutSeconds)", param)
+		if !strings.Contains(shutdownRow, "`"+param+"`") {
+			t.Errorf("§4.7 Shutdown row does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all three (podId, cleanupCommands, cleanupTimeoutSeconds)", param)
 		}
 		if !strings.Contains(triggerParagraph, "`"+param+"`") {
 			t.Errorf("§5.2 scrub-procedure trigger paragraph does not carry the recycle parameter %q; §4.7 and §5.2 must agree on all three (podId, cleanupCommands, cleanupTimeoutSeconds)", param)
@@ -93,7 +92,7 @@ func TestRecycleTriggerConsistentAcrossSpec47And52_F5215(t *testing.T) {
 	// The §4.7 row and the §5.2 trigger paragraph must agree that the gateway
 	// does not block the Shutdown response on the scrub, and that a missing
 	// report is bounded by a gateway-side timeout.
-	requireAllContain(t, "§4.7 Terminate (proto Shutdown) row", terminateRow, []string{
+	requireAllContain(t, "§4.7 Shutdown row", shutdownRow, []string{
 		"does not block the response on the scrub",
 	})
 	requireAllContain(t, "§5.2 scrub-procedure trigger paragraph", triggerParagraph, []string{
@@ -102,10 +101,10 @@ func TestRecycleTriggerConsistentAcrossSpec47And52_F5215(t *testing.T) {
 }
 
 // spec: 4.7, 5.2
-// diagnosis: A cross-reference between the §4.7 `Terminate` row and the §5.2
+// diagnosis: A cross-reference between the §4.7 `Shutdown` row and the §5.2
 //
 //	scrub-procedure trigger paragraph points at a heading that no longer
-//	exists. Proposal 0031 (S-A1) wove the two sites together with bidirectional
+//	exists. The two sites are woven together with bidirectional
 //	links: the §4.7 row links to §5.2, and the §5.2 trigger paragraph links to
 //	§4.7. A reader following the published link gets a 404 to the section
 //	anchor. Re-point the link or restore the heading.
@@ -113,14 +112,14 @@ func TestRecycleTriggerCrossRefsResolve_F5215(t *testing.T) {
 	root := repoRoot(t)
 	specDir := filepath.Join(root, "spec")
 
-	// The §4.7 `Terminate` row links to §5.2; the §5.2 trigger paragraph links
+	// The §4.7 `Shutdown` row links to §5.2; the §5.2 trigger paragraph links
 	// to §4.7. Both anchors must resolve to a live heading in the target file.
 	refs := []struct {
 		targetFile string
 		anchor     string
 		label      string
 	}{
-		{"05_runtime-registry-and-pool-model.md", "52-pool-configuration-and-execution-modes", "§4.7 Terminate row → §5.2"},
+		{"05_runtime-registry-and-pool-model.md", "52-pool-configuration-and-execution-modes", "§4.7 Shutdown row → §5.2"},
 		{"04_system-components.md", "47-runtime-adapter", "§5.2 trigger paragraph → §4.7"},
 	}
 	for _, ref := range refs {
@@ -136,9 +135,9 @@ func TestRecycleTriggerCrossRefsResolve_F5215(t *testing.T) {
 	// Confirm the link syntax is actually present at each source site, so the
 	// cross-reference exists rather than merely the anchor being resolvable.
 	s47 := specSection(t, filepath.Join(specDir, "04_system-components.md"), "### 4.7 ")
-	terminateRow := requireLine(t, s47, "`Terminate` (proto `Shutdown`)")
-	if !strings.Contains(terminateRow, "05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes") {
-		t.Error("§4.7 Terminate (proto Shutdown) row does not link to §5.2; the recycle disposition must cross-reference the whole-pod scrub section")
+	shutdownRow := requireLine(t, s47, "| `Shutdown` |")
+	if !strings.Contains(shutdownRow, "05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes") {
+		t.Error("§4.7 Shutdown row does not link to §5.2; the recycle disposition must cross-reference the whole-pod scrub section")
 	}
 
 	s52 := specSection(t, filepath.Join(specDir, "05_runtime-registry-and-pool-model.md"), "### 5.2 ")
@@ -151,7 +150,7 @@ func TestRecycleTriggerCrossRefsResolve_F5215(t *testing.T) {
 // requireLine returns the single markdown line in body that contains substr,
 // failing the test when no line matches. It scopes an assertion to the specific
 // table row or paragraph line that carries a claim, so a match elsewhere in the
-// section does not mask a drift in the line itself. Both the §4.7 recycle row
+// section does not mask a drift in the line itself. Both the §4.7 Shutdown row
 // and the §5.2 trigger sentence are single logical lines in the source
 // markdown. It reuses the package-level lineContaining helper and adds the
 // fail-when-absent guard so a renamed row surfaces here rather than as a

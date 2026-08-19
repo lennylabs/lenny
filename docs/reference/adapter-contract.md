@@ -72,13 +72,13 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `RotateCredentials` | Push replacement credentials for a specific provider mid-session |
 | `Resume` | Restore from checkpoint on a replacement pod |
 | `ReportUsage` | Report LLM token counts extracted from provider responses |
-| `Terminate` | Graceful shutdown |
+| `Shutdown` | Graceful end-of-session teardown of the named session. The adapter flushes the session's final usage report, closes its runtime, removes its slot tree, and reports the per-slot cleanup outcome through `ReportSessionScrub`. When the release leaves the pod holding no other bound session, the adapter also sends the CH-RUNTIMEOPS drain signal. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
 
 **Adapter-to-Gateway RPCs:**
 
 | RPC | Description |
 |-----|-------------|
-| `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release on a recycling or concurrent pod. The gateway increments the pod's served-session count and feeds the leak ledger. |
+| `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release, on a pod of any concurrency and any recycle setting. The gateway increments the pod's served-session count and feeds the leak ledger. |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod. The gateway computes the recycle disposition from the outcome and `sessionPolicy`. |
 
 **Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime exits at each session end as in the default mode; the adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, then reports through these RPCs.

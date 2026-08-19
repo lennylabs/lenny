@@ -235,15 +235,15 @@ rather than from text dependency alone.
 Where a deliverable's documentation text and the code that makes it true fall on opposite sides of either
 rule, the text moves to the code's step, and the step that carries it names the part it takes.
 
-- [ ] **S1 · spec** — SPEC-1. The presence conditions in `spec/15`, `spec/28`, `spec/05`, `spec/06`,
+- [x] **S1 · spec** — SPEC-1. The presence conditions in `spec/15`, `spec/28`, `spec/05`, `spec/06`,
       `spec/07`, and `spec/29` are replaced by §4.2's value rule and §4.6.1's population rule, and the
       intra-pod MCP nonce statements and the §4.7.5 manifest stability sentence are restated on the
       pod-wide surface CODE-1's start-side merge leaves.
       Depends on: —
-- [ ] **S2 · spec** — SPEC-2. §5.2 defines a session-mode slot and a service-mode slot, and the glossary
+- [x] **S2 · spec** — SPEC-2. §5.2 defines a session-mode slot and a service-mode slot, and the glossary
       gains an entry carrying both senses.
       Depends on: S1
-- [ ] **S3 · spec** — SPEC-7. §4.1 gains the message-scope classification table, the §28.5.3 addressing
+- [x] **S3 · spec** — SPEC-7. §4.1 gains the message-scope classification table, the §28.5.3 addressing
       rule is stated, the `Terminate` sentences are restated on the `Shutdown` wire name in the
       specification and in `docs/reference/adapter-contract.md`, and the client-visible exhaustion error
       at `spec/05:558` is restated on `error.sessionId`. The exhaustion sentence lands here with the rest

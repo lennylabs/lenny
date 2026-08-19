@@ -64,10 +64,12 @@ A pod that serves more than one session carries residual state that survives bet
 
 | Configuration | Scrub at session release | Residual state across sessions |
 |---|---|---|
-| One session per pod (`recycle.enabled: false`, `maxConcurrentSessions: 1`) | Pod terminated | None; pod is never reused |
-| Pod reuse (`recycle.enabled: true`, `maxConcurrentSessions: 1`) | Best-effort whole-pod scrub at occupancy zero | DNS cache, TCP `TIME_WAIT`, page cache, residual processes survive a best-effort scrub |
+| One session per pod (`recycle.enabled: false`, `maxConcurrentSessions: 1`) | Per-slot cleanup at the session's release, then the pod is terminated | None; pod is never reused |
+| Pod reuse (`recycle.enabled: true`, `maxConcurrentSessions: 1`) | Per-slot cleanup at each release plus a best-effort whole-pod scrub at occupancy zero | DNS cache, TCP `TIME_WAIT`, page cache, residual processes survive a best-effort scrub |
 | Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
 | Service (`executionMode: service`) | None | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
+
+The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting. The whole-pod scrub runs at occupancy zero on a recycling pod. What is distinctive to the `Concurrent` row is the co-tenancy its third column names.
 
 ---
 

@@ -30,10 +30,12 @@ This page describes the security posture Lenny is built to. It is a companion to
 
 In the default configuration (`sessionPolicy.maxConcurrentSessions: 1`, `recycle.enabled: false`) every session runs in its own Kubernetes pod that is terminated when the session ends. Pods do not share filesystems, credentials, or long-lived network paths, and cross-session leakage through `/tmp`, environment, or a shared in-process cache cannot occur because nothing is reused. The gateway, rather than the pod, is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
 
+A per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting, and the adapter reports its outcome to the gateway.
+
 When a deployer opts into pod reuse, the trust boundary relaxes by acknowledgment. Credential leases are always per session, but residual state can survive between sessions:
 
 - `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`. A whole-pod scrub runs when occupancy reaches zero (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup, residual-process kill), but it is best-effort: DNS cache, TCP `TIME_WAIT`, and page cache may persist.
-- `maxConcurrentSessions > 1` requires `acknowledgeProcessLevelIsolation: true` and runs a per-slot cleanup at each session release plus a whole-pod scrub at occupancy zero. Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack.
+- `maxConcurrentSessions > 1` requires `acknowledgeProcessLevelIsolation: true`. Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack.
 - `recycle.scrubProfile: in-place` reuses the continuing microvm guest across the tenant boundary without provisioning a fresh guest, and requires `recycle.acknowledgeMicrovmResidualState: true`, because guest-kernel residual state crosses the tenant boundary. The `vm-restart` profile instead retires the pod at the recycle boundary and provisions a fresh replacement pod, which is a fresh guest VM, from the warm pool, so it carries no residual-state acknowledgment.
 
 Each acknowledgment is fail-closed: the pool controller rejects a pool that opts into the reuse mode without the corresponding acknowledgment. The session creation response carries `sessionIsolationLevel.residualStateWarning: true` whenever a session runs on a pod that serves more than one session, so a client that requires strict isolation can reject it.

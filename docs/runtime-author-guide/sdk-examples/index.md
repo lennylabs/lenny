@@ -20,7 +20,7 @@ All three examples implement the same behavior:
 
 1. **Receive a message** asking to summarize workspace files.
 2. **Read files** from the workspace using the `list_dir` and `read_file` adapter-local tools.
-3. **Produce a summary** as a `response` on stdout. The examples concatenate truncated file contents; a production summarizer would pass the contents to an LLM.
+3. **Produce a summary** as a `response` on stdout, carrying the `sessionId` the inbound `message` was addressed with. The examples concatenate truncated file contents; a production summarizer would pass the contents to an LLM.
 4. **Handle heartbeats** by immediately writing `heartbeat_ack`.
 5. **Handle shutdown** by exiting cleanly.
 
@@ -46,6 +46,7 @@ Each example covers:
 
 ### Basic level (complete)
 - Message handling with file reading via `tool_call`/`tool_result`
+- Echoing the inbound `sessionId` on every session-scoped frame emitted in response
 - Heartbeat/shutdown handling
 - Proper stdout flushing
 - Complete `go.mod`/`requirements.txt`/`package.json`

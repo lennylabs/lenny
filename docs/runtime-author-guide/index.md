@@ -147,7 +147,7 @@ Included:
 
 - Messages in, responses out.
 - File access to the session's workspace through a small built-in tool vocabulary (`read_file`, `write_file`, `list_dir`, `delete_file`).
-- A shortcut response format for simple replies: `{"type": "response", "text": "hello"}`.
+- A shortcut response format for simple replies: `{"type": "response", "sessionId": "sess_abc", "text": "hello"}`. The runtime echoes the `sessionId` the adapter handed it on the frames it emits in response.
 
 Not included:
 

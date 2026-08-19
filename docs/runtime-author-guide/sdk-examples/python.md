@@ -53,6 +53,10 @@ phase = 0
 # Pending tool call ID (for correlating results).
 pending_tool_call_id = None
 
+# sessionId of the message being processed. The adapter populates it on every
+# pod, and every session-scoped frame this runtime emits echoes it back.
+current_session_id = None
+
 # List of files discovered via list_dir.
 file_list = []
 
@@ -82,6 +86,7 @@ def write_response(text):
     global phase
     write_json({
         "type": "response",
+        "sessionId": current_session_id,
         "output": [
             {"type": "text", "inline": text}
         ]
@@ -113,6 +118,7 @@ def list_dir(path):
     write_json({
         "type": "tool_call",
         "id": tc_id,
+        "sessionId": current_session_id,
         "name": "list_dir",
         "arguments": {"path": path}
     })
@@ -126,6 +132,7 @@ def read_file(path):
     write_json({
         "type": "tool_call",
         "id": tc_id,
+        "sessionId": current_session_id,
         "name": "read_file",
         "arguments": {"path": path}
     })
@@ -135,9 +142,11 @@ def read_file(path):
 
 def handle_message(msg):
     """Process a new task message."""
-    global phase, file_list, file_contents, current_file_index
+    global phase, file_list, file_contents, current_file_index, current_session_id
 
-    # Reset state for this task.
+    # Record the session this message addresses so every frame emitted in
+    # response echoes it, then reset state for this task.
+    current_session_id = msg.get("sessionId")
     file_list = []
     file_contents = []
     current_file_index = 0

@@ -47,7 +47,7 @@ sessionPolicy:                    # session mode only
 |:--|:--|:--|:--|
 | One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
 | Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. |
-| Concurrent | N | `true` | The pod serves up to N simultaneous sessions in per-slot workspaces and recycles when occupancy reaches zero. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero. |
 | Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
 
 The acknowledgments, tenant pinning, `residualStateWarning`, and the scaling factors derive from `sessionPolicy` properties: `acknowledgeBestEffortScrub` is required when recycling is enabled, `acknowledgeProcessLevelIsolation` is required when concurrency exceeds one, `acknowledgeMicrovmResidualState` is required for `scrubProfile: in-place`, and tenant pinning is required when `maxConcurrentSessions > 1` or `recycle.enabled: true`.
@@ -60,10 +60,12 @@ The `sessionIsolationLevel` object in the `POST /v1/sessions` response reports t
 
 | Configuration | Scrub at session release | `conversationContinuity` | Residual state across sessions |
 |:--|:--|:--|:--|
-| One session per pod | Pod terminated | `platform` | None; the pod is never reused |
-| Pod reuse | Best-effort whole-pod scrub at occupancy zero | `platform` | DNS cache, TCP `TIME_WAIT`, page cache, residual processes may survive a best-effort scrub |
+| One session per pod | Per-slot cleanup at the session's release, then the pod is terminated | `platform` | None; the pod is never reused |
+| Pod reuse | Per-slot cleanup at each release plus a best-effort whole-pod scrub at occupancy zero | `platform` | DNS cache, TCP `TIME_WAIT`, page cache, residual processes may survive a best-effort scrub |
 | Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | `platform` | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
 | Service | None | `none` | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
+
+The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting, and the adapter reports its outcome to the gateway. The whole-pod scrub runs at occupancy zero on a recycling pod. What is distinctive to the `Concurrent` row is the co-tenancy its third column names.
 
 A client that requires strict isolation should reject a session whose response carries `residualStateWarning: true`.
 

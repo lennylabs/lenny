@@ -47,6 +47,10 @@ type InboundMessage struct {
 	Type       string       `json:"type"`
 	ID         string       `json:"id,omitempty"`
 	Input      []MessagePart `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod, and the runtime echoes it on the
+	// session-scoped frames it emits in response.
+	SessionID  string       `json:"sessionId,omitempty"`
 	TS         int64        `json:"ts,omitempty"`
 	Reason     string       `json:"reason,omitempty"`
 	DeadlineMs int          `json:"deadline_ms,omitempty"`
@@ -67,14 +71,16 @@ type MessagePart struct {
 type ToolCall struct {
 	Type      string            `json:"type"`
 	ID        string            `json:"id"`
+	SessionID string            `json:"sessionId,omitempty"`
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments"`
 }
 
 // Response signals task completion.
 type Response struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output"`
+	Type      string       `json:"type"`
+	SessionID string       `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -86,6 +92,10 @@ type HeartbeatAck struct {
 
 // pendingToolCall tracks an outstanding tool call ID so we can correlate results.
 var pendingToolCallID string
+
+// currentSessionID holds the sessionId of the message being processed. Every
+// session-scoped frame the runtime emits echoes it back to the adapter.
+var currentSessionID string
 
 // toolCallCounter generates unique tool call IDs.
 var toolCallCounter atomic.Int64
@@ -154,7 +164,9 @@ func main() {
 
 // handleMessage processes a new task message.
 func handleMessage(msg InboundMessage) {
-	// Reset state for this task.
+	// Reset state for this task. Record the session this message addresses so
+	// every frame emitted in response echoes it.
+	currentSessionID = msg.SessionID
 	fileContents = nil
 	fileList = nil
 	currentFileIndex = 0
@@ -241,6 +253,7 @@ func listDir(path string) {
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
+		SessionID: currentSessionID,
 		Name:      "list_dir",
 		Arguments: map[string]string{"path": path},
 	})
@@ -257,6 +270,7 @@ func readNextFile() {
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
+		SessionID: currentSessionID,
 		Name:      "read_file",
 		Arguments: map[string]string{"path": filePath},
 	})
@@ -279,7 +293,8 @@ func produceSummary() {
 // writeResponse sends a response message to stdout.
 func writeResponse(text string) {
 	resp := Response{
-		Type: "response",
+		Type:      "response",
+		SessionID: currentSessionID,
 		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},

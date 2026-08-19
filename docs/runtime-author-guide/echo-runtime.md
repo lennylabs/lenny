@@ -48,6 +48,10 @@ type InboundMessage struct {
 	Type  string          `json:"type"`
 	ID    string          `json:"id,omitempty"`
 	Input []MessagePart    `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod, and a Basic-level runtime echoes it on the
+	// frames it emits in response.
+	SessionID string      `json:"sessionId,omitempty"`
 	TS    int64           `json:"ts,omitempty"`         // heartbeat timestamp
 	Reason string         `json:"reason,omitempty"`     // shutdown reason
 	DeadlineMs int        `json:"deadline_ms,omitempty"` // shutdown deadline
@@ -68,8 +72,9 @@ type MessagePart struct {
 
 // Response is the primary output message, signaling task completion.
 type Response struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output"`
+	Type      string       `json:"type"`
+	SessionID string       `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -111,6 +116,9 @@ func main() {
 			seq++
 			resp := Response{
 				Type: "response",
+				// Echo the inbound sessionId on every session-scoped frame
+				// emitted in response.
+				SessionID: msg.SessionID,
 				Output: []MessagePart{
 					{
 						Type:   "text",
@@ -174,14 +182,15 @@ func writeJSON(v interface{}) {
 
 ```go
 type InboundMessage struct {
-    Type  string          `json:"type"`
-    ID    string          `json:"id,omitempty"`
-    Input []MessagePart    `json:"input,omitempty"`
+    Type      string       `json:"type"`
+    ID        string       `json:"id,omitempty"`
+    Input     []MessagePart `json:"input,omitempty"`
+    SessionID string       `json:"sessionId,omitempty"`
     // ...
 }
 ```
 
-We define a single struct that can hold fields from any inbound message type. Go's `encoding/json` silently ignores unknown fields, which satisfies the forward-compatibility rule: your runtime MUST ignore fields it does not recognize. We dispatch on `msg.Type` to determine which fields are relevant.
+We define a single struct that can hold fields from any inbound message type. Go's `encoding/json` silently ignores unknown fields, which satisfies the forward-compatibility rule: your runtime MUST ignore fields it does not recognize. We dispatch on `msg.Type` to determine which fields are relevant. `sessionId` is the exception to the ignore permission: it names the session the frame is addressed to, the adapter populates it on every pod, and the runtime echoes it on the session-scoped frames it emits in response.
 
 ### The Main Loop
 
@@ -206,13 +215,14 @@ case "message":
     inputText := msg.Input[0].Inline
     seq++
     resp := Response{
-        Type: "response",
+        Type:      "response",
+        SessionID: msg.SessionID,
         Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
     }
     writeJSON(resp)
 ```
 
-We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client.
+We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout, carrying the `sessionId` the inbound `message` was addressed with. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client. Echoing `sessionId` is the Basic-level echo obligation: the adapter resolves each session-scoped frame against the session it names, and a `response` that names no session is rejected on a pod holding more than one slot.
 
 ### Handling `heartbeat`
 
@@ -335,6 +345,7 @@ case "message":
     readCall := ToolCall{
         Type:      "tool_call",
         ID:        "tc_001",
+        SessionID: msg.SessionID,
         Name:      "read_file",
         Arguments: map[string]string{"path": "/workspace/current/input.txt"},
     }
