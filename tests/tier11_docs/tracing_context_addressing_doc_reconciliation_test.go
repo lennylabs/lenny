@@ -117,9 +117,9 @@ func TestTracingContextRegistrationMechanismAgreesAcrossDocs(t *testing.T) {
 //	the frame omits resolves to that stream's own binding on a pod holding at
 //	most one slot and is rejected on a pod holding more, and the adapter drops,
 //	counts, and logs a frame whose identifier names no live binding on the
-//	receiving stream. The two rejections are counted on separate series, so a
-//	page that attributes the unaddressed rejection to the drop counter is a
-//	failure too. A failure here means a runtime author would read the silent
+//	receiving stream. A page that attributes the unaddressed rejection to the
+//	drop counter is a failure too, because the two rejections are counted on
+//	separate series. A failure here means a runtime author would read the silent
 //	drop as a platform defect, would expect an unaddressed frame to reach every
 //	slot as it did before the frame was addressed, or would read the identifier
 //	as required only on a pod running concurrent slots.
@@ -144,10 +144,12 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// error on a pod holding more.
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
 		"on a pod holding more than one slot it is rejected and relayed to no stream",
-		// The two rejections are counted separately, and the drop
-		// counter covers the frame whose identifier names no live
-		// binding on the receiving stream.
-		"Two dispositions reject a frame, and they are counted separately",
+		// Both rejecting dispositions are stated, and the drop counter
+		// covers the frame whose identifier names no live binding on the
+		// receiving stream. Whether each disposition also names its
+		// counter is pinned by the catalog-owed case in
+		// unaddressed_frame_counter_owed_test.go.
+		"Two dispositions reject a frame.",
 		"A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
 		// Live-binding confirmation fails for both of the reasons

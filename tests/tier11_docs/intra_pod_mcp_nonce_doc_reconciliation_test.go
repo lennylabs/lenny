@@ -19,9 +19,9 @@
 // connection that fails and a troubleshooting reader is told to repeat the step
 // that failed.
 //
-// The predicate is the runtime-author documentation alone. The specification
-// sites that state the same handshake are reconciled against their reader-facing
-// mirrors by the case that lands with the manifest's own restatement.
+// The predicate covers the runtime-author documentation and, in the second
+// case below, every specification statement of the handshake together with the
+// adapter manifest's currency statement and its reader-facing mirror.
 //
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
@@ -33,6 +33,8 @@ package tier11_docs_test
 
 import (
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -143,5 +145,210 @@ func TestRuntimeAuthorTroubleshootingExplainsARejectedNonceOnTheArmingValue(t *t
 			"stale manifest",
 			"cached the manifest too early",
 		})
+	}
+}
+
+// noncePodWideRule, nonceArmingRule, and nonceNoReArmRule are the three
+// statements that make the intra-pod MCP nonce handshake implementable. A
+// server is pod-wide, it validates against the value the manifest carried at
+// the start that bound it, and a later start does not re-arm it.
+const (
+	noncePodWideRule = "started at most once per pod"
+	nonceArmingRule  = "carried at the start that bound"
+	nonceNoReArmRule = "does not re-arm"
+)
+
+// retiredNoncePhrasings are the readings the pod-wide rule replaces: a nonce
+// regenerated for each session, a nonce that scopes a connection to a session,
+// and a server that admits the manifest's current value. Each one describes a
+// handshake that fails on a pod holding a co-tenant session.
+var retiredNoncePhrasings = []string{
+	"regenerated per session",
+	"regenerated for each session",
+	"regenerated each session",
+	"scoped to the session",
+	"scopes the connection to a session",
+	"scopes a connection to a session",
+	"manifest's current",
+	"current manifest",
+}
+
+// nonceStatementSite names one statement of the handshake: the file it lives
+// in, an anchor unique to it, and the rules it has to state.
+type nonceStatementSite struct {
+	label  string
+	path   []string
+	anchor string
+	want   []string
+}
+
+// nonceStatementBlock returns the markdown block that carries anchor, with its
+// wrapped lines joined into one string. A block is a table row, a list item, or
+// a paragraph: the spec wraps a single sentence across several lines, so a
+// line-scoped match would miss a rule split at a line break.
+func nonceStatementBlock(t *testing.T, label, body, anchor string) string {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	idx := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, anchor) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("%s: no line carries %q (rewritten or removed?)", label, anchor)
+	}
+	start := idx
+	for start > 0 && !nonceBlockStart(lines[start]) && strings.TrimSpace(lines[start-1]) != "" {
+		start--
+	}
+	end := idx + 1
+	for end < len(lines) && strings.TrimSpace(lines[end]) != "" && !nonceBlockStart(lines[end]) {
+		end++
+	}
+	return strings.Join(strings.Fields(strings.Join(lines[start:end], " ")), " ")
+}
+
+// nonceBlockOpener matches the opening line of a numbered specification step,
+// including the lettered form the §29.4 sequence uses.
+var nonceBlockOpener = regexp.MustCompile(`^\d+[a-z]?\.\s`)
+
+// nonceBlockStart reports whether a line opens a new block rather than
+// continuing the one above it.
+func nonceBlockStart(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "|"), strings.HasPrefix(trimmed, "#"):
+		return true
+	default:
+		return nonceBlockOpener.MatchString(trimmed)
+	}
+}
+
+// intraPodNonceSites returns every statement of the intra-pod MCP nonce
+// handshake the pod-wide rule reaches, in the specification and in the
+// reader-facing mirror of the adapter manifest. A site left behind states a
+// handshake that contradicts the ones beside it.
+func intraPodNonceSites() []nonceStatementSite {
+	spec15 := []string{"spec", "15_external-api-surface.md"}
+	spec28 := []string{"spec", "28_communication-channels.md"}
+	spec04 := []string{"spec", "04_system-components.md"}
+	spec29 := []string{"spec", "29_communication-scenarios.md"}
+	return []nonceStatementSite{
+		{
+			label:  "spec/15 §15.4.3 Authentication lead",
+			path:   spec15,
+			anchor: "**Authentication.** Intra-pod MCP connections require a manifest-nonce handshake",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/15 §15.4.3 nonce validation sentence",
+			path:   spec15,
+			anchor: "The adapter validates the `_lennyNonce` value before processing any tool dispatch",
+			want:   []string{nonceArmingRule, "rather than against that field's current value"},
+		},
+		{
+			label:  "spec/28 CH-MCP-PLATFORM Endpoint bullet",
+			path:   spec28,
+			anchor: "**Endpoint.** An abstract Unix socket whose name the adapter manifest advertises under",
+			want:   []string{nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/28 CH-MCP-PLATFORM Exclusivity bullet",
+			path:   spec28,
+			anchor: "The manifest nonce authenticates a connection to the pod's intra-pod MCP servers, which",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/28 CH-MCP-CONNECTOR Exclusivity bullet",
+			path:   spec28,
+			anchor: "The same manifest nonce that authenticates a connection to `CH-MCP-PLATFORM`\n  authenticates a connection here",
+			want:   []string{noncePodWideRule, nonceArmingRule},
+		},
+		{
+			label:  "spec/28 §28.6 MCP scoping clause",
+			path:   spec28,
+			anchor: "On `CH-MCP-PLATFORM` and `CH-MCP-CONNECTOR` the manifest nonce",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/28 §28.8 CH-MCP-PLATFORM row",
+			path:   spec28,
+			anchor: "| `CH-MCP-PLATFORM` | When the runtime is Basic-level",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/28 §28.8 CH-MCP-CONNECTOR row",
+			path:   spec28,
+			anchor: "| `CH-MCP-CONNECTOR` | When the runtime is Basic-level",
+			want:   []string{noncePodWideRule},
+		},
+		{
+			label:  "spec/04 §4.7.5 `mcpNonce` manifest field row",
+			path:   spec04,
+			anchor: "| `mcpNonce`",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/04 §4.7 MCP server security invariant",
+			path:   spec04,
+			anchor: "**MCP server security:**",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/29 §29.4 platform MCP connect step",
+			path:   spec29,
+			anchor: "The runtime reads the manifest and connects to the platform MCP",
+			want:   []string{noncePodWideRule, nonceArmingRule, nonceNoReArmRule},
+		},
+		{
+			label:  "spec/04 §4.7.5 adapter manifest lead",
+			path:   spec04,
+			anchor: "**Adapter manifest:** One pod-global file written to",
+			want: []string{
+				"One pod-global file",
+				"authoritative for the session whose start last wrote it",
+			},
+		},
+		{
+			label:  "docs/reference/adapter-contract.md Adapter Manifest lead",
+			path:   []string{"docs", "reference", "adapter-contract.md"},
+			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
+			want: []string{
+				"one pod-global file",
+				"authoritative for the session whose start last wrote it",
+			},
+		},
+	}
+}
+
+// spec: 4.7, 4.7.5, 15.4.3, 28.5.3, 28.6, 29.4
+// diagnosis: one statement of the intra-pod MCP nonce handshake, or of the
+//
+//	adapter manifest's currency, disagrees with the others. The intra-pod MCP
+//	servers are pod-wide and started at most once per pod, a server validates
+//	against the nonce the manifest carried at the start that bound it, and a
+//	later session's manifest write does not re-arm a running server. A site
+//	that still describes a nonce regenerated per session, scoped to a
+//	connection, or validated against the manifest's current value tells a
+//	runtime author to implement a handshake that fails on a pod holding a
+//	co-tenant session, and contradicts the sites that cite it.
+func TestIntraPodMCPNonceStatementsAgreeAcrossSpecAndDocs(t *testing.T) {
+	root := repoRoot(t)
+
+	files := map[string]string{}
+	for _, site := range intraPodNonceSites() {
+		key := filepath.Join(site.path...)
+		if _, ok := files[key]; !ok {
+			files[key] = readRepoFile(t, root, site.path...)
+		}
+		anchor := strings.Join(strings.Fields(site.anchor), " ")
+		block := nonceStatementBlock(t, site.label, files[key], strings.Split(site.anchor, "\n")[0])
+		if !strings.Contains(block, anchor) {
+			t.Fatalf("%s: the anchoring sentence was not found in one block (rewritten or removed?)", site.label)
+		}
+		requireAllContain(t, site.label, block, site.want)
+		requireNoneContain(t, site.label, block, retiredNoncePhrasings)
 	}
 }
