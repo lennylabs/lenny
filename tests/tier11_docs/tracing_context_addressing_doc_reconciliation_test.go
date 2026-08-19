@@ -144,10 +144,13 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// error on a pod holding more.
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
 		"on a pod holding more than one slot it is rejected and relayed to no stream",
-		// The two rejections are counted separately, and the drop
-		// counter covers the frame whose identifier names no live
-		// binding on the receiving stream.
+		// The two rejections are counted separately, and the two
+		// counters partition them: the unaddressed counter takes the
+		// frame that carries no identifier on a pod holding more than
+		// one slot, and the drop counter takes the frame whose
+		// identifier names no live binding on the receiving stream.
 		"Two dispositions reject a frame, and they are counted separately",
+		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
 		"A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
 		// Live-binding confirmation fails for both of the reasons
@@ -178,6 +181,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		"The JSONL frame carries the per-session identifier in `slotId` on every pod",
 		"the runtime echoes the identifier the adapter handed it",
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
@@ -198,6 +202,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// nowhere else on the page.
 		"a Basic-level runtime echoes the identifier the adapter handed it",
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md tool-availability paragraph", availability, []string{

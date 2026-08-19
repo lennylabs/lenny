@@ -75,7 +75,7 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
 ### What you add on top of Basic
 
 1. **Read the manifest** the sidecar writes to `/run/lenny/adapter-manifest.json` at startup. Extract `platformMcpServer.socket`, `connectorServers`, and `mcpNonce`.
-2. **Connect to the platform tool server** over the Unix socket named in the manifest. Present the `mcpNonce` in the MCP `initialize` handshake.
+2. **Connect to the platform tool server** over the Unix socket named in the manifest. Present the `mcpNonce` in the MCP `initialize` handshake. The intra-pod MCP servers are pod-wide and started at most once per pod, so the nonce a server validates against is the one the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server.
 3. **Optionally connect to connector tool servers** -- one per connector the operator has authorized for your tenant. A connector is an external MCP server registered with Lenny; the gateway proxies its tools into your pod, scoped by the session's DelegationPolicy. This is how an agent runtime reaches external MCP tools. A `type: mcp` runtime's tools are not reachable this way; an agent cannot call them in v1 (see [`type: mcp` runtimes](#type-mcp-runtimes)).
 4. **Use the platform tools** for delegation, streaming output, asking the user questions, memory, and messaging.
 
@@ -95,6 +95,8 @@ About 50 lines in any language. See the [Echo Runtime Sample](echo-runtime.md) f
   }
 }
 ```
+
+The nonce authenticates the connection to the pod's intra-pod MCP servers. It does not scope the connection to a session: the server resolves the calling session at call time and refuses the call unless the pod's shared runtime process has been given exactly one session and that session is the caller.
 
 - **Tool discovery:** once connected, call `tools/list` on each server to see what's available.
 - **Client libraries:** use whichever MCP client library your language already has -- `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript, `mcp` for Python.
