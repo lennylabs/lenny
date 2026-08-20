@@ -87,7 +87,7 @@ type InboundMessage struct {
 	Ts    int64       `json:"ts,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID string  `json:"slotId,omitempty"`
+	SlotID string `json:"slotId,omitempty"`
 }
 
 type InputPart struct {
@@ -101,9 +101,9 @@ type MessagePart struct {
 }
 
 type ResponseMsg struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output"`
 }
 
 // --- Manifest ---
@@ -132,8 +132,8 @@ func main() {
 	// 2. Connect to Lenny's local tool server
 	ctx := context.Background()
 	mcp, err := mcpclient.Connect(ctx, mcpclient.ConnectOptions{
-		Socket:   manifest.PlatformMcpServer.Socket,
-		Nonce:    manifest.McpNonce,
+		Socket: manifest.PlatformMcpServer.Socket,
+		Nonce:  manifest.McpNonce,
 		ClientInfo: mcpclient.ClientInfo{
 			Name:    "worker-runtime",
 			Version: "1.0.0",
@@ -172,7 +172,7 @@ func main() {
 
 			// Send final response
 			resp := ResponseMsg{
-				Type:      "response",
+				Type:   "response",
 				SlotID: msg.SlotID,
 				Output: []MessagePart{
 					{Type: "text", Inline: result},
@@ -238,9 +238,9 @@ func runBasicLevel() {
 			text := extractText(msg.Input)
 			result := processTask(text)
 			writeJSON(ResponseMsg{
-				Type:      "response",
+				Type:   "response",
 				SlotID: msg.SlotID,
-				Output:    []MessagePart{{Type: "text", Inline: result}},
+				Output: []MessagePart{{Type: "text", Inline: result}},
 			})
 		case "heartbeat":
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
@@ -290,7 +290,7 @@ type InboundMessage struct {
 	Ts    int64       `json:"ts,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID string  `json:"slotId,omitempty"`
+	SlotID string `json:"slotId,omitempty"`
 }
 
 type InputPart struct {
@@ -304,9 +304,9 @@ type MessagePart struct {
 }
 
 type ResponseMsg struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output"`
 }
 
 type AdapterManifest struct {
@@ -347,8 +347,8 @@ func main() {
 	// 2. Connect to Lenny's local tool server
 	ctx := context.Background()
 	mcp, err := mcpclient.Connect(ctx, mcpclient.ConnectOptions{
-		Socket:   manifest.PlatformMcpServer.Socket,
-		Nonce:    manifest.McpNonce,
+		Socket: manifest.PlatformMcpServer.Socket,
+		Nonce:  manifest.McpNonce,
 		ClientInfo: mcpclient.ClientInfo{
 			Name:    "coordinator-runtime",
 			Version: "1.0.0",
@@ -390,9 +390,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	subTasks := strings.Split(text, "|")
 	if len(subTasks) == 0 {
 		writeJSON(ResponseMsg{
-			Type:      "response",
+			Type:   "response",
 			SlotID: msg.SlotID,
-			Output:    []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
+			Output: []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
 		})
 		return
 	}
@@ -407,9 +407,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	})
 	if err != nil {
 		writeJSON(ResponseMsg{
-			Type:      "response",
+			Type:   "response",
 			SlotID: msg.SlotID,
-			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
+			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
 		})
 		return
 	}
@@ -421,9 +421,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if len(agents) == 0 {
 		writeJSON(ResponseMsg{
-			Type:      "response",
+			Type:   "response",
 			SlotID: msg.SlotID,
-			Output:    []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
+			Output: []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
 		})
 		return
 	}
@@ -457,8 +457,8 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 			// Budget slice allocated from parent to child
 			"lease_slice": map[string]interface{}{
-				"maxTokenBudget": 10000,     // 10k tokens per child
-				"perChildMaxAge": 300,        // 5 minutes max per child
+				"maxTokenBudget": 10000, // 10k tokens per child
+				"perChildMaxAge": 300,   // 5 minutes max per child
 			},
 		})
 
@@ -475,9 +475,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if len(childIDs) == 0 {
 		writeJSON(ResponseMsg{
-			Type:      "response",
+			Type:   "response",
 			SlotID: msg.SlotID,
-			Output:    []MessagePart{{Type: "text", Inline: "All delegations failed."}},
+			Output: []MessagePart{{Type: "text", Inline: "All delegations failed."}},
 		})
 		return
 	}
@@ -496,9 +496,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if err != nil {
 		writeJSON(ResponseMsg{
-			Type:      "response",
+			Type:   "response",
 			SlotID: msg.SlotID,
-			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
+			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
 		})
 		return
 	}
@@ -520,7 +520,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	}
 
 	writeJSON(ResponseMsg{
-		Type:      "response",
+		Type:   "response",
 		SlotID: msg.SlotID,
 		Output: []MessagePart{
 			{Type: "text", Inline: strings.Join(outputLines, "\n")},

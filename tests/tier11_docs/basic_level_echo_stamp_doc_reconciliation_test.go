@@ -30,9 +30,11 @@
 package tier11_docs_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -275,17 +277,16 @@ func addressOmittedWhenAbsent(key string) []struct {
 	page      string
 	construct string
 } {
-	goField, snake := addressSpellings(key)
+	_, snake := addressSpellings(key)
 	goTag := fmt.Sprintf("`json:%q`", key+",omitempty")
-	camel := "current" + goField[:len(goField)-2] + "Id"
 	return []struct {
 		page      string
 		construct string
 	}{
 		{filepath.Join("docs", "runtime-author-guide", "echo-runtime.md"), goTag},
 		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "go.md"), goTag},
-		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "python.md"), fmt.Sprintf("if current_%s is not None:", snake)},
-		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "typescript.md"), fmt.Sprintf("let %s: string | undefined;", camel)},
+		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "python.md"), fmt.Sprintf("if %s is not None:", snake)},
+		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "typescript.md"), fmt.Sprintf("%s?: string;", key)},
 		{filepath.Join("docs", "tutorials", "build-a-runtime.md"), goTag},
 		{filepath.Join("docs", "tutorials", "recursive-delegation.md"), goTag},
 	}
@@ -496,5 +497,188 @@ func TestAnnotatedTracesAddressBothHalvesOfTheConversation(t *testing.T) {
 	}
 	if traced == 0 {
 		t.Error("no annotated protocol trace carries a session-scoped frame (pages restructured?); the addressing rule is no longer held on the traces")
+	}
+}
+
+// sampleSourceLanguages are the fence languages whose blocks carry a sample's
+// executable source. The untagged fences on the same pages are annotated
+// protocol traces, which have no functions and no variables, and the tagged
+// non-source fences are shell transcripts.
+var sampleSourceLanguages = map[string]bool{"go": true, "python": true, "typescript": true, "ts": true}
+
+// sampleFunctionHeader matches a top-level function declaration in any of the
+// three sample languages. The header is where a sample states which values the
+// function is handed, so it is where the per-session address has to appear when
+// the emission inside does not read it from an inbound envelope.
+var sampleFunctionHeader = regexp.MustCompile(`^(func|def|function|async function) \w+\(`)
+
+// inboundEnvelopeReference matches a read of the inbound frame the emission is
+// answering, in the spelling all six samples use for it.
+var inboundEnvelopeReference = regexp.MustCompile(`\bmsg\b`)
+
+// frameTypeDeclaration matches the opener of a type declaration whose literal
+// `type` member names a session-scoped frame. A declaration states the field
+// set rather than emitting a frame, so it carries no address of its own.
+var frameTypeDeclaration = regexp.MustCompile(`^\s*(interface|type|class)\s+\w+`)
+
+// addressHoldingVariable matches the declaration of a variable that holds the
+// per-session address across frames, in the three sample languages. `stem` is
+// the address key's stem, so the matcher travels with the key rename.
+func addressHoldingVariable(stem string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)^(var|let|const)\s+(\w*` + stem + `\w*id\w*)\b|^(\w*` + stem + `\w*id\w*)\s*=`)
+}
+
+// addressParameter matches the per-session address appearing in a function
+// header's parameter list, under the local spelling any of the three languages
+// gives it.
+func addressParameter(stem string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)\(.*\b\w*` + stem + `_?id\b`)
+}
+
+// spec: 4.6.1, 15.4.3, 28.5.3
+// diagnosis: a hand-written Basic-level sample stamps the per-session address
+//
+//	from a variable that outlives the frame it was read from, rather than from
+//	the inbound envelope the emission answers. On a pod holding more than one
+//	slot the adapter multiplexes every session's stream over the one channel, so
+//	a second session's `message` overwrites such a variable while the first
+//	session's tool-call round trip is still outstanding and the continuation
+//	frames go out addressed to the wrong session. The adapter populates the
+//	address on the `tool_result` too, so the value each emission needs is
+//	already in scope on the frame being answered.
+func TestBasicLevelRuntimeSamplesStampTheAddressFromTheFrameTheyAnswer(t *testing.T) {
+	root := repoRoot(t)
+	key := publishedFrameAddressKey(t, root)
+	stem := strings.TrimSuffix(key, "Id")
+	holder := addressHoldingVariable(stem)
+	param := addressParameter(stem)
+
+	checked := 0
+	for _, rel := range basicLevelRuntimeSamplePages {
+		blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		for _, b := range blocks {
+			if !sampleSourceLanguages[strings.ToLower(b.Language)] {
+				continue
+			}
+			lines := strings.Split(b.Body, "\n")
+			for i, line := range lines {
+				if holder.MatchString(line) {
+					t.Errorf("%s:%d: the sample holds the per-session address in a variable that outlives the frame it was read from; each session-scoped emission stamps the address carried by the inbound frame it answers\n%s", rel, b.StartLine+i+1, strings.TrimSpace(line))
+				}
+			}
+			for _, e := range sessionScopedEmissions(b.Body) {
+				if frameTypeDeclaration.MatchString(e.Text) {
+					continue
+				}
+				checked++
+				if inboundEnvelopeReference.MatchString(e.Text) {
+					continue
+				}
+				header := enclosingFunctionHeader(lines, e.Offset-1)
+				if header != "" && param.MatchString(header) {
+					continue
+				}
+				t.Errorf("%s:%d: this emission takes the per-session address from neither the inbound frame it answers nor a parameter of %q; the address travels with the frame being answered\n%s", rel, b.StartLine+e.Offset, header, e.Text)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Error("no sample source block emits a `response` or a `tool_call` (pages restructured?); the addressing rule is no longer held on the samples")
+	}
+}
+
+// enclosingFunctionHeader returns the top-level function declaration the line
+// at `idx` sits inside, or the empty string when the block is a fragment with
+// no declaration above it.
+func enclosingFunctionHeader(lines []string, idx int) string {
+	for i := idx; i >= 0 && i < len(lines); i-- {
+		if sampleFunctionHeader.MatchString(lines[i]) {
+			return strings.TrimSpace(lines[i])
+		}
+	}
+	return ""
+}
+
+// gofmtFence returns the canonical formatting of a Go fence, and reports
+// whether the fence could be parsed at all. A fence that opens inside a switch
+// statement, which is how the sample pages present a single handler arm, is
+// wrapped before formatting and unwrapped afterwards. A fence gofmt cannot
+// parse is left to code_blocks_test.go, which reports the syntax error.
+func gofmtFence(t *testing.T, body string) (string, bool) {
+	t.Helper()
+	body = strings.TrimRight(body, "\n")
+	if out, err := runGofmt(body); err == nil {
+		return out, true
+	}
+	if !strings.HasPrefix(strings.TrimLeft(body, " \t"), "case ") {
+		return "", false
+	}
+	out, err := runGofmt("func _f() {\nswitch {\n" + body + "\n}\n}")
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) < 4 {
+		return "", false
+	}
+	inner := lines[2 : len(lines)-2]
+	for i, l := range inner {
+		inner[i] = strings.TrimPrefix(l, "\t")
+	}
+	return strings.Join(inner, "\n"), true
+}
+
+// runGofmt formats a Go source fragment, returning the error gofmt reported
+// when the fragment does not parse.
+func runGofmt(body string) (string, error) {
+	cmd := exec.Command("gofmt")
+	cmd.Stdin = strings.NewReader(body + "\n")
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gofmt: %s", strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// spec: 15.4.3
+// diagnosis: a Go fence on a page that presents a complete, runnable sample is
+//
+//	not in canonical gofmt form, so the field, type, struct-tag, and
+//	composite-literal key columns no longer line up. An author copies these
+//	pages as a starting point, and the first `gofmt` run on the copy rewrites
+//	lines the page never asked them to touch. This most often follows an edit
+//	that inserts a struct member or a literal key without re-aligning the
+//	columns around it.
+func TestBasicLevelRuntimeSampleGoFencesAreCanonicallyFormatted(t *testing.T) {
+	root := repoRoot(t)
+
+	formatted := 0
+	for _, rel := range basicLevelRuntimeSamplePages {
+		blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		for _, b := range blocks {
+			if strings.ToLower(b.Language) != "go" {
+				continue
+			}
+			want, ok := gofmtFence(t, b.Body)
+			if !ok {
+				continue
+			}
+			formatted++
+			if want == strings.TrimRight(b.Body, "\n") {
+				continue
+			}
+			t.Errorf("%s:%d: this Go fence is not in canonical gofmt form; run the fence through gofmt and paste the result back\n--- got\n%s\n--- want\n%s", rel, b.StartLine, b.Body, want)
+		}
+	}
+	if formatted == 0 {
+		t.Error("no sample page carries a parseable Go fence (pages restructured?); the samples are no longer held to canonical formatting")
 	}
 }

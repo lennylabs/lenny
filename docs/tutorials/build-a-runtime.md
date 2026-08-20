@@ -73,15 +73,15 @@ import (
 
 // Message represents any inbound JSON line from the adapter.
 type Message struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id,omitempty"`
-	Input      []InputPart `json:"input,omitempty"`
+	Type  string      `json:"type"`
+	ID    string      `json:"id,omitempty"`
+	Input []InputPart `json:"input,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID  string      `json:"slotId,omitempty"`
-	Reason     string      `json:"reason,omitempty"`
-	DeadlineMs int         `json:"deadline_ms,omitempty"`
-	Ts         int64       `json:"ts,omitempty"`
+	SlotID     string `json:"slotId,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
+	Ts         int64  `json:"ts,omitempty"`
 }
 
 // InputPart is a single content part within a message.
@@ -92,9 +92,9 @@ type InputPart struct {
 
 // Response is the outbound message format.
 type Response struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output,omitempty"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output,omitempty"`
 }
 
 // MessagePart is a single content part within a response.
@@ -200,15 +200,15 @@ import (
 // InboundMessage represents any JSON line received on stdin.
 // We use a single type with optional fields and dispatch on "type".
 type InboundMessage struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id,omitempty"`
-	Input      []InputPart `json:"input,omitempty"`
+	Type  string      `json:"type"`
+	ID    string      `json:"id,omitempty"`
+	Input []InputPart `json:"input,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID  string      `json:"slotId,omitempty"`
-	Ts         int64       `json:"ts,omitempty"`
-	Reason     string      `json:"reason,omitempty"`
-	DeadlineMs int         `json:"deadline_ms,omitempty"`
+	SlotID     string `json:"slotId,omitempty"`
+	Ts         int64  `json:"ts,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
 
 	// tool_result fields
 	Content []InputPart `json:"content,omitempty"`
@@ -228,15 +228,15 @@ type MessagePart struct {
 // --- Outbound Message Types ---
 
 type ResponseMsg struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output"`
 }
 
 type ToolCallMsg struct {
 	Type      string                 `json:"type"`
 	ID        string                 `json:"id"`
-	SlotID string                 `json:"slotId,omitempty"`
+	SlotID    string                 `json:"slotId,omitempty"`
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
@@ -333,10 +333,10 @@ func main() {
 				pendingToolCalls[callID] = content
 
 				call := ToolCallMsg{
-					Type:      "tool_call",
-					ID:        callID,
+					Type:   "tool_call",
+					ID:     callID,
 					SlotID: msg.SlotID,
-					Name:      "write_file",
+					Name:   "write_file",
 					Arguments: map[string]interface{}{
 						"path":    "result.txt",
 						"content": content,
@@ -352,7 +352,7 @@ func main() {
 			if err != nil {
 				// Not a math expression; provide a help message
 				resp := ResponseMsg{
-					Type:      "response",
+					Type:   "response",
 					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
@@ -365,7 +365,7 @@ func main() {
 			} else {
 				// Return the calculation result
 				resp := ResponseMsg{
-					Type:      "response",
+					Type:   "response",
 					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
@@ -394,7 +394,7 @@ func main() {
 					errorText = msg.Content[0].Inline
 				}
 				resp := ResponseMsg{
-					Type:      "response",
+					Type:   "response",
 					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
@@ -406,7 +406,7 @@ func main() {
 				writeJSON(resp)
 			} else {
 				resp := ResponseMsg{
-					Type:      "response",
+					Type:   "response",
 					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
@@ -651,14 +651,14 @@ import (
 )
 
 type AdapterManifest struct {
-	Version          int               `json:"version"`
-	PlatformMcpServer MCPServerConfig  `json:"platformMcpServer"`
-	RuntimeOps  MCPServerConfig  `json:"runtimeOps"`
+	Version           int               `json:"version"`
+	PlatformMcpServer MCPServerConfig   `json:"platformMcpServer"`
+	RuntimeOps        MCPServerConfig   `json:"runtimeOps"`
 	ConnectorServers  []ConnectorServer `json:"connectorServers"`
 	AdapterLocalTools []ToolDef         `json:"adapterLocalTools"`
-	SessionID        string            `json:"sessionId"`
-	TaskID           string            `json:"taskId"`
-	McpNonce         string            `json:"mcpNonce"`
+	SessionID         string            `json:"sessionId"`
+	TaskID            string            `json:"taskId"`
+	McpNonce          string            `json:"mcpNonce"`
 }
 
 type MCPServerConfig struct {
@@ -704,7 +704,7 @@ Standard-level runtimes connect to Lenny's local tool server as an MCP client. T
 
 manifest, err := manifest.Load("/run/lenny/adapter-manifest.json")
 if err != nil {
-    log.Fatal(err)
+	log.Fatal(err)
 }
 
 // Connect to Lenny's local tool server using the mcp-go library

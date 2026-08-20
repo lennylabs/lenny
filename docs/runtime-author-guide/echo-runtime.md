@@ -45,19 +45,19 @@ import (
 // We only parse the fields we need; unknown fields are silently ignored
 // by encoding/json (this is the forward-compatibility rule).
 type InboundMessage struct {
-	Type  string          `json:"type"`
-	ID    string          `json:"id,omitempty"`
-	Input []MessagePart    `json:"input,omitempty"`
+	Type  string        `json:"type"`
+	ID    string        `json:"id,omitempty"`
+	Input []MessagePart `json:"input,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod, and a Basic-level runtime echoes it on the
 	// frames it emits in response.
-	SlotID string      `json:"slotId,omitempty"`
-	TS    int64           `json:"ts,omitempty"`         // heartbeat timestamp
-	Reason string         `json:"reason,omitempty"`     // shutdown reason
-	DeadlineMs int        `json:"deadline_ms,omitempty"` // shutdown deadline
+	SlotID     string `json:"slotId,omitempty"`
+	TS         int64  `json:"ts,omitempty"`          // heartbeat timestamp
+	Reason     string `json:"reason,omitempty"`      // shutdown reason
+	DeadlineMs int    `json:"deadline_ms,omitempty"` // shutdown deadline
 
 	// tool_result fields
-	Content []MessagePart  `json:"content,omitempty"`
+	Content []MessagePart `json:"content,omitempty"`
 	IsError bool          `json:"isError,omitempty"`
 }
 
@@ -72,9 +72,9 @@ type MessagePart struct {
 
 // Response is the primary output message, signaling task completion.
 type Response struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -182,11 +182,11 @@ func writeJSON(v interface{}) {
 
 ```go
 type InboundMessage struct {
-    Type      string       `json:"type"`
-    ID        string       `json:"id,omitempty"`
-    Input     []MessagePart `json:"input,omitempty"`
-    SlotID string       `json:"slotId,omitempty"`
-    // ...
+	Type   string        `json:"type"`
+	ID     string        `json:"id,omitempty"`
+	Input  []MessagePart `json:"input,omitempty"`
+	SlotID string        `json:"slotId,omitempty"`
+	// ...
 }
 ```
 
@@ -197,12 +197,12 @@ We define a single struct that can hold fields from any inbound message type. Go
 ```go
 scanner := bufio.NewScanner(os.Stdin)
 for scanner.Scan() {
-    line := scanner.Bytes()
-    var msg InboundMessage
-    json.Unmarshal(line, &msg)
-    switch msg.Type {
-    // ...
-    }
+	line := scanner.Bytes()
+	var msg InboundMessage
+	json.Unmarshal(line, &msg)
+	switch msg.Type {
+	// ...
+	}
 }
 ```
 
@@ -212,14 +212,14 @@ The loop reads one line at a time from stdin. Each line is a complete JSON objec
 
 ```go
 case "message":
-    inputText := msg.Input[0].Inline
-    seq++
-    resp := Response{
-        Type:      "response",
-        SlotID: msg.SlotID,
-        Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
-    }
-    writeJSON(resp)
+	inputText := msg.Input[0].Inline
+	seq++
+	resp := Response{
+		Type:   "response",
+		SlotID: msg.SlotID,
+		Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
+	}
+	writeJSON(resp)
 ```
 
 We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout, carrying the `slotId` the inbound `message` was addressed with. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client. Echoing `slotId` is the Basic-level echo obligation: the adapter resolves each session-scoped frame against the session it names, and a `response` that names no session is rejected on a pod holding more than one slot.
@@ -228,7 +228,7 @@ We extract the text from the first `MessagePart` in the `input` array. We write 
 
 ```go
 case "heartbeat":
-    writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+	writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 ```
 
 The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds or the adapter sends SIGTERM. The heartbeat handler should be immediate --- do not do any heavy work here.
@@ -237,7 +237,7 @@ The adapter sends periodic heartbeats to check liveness. You MUST respond within
 
 ```go
 case "shutdown":
-    os.Exit(0)
+	os.Exit(0)
 ```
 
 The adapter sends `shutdown` when the pod is being drained, the session has completed, or the budget is exhausted. Exit cleanly within `deadline_ms`. For the echo runtime, there is no cleanup needed, so we exit immediately.
@@ -246,9 +246,9 @@ The adapter sends `shutdown` when the pod is being drained, the session has comp
 
 ```go
 func writeJSON(v interface{}) {
-    data, _ := json.Marshal(v)
-    os.Stdout.Write(data)
-    os.Stdout.Write([]byte("\n"))
+	data, _ := json.Marshal(v)
+	os.Stdout.Write(data)
+	os.Stdout.Write([]byte("\n"))
 }
 ```
 
@@ -341,28 +341,28 @@ docker compose run smoke-test
 
 ```go
 case "message":
-    // Read a file from the workspace
-    readCall := ToolCall{
-        Type:      "tool_call",
-        ID:        "tc_001",
-        SlotID: msg.SlotID,
-        Name:      "read_file",
-        Arguments: map[string]string{"path": "/workspace/current/input.txt"},
-    }
-    writeJSON(readCall)
+	// Read a file from the workspace
+	readCall := ToolCall{
+		Type:      "tool_call",
+		ID:        "tc_001",
+		SlotID:    msg.SlotID,
+		Name:      "read_file",
+		Arguments: map[string]string{"path": "/workspace/current/input.txt"},
+	}
+	writeJSON(readCall)
 
-    // Continue reading stdin for the tool_result
-    // (heartbeats may arrive before the result)
+	// Continue reading stdin for the tool_result
+	// (heartbeats may arrive before the result)
 ```
 
 3. **Handle `tool_result`** to process the results of your tool calls:
 
 ```go
 case "tool_result":
-    if msg.ID == "tc_001" {
-        fileContent := msg.Content[0].Inline
-        // Process the file content...
-    }
+	if msg.ID == "tc_001" {
+		fileContent := msg.Content[0].Inline
+		// Process the file content...
+	}
 ```
 
 4. **Add error handling** for malformed input, missing files, and LLM failures. Use the `error` field on the `response` message to report structured errors.

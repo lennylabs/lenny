@@ -44,20 +44,20 @@ import (
 // InboundMessage is the envelope for all messages received on stdin.
 // Unknown fields are silently ignored by encoding/json (forward-compatibility rule).
 type InboundMessage struct {
-	Type       string       `json:"type"`
-	ID         string       `json:"id,omitempty"`
-	Input      []MessagePart `json:"input,omitempty"`
+	Type  string        `json:"type"`
+	ID    string        `json:"id,omitempty"`
+	Input []MessagePart `json:"input,omitempty"`
 	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod, and the runtime echoes it on the
 	// session-scoped frames it emits in response.
-	SlotID  string       `json:"slotId,omitempty"`
-	TS         int64        `json:"ts,omitempty"`
-	Reason     string       `json:"reason,omitempty"`
-	DeadlineMs int          `json:"deadline_ms,omitempty"`
+	SlotID     string `json:"slotId,omitempty"`
+	TS         int64  `json:"ts,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
 
 	// tool_result fields
 	Content []MessagePart `json:"content,omitempty"`
-	IsError bool         `json:"isError,omitempty"`
+	IsError bool          `json:"isError,omitempty"`
 }
 
 // MessagePart is Lenny's internal content model.
@@ -71,16 +71,16 @@ type MessagePart struct {
 type ToolCall struct {
 	Type      string            `json:"type"`
 	ID        string            `json:"id"`
-	SlotID string            `json:"slotId,omitempty"`
+	SlotID    string            `json:"slotId,omitempty"`
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments"`
 }
 
 // Response signals task completion.
 type Response struct {
-	Type      string       `json:"type"`
-	SlotID string       `json:"slotId,omitempty"`
-	Output    []MessagePart `json:"output"`
+	Type   string        `json:"type"`
+	SlotID string        `json:"slotId,omitempty"`
+	Output []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -93,10 +93,6 @@ type HeartbeatAck struct {
 // pendingToolCall tracks an outstanding tool call ID so we can correlate results.
 var pendingToolCallID string
 
-// currentSlotID holds the slotId of the message being processed. Every
-// session-scoped frame the runtime emits echoes it back to the adapter.
-var currentSlotID string
-
 // toolCallCounter generates unique tool call IDs.
 var toolCallCounter atomic.Int64
 
@@ -107,10 +103,11 @@ var fileContents []string
 var fileList []string
 
 // phase tracks the current processing phase:
-//   0 = waiting for message
-//   1 = listing directory
-//   2 = reading files
-//   3 = producing summary
+//
+//	0 = waiting for message
+//	1 = listing directory
+//	2 = reading files
+//	3 = producing summary
 var phase int
 
 // currentFileIndex tracks which file we are reading next.
@@ -164,9 +161,7 @@ func main() {
 
 // handleMessage processes a new task message.
 func handleMessage(msg InboundMessage) {
-	// Reset state for this task. Record the session this message addresses so
-	// every frame emitted in response echoes it.
-	currentSlotID = msg.SlotID
+	// Reset state for this task.
 	fileContents = nil
 	fileList = nil
 	currentFileIndex = 0
@@ -179,8 +174,9 @@ func handleMessage(msg InboundMessage) {
 	}
 	fmt.Fprintf(os.Stderr, "file-summarizer: received request: %s\n", requestText)
 
-	// Step 1: List files in the workspace.
-	listDir("/workspace/current")
+	// Step 1: List files in the workspace. The frame this message triggers is
+	// addressed to the session the message itself was addressed to.
+	listDir(msg.SlotID, "/workspace/current")
 }
 
 // handleToolResult processes the result of a tool call.
@@ -197,7 +193,7 @@ func handleToolResult(msg InboundMessage) {
 			errorText = msg.Content[0].Inline
 		}
 		fmt.Fprintf(os.Stderr, "file-summarizer: tool error: %s\n", errorText)
-		writeResponse(fmt.Sprintf("Error reading workspace: %s", errorText))
+		writeResponse(msg.SlotID, fmt.Sprintf("Error reading workspace: %s", errorText))
 		return
 	}
 
@@ -216,14 +212,14 @@ func handleToolResult(msg InboundMessage) {
 		}
 
 		if len(fileList) == 0 {
-			writeResponse("No files found in the workspace.")
+			writeResponse(msg.SlotID, "No files found in the workspace.")
 			return
 		}
 
 		// Step 2: Start reading files one by one.
 		phase = 2
 		currentFileIndex = 0
-		readNextFile()
+		readNextFile(msg.SlotID)
 
 	case 2:
 		// Phase 2: We received a file's contents.
@@ -237,30 +233,32 @@ func handleToolResult(msg InboundMessage) {
 		currentFileIndex++
 		if currentFileIndex < len(fileList) && currentFileIndex < 10 {
 			// Read the next file (cap at 10 files to avoid excessive reads).
-			readNextFile()
+			readNextFile(msg.SlotID)
 		} else {
 			// All files read. Produce the summary.
 			phase = 3
-			produceSummary()
+			produceSummary(msg.SlotID)
 		}
 	}
 }
 
-// listDir sends a list_dir tool call for the given path.
-func listDir(path string) {
+// listDir sends a list_dir tool call for the given path, addressed to the
+// session the inbound frame that triggered it was addressed to.
+func listDir(slotID, path string) {
 	id := nextToolCallID()
 	pendingToolCallID = id
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SlotID: currentSlotID,
+		SlotID:    slotID,
 		Name:      "list_dir",
 		Arguments: map[string]string{"path": path},
 	})
 }
 
-// readNextFile sends a read_file tool call for the next file in the list.
-func readNextFile() {
+// readNextFile sends a read_file tool call for the next file in the list,
+// addressed to the session the tool_result that triggered it was addressed to.
+func readNextFile(slotID string) {
 	if currentFileIndex >= len(fileList) {
 		return
 	}
@@ -270,14 +268,15 @@ func readNextFile() {
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SlotID: currentSlotID,
+		SlotID:    slotID,
 		Name:      "read_file",
 		Arguments: map[string]string{"path": filePath},
 	})
 }
 
-// produceSummary generates the final summary response.
-func produceSummary() {
+// produceSummary generates the final summary response, addressed to the
+// session the tool_result that completed the read run was addressed to.
+func produceSummary(slotID string) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Workspace Summary (%d files)\n\n", len(fileContents)))
 	for _, fc := range fileContents {
@@ -285,16 +284,19 @@ func produceSummary() {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString(fmt.Sprintf("Total files examined: %d", len(fileContents)))
-	writeResponse(sb.String())
+	writeResponse(slotID, sb.String())
 }
 
 // ---- Helpers ----
 
-// writeResponse sends a response message to stdout.
-func writeResponse(text string) {
+// writeResponse sends a response message to stdout, addressed to the session
+// the inbound frame it answers was addressed to. Stamping the address read
+// from that frame, rather than one held in a variable between frames, is what
+// keeps the answer on the right session when the pod holds more than one.
+func writeResponse(slotID, text string) {
 	resp := Response{
-		Type:      "response",
-		SlotID: currentSlotID,
+		Type:   "response",
+		SlotID: slotID,
 		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},
@@ -442,22 +444,22 @@ import "encoding/json"
 import "os"
 
 type AdapterManifest struct {
-    SessionID          string `json:"sessionId"`
-    TaskID             string `json:"taskId"`
-    PlatformMcpServer  struct {
-        Socket string `json:"socket"`
-    } `json:"platformMcpServer"`
-    McpNonce string `json:"mcpNonce"`
+	SessionID         string `json:"sessionId"`
+	TaskID            string `json:"taskId"`
+	PlatformMcpServer struct {
+		Socket string `json:"socket"`
+	} `json:"platformMcpServer"`
+	McpNonce string `json:"mcpNonce"`
 }
 
 func readManifest() (*AdapterManifest, error) {
-    data, err := os.ReadFile("/run/lenny/adapter-manifest.json")
-    if err != nil {
-        return nil, err
-    }
-    var m AdapterManifest
-    err = json.Unmarshal(data, &m)
-    return &m, err
+	data, err := os.ReadFile("/run/lenny/adapter-manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	var m AdapterManifest
+	err = json.Unmarshal(data, &m)
+	return &m, err
 }
 ```
 
@@ -467,19 +469,19 @@ func readManifest() (*AdapterManifest, error) {
 import "github.com/mark3labs/mcp-go/client"
 
 func connectMCP(manifest *AdapterManifest) (*client.Client, error) {
-    c, err := client.NewUnixSocketClient(manifest.PlatformMcpServer.Socket)
-    if err != nil {
-        return nil, err
-    }
+	c, err := client.NewUnixSocketClient(manifest.PlatformMcpServer.Socket)
+	if err != nil {
+		return nil, err
+	}
 
-    // Initialize with nonce
-    err = c.Initialize(client.InitOptions{
-        Nonce:           manifest.McpNonce,
-        ClientName:      "file-summarizer",
-        ClientVersion:   "1.0.0",
-        ProtocolVersion: "2025-03-26",
-    })
-    return c, err
+	// Initialize with nonce
+	err = c.Initialize(client.InitOptions{
+		Nonce:           manifest.McpNonce,
+		ClientName:      "file-summarizer",
+		ClientVersion:   "1.0.0",
+		ProtocolVersion: "2025-03-26",
+	})
+	return c, err
 }
 ```
 
@@ -488,24 +490,24 @@ func connectMCP(manifest *AdapterManifest) (*client.Client, error) {
 ```go
 // Emit incremental output
 func emitOutput(c *client.Client, text string) error {
-    return c.CallTool("lenny/output", map[string]interface{}{
-        "output": []map[string]string{
-            {"type": "text", "inline": text},
-        },
-    })
+	return c.CallTool("lenny/output", map[string]interface{}{
+		"output": []map[string]string{
+			{"type": "text", "inline": text},
+		},
+	})
 }
 
 // Delegate a subtask
 func delegateReview(c *client.Client, code string) (string, error) {
-    result, err := c.CallTool("lenny/delegate_task", map[string]interface{}{
-        "target": "code-reviewer",
-        "task": map[string]interface{}{
-            "input": []map[string]string{
-                {"type": "text", "inline": "Review this code:\n" + code},
-            },
-        },
-    })
-    return result.SessionId, err
+	result, err := c.CallTool("lenny/delegate_task", map[string]interface{}{
+		"target": "code-reviewer",
+		"task": map[string]interface{}{
+			"input": []map[string]string{
+				{"type": "text", "inline": "Review this code:\n" + code},
+			},
+		},
+	})
+	return result.SessionId, err
 }
 ```
 
