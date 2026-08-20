@@ -32,6 +32,7 @@ package tier11_docs_test
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -129,7 +130,7 @@ var echoedIdentifier = regexp.MustCompile(
 // The two dispositions are reported apart, because a key the literal omits and
 // a key bound to a value the schema rejects are different edits to the page.
 //
-// spec: 4.6.1, 28.5.3
+// spec: 4.1 (request message scope), 28.5.3
 func checkFrameAddress(t *testing.T, at, literal string) {
 	t.Helper()
 	trimmed := strings.TrimSpace(literal)
@@ -143,7 +144,7 @@ func checkFrameAddress(t *testing.T, at, literal string) {
 	t.Errorf("%s: this frame literal carries no per-session address; every session-scoped frame is addressed on every pod\n%s", at, trimmed)
 }
 
-// spec: 4.6.1, 28.5.3
+// spec: 15.4.3, 28.5.3
 // diagnosis: the frame-address matchers above resolve the per-session address
 //
 //	by one key spelling and reject the other. The schema, the SDKs, and the
@@ -406,7 +407,7 @@ func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *te
 // example set.
 var singleLineFrameLiteral = regexp.MustCompile(`\{[^{}]*"type"\s*:\s*"(message|tool_result|response|tool_call)"`)
 
-// spec: 4.6.1, 15.4.3, 28.5.3
+// spec: 4.1 (request message scope), 15.4.3, 28.5.3
 // diagnosis: a one-line `response`, `tool_call`, `message`, or `tool_result`
 //
 //	literal on docs/reference/adapter-contract.md carries no per-session
@@ -580,7 +581,7 @@ var addressHoldingVariable = regexp.MustCompile(`(?i)^(var|let|const)\s+(\w*` + 
 // gives it.
 var addressParameter = regexp.MustCompile(`(?i)\(.*\b\w*` + addressStems + `_?id\b`)
 
-// spec: 4.6.1, 15.4.3, 28.5.3
+// spec: 4.1 (request message scope), 15.4.3, 28.5.3
 // diagnosis: a hand-written Basic-level sample stamps the per-session address
 //
 //	from a variable that outlives the frame it was read from, rather than from
@@ -722,4 +723,82 @@ func TestBasicLevelRuntimeSampleGoFencesAreCanonicallyFormatted(t *testing.T) {
 	if formatted == 0 {
 		t.Error("no sample page carries a parseable Go fence (pages restructured?); the samples are no longer held to canonical formatting")
 	}
+}
+
+// conformanceGuidePage is the reader-facing conformance page whose validator
+// table states the Basic-level echo obligation and whose worked harness
+// snippets show an author how to exercise a runtime by hand.
+var conformanceGuidePage = filepath.Join("docs", "runtime-author-guide", "testing.md")
+
+// inboundMessageLiteral matches an inbound `message` frame written as a
+// complete one-line JSON object, which is the form a harness snippet pipes
+// into the runtime under test.
+var inboundMessageLiteral = regexp.MustCompile(`\{[^{}]*"type"\s*:\s*"message"`)
+
+// addressReadBack matches a read of the per-session address off a parsed
+// frame, under the map-index and member-access spellings the harness snippets
+// use. A snippet that stamps the address on its inbound frame but never reads
+// it back off the response certifies a runtime that drops it.
+var addressReadBack = regexp.MustCompile(
+	`\[\s*["'](` + addressAlternation(wireSpelling) + `)["']\s*\]|` +
+		`\.(` + addressAlternation(wireSpelling) + "|" +
+		addressAlternation(goFieldSpelling) + "|" +
+		addressAlternation(snakeSpelling) + `)\b`)
+
+// spec: 4.1 (request message scope), 15.4.3, 28.5.3
+// diagnosis: the conformance page states the Basic-level echo obligation in
+//
+//	its round-trip validator row and then shows a hand-written harness that
+//	pipes an unaddressed `message` into the runtime and checks only the frame
+//	type of what comes back. An author who follows the page's own harness feeds
+//	a frame the runtime has no address to echo from, so the harness passes a
+//	runtime the validator row rejects, and the page contradicts itself. Every
+//	inbound `message` the page shows is addressed, and the snippet that reads
+//	the answer reads the address back off it.
+func TestConformanceGuideHarnessFeedsAnAddressedMessageAndChecksTheEcho(t *testing.T) {
+	root := repoRoot(t)
+	rel := conformanceGuidePage
+	page := filepath.Join(root, rel)
+
+	row := lineContaining(mustReadPage(t, page), "| `message` / `response` round-trip |")
+	if row == "" {
+		t.Fatalf("%s: the round-trip validator row is gone (page restructured?); the echo obligation the harness below must agree with is no longer stated", rel)
+	}
+	if !frameAddressValue.MatchString(row) {
+		t.Errorf("%s: the round-trip validator row states no per-session address on the accepted `response` form; the harness snippets below are held to the obligation this row states\n%s", rel, strings.TrimSpace(row))
+	}
+
+	blocks, err := extractFencedBlocksIncluding(page, true)
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	feeding := 0
+	for _, b := range blocks {
+		lines := strings.Split(b.Body, "\n")
+		carries := false
+		for i, line := range lines {
+			if !inboundMessageLiteral.MatchString(line) {
+				continue
+			}
+			carries = true
+			feeding++
+			checkFrameAddress(t, fmt.Sprintf("%s:%d", rel, b.StartLine+i+1), line)
+		}
+		if carries && !addressReadBack.MatchString(b.Body) {
+			t.Errorf("%s:%d: this harness snippet feeds an addressed `message` and never reads the per-session address back off the answer; the round-trip category asserts the echo, so the page's own harness asserts it too", rel, b.StartLine)
+		}
+	}
+	if feeding == 0 {
+		t.Errorf("%s: no snippet feeds an inbound `message` (page restructured?); the harness is no longer held to the echo obligation", rel)
+	}
+}
+
+// mustReadPage reads a documentation page or fails the test.
+func mustReadPage(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
 }

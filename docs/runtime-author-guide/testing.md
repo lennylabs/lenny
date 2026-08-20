@@ -241,8 +241,8 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     cmd.Start()
     defer cmd.Process.Kill()
 
-    // Send a message
-    msg := `{"type":"message","id":"msg_001","input":[{"type":"text","inline":"Hello"}]}` + "\n"
+    // Send a message addressed to a session
+    msg := `{"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}` + "\n"
     stdin.Write([]byte(msg))
 
     // Read response
@@ -254,6 +254,11 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     // Validate
     if resp["type"] != "response" {
         t.Errorf("expected response, got %s", resp["type"])
+    }
+    // The response echoes the address the inbound message carried. A response
+    // that names no session is rejected on a pod holding more than one slot.
+    if resp["slotId"] != "sess_abc" {
+        t.Errorf("expected slotId sess_abc, got %v", resp["slotId"])
     }
 }
 ```
