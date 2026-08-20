@@ -102,11 +102,14 @@ type Ops interface {
 // Config carries everything one scrub cycle needs. The zero value runs no
 // cleanup commands and verifies no paths; callers populate it per pool.
 type Config struct {
-	// CredentialFile is the platform-managed credential path purged in
-	// step 0 before any deployer code runs and re-verified absent in step
-	// 6 (spec lines 424, 431). Empty skips the step 0 purge; step 6 still
-	// fails the scrub if a non-empty CredentialFile path is left present.
-	CredentialFile string
+	// CredentialFiles are the platform-managed per-session credential
+	// files purged in step 0 before any deployer code runs and re-verified
+	// absent in step 6. The set is enumerated from the pod's on-disk slot
+	// trees rather than from the live registry, because the residue the
+	// scrub must reach belongs to a leaked slot whose registry entry is
+	// already gone. An empty set skips the step 0 purge; step 6 fails the
+	// scrub if any member is left present. spec: §5.2; §6.1.
+	CredentialFiles []string
 
 	// PrevProvider and PrevLeaseID are the sanitized metadata for the task
 	// whose credentials were just purged. They seed the
@@ -130,10 +133,21 @@ type Config struct {
 	// directly so shell metacharacters are inert (mirrors §7.5 setup).
 	ShellMode bool
 
-	// WorkspaceDir is the task workspace removed in step 2 and verified
-	// absent in step 6 (spec step 2 — rm -rf $WORKSPACE_DIR). Empty skips
-	// the removal and the verification.
-	WorkspaceDir string
+	// WorkspaceDirs are the per-session workspace trees removed in step 2
+	// and verified absent in step 6 (spec step 2 — rm -rf
+	// $WORKSPACE_DIR), enumerated from the pod's on-disk slot trees on the
+	// same terms as CredentialFiles. An empty set skips the removal and
+	// the verification. spec: §5.2; §6.4.
+	WorkspaceDirs []string
+
+	// CleanupDir is the single directory the deployer's cleanupCommands
+	// execute in and the value they observe as PWD. It is the workspace
+	// base, the one workspace path a pod always carries and the parent of
+	// every per-slot tree, rather than a directory an ended session owned:
+	// every ending session's teardown removes its own tree ahead of the
+	// pod scrub in the same handler, so no released session's tree
+	// survives to this phase. spec: §5.2; §6.4.
+	CleanupDir string
 
 	// ScratchDirs are the adapter-managed scratch directories cleared in
 	// step 4 alongside /tmp and /dev/shm, and verified empty in step 6.
@@ -227,8 +241,8 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 
 	// Step 0 (pre-cleanup): purge the credential file before any deployer
 	// code runs. spec line 424.
-	if cfg.CredentialFile != "" {
-		rep.record(StepCredentialPurge, false, ops.RemoveAll(cfg.CredentialFile))
+	if len(cfg.CredentialFiles) > 0 {
+		rep.record(StepCredentialPurge, false, removeAll(ops, cfg.CredentialFiles))
 	} else {
 		rep.record(StepCredentialPurge, true, nil)
 	}
@@ -243,8 +257,8 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	rep.record(StepKillProcesses, false, ops.KillUserProcesses(ctx))
 	rep.record(StepPurgeIPCShm, false, ops.PurgeIPCShm(ctx))
 
-	if cfg.WorkspaceDir != "" {
-		rep.record(StepRemoveWorkspace, false, ops.RemoveAll(cfg.WorkspaceDir))
+	if len(cfg.WorkspaceDirs) > 0 {
+		rep.record(StepRemoveWorkspace, false, removeAll(ops, cfg.WorkspaceDirs))
 	} else {
 		rep.record(StepRemoveWorkspace, true, nil)
 	}
@@ -296,7 +310,7 @@ func (r *Report) runCleanup(ctx context.Context, cfg Config) {
 	for _, c := range cfg.CleanupCommands {
 		cmds = append(cmds, &adapterv1.SetupCommand{Cmd: c})
 	}
-	outputs, err := workspace.RunSetup(ctx, cfg.WorkspaceDir, cmds, workspace.SetupOptions{
+	outputs, err := workspace.RunSetup(ctx, cfg.CleanupDir, cmds, workspace.SetupOptions{
 		AggregateTimeout: timeout,
 		// The §5.2 onCleanupFailure disposition is decided downstream from
 		// Result, so the cleanup phase always runs to its cap and reports a
@@ -304,7 +318,7 @@ func (r *Report) runCleanup(ctx context.Context, cfg Config) {
 		// path (FailOnAggregateTimeout: false) and treat any returned error
 		// as a cleanup failure for scrub purposes.
 		FailOnAggregateTimeout: false,
-		Env:                    CleanupEnv(cfg.WorkspaceDir, cfg.PrevProvider, cfg.PrevLeaseID),
+		Env:                    CleanupEnv(cfg.CleanupDir, cfg.PrevProvider, cfg.PrevLeaseID),
 		Shell:                  cfg.ShellMode,
 	})
 	r.CleanupOutputs = outputs
@@ -360,7 +374,9 @@ func (r *Report) verify(ops Ops, cfg Config) {
 		}
 	}
 
-	checkEmpty(cfg.WorkspaceDir)
+	for _, d := range cfg.WorkspaceDirs {
+		checkEmpty(d)
+	}
 	for _, d := range scratchTargets(cfg) {
 		checkEmpty(d)
 	}
@@ -369,14 +385,16 @@ func (r *Report) verify(ops Ops, cfg Config) {
 	// it and step 6 confirms removal. spec line 436 — "if
 	// /run/lenny/credentials.json still exists despite step 0, the scrub is
 	// marked failed".
-	if cfg.CredentialFile != "" {
-		exists, _, err := ops.PathState(cfg.CredentialFile)
+	for _, f := range cfg.CredentialFiles {
+		exists, _, err := ops.PathState(f)
 		if err != nil {
 			if verifyErr == nil {
-				verifyErr = fmt.Errorf("stat %s: %w", cfg.CredentialFile, err)
+				verifyErr = fmt.Errorf("stat %s: %w", f, err)
 			}
-		} else if exists {
-			r.VerifyDirty = append(r.VerifyDirty, cfg.CredentialFile)
+			continue
+		}
+		if exists {
+			r.VerifyDirty = append(r.VerifyDirty, f)
 		}
 	}
 
@@ -385,6 +403,18 @@ func (r *Report) verify(ops Ops, cfg Config) {
 			len(r.VerifyDirty), r.VerifyDirty)
 	}
 	r.record(StepVerify, false, verifyErr)
+}
+
+// removeAll removes every path in the set, returning the first failure so
+// one surviving member fails the step rather than being masked by a later
+// success.
+func removeAll(ops Ops, paths []string) error {
+	for _, p := range paths {
+		if err := ops.RemoveAll(p); err != nil {
+			return fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // CleanupEnv returns the env a cleanupCommand runs with: the §7.5 minimal

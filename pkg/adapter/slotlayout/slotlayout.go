@@ -156,6 +156,17 @@ func Resolve(roots Roots, slotID string) (SlotPaths, error) {
 	return p, nil
 }
 
+// SlotsDir returns the `slots` container under base, the directory whose
+// children are the per-slot trees. An empty base yields the empty string.
+// The whole-pod scrub enumerates it to reach a leaked slot's residue,
+// whose registry entry is already gone. spec: §5.2; §6.4.
+func SlotsDir(base string) string {
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, slotsSegment)
+}
+
 // slotRoot returns `/workspace/slots/{slotId}` for the workspace-side
 // removal, the parent of both current/ and staging/.
 func (p SlotPaths) slotRoot() string {

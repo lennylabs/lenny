@@ -69,7 +69,7 @@ type cpChunkedAdapter struct {
 	stallAfter int
 	// remintObserved records the grants the gateway minted per index.
 	remintObserved map[uint32]int
-	// recvSlotID records the slot_id the gateway put on the CheckpointStart
+	// recvSlotID records the session address the gateway put on the CheckpointStart
 	// frame, so a concurrent-pool test asserts each slot's stream carried
 	// its own slot identity (empty on a maxConcurrentSessions: 1 pod).
 	recvSlotID string
@@ -84,7 +84,9 @@ func (a *cpChunkedAdapter) grantCount(index uint32) int {
 	return a.remintObserved[index]
 }
 
-// receivedSlotID reports the slot_id the gateway sent on CheckpointStart.
+// receivedSlotID reports the session address the gateway sent on
+// CheckpointStart, which under §5.2 also names the slot that session
+// holds on the pod.
 func (a *cpChunkedAdapter) receivedSlotID() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -97,7 +99,7 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 		return err
 	}
 	a.mu.Lock()
-	a.recvSlotID = first.GetStart().GetSlotId().GetValue()
+	a.recvSlotID = first.GetStart().GetSessionId().GetValue()
 	a.mu.Unlock()
 	if err := stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},

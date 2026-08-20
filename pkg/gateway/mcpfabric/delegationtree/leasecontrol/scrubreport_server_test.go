@@ -26,8 +26,8 @@ type fakeScrubReports struct {
 }
 
 type sessionScrubCall struct {
-	podID, sessionID, slotID string
-	leaked                   bool
+	podID, sessionID string
+	leaked           bool
 }
 
 type podScrubCall struct {
@@ -36,8 +36,8 @@ type podScrubCall struct {
 	detail string
 }
 
-func (f *fakeScrubReports) RecordSessionScrub(_ context.Context, podID, sessionID, slotID string, leaked bool) error {
-	f.sessionCalls = append(f.sessionCalls, sessionScrubCall{podID, sessionID, slotID, leaked})
+func (f *fakeScrubReports) RecordSessionScrub(_ context.Context, podID, sessionID string, leaked bool) error {
+	f.sessionCalls = append(f.sessionCalls, sessionScrubCall{podID, sessionID, leaked})
 	return f.sessionErr
 }
 
@@ -61,7 +61,7 @@ func newServiceWithScrub(t *testing.T, sr leasecontrol.ScrubReportService) *leas
 }
 
 // TestReportSessionScrubDelegatesLeaked verifies the handler decodes a
-// LEAKED outcome and delegates it as leaked=true, with the slot id when set.
+// LEAKED outcome and delegates it as leaked=true.
 // spec: 4.7 (ReportSessionScrub), 5.2 (scrub model)
 //
 // diagnosis: a failure means the gateway-side ReportSessionScrub handler
@@ -74,7 +74,6 @@ func TestReportSessionScrubDelegatesLeaked_spec_5_2(t *testing.T) {
 	_, err := svc.ReportSessionScrub(context.Background(), &adapterv1.ReportSessionScrubRequest{
 		PodId:     "pod-1",
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-2"},
 		Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
 	})
 	if err != nil {
@@ -84,8 +83,8 @@ func TestReportSessionScrubDelegatesLeaked_spec_5_2(t *testing.T) {
 		t.Fatalf("session calls = %d, want 1", len(f.sessionCalls))
 	}
 	got := f.sessionCalls[0]
-	if got.podID != "pod-1" || got.sessionID != "sess-1" || got.slotID != "slot-2" || !got.leaked {
-		t.Errorf("delegated %+v, want pod-1/sess-1/slot-2 leaked", got)
+	if got.podID != "pod-1" || got.sessionID != "sess-1" || !got.leaked {
+		t.Errorf("delegated %+v, want pod-1/sess-1 leaked", got)
 	}
 }
 
@@ -430,10 +429,10 @@ func newReporterWithRetirer(t *testing.T, c *fakeCounters, l *fakeLedger, i *fak
 func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	r, sr := newReporterWithRetirer(t, c, l, i, d)
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", false); err != nil {
 		t.Fatalf("released: %v", err)
 	}
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s2", "", true); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s2", true); err != nil {
 		t.Fatalf("leaked: %v", err)
 	}
 	if c.served["pod-1"] != 2 {
@@ -468,7 +467,7 @@ func TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount_sp
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	c.served["pod-7"] = 4 // three prior releases; this release makes 5
 	r, sr := newReporterWithRetirer(t, c, l, i, d)
-	if err := r.RecordSessionScrub(context.Background(), "pod-7", "s5", "slot-2", false); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-7", "s5", false); err != nil {
 		t.Fatalf("RecordSessionScrub: %v", err)
 	}
 	if len(sr.calls) != 1 {
@@ -497,7 +496,7 @@ func TestReporterSessionScrubPropagatesRetirerError_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err == nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", false); err == nil {
 		t.Error("RecordSessionScrub with a failing per-release retirer: err = nil, want non-nil")
 	}
 }
@@ -513,7 +512,7 @@ func TestReporterSessionScrubMissingPodFailsClosed_spec_4_7(t *testing.T) {
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	c.missing["ghost"] = true
 	r := newReporter(t, c, l, i, d)
-	err := r.RecordSessionScrub(context.Background(), "ghost", "s1", "", false)
+	err := r.RecordSessionScrub(context.Background(), "ghost", "s1", false)
 	if !errors.Is(err, leasecontrol.ErrPodNotInMirror) {
 		t.Fatalf("missing pod err = %v, want ErrPodNotInMirror", err)
 	}

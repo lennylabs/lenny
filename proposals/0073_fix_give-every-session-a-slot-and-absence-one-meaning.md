@@ -277,7 +277,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       The step also stages the `spec/10:58` sentence recording what the coordinator hold's timeout
       terminates and emits, which is the specification half of CODE-3.
       Depends on: S4
-- [ ] **S10 · schema** — SCHEMA-2. The JSONL schema states §4.6.1's population rule on all six session-scoped
+- [x] **S10 · schema** — SCHEMA-2. The JSONL schema states §4.6.1's population rule on all six session-scoped
       frames, renames `slotId` to `sessionId`, adds the field to `status`, and updates the frame example.
       Depends on: S1
 - [ ] **S11 · schema, code, test** — SCHEMA-1, CODE-1, and REG-1's retirement half. The duplicate `slot_id`

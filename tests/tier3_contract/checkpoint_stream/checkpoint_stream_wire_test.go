@@ -140,20 +140,21 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 		{name: "chunk_size_bytes", number: 3},
 		{name: "chunk_encoding", number: 4},
 		{name: "deadline_ms", number: 5},
-		{name: "slot_id", number: 6},
+		{name: "session_id", number: 7},
 	})
 	// assertFields iterates only its want slice and never asserts the total
-	// field count, so a coordinated proto+regen renumber of the slot-routing
-	// field would pass unpinned. Assert CheckpointStart has exactly six fields
-	// and that slot_id is a SlotId message field, so the gateway-to-adapter
-	// slot addressing cannot silently break.
+	// field count, so a coordinated proto+regen renumber of the addressing
+	// field would pass unpinned. Assert CheckpointStart has exactly six
+	// fields and that session_id is a SessionId message field: neither the
+	// CheckpointRequest envelope nor the RPC signature carries a session, so
+	// the opening frame is the stream's only address.
 	if got := startMD.Fields().Len(); got != 6 {
 		t.Errorf("CheckpointStart has %d fields, want 6", got)
 	}
-	if sf := startMD.Fields().ByName("slot_id"); sf == nil {
-		t.Error("CheckpointStart.slot_id field missing")
-	} else if sf.Kind() != protoreflect.MessageKind || sf.Message().FullName() != (&adapterv1.SlotId{}).ProtoReflect().Descriptor().FullName() {
-		t.Errorf("CheckpointStart.slot_id must be a SlotId message field, got kind %v message %v", sf.Kind(), sf.Message())
+	if sf := startMD.Fields().ByName("session_id"); sf == nil {
+		t.Error("CheckpointStart.session_id field missing")
+	} else if sf.Kind() != protoreflect.MessageKind || sf.Message().FullName() != (&adapterv1.SessionId{}).ProtoReflect().Descriptor().FullName() {
+		t.Errorf("CheckpointStart.session_id must be a SessionId message field, got kind %v message %v", sf.Kind(), sf.Message())
 	}
 	assertFields(t, (&adapterv1.ChunkReady{}).ProtoReflect().Descriptor(), []wantField{
 		{name: "index", number: 1},
@@ -263,16 +264,28 @@ func (r *recordingTransport) putCount() int {
 	return len(r.puts)
 }
 
+// contractSession is the session the contract cases address. Every session
+// is bound to a slot on every pod, so the stream's opening frame names it
+// and the adapter resolves that session's own tree from it.
+const contractSession = "sess-contract"
+
 // realAdapterClient serves a real adapter Server with the given transport
-// and a seeded one-file workspace over bufconn, returning a connected
-// Adapter client.
+// and a seeded one-file per-session workspace over bufconn, returning a
+// connected Adapter client.
 func realAdapterClient(t *testing.T, transport adapter.CheckpointTransport) adapterv1.AdapterClient {
 	t.Helper()
 	s := adapter.New("checkpoint-stream-contract")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
+	s.Runtime = noopRuntime{}
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: contractSession},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", contractSession, "current")
+	if err := os.WriteFile(filepath.Join(current, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	lis := bufconn.Listen(1 << 20)
@@ -321,6 +334,7 @@ func TestCheckpointStreamFrameOrderAndHeaderReplay(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-order",
+			SessionId:      &adapterv1.SessionId{Value: contractSession},
 			Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
 			ChunkSizeBytes: 1 << 20,
 			ChunkEncoding:  "tar",
@@ -427,6 +441,7 @@ func TestCheckpointStreamDroppedSignedHeaderFails(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-drophdr",
+			SessionId:      &adapterv1.SessionId{Value: contractSession},
 			Trigger:        checkpoint.TriggerPeriodic.Proto(),
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -842,4 +857,23 @@ func TestCheckpointStreamGrantCarriesCapabilityExpiry(t *testing.T) {
 			t.Errorf("chunk %d grant expires_at = %s, want the signed capability expiry %s", g.GetIndex(), got, want)
 		}
 	}
+}
+
+// noopRuntime is a RuntimeProcess that starts and closes without spawning
+// anything, so the contract cases can bind the session whose slot tree the
+// checkpoint captures without a real agent process.
+type noopRuntime struct{}
+
+func (noopRuntime) Start(context.Context, string) error           { return nil }
+func (noopRuntime) WriteEnvelope(string, []byte) error            { return nil }
+func (noopRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (noopRuntime) Close(context.Context, string) error           { return nil }
+
+func (noopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
 }

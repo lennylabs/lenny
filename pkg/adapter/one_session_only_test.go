@@ -3,120 +3,78 @@
 package adapter
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §6.1 — "After a session completes or fails in
-// `executionMode: session`, the pod is terminated and replaced — never
-// recycled for a different session." The adapter is the last line of
-// defense for this invariant: a pod that somehow survives the
-// gateway-side drain → terminated → replaced loop must NOT accept a
-// second session, regardless of whether the new caller is the same
-// session id or a different one.
+// The merged start claim discriminates on whether a session has started
+// rather than on whether the pod holds one. Every session is bound to a
+// slot on every pod, so a second session arriving on a pod-warm pod
+// arrives on its own slot and is admitted; the ceiling that bounds how
+// many may do so is the gateway's, which allocates the slot and counts
+// occupancy at the same site. What the claim refuses is a second start
+// for a session that has already started.
 //
-// F-6.1.12 verifies both layers. The gateway-side drain is verified by
-// the binder + lifecycle tests; this file pins the adapter-side
-// defense-in-depth.
+// spec: §4.7; §5.2.
 
-// claimSession is cleared on Shutdown so the adapter does not block
-// itself on a hypothetical second StartSession after a clean Shutdown.
-// But the credSessionID stays sticky on purpose: an AssignCredentials
-// for a different session after the original session's Shutdown is the
-// canonical "pod was recycled" signal, and the adapter rejects it.
-func TestReleaseSessionClearsSessionIdButKeepsCredSessionId_spec_6_1(t *testing.T) {
-	s := &Server{}
-	s.sessionID = "sess-old"
-	s.credSessionID = "sess-old"
-
-	s.releaseSession()
-
-	if s.sessionID != "" {
-		t.Errorf("sessionID = %q, want empty after release", s.sessionID)
-	}
-	// credSessionID stays set as the §6.1 defense-in-depth: a pod that
-	// somehow survives termination cannot have credentials reassigned
-	// to a different session. The gateway-side drain loop is the
-	// primary defense; this is the second layer.
-	if s.credSessionID != "sess-old" {
-		t.Errorf("credSessionID = %q, want sess-old (sticky on release)", s.credSessionID)
-	}
-}
-
-// spec: §6.1 — after a Shutdown, an AssignCredentials for a different
-// session must be rejected so the §6.1 one-session-only invariant
-// cannot be circumvented by a misbehaving controller.
-func TestAssignCredentialsRejectsDifferentSessionAfterShutdown_spec_6_1(t *testing.T) {
-	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
-	s := expiryServer(t, clk)
-
-	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-old"},
-		Leases: map[string]*adapterv1.CredentialLease{
-			"anthropic_direct": {LeaseId: "l1", Provider: "anthropic_direct"},
-		},
-	}); err != nil {
-		t.Fatalf("initial AssignCredentials: %v", err)
-	}
-
-	// Simulate a Shutdown by releasing the session bookkeeping. (The
-	// real Shutdown RPC also tears the runtime down; this test isolates
-	// the credential bookkeeping behaviour.)
-	s.releaseSession()
-
-	// A controller that tried to re-bind this pod to a NEW session
-	// would call AssignCredentials with the new session id. The
-	// adapter must reject so the pod cannot be recycled.
-	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-new"},
-		Leases: map[string]*adapterv1.CredentialLease{
-			"anthropic_direct": {LeaseId: "l2", Provider: "anthropic_direct"},
-		},
-	})
-	if err == nil {
-		t.Fatal("F-6.1.12: AssignCredentials for a different session after Shutdown succeeded; expected rejection")
-	}
-	if got := status.Code(err); got != codes.FailedPrecondition {
-		t.Errorf("F-6.1.12: code = %v, want FailedPrecondition (sticky credSessionID)", got)
-	}
-}
-
-// spec: §6.1 — Shutdown clears the session-id slot so the adapter is
-// not wedged from accepting a fresh StartSession (e.g. on a test
-// fixture that reuses the same Server). The §6.1 one-session-only
-// invariant is enforced at the credSessionID level above; the
-// sessionID slot's "is some session currently running" gate is
-// separate.
-func TestClaimSessionAfterReleaseSessionAdmitsNewSession_spec_6_1(t *testing.T) {
-	s := &Server{}
-	if err := s.claimSession("sess-old"); err != nil {
+// spec: 4.7 (StartSession claim), 5.2 (every session is bound to a slot)
+func TestStartClaimAdmitsASecondSessionOnItsOwnSlot_spec_5_2(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	if err := s.claimSessionForTest("sess-a"); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	s.releaseSession()
-	if err := s.claimSession("sess-new"); err != nil {
-		t.Errorf("claim after release: %v (sessionID slot must be free)", err)
+	if err := s.claimSessionForTest("sess-b"); err != nil {
+		t.Errorf("second session's claim = %v, want admitted on its own slot", err)
 	}
 }
 
-// spec: §6.1 — a second StartSession on a pod that is currently running
-// a session is rejected with Unavailable so a misbehaving controller
-// cannot collide two sessions on the same pod.
-func TestClaimSessionRejectsConcurrentSession_spec_6_1(t *testing.T) {
-	s := &Server{}
-	if err := s.claimSession("sess-a"); err != nil {
+// spec: 4.7 (StartSession Unavailable for a repeated start), 5.2
+func TestStartClaimRefusesASecondStartOfTheSameSession_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	if err := s.claimSessionForTest("sess-a"); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	err := s.claimSession("sess-b")
+	err := s.claimSessionForTest("sess-a")
 	if err == nil {
-		t.Fatal("F-6.1.12: second claimSession succeeded; expected Unavailable")
+		t.Fatal("second start of the same session succeeded; want Unavailable")
 	}
 	if got := status.Code(err); got != codes.Unavailable {
-		t.Errorf("F-6.1.12: code = %v, want Unavailable", got)
+		t.Errorf("code = %v, want Unavailable", got)
+	}
+}
+
+// spec: 4.7 (the credentials-first bind sequence), 5.2
+//
+// The §4.7 bind sequence assigns credentials before StartSession, so the
+// session's entry is already bound when its first start arrives. A claim
+// keyed on the binding rather than on the started flag would refuse that
+// first start on every pool that configures a credential source.
+func TestStartClaimAdmitsAStartOnABoundNotStartedEntry_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	s.mu.Lock()
+	st, err := s.ensureSlotStateLocked("sess-a")
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("ensure slot state: %v", err)
+	}
+	st.sessionID = "sess-a"
+	s.mu.Unlock()
+
+	if err := s.claimSessionForTest("sess-a"); err != nil {
+		t.Errorf("start on a bound-not-started entry = %v, want admitted", err)
+	}
+}
+
+// spec: 4.7 (release returns the slot), 5.2
+func TestStartClaimReadmitsASessionAfterItsRelease_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	if err := s.claimSessionForTest("sess-old"); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	s.ReleaseSlotForTest("sess-old")
+	if err := s.claimSessionForTest("sess-old"); err != nil {
+		t.Errorf("claim after release: %v (the slot must be free again)", err)
 	}
 }

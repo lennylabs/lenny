@@ -32,7 +32,7 @@ import (
 // sub-message is field 5; proto3 emits nothing for an unset message field,
 // so the terminate path must stay byte-identical to before the recycle
 // field was added. The expected bytes are the deterministic encoding of the
-// session_id, reason, deadline_ms, and slot_id fields alone.
+// session_id, reason, and deadline_ms fields alone.
 // spec: 4.7 (Shutdown recycle disposition), 5.2 (whole-pod scrub trigger)
 //
 // diagnosis: a failure means adding RecycleScrub to ShutdownRequest changed
@@ -45,7 +45,6 @@ func TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7(t *testing.T) {
 		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
 		Reason:     "drain",
 		DeadlineMs: 5000,
-		SlotId:     &adapterv1.SlotId{Value: "slot-3"},
 		// Recycle left nil: the terminate path.
 	}
 	got, err := proto.MarshalOptions{Deterministic: true}.Marshal(req)
@@ -53,18 +52,18 @@ func TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 
-	// Golden encoding of fields 1-4 only, computed independently of the
+	// Golden encoding of fields 1-3 only, computed independently of the
 	// ShutdownRequest type so the assertion would fail if the recycle field
-	// (field 5) emitted any bytes when unset. Field wire tags:
+	// (field 5) emitted any bytes when unset. Field 4 is reserved: the
+	// duplicate slot address came off the message, and the encoding must
+	// carry no bytes for it. Field wire tags:
 	//   field 1 (session_id, message): tag 0x0a
 	//   field 2 (reason, string):      tag 0x12
 	//   field 3 (deadline_ms, varint): tag 0x18
-	//   field 4 (slot_id, message):    tag 0x22
 	want := []byte{
 		0x0a, 0x08, 0x0a, 0x06, 's', 'e', 's', 's', '-', '1', // session_id { value: "sess-1" }
 		0x12, 0x05, 'd', 'r', 'a', 'i', 'n', // reason: "drain"
 		0x18, 0x88, 0x27, // deadline_ms: 5000
-		0x22, 0x08, 0x0a, 0x06, 's', 'l', 'o', 't', '-', '3', // slot_id { value: "slot-3" }
 	}
 	if string(got) != string(want) {
 		t.Fatalf("terminate-path encoding drifted:\n got % x\nwant % x", got, want)

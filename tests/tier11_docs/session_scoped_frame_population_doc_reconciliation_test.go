@@ -94,8 +94,10 @@ func TestSessionScopedFrameReferenceStatesThePopulationRule(t *testing.T) {
 		})
 	}
 
-	// The runtime writes `tool_call` and `set_tracing_context`, so each states
-	// the echo obligation and what an omitted identifier resolves to.
+	// The runtime writes `tool_call` and `set_tracing_context`, so each
+	// states the echo obligation and the disposition of a frame that omits
+	// the address. The address is populated on every session-scoped frame
+	// on every pod, so an omitted one names no session and is refused.
 	for _, heading := range []string{"`tool_call` ---", "`set_tracing_context` ---"} {
 		entry := section(contract, heading)
 		if entry == "" {
@@ -103,7 +105,7 @@ func TestSessionScopedFrameReferenceStatesThePopulationRule(t *testing.T) {
 		}
 		requireAllContain(t, "adapter-contract.md "+heading+" entry", entry, []string{
 			"Echo the identifier",
-			"resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more",
+			"A frame that omits it is rejected on every pod.",
 		})
 	}
 }

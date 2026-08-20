@@ -291,8 +291,7 @@ func materializeServer(
 ) (*mcp.Server, sessionstore.Store, *podsession.Registry, executor.Executor) {
 	t.Helper()
 	adapterSrv := adapter.New("materialize-adapter")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 

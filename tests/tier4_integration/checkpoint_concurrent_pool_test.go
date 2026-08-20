@@ -32,7 +32,7 @@ import (
 
 // spec: §5.2 (per-slot checkpoint granularity), §4.4 (checkpoint store
 // durability). A concurrent pool checkpoints each occupied slot
-// independently: the gateway sends the slot's own slotID on
+// independently: the gateway addresses each stream by its own session on
 // CheckpointStart, finalises a manifest keyed on (session_id, slot_id) with
 // that slot's chunk_count and workspace_bytes, and writes the slot's chunk
 // objects under its own prefix with none of the other slot's content.
@@ -60,13 +60,13 @@ func TestConcurrentPoolCapturesEachSlotIndependently(t *testing.T) {
 		t.Fatalf("checkpoint slot-b: %v", err)
 	}
 
-	// The gateway addressed each slot's stream with its own slotID (never
-	// the manifest-only "default" sentinel, and never the other slot's id).
-	if got := slotA.receivedSlotID(); got != "slot-a" {
-		t.Errorf("slot-a stream carried slot_id %q, want %q", got, "slot-a")
+	// The gateway addressed each stream with its own session, never the
+	// co-tenant's.
+	if got := slotA.receivedSlotID(); got != "sess-a" {
+		t.Errorf("slot-a stream carried session %q, want %q", got, "sess-a")
 	}
-	if got := slotB.receivedSlotID(); got != "slot-b" {
-		t.Errorf("slot-b stream carried slot_id %q, want %q", got, "slot-b")
+	if got := slotB.receivedSlotID(); got != "sess-b" {
+		t.Errorf("slot-b stream carried session %q, want %q", got, "sess-b")
 	}
 
 	recA := h.manifestForSession(t, "sess-a")

@@ -200,26 +200,28 @@ func (m *SessionUsageMeter) readLocked(sessionID string, cumulative bool) Usage 
 
 // sessionTokenSink bridges the CH-RUNTIMEOPS's session-less
 // tokenSink to a per-session SessionUsageMeter. The lifecycle frame
-// carries no session id (§6.1 one session per pod), so the sink resolves
-// the pod's current session at fold time and keys the meter by it. A
-// token frame that arrives while the pod is idle (no assigned session)
-// is dropped, since it belongs to no session.
+// carries no session id, so the sink resolves the session at fold time
+// and keys the meter by it. It resolves through soleSession, which is
+// empty whenever another session's code may still be resident in the
+// pod's shared runtime process, and the meter drops a fold under an empty
+// identifier, so a token count is never charged to a co-tenant's §11.2
+// budget.
 type sessionTokenSink struct {
-	meter          *SessionUsageMeter
-	currentSession func() string
+	meter       *SessionUsageMeter
+	soleSession func() string
 }
 
-// AddTokens folds the counts into the pod's current session's total.
+// AddTokens folds the counts into the resolved session's total.
 func (s sessionTokenSink) AddTokens(inputTokens, outputTokens int64) {
-	s.meter.Add(s.currentSession(), inputTokens, outputTokens)
+	s.meter.Add(s.soleSession(), inputTokens, outputTokens)
 }
 
 // NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that
-// folds llm_request_completed token counts into meter under the pod's
-// current session id. cmd/lenny-adapter wires it via
+// folds llm_request_completed token counts into meter under the session
+// soleSession resolves. cmd/lenny-adapter wires it via
 // RuntimeOps.SetUsageSink.
-func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string) tokenSink {
-	return sessionTokenSink{meter: meter, currentSession: currentSession}
+func NewSessionTokenSink(meter *SessionUsageMeter, soleSession func() string) tokenSink {
+	return sessionTokenSink{meter: meter, soleSession: soleSession}
 }
 
 // WireDirectModeUsage installs the §4.7 direct-mode usage path on the
@@ -244,7 +246,7 @@ func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 	meter := NewSessionUsageMeter(nil)
 	s.Usage = meter
 	if lc != nil {
-		lc.SetUsageSink(NewSessionTokenSink(meter, s.CurrentSessionID))
+		lc.SetUsageSink(NewSessionTokenSink(meter, s.SoleSessionID))
 	}
 	return meter
 }
@@ -261,7 +263,7 @@ func (s *Server) ReportUsage(ctx context.Context, req *adapterv1.ReportUsageRequ
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "ReportUsage requires a session id")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 	if s.Usage == nil {

@@ -106,7 +106,6 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 
 	base := t.TempDir()
 	srv := adapter.New("tier4-concurrent")
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
@@ -129,8 +128,8 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 	ctx := context.Background()
 
 	slots := []slot{
-		{sessionID: "sess-alice", slotID: "slot-01"},
-		{sessionID: "sess-bob", slotID: "slot-02"},
+		{sessionID: "sess-alice", slotID: "sess-alice"},
+		{sessionID: "sess-bob", slotID: "sess-bob"},
 	}
 	if len(slots) > pool.maxConcurrentSessions {
 		t.Fatalf("flow drives %d slots, more than the pool bound %d", len(slots), pool.maxConcurrentSessions)
@@ -143,7 +142,6 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 		if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: sl.sessionID},
 			Runtime:   "echo-concurrent",
-			SlotId:    &adapterv1.SlotId{Value: sl.slotID},
 		}); err != nil {
 			t.Fatalf("StartSession(%s on %s): %v", sl.sessionID, sl.slotID, err)
 		}
@@ -171,7 +169,6 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 	for _, sl := range slots {
 		if _, err := client.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 			SessionId: &adapterv1.SessionId{Value: sl.sessionID},
-			SlotId:    &adapterv1.SlotId{Value: sl.slotID},
 			WorkspacePlan: &adapterv1.WorkspacePlan{
 				SchemaVersion: 1,
 				Sources: []*adapterv1.WorkspaceSource{
@@ -236,7 +233,6 @@ func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, 
 			}
 			if err := stream.Send(&adapterv1.AttachRequest{
 				SessionId:    &adapterv1.SessionId{Value: sl.sessionID},
-				SlotId:       &adapterv1.SlotId{Value: sl.slotID},
 				EnvelopeJson: body,
 			}); err != nil {
 				t.Fatalf("Send bind+message(%s): %v", sl.slotID, err)

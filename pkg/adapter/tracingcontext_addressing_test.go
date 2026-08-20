@@ -18,10 +18,10 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// tracingFrame builds a set_tracing_context frame, tagging it with slotID
-// when slotID is non-empty. An untagged frame is what a runtime on a
-// single-session pod writes; a tagged one is what the dispatch loop on a
-// concurrent pod stamps.
+// tracingFrame builds a set_tracing_context frame, tagging it with the
+// session address when one is given. An untagged frame is what a runtime
+// that does not populate the address writes; §4.6.1 requires the address
+// on every session-scoped frame, on every pod.
 func tracingFrame(slotID string) []byte {
 	if slotID == "" {
 		return []byte(`{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc"}}`)
@@ -47,22 +47,20 @@ func tracingDrops() float64 {
 	return testutil.ToFloat64(adapter.SetTracingContextDroppedCounter())
 }
 
-// openTracingAttach binds an Attach stream to (sessionID, slotID) and
-// returns it. An empty slotID binds the pod-global base path.
-func openTracingAttach(t *testing.T, client adapterv1.AdapterClient, sessionID, slotID string) adapterv1.Adapter_AttachClient {
+// openTracingAttach binds an Attach stream to sessionID and returns it.
+// The session identifier is the stream's whole address.
+func openTracingAttach(t *testing.T, client adapterv1.AdapterClient, sessionID string) adapterv1.Adapter_AttachClient {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	stream, err := client.Attach(ctx)
 	if err != nil {
-		t.Fatalf("Attach(%s/%s): %v", sessionID, slotID, err)
+		t.Fatalf("Attach(%s): %v", sessionID, err)
 	}
-	req := &adapterv1.AttachRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
-	if slotID != "" {
-		req.SlotId = &adapterv1.SlotId{Value: slotID}
-	}
-	if err := stream.Send(req); err != nil {
-		t.Fatalf("Send bind(%s/%s): %v", sessionID, slotID, err)
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}); err != nil {
+		t.Fatalf("Send bind(%s): %v", sessionID, err)
 	}
 	return stream
 }
@@ -192,107 +190,92 @@ func requireDrops(t *testing.T, before, want float64) {
 // concurrentTracingPod starts a two-slot concurrent pod with a platform
 // forwarder wired and returns the server, its runtime, the forwarder, and
 // an adapter client.
-func concurrentTracingPod(t *testing.T, slots ...string) (*adapter.Server, *fakeRuntime, *fakePlatformForwarder, adapterv1.AdapterClient) {
+func concurrentTracingPod(t *testing.T, sessions ...string) (*adapter.Server, *fakeRuntime, *fakePlatformForwarder, adapterv1.AdapterClient) {
 	t.Helper()
 	s, rt := concurrentServer(t)
 	rt.output = make(chan []byte, 16)
 	fwd := &fakePlatformForwarder{result: json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)}
 	s.PlatformForwarder = fwd
-	for _, slot := range slots {
-		if _, err := s.StartSession(context.Background(), slotStartReq("sess-"+slot, slot)); err != nil {
-			t.Fatalf("StartSession(%s): %v", slot, err)
+	for _, sess := range sessions {
+		if _, err := s.StartSession(context.Background(), slotStartReq(sess)); err != nil {
+			t.Fatalf("StartSession(%s): %v", sess, err)
 		}
 	}
 	client, _ := adapterClient(t, s)
 	return s, rt, fwd, client
 }
 
-// singleSessionTracingPod starts a single-session pod with a platform
-// forwarder wired and returns the server, its runtime, the forwarder, and
-// an adapter client.
-func singleSessionTracingPod(t *testing.T, sessionID string) (*adapter.Server, *fakeRuntime, *fakePlatformForwarder, adapterv1.AdapterClient) {
-	t.Helper()
-	s, rt, _ := sessionServer(t)
-	rt.output = make(chan []byte, 8)
-	fwd := &fakePlatformForwarder{result: json.RawMessage(`{"content":[{"type":"text","text":"ok"}]}`)}
-	s.PlatformForwarder = fwd
-	if _, err := s.StartSession(context.Background(), startReq(sessionID)); err != nil {
-		t.Fatalf("StartSession(%s): %v", sessionID, err)
-	}
-	client, _ := adapterClient(t, s)
-	return s, rt, fwd, client
-}
-
-// spec: 28.5.3 (set_tracing_context addressing) — a frame tagged with the
-// stream's own slot satisfies both conditions, so the adapter registers it
-// once, against that slot's session, and counts no drop.
+// spec: 28.5.3 (set_tracing_context addressing) — a frame carrying the
+// stream's own session address satisfies both conditions, so the adapter
+// registers it once, against that session, and counts no drop.
 //
 // diagnosis: a failure means the addressing rule rejects a correctly
-// addressed frame, so a concurrent runtime's tracing identifiers never
-// reach the gateway.
-func TestSetTracingContextTaggedForOwnSlotRegistersOnce_spec_28_5_3(t *testing.T) {
-	_, rt, fwd, client := concurrentTracingPod(t, "slot-a", "slot-b")
-	streamA := openTracingAttach(t, client, "sess-slot-a", "slot-a")
-	openTracingAttach(t, client, "sess-slot-b", "slot-b")
+// addressed frame, so a runtime's tracing identifiers never reach the
+// gateway.
+func TestSetTracingContextAddressedToOwnSessionRegistersOnce_spec_28_5_3(t *testing.T) {
+	_, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
+	streamA := openTracingAttach(t, client, "sess-a")
+	openTracingAttach(t, client, "sess-b")
 	rt.waitForSubscribers(t, 2)
 
 	before := tracingDrops()
 	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("slot-a")
-	rt.output <- statusFrame("slot-a")
+	rt.output <- tracingFrame("sess-a")
+	rt.output <- statusFrame("sess-a")
 	awaitStatus(t, streamA)
 
-	requireCalls(t, fwd, "sess-slot-a")
+	requireCalls(t, fwd, "sess-a")
 	requireDrops(t, before, 0)
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing) — an untagged frame on a
-// concurrent pod addresses no slot-bound stream. Every slot's stream
-// receives it through the fan-out and every one of them drops, counts, and
-// logs it, so no session's tracing context is written.
+// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (the address is
+// populated on every session-scoped frame) — an unaddressed frame
+// addresses no stream on any pod. Every stream receives it through the
+// fan-out and every one of them drops, counts, and logs it, so no
+// session's tracing context is written.
 //
-// diagnosis: a failure means the untagged frame is registering against a
-// slot's session again, which merges one runtime's tracing identifiers
-// into every sibling slot's delegation lease.
-func TestSetTracingContextUntaggedOnConcurrentPodIsDropped_spec_28_5_3(t *testing.T) {
-	_, rt, fwd, client := concurrentTracingPod(t, "slot-a", "slot-b")
-	streamA := openTracingAttach(t, client, "sess-slot-a", "slot-a")
-	streamB := openTracingAttach(t, client, "sess-slot-b", "slot-b")
+// diagnosis: a failure means an unaddressed frame is registering against
+// some session again, which merges one runtime's tracing identifiers into
+// a co-tenant's delegation lease.
+func TestSetTracingContextUnaddressedIsDropped_spec_28_5_3(t *testing.T) {
+	_, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
+	streamA := openTracingAttach(t, client, "sess-a")
+	streamB := openTracingAttach(t, client, "sess-b")
 	rt.waitForSubscribers(t, 2)
 
 	before := tracingDrops()
 	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
-	rt.output <- statusFrame("slot-a")
-	rt.output <- statusFrame("slot-b")
+	rt.output <- statusFrame("sess-a")
+	rt.output <- statusFrame("sess-b")
 	awaitStatus(t, streamA)
 	awaitStatus(t, streamB)
 
 	requireCalls(t, fwd)
-	// Both slot streams see the untagged frame, so both reject it.
+	// Both streams see the unaddressed frame, so both reject it.
 	requireDrops(t, before, 2)
 	requireDropLogs(t, logs,
-		dropLog{frameSlot: "", session: "sess-slot-a", streamSlot: "slot-a"},
-		dropLog{frameSlot: "", session: "sess-slot-b", streamSlot: "slot-b"})
+		dropLog{frameSlot: "", session: "sess-a", streamSlot: "sess-a"},
+		dropLog{frameSlot: "", session: "sess-b", streamSlot: "sess-b"})
 }
 
-// spec: 28.5.3 (set_tracing_context addressing) — a frame tagged for a
-// sibling slot never reaches this stream's handler: the per-slot
-// demultiplexer drops it first, so the stream registers nothing and the
-// addressing counter does not move.
+// spec: 28.5.3 (set_tracing_context addressing) — a frame addressed to a
+// co-tenant never reaches this stream's handler: the demultiplexer drops
+// it first, so the stream registers nothing and the addressing counter
+// does not move.
 //
-// diagnosis: a failure means a slot's Attach stream handled a frame
-// addressed to a sibling slot.
-func TestSetTracingContextTaggedForSiblingSlotNeverReachesStream_spec_28_5_3(t *testing.T) {
-	_, rt, fwd, client := concurrentTracingPod(t, "slot-a", "slot-b")
-	streamA := openTracingAttach(t, client, "sess-slot-a", "slot-a")
+// diagnosis: a failure means a session's Attach stream handled a frame
+// addressed to a co-tenant.
+func TestSetTracingContextAddressedToACoTenantNeverReachesStream_spec_28_5_3(t *testing.T) {
+	_, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
+	streamA := openTracingAttach(t, client, "sess-a")
 	rt.waitForSubscribers(t, 1)
 
 	before := tracingDrops()
 	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("slot-b")
-	rt.output <- statusFrame("slot-a")
+	rt.output <- tracingFrame("sess-b")
+	rt.output <- statusFrame("sess-a")
 	awaitStatus(t, streamA)
 
 	requireCalls(t, fwd)
@@ -300,185 +283,63 @@ func TestSetTracingContextTaggedForSiblingSlotNeverReachesStream_spec_28_5_3(t *
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing) — on a single-session pod
-// the stream carries no slot, so an untagged frame satisfies address
-// equality, the pod's session is still the stream's session, and the slot
-// registry is empty. The adapter registers it once.
-//
-// diagnosis: a failure means the addressing rule rejects the frame a
-// conforming single-session runtime writes.
-func TestSetTracingContextUntaggedOnSingleSessionPodRegisters_spec_28_5_3(t *testing.T) {
-	_, rt, fwd, client := singleSessionTracingPod(t, "sess-solo")
-	stream := openTracingAttach(t, client, "sess-solo", "")
-	rt.waitForSubscribers(t, 1)
-
-	before := tracingDrops()
-	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("")
-	rt.output <- statusFrame("")
-	awaitStatus(t, stream)
-
-	requireCalls(t, fwd, "sess-solo")
-	requireDrops(t, before, 0)
-	requireDropLogs(t, logs)
-}
-
-// spec: 28.5.3 (set_tracing_context addressing) — no session on a
-// single-session pod holds a slot id and the adapter stamps one only on
-// concurrent slots, so a frame carrying any slotId there fails address
-// equality and is dropped, counted, and logged.
-//
-// diagnosis: a failure means the adapter accepts a slot-tagged frame on a
-// stream that holds no slot, which is the case address equality exists to
-// reject.
-func TestSetTracingContextTaggedOnSingleSessionPodIsDropped_spec_28_5_3(t *testing.T) {
-	_, rt, fwd, client := singleSessionTracingPod(t, "sess-solo")
-	stream := openTracingAttach(t, client, "sess-solo", "")
-	rt.waitForSubscribers(t, 1)
-
-	before := tracingDrops()
-	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("slot-x")
-	rt.output <- statusFrame("")
-	awaitStatus(t, stream)
-
-	requireCalls(t, fwd)
-	requireDrops(t, before, 1)
-	requireDropLogs(t, logs, dropLog{frameSlot: "slot-x", session: "sess-solo", streamSlot: ""})
-}
-
 // spec: 28.5.3 (set_tracing_context addressing) — address equality is
-// exact string equality with an absent or empty slotId counting as the
-// empty string on both sides, and the adapter reads no other outcome off
-// the frame. A slotId the adapter cannot read as a string therefore
-// resolves to the empty address: it satisfies address equality on a
-// slotless stream whose pod holds no registered slot, and it fails it on a
-// stream bound to a slot.
+// exact string equality with an absent or unreadable address counting as
+// the empty string, and the adapter reads no other outcome off the frame.
+// A frame whose address the adapter cannot read as a string therefore
+// resolves to the empty address and fails equality against every stream,
+// which is the fail-closed direction now that no stream carries an empty
+// address.
 //
 // diagnosis: a failure means the adapter applies an addressing outcome the
-// addressing rule does not define, dropping a frame the two conditions
-// accept (or accepting one they reject) because it decodes the slotId
-// value's JSON type as a third answer.
-func TestSetTracingContextUnreadableSlotIDIsTheEmptyAddress_spec_28_5_3(t *testing.T) {
+// addressing rule does not define, accepting a frame the two conditions
+// reject because it decodes the address value's JSON type as a third
+// answer.
+func TestSetTracingContextUnreadableAddressIsTheEmptyAddress_spec_28_5_3(t *testing.T) {
 	frames := map[string]string{
 		"number": `{"type":"set_tracing_context","slotId":1,"context":{"langsmith_run_id":"run_abc"}}`,
 		"null":   `{"type":"set_tracing_context","slotId":null,"context":{"langsmith_run_id":"run_abc"}}`,
-		"object": `{"type":"set_tracing_context","slotId":{"id":"slot-x"},"context":{"langsmith_run_id":"run_abc"}}`,
+		"object": `{"type":"set_tracing_context","slotId":{"id":"sess-a"},"context":{"langsmith_run_id":"run_abc"}}`,
 	}
 	for name, frame := range frames {
-		t.Run(name+" on a slotless stream registers", func(t *testing.T) {
-			_, rt, fwd, client := singleSessionTracingPod(t, "sess-solo")
-			stream := openTracingAttach(t, client, "sess-solo", "")
+		t.Run(name+" is dropped", func(t *testing.T) {
+			_, rt, fwd, client := concurrentTracingPod(t, "sess-a")
+			streamA := openTracingAttach(t, client, "sess-a")
 			rt.waitForSubscribers(t, 1)
 
 			before := tracingDrops()
 			logs := captureDropLogs(t)
 			rt.output <- []byte(frame)
-			rt.output <- statusFrame("")
-			awaitStatus(t, stream)
-
-			requireCalls(t, fwd, "sess-solo")
-			requireDrops(t, before, 0)
-			requireDropLogs(t, logs)
-		})
-
-		t.Run(name+" on a slot-bound stream is dropped", func(t *testing.T) {
-			_, rt, fwd, client := concurrentTracingPod(t, "slot-a")
-			streamA := openTracingAttach(t, client, "sess-slot-a", "slot-a")
-			rt.waitForSubscribers(t, 1)
-
-			before := tracingDrops()
-			logs := captureDropLogs(t)
-			rt.output <- []byte(frame)
-			rt.output <- statusFrame("slot-a")
+			rt.output <- statusFrame("sess-a")
 			awaitStatus(t, streamA)
 
 			requireCalls(t, fwd)
 			requireDrops(t, before, 1)
-			requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-slot-a", streamSlot: "slot-a"})
+			requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-a", streamSlot: "sess-a"})
 		})
 	}
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — live-binding
-// confirmation on the per-slot branch. The slot entry is deleted while the
-// stream is still draining the runtime's output, so a correctly tagged
-// frame arriving afterwards no longer names a live binding and is dropped.
+// confirmation. The session's registry entry is deleted while its stream
+// is still draining the runtime's output, so a correctly addressed frame
+// arriving afterwards no longer names a live binding and is dropped.
 //
-// diagnosis: a failure means a frame arriving in the slot's teardown
-// window registers tracing identifiers against a released session.
-func TestSetTracingContextAfterSlotReleaseIsDropped_spec_28_5_3(t *testing.T) {
-	s, rt, fwd, client := concurrentTracingPod(t, "slot-a", "slot-b")
-	streamA := openTracingAttach(t, client, "sess-slot-a", "slot-a")
+// diagnosis: a failure means a frame arriving in the teardown window
+// registers tracing identifiers against a released session.
+func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T) {
+	s, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
+	streamA := openTracingAttach(t, client, "sess-a")
 	rt.waitForSubscribers(t, 1)
-	s.ReleaseSlotForTest(context.Background(), "slot-a")
+	s.ReleaseSlotForTest("sess-a")
 
 	before := tracingDrops()
 	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("slot-a")
-	rt.output <- statusFrame("slot-a")
+	rt.output <- tracingFrame("sess-a")
+	rt.output <- statusFrame("sess-a")
 	awaitStatus(t, streamA)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
-	requireDropLogs(t, logs, dropLog{frameSlot: "slot-a", session: "sess-slot-a", streamSlot: "slot-a"})
-}
-
-// spec: 28.5.3 (set_tracing_context addressing) — live-binding
-// confirmation on the pod-global branch, ambiguity term. The pod holds an
-// occupied slot and a pod-global session at once, which the adapter does
-// not prevent, so an untagged frame on the slotless stream names no single
-// session. The empty-registry term is the only one that fails, and it
-// rejects the frame fail-closed.
-//
-// diagnosis: a failure means an untagged frame on a pod that has taken the
-// per-slot path registers against the pod-global session, which is the
-// ambiguity the empty-registry term rejects.
-func TestSetTracingContextPodGlobalStreamWithOccupiedSlotIsDropped_spec_28_5_3(t *testing.T) {
-	s, rt, fwd, client := concurrentTracingPod(t, "slot-a")
-	if _, err := s.StartSession(context.Background(), startReq("sess-pod")); err != nil {
-		t.Fatalf("StartSession(pod-global): %v", err)
-	}
-	stream := openTracingAttach(t, client, "sess-pod", "")
-	rt.waitForSubscribers(t, 1)
-
-	before := tracingDrops()
-	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("")
-	rt.output <- statusFrame("")
-	awaitStatus(t, stream)
-
-	requireCalls(t, fwd)
-	requireDrops(t, before, 1)
-	requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-pod", streamSlot: ""})
-}
-
-// spec: 28.5.3 (set_tracing_context addressing) — live-binding
-// confirmation on the pod-global branch, session term. The pod's session
-// is released while the stream is still draining the runtime's output,
-// mirroring the grace-deadline overrun in Shutdown, so an untagged frame
-// arriving afterwards is dropped rather than registered against the
-// just-released session.
-//
-// diagnosis: a failure means the teardown window on the pod-global branch
-// is open again: a frame arriving after the release registers tracing
-// identifiers against a session the pod no longer holds.
-func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T) {
-	s, rt, fwd, client := singleSessionTracingPod(t, "sess-solo")
-	stream := openTracingAttach(t, client, "sess-solo", "")
-	// The bind is validated before the stream subscribes to the runtime's
-	// output, so waiting for the subscriber keeps the release after the
-	// bind: the stream is open and draining when its session goes away.
-	rt.waitForSubscribers(t, 1)
-	s.ReleaseSessionForTest()
-
-	before := tracingDrops()
-	logs := captureDropLogs(t)
-	rt.output <- tracingFrame("")
-	rt.output <- statusFrame("")
-	awaitStatus(t, stream)
-
-	requireCalls(t, fwd)
-	requireDrops(t, before, 1)
-	requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-solo", streamSlot: ""})
+	requireDropLogs(t, logs, dropLog{frameSlot: "sess-a", session: "sess-a", streamSlot: "sess-a"})
 }

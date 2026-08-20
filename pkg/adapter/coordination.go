@@ -86,7 +86,7 @@ func (s *Server) CoordinatorFence(ctx context.Context, req *adapterv1.Coordinato
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "CoordinatorFence requires a session id")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 	gen := req.GetCoordinationGeneration()
@@ -213,7 +213,7 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "CheckpointBarrier requires a session id")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 	barrierID := req.GetBarrierId()

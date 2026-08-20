@@ -253,7 +253,7 @@ func TestMCPRuntimeInterruptBeforeStartErrors(t *testing.T) {
 func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 	rt := &adapter.MCPRuntime{Command: mcpReferenceBinary}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt
 
@@ -305,7 +305,7 @@ func TestAdapterServerSkipsPlatformMCPForMCPRuntime(t *testing.T) {
 	// MCP runtime kind and an MCP socket left unset.
 	rt := &adapter.MCPRuntime{Command: mcpReferenceBinary}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt

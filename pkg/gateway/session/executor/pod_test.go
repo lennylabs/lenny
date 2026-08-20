@@ -5,7 +5,6 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -44,7 +43,7 @@ func (r *respondingRuntime) Close(context.Context, string) error           { ret
 func dialPodAdapter(t *testing.T, rt adapter.RuntimeProcess) *adapterclient.Client {
 	t.Helper()
 	srv := adapter.New("podexec-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
@@ -197,7 +196,7 @@ func (a *slotCapturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.
 		return err
 	}
 	a.mu.Lock()
-	a.attachBindSlot = first.GetSlotId().GetValue()
+	a.attachBindSlot = first.GetSessionId().GetValue()
 	a.mu.Unlock()
 	for {
 		req, err := stream.Recv()
@@ -249,143 +248,31 @@ func dialSlotCapturingAdapter(t *testing.T, rec *slotCapturingAdapter) *adapterc
 	return cl
 }
 
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestPodExecutorSendStampsTheSlotIDForAConcurrentPoolBind(t *testing.T) {
-	rec := newSlotCapturingAdapter()
-	cl := dialSlotCapturingAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl, SlotID: "slot_01"})
+// TestPodExecutorSendAddressesTheAttachStreamBySession pins that the
+// executor addresses the Attach stream by the session identifier, which
+// under §5.2 names the slot that session holds on the pod, on a binding of
+// either concurrency. Before this the stream carried a separate slot
+// address that a bind on a pool of one left empty.
+// spec: 7.2 (per-session routing), 5.2
+func TestPodExecutorSendAddressesTheAttachStreamBySession(t *testing.T) {
+	for _, slotID := range []string{"slot_02", ""} {
+		rec := newSlotCapturingAdapter()
+		cl := dialSlotCapturingAdapter(t, rec)
+		reg := podsession.NewRegistry()
+		reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl, SlotID: slotID})
 
-	pe := executor.NewPodExecutor(reg, nil)
-	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
-		{Role: "user", Content: "hello"},
-	}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-
-	bindSlot, envelopeSlot, gotEnvelope := rec.snapshot()
-	if !gotEnvelope {
-		t.Fatal("adapter never received the forwarded envelope")
-	}
-	if bindSlot != "slot_01" {
-		t.Errorf("Attach binding frame carried slotId %q, want slot_01", bindSlot)
-	}
-	if envelopeSlot != "slot_01" {
-		t.Errorf("outbound envelope carried slotId %q, want slot_01", envelopeSlot)
-	}
-}
-
-// TestPodExecutorSendFailsClosedOnConcurrentBindWithNoSlot pins the §7.2
-// SLOT_ID_REQUIRED fail-closed invariant. A bind reporting
-// maxConcurrentSessions > 1 with an empty SlotID is a routing bug: per-slot
-// dispatch was reached for a concurrent pod but the gateway resolved no slot
-// for the session. The executor must fail closed with ErrSlotIDRequired
-// rather than open a no-slotId Attach stream that the adapter would route to
-// the whole-pod base path and misdeliver into another session's slot.
-// spec: 7.2 (per-slot routing, SLOT_ID_REQUIRED), 5.2
-func TestPodExecutorSendFailsClosedOnConcurrentBindWithNoSlot(t *testing.T) {
-	rec := newSlotCapturingAdapter()
-	cl := dialSlotCapturingAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	// A concurrent-session pool bind that resolved no slot (the routing bug):
-	// MaxConcurrentSessions > 1 with an empty SlotID.
-	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl, MaxConcurrentSessions: 4})
-
-	pe := executor.NewPodExecutor(reg, nil)
-	_, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
-		{Role: "user", Content: "hello"},
-	})
-	if err == nil {
-		t.Fatal("Send on a concurrent bind with no resolved slot succeeded, want a fail-closed error")
-	}
-	if !errors.Is(err, executor.ErrSlotIDRequired) {
-		t.Errorf("Send error = %v, want ErrSlotIDRequired", err)
-	}
-	// The invariant fails closed before any envelope reaches the adapter.
-	if _, _, gotEnvelope := rec.snapshot(); gotEnvelope {
-		t.Error("an envelope was forwarded to the adapter despite the fail-closed invariant")
-	}
-}
-
-// TestPodExecutorSendAdmitsAWellRoutedConcurrentBind confirms the
-// SLOT_ID_REQUIRED invariant does NOT fire on the normal concurrent path: a
-// maxConcurrentSessions > 1 bind that carries a resolved SlotID routes per
-// slot and stamps the slotId outbound, exactly as the single-slot stamp test
-// asserts, with the per-pod concurrency bound present.
-// spec: 7.2 (per-slot routing, SLOT_ID_REQUIRED), 5.2
-func TestPodExecutorSendAdmitsAWellRoutedConcurrentBind(t *testing.T) {
-	rec := newSlotCapturingAdapter()
-	cl := dialSlotCapturingAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{
-		SessionID: "sess-pod", Adapter: cl, SlotID: "slot_02", MaxConcurrentSessions: 4,
-	})
-
-	pe := executor.NewPodExecutor(reg, nil)
-	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
-		{Role: "user", Content: "hello"},
-	}); err != nil {
-		t.Fatalf("Send on a well-routed concurrent bind: %v", err)
-	}
-	bindSlot, envelopeSlot, gotEnvelope := rec.snapshot()
-	if !gotEnvelope {
-		t.Fatal("adapter never received the forwarded envelope")
-	}
-	if bindSlot != "slot_02" || envelopeSlot != "slot_02" {
-		t.Errorf("slotId routing: attach=%q envelope=%q, want slot_02 on both", bindSlot, envelopeSlot)
-	}
-}
-
-// TestPodExecutorSendAdmitsAnExclusiveBindWithNoSlot confirms the invariant
-// leaves the maxConcurrentSessions <= 1 whole-pod path untouched: an
-// exclusive bind has no SlotID and no concurrency bound, so it routes
-// whole-pod with no slotId rather than triggering SLOT_ID_REQUIRED.
-// spec: 7.2 (per-slot routing, SLOT_ID_REQUIRED), 5.2
-func TestPodExecutorSendAdmitsAnExclusiveBindWithNoSlot(t *testing.T) {
-	rec := newSlotCapturingAdapter()
-	cl := dialSlotCapturingAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	// An exclusive bind: MaxConcurrentSessions is 1 (or 0), SlotID empty.
-	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl, MaxConcurrentSessions: 1})
-
-	pe := executor.NewPodExecutor(reg, nil)
-	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
-		{Role: "user", Content: "hello"},
-	}); err != nil {
-		t.Fatalf("Send on an exclusive bind: %v", err)
-	}
-	bindSlot, envelopeSlot, gotEnvelope := rec.snapshot()
-	if !gotEnvelope {
-		t.Fatal("adapter never received the forwarded envelope")
-	}
-	if bindSlot != "" || envelopeSlot != "" {
-		t.Errorf("exclusive bind stamped a slotId: attach=%q envelope=%q, want empty", bindSlot, envelopeSlot)
-	}
-}
-
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestPodExecutorSendStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
-	rec := newSlotCapturingAdapter()
-	cl := dialSlotCapturingAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	// An exclusive (maxConcurrentSessions=1) bind leaves SlotID empty.
-	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: cl})
-
-	pe := executor.NewPodExecutor(reg, nil)
-	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
-		{Role: "user", Content: "hello"},
-	}); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-
-	bindSlot, envelopeSlot, gotEnvelope := rec.snapshot()
-	if !gotEnvelope {
-		t.Fatal("adapter never received the forwarded envelope")
-	}
-	if bindSlot != "" {
-		t.Errorf("Attach binding frame on an exclusive bind carried slotId %q, want empty", bindSlot)
-	}
-	if envelopeSlot != "" {
-		t.Errorf("outbound envelope on an exclusive bind carried slotId %q, want empty", envelopeSlot)
+		pe := executor.NewPodExecutor(reg, nil)
+		if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+			{Role: "user", Content: "hello"},
+		}); err != nil {
+			t.Fatalf("Send with recorded slot %q: %v", slotID, err)
+		}
+		bindSession, _, gotEnvelope := rec.snapshot()
+		if !gotEnvelope {
+			t.Fatal("adapter never received the forwarded envelope")
+		}
+		if bindSession != "sess-pod" {
+			t.Errorf("Attach binding address = %q, want sess-pod", bindSession)
+		}
 	}
 }

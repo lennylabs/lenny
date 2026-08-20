@@ -382,8 +382,10 @@ func main() {
 	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
 	// production (F-15.3.7), and, when CH-RUNTIMEOPS is configured,
 	// wire the token sink that folds each llm_request_completed frame's
-	// direct-mode token counts into it. The sink resolves the pod's active
-	// session (§6.1 one session per pod) at fold time via CurrentSessionID.
+	// direct-mode token counts into it. The sink resolves the session at
+	// fold time via SoleSessionID, which names a session only while the
+	// pod's shared runtime process has been given no other, so a fold is
+	// never charged to a co-tenant's budget.
 	//
 	// This runs before the lifecycle Run goroutine is launched below, so
 	// the sink is assigned to the lock-free RuntimeOps.usage field

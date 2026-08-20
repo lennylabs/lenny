@@ -96,8 +96,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	cluster := denyLeakageCluster(t)
 
 	adapterSrv := adapter.New("deny-leakage-adapter")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = noopRuntime{}
 

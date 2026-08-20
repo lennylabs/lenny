@@ -45,24 +45,20 @@ func (r *startRecorder) recorded() *adapterv1.CheckpointStart {
 	return r.start
 }
 
-// spec: 5.2 (per-slot checkpoint granularity), 15 (single-session
-// runtimes never see a slotId), 10.1 (the 'default' sentinel is
-// manifest-only). The gateway populates CheckpointStart.slot_id from the
-// raw binding.SlotID: a concurrent-workspace binding sends the slot id on
-// the wire so the adapter can address the slot subtree, and a
-// single-session binding sends no slot_id field so the adapter stays on
-// the pod-global path. The gateway must not leak the manifest-side
-// "default" sentinel onto the wire, which the adapter would route down the
-// per-slot branch that has no assigned slot state.
-func TestDriveCheckpointSendsRawSlotIDOnTheWire(t *testing.T) {
+// spec: 5.2 (a session-mode slot's identifier is its session's
+// identifier), 10.1.7 (the opening frame addresses the checkpoint
+// stream). Neither the CheckpointRequest envelope nor the Checkpoint RPC
+// signature carries a session, so CheckpointStart is where the stream is
+// addressed. The gateway populates it from the session it is
+// checkpointing, on a binding of either concurrency, and sends no second
+// address beside it.
+func TestDriveCheckpointAddressesTheStartBySession(t *testing.T) {
 	cases := []struct {
-		name      string
-		slotID    string
-		wantValue string
-		wantNil   bool
+		name   string
+		slotID string
 	}{
-		{name: "concurrent binding sends the raw slot id", slotID: "slot-a", wantValue: "slot-a"},
-		{name: "single-session binding sends no slot_id", slotID: "", wantNil: true},
+		{name: "a binding placed on a counted slot", slotID: "s1"},
+		{name: "a binding with no separate slot recorded", slotID: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,14 +80,8 @@ func TestDriveCheckpointSendsRawSlotIDOnTheWire(t *testing.T) {
 			if got == nil {
 				t.Fatal("adapter recorded no CheckpointStart")
 			}
-			if tc.wantNil {
-				if got.GetSlotId() != nil {
-					t.Errorf("GetSlotId() = %v, want nil for a single-session binding", got.GetSlotId())
-				}
-				return
-			}
-			if v := got.GetSlotId().GetValue(); v != tc.wantValue {
-				t.Errorf("CheckpointStart.slot_id.value = %q, want %q", v, tc.wantValue)
+			if v := got.GetSessionId().GetValue(); v != "s1" {
+				t.Errorf("CheckpointStart.session_id.value = %q, want s1", v)
 			}
 		})
 	}

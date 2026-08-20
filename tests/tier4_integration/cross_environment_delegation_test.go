@@ -721,8 +721,7 @@ func sharedToolCluster(t *testing.T) client.Client {
 func newRecordingAdapter(t *testing.T) *adapter.Server {
 	t.Helper()
 	srv := adapter.New("cross-env-adapter")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &noopRuntime{}
 	return srv

@@ -96,15 +96,6 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		)
 		return nil, status.Error(codes.InvalidArgument, "StartSession requires a session id")
 	}
-	// spec: §6.4 — a slot-qualified StartSession claims one
-	// of the pod's concurrent-workspace slots (its own per-slot tree and
-	// runtime) rather than the whole pod. The single-session base path
-	// (maxConcurrentSessions == 1, no slot id) below is taken unchanged.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		resp, err := s.startSessionSlot(ctx, req, slotID)
-		spanErr = err
-		return resp, err
-	}
 	if s.Runtime == nil {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a runtime"),
@@ -114,7 +105,11 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 			"adapter is not configured with a runtime")
 	}
 
-	if err := s.claimSession(sessionID); err != nil {
+	// spec: §5.2 — every session is bound to a slot on every pod, so the
+	// start claims this session's slot whatever the pool's concurrency.
+	// The claim also decides the once-per-pod intra-pod MCP start.
+	_, startMCP, err := s.claimSessionSlot(sessionID, s.isSDKWarm(), false)
+	if err != nil {
 		spanErr = err
 		return nil, err
 	}
@@ -135,7 +130,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		connectors:         connectors,
 	})
 	if err != nil {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
 		// pod can succeed; the §4.7 contract returns the pod to idle).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
@@ -145,10 +140,11 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// type: mcp runtime is "oblivious to Lenny" (§5.1) and never connects
 	// to the platform MCP server, so the adapter does not start one for
 	// it — the adapter drives the type: mcp agent's own MCP server as a
-	// client instead.
-	if s.RuntimeKind != RuntimeKindMCP {
+	// client instead. The servers bind pod-wide sockets, so only the claim
+	// that took the once-per-pod start arms them.
+	if s.RuntimeKind != RuntimeKindMCP && startMCP {
 		if err := s.startPlatformMCP(nonce); err != nil {
-			s.releaseSession()
+			s.releaseSessionSlot(sessionID)
 			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
@@ -158,12 +154,13 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		// §16.3: a runtime-start crash is TRANSIENT (pod crash → retry on a
 		// fresh pod).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
+	s.noteRuntimeStarted(sessionID)
 	return &adapterv1.StartSessionResponse{}, nil
 }
 
@@ -180,107 +177,111 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 	if len(req.GetEnvelopeJson()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "SendMessage requires a message envelope")
 	}
-	// spec: §6.4 — a slot-qualified message is delivered to
-	// the slot's own runtime so the dispatch lands on the slot's cwd.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		if err := s.checkSlotSession(sessionID, slotID); err != nil {
-			return nil, err
-		}
-		rt := s.runtimeForSlot(slotID)
-		if rt == nil {
-			return nil, status.Errorf(codes.FailedPrecondition, "slot %s has no running runtime", slotID)
-		}
-		if err := rt.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
-			return nil, status.Errorf(codes.Internal, "deliver message to slot runtime: %v", err)
-		}
-		return &adapterv1.SendMessageResponse{}, nil
-	}
-	if err := s.checkSession(sessionID); err != nil {
+	// spec: §5.2 — the message is delivered to the session the request
+	// names, whose slot the registry holds on every pod.
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
-	if err := s.Runtime.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
+	rt := s.runtimeForSession(sessionID)
+	if rt == nil {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"session %s has no running runtime", sessionID)
+	}
+	if err := rt.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
 		return nil, status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 	}
 	return &adapterv1.SendMessageResponse{}, nil
 }
 
-// Shutdown terminates the pod's runtime and releases the session
-// (§4.7). It closes the runtime process and returns the pod toward
-// termination; a session-mode pod is replaced rather than reused.
+// Shutdown tears the named session down and, on the occupancy-zero
+// recycle boundary, runs the §5.2 whole-pod scrub. It is where a
+// session's whole teardown lands, on every pod: the final usage flush,
+// the §15.4.2 drain signal, the runtime close, the per-slot tree removal,
+// and the cleanup-outcome report are one sequence whatever the pool's
+// concurrency.
+//
+// The handler is three ordered clauses over one message. It refuses an
+// empty session_id. It then runs the locked cancel-deregister step for
+// the named session and runs the teardown when that step removed a bound
+// entry, skipping it otherwise. It then runs the whole-pod scrub when the
+// request carries the recycle disposition.
+//
+// Clause two is conditional rather than guarded, which is what makes the
+// handler idempotent: the §11.4 full revoke and the concurrent
+// occupancy-zero edge each send a second request for a session already
+// released, and returning an error there would make every revoked session
+// hold its slot for the life of the pod.
 //
 // The §4.7 ShutdownRequest carries `deadline_ms` — the §11.4 step-3
 // graceful window the gateway pinned at full_revoke (10s by default).
 // Close runs under a context bounded by that deadline so the runtime
 // adapter's SIGTERM/SIGKILL pivot honors the spec window instead of an
 // internal default. A non-positive `deadline_ms` falls through to the
-// inbound RPC context, preserving the previous behavior. spec: §11.4; §4.7 ShutdownRequest.deadline_ms.
+// inbound RPC context.
+//
+// spec: §4.7; §5.2; §11.4; §15.4.2.
 func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Shutdown requires a session id")
 	}
-	// spec: §6.4 — a slot-qualified Shutdown tears down only
-	// the named slot (its runtime + per-slot tree), leaving sibling slots
-	// on the pod running.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.shutdownSlot(ctx, sessionID, slotID, req.GetDeadlineMs())
+
+	// Clause two. The deregistration and the drain decision are one
+	// critical section: an occupancy read taken before the deregistration
+	// would let two co-tenants ending at once each observe the other and
+	// send no drain at all.
+	s.mu.Lock()
+	st, removed, boundRemains := s.deregisterSlotLocked(sessionID)
+	bound := removed && st.sessionID != ""
+	s.mu.Unlock()
+
+	closeErr := error(nil)
+	if bound {
+		// §4.7: flush a final usage report onto the gateway control stream
+		// before the stream closes, so the gateway can run
+		// budget_return.lua (§8.3) with the session's complete token
+		// totals. It reads the usage meter alone, so it is indifferent to
+		// the entry being gone by the time it runs.
+		s.emitFinalUsage(ctx, sessionID)
+		// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through
+		// CH-RUNTIMEOPS (the DRAINING state) before the hard runtime
+		// close. The signal is pod-global and names no session, so it goes
+		// out only when the deregistration left the registry holding no
+		// bound entry; sending it while a co-tenant is still bound would
+		// signal the shared runtime to terminate while it is still serving
+		// that session. It precedes the close because the last session's
+		// close tears the shared runtime down and a terminate frame sent
+		// afterwards reaches a dead runtime.
+		if !boundRemains {
+			s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
+		}
+		if s.Runtime != nil {
+			closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
+			closeErr = s.Runtime.Close(closeCtx, sessionID)
+			cancel()
+		}
+		s.noteRuntimeClosed(sessionID)
+		// The second release step. It follows the drain and the close so
+		// the agent process is not reading a credential file the teardown
+		// has already removed inside the §15.4.2 grace window.
+		_ = removeSlotTree(st)
+		s.cancelPodMCPIfRuntimeIdle()
+		// spec: §5.2 (per-session cleanup outcome), §4.7
+		// (ReportSessionScrub). Report the cleanup outcome so the gateway
+		// advances sessions_served (feeding the maxSessionsPerPod
+		// retirement) and, on a leaked outcome, feeds the
+		// unhealthy-threshold ledger. A clean close is `released`; a close
+		// failure or grace-deadline overrun is `leaked`.
+		s.reportSessionScrub(ctx, sessionID, closeErr)
 	}
-	// spec: §5.2 (whole-pod scrub trigger, uniform across session modes); §4.7
-	// (Shutdown recycle disposition). A concurrent-session pod reaches occupancy
-	// zero when its last slot drains cleanly: the gateway sends a slot-less
-	// recycle Shutdown carrying the last-released slot's session id (so the
-	// non-empty session_id guard above admits it) and the RecycleScrub
-	// disposition, but never sets the pod-global s.sessionID (a concurrent pod
-	// sets only the per-slot st.sessionID, so checkSession below can never pass
-	// for it). Dispatch the whole-pod scrub on the empty pod-global session id:
-	// run startPodScrub and return, replacing the gateway missing-report timeout
-	// with a deliberate scrub-and-report. A base-mode session (which sets
-	// s.sessionID via claimSession) does not match this branch and takes the
-	// checkSession path unchanged, where its own recycle handling runs below.
-	// Ordered before checkSession because a concurrent pod fails that gate.
-	// F-5.2.31.
-	if rc := req.GetRecycle(); rc != nil && s.currentSession() == "" {
-		s.startPodScrub(rc)
-		return &adapterv1.ShutdownResponse{}, nil
-	}
-	if err := s.checkSession(sessionID); err != nil {
-		return nil, err
-	}
-	// §4.7: flush a final usage report onto the gateway
-	// control stream before the stream closes, so the gateway can run
-	// budget_return.lua (§8.3) with the session's complete token totals.
-	s.emitFinalUsage(ctx, sessionID)
-	// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through
-	// CH-RUNTIMEOPS (the DRAINING state) before the hard runtime
-	// close: the adapter sends `terminate` so the runtime finishes the
-	// current exchange and exits within the gateway's grace window rather
-	// than only observing the stdin/socket EOF. Basic/Standard runtimes
-	// have no CH-RUNTIMEOPS (Lifecycle == nil) and a not-yet-connected
-	// runtime is a no-op; the drain is best-effort and never fails the
-	// shutdown.
-	s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
-	closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
-	closeErr := s.Runtime.Close(closeCtx, sessionID)
-	cancel()
-	s.releaseSession()
-	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition. On the
-	// occupancy-zero recycle boundary the pod process stays alive: after the
-	// ending session's runtime is closed, run the whole-pod scrub and report
-	// its binary outcome asynchronously via ReportPodScrub. The Shutdown
+
+	// Clause three. The gateway populates recycle only at occupancy zero,
+	// and on that call clause two has already deregistered the ending
+	// session and removed its tree ahead of the scrub. The Shutdown
 	// response does not wait for the scrub; the gateway bounds it with the
-	// missing-report timeout it armed before sending this Shutdown. On the
-	// terminate path (recycle unset) the pod is replaced and no scrub runs.
+	// missing-report timeout it armed before sending this request.
+	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
 	if rc := req.GetRecycle(); rc != nil {
-		// spec: §5.2 (ReportSessionScrub, maxSessionsPerPod both modes). A base
-		// (maxConcurrentSessions == 1) recycling pod has no slot, so it advances
-		// sessions_served on its own recycle boundary: emit ReportSessionScrub
-		// with an empty slot id for the ending session before the whole-pod
-		// scrub, so advanceScrubCounters reads back a non-zero count and the
-		// maxSessionsPerPod retirement becomes functional in base mode too.
-		// The outcome derives from the same closeErr that set ExitedCleanly.
-		// This runs only on the recycle boundary; the terminate path replaces
-		// the pod and needs no session-scrub report. F-5.2.31.
-		s.reportSessionScrub(ctx, sessionID, "", closeErr)
 		s.startPodScrub(rc)
 	}
 	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
@@ -338,71 +339,5 @@ func (s *Server) emitFinalUsage(ctx context.Context, sessionID string) {
 	if err != nil {
 		return
 	}
-	s.EmitFinalUsageReport(u)
-}
-
-// checkSession confirms sessionID is the session currently assigned to
-// the pod.
-func (s *Server) checkSession(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sessionID == "" {
-		return status.Error(codes.FailedPrecondition, "pod has no assigned session")
-	}
-	if s.sessionID != sessionID {
-		return status.Errorf(codes.NotFound, "session %s is not assigned to this pod", sessionID)
-	}
-	return nil
-}
-
-// claimSession marks the pod as holding sessionID, returning a gRPC
-// Unavailable error when the pod is not idle. The §4.7 StartSession
-// contract specifies Unavailable for a pod that is not idle.
-func (s *Server) claimSession(sessionID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sessionID != "" {
-		return status.Errorf(codes.Unavailable,
-			"pod is not idle: session %s is already assigned", s.sessionID)
-	}
-	s.sessionID = sessionID
-	return nil
-}
-
-// releaseSession returns the pod to the idle state and stops the
-// session's platform MCP server, if one was started.
-//
-// credSessionID is INTENTIONALLY left set: the §6.1
-// invariant ("After a session completes or fails in `executionMode:
-// session`, the pod is terminated and replaced — never recycled for a
-// different session") is primarily enforced by the gateway-side
-// teardown loop (binder.Release → drain → terminated → replaced); the
-// sticky credSessionID is the adapter-side defense-in-depth that
-// rejects an AssignCredentials for a different session if a pod
-// somehow survives termination. Clearing it here would weaken that
-// backstop. F-6.1.12.
-func (s *Server) releaseSession() {
-	s.mu.Lock()
-	s.sessionID = ""
-	cancel := s.mcpCancel
-	s.mcpCancel = nil
-	// spec: §5.1 — the next session's runtime must reconnect to the
-	// platform MCP server to be observed at Standard; clear the prior
-	// session's signal. F-5.1.11.
-	s.mcpHandshakeSeen = false
-	// §9.3: stop every per-connector MCP server started for the session so
-	// the connector sockets are released alongside the platform socket.
-	// F-9.1.2.
-	connectorCancels := s.connectorCancels
-	s.connectorCancels = nil
-	// §4.9: drop the direct-mode expiry timers so a stale lease
-	// cannot fire AUTH_EXPIRED against a session that has already ended.
-	s.cancelAllExpiryTimers()
-	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
-	for _, c := range connectorCancels {
-		c()
-	}
+	s.EmitFinalUsageReport(sessionID, u)
 }

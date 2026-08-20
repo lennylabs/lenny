@@ -44,7 +44,11 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	if err := s.claimSession(sessionID); err != nil {
+	// spec: §5.2 — the resume claims this session's slot on the
+	// replacement pod, the same claim the start path takes, and decides the
+	// once-per-pod intra-pod MCP start with it.
+	_, startMCP, err := s.claimSessionSlot(sessionID, s.isSDKWarm(), false)
+	if err != nil {
 		return nil, err
 	}
 
@@ -59,7 +63,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// guard called out by F-7.3.15. An empty `expected_workspace_root`
 	// disables the assertion so a pre-F-7.3.15 client can still resume.
 	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != s.WorkspaceRoot {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"resume rejected: workspace root mismatch (expected %q, adapter has %q)",
 			expected, s.WorkspaceRoot)
@@ -75,7 +79,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes(),
 	); err != nil {
 		var sizeErr *checkpoint.WorkspaceSizeExceededError
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		if errors.As(err, &sizeErr) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"resume rejected: %s", sizeErr.Error())
@@ -93,7 +97,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// carries no chunks (conversation-only) restores nothing.
 	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
 	if extractErr != nil {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
@@ -112,20 +116,25 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		connectors:         connectors,
 	})
 	if err != nil {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
-	// §4.7: start the platform MCP server for the restored session.
-	if err := s.startPlatformMCP(nonce); err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+	// §4.7: start the platform MCP server for the restored session. The
+	// sockets are pod-wide, so only the claim that took the once-per-pod
+	// start arms them.
+	if startMCP {
+		if err := s.startPlatformMCP(nonce); err != nil {
+			s.releaseSessionSlot(sessionID)
+			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+		}
+		// §9.3: re-open the per-connector MCP servers. F-9.1.2.
+		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
-	// §9.3: re-open the per-connector MCP servers. F-9.1.2.
-	s.startConnectorMCPServers(sessionID, nonce, connectors)
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSession()
+		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
+	s.noteRuntimeStarted(sessionID)
 	// spec: §4.4 / §7.2 ResumeMode — the adapter restored the workspace
 	// from the named full checkpoint. The §10.1 partial-manifest reassembly
 	// is gateway-driven; the adapter never assembles partials directly, so

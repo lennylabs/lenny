@@ -77,7 +77,7 @@ func claimAndPrepare(t *testing.T, binder *podsession.Binder, req podsession.Bin
 func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -120,7 +120,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -165,7 +165,7 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 // until select.go reports exhaustion for idle credentials.
 func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &startFailRuntime{}
 
@@ -271,7 +271,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_3(t *testing.T) {
 func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = rt
 
@@ -331,7 +331,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -376,7 +376,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 // claimless reclaim entry point does not return both to the pool.
 func TestReclaimClaimedReleasesPodAndLease_spec_4_5(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
@@ -417,7 +417,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_5(t *testing.T) {
 // pod stranded.
 func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -460,7 +460,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
 // row without returning the pod the create handler reserved.
 func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -530,7 +530,7 @@ func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
 // is missing, orphaning the pod the create handler reserved.
 func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -556,7 +556,7 @@ func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
 func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.ProtocolVersions = []string{"9.9.9"} // no version the gateway accepts
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -581,7 +581,7 @@ func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
 // still exists before reconnecting, so a stale binding silently proceeds.
 func TestPrepareFailsWhenBoundPodIsGone_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	// No Sandbox is seeded, so resolveSandbox cannot find the bound pod.

@@ -96,9 +96,9 @@ func TestWriteSessionManifestLLMField_spec_4_7(t *testing.T) {
 	}
 
 	// With a proxy lease assigned, llm reflects it.
-	srv.credLeases = map[string]*adapterv1.CredentialLease{
+	setSessionLeasesForTest(t, srv, "sess-1", map[string]*adapterv1.CredentialLease{
 		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
-	}
+	})
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-1"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
@@ -117,10 +117,10 @@ func TestWriteSessionManifestLLMField_spec_4_7(t *testing.T) {
 func TestManifestLLMMultiProviderDeterministic_spec_4_7(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
-	srv.credLeases = map[string]*adapterv1.CredentialLease{
+	setSessionLeasesForTest(t, srv, "sess-1", map[string]*adapterv1.CredentialLease{
 		"openai":    {LeaseId: "l2", Provider: "openai", Payload: []byte(directLeasePayload)},
 		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
-	}
+	})
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-1"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
@@ -207,4 +207,20 @@ func fieldPresent(t *testing.T, raw []byte, field string) bool {
 	}
 	_, ok := obj[field]
 	return ok
+}
+
+// setSessionLeasesForTest puts the named session's own §6.1 lease set in
+// place, which is where the manifest's llm object is derived from now that
+// every assignment lands on the session's own slot. spec: §6.1.
+func setSessionLeasesForTest(t *testing.T, srv *Server, sessionID string, leases map[string]*adapterv1.CredentialLease) {
+	t.Helper()
+	srv.WorkspaceBase = t.TempDir()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	st, err := srv.ensureSlotStateLocked(sessionID)
+	if err != nil {
+		t.Fatalf("ensure slot state for %s: %v", sessionID, err)
+	}
+	st.sessionID = sessionID
+	st.creds = leases
 }

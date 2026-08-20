@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // countingPresigner mints grant URLs against a cpStore and counts how many
@@ -146,10 +147,19 @@ func (t *flakyPutTransport) successBytes() int64 {
 func realAdapterCheckpointClient(t *testing.T, transport adapter.CheckpointTransport) *adapterclient.Client {
 	t.Helper()
 	s := adapter.New("checkpoint-grant-remint")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
+	s.Runtime = checkpointNoopRuntime{}
+	// The checkpoint captures the session's own §6.4 tree, which the bind
+	// creates, so the case binds the session before seeding it.
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "s1"},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", "s1", "current")
+	if err := os.WriteFile(filepath.Join(current, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	lis := bufconn.Listen(1 << 20)
@@ -251,4 +261,23 @@ func latestFinalisedID(t *testing.T, sessions sessionstore.Store) string {
 		t.Fatalf("session has no finalised workspace-snapshot ref")
 	}
 	return row.WorkspaceSnapshot.Ref
+}
+
+// checkpointNoopRuntime is a RuntimeProcess that binds and closes without
+// spawning anything, so the case can bind the session whose slot tree the
+// checkpoint captures without a real agent process.
+type checkpointNoopRuntime struct{}
+
+func (checkpointNoopRuntime) Start(context.Context, string) error           { return nil }
+func (checkpointNoopRuntime) WriteEnvelope(string, []byte) error            { return nil }
+func (checkpointNoopRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (checkpointNoopRuntime) Close(context.Context, string) error           { return nil }
+
+func (checkpointNoopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
 }

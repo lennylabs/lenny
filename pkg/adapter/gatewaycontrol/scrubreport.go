@@ -68,23 +68,18 @@ func (o PodScrubOutcome) proto() adapterv1.PodScrubOutcome {
 	}
 }
 
-// ReportSessionScrub reports the §5.2 per-slot cleanup outcome to the
-// gateway on every session release (the `maxConcurrentSessions > 1` and
-// recycling cases alike). podID is the agent_pod_state row key, sessionID
-// the released session, and slotID the released slot when the pod runs
-// concurrent sessions (`maxConcurrentSessions > 1`); slotID is empty
-// otherwise. The gateway increments sessionsServed on the pod's row and
+// ReportSessionScrub reports the §5.2 per-session cleanup outcome to the
+// gateway on every session release. podID is the agent_pod_state row key
+// and sessionID the released session, which is also the identifier of the
+// slot it held. The gateway increments sessionsServed on the pod's row and
 // feeds a leaked outcome into the unhealthy-threshold ledger. A transport
 // or gateway failure is returned as a wrapped error.
 // spec: §4.7 (Adapter → Gateway RPCs); §5.2.
-func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID, slotID string, outcome SessionScrubOutcome) error {
+func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID string, outcome SessionScrubOutcome) error {
 	req := &adapterv1.ReportSessionScrubRequest{
 		PodId:     podID,
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Outcome:   outcome.proto(),
-	}
-	if slotID != "" {
-		req.SlotId = &adapterv1.SlotId{Value: slotID}
 	}
 	if _, err := c.rpc.ReportSessionScrub(ctx, req); err != nil {
 		return fmt.Errorf("gatewaycontrol: ReportSessionScrub for pod %s session %s: %w", podID, sessionID, err)

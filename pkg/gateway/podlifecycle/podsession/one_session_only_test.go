@@ -42,7 +42,7 @@ import (
 
 func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-orig", "10.244.1.10"))

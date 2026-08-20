@@ -64,7 +64,7 @@ func materializeCluster(t *testing.T) (client.Client, func(string) (*adapterclie
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
@@ -211,7 +211,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 		t.Errorf("registry binding SandboxName = %q, want sbx-1", binding.SandboxName)
 	}
 	// The stamped WorkspacePlan streamed through the §6.3 binder onto the pod.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CHILD.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "child-1", "current", "CHILD.md"))
 	if err != nil {
 		t.Fatalf("child workspace plan was not materialized: %v", err)
 	}

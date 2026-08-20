@@ -54,7 +54,7 @@ type perSlotAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 
 	mu        sync.Mutex
-	bindSlots []string // slotId on each opened Attach stream, in open order
+	bindSlots []string // the session address on each opened Attach stream, in open order
 	envSlots  []string // slotId on each forwarded envelope
 }
 
@@ -64,7 +64,7 @@ func (a *perSlotAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.Attach
 		return err
 	}
 	a.mu.Lock()
-	a.bindSlots = append(a.bindSlots, first.GetSlotId().GetValue())
+	a.bindSlots = append(a.bindSlots, first.GetSessionId().GetValue())
 	a.mu.Unlock()
 	for {
 		req, err := stream.Recv()
@@ -175,11 +175,11 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess-slot-01", TenantID: "acme", SandboxName: "sbx-c",
-		Adapter: cl01, SlotID: "slot_01", MaxConcurrentSessions: 4,
+		Adapter: cl01, SlotID: "slot_01",
 	})
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess-slot-02", TenantID: "acme", SandboxName: "sbx-c",
-		Adapter: cl02, SlotID: "slot_02", MaxConcurrentSessions: 4,
+		Adapter: cl02, SlotID: "slot_02",
 	})
 
 	srv, store, inbox := concurrentRoutingServer(t, reg)
@@ -217,11 +217,11 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 		t.Errorf("slot 02 inbox depth = %d, want 1", n)
 	}
 
-	// The gateway resolved each session to its own slot and stamped the
-	// slotId on both the Attach binding frame and the outbound envelope.
+	// The gateway addressed each Attach stream by its own session and
+	// stamped the resolved slot on the outbound envelope.
 	bind01, env01 := rec01.snapshot()
-	if len(bind01) == 0 || bind01[0] != "slot_01" {
-		t.Errorf("slot 01 Attach binding slotId = %v, want [slot_01]", bind01)
+	if len(bind01) == 0 || bind01[0] != "sess-slot-01" {
+		t.Errorf("session Attach binding address = %v, want [sess-slot-01]", bind01)
 	}
 	if len(env01) == 0 || env01[0] != "slot_01" {
 		t.Errorf("slot 01 outbound envelope slotId = %v, want slot_01 stamped", env01)
@@ -249,7 +249,7 @@ func TestMessagesIgnoresClientSlotIDAndRoutesBySession(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess-slot-01", TenantID: "acme", SandboxName: "sbx-c",
-		Adapter: cl, SlotID: "slot_01", MaxConcurrentSessions: 4,
+		Adapter: cl, SlotID: "slot_01",
 	})
 	srv, store, _ := concurrentRoutingServer(t, reg)
 	seedConcurrentSession(t, store, "sess-slot-01", session.StateRunning)
@@ -271,23 +271,24 @@ func TestMessagesIgnoresClientSlotIDAndRoutesBySession(t *testing.T) {
 	}
 }
 
-// TestMessagesWholePodRoutingOnExclusivePod confirms the per-slot machinery
-// leaves the maxConcurrentSessions <= 1 path untouched: an exclusive bind has
-// no slot and no concurrency bound, so the gateway routes whole-pod with no
-// slotId stamped.
+// TestMessagesAddressesTheStreamBySessionOnAPoolOfOne confirms that a bind
+// with no separate slot recorded still addresses its Attach stream by the
+// session identifier, which under §5.2 names the slot that session holds
+// on the pod.
 //
-// spec: 7.2 (whole-pod routing on maxConcurrentSessions <= 1), 5.2
+// spec: 7.2 (per-session routing), 5.2
 //
-// diagnosis: a failure means the per-slot routing leaked onto the
-// single-session path and began stamping a slotId where none belongs.
-func TestMessagesWholePodRoutingOnExclusivePod(t *testing.T) {
+// diagnosis: a failure means the stream carries a separate slot address
+// again, which a bind on a pool of one leaves empty and the adapter cannot
+// attribute.
+func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
 	rec := &perSlotAdapter{}
 	cl := dialPerSlotAdapter(t, rec)
 	reg := podsession.NewRegistry()
-	// Exclusive (session-mode) bind: no SlotID, MaxConcurrentSessions == 1.
+	// A bind on a pool of one: no separate slot recorded.
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess-excl", TenantID: "acme", SandboxName: "sbx-c",
-		Adapter: cl, MaxConcurrentSessions: 1,
+		Adapter: cl,
 	})
 	srv, store, _ := concurrentRoutingServer(t, reg)
 	seedConcurrentSession(t, store, "sess-excl", session.StateRunning)
@@ -303,47 +304,8 @@ func TestMessagesWholePodRoutingOnExclusivePod(t *testing.T) {
 	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
 		t.Errorf("exclusive status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
-	bind, env := rec.snapshot()
-	if len(bind) == 0 || bind[0] != "" {
-		t.Errorf("exclusive Attach binding slotId = %v, want empty", bind)
-	}
-	if len(env) == 0 || env[0] != "" {
-		t.Errorf("exclusive outbound envelope slotId = %v, want empty", env)
-	}
-}
-
-// TestMessagesFailsClosedOnConcurrentBindWithNoSlot pins the §7.2
-// SLOT_ID_REQUIRED fail-closed invariant at the component level: a
-// maxConcurrentSessions > 1 bind that resolved no slot (a routing bug) must
-// not be delivered. The handler surfaces the executor failure rather than
-// misdelivering the message to another session's slot.
-//
-// spec: 7.2 (SLOT_ID_REQUIRED fail-closed invariant), 5.2
-//
-// diagnosis: a failure means the gateway delivered a message on a concurrent
-// pod with no resolved slot, opening a misdelivery into another session's slot
-// rather than failing closed.
-func TestMessagesFailsClosedOnConcurrentBindWithNoSlot(t *testing.T) {
-	rec := &perSlotAdapter{}
-	cl := dialPerSlotAdapter(t, rec)
-	reg := podsession.NewRegistry()
-	// The routing-bug case: concurrent bind (MaxConcurrentSessions > 1) with
-	// an empty SlotID.
-	reg.Put(&podsession.BindResult{
-		SessionID: "sess-bug", TenantID: "acme", SandboxName: "sbx-c",
-		Adapter: cl, MaxConcurrentSessions: 4,
-	})
-	srv, store, _ := concurrentRoutingServer(t, reg)
-	seedConcurrentSession(t, store, "sess-bug", session.StateRunning)
-
-	rr := sendMessageRequest(t, srv.Handler(), "sess-bug", sessionserver.MessageRequest{
-		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("should-fail-closed")}},
-	})
-	if rr.Code == http.StatusOK {
-		t.Fatalf("delivery on a concurrent bind with no resolved slot returned 200; want a fail-closed error. body=%s", rr.Body.String())
-	}
-	// No envelope must have reached the adapter.
-	if _, env := rec.snapshot(); len(env) != 0 {
-		t.Errorf("an envelope reached the adapter %v despite the fail-closed invariant", env)
+	bind, _ := rec.snapshot()
+	if len(bind) == 0 || bind[0] != "sess-excl" {
+		t.Errorf("Attach binding address = %v, want [sess-excl]", bind)
 	}
 }

@@ -279,7 +279,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 	}
-	warnings, err := cl.FinalizeWorkspaceSlot(ctx, req.SessionID, slotID, stagedPlan, req.ArchivePolicy, false)
+	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
@@ -287,7 +287,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 	}
 	finalizeWarnings := append(stageWarnings, warnings...)
-	setupOutputs, err := cl.RunSetupSlot(ctx, req.SessionID, slotID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
+	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
@@ -308,8 +308,6 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		TracingContext:     req.TracingContext,
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
-		// spec: §6.4 — claim the slot rather than the whole pod.
-		SlotID: slotID,
 	}); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
@@ -317,18 +315,11 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
 	}
 	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       podIP,
-		SlotID:      slotID,
-		// spec: §7.2 (per-slot routing) — carry the pool's
-		// maxConcurrentSessions bound onto the binding so the executor's
-		// per-slot message routing can detect the SLOT_ID_REQUIRED
-		// routing-bug case (a concurrent pod with no resolved slot) and fail
-		// closed rather than misdeliver. A BindSlot result is by definition a
-		// maxConcurrentSessions > 1 bind.
-		MaxConcurrentSessions: req.MaxConcurrentSessions,
+		SessionID:             req.SessionID,
+		TenantID:              req.TenantID,
+		SandboxName:           sandboxName,
+		PodIP:                 podIP,
+		SlotID:                slotID,
 		Adapter:               cl,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
@@ -394,9 +385,9 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 			leases[provider] = lease
 		}
 	}
-	// spec: §6.1 — the slot's lease is written to its own per-slot
-	// credential file so a rotation on a sibling slot does not disrupt it.
-	return cl.AssignCredentialsSlot(ctx, req.SessionID, slotID, leases)
+	// spec: §6.1 — the lease is written to the session's own per-slot
+	// credential file so a rotation on a co-tenant does not disrupt it.
+	return cl.AssignCredentials(ctx, req.SessionID, leases)
 }
 
 // connectSlot reserves a concurrent-session slot from the pool, resolves
@@ -495,7 +486,7 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 	// the counter must decrement (the slot is not leaked). The recycled signal
 	// is discarded: recycle=false never returns it. spec: §5.2 (slot retry
 	// releases the reservation), §4.7 (recycle disposition), §6.2 (leaked slot remains counted).
-	_, err := claimer.ReleaseSlot(ctx, sandboxName, slotID, false, false)
+	_, err := claimer.ReleaseSlot(ctx, sandboxName, false, false)
 	return err
 }
 
@@ -531,11 +522,11 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// may still hold).
 	leaked := false
 	if result.Adapter != nil {
-		// spec: §6.4 — tear down just this slot (its runtime
-		// and per-slot tree); sibling slots on the pod keep running. The
+		// spec: §6.4 — tear down the named session (its runtime and its
+		// per-slot tree); a co-tenant on the pod keeps running. The
 		// connection is held open past this call: on the occupancy-zero recycle
 		// edge below the whole-pod recycle Shutdown reuses it before it is closed.
-		cleanly, err := result.Adapter.ShutdownSlot(ctx, result.SessionID, result.SlotID)
+		cleanly, err := result.Adapter.Shutdown(ctx, result.SessionID, "", 0)
 		leaked = err != nil || !cleanly
 		defer result.Adapter.Close()
 	}
@@ -552,7 +543,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		// gateway-side timeout session-mode Release arms.
 		RecycleBoundary: b.RecycleBoundary,
 	}
-	recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.SessionID, result.Recycle, leaked)
+	recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.Recycle, leaked)
 	if err != nil {
 		return err
 	}
@@ -562,8 +553,8 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		// `recycling`, and the missing-report timeout is armed. Send the
 		// whole-pod recycle Shutdown over the still-open connection: it carries
 		// the last-released slot's session id (the adapter's non-empty session_id
-		// guard admits it), the RecycleScrub disposition (PodID plus the pool's
-		// cleanup parameters), and no slot id, so the adapter runs the §5.2 scrub
+		// guard admits it) and the RecycleScrub disposition (PodID plus the
+		// pool's cleanup parameters), so the adapter runs the §5.2 scrub
 		// and reports ReportPodScrub. Best-effort: a failure here leaves the
 		// armed missing-report timeout to retire the pod. The response's
 		// ExitedCleanly is ignored — the scrub outcome arrives asynchronously.

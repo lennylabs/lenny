@@ -154,8 +154,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	cluster := materializeCredCluster(t)
 
 	adapterSrv := adapter.New("mat-cred-adapter")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = noopRuntime{}
 

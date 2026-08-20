@@ -39,16 +39,14 @@ func TestSetTracingContextAddressingSamplesTheRegistryOnce_spec_28_5_3(t *testin
 				return
 			default:
 			}
-			// The pod holds the stream's session and a claimed slot: the
-			// address is ambiguous and the frame is rejected.
+			// The registry binds the address to another session, so the
+			// frame is rejected.
 			s.mu.Lock()
-			s.sessionID = sessionID
-			s.slots = map[string]*slotState{"slot-a": {sessionID: "sess-slot-a"}}
+			s.slots = map[string]*slotState{sessionID: {sessionID: "sess-other"}}
 			s.mu.Unlock()
-			// The pod holds neither: the session term is what rejects the
-			// frame, and the registry is empty.
+			// The registry holds no entry for the address at all, which
+			// rejects the frame on the other term.
 			s.mu.Lock()
-			s.sessionID = ""
 			s.slots = map[string]*slotState{}
 			s.mu.Unlock()
 		}

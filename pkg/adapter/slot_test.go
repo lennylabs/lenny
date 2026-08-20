@@ -17,10 +17,10 @@ import (
 
 // concurrentServer builds an adapter Server wired to fresh temp roots and
 // a single pod-global fakeRuntime. Per spec/05:509 and spec/15:1459 one
-// runtime process per pod serves every slot, multiplexed on slotId over
-// the single runtime connection, so the slots share this one runtime. The
-// per-slot path activates on slotId presence alone (useSlot == slotID !=
-// ""), with no mode flag.
+// runtime process per pod serves every slot, so the slots share this one
+// runtime. Every session is bound to a slot on every pod and a
+// session-mode slot's identifier is its session's identifier, so a slot is
+// addressed by the session it holds.
 func concurrentServer(t *testing.T) (*adapter.Server, *fakeRuntime) {
 	t.Helper()
 	base := t.TempDir()
@@ -34,11 +34,10 @@ func concurrentServer(t *testing.T) (*adapter.Server, *fakeRuntime) {
 	return s, rt
 }
 
-func slotStartReq(sessionID, slotID string) *adapterv1.StartSessionRequest {
+func slotStartReq(sessionID string) *adapterv1.StartSessionRequest {
 	return &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	}
 }
 
@@ -47,7 +46,7 @@ func slotStartReq(sessionID, slotID string) *adapterv1.StartSessionRequest {
 // the single pod-global runtime.
 func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
 	s, rt := concurrentServer(t)
-	if _, err := s.StartSession(context.Background(), slotStartReq("sess-a", "slot-a")); err != nil {
+	if _, err := s.StartSession(context.Background(), slotStartReq("sess-a")); err != nil {
 		t.Fatalf("StartSession(slot): %v", err)
 	}
 	if len(rt.started) != 1 || rt.started[0] != "sess-a" {
@@ -55,11 +54,11 @@ func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
 	}
 	// The §6.4 per-slot tree must exist on disk.
 	for _, sub := range []string{
-		filepath.Join(s.WorkspaceBase, "slots", "slot-a", "current"),
-		filepath.Join(s.WorkspaceBase, "slots", "slot-a", "staging"),
-		filepath.Join(s.SessionsRoot, "slot-a"),
-		filepath.Join(s.ArtifactsRoot, "slot-a"),
-		filepath.Join(s.CredentialsDir, "slots", "slot-a"),
+		filepath.Join(s.WorkspaceBase, "slots", "sess-a", "current"),
+		filepath.Join(s.WorkspaceBase, "slots", "sess-a", "staging"),
+		filepath.Join(s.SessionsRoot, "sess-a"),
+		filepath.Join(s.ArtifactsRoot, "sess-a"),
+		filepath.Join(s.CredentialsDir, "slots", "sess-a"),
 	} {
 		if info, err := os.Stat(sub); err != nil || !info.IsDir() {
 			t.Errorf("expected slot dir %q to exist: err=%v", sub, err)
@@ -77,10 +76,10 @@ func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
 func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 	s, rt := concurrentServer(t)
 	ctx := context.Background()
-	if _, err := s.StartSession(ctx, slotStartReq("sess-a", "slot-a")); err != nil {
+	if _, err := s.StartSession(ctx, slotStartReq("sess-a")); err != nil {
 		t.Fatalf("StartSession(slot-a): %v", err)
 	}
-	if _, err := s.StartSession(ctx, slotStartReq("sess-b", "slot-b")); err != nil {
+	if _, err := s.StartSession(ctx, slotStartReq("sess-b")); err != nil {
 		t.Fatalf("StartSession(slot-b): %v", err)
 	}
 	// One runtime process per pod serves both slots: it sees both sessions
@@ -96,7 +95,6 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 		t.Helper()
 		req := &adapterv1.FinalizeWorkspaceRequest{
 			SessionId: &adapterv1.SessionId{Value: session},
-			SlotId:    &adapterv1.SlotId{Value: slot},
 			WorkspacePlan: &adapterv1.WorkspacePlan{
 				SchemaVersion: 1,
 				Sources: []*adapterv1.WorkspaceSource{
@@ -113,7 +111,7 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 
 	// Each slot's marker holds only that slot's content; neither slot's file
 	// leaked into the sibling slot's workspace.
-	for slot, want := range map[string]string{"slot-a": "from-slot-a", "slot-b": "from-slot-b"} {
+	for slot, want := range map[string]string{"sess-a": "from-slot-a", "sess-b": "from-slot-b"} {
 		path := filepath.Join(s.WorkspaceBase, "slots", slot, "current", "marker.txt")
 		got, err := os.ReadFile(path)
 		if err != nil {
@@ -129,15 +127,16 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §6.4 — re-claiming an already-active slot id is rejected.
-func TestStartSessionSlotRejectsDuplicateSlot_spec_6_4(t *testing.T) {
+// spec: §4.7 — a second start for a session that has already started is
+// rejected. A second session is not: it arrives on its own slot.
+func TestStartSessionRejectsARepeatedStart_spec_4_7(t *testing.T) {
 	s, _ := concurrentServer(t)
-	if _, err := s.StartSession(context.Background(), slotStartReq("sess-a", "slot-a")); err != nil {
+	if _, err := s.StartSession(context.Background(), slotStartReq("sess-a")); err != nil {
 		t.Fatalf("first StartSession: %v", err)
 	}
-	_, err := s.StartSession(context.Background(), slotStartReq("sess-b", "slot-a"))
+	_, err := s.StartSession(context.Background(), slotStartReq("sess-a"))
 	if status.Code(err) != codes.Unavailable {
-		t.Errorf("duplicate slot code = %v, want Unavailable", status.Code(err))
+		t.Errorf("repeated start code = %v, want Unavailable", status.Code(err))
 	}
 }
 
@@ -147,7 +146,6 @@ func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
 	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-a"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-a"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: 1,
 			Sources: []*adapterv1.WorkspaceSource{
@@ -158,7 +156,7 @@ func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	if _, err := s.FinalizeWorkspace(context.Background(), req); err != nil {
 		t.Fatalf("FinalizeWorkspace(slot): %v", err)
 	}
-	want := filepath.Join(s.WorkspaceBase, "slots", "slot-a", "current", "hello.txt")
+	want := filepath.Join(s.WorkspaceBase, "slots", "sess-a", "current", "hello.txt")
 	got, err := os.ReadFile(want)
 	if err != nil {
 		t.Fatalf("expected materialized file at %q: %v", want, err)
@@ -181,13 +179,12 @@ func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 	}
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-a"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-a"},
 		Leases:    leases,
 	})
 	if err != nil {
 		t.Fatalf("AssignCredentials(slot): %v", err)
 	}
-	perSlot := filepath.Join(s.CredentialsDir, "slots", "slot-a", "credentials.json")
+	perSlot := filepath.Join(s.CredentialsDir, "slots", "sess-a", "credentials.json")
 	if _, err := os.Stat(perSlot); err != nil {
 		t.Errorf("expected per-slot credential file at %q: %v", perSlot, err)
 	}
@@ -201,10 +198,9 @@ func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 	s, _ := concurrentServer(t)
 	ctx := context.Background()
-	for _, slot := range []string{"slot-a", "slot-b"} {
+	for _, slot := range []string{"sess-a", "sess-b"} {
 		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-" + slot},
-			SlotId:    &adapterv1.SlotId{Value: slot},
+			SessionId: &adapterv1.SessionId{Value: slot},
 			Leases: map[string]*adapterv1.CredentialLease{
 				"anthropic": {LeaseId: "lease-" + slot, Provider: "anthropic"},
 			},
@@ -212,15 +208,14 @@ func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 			t.Fatalf("AssignCredentials(%s): %v", slot, err)
 		}
 	}
-	bFile := filepath.Join(s.CredentialsDir, "slots", "slot-b", "credentials.json")
+	bFile := filepath.Join(s.CredentialsDir, "slots", "sess-b", "credentials.json")
 	before, err := os.ReadFile(bFile)
 	if err != nil {
 		t.Fatalf("read slot-b creds: %v", err)
 	}
 	// Rotate slot-a only.
 	if _, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-slot-a"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-a"},
+		SessionId: &adapterv1.SessionId{Value: "sess-a"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: "lease-a-rotated", Provider: "anthropic"},
 		},
@@ -244,14 +239,13 @@ func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 	s, rt := concurrentServer(t)
 	ctx := context.Background()
-	for _, slot := range []string{"slot-a", "slot-b"} {
-		if _, err := s.StartSession(ctx, slotStartReq("sess-"+slot, slot)); err != nil {
-			t.Fatalf("StartSession(%s): %v", slot, err)
+	for _, sess := range []string{"sess-a", "sess-b"} {
+		if _, err := s.StartSession(ctx, slotStartReq(sess)); err != nil {
+			t.Fatalf("StartSession(%s): %v", sess, err)
 		}
 	}
 	if _, err := s.SendMessage(ctx, &adapterv1.SendMessageRequest{
-		SessionId:    &adapterv1.SessionId{Value: "sess-slot-a"},
-		SlotId:       &adapterv1.SlotId{Value: "slot-a"},
+		SessionId:    &adapterv1.SessionId{Value: "sess-a"},
 		EnvelopeJson: []byte(`{"type":"message"}`),
 	}); err != nil {
 		t.Fatalf("SendMessage(slot-a): %v", err)
@@ -260,16 +254,16 @@ func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 	if got := len(rt.envelopesSnapshot()); got != 1 {
 		t.Errorf("pod runtime envelopes = %d, want 1", got)
 	}
-	// A session not bound to slot-a's recorded session is rejected: the
-	// adapter validates the slot↔session binding before delivery so a
-	// message cannot be misrouted to another slot's session.
+	// A session the registry holds no bound entry for is rejected: the
+	// adapter validates the binding before delivery so a message for a
+	// session this pod does not hold is never written to the shared
+	// runtime.
 	_, err := s.SendMessage(ctx, &adapterv1.SendMessageRequest{
-		SessionId:    &adapterv1.SessionId{Value: "sess-slot-b"},
-		SlotId:       &adapterv1.SlotId{Value: "slot-a"},
+		SessionId:    &adapterv1.SessionId{Value: "sess-unbound"},
 		EnvelopeJson: []byte(`{"type":"message"}`),
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("cross-slot session code = %v, want NotFound", status.Code(err))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("unbound session code = %v, want FailedPrecondition", status.Code(err))
 	}
 	if got := len(rt.envelopesSnapshot()); got != 1 {
 		t.Errorf("pod runtime envelopes after rejected send = %d, want 1", got)
@@ -282,14 +276,13 @@ func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 func TestShutdownSlotRemovesTree_spec_6_4(t *testing.T) {
 	s, rt := concurrentServer(t)
 	ctx := context.Background()
-	for _, slot := range []string{"slot-a", "slot-b"} {
-		if _, err := s.StartSession(ctx, slotStartReq("sess-"+slot, slot)); err != nil {
-			t.Fatalf("StartSession(%s): %v", slot, err)
+	for _, sess := range []string{"sess-a", "sess-b"} {
+		if _, err := s.StartSession(ctx, slotStartReq(sess)); err != nil {
+			t.Fatalf("StartSession(%s): %v", sess, err)
 		}
 	}
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-slot-a"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-a"},
+		SessionId: &adapterv1.SessionId{Value: "sess-a"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(slot-a): %v", err)
@@ -299,14 +292,14 @@ func TestShutdownSlotRemovesTree_spec_6_4(t *testing.T) {
 	}
 	// The slot teardown closes the slot's session on the shared runtime,
 	// scoped by session id, rather than tearing the pod runtime down.
-	if got := rt.closed; len(got) != 1 || got[0] != "sess-slot-a" {
+	if got := rt.closed; len(got) != 1 || got[0] != "sess-a" {
 		t.Errorf("runtime Close calls = %v, want [sess-slot-a]", got)
 	}
-	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "slot-a")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "sess-a")); !os.IsNotExist(err) {
 		t.Errorf("slot-a tree not removed on shutdown")
 	}
 	// slot-b's tree survives.
-	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "slot-b", "current")); err != nil {
+	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "sess-b", "current")); err != nil {
 		t.Errorf("sibling slot-b tree was removed: %v", err)
 	}
 }
@@ -315,7 +308,7 @@ func TestShutdownSlotRemovesTree_spec_6_4(t *testing.T) {
 // filesystem path is derived.
 func TestStartSessionSlotRejectsBadSlotID_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
-	_, err := s.StartSession(context.Background(), slotStartReq("sess-a", "../escape"))
+	_, err := s.StartSession(context.Background(), slotStartReq("../escape"))
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("bad slot id code = %v, want InvalidArgument", status.Code(err))
 	}
@@ -326,18 +319,16 @@ func TestStartSessionSlotRejectsBadSlotID_spec_6_4(t *testing.T) {
 func TestStartSessionSlotRequiresRuntime_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
 	s.Runtime = nil
-	_, err := s.StartSession(context.Background(), slotStartReq("sess-a", "slot-a"))
+	_, err := s.StartSession(context.Background(), slotStartReq("sess-a"))
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("no-runtime code = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 
-// spec: §6.4; spec/15:1459 — a frame with no slotId keeps the
-// one-session-only whole-pod base path. Per-slot routing keys on slotId
-// presence alone (useSlot == slotID != ""), and runtimes on
-// maxConcurrentSessions == 1 pods never see a slotId, so the absent-slotId
-// frame degenerates to the base claim on the pod-global runtime.
-func TestNoSlotIDKeepsBasePath_spec_6_4(t *testing.T) {
+// spec: §5.2; §6.4 — a single-session pod takes the same per-slot path:
+// the start binds the session's slot and starts the session on the pod's
+// one runtime, with no branch on the pool's concurrency.
+func TestSingleSessionPodTakesThePerSlotPath_spec_5_2(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-a")); err != nil {
 		t.Fatalf("StartSession: %v", err)

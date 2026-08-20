@@ -5,6 +5,7 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -98,7 +99,7 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
+	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -115,8 +116,11 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	if len(rt.configured) != 1 || rt.configured[0] != root {
-		t.Errorf("ConfigureWorkspace cwd = %v, want [%q]", rt.configured, root)
+	// The gateway points the pre-connected SDK at the session's own §6.4
+	// cwd, derived from the workspace base the adapter reports.
+	want := filepath.Join(root, "slots", "sess-1", "current")
+	if len(rt.configured) != 1 || rt.configured[0] != want {
+		t.Errorf("ConfigureWorkspace cwd = %v, want [%q]", rt.configured, want)
 	}
 	if rt.demoted != 0 {
 		t.Errorf("unexpected demotion: %d", rt.demoted)
@@ -132,7 +136,7 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -181,7 +185,7 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 	// A plain fakeRuntime is pod-warm: its DemoteSDK returns Unimplemented.
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -207,7 +211,7 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))

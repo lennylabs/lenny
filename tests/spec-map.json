@@ -518,7 +518,7 @@
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
-        "tests/tier3_contract/adapter_slot_identity/slot_identity_wire_test.go",
+        "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier10_conformance/recycle_scrub_conformance_test.go",
         "tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
@@ -1028,7 +1028,7 @@
         "pkg/controller/sandbox/podspec/...",
         "pkg/adapter/workspace/materialize_test.go",
         "pkg/adapter/staging_test.go",
-        "tests/tier3_contract/adapter_slot_identity/slot_identity_wire_test.go",
+        "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
       ],
       "packages": [

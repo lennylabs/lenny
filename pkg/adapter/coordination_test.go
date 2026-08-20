@@ -23,7 +23,7 @@ import (
 func newFencedServer(t *testing.T) *Server {
 	t.Helper()
 	s := New("test")
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim session: %v", err)
 	}
 	return s

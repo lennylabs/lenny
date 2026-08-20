@@ -6,12 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -103,21 +105,56 @@ func (s *Server) SetScrubDoneHook(f func()) {
 // spec: §5.2 (whole-pod scrub parameters).
 func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) scrub.Config {
 	return scrub.Config{
-		CredentialFile:  s.credentialFilePath(),
-		WorkspaceDir:    s.WorkspaceRoot,
+		CredentialFiles: s.slotCredentialFiles(),
+		WorkspaceDirs:   s.slotWorkspaceTrees(),
+		CleanupDir:      s.WorkspaceBase,
 		CleanupCommands: rc.GetCleanupCommands(),
 		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
 	}
 }
 
-// credentialFilePath is the §4.7 credential file the scrub purges in step 0 and
-// re-verifies absent in step 6. It is empty when the adapter has no credentials
-// directory (the dev path), which the scrub treats as "skip the step 0 purge".
-func (s *Server) credentialFilePath() string {
-	if s.CredentialsDir == "" {
-		return ""
+// slotCredentialFiles enumerates the §6.1 per-session credential files the
+// scrub purges in step 0 and re-verifies absent in step 6, from the
+// on-disk children of /run/lenny/slots. The enumeration is on-disk rather
+// than registry-backed because the residue the scrub must reach belongs to
+// a leaked slot whose registry entry is already gone. An unset credentials
+// root yields an empty set, which the scrub treats as "skip the step 0
+// purge". spec: §5.2; §6.1.
+func (s *Server) slotCredentialFiles() []string {
+	var files []string
+	for _, dir := range slotChildren(slotlayout.SlotsDir(s.CredentialsDir)) {
+		files = append(files, filepath.Join(dir, credfile.FileName))
 	}
-	return filepath.Join(s.CredentialsDir, credfile.FileName)
+	return files
+}
+
+// slotWorkspaceTrees enumerates the per-session workspace trees the scrub
+// removes in step 2 and re-verifies absent in step 6, from the on-disk
+// children of /workspace/slots, on the same terms as
+// slotCredentialFiles. spec: §5.2; §6.4.
+func (s *Server) slotWorkspaceTrees() []string {
+	return slotChildren(slotlayout.SlotsDir(s.WorkspaceBase))
+}
+
+// slotChildren lists the immediate subdirectories of a slots container.
+// An unset or unreadable container yields nothing: the scrub's step 6
+// then verifies an empty set, which is the same outcome as a pod that
+// held no slot.
+func slotChildren(slotsDir string) []string {
+	if slotsDir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(slotsDir)
+	if err != nil {
+		return nil
+	}
+	dirs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(slotsDir, e.Name()))
+		}
+	}
+	return dirs
 }
 
 // scrubOutcome converts a completed scrub Report (or a start error) into the

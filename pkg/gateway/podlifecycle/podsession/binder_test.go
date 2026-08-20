@@ -326,7 +326,7 @@ func (a *fakeAssigner) ReleaseSession(sessionID string) {
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -372,7 +372,7 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 // rather than serving the session.
 func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -406,7 +406,7 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 // reaches attached.
 func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -439,7 +439,7 @@ func TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1(t *testing.T) {
 func TestBindRecordsPhaseTimings_spec_6_3(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -483,7 +483,8 @@ func TestBindRecordsPhaseTimings_spec_6_3(t *testing.T) {
 func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
+	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -546,7 +547,7 @@ func TestResumeReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 func TestBindRecordsWarmpoolClaim_spec_6_3_F_6_3_6(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	sb := idleSandbox("sbx-1", "10.244.1.7")
@@ -610,7 +611,7 @@ func TestBindSkipsWarmpoolClaimOnAdapterDialFailure_spec_6_3_F_6_3_6(t *testing.
 func TestBindSkipsWarmpoolClaimOnUnknownIsolation_spec_6_3_F_6_3_6(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	sb := idleSandbox("sbx-1", "10.244.1.7")
@@ -661,7 +662,7 @@ func TestBindFailsWhenSandboxHasNoPodIP(t *testing.T) {
 func TestBindFailsOnIncompatibleProtocolVersion(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.ProtocolVersions = []string{"9.9.9"} // no version the gateway accepts
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -677,7 +678,7 @@ func TestBindFailsOnIncompatibleProtocolVersion(t *testing.T) {
 
 func TestReleaseDrainsTheSandbox(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -709,7 +710,7 @@ func TestReleaseDrainsTheSandbox(t *testing.T) {
 // leaks on every completed session.
 func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.CredentialsDir = t.TempDir()
 
@@ -735,7 +736,7 @@ func TestReleaseReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 
 func TestReleaseFailsWhenSandboxGone(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -846,7 +847,7 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 // per-pod SandboxClaim instead.
 func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
@@ -881,7 +882,7 @@ func TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3(t *testing.T) {
 // gateway records no Sandbox condition. F-6.2.12.
 func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
@@ -923,7 +924,7 @@ func TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3(t *test
 // and writes no Sandbox.status field (§4.6.3).
 func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
@@ -966,7 +967,7 @@ func TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3(t *testing.T)
 // (recycle on occupancy-zero); §4.6.1 (recycling binding state); §4.6.3.
 func TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	var phases []string
@@ -1021,7 +1022,7 @@ func (f *fakeRecycleBoundary) OnRecycling(podID string) { f.armed = append(f.arm
 // much longer orphan-GC window. spec: §5.2 (missing-report timeout).
 func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1049,7 +1050,7 @@ func TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4(t *testing.T) {
 // retired pod. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1082,7 +1083,7 @@ func TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4(t *testing.T) {
 // spec: §6.2 (claim state machine), §5.2 (recycle disposition, patch-then-scrub).
 func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 
@@ -1123,7 +1124,7 @@ func TestReleaseRecyclingPatchesClaimBeforeScrubSignal_spec_3_2(t *testing.T) {
 // pod regardless of recycle settings. spec: §5.2; §6.2.
 func TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1211,7 +1212,7 @@ func dialRecordingAdapter(t *testing.T, a *recordingShutdownAdapter) *adaptercli
 // recycle Shutdown); §4.7 (Shutdown recycle disposition).
 func TestReleaseRecyclingSendsRecycleScrubShutdown_spec_5_2(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	rec := &recordingShutdownAdapter{}
@@ -1318,8 +1319,7 @@ func TestBindStagesUploadFile(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
 	blobs := blobstore.NewMemoryStore(nil)
@@ -1350,7 +1350,7 @@ func TestBindStagesUploadFile(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	got, err := os.ReadFile(filepath.Join(root, "data", "payload.bin"))
+	got, err := os.ReadFile(filepath.Join(root, "slots", "sess-1", "current", "data", "payload.bin"))
 	if err != nil {
 		t.Fatalf("read materialized upload: %v", err)
 	}
@@ -1397,8 +1397,7 @@ func TestBindClonesGitSource(t *testing.T) {
 
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = root
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1418,7 +1417,7 @@ func TestBindClonesGitSource(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	got, err := os.ReadFile(filepath.Join(root, "checkout", "service.go"))
+	got, err := os.ReadFile(filepath.Join(root, "slots", "sess-1", "current", "checkout", "service.go"))
 	if err != nil {
 		t.Fatalf("read cloned file: %v", err)
 	}
@@ -1432,8 +1431,7 @@ func TestBindRejectsAuthenticatedGitCloneWithNoResolver(t *testing.T) {
 	// credential resolver. With none, Bind fails with a clear error rather
 	// than cloning unauthenticated.
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1484,8 +1482,7 @@ func TestBindClonesAuthenticatedGitClone(t *testing.T) {
 
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = root
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1517,7 +1514,7 @@ func TestBindClonesAuthenticatedGitClone(t *testing.T) {
 		t.Errorf("resolver got (tenant=%q url=%q scope=%q), want (acme, %q, vcs.github.read)",
 			resolver.gotTen, resolver.gotURL, resolver.gotScpe, repo)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "checkout", "service.go"))
+	got, err := os.ReadFile(filepath.Join(root, "slots", "sess-1", "current", "checkout", "service.go"))
 	if err != nil {
 		t.Fatalf("read cloned file: %v", err)
 	}
@@ -1531,8 +1528,7 @@ func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
 	repo, sha := tempGitRepo(t)
 
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1558,8 +1554,7 @@ func TestBindFailsWhenVCSCredentialResolveFails(t *testing.T) {
 
 func TestBindFailsWhenUploadPlanHasNoBlobStore(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1594,7 +1589,7 @@ func TestBindFailsWhenUploadPlanHasNoBlobStore(t *testing.T) {
 func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	// The Sandbox exists by name but carries no pool label, so the
@@ -1646,7 +1641,8 @@ func TestBindFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
+	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = rt
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
@@ -1679,7 +1675,7 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 
 func TestBindFallbackSkippedWhenMirrorIsStale(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
@@ -1702,7 +1698,7 @@ func TestBindFallbackSkippedWhenMirrorIsStale(t *testing.T) {
 
 func TestBindFallbackHonorsCustomMirrorLagThreshold(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
@@ -1726,7 +1722,7 @@ func TestBindFallbackHonorsCustomMirrorLagThreshold(t *testing.T) {
 
 func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	binder := newBinder(k8sClient(t), adapterDialer(t, srv))
@@ -1775,7 +1771,7 @@ func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
 func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	// A normal CRD-based claim already holds sbx-fb under the deterministic
@@ -1824,7 +1820,7 @@ func TestFallbackDoubleClaimFencedByDeterministicName(t *testing.T) {
 
 func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	// No Fallback configured: the no-idle-pod result surfaces directly.
@@ -1843,7 +1839,7 @@ func TestBindWithoutFallbackReturnsErrNoIdlePod(t *testing.T) {
 // with reason mirror_stale.
 func TestBindFallbackSkipRecordsMirrorStale(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
@@ -1872,7 +1868,7 @@ func TestBindFallbackSkipRecordsMirrorStale(t *testing.T) {
 // row and records reason apiserver_unreachable.
 func TestBindFallbackSkipRecordsAPIServerUnreachable(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
@@ -1927,7 +1923,7 @@ func credEntries(t *testing.T, dir string) map[string]map[string]any {
 func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	credDir := t.TempDir()
 	srv.CredentialsDir = credDir
 	srv.Runtime = rt
@@ -1961,9 +1957,9 @@ func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
 
 	// The adapter materialized the minted lease into the credential file,
 	// keyed by the provider the binder filed the lease under.
-	entry, ok := credEntries(t, credDir)["anthropic_direct"]
+	entry, ok := credEntries(t, filepath.Join(credDir, "slots", "sess-1"))["anthropic_direct"]
 	if !ok {
-		t.Fatalf("the credential file has no anthropic_direct entry after Bind: %v", credEntries(t, credDir))
+		t.Fatalf("the credential file has no anthropic_direct entry after Bind: %v", credEntries(t, filepath.Join(credDir, "slots", "sess-1")))
 	}
 	if entry["leaseId"] != "cl-claude-direct-prod" {
 		t.Errorf("credential file leaseId = %v, want the minted cl-claude-direct-prod", entry["leaseId"])
@@ -1977,7 +1973,7 @@ func TestBindAssignsCredentialsBeforeStartSession(t *testing.T) {
 
 func TestBindWithoutCredentialPoolsAssignsNothing(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
@@ -2003,7 +1999,7 @@ func TestBindWithoutCredentialPoolsAssignsNothing(t *testing.T) {
 
 func TestBindWithoutCredentialServiceSkipsAssignment(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
@@ -2024,7 +2020,7 @@ func TestBindWithoutCredentialServiceSkipsAssignment(t *testing.T) {
 
 func TestBindFailsWhenCredentialAssignmentFails(t *testing.T) {
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 

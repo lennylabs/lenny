@@ -38,11 +38,12 @@ type ScrubReportService interface {
 	// session release. It increments sessionsServed on the pod's
 	// agent_pod_state row, and when leaked is true it feeds the
 	// unhealthy-threshold drain ledger behind lenny.dev/drain-request
-	// (§4.6.3). slotID is empty unless the pod runs concurrent sessions.
-	// A gateway-side failure is returned as an error the handler maps to a
-	// gRPC status. spec: §4.7 (ReportSessionScrub increments sessionsServed;
-	// leaked feeds the drain ledger), §5.2.
-	RecordSessionScrub(ctx context.Context, podID, sessionID, slotID string, leaked bool) error
+	// (§4.6.3). The session identifier also names the slot that session
+	// held on the pod (§5.2). A gateway-side failure is returned as an
+	// error the handler maps to a gRPC status. spec: §4.7
+	// (ReportSessionScrub increments sessionsServed; leaked feeds the drain
+	// ledger), §5.2.
+	RecordSessionScrub(ctx context.Context, podID, sessionID string, leaked bool) error
 
 	// RecordPodScrub records the §5.2 whole-pod scrub outcome at the
 	// occupancy-zero recycle boundary and drives the §6.2 recycle
@@ -88,10 +89,7 @@ func (s *Service) ReportSessionScrub(ctx context.Context, req *adapterv1.ReportS
 	if err != nil {
 		return nil, err
 	}
-	// slot_id is set only when the pod runs concurrent sessions; an empty
-	// value is the single-session case and the service ignores it.
-	slotID := req.GetSlotId().GetValue()
-	if err := s.scrubReports.RecordSessionScrub(ctx, podID, sessionID, slotID, leaked); err != nil {
+	if err := s.scrubReports.RecordSessionScrub(ctx, podID, sessionID, leaked); err != nil {
 		return nil, status.Errorf(codes.Internal, "leasecontrol: record session scrub for pod %s session %s: %v", podID, sessionID, err)
 	}
 	return &adapterv1.ReportSessionScrubResponse{}, nil
@@ -450,7 +448,7 @@ func NewScrubReporter(opts ScrubReporterOptions) (*ScrubReporter, error) {
 // leaked slot can hold total occupancy above zero indefinitely. A pod absent
 // from the mirror returns ErrPodNotInMirror so a stale report does not
 // silently no-op. spec: §4.7; §5.2 (per-release maxSessionsPerPod drain).
-func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ string, leaked bool) error {
+func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _ string, leaked bool) error {
 	// Capture the atomic post-increment served-session count: the per-release
 	// retirement gates its exact-equality counter emit on this exact value, so
 	// re-reading the counter (which a concurrent release could have advanced)

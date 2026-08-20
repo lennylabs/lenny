@@ -34,22 +34,21 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	if sessionID == "" {
 		return status.Error(codes.InvalidArgument, "Attach requires a session id on the first message")
 	}
-	// spec: §6.4 — a slot-qualified Attach binds to the
-	// slot's own runtime and cwd; the single-session layout (no slot id)
-	// uses the pod-global Runtime and WorkspaceRoot unchanged.
-	slotID := first.GetSlotId().GetValue()
-	if s.useSlot(slotID) {
-		if err := s.checkSlotSession(sessionID, slotID); err != nil {
-			return err
-		}
-	} else if err := s.checkSession(sessionID); err != nil {
+	// spec: §5.2 — the stream binds to the session it names, whose slot
+	// the registry holds on every pod, and its cwd is that slot's tree.
+	slotID := sessionID
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return err
 	}
-	rt := s.runtimeForSlot(slotID)
+	rt := s.runtimeForSession(sessionID)
 	if rt == nil {
-		return status.Errorf(codes.FailedPrecondition, "slot %s has no running runtime", slotID)
+		return status.Errorf(codes.FailedPrecondition,
+			"session %s has no running runtime", sessionID)
 	}
-	wsRoot := s.workspaceRootForSlot(slotID)
+	wsRoot, err := s.workspaceRootForSession(sessionID)
+	if err != nil {
+		return err
+	}
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
 		if err := s.writeSlotEnvelope(rt, sessionID, slotID, env); err != nil {
 			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
@@ -62,15 +61,11 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
 	}
 	// spec: §28.5.3 — the single pod-global runtime serves every
-	// slot over one connection, so its output stream interleaves frames for
-	// all slots tagged by slotId. Demultiplex by slotId so this Attach
-	// stream sees only its slot's frames; a no-slotId frame serves the
-	// whole-pod base path. A single-session (no-slot) Attach reads the raw
-	// stream unfiltered.
-	out := rawOut
-	if s.useSlot(slotID) {
-		out = demuxSlotOutput(ctx, rawOut, slotID)
-	}
+	// session over one connection, so its output stream interleaves frames
+	// for every session, each tagged with the session it addresses.
+	// Demultiplex on that address so this Attach stream sees only its own
+	// session's frames.
+	out := demuxSlotOutput(ctx, rawOut, slotID)
 
 	// spec: §28.5.3 — the adapter probes runtime liveness
 	// with periodic heartbeats and SIGTERMs a process that misses the ack
@@ -256,7 +251,7 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 // preserving the one-runtime-per-pod whole-pod behavior. spec: §6.4; §28.5.3 — inbound frames carry slotId when
 // maxConcurrentSessions > 1.
 func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID, slotID string, envelope []byte) error {
-	if s.useSlot(slotID) {
+	if slotID != "" {
 		stamped, err := stampSlotID(envelope, slotID)
 		if err != nil {
 			return err

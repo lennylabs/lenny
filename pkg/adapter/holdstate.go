@@ -89,7 +89,12 @@ func (s *Server) coordinatorHoldTimeout() time.Duration {
 //
 // spec: §10.1.
 func (s *Server) onCoordinatorChannelClosed() {
-	session := s.currentSession()
+	// spec: §10.1 — the hold arms on the sessions the adapter has
+	// started on this pod, read from the slot registry. Every session is
+	// bound to a slot on every pod, so a pod-global session field would
+	// name no session on a pod whose sessions all take the slot path and
+	// the hold would never arm.
+	session := s.anyStartedSession()
 	if session == "" {
 		return
 	}
@@ -171,7 +176,7 @@ func (s *Server) onHoldTimeout() {
 
 	// §10.1.4 — notify the gateway so it can transition the session
 	// without waiting for the 60s orphan-session reconciler.
-	s.EmitAdapterTerminating(reasonCoordinatorLost)
+	s.EmitAdapterTerminating(session, reasonCoordinatorLost)
 	s.writeHoldPostMortem(session, gen)
 
 	// Best-effort graceful runtime termination.

@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/blobstore"
@@ -492,16 +493,6 @@ type BindResult struct {
 	// where the pod is claimed exclusively for the session. It is non-empty
 	// only for a BindSlot result.
 	SlotID string
-	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
-	// bound of the pod's pool, carried from the bind request. It is 0 (or 1)
-	// for an exclusive session-mode bind and > 1 for a BindSlot result on a
-	// concurrent-session pool. The gateway's per-slot message routing keys on
-	// it: a bind reporting maxConcurrentSessions > 1 with an empty SlotID is
-	// the §7.2 SLOT_ID_REQUIRED routing-bug case, where per-slot dispatch is
-	// reached for a concurrent pod but the gateway resolved no slot for the
-	// session, so the executor fails closed rather than misdelivering to
-	// another slot. spec: §7.2 (per-slot routing, SLOT_ID_REQUIRED), §5.2.
-	MaxConcurrentSessions int32
 	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag, carried
 	// from the bind request so the release path can apply the §5.2 recycle
 	// disposition without re-resolving the pool. On a recycling session-mode
@@ -805,7 +796,7 @@ func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, erro
 		SandboxName:   sb.Name,
 		Pool:          req.Pool,
 		PodIP:         sb.Status.PodIP,
-		WorkspaceRoot: neg.WorkspaceRoot,
+		WorkspaceRoot: neg.workspaceRoot(req.SessionID),
 		PodClaim:      time.Since(phaseStart),
 	}, nil
 }
@@ -891,7 +882,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// re-validation location.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
-		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.WorkspaceRoot, archive.DefaultWorkspaceRoot),
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.workspaceRoot(req.SessionID), archive.DefaultWorkspaceRoot),
 	}
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, "", req.TenantID, req.Plan, allow)
 	if err != nil {
@@ -936,7 +927,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 
 	cl.Close()
 	return &PrepareResult{
-		WorkspaceRoot:         neg.WorkspaceRoot,
+		WorkspaceRoot:         neg.workspaceRoot(req.SessionID),
 		Demoted:               demoted,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
@@ -986,7 +977,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// runtime from cold (StartSession). A demoted or pod-warm pod uses
 	// StartSession.
 	if req.PreConnect && !req.Demoted {
-		if err := cl.ConfigureWorkspace(ctx, req.SessionID, neg.WorkspaceRoot, req.ExperimentContext, req.TracingContext); err != nil {
+		if err := cl.ConfigureWorkspace(ctx, req.SessionID, neg.workspaceRoot(req.SessionID), req.ExperimentContext, req.TracingContext); err != nil {
 			reclaim()
 			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
 		}
@@ -1031,7 +1022,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
 		Adapter:               cl,
 		Timings:               t,
-		WorkspaceRoot:         neg.WorkspaceRoot,
+		WorkspaceRoot:         neg.workspaceRoot(req.SessionID),
 	}, nil
 }
 
@@ -1114,7 +1105,7 @@ func (b *Binder) reconnect(ctx context.Context, req BindRequest) (*lennyv1.Sandb
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", req.SandboxName,
 		)
 	}
-	return sb, cl, negotiated{WorkspaceRoot: resp.GetWorkspaceRoot()}, nil
+	return sb, cl, negotiated{WorkspaceBase: resp.GetWorkspaceBase()}, nil
 }
 
 // dialSandbox resolves the Sandbox recorded on a session's persisted binding
@@ -1304,13 +1295,10 @@ func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, s
 	}
 
 	if len(uploads) > 0 {
-		var err error
-		if slotID != "" {
-			_, err = cl.PrepareWorkspaceSlot(ctx, sessionID, slotID, uploads)
-		} else {
-			_, err = cl.PrepareWorkspace(ctx, sessionID, uploads)
-		}
-		if err != nil {
+		// spec: §6.4 — the uploads stage into the session's own
+		// /workspace/slots/{sessionId}/staging area, whose identifier is the
+		// session the request already names.
+		if _, err := cl.PrepareWorkspace(ctx, sessionID, uploads); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1612,7 +1600,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 			SandboxName:   sb.Name,
 			PodIP:         sb.Status.PodIP,
 			Adapter:       cl,
-			WorkspaceRoot: neg.WorkspaceRoot,
+			WorkspaceRoot: neg.workspaceRoot(req.SessionID),
 		},
 		Mode:               res.Mode,
 		RecoveryGeneration: res.RecoveryGeneration,
@@ -1624,9 +1612,25 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 // response fields the gateway threads onto BindResult so downstream
 // users (session-row persistence, Resume-time assertion) can see them.
 type negotiated struct {
-	// WorkspaceRoot is the adapter's reported §7.3 cwd path.
-	// Empty when the adapter is on an older protocol. F-7.3.15.
-	WorkspaceRoot string
+	// WorkspaceBase is the §6.4 base the adapter nests every session's
+	// per-slot tree under. A session's §7.3 cwd is derived from it and the
+	// session identifier. Empty when the adapter reports none. F-7.3.15.
+	WorkspaceBase string
+}
+
+// workspaceRoot derives the §7.3 absolute cwd path of one session on the
+// pod: <base>/slots/{sessionId}/current. An adapter that reported no base
+// yields the empty string, which the callers treat as "unreported" the way
+// they treated an unreported root. spec: §6.4; §7.3.
+func (n negotiated) workspaceRoot(sessionID string) string {
+	if n.WorkspaceBase == "" || sessionID == "" {
+		return ""
+	}
+	paths, err := slotlayout.Resolve(slotlayout.Roots{Workspace: n.WorkspaceBase}, sessionID)
+	if err != nil {
+		return ""
+	}
+	return paths.Current
 }
 
 // connect claims an idle pod from the pool, resolves the claimed Sandbox,
@@ -1704,7 +1708,7 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 			b.ClaimAccepted(pool, rc)
 		}
 	}
-	neg = negotiated{WorkspaceRoot: resp.GetWorkspaceRoot()}
+	neg = negotiated{WorkspaceBase: resp.GetWorkspaceBase()}
 	return sb, cl, neg, nil
 }
 
@@ -1942,7 +1946,7 @@ func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult, recycl
 			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
 		})
 	} else {
-		_, _ = result.Adapter.Shutdown(ctx, result.SessionID)
+		_, _ = result.Adapter.Shutdown(ctx, result.SessionID, "", 0)
 	}
 	result.Adapter.Close()
 }

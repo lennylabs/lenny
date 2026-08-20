@@ -5,6 +5,8 @@ package adapter
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -465,8 +468,12 @@ func TestShutdownTerminatePathRunsNoScrub_spec_4_7(t *testing.T) {
 // spec: 5.2 (whole-pod scrub parameters, retire-and-reprovision)
 func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing.T) {
 	s := New("test")
-	s.WorkspaceRoot = "/workspace/current"
-	s.CredentialsDir = "/run/lenny"
+	base := t.TempDir()
+	credRoot := t.TempDir()
+	s.WorkspaceBase = base
+	s.CredentialsDir = credRoot
+	mustMkdirAll(t, filepath.Join(base, "slots", "sess-a"))
+	mustMkdirAll(t, filepath.Join(credRoot, "slots", "sess-a"))
 
 	var first scrub.Config
 	// The loop still iterates the three §5.2 scrub-profile names to document
@@ -489,11 +496,16 @@ func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing
 		if cfg.CleanupTimeout != 12*time.Second {
 			t.Errorf("profile %q: CleanupTimeout = %v, want 12s", profile, cfg.CleanupTimeout)
 		}
-		if cfg.CredentialFile != "/run/lenny/credentials.json" {
-			t.Errorf("profile %q: CredentialFile = %q, want /run/lenny/credentials.json", profile, cfg.CredentialFile)
+		wantCred := []string{filepath.Join(credRoot, "slots", "sess-a", credfile.FileName)}
+		if !reflect.DeepEqual(cfg.CredentialFiles, wantCred) {
+			t.Errorf("profile %q: CredentialFiles = %v, want %v", profile, cfg.CredentialFiles, wantCred)
 		}
-		if cfg.WorkspaceDir != "/workspace/current" {
-			t.Errorf("profile %q: WorkspaceDir = %q, want /workspace/current", profile, cfg.WorkspaceDir)
+		wantWs := []string{filepath.Join(base, "slots", "sess-a")}
+		if !reflect.DeepEqual(cfg.WorkspaceDirs, wantWs) {
+			t.Errorf("profile %q: WorkspaceDirs = %v, want %v", profile, cfg.WorkspaceDirs, wantWs)
+		}
+		if cfg.CleanupDir != base {
+			t.Errorf("profile %q: CleanupDir = %q, want the workspace base %q", profile, cfg.CleanupDir, base)
 		}
 		// Every profile yields an identical config: no per-profile restart
 		// divergence survives the retire-and-reprovision reconciliation.
@@ -696,5 +708,14 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	reports := reporter.snapshot()
 	if len(reports) != 1 || reports[0].podID != "pod-async" || reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Fatalf("post-release reports = %+v, want one PodScrubSucceeded for pod-async", reports)
+	}
+}
+
+// mustMkdirAll creates a directory tree the scrub enumeration reads, so a
+// test can put a per-session slot tree on disk without driving a bind.
+func mustMkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 }

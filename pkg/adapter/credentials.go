@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -68,36 +67,11 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "AssignCredentials requires a session id")
 	}
-	// spec: §6.1 — a slot-qualified assignment writes the slot's
-	// own /run/lenny/slots/{slotId}/credentials.json so a sibling slot's
-	// credential file is untouched.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.assignCredentialsSlot(sessionID, slotID, req.GetLeases())
-	}
-	if s.CredentialsDir == "" {
-		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a credentials directory")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.credSessionID != "" && s.credSessionID != sessionID {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"credentials are already assigned to session %s", s.credSessionID)
-	}
-
-	leases := make(map[string]*adapterv1.CredentialLease, len(req.GetLeases()))
-	for provider, lease := range req.GetLeases() {
-		leases[provider] = lease
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
-		return nil, err
-	}
-	s.credSessionID = sessionID
-	s.credLeases = leases
-	// §4.9: arm a local expiry timer for each direct-mode lease.
-	s.reconcileExpiryTimers(leases)
-	return &adapterv1.AssignCredentialsResponse{}, nil
+	// spec: §6.1 — the assignment writes the session's own
+	// /run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's
+	// credential file is untouched. Every session is bound to a slot on
+	// every pod, so this is the only assignment path.
+	return s.assignCredentialsSlot(sessionID, sessionID, req.GetLeases())
 }
 
 // RotateCredentials replaces the leases for the providers named in the
@@ -110,23 +84,25 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RotateCredentials requires a session id")
 	}
-	// spec: §6.1 — a slot-qualified rotation rewrites only the
-	// slot's own credential file, so sibling slots' in-flight requests are
-	// unaffected.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.rotateCredentialsSlot(sessionID, slotID, req.GetLeases())
-	}
-
-	rotated, err := s.applyRotation(sessionID, req.GetLeases())
+	// spec: §6.1 — the rotation rewrites the session's own credential
+	// file, so a co-tenant's in-flight requests are unaffected.
+	resp, err := s.rotateCredentialsSlot(sessionID, sessionID, req.GetLeases())
 	if err != nil {
 		return nil, err
+	}
+	rotated := make([]rotatedLease, 0, len(req.GetLeases()))
+	for provider, lease := range req.GetLeases() {
+		rotated = append(rotated, rotatedLease{provider: provider, leaseID: lease.GetLeaseId()})
 	}
 
 	// §4.7: a Full-level runtime rebinds the rotated credential in place.
 	// The adapter runs the strict in-flight-gate / ceiling / ack-timeout
-	// rotation protocol per provider (spec lines 816-829).
+	// rotation protocol per provider against that session's own file.
 	if s.Lifecycle != nil && s.Lifecycle.Supports("credential_rotation") {
-		path := filepath.Join(s.CredentialsDir, credfile.FileName)
+		path, perr := s.sessionCredentialFile(sessionID)
+		if perr != nil {
+			return nil, perr
+		}
 		trigger := req.GetRotationTrigger()
 		for _, r := range rotated {
 			if err := s.rotateProviderFull(ctx, sessionID, r, path, trigger); err != nil {
@@ -134,7 +110,20 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 			}
 		}
 	}
-	return &adapterv1.RotateCredentialsResponse{}, nil
+	return resp, nil
+}
+
+// sessionCredentialFile returns the absolute path of the session's own
+// §6.1 credential file. spec: §6.1.
+func (s *Server) sessionCredentialFile(sessionID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok || st.paths.CredentialsDir == "" {
+		return "", status.Errorf(codes.FailedPrecondition,
+			"session %s has no credential directory on this pod", sessionID)
+	}
+	return filepath.Join(st.paths.CredentialsDir, credfile.FileName), nil
 }
 
 // ExtendCredentialLease re-arms a still-valid direct-mode credential
@@ -153,15 +142,9 @@ func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendC
 		return nil, status.Error(codes.InvalidArgument, "ExtendCredentialLease requires a session id")
 	}
 	newExpiresAt := time.UnixMilli(req.GetExpiresAtUnixMs())
-	// spec: §6.1 — a slot-qualified extension re-arms only the
-	// slot's own timer, so sibling slots' deadlines are untouched.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.extendCredentialLeaseSlot(slotID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
-	}
-	s.mu.Lock()
-	s.extendExpiryTimer(req.GetProvider(), req.GetLeaseId(), newExpiresAt)
-	s.mu.Unlock()
-	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+	// spec: §6.1 — the extension re-arms only this session's own timer,
+	// so a co-tenant's deadline is untouched.
+	return s.extendCredentialLeaseSlot(sessionID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
 }
 
 // rotateProviderFull runs the §4.7 Full-level rotation protocol for one provider: the in-flight LLM-request completion gate
@@ -293,32 +276,6 @@ type rotatedLease struct {
 	leaseID  string
 }
 
-// applyRotation merges the new leases into the credential file under
-// s.mu and returns the rotated providers. The lock is released before
-// the caller's CH-RUNTIMEOPS round-trip so a slow runtime does not
-// block other credential RPCs.
-func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1.CredentialLease) ([]rotatedLease, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkCredentialSession(sessionID); err != nil {
-		return nil, err
-	}
-	leases := s.cloneCredentialLeases()
-	rotated := make([]rotatedLease, 0, len(newLeases))
-	for provider, lease := range newLeases {
-		leases[provider] = lease
-		rotated = append(rotated, rotatedLease{provider: provider, leaseID: lease.GetLeaseId()})
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
-		return nil, err
-	}
-	s.credLeases = leases
-	// §4.9: a rotated direct-mode lease re-arms its expiry timer
-	// at the new expiresAt; unchanged providers keep their existing timer.
-	s.reconcileExpiryTimers(leases)
-	return rotated, nil
-}
-
 // RevokeCredentials removes the named providers' leases and rewrites
 // the credential file without them (§4.7 item 4).
 func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCredentialsRequest) (*adapterv1.RevokeCredentialsResponse, error) {
@@ -326,77 +283,7 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RevokeCredentials requires a session id")
 	}
-	// spec: §6.1 — a slot-qualified revoke drops providers from
-	// the slot's own credential file only.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.revokeCredentialsSlot(sessionID, slotID, req.GetProviders())
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkCredentialSession(sessionID); err != nil {
-		return nil, err
-	}
-
-	leases := s.cloneCredentialLeases()
-	for _, provider := range req.GetProviders() {
-		delete(leases, provider)
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
-		return nil, err
-	}
-	s.credLeases = leases
-	// §4.9: a revoked provider's expiry timer is cancelled so
-	// it cannot fire AUTH_EXPIRED after the lease is already gone.
-	s.reconcileExpiryTimers(leases)
-	return &adapterv1.RevokeCredentialsResponse{}, nil
-}
-
-// checkCredentialSession confirms credentials were assigned for
-// sessionID and the adapter is configured to write them. Callers hold
-// s.mu.
-func (s *Server) checkCredentialSession(sessionID string) error {
-	if s.CredentialsDir == "" {
-		return status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a credentials directory")
-	}
-	if s.credSessionID == "" {
-		return status.Error(codes.FailedPrecondition,
-			"no credentials have been assigned to this pod")
-	}
-	if s.credSessionID != sessionID {
-		return status.Errorf(codes.NotFound,
-			"credentials are assigned to session %s, not %s", s.credSessionID, sessionID)
-	}
-	return nil
-}
-
-// cloneCredentialLeases returns a copy of the current lease set so a
-// rewrite is computed off-line and committed only when the file write
-// succeeds. Callers hold s.mu.
-func (s *Server) cloneCredentialLeases() map[string]*adapterv1.CredentialLease {
-	leases := make(map[string]*adapterv1.CredentialLease, len(s.credLeases))
-	for provider, lease := range s.credLeases {
-		leases[provider] = lease
-	}
-	return leases
-}
-
-// writeCredentialFile materializes leases to the credential file,
-// ordered by provider for a deterministic file. Callers hold s.mu.
-func (s *Server) writeCredentialFile(leases map[string]*adapterv1.CredentialLease) error {
-	providers := make([]string, 0, len(leases))
-	for provider := range leases {
-		providers = append(providers, provider)
-	}
-	sort.Strings(providers)
-
-	ordered := make([]*adapterv1.CredentialLease, 0, len(providers))
-	for _, provider := range providers {
-		ordered = append(ordered, leases[provider])
-	}
-	if err := credfile.Write(s.CredentialsDir, ordered); err != nil {
-		return status.Errorf(codes.Internal, "write credential file: %v", err)
-	}
-	return nil
+	// spec: §6.1 — the revoke drops the named providers from the
+	// session's own credential file only.
+	return s.revokeCredentialsSlot(sessionID, sessionID, req.GetProviders())
 }

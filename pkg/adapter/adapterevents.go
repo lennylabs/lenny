@@ -140,15 +140,18 @@ func (s *Server) AdapterEvents(stream adapterv1.Adapter_AdapterEventsServer) err
 	}
 }
 
-// emitControlEvent queues ev onto the active gateway control stream. The
-// session id is stamped from the pod's current session. When no stream is
+// emitControlEvent queues ev onto the active gateway control stream. An
+// event that carries no identifier of its own is stamped from
+// soleSession, so it is attributed only when the pod's shared runtime
+// process has been given no session but that one; otherwise the envelope
+// goes out with an empty sessionId rather than under a co-tenant's. When no stream is
 // attached, or the per-stream buffer is full, the event is dropped and
 // recorded on lenny_adapter_control_events_dropped_total — the gateway's
 // orphan-session reconciler (§10.1) is the backstop for a lost terminal
 // event.
 func (s *Server) emitControlEvent(ev controlEvent) {
 	if ev.SessionID == "" {
-		ev.SessionID = s.currentSession()
+		ev.SessionID = s.soleSession()
 	}
 	s.controlMu.Lock()
 	sink := s.controlSink
@@ -164,21 +167,16 @@ func (s *Server) emitControlEvent(ev controlEvent) {
 	}
 }
 
-// currentSession returns the session the pod currently holds, empty when
-// the pod is idle.
-func (s *Server) currentSession() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sessionID
-}
-
-// CurrentSessionID returns the id of the session the pod currently holds,
-// empty when the pod is idle. It is the exported accessor cmd/lenny-adapter
-// hands to NewSessionTokenSink so the session-less §4.7 lifecycle frame's
-// direct-mode token counts fold into the right session's cumulative total
-// (§6.1 one session per pod). spec: §4.7 (direct-mode usage), §11.2.
-func (s *Server) CurrentSessionID() string {
-	return s.currentSession()
+// SoleSessionID returns the session the pod's one shared runtime process
+// has been given, and nothing else, since it was last serving none. It is
+// the exported accessor cmd/lenny-adapter hands to NewSessionTokenSink so
+// a session-less §4.7 lifecycle frame's direct-mode token counts fold
+// into that session's cumulative total, and it is empty whenever another
+// session's code may still be resident in the process, in which case the
+// counts are dropped rather than charged to a co-tenant's budget.
+// spec: §4.7 (direct-mode usage), §11.2.
+func (s *Server) SoleSessionID() string {
+	return s.soleSession()
 }
 
 // EmitRateLimited reports that provider's current credential is
@@ -212,17 +210,27 @@ func (s *Server) EmitLeaseRejected(provider, leaseID, reason string) {
 // EmitAdapterTerminating sends the §4.7 self-initiated terminal
 // notification (reason is one of "coordinator_lost", etc.), letting the
 // gateway transition the session immediately rather than waiting for the
-// orphan-session reconciler (§10.1).
-func (s *Server) EmitAdapterTerminating(reason string) {
-	s.emitControlEvent(controlEvent{Type: eventAdapterTerminating, Reason: reason})
+// orphan-session reconciler (§10.1). The caller supplies the session it
+// is terminating: the event names a specific session, and the caller
+// holds that identifier in a window where soleSession may already be
+// empty.
+func (s *Server) EmitAdapterTerminating(sessionID, reason string) {
+	s.emitControlEvent(controlEvent{
+		Type:      eventAdapterTerminating,
+		SessionID: sessionID,
+		Reason:    reason,
+	})
 }
 
 // EmitFinalUsageReport sends the §4.7 FINAL_USAGE_REPORT terminal event
 // carrying the session's final token and wall-clock totals. The gateway
-// waits for it before running budget_return.lua (§8.3).
-func (s *Server) EmitFinalUsageReport(u Usage) {
+// waits for it before running budget_return.lua (§8.3), so the caller
+// supplies the session it computed the totals for rather than leaving the
+// envelope unattributable on a pod serving more than one.
+func (s *Server) EmitFinalUsageReport(sessionID string, u Usage) {
 	s.emitControlEvent(controlEvent{
-		Type: eventFinalUsageReport,
+		Type:      eventFinalUsageReport,
+		SessionID: sessionID,
 		Usage: &controlUsage{
 			InputTokens:  u.InputTokens,
 			OutputTokens: u.OutputTokens,

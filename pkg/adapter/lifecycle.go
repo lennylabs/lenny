@@ -27,7 +27,7 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 	if mode == adapterv1.InterruptRequest_MODE_UNSPECIFIED {
 		return nil, status.Error(codes.InvalidArgument, "Interrupt requires a mode")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 
@@ -74,7 +74,7 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "SignalDeadline requires a session id")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 	if s.Lifecycle == nil || !s.Lifecycle.Supports("deadline_signal") {

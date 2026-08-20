@@ -440,13 +440,18 @@ enum SessionScrubOutcome {
 // ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
 // adapter reports on every session release. pod_id is the agent_pod_state
 // row key the gateway increments sessionsServed on; session_id names the
-// released session; slot_id is set only when the pod runs concurrent
-// sessions (`maxConcurrentSessions > 1`) and identifies the released slot.
+// released session, which is also the identifier of the slot it held.
 // spec: §4.7; §5.2.
 message ReportSessionScrubRequest {
   string pod_id = 1;
   SessionId session_id = 2;
-  SlotId slot_id = 3;
+  // Field 3 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 3;
+  reserved "slot_id";
   SessionScrubOutcome outcome = 4;
 }
 
@@ -581,13 +586,6 @@ message SessionId {
   string value = 1;
 }
 
-// SlotId identifies a slot on a pod that runs concurrent sessions
-// (`sessionPolicy.maxConcurrentSessions > 1`). Empty when
-// `maxConcurrentSessions: 1`, where a session claims the whole pod.
-message SlotId {
-  string value = 1;
-}
-
 // WorkspacePlan is the proto-encoded form of the JSON Schema in
 // workspaceplan-v1.json. The gateway translates between JSON and proto;
 // the wire schema is authoritative.
@@ -677,11 +675,13 @@ message PrepareWorkspaceRequest {
   // name with no path separators.
   string upload_ref = 2;
   bytes chunk = 3;
-  // slot_id, when set, stages this slot's uploads into the §6.4 per-slot
-  // staging area /workspace/slots/{slotId}/staging/ instead of the single
-  // /workspace/staging. Empty when `maxConcurrentSessions: 1` (the base
-  // layout). spec: §6.4.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
 }
 
 // PrepareWorkspaceResponse reports the total staged upload set.
@@ -709,11 +709,13 @@ message FinalizeWorkspaceRequest {
   // proto3 default false is the pre-start whole-tree materialization the
   // §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
   bool mid_session = 4;
-  // slot_id, when set, materializes this slot's workspace under the §6.4
-  // per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
-  // current /workspace/slots/{slotId}/current/) instead of the single
-  // /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 5;
+  reserved "slot_id";
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
@@ -831,10 +833,13 @@ message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
   SetupPolicy setup_policy = 3;
-  // slot_id, when set, runs setup against this slot's materialized cwd
-  // /workspace/slots/{slotId}/current/ instead of /workspace/current.
-  // Empty when `maxConcurrentSessions: 1`. spec: §6.4.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
@@ -907,14 +912,13 @@ message StartSessionRequest {
   // written into the adapter manifest. Empty when the runtime specifies no
   // minimum.
   string min_platform_version = 10;
-  // slot_id, when set, claims a §6.4 per-slot workspace rather than the
-  // whole pod: the adapter registers the slot (alongside sibling slots),
-  // ensures the per-slot tree exists, and starts the slot's runtime
-  // against /workspace/slots/{slotId}/current/. Set only when the pod
-  // runs concurrent sessions (`maxConcurrentSessions > 1`); empty when
-  // `maxConcurrentSessions: 1` (the one-session-per-pod claim). spec:
-  // §6.4; §5.2.
-  SlotId slot_id = 11;
+  // Field 11 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 11;
+  reserved "slot_id";
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
@@ -945,7 +949,13 @@ message StartSessionResponse {
 
 message SendMessageRequest {
   SessionId session_id = 1;
-  SlotId slot_id = 2;
+  // Field 2 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 2;
+  reserved "slot_id";
   // Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
   // `message`). The adapter writes it verbatim to the agent's stdin.
   bytes envelope_json = 3;
@@ -964,7 +974,13 @@ message SendMessageResponse {}
 // stream bound to a session the pod does not hold.
 message AttachRequest {
   SessionId session_id = 1;
-  SlotId slot_id = 2;
+  // Field 2 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 2;
+  reserved "slot_id";
   // Opaque JSON-encoded client-to-agent frame (lenny-adapter-jsonl.schema.json
   // `message`, `tool_result`, `heartbeat`, ...). The adapter writes it
   // verbatim to the agent's stdin.
@@ -991,12 +1007,13 @@ message AttachResponse {
 message AssignCredentialsRequest {
   SessionId session_id = 1;
   map<string, CredentialLease> leases = 2; // keyed by provider
-  // slot_id, when set, writes this slot's independent credential lease to
-  // the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
-  // instead of the single global /run/lenny/credentials.json, so a
-  // rotation on one slot does not disrupt sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1.
-  SlotId slot_id = 3;
+  // Field 3 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 3;
+  reserved "slot_id";
 }
 
 message AssignCredentialsResponse {}
@@ -1012,10 +1029,13 @@ message RotateCredentialsRequest {
   // because the old credential is still valid. Empty is treated as a
   // fault trigger (capped) for fail-closed safety.
   string rotation_trigger = 3;
-  // slot_id, when set, rotates the lease in this slot's §6.1 per-slot
-  // credential file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
   // generation on every gateway-to-pod RPC and rejects a stale
@@ -1033,10 +1053,13 @@ message ExtendCredentialLeaseRequest {
   // expires_at_unix_ms is the new, later expiry deadline the adapter
   // re-arms the direct-mode expiry timer to. spec: §4.9.
   int64 expires_at_unix_ms = 4;
-  // slot_id, when set, extends this slot's §6.1 per-slot credential
-  // lease timer independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 5;
+  reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
   // generation on every gateway-to-pod RPC and rejects a stale
@@ -1051,10 +1074,13 @@ message RevokeCredentialsRequest {
   SessionId session_id = 1;
   repeated string providers = 2;
   string reason = 3;
-  // slot_id, when set, revokes from this slot's §6.1 per-slot credential
-  // file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
   // generation on every gateway-to-pod RPC and rejects a stale
@@ -1084,11 +1110,13 @@ message InterruptRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 4;
-  // slot_id, when set, interrupts just this §6.4 per-slot session's
-  // runtime while sibling slots on the pod keep running. Empty when
-  // `maxConcurrentSessions: 1`, where the session claims the whole pod.
-  // spec: §6.4.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 5;
+  reserved "slot_id";
   enum Mode {
     MODE_UNSPECIFIED = 0;
     MODE_CLEAN = 1; // SIGTERM with grace
@@ -1162,12 +1190,17 @@ message CheckpointStart {
   // checkpoint_id.
   string chunk_encoding = 4;
   int64 deadline_ms = 5;
-  // slot_id, when set, checkpoints this slot's per-slot workspace and
-  // session subtree (/workspace/slots/{slotId}/current and
-  // /sessions/{slotId}) instead of the pod-global roots. Empty when
-  // maxConcurrentSessions: 1 (the pod-global base layout). spec: §5.2
-  // (per-slot checkpoint granularity), §6.4 (per-slot layout).
-  SlotId slot_id = 6;
+  // Field 6 held slot_id. The stream's sole per-session address is
+  // session_id below, which every session on every pod carries.
+  // spec: §4.5; §5.2.
+  reserved 6;
+  reserved "slot_id";
+  // session_id names the session this checkpoint captures. Neither the
+  // CheckpointRequest envelope nor the Checkpoint RPC signature carries
+  // one, so the opening frame is where the stream is addressed. The
+  // adapter resolves the checkpoint roots and the per-session op lock
+  // from it. spec: §4.5; §10.1.7.
+  SessionId session_id = 7;
 }
 
 // CheckpointGrant is a single-chunk presigned PUT capability the gateway
@@ -1268,11 +1301,13 @@ message SignalDeadlineRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 4;
-  // slot_id, when set, addresses the warning at this §6.4 per-slot
-  // session's runtime rather than at the whole pod. Empty when
-  // `maxConcurrentSessions: 1`, where the session claims the whole pod.
-  // spec: §6.4.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 5;
+  reserved "slot_id";
 }
 
 message SignalDeadlineResponse {
@@ -1354,11 +1389,13 @@ message ResumeRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 14;
-  // slot_id, when set, restores the checkpoint into this §6.4 per-slot
-  // workspace on a pod that runs concurrent sessions, rather than into
-  // the whole-pod workspace. Empty when `maxConcurrentSessions: 1`.
-  // spec: §6.4.
-  SlotId slot_id = 15;
+  // Field 15 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 15;
+  reserved "slot_id";
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -1437,11 +1474,13 @@ message CheckpointBarrierRequest {
   // barrier_id is the gateway's correlation id for this barrier. Echoed
   // verbatim in the CheckpointBarrierAck.
   string barrier_id = 3;
-  // slot_id, when set, dispatches the barrier at this §6.4 per-slot
-  // session rather than at the whole pod, so a drain quiesces one slot
-  // while sibling slots keep running. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.4.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
 }
 
 // CheckpointBarrierResponse is the synchronous mirror of the
@@ -1531,12 +1570,13 @@ message ReportUsageRequest {
   // coordinator's request, so a replica that has lost coordination
   // cannot drive the pod (§10.1).
   int64 coordination_generation = 3;
-  // slot_id, when set, reads the usage counters of this §6.4 per-slot
-  // session rather than the whole pod's. A pod running concurrent
-  // sessions meters each slot independently, so a pod-scoped read would
-  // conflate sibling tenants' consumption. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.4.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
 }
 
 message ReportUsageResponse {
@@ -1549,15 +1589,18 @@ message ShutdownRequest {
   SessionId session_id = 1;
   string reason = 2;
   int32 deadline_ms = 3;
-  // slot_id, when set, tears down just this §6.4 per-slot session (its
-  // runtime, credential timers, and per-slot directory tree) while
-  // sibling slots on the pod keep running. Empty when
-  // `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §4.5; §5.2.
+  reserved 4;
+  reserved "slot_id";
 
-  // recycle, when set, marks this as the occupancy-zero recycle-boundary
-  // shutdown (§5.2): the adapter closes the ending session's runtime, keeps
-  // the pod process alive, runs the §5.2 whole-pod scrub with the carried
+  // recycle, when set, carries the occupancy-zero recycle disposition
+  // beside the named session's teardown rather than selecting a scope
+  // (§5.2): the adapter tears the named session down, keeps the pod
+  // process alive, runs the §5.2 whole-pod scrub with the carried
   // parameters, and reports the binary outcome asynchronously via
   // ReportPodScrub. Absent on the terminate path (the pod is replaced).
   // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
@@ -1661,14 +1704,20 @@ message NegotiateVersionResponse {
   // True when the adapter could not satisfy the gateway's accepted
   // versions. The connection should be torn down and the pod evicted.
   bool incompatible = 4;
-  // workspace_root is the §7.3 / §6.1 absolute cwd path the
-  // adapter mounts the session workspace into — the value of
-  // `--workspace-root` on `lenny-adapter`. The gateway captures it on
-  // the first Bind and persists it on the session row so a subsequent
-  // Resume can pass it back as `expected_workspace_root` and the
-  // replacement pod's adapter can assert "same absolute cwd path".
-  // F-7.3.15.
-  string workspace_root = 5;
+  // Field 5 held workspace_root, the pod-global cwd of the retired
+  // single-workspace layout. The per-slot tree is the only layout, so a
+  // session's root is derived from workspace_base below rather than
+  // reported directly. spec: §6.4; §7.3.
+  reserved 5;
+  reserved "workspace_root";
+  // workspace_base is the §6.4 absolute path the adapter nests every
+  // session's per-slot tree under — the value of `--workspace-base` on
+  // `lenny-adapter`. The gateway derives a session's cwd as
+  // `<base>/slots/{sessionId}/current`, captures it on the first Bind,
+  // and persists it on the session row so a subsequent Resume can pass
+  // it back as `expected_workspace_root` and the replacement pod's
+  // adapter can assert "same absolute cwd path". F-7.3.15.
+  string workspace_base = 6;
 }
 
 message GetObservedIntegrationLevelRequest {

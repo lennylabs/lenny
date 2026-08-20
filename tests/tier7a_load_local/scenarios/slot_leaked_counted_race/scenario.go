@@ -157,8 +157,7 @@ func (s *Scenario) Teardown(ctx context.Context) error {
 // must decrement (its slot is reclaimed). The running floor is the seeded
 // leakedFloor plus every leak committed so far; occupancy must never read below
 // it, which fails only if a leaked slot was wrongly decremented.
-func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	sessionID := fmt.Sprintf("sess-%d-%d", vu, iter)
+func (s *Scenario) Run(ctx context.Context, _, _ int) error {
 	if _, _, err := s.counter.Reserve(ctx, s.podID, s.maxConcurrent); err != nil {
 		// Exhaustion is not expected at this bound; count and skip rather than
 		// fail the whole run on a transient miniredis contention edge.
@@ -176,7 +175,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	} else {
 		s.counters.Inc("clean_release")
 	}
-	if _, err := s.claimer.ReleaseSlot(ctx, s.podID, sessionID, false, leaked); err != nil {
+	if _, err := s.claimer.ReleaseSlot(ctx, s.podID, false, leaked); err != nil {
 		return fmt.Errorf("ReleaseSlot(leaked=%v): %w", leaked, err)
 	}
 

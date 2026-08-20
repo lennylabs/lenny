@@ -218,8 +218,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	rt := &eagerRuntime{}
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 
@@ -329,7 +328,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	}
 	// The uploaded file must NOT be in the pod workspace yet: the upload window
 	// buffers in the store and performs no pod I/O (§7.4 store-mediated staging).
-	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(wsRoot, "slots", "sess-eager", "current", "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("CLAUDE.md present in the pod workspace before finalize (err=%v); uploads must buffer in the Artifact Store, not stream into the pod", err)
 	}
 
@@ -354,7 +353,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 		t.Fatalf("after finalize, state = %q, want ready (finalize is the barrier and returns ready)", finResp.State)
 	}
 	// The buffered blob was streamed into /workspace/current at finalize.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-eager", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("the buffered upload was not materialized into the pod workspace at finalize: %v", err)
 	}

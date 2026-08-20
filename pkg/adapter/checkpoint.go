@@ -83,33 +83,34 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 		return status.Error(codes.InvalidArgument,
 			"Checkpoint stream must open with a CheckpointStart")
 	}
-	if s.WorkspaceRoot == "" {
+	if s.WorkspaceBase == "" {
 		return status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root")
+			"adapter is not configured with a workspace base")
 	}
 	if s.CheckpointTransport == nil {
 		return status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the target slot
-	// once. An absent slot_id yields the pod-global bundle unchanged; a
-	// named slot yields its slot subtree, and an unassigned slot is rejected
-	// with FailedPrecondition before the op lock is taken or any grant is
+	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the session the
+	// opening frame names, which is the stream's sole per-session address.
+	// A session the registry holds no bound entry for is rejected with
+	// FailedPrecondition before the op lock is taken or any grant is
 	// minted.
-	roots, err := s.checkpointRootsForSlot(start.GetSlotId().GetValue())
+	roots, err := s.checkpointRootsForSession(start.GetSessionId().GetValue())
 	if err != nil {
 		return err
 	}
 
 	// spec: §4.7 — the Checkpoint RPC shares the pod-level op lock with
 	// Interrupt so at most one runs at a time. The lock admits one pending
-	// checkpoint per distinct slotId and promotes them in slot-ID order
-	// (spec: §5.2), so a concurrent-session drain checkpoints every slot.
+	// checkpoint per distinct session and promotes them in identifier
+	// order (spec: §5.2), so a concurrent-session drain checkpoints every
+	// session.
 	// A barrier-window checkpoint runs through the same lock; the barrier's
 	// quiescence has already drained dispatch, so the lock is uncontended
 	// there by construction.
-	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSlotId().GetValue())
+	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSessionId().GetValue())
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
 		// finalises the manifest row partial.

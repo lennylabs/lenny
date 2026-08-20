@@ -76,16 +76,14 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
 
-// concurrentSlotSession binds one concurrent-mode slot to its session: the
-// pod slot the adapter tracks and the delegation-store session that carries
-// the slot's independent budget. The gateway uses the session id as the slot
-// id in production; the test keeps them distinct strings so a cross-wiring
-// (using one where the other is meant) fails loudly.
+// concurrentSlotSession binds one session to the slot it holds on the pod
+// and to the delegation-store session that carries its independent budget.
+// A session-mode slot's identifier is its session's identifier, so the two
+// are one string. spec: §5.2.
 type concurrentSlotSession struct {
 	sessionID string
-	slotID    string
-	provider  string // the credential provider assigned to this slot
-	leaseID   string // the slot's credential lease id
+	provider  string // the credential provider assigned to this session
+	leaseID   string // the session's credential lease id
 }
 
 // recordingScrubReporter captures every ReportSessionScrub the adapter emits
@@ -100,14 +98,13 @@ type recordingScrubReporter struct {
 type scrubReport struct {
 	podID     string
 	sessionID string
-	slotID    string
 	outcome   gatewaycontrol.SessionScrubOutcome
 }
 
-func (r *recordingScrubReporter) ReportSessionScrub(_ context.Context, podID, sessionID, slotID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+func (r *recordingScrubReporter) ReportSessionScrub(_ context.Context, podID, sessionID string, outcome gatewaycontrol.SessionScrubOutcome) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, scrubReport{podID: podID, sessionID: sessionID, slotID: slotID, outcome: outcome})
+	r.reports = append(r.reports, scrubReport{podID: podID, sessionID: sessionID, outcome: outcome})
 	return nil
 }
 
@@ -151,7 +148,7 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 
 	base := t.TempDir()
 	srv := adapter.New("tier4-concurrent-delegation-proxy")
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
+	srv.WorkspaceBase = filepath.Join(base, "workspace", "current")
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
@@ -179,28 +176,26 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	// alice on the same pod.
 	const aliceBudget = 30000
 	const bobBudget = 100000
-	alice := concurrentSlotSession{sessionID: "sess-alice", slotID: "slot-01", provider: "anthropic", leaseID: "lease-alice-anth"}
-	bob := concurrentSlotSession{sessionID: "sess-bob", slotID: "slot-02", provider: "openai", leaseID: "lease-bob-oai"}
+	alice := concurrentSlotSession{sessionID: "sess-alice", provider: "anthropic", leaseID: "lease-alice-anth"}
+	bob := concurrentSlotSession{sessionID: "sess-bob", provider: "openai", leaseID: "lease-bob-oai"}
 
 	// ---- open both slots on the one pod, each with its own credential lease ----
 	for _, s := range []concurrentSlotSession{alice, bob} {
 		if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: s.sessionID},
 			Runtime:   "echo-concurrent",
-			SlotId:    &adapterv1.SlotId{Value: s.slotID},
 		}); err != nil {
-			t.Fatalf("StartSession(%s on %s): %v", s.sessionID, s.slotID, err)
+			t.Fatalf("StartSession(%s on %s): %v", s.sessionID, s.sessionID, err)
 		}
 		// §6.1: each active slot obtains its independent credential lease via a
 		// separate AssignCredentials RPC at slot assignment time.
 		if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
 			SessionId: &adapterv1.SessionId{Value: s.sessionID},
-			SlotId:    &adapterv1.SlotId{Value: s.slotID},
 			Leases: map[string]*adapterv1.CredentialLease{
 				s.provider: {LeaseId: s.leaseID, Provider: s.provider, Payload: []byte(`{}`)},
 			},
 		}); err != nil {
-			t.Fatalf("AssignCredentials(%s on %s): %v", s.sessionID, s.slotID, err)
+			t.Fatalf("AssignCredentials(%s on %s): %v", s.sessionID, s.sessionID, err)
 		}
 	}
 
@@ -313,12 +308,12 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	}
 	assertScrub(t, reporter.snapshot()[0], podID, alice)
 	// slot 1's credential file survives slot 0's release: cleanup is per-slot.
-	if _, err := os.Stat(slotCredentialFile(srv, bob.slotID)); err != nil {
+	if _, err := os.Stat(slotCredentialFile(srv, bob.sessionID)); err != nil {
 		t.Errorf("slot 1 credential file was disturbed by slot 0's release: %v", err)
 	}
 	// slot 0's own per-slot credential tree was removed on its release (§6.1
 	// independent revoke).
-	if _, err := os.Stat(slotCredentialFile(srv, alice.slotID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(slotCredentialFile(srv, alice.sessionID)); !os.IsNotExist(err) {
 		t.Errorf("slot 0 per-slot credential file survived its release (err=%v); the slot was not cleaned up", err)
 	}
 
@@ -331,7 +326,7 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	assertScrub(t, reports[1], podID, bob)
 	// The two reports name distinct slots and sessions: the per-slot cleanup
 	// never conflated the two slots.
-	if reports[0].slotID == reports[1].slotID || reports[0].sessionID == reports[1].sessionID {
+	if reports[0].sessionID == reports[1].sessionID {
 		t.Errorf("per-slot scrub reports collide: %+v and %+v", reports[0], reports[1])
 	}
 }
@@ -362,24 +357,24 @@ func seedConcurrentSession(t *testing.T, ctx context.Context, store *memstore.St
 func assertSlotCredentialIsolation(t *testing.T, srv *adapter.Server, alice, bob concurrentSlotSession) {
 	t.Helper()
 	for _, s := range []concurrentSlotSession{alice, bob} {
-		providers := readCredentialProviders(t, slotCredentialFile(srv, s.slotID))
+		providers := readCredentialProviders(t, slotCredentialFile(srv, s.sessionID))
 		lease, ok := providers[s.provider]
 		if !ok {
-			t.Errorf("slot %s credential file is missing its own provider %q; got providers %v", s.slotID, s.provider, providers)
+			t.Errorf("slot %s credential file is missing its own provider %q; got providers %v", s.sessionID, s.provider, providers)
 			continue
 		}
 		if lease != s.leaseID {
-			t.Errorf("slot %s provider %q lease = %q, want %q", s.slotID, s.provider, lease, s.leaseID)
+			t.Errorf("slot %s provider %q lease = %q, want %q", s.sessionID, s.provider, lease, s.leaseID)
 		}
 	}
 	// Cross-check: neither slot's file carries the sibling's provider.
-	aliceProviders := readCredentialProviders(t, slotCredentialFile(srv, alice.slotID))
+	aliceProviders := readCredentialProviders(t, slotCredentialFile(srv, alice.sessionID))
 	if _, leaked := aliceProviders[bob.provider]; leaked {
-		t.Errorf("slot %s credential file leaked sibling provider %q; per-slot credential isolation broken", alice.slotID, bob.provider)
+		t.Errorf("slot %s credential file leaked sibling provider %q; per-slot credential isolation broken", alice.sessionID, bob.provider)
 	}
-	bobProviders := readCredentialProviders(t, slotCredentialFile(srv, bob.slotID))
+	bobProviders := readCredentialProviders(t, slotCredentialFile(srv, bob.sessionID))
 	if _, leaked := bobProviders[alice.provider]; leaked {
-		t.Errorf("slot %s credential file leaked sibling provider %q; per-slot credential isolation broken", bob.slotID, alice.provider)
+		t.Errorf("slot %s credential file leaked sibling provider %q; per-slot credential isolation broken", bob.sessionID, alice.provider)
 	}
 	// The single-slot pod-global credential file must never exist on a
 	// concurrent pod; each slot has its own file under slots/{slotId}/.
@@ -426,25 +421,24 @@ func shutdownSlotCleanly(t *testing.T, ctx context.Context, client adapterv1.Ada
 	t.Helper()
 	resp, err := client.Shutdown(ctx, &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: s.sessionID},
-		SlotId:    &adapterv1.SlotId{Value: s.slotID},
 	})
 	if err != nil {
-		t.Fatalf("Shutdown(%s on %s): %v", s.sessionID, s.slotID, err)
+		t.Fatalf("Shutdown(%s on %s): %v", s.sessionID, s.sessionID, err)
 	}
 	if !resp.GetExitedCleanly() {
-		t.Errorf("Shutdown(%s) reported a non-clean exit; the slot cleanup was not released", s.slotID)
+		t.Errorf("Shutdown(%s) reported a non-clean exit; the slot cleanup was not released", s.sessionID)
 	}
 }
 
-// assertScrub checks one per-slot cleanup report carries the pod identity, the
-// released slot's session and slot ids, and the released outcome.
+// assertScrub checks one per-session cleanup report carries the pod
+// identity, the released session, and the released outcome.
 func assertScrub(t *testing.T, r scrubReport, podID string, s concurrentSlotSession) {
 	t.Helper()
 	if r.podID != podID {
 		t.Errorf("scrub report pod = %q, want %q", r.podID, podID)
 	}
-	if r.sessionID != s.sessionID || r.slotID != s.slotID {
-		t.Errorf("scrub report = {session %q, slot %q}, want {%s, %s}", r.sessionID, r.slotID, s.sessionID, s.slotID)
+	if r.sessionID != s.sessionID {
+		t.Errorf("scrub report session = %q, want %q", r.sessionID, s.sessionID)
 	}
 	if r.outcome != gatewaycontrol.SessionScrubReleased {
 		t.Errorf("scrub report outcome = %v, want released for a clean per-slot cleanup", r.outcome)

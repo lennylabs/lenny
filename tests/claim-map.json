@@ -74,14 +74,6 @@
       "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, so the wire field is present and the per-slot restore is not implemented"
     },
     {
-      "claim": "CheckpointBarrierRequest slot identifier field",
-      "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "deferral_id": "R22",
-      "surface": "schemas/lenny-adapter.proto",
-      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
-    },
-    {
       "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",
       "status": "UNWIRED",
       "spec_anchor": "#2851-gateway-to-pod",
@@ -170,14 +162,6 @@
       "spec_anchor": "#2854-inter-replica",
       "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
       "deferral_id": "R19"
-    },
-    {
-      "claim": "InterruptRequest slot identifier field",
-      "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "deferral_id": "R22",
-      "surface": "schemas/lenny-adapter.proto",
-      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
     },
     {
       "claim": "InterruptRequest.coordination_generation generation fence field",
@@ -286,14 +270,6 @@
       "deferral_id": "R13"
     },
     {
-      "claim": "ReportUsageRequest slot identifier field",
-      "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "deferral_id": "R22",
-      "surface": "schemas/lenny-adapter.proto",
-      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
-    },
-    {
       "claim": "ReportUsageRequest.coordination_generation generation fence field",
       "status": "UNWIRED",
       "spec_anchor": "#2851-gateway-to-pod",
@@ -308,14 +284,6 @@
       "deferral_id": "R16",
       "surface": "schemas/lenny-adapter.proto",
       "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
-    },
-    {
-      "claim": "ResumeRequest.slot_id",
-      "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "deferral_id": "R22",
-      "surface": "schemas/lenny-adapter.proto",
-      "note": "the carved resume path reads the slot identifier when it lands"
     },
     {
       "claim": "RevokeCredentialsRequest.coordination_generation generation fence field",
@@ -410,14 +378,6 @@
       "note": "the field is carried on the request and no production reader compares it until the generation fence lands"
     },
     {
-      "claim": "SignalDeadlineRequest slot identifier field",
-      "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "deferral_id": "R22",
-      "surface": "schemas/lenny-adapter.proto",
-      "note": "the slot dimension is carried and unread until concurrent-slot resume and restore lands"
-    },
-    {
       "claim": "SignalDeadlineRequest.coordination_generation generation fence field",
       "status": "UNWIRED",
       "spec_anchor": "#2851-gateway-to-pod",
@@ -431,14 +391,6 @@
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
       "surface": "no registry or counter anywhere in `pkg/adapter/attach.go`",
       "deferral_id": "R20"
-    },
-    {
-      "claim": "Slot-qualified interrupt, deadline, usage, and barrier",
-      "status": "ABSENT",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "surface": "`pkg/adapter/lifecycle.go:21`, `pkg/adapter/lifecycle.go:72`, `pkg/adapter/usage.go:259`, and `pkg/adapter/coordination.go:211` each ignore the request's slot identifier",
-      "deferral_id": "R22",
-      "note": "the four request messages carry a slot identifier and every handler dispatches per pod, so the wire field is present and the slot-qualified dispatch is not implemented"
     },
     {
       "claim": "Tool-approval resolution across replicas",

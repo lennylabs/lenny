@@ -11,19 +11,25 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// slotState is one §6.4 concurrent-workspace slot's independent state: the
-// session bound to the slot, its resolved per-slot filesystem tree, and
-// its §6.1 per-slot credential lease set. Sibling slots share none of this,
-// so a rotation, teardown, or workspace change on one slot does not disturb
-// another. The single pod-global runtime serves every slot, multiplexed on
-// slotId over the one runtime connection (spec/05:509, spec/15:1459), so a
-// slot owns no runtime process of its own. spec: §6.4;
-// §6.1.
+// slotState is one slot's independent state: the session bound to the
+// slot, its resolved per-slot filesystem tree, and its §6.1 per-slot
+// credential lease set. Sibling slots share none of this, so a rotation,
+// teardown, or workspace change on one slot does not disturb another. The
+// single pod-global runtime serves every slot, so a slot owns no runtime
+// process of its own. Every session is bound to a slot on every pod,
+// whatever the pool's concurrency. spec: §5.2; §6.4; §6.1.
 type slotState struct {
-	// sessionID is the session assigned to this slot. The gateway uses
-	// the session id as the slot id, but the adapter validates inbound
-	// RPCs against the recorded session id independently.
+	// sessionID is the session assigned to this slot. A session-mode
+	// slot's identifier is its session's identifier (§5.2), so the
+	// registry key and this value are the same string once the slot is
+	// bound; the field records whether the binding has happened.
 	sessionID string
+	// started records that the merged claim has run for this session,
+	// which is what separates a bound-not-started entry (credentials
+	// assigned ahead of the start, per the §4.7 bind sequence) from a
+	// started one. A second start for the same session is refused on it.
+	// spec: §4.7.
+	started bool
 	// paths is the slot's resolved per-slot directory tree.
 	paths slotlayout.SlotPaths
 	// creds is the slot's independent credential lease set, keyed by
@@ -32,16 +38,6 @@ type slotState struct {
 	// timers holds the slot's §4.9 direct-mode lease-expiry timers, keyed
 	// by provider, independent of sibling slots and the single-slot set.
 	timers map[string]*expiryTimer
-}
-
-// useSlot reports whether the adapter should take the §6.4 per-slot path
-// for slotID: the RPC carries a non-empty slot id. A slotId-bearing frame
-// is by definition a concurrent-pool frame (spec/15:1459: runtimes on
-// maxConcurrentSessions == 1 pods never see a slotId), so the per-slot
-// decision keys on slotId presence alone. The single-session base layout
-// (slotID == "") is left untouched.
-func (s *Server) useSlot(slotID string) bool {
-	return slotID != ""
 }
 
 // concurrentRoots derives the §6.4 base directories the per-slot trees
@@ -64,7 +60,7 @@ func (s *Server) resolveSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 	return slotlayout.Resolve(s.concurrentRoots(), slotID)
 }
 
-// ensureSlotState returns the slot's state, creating the registry entry
+// ensureSlotStateLocked returns the slot's state, creating the registry entry
 // and its on-disk tree on first reference. It is idempotent: a second
 // call for the same slot returns the existing state without recreating
 // the tree's content. Callers hold s.mu.
@@ -117,40 +113,35 @@ func (s *Server) ensureSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 	return st.paths, nil
 }
 
-// workspaceRootForSlot returns the cwd the adapter-local tool dispatch
-// resolves against for slotID: the slot's /workspace/slots/{slotId}/current
-// for a concurrent slot, or the pod-global WorkspaceRoot for the
-// single-session base path. An unknown slot falls back to WorkspaceRoot.
-func (s *Server) workspaceRootForSlot(slotID string) string {
-	if !s.useSlot(slotID) {
-		return s.WorkspaceRoot
-	}
+// workspaceRootForSession returns the cwd the adapter-local tool dispatch
+// resolves against for the named session: its
+// /workspace/slots/{sessionId}/current. The per-slot tree is the only
+// layout, so a session the registry does not hold has no root and the
+// caller fails closed rather than dispatching against a pod-global
+// directory. spec: §6.4.
+func (s *Server) workspaceRootForSession(sessionID string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.slots[slotID]; ok && st.paths.Current != "" {
-		return st.paths.Current
+	st, ok := s.slots[sessionID]
+	if !ok || st.paths.Current == "" {
+		return "", status.Errorf(codes.FailedPrecondition,
+			"session %s has no workspace on this pod", sessionID)
 	}
-	return s.WorkspaceRoot
+	return st.paths.Current, nil
 }
 
-// checkpointRootsForSlot returns the §4.4 checkpoint bundle for slotID.
-// For the single-session base path (slotID == "") it returns the pod-global
-// s.checkpointRoots() slice unchanged, so an absent slot_id checkpoints
-// byte-for-byte as before. For a concurrent slot it swaps both roots to the
-// slot subtree: /workspace/slots/{slotId}/current under WorkspacePrefix and
-// /sessions/{slotId} under SessionsPrefix, because the session tmpfs is
-// itself slot-scoped. A slot with no registry entry or no bound session is
-// rejected with FailedPrecondition so a checkpoint never captures an empty
-// or nonexistent subtree for an unassigned slot; the adapter fails closed
-// on the slot gate. spec: §5.2 (per-slot checkpoint granularity), §6.4
-// (slot-qualified export target /workspace/slots/{slotId}/current and
-// /sessions/{slotId}), §4.4 (durability contract).
-func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, error) {
-	if !s.useSlot(slotID) {
-		return s.checkpointRoots(), nil
-	}
+// checkpointRootsForSession returns the §4.4 checkpoint bundle for the
+// named session: /workspace/slots/{sessionId}/current under
+// WorkspacePrefix and /sessions/{sessionId} under SessionsPrefix, because
+// the session tmpfs is itself per-session. A session with no registry
+// entry or no bound session is rejected with FailedPrecondition so a
+// checkpoint never captures an empty or nonexistent subtree for an
+// unassigned slot; the adapter fails closed on the slot gate. spec: §5.2
+// (per-slot checkpoint granularity), §6.4 (per-slot export target),
+// §4.4 (durability contract).
+func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedRoot, error) {
 	s.mu.Lock()
-	st, ok := s.slotStateLocked(slotID)
+	st, ok := s.slotStateLocked(sessionID)
 	var current, sessions, sess string
 	if ok {
 		current = st.paths.Current
@@ -160,7 +151,7 @@ func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, e
 	s.mu.Unlock()
 	if !ok || sess == "" {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"slot %s has no assigned session", slotID)
+			"session %s has no assigned slot on this pod", sessionID)
 	}
 	roots := []workspace.NamedRoot{
 		{Prefix: workspace.WorkspacePrefix, Root: current},
@@ -179,19 +170,15 @@ func removeSlotTree(st *slotState) error {
 	return slotlayout.RemoveTree(st.paths)
 }
 
-// runtimeForSlot returns the runtime process that drives slotID. The
-// single pod-global Runtime serves every slot, multiplexed on slotId over
-// the one runtime connection (spec/05:509, spec/15:1459), so an assigned
-// concurrent slot resolves to the same Runtime as the single-session base
-// layout. An unknown (unassigned) slot returns nil so the caller surfaces
-// a FailedPrecondition.
-func (s *Server) runtimeForSlot(slotID string) RuntimeProcess {
-	if !s.useSlot(slotID) {
-		return s.Runtime
-	}
+// runtimeForSession returns the runtime process that drives the named
+// session. The single pod-global Runtime serves every slot, so every
+// registered session resolves to the same Runtime. A session the registry
+// does not hold returns nil so the caller surfaces a FailedPrecondition.
+// spec: §6.4.
+func (s *Server) runtimeForSession(sessionID string) RuntimeProcess {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.slots[slotID]; ok {
+	if _, ok := s.slots[sessionID]; ok {
 		return s.Runtime
 	}
 	return nil

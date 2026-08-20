@@ -49,7 +49,7 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
 	s.CoordinatorHoldTimeout = 90 * time.Second
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
 	clk := &fakeExpiryClock{}
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	s.enterHoldState("s1")
@@ -142,7 +142,7 @@ func TestHoldStateTimeoutTerminates_spec_10_1(t *testing.T) {
 	s.HoldAfterFunc = clk.After
 	s.Runtime = rt
 	s.PostMortemDir = dir
-	if err := s.claimSession("sess-42"); err != nil {
+	if err := s.claimSessionForTest("sess-42"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	// Record a fenced generation so the post-mortem carries it.
@@ -202,7 +202,7 @@ func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
 	s.Runtime = rt
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 	s.enterHoldState("s1")
@@ -228,7 +228,7 @@ func TestHoldStateEnterIdempotent_spec_10_1(t *testing.T) {
 	clk := &fakeExpiryClock{}
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
-	_ = s.claimSession("s1")
+	_ = s.claimSessionForTest("s1")
 	s.enterHoldState("s1")
 	s.enterHoldState("s1")
 	if got := len(clk.armed()); got != 1 {
@@ -242,7 +242,7 @@ func TestHoldStateEnterIdempotent_spec_10_1(t *testing.T) {
 func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	s := New("hold-test")
-	_ = s.claimSession("s1")
+	_ = s.claimSessionForTest("s1")
 	s.enterHoldState("s1")
 
 	handlerCalled := false
@@ -275,7 +275,7 @@ func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	s := New("hold-test")
-	_ = s.claimSession("s1")
+	_ = s.claimSessionForTest("s1")
 	s.enterHoldState("s1")
 
 	handlerCalled := false
@@ -319,5 +319,130 @@ func TestCoordinatorHoldTimeoutDefault_spec_10_1(t *testing.T) {
 	s.CoordinatorHoldTimeout = 45 * time.Second
 	if got := s.coordinatorHoldTimeout(); got != 45*time.Second {
 		t.Errorf("override timeout = %v, want 45s", got)
+	}
+}
+
+// spec: 10.1 (coordinator-loss hold), 4.11 (the four states a registry
+// entry holds), 5.2 (every session is bound to a slot on every pod)
+//
+// The hold arms from the slot registry's started entries. Every session is
+// bound to a slot on every pod, so a pod-global session field named no
+// session on a pod whose sessions took the slot path and the hold never
+// armed there: the coordinating gateway could crash and the agent kept
+// running, unsupervised and unfenced, until the orphan reconciler noticed.
+//
+// diagnosis: a failure means the hold arms from something other than the
+// started entries again. Either it no longer arms for a session the
+// adapter started, which leaves the agent running unsupervised after the
+// coordinating gateway is lost, or it arms for an entry no session has
+// started on, which rejects every RPC on a pod that is serving nobody.
+func TestCoordinatorHoldArmsFromStartedSlotRegistry_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	clk := &fakeExpiryClock{}
+	s := New("hold-arming")
+	s.WorkspaceBase = t.TempDir()
+	s.HoldAfterFunc = clk.After
+	if err := s.claimSessionForTest("s1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	s.onCoordinatorChannelClosed()
+
+	if !s.inHoldState() {
+		t.Fatal("the hold did not arm on a pod holding a started session")
+	}
+	if holdGauge() != 1 {
+		t.Errorf("coordinator-hold gauge = %v, want 1", holdGauge())
+	}
+
+	// The hold's unit is the pod: every inbound RPC outside the allowlist
+	// is rejected while it is held, and CoordinatorFence is admitted.
+	_, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/SendMessage"},
+		func(context.Context, any) (any, error) { return nil, nil })
+	if status.Code(err) != codes.Unavailable {
+		t.Errorf("SendMessage under the hold = %v, want Unavailable", status.Code(err))
+	}
+	if _, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/CoordinatorFence"},
+		func(context.Context, any) (any, error) { return nil, nil }); err != nil {
+		t.Errorf("CoordinatorFence under the hold = %v, want admitted", err)
+	}
+
+	// A fence exits the hold, so a later RPC is admitted again.
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
+		SessionId:              &adapterv1.SessionId{Value: "s1"},
+		CoordinationGeneration: 1,
+	}); err != nil {
+		t.Fatalf("CoordinatorFence: %v", err)
+	}
+	if s.inHoldState() {
+		t.Fatal("the fence did not exit the hold")
+	}
+	if _, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/SendMessage"},
+		func(context.Context, any) (any, error) { return nil, nil }); err != nil {
+		t.Errorf("SendMessage after the fence = %v, want admitted", err)
+	}
+}
+
+// spec: 10.1, 4.11 (registered and bound-not-started are not started)
+//
+// A pod whose only entry has not been started is serving no agent process,
+// so a closed control stream there is not a coordinator loss. Arming on it
+// would reject every RPC on a pod mid-bind, failing the bind that is still
+// in flight.
+//
+// diagnosis: a failure means the arming predicate reads the entry's
+// existence or its bound state rather than the started flag, so a pod that
+// has only had its workspace prepared, or has only had credentials
+// assigned, enters a hold and rejects the rest of its own bind.
+func TestCoordinatorHoldDoesNotArmOnAnUnstartedEntry_spec_10_1(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, s *Server)
+	}{
+		{
+			name: "registered by a workspace-prep RPC and not yet bound",
+			seed: func(t *testing.T, s *Server) {
+				t.Helper()
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if _, err := s.ensureSlotStateLocked("s1"); err != nil {
+					t.Fatalf("ensure slot state: %v", err)
+				}
+			},
+		},
+		{
+			name: "bound by the credentials-first bind order and not yet started",
+			seed: func(t *testing.T, s *Server) {
+				t.Helper()
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				st, err := s.ensureSlotStateLocked("s1")
+				if err != nil {
+					t.Fatalf("ensure slot state: %v", err)
+				}
+				st.sessionID = "s1"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setCoordinatorHold(false)
+			clk := &fakeExpiryClock{}
+			s := New("hold-arming")
+			s.WorkspaceBase = t.TempDir()
+			s.HoldAfterFunc = clk.After
+			tc.seed(t, s)
+
+			s.onCoordinatorChannelClosed()
+
+			if s.inHoldState() {
+				t.Error("the hold armed on a pod that has started no session")
+			}
+			if len(clk.armed()) != 0 {
+				t.Errorf("armed %d hold timers, want 0", len(clk.armed()))
+			}
+		})
 	}
 }

@@ -116,7 +116,7 @@ func recordingAdapterDialer(t *testing.T, srv *adapter.Server, rec *readoptRecor
 func TestReadoptConnectSkipsVersionHandshakeSoFenceIsFirst_spec_10_1(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	rec := &readoptRecorder{}

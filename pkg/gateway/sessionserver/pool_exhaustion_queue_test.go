@@ -70,7 +70,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 ) {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	objs := []client.Object{

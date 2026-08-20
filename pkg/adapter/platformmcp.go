@@ -8,11 +8,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/mcp"
 )
 
-// startPlatformMCP starts the §4.7 platform MCP server for the current
-// session on the adapter's configured Unix socket, authenticated by
-// the session's manifest nonce. It is a no-op when no MCP socket is
-// configured or no nonce was issued (no manifest, so the runtime could
-// not read one). The server runs until releaseSession stops it.
+// startPlatformMCP starts the §4.7 platform MCP server on the adapter's
+// configured Unix socket, authenticated by the manifest nonce. The socket
+// is pod-wide, so the server is started at most once per pod, by the
+// claim that took the once-per-pod start. It is a no-op when no MCP
+// socket is configured or no nonce was issued (no manifest, so the
+// runtime could not read one). The server runs until a release leaves the
+// pod's shared runtime process serving no session.
 func (s *Server) startPlatformMCP(nonce string) error {
 	if s.MCPSocket == "" || nonce == "" {
 		return nil
@@ -37,10 +39,7 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	// session. Without a forwarder the server serves an empty catalog (the
 	// dev path with no gateway link). F-9.1.1.
 	if s.PlatformForwarder != nil {
-		s.mu.Lock()
-		sessionID := s.sessionID
-		s.mu.Unlock()
-		srv.Provider = &platformToolProvider{forwarder: s.PlatformForwarder, sessionID: sessionID}
+		srv.Provider = &platformToolProvider{forwarder: s.PlatformForwarder, server: s}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()

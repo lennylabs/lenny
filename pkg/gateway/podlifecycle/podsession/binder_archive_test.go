@@ -85,8 +85,7 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
 	blobs := blobstore.NewMemoryStore(nil)
@@ -119,7 +118,7 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 		"proj/README.md":   "hello",
 		"proj/docs/g.md":   "guide",
 	} {
-		got, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		got, rerr := os.ReadFile(filepath.Join(root, "slots", "sess-1", "current", filepath.FromSlash(rel)))
 		if rerr != nil {
 			t.Fatalf("read %q: %v", rel, rerr)
 		}
@@ -136,8 +135,7 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
 	blobs := blobstore.NewMemoryStore(nil)
@@ -174,7 +172,7 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 		t.Fatalf("strip-skip warning not surfaced; warnings=%+v", res.WorkspacePlanWarnings)
 	}
 	// The kept entry lands with its leading segment stripped.
-	if got, _ := os.ReadFile(filepath.Join(root, "nested", "f.txt")); string(got) != "kept" {
+	if got, _ := os.ReadFile(filepath.Join(root, "slots", "sess-1", "current", "nested", "f.txt")); string(got) != "kept" {
 		t.Errorf("stripped entry = %q, want kept", got)
 	}
 }
@@ -185,8 +183,7 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	blobs := blobstore.NewMemoryStore(nil)
@@ -275,8 +272,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &fakeRuntime{}
 			srv := adapter.New("adapter-test")
-			srv.WorkspaceRoot = t.TempDir()
-			srv.StagingDir = t.TempDir()
+			srv.WorkspaceBase = t.TempDir()
 			srv.Runtime = rt
 
 			blobs := blobstore.NewMemoryStore(nil)

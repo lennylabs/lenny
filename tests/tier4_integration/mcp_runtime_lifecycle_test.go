@@ -70,7 +70,7 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 
 	rt := &adapter.MCPRuntime{Command: bin}
 	s := adapter.New("integration")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt
 

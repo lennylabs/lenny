@@ -346,22 +346,9 @@ func raceAdapter(t *testing.T) (*adapter.Server, *raceRuntime, *raceForwarder, a
 	return s, rt, fwd, adapterv1.NewAdapterClient(conn)
 }
 
-// startRaceSlot claims slotID for its own session through the §6.4
-// per-slot path.
-func startRaceSlot(t *testing.T, s *adapter.Server, slotID string) {
-	t.Helper()
-	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-" + slotID},
-		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
-	}); err != nil {
-		t.Fatalf("StartSession(%s): %v", slotID, err)
-	}
-}
-
-// startRacePodSession claims the pod-global session, which the adapter
-// keeps independent of its slot registry.
-func startRacePodSession(t *testing.T, s *adapter.Server, sessionID string) {
+// startRaceSlot binds sessionID's slot on the pod, which is the one start
+// path on a pod of either concurrency. spec: §5.2.
+func startRaceSlot(t *testing.T, s *adapter.Server, sessionID string) {
 	t.Helper()
 	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
@@ -371,8 +358,9 @@ func startRacePodSession(t *testing.T, s *adapter.Server, sessionID string) {
 	}
 }
 
-// openRaceAttach binds an Attach stream to (sessionID, slotID). An empty
-// slotID binds the pod-global path.
+// openRaceAttach binds an Attach stream to sessionID, which is the
+// stream's whole address; slotID is the same identifier and is carried for
+// the diagnostics below.
 func openRaceAttach(t *testing.T, client adapterv1.AdapterClient, sessionID, slotID string) adapterv1.Adapter_AttachClient {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -382,9 +370,6 @@ func openRaceAttach(t *testing.T, client adapterv1.AdapterClient, sessionID, slo
 		t.Fatalf("Attach(%s/%s): %v", sessionID, slotID, err)
 	}
 	req := &adapterv1.AttachRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
-	if slotID != "" {
-		req.SlotId = &adapterv1.SlotId{Value: slotID}
-	}
 	if err := stream.Send(req); err != nil {
 		t.Fatalf("Send bind(%s/%s): %v", sessionID, slotID, err)
 	}
@@ -485,23 +470,15 @@ func shutdownAfterJitter(t *testing.T, client adapterv1.AdapterClient, rt *raceR
 	time.Sleep(time.Duration(rand.Intn(int(tracingRaceJitter))) * time.Nanosecond)
 	for _, req := range reqs {
 		if _, err := client.Shutdown(context.Background(), req); err != nil {
-			t.Errorf("Shutdown(%s/%s): %v", req.GetSessionId().GetValue(), req.GetSlotId().GetValue(), err)
+			t.Errorf("Shutdown(%s): %v", req.GetSessionId().GetValue(), err)
 		}
 	}
 	rt.output <- raceStatusFrame(slotID)
 }
 
-// shutdownSlotRequest builds the §6.4 slot-qualified Shutdown, which
-// releases the slot's registry entry.
-func shutdownSlotRequest(slotID string) *adapterv1.ShutdownRequest {
-	return &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-" + slotID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
-	}
-}
-
-// shutdownSessionRequest builds the pod-global Shutdown, which clears the
-// pod's session id.
+// shutdownSessionRequest builds the Shutdown that releases the named
+// session's slot, which is the one teardown on a pod of either
+// concurrency. spec: §5.2.
 func shutdownSessionRequest(sessionID string) *adapterv1.ShutdownRequest {
 	return &adapterv1.ShutdownRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
 }
@@ -577,10 +554,10 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 	for run := 0; run < tracingRaceRuns; run++ {
 		t.Run(fmt.Sprintf("run%02d", run), func(t *testing.T) {
 			s, rt, fwd, client := raceAdapter(t)
-			startRaceSlot(t, s, "slot-a")
-			startRaceSlot(t, s, "slot-b")
-			streamA := openRaceAttach(t, client, "sess-slot-a", "slot-a")
-			streamB := openRaceAttach(t, client, "sess-slot-b", "slot-b")
+			startRaceSlot(t, s, "sess-slot-a")
+			startRaceSlot(t, s, "sess-slot-b")
+			streamA := openRaceAttach(t, client, "sess-slot-a", "sess-slot-a")
+			streamB := openRaceAttach(t, client, "sess-slot-b", "sess-slot-b")
 			rt.waitForSubscribers(t, 2)
 
 			before := tracingDropCount(t)
@@ -594,7 +571,7 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 			// release sentinel has come back.
 			go func() {
 				defer wg.Done()
-				addressed.emitAddressed(rt, "slot-a")
+				addressed.emitAddressed(rt, "sess-slot-a")
 			}()
 			go func() {
 				defer wg.Done()
@@ -604,14 +581,14 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 			}()
 			go func() {
 				defer wg.Done()
-				shutdownAfterJitter(t, client, rt, "slot-a", shutdownSlotRequest("slot-a"))
+				shutdownAfterJitter(t, client, rt, "sess-slot-a", shutdownSessionRequest("sess-slot-a"))
 			}()
-			decidedAtRelease := awaitReleaseSentinel(t, streamA, "slot-a", fwd, addressed, misaddressed)
+			decidedAtRelease := awaitReleaseSentinel(t, streamA, "sess-slot-a", fwd, addressed, misaddressed)
 			wg.Wait()
 			// Both streams decide the untagged frames, so both must be
 			// drained before the accounting is read.
-			drainToStatus(t, rt, streamA, "slot-a")
-			drainToStatus(t, rt, streamB, "slot-b")
+			drainToStatus(t, rt, streamA, "sess-slot-a")
+			drainToStatus(t, rt, streamB, "sess-slot-b")
 
 			raced := fwd.forwards()
 			// Every tagged frame is decided on this stream alone (the
@@ -623,9 +600,9 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 
 			// The slot is gone for good, so every later frame on its
 			// address fails live-binding confirmation.
-			checkPostReleaseSilence(t, run, rt, streamA, "slot-a", fwd, len(raced))
+			checkPostReleaseSilence(t, run, rt, streamA, "sess-slot-a", fwd, len(raced))
 			// The sibling slot is untouched by its neighbour's teardown.
-			drainToStatus(t, rt, streamB, "slot-b")
+			drainToStatus(t, rt, streamB, "sess-slot-b")
 		})
 	}
 }
@@ -648,8 +625,8 @@ func TestSetTracingContextSessionReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t 
 	for run := 0; run < tracingRaceRuns; run++ {
 		t.Run(fmt.Sprintf("run%02d", run), func(t *testing.T) {
 			s, rt, fwd, client := raceAdapter(t)
-			startRacePodSession(t, s, "sess-solo")
-			stream := openRaceAttach(t, client, "sess-solo", "")
+			startRaceSlot(t, s, "sess-solo")
+			stream := openRaceAttach(t, client, "sess-solo", "sess-solo")
 			rt.waitForSubscribers(t, 1)
 
 			before := tracingDropCount(t)
@@ -659,152 +636,31 @@ func TestSetTracingContextSessionReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t 
 			wg.Add(3)
 			go func() {
 				defer wg.Done()
-				addressed.emitAddressed(rt, "")
+				addressed.emitAddressed(rt, "sess-solo")
 			}()
 			go func() {
 				defer wg.Done()
-				// A slotless stream reads the fan-out unfiltered, so a
-				// frame carrying a slot id reaches its handler and must be
-				// rejected on address equality alone.
-				misaddressed.emitMisaddressed(rt, "slot-x")
+				// A frame carrying no address reaches every stream through
+				// the fan-out and must be rejected on address equality
+				// alone, on a pod of either concurrency.
+				misaddressed.emitMisaddressed(rt, "")
 			}()
 			go func() {
 				defer wg.Done()
-				shutdownAfterJitter(t, client, rt, "", shutdownSessionRequest("sess-solo"))
+				shutdownAfterJitter(t, client, rt, "sess-solo", shutdownSessionRequest("sess-solo"))
 			}()
-			decidedAtRelease := awaitReleaseSentinel(t, stream, "", fwd, addressed, misaddressed)
+			decidedAtRelease := awaitReleaseSentinel(t, stream, "sess-solo", fwd, addressed, misaddressed)
 			wg.Wait()
-			drainToStatus(t, rt, stream, "")
+			drainToStatus(t, rt, stream, "sess-solo")
 
 			raced := fwd.forwards()
 			decisions := addressed.written + misaddressed.written
 			checkTracingAccounting(t, run, "sess-solo", decisions, raced,
 				tracingDropCount(t)-before, decidedAtRelease)
 
-			checkPostReleaseSilence(t, run, rt, stream, "", fwd, len(raced))
+			checkPostReleaseSilence(t, run, rt, stream, "sess-solo", fwd, len(raced))
 		})
 	}
-}
-
-// spec: 28.5.3 (set_tracing_context addressing, live-binding
-// confirmation), 6.4 (slot claim and release lifecycle), 8.3 (tracing
-// context, per-session scope)
-//
-// diagnosis: the addressing decision reads the registry more than once. The
-//
-//	pod holds a claimed slot and a pod-global session at the same time, so
-//	the two terms the pod-global branch evaluates disagree, and both are
-//	released while frames are being decided. Releasing the pod-global
-//	session before the slot leaves no instant at which the session still
-//	names this stream and the slot registry is already empty, so a single
-//	forward means the decision took its two terms from two different
-//	samplings of the registry and registered tracing identifiers against a
-//	session that had already been released. In the unordered ordering a
-//	forward recorded after the release sentinel means the same thing.
-func TestSetTracingContextCoexistingSlotAndSessionReleaseRaceForwardsNothingTorn_spec_28_5_3(t *testing.T) {
-	// A pod-global session coexisting with a claimed slot is the state in
-	// which the live-binding terms `s.sessionID == sessionID` and
-	// `len(s.slots) == 0` can disagree. The adapter imposes no guard
-	// against it, so it is built the way the tier-1 pod-global case builds
-	// it: claim a slot through the per-slot path, then bind a slotless
-	// Attach through the pod-global path.
-	t.Run("sessionReleasedFirst", func(t *testing.T) {
-		for run := 0; run < tracingRaceRuns; run++ {
-			t.Run(fmt.Sprintf("run%02d", run), func(t *testing.T) {
-				s, rt, fwd, client := raceAdapter(t)
-				startRaceSlot(t, s, "slot-a")
-				startRacePodSession(t, s, "sess-pod")
-				stream := openRaceAttach(t, client, "sess-pod", "")
-				rt.waitForSubscribers(t, 1)
-
-				before := tracingDropCount(t)
-				addressed := &raceEmitter{}
-				var wg sync.WaitGroup
-				wg.Add(2)
-				go func() {
-					defer wg.Done()
-					addressed.emitAddressed(rt, "")
-				}()
-				go func() {
-					defer wg.Done()
-					// The pod-global session is released first and the slot
-					// second, so the registry never reaches a state in which
-					// both terms hold: before the first release the slot
-					// registry is occupied, and after it the pod's session id
-					// is empty.
-					shutdownAfterJitter(t, client, rt, "",
-						shutdownSessionRequest("sess-pod"), shutdownSlotRequest("slot-a"))
-				}()
-				awaitReleaseSentinel(t, stream, "", fwd, addressed)
-				wg.Wait()
-				drainToStatus(t, rt, stream, "")
-
-				if got := fwd.forwards(); len(got) != 0 {
-					t.Fatalf("run %d: %d untagged frames forwarded on a pod that held a slot and a "+
-						"pod-global session, want none (first forward carried frame %q): the "+
-						"addressing decision read the session and the slot registry at two "+
-						"different times", run, len(got), got[0].seq)
-				}
-				if drops := tracingDropCount(t) - before; drops != float64(addressed.written) {
-					t.Fatalf("run %d: %d frames reached the addressing decision but %v were counted "+
-						"as dropped and none were forwarded; a frame was lost without either",
-						run, addressed.written, drops)
-				}
-				checkPostReleaseSilence(t, run, rt, stream, "", fwd, 0)
-			})
-		}
-	})
-
-	t.Run("unordered", func(t *testing.T) {
-		for run := 0; run < tracingRaceRuns; run++ {
-			t.Run(fmt.Sprintf("run%02d", run), func(t *testing.T) {
-				s, rt, fwd, client := raceAdapter(t)
-				startRaceSlot(t, s, "slot-a")
-				startRacePodSession(t, s, "sess-pod")
-				stream := openRaceAttach(t, client, "sess-pod", "")
-				rt.waitForSubscribers(t, 1)
-
-				before := tracingDropCount(t)
-				addressed := &raceEmitter{}
-				misaddressed := &raceEmitter{}
-				var wg sync.WaitGroup
-				wg.Add(4)
-				go func() {
-					defer wg.Done()
-					addressed.emitAddressed(rt, "")
-				}()
-				go func() {
-					defer wg.Done()
-					misaddressed.emitMisaddressed(rt, "slot-x")
-				}()
-				// The two releases run on their own goroutines with no
-				// ordering between them, so the slot registry and the pod's
-				// session id empty in either order while frames are being
-				// decided.
-				go func() {
-					defer wg.Done()
-					shutdownAfterJitter(t, client, rt, "", shutdownSlotRequest("slot-a"))
-				}()
-				go func() {
-					defer wg.Done()
-					shutdownAfterJitter(t, client, rt, "", shutdownSessionRequest("sess-pod"))
-				}()
-				// Each teardown writes its own sentinel; the second one is
-				// the point after which both bindings are gone.
-				awaitReleaseSentinel(t, stream, "", fwd)
-				decidedAtRelease := awaitReleaseSentinel(t, stream, "", fwd, addressed, misaddressed)
-				wg.Wait()
-				drainToStatus(t, rt, stream, "")
-
-				raced := fwd.forwards()
-				decisions := addressed.written + misaddressed.written
-				checkTracingAccounting(t, run, "sess-pod", decisions, raced,
-					tracingDropCount(t)-before, decidedAtRelease)
-
-				checkPostReleaseSilence(t, run, rt, stream, "", fwd, len(raced))
-			})
-		}
-	})
 }
 
 // spec: 28.5.3 (set_tracing_context addressing, live-binding
@@ -832,17 +688,17 @@ func TestSetTracingContextFramesInFlightAcrossReleaseAreDropped_spec_28_5_3(t *t
 		shutdown  *adapterv1.ShutdownRequest
 	}{
 		{
-			name:      "slotBranch",
+			name:      "coTenantedPod",
 			sessionID: "sess-slot-a",
-			slotID:    "slot-a",
-			start:     func(t *testing.T, s *adapter.Server) { startRaceSlot(t, s, "slot-a") },
-			shutdown:  shutdownSlotRequest("slot-a"),
+			slotID:    "sess-slot-a",
+			start:     func(t *testing.T, s *adapter.Server) { startRaceSlot(t, s, "sess-slot-a") },
+			shutdown:  shutdownSessionRequest("sess-slot-a"),
 		},
 		{
-			name:      "podGlobalBranch",
+			name:      "poolOfOne",
 			sessionID: "sess-solo",
-			slotID:    "",
-			start:     func(t *testing.T, s *adapter.Server) { startRacePodSession(t, s, "sess-solo") },
+			slotID:    "sess-solo",
+			start:     func(t *testing.T, s *adapter.Server) { startRaceSlot(t, s, "sess-solo") },
 			shutdown:  shutdownSessionRequest("sess-solo"),
 		},
 	}

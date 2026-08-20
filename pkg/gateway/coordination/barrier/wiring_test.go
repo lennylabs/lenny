@@ -40,7 +40,7 @@ func (fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 	t.Helper()
 	srv := adapter.New("barrier-wiring-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = t.TempDir()
 	srv.Runtime = fakeRuntime{}
 

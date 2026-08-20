@@ -322,8 +322,8 @@ type Server struct {
 	// attached; emitControlEvent drops events when it is nil.
 	controlSink chan controlEvent
 
-	// mu guards sessionID, mcpCancel, sdkConnected, and the credential
-	// fields.
+	// mu guards the slot registry, the pod-level runtime-generation
+	// state, mcpCancel, sdkConnected, and the credential fields.
 	mu sync.Mutex
 	// sdkConnected records that the §6.1 SDK-warm pre-connect has
 	// completed for a preConnect runtime. It is set by PreConnect at warm
@@ -334,25 +334,34 @@ type Server struct {
 	// nonce-authenticated initialize handshake against the platform MCP
 	// server during the current session. The §5.1 observed-integration
 	// -level probe reads it: a runtime that connected to MCP is at least
-	// Standard. Cleared by releaseSession. F-5.1.11.
+	// Standard. Cleared when a release leaves the pod's shared runtime
+	// process serving no session. F-5.1.11.
 	mcpHandshakeSeen bool
-	// sessionID is the session currently assigned to the pod, empty
-	// when the pod is idle. Per §6.1 a session-mode pod is
-	// one-session-only.
-	sessionID string
-	// mcpCancel stops the platform MCP server started for the current
-	// session. Nil when no platform MCP server is running.
+	// mcpCancel stops the pod's platform MCP server. Nil when no platform
+	// MCP server is running. The server binds the single socket the
+	// controller renders for the whole pod, so it is started at most once
+	// per pod rather than once per session.
 	mcpCancel context.CancelFunc
-	// connectorCancels stops the §9.3 per-connector MCP servers started
-	// for the current session, one cancel per connector socket. Reset to
-	// nil by releaseSession after every server is stopped. F-9.1.2.
+	// mcpArmed records that a claim has taken the once-per-pod MCP start,
+	// decided inside the claim's own critical section so two concurrent
+	// starts cannot both bind the one socket. Cleared by the pod-surface
+	// cancellation. spec: §15.4.3.
+	mcpArmed bool
+	// connectorCancels stops the §9.3 per-connector MCP servers, one
+	// cancel per connector socket. Reset to nil after every server is
+	// stopped. F-9.1.2.
 	connectorCancels []context.CancelFunc
-	// credSessionID is the session the current credential leases were
-	// assigned for, empty when none are assigned.
-	credSessionID string
-	// credLeases is the credential lease set materialized into the
-	// credential file, keyed by provider.
-	credLeases map[string]*adapterv1.CredentialLease
+	// runtimeLive is the set of sessions the adapter has started on the
+	// pod's one shared runtime process and not yet finished closing.
+	// spec: §15.4.3.
+	runtimeLive map[string]struct{}
+	// runtimeCohort counts the sessions handed to the current generation
+	// of that process, meaning those started since runtimeLive was last
+	// empty. soleSession reports a session only while it is one.
+	runtimeCohort int
+	// cohortSession is the identifier of the current generation's first
+	// session.
+	cohortSession string
 	// expiryTimers holds the §4.9 direct-mode lease-expiry
 	// timers, keyed by provider. Each fires at its lease's expiresAt to
 	// delete the provider's credential-file entry and report
@@ -391,10 +400,11 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 	resp := &adapterv1.NegotiateVersionResponse{
 		Capabilities:   s.advertisedCapabilities(),
 		AdapterVersion: s.Version,
-		// spec: §7.3 — surface the absolute cwd path the adapter
-		// mounts the workspace into so the gateway can persist it for the
-		// "same absolute cwd path" assertion on Resume. F-7.3.15.
-		WorkspaceRoot: s.WorkspaceRoot,
+		// spec: §6.4, §7.3 — surface the base every session's per-slot
+		// tree nests under, so the gateway derives a session's cwd as
+		// <base>/slots/{sessionId}/current and persists it for the "same
+		// absolute cwd path" assertion on Resume. F-7.3.15.
+		WorkspaceBase: s.WorkspaceBase,
 	}
 	selected := highestCommonVersion(req.GetAcceptedProtocolVersions(), s.ProtocolVersions)
 	if selected == "" {

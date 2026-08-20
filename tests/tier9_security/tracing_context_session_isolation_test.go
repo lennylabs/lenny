@@ -234,39 +234,36 @@ func tracingIsolationPod(t *testing.T) (*adapter.Server, *tracingIsolationRuntim
 }
 
 // startTracingSlot claims a §6.4 slot on the pod for sessionID.
-func startTracingSlot(t *testing.T, s *adapter.Server, sessionID, slotID string) {
+func startTracingSlot(t *testing.T, s *adapter.Server, sessionID string) {
 	t.Helper()
 	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	}); err != nil {
-		t.Fatalf("StartSession(%s on slot %s): %v", sessionID, slotID, err)
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
 	}
 }
 
-// attachTracingStream binds an Attach stream to (sessionID, slotID). An
-// empty slotID binds the pod-global base path.
-func attachTracingStream(t *testing.T, client adapterv1.AdapterClient, sessionID, slotID string) adapterv1.Adapter_AttachClient {
+// attachTracingStream binds an Attach stream to sessionID, which is the
+// stream's whole address.
+func attachTracingStream(t *testing.T, client adapterv1.AdapterClient, sessionID string) adapterv1.Adapter_AttachClient {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	stream, err := client.Attach(ctx)
 	if err != nil {
-		t.Fatalf("Attach(%s/%s): %v", sessionID, slotID, err)
+		t.Fatalf("Attach(%s): %v", sessionID, err)
 	}
-	req := &adapterv1.AttachRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
-	if slotID != "" {
-		req.SlotId = &adapterv1.SlotId{Value: slotID}
-	}
-	if err := stream.Send(req); err != nil {
-		t.Fatalf("bind Attach(%s/%s): %v", sessionID, slotID, err)
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}); err != nil {
+		t.Fatalf("bind Attach(%s): %v", sessionID, err)
 	}
 	return stream
 }
 
 // tracingContextFrame builds a set_tracing_context frame carrying one
-// identifier, tagged with slotID when slotID is non-empty.
+// identifier, addressed to slotID when slotID is non-empty.
 func tracingContextFrame(slotID, runID string) []byte {
 	if slotID == "" {
 		return []byte(`{"type":"set_tracing_context","context":{"langsmith_run_id":"` + runID + `"}}`)
@@ -319,22 +316,22 @@ func awaitTracingStatus(t *testing.T, stream adapterv1.Adapter_AttachClient) {
 // rejects every later registration on itself and on its delegated children.
 func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T) {
 	s, rt, gw, client := tracingIsolationPod(t)
-	startTracingSlot(t, s, "sess-slot-a", "slot-a")
-	startTracingSlot(t, s, "sess-slot-b", "slot-b")
+	startTracingSlot(t, s, "sess-slot-a")
+	startTracingSlot(t, s, "sess-slot-b")
 	inheritedA := map[string]string{"traceparent": "00-aaaa-aaaa-01"}
 	inheritedB := map[string]string{"traceparent": "00-bbbb-bbbb-01"}
 	gw.seed("sess-slot-a", map[string]string{"traceparent": "00-aaaa-aaaa-01"})
 	gw.seed("sess-slot-b", map[string]string{"traceparent": "00-bbbb-bbbb-01"})
 
-	streamA := attachTracingStream(t, client, "sess-slot-a", "slot-a")
-	streamB := attachTracingStream(t, client, "sess-slot-b", "slot-b")
+	streamA := attachTracingStream(t, client, "sess-slot-a")
+	streamB := attachTracingStream(t, client, "sess-slot-b")
 	rt.waitForSubscribers(t, 2)
 
 	// The runtime writes a frame carrying no slotId. It reaches both slots'
 	// streams and addresses neither.
 	rt.emit(tracingContextFrame("", "run_untagged"))
-	rt.emit(tracingStatusFrame("slot-a"))
-	rt.emit(tracingStatusFrame("slot-b"))
+	rt.emit(tracingStatusFrame("sess-slot-a"))
+	rt.emit(tracingStatusFrame("sess-slot-b"))
 	awaitTracingStatus(t, streamA)
 	awaitTracingStatus(t, streamB)
 
@@ -344,9 +341,9 @@ func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T
 	// A correctly addressed frame still registers, and only on the session
 	// that owns the slot it names, so the isolation asserted above is the
 	// addressing rule rather than a broken registration path.
-	rt.emit(tracingContextFrame("slot-a", "run_a"))
-	rt.emit(tracingStatusFrame("slot-a"))
-	rt.emit(tracingStatusFrame("slot-b"))
+	rt.emit(tracingContextFrame("sess-slot-a", "run_a"))
+	rt.emit(tracingStatusFrame("sess-slot-a"))
+	rt.emit(tracingStatusFrame("sess-slot-b"))
 	awaitTracingStatus(t, streamA)
 	awaitTracingStatus(t, streamB)
 
@@ -354,47 +351,4 @@ func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T
 		"traceparent": "00-aaaa-aaaa-01", "langsmith_run_id": "run_a",
 	})
 	requireTracingContext(t, gw, "sess-slot-b", inheritedB)
-}
-
-// spec: 28.5.3 (set_tracing_context addressing), 8.3 (tracing context,
-// per-session scope), 13.1 (concurrent-slot isolation boundaries)
-//
-// diagnosis: a failure means one runtime wrote tracing identifiers onto a
-// sibling session, here the pod-global session of a pod that also holds an
-// occupied slot. The adapter imposes no guard against that coexistence, and
-// an untagged frame from the slot's runtime reaches the slotless stream and
-// satisfies address equality, so only the empty-registry term keeps it off
-// the pod-global session. The write is permanent: pkg/delegation/tracing
-// merges without overwriting and the tree has no delete path, so the
-// entries stay on the pod-global session and count against the 32-entry
-// bound, and a session driven to that bound rejects every later
-// registration on itself and on its delegated children.
-func TestUntaggedTracingFrameWritesNoPodGlobalSessionBesideASlot_spec_28_5_3(t *testing.T) {
-	s, rt, gw, client := tracingIsolationPod(t)
-	// The pod holds an occupied slot and a pod-global session at once: the
-	// slot is claimed through a slot-qualified StartSession and the
-	// pod-global session through a slotless one, which the adapter's
-	// separate registries permit.
-	startTracingSlot(t, s, "sess-slot-a", "slot-a")
-	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-pod"},
-		Runtime:   "echo",
-	}); err != nil {
-		t.Fatalf("StartSession(pod-global): %v", err)
-	}
-	inherited := map[string]string{"traceparent": "00-cccc-cccc-01"}
-	gw.seed("sess-pod", map[string]string{"traceparent": "00-cccc-cccc-01"})
-
-	podStream := attachTracingStream(t, client, "sess-pod", "")
-	rt.waitForSubscribers(t, 1)
-
-	// The frame is the sibling slot's runtime output, carrying no slotId.
-	rt.emit(tracingContextFrame("", "run_sibling"))
-	rt.emit(tracingStatusFrame(""))
-	awaitTracingStatus(t, podStream)
-
-	requireTracingContext(t, gw, "sess-pod", inherited)
-	if got := gw.contextOf("sess-slot-a"); len(got) != 0 {
-		t.Fatalf("slot session tracingContext = %v, want no entries", got)
-	}
 }

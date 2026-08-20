@@ -80,7 +80,7 @@ func TestGetObservedIntegrationLevelRPC_spec_5_1(t *testing.T) {
 func TestObservedLevelResetOnReleaseSession_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
-	s.releaseSession()
+	s.ReleaseSlotForTest("")
 	if lvl := s.observedIntegrationLevel(context.Background(), 0); lvl != observedLevelBasic {
 		t.Errorf("after releaseSession level = %q, want basic", lvl)
 	}

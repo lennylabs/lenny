@@ -98,7 +98,7 @@ func podBindServerWithLease(t *testing.T, id, replicaID string, leases leasestor
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(

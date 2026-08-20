@@ -256,7 +256,7 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 		AgentInterface:     manifestAgentInterface(in.agentInterface),
 		MinPlatformVersion: in.minPlatformVersion,
 		Observability:      s.manifestObservability(),
-		LLM:                s.manifestLLM(),
+		LLM:                s.manifestLLM(in.sessionID),
 		AdapterLocalTools:  manifestLocalTools(),
 	}
 	if s.MCPSocket != "" {
@@ -303,14 +303,18 @@ func (s *Server) manifestObservability() *ManifestObservability {
 	return o
 }
 
-// manifestLLM derives the §4.7 llm manifest object from the session's
-// assigned §4.9 credential lease. It returns nil (a JSON null field) when
-// no lease is assigned. When more than one provider lease is present the
-// lease is selected deterministically by provider name; the full
-// per-provider set is always in /run/lenny/credentials.json.
-func (s *Server) manifestLLM() *ManifestLLM {
+// manifestLLM derives the §4.7 llm manifest object from the named
+// session's own §6.1 lease set, which is where every assignment lands. It
+// returns nil (a JSON null field) when no lease is assigned. When more
+// than one provider lease is present the lease is selected
+// deterministically by provider name; the full per-provider set is always
+// in that session's own credential file. spec: §6.1; §4.7.
+func (s *Server) manifestLLM(sessionID string) *ManifestLLM {
 	s.mu.Lock()
-	leases := s.credLeases
+	var leases map[string]*adapterv1.CredentialLease
+	if st, ok := s.slotStateLocked(sessionID); ok {
+		leases = st.creds
+	}
 	s.mu.Unlock()
 	if len(leases) == 0 {
 		return nil

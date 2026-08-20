@@ -79,18 +79,27 @@ func (r *recordingTransport) allBodies() []byte {
 func checkpointServer(t *testing.T, transport adapter.CheckpointTransport, files map[string]string, limit int64) adapterv1.AdapterClient {
 	t.Helper()
 	s := adapter.New("checkpoint-stream")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
 	s.WorkspaceSizeLimitBytes = limit
+	s.Runtime = &fakeRuntime{}
+	if _, err := s.StartSession(context.Background(), startReq(streamSession)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", streamSession, "current")
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(current, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("seed workspace file: %v", err)
 		}
 	}
 	client, _ := adapterClient(t, s)
 	return client
 }
+
+// streamSession is the session the Checkpoint stream cases address. Every
+// session is bound to a slot on every pod, so the opening frame names it
+// and the adapter resolves that session's own tree from it. spec: §5.2.
+const streamSession = "sess-stream"
 
 // driveCheckpoint runs the gateway side of the Checkpoint stream: it sends
 // the Start, answers each ChunkReady with a Grant carrying the signed
@@ -223,18 +232,13 @@ func answerQuiesceAndReadComplete(fr *fakeLifecycleRuntime) <-chan lcFrame {
 	return out
 }
 
-// slotCheckpointServer extends a concurrentServer with the workspace root,
-// staging dir, and checkpoint transport the Checkpoint handler requires,
-// which concurrentServer omits. The handler guards on WorkspaceRoot == ""
-// before slot resolution runs, so a per-slot checkpoint test must set these
-// three fields or every case would reject at the config guard before the
-// slot gate. It returns the server so callers assign slots via StartSession
-// before serving.
+// slotCheckpointServer extends a concurrentServer with the checkpoint
+// transport the Checkpoint handler requires, which concurrentServer omits.
+// It returns the server so callers bind sessions via StartSession before
+// serving.
 func slotCheckpointServer(t *testing.T, transport adapter.CheckpointTransport) *adapter.Server {
 	t.Helper()
 	s, _ := concurrentServer(t)
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
 	s.CheckpointTransport = transport
 	return s
 }
@@ -260,14 +264,14 @@ func TestCheckpointStreamCapturesSlotSubtree_spec_5_2(t *testing.T) {
 	transport := &recordingTransport{}
 	s := slotCheckpointServer(t, transport)
 	ctx := context.Background()
-	if _, err := s.StartSession(ctx, slotStartReq("sess-a", "slot-a")); err != nil {
+	if _, err := s.StartSession(ctx, slotStartReq("sess-a")); err != nil {
 		t.Fatalf("StartSession(slot-a): %v", err)
 	}
-	seedFile(t, filepath.Join(s.WorkspaceBase, "slots", "slot-a", "current", "notes.txt"), "slot-a workspace state")
-	seedFile(t, filepath.Join(s.SessionsRoot, "slot-a", "history.jsonl"), "slot-a conversation")
-	// A pod-global decoy under the base WorkspaceRoot must never be captured
-	// by a per-slot checkpoint.
-	seedFile(t, filepath.Join(s.WorkspaceRoot, "decoy.txt"), "pod-global decoy")
+	seedFile(t, filepath.Join(s.WorkspaceBase, "slots", "sess-a", "current", "notes.txt"), "slot-a workspace state")
+	seedFile(t, filepath.Join(s.SessionsRoot, "sess-a", "history.jsonl"), "slot-a conversation")
+	// A decoy at the workspace base, outside every session's own tree,
+	// must never be captured by a session's checkpoint.
+	seedFile(t, filepath.Join(s.WorkspaceBase, "decoy.txt"), "out-of-tree decoy")
 
 	client, _ := adapterClient(t, s)
 	stream, err := client.Checkpoint(ctx)
@@ -276,10 +280,10 @@ func TestCheckpointStreamCapturesSlotSubtree_spec_5_2(t *testing.T) {
 	}
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
-			CheckpointId:   "gw-ckpt-slot-a",
+			CheckpointId:   "gw-ckpt-sess-a",
+			SessionId:      &adapterv1.SessionId{Value: "sess-a"},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
-			SlotId:         &adapterv1.SlotId{Value: "slot-a"},
 		}},
 	}); err != nil {
 		t.Fatalf("send start: %v", err)
@@ -333,7 +337,6 @@ func TestCheckpointStreamRejectsUnassignedSlot_spec_5_2(t *testing.T) {
 	// with an empty sessionID.
 	if _, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-idle"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-idle"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: 1,
 			Sources: []*adapterv1.WorkspaceSource{
@@ -345,7 +348,7 @@ func TestCheckpointStreamRejectsUnassignedSlot_spec_5_2(t *testing.T) {
 	}
 
 	client, _ := adapterClient(t, s)
-	for _, slot := range []string{"slot-unknown", "slot-idle"} {
+	for _, slot := range []string{"sess-unknown", "sess-idle"} {
 		stream, err := client.Checkpoint(ctx)
 		if err != nil {
 			t.Fatalf("open Checkpoint stream for %s: %v", slot, err)
@@ -353,9 +356,9 @@ func TestCheckpointStreamRejectsUnassignedSlot_spec_5_2(t *testing.T) {
 		if err := stream.Send(&adapterv1.CheckpointRequest{
 			Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 				CheckpointId:   "gw-ckpt-" + slot,
+				SessionId:      &adapterv1.SessionId{Value: slot},
 				Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 				ChunkSizeBytes: 1 << 20,
-				SlotId:         &adapterv1.SlotId{Value: slot},
 			}},
 		}); err != nil {
 			t.Fatalf("send start for %s: %v", slot, err)
@@ -413,9 +416,9 @@ func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
 	transport := &recordingTransport{}
 	s := slotCheckpointServer(t, transport)
 	ctx := context.Background()
-	slots := []string{"slot-1", "slot-2", "slot-3"}
+	slots := []string{"sess-1", "sess-2", "sess-3"}
 	for _, slot := range slots {
-		if _, err := s.StartSession(ctx, slotStartReq("sess-"+slot, slot)); err != nil {
+		if _, err := s.StartSession(ctx, slotStartReq(slot)); err != nil {
 			t.Fatalf("StartSession(%s): %v", slot, err)
 		}
 		seedFile(t, filepath.Join(s.WorkspaceBase, "slots", slot, "current", slot+".txt"), "content-"+slot)
@@ -442,9 +445,9 @@ func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
 			if err := stream.Send(&adapterv1.CheckpointRequest{
 				Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 					CheckpointId:   "gw-ckpt-" + slot,
+					SessionId:      &adapterv1.SessionId{Value: slot},
 					Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 					ChunkSizeBytes: 1 << 20,
-					SlotId:         &adapterv1.SlotId{Value: slot},
 				}},
 			}); err != nil {
 				results[i] = result{slot: slot, err: err}
@@ -514,10 +517,14 @@ func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
 func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.T) {
 	transport := &recordingTransport{rejectStatus: 403, rejectCode: "SignatureDoesNotMatch"}
 	s := adapter.New("ckpt-full-fail")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "notes.txt"), []byte("state"), 0o644); err != nil {
+	s.Runtime = &fakeRuntime{}
+	if _, err := s.StartSession(context.Background(), startReq(streamSession)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", streamSession, "current")
+	if err := os.WriteFile(filepath.Join(current, "notes.txt"), []byte("state"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	fr := wireLifecycle(t, s)
@@ -531,6 +538,7 @@ func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-full-fail",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -561,10 +569,14 @@ func TestCheckpointStreamFullLevelReportsFailedComplete_spec_4_4_241(t *testing.
 func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 	transport := &recordingTransport{}
 	s := adapter.New("ckpt-full-ok")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "notes.txt"), []byte("state"), 0o644); err != nil {
+	s.Runtime = &fakeRuntime{}
+	if _, err := s.StartSession(context.Background(), startReq(streamSession)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", streamSession, "current")
+	if err := os.WriteFile(filepath.Join(current, "notes.txt"), []byte("state"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	fr := wireLifecycle(t, s)
@@ -578,6 +590,7 @@ func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-full-ok",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -640,6 +653,7 @@ func TestCheckpointStreamProbeBeforeQuiesce_spec_4_4_255(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-oversize",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -669,6 +683,7 @@ func TestCheckpointStreamUploadsChunksAndSummarizes(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-1",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 			ChunkEncoding:  "tar.gz",
@@ -736,6 +751,7 @@ func TestCheckpointStreamRejectsOversizeWorkspace_spec_4_4_255(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-2",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -768,6 +784,7 @@ func TestCheckpointStreamReportsObjectStoreRejection_spec_4_4(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-3",
+			SessionId:      &adapterv1.SessionId{Value: streamSession},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},

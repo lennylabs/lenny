@@ -633,9 +633,10 @@ func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T)
 		t.Error("a recycling last-slot drain must keep the per-pod claim (patched recycling), not delete it")
 	}
 
-	// Two Shutdown RPCs reach the adapter: the per-slot teardown (slot_id set,
-	// recycle nil) and the whole-pod recycle (recycle set, no slot_id). Find the
-	// recycle one and assert its disposition.
+	// Two Shutdown RPCs reach the adapter: the ending session's teardown
+	// (recycle nil) and the whole-pod recycle (recycle set). Both name the
+	// same session; the recycle disposition is what separates them. Find
+	// the recycle one and assert its disposition.
 	reqs := rec.shutdownRequests()
 	var recycleReq *adapterv1.ShutdownRequest
 	for _, r := range reqs {
@@ -646,12 +647,8 @@ func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T)
 	if recycleReq == nil {
 		t.Fatalf("no whole-pod recycle Shutdown reached the adapter; requests = %d, want one carrying a RecycleScrub sub-message", len(reqs))
 	}
-	if recycleReq.GetSlotId().GetValue() != "" {
-		t.Errorf("recycle Shutdown carried slot_id %q, want none (it is a whole-pod scrub, not a per-slot teardown)",
-			recycleReq.GetSlotId().GetValue())
-	}
 	if recycleReq.GetSessionId().GetValue() != "slot-sess" {
-		t.Errorf("recycle Shutdown session_id = %q, want the last-released slot's session (slot-sess) so the adapter's non-empty guard admits it",
+		t.Errorf("recycle Shutdown session_id = %q, want the last-released session (slot-sess) so the adapter's non-empty guard admits it",
 			recycleReq.GetSessionId().GetValue())
 	}
 	rc := recycleReq.GetRecycle()

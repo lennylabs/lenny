@@ -158,13 +158,16 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	go func() { _ = lc.Run(ctx) }()
 
 	base := t.TempDir()
-	credsDir := filepath.Join(base, "run", "lenny")
-	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+	credsRoot := filepath.Join(base, "run", "lenny")
+	if err := os.MkdirAll(credsRoot, 0o755); err != nil {
 		t.Fatalf("make credentials dir: %v", err)
 	}
 	s := adapter.New("guard-conformance")
-	s.CredentialsDir = credsDir
+	s.CredentialsDir = credsRoot
+	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.Lifecycle = lc
+	// Every assignment lands on the session's own §6.1 credential file.
+	credsDir := filepath.Join(credsRoot, "slots", "sess-conformance")
 
 	// A direct-mode lease with a short expiry: without the extension its real
 	// adapter timer fires within the test window and deletes the file entry.

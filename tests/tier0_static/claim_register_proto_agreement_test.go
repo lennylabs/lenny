@@ -35,11 +35,8 @@ import (
 const adapterProtoPath = "schemas/lenny-adapter.proto"
 
 // generationFenceField is the fence field §10.1's handoff protocol carries on a
-// gateway-to-pod request, and slotIDField is the §6.4 per-slot dimension.
-const (
-	generationFenceField = "coordination_generation"
-	slotIDField          = "slot_id"
-)
+// gateway-to-pod request.
+const generationFenceField = "coordination_generation"
 
 // fenceReadersExempt names the request messages whose generation fence a handler
 // already compares, so the fence is not an unread field the register tracks.
@@ -53,10 +50,9 @@ var (
 	// protoField matches a field declaration inside a message body, including
 	// the arms of a oneof.
 	protoField = regexp.MustCompile(`^\s*(?:repeated\s+)?[\w.]+\s+(\w+)\s*=\s*\d+\s*;`)
-	// claimFieldRow matches a row that names one message field, in either of the
-	// two spellings the register uses: `Message.field` and `Message <name> field`.
+	// claimQualifiedField matches a row that names one message field in the
+	// `Message.field` spelling the register uses.
 	claimQualifiedField = regexp.MustCompile(`^(\w+)\.(\w+)`)
-	claimSlotField      = regexp.MustCompile(`^(\w+) slot identifier field$`)
 	// absenceAssertion matches a row that records a capability as unimplemented
 	// by naming a field the message does not carry.
 	absenceAssertion = regexp.MustCompile("no `(\\w+)` on `(\\w+)`")
@@ -151,12 +147,8 @@ func registerProtoDisagreements(registerBody []byte, protoBody string) []string 
 	return findings
 }
 
-// namedField reports the message and field a row's claim names, in either of the
-// two spellings the register uses for a field row.
+// namedField reports the message and field a row's claim names.
 func namedField(claimText string) (string, string, bool) {
-	if m := claimSlotField.FindStringSubmatch(claimText); m != nil {
-		return m[1], slotIDField, true
-	}
 	if m := claimQualifiedField.FindStringSubmatch(claimText); m != nil {
 		return m[1], m[2], true
 	}
@@ -194,7 +186,6 @@ func TestClaimRegisterProtoCheckRefusesADisagreeingRegister(t *testing.T) {
 	const proto = `message InterruptRequest {
   SessionId session_id = 1;
   int64 coordination_generation = 4;
-  SlotId slot_id = 5;
 }
 
 message CheckpointRequest {
@@ -230,21 +221,15 @@ message CheckpointRequest {
 			"which the proto does not declare",
 		},
 		{
-			"slot-identifier row naming a message that carries no slot",
-			register(append(append([]string{}, fenceRows...),
-				row("ReportUsageRequest slot identifier field", adapterProtoPath, ""))...),
-			"ReportUsageRequest.slot_id, which the proto does not declare",
-		},
-		{
 			"row asserting the absence of a declared field in its surface",
 			register(append(append([]string{}, fenceRows...),
-				row("Slot-qualified interrupt", "no `slot_id` on `InterruptRequest`", ""))...),
+				row("Fenced interrupt", "no `coordination_generation` on `InterruptRequest`", ""))...),
 			"which the proto declares",
 		},
 		{
 			"row asserting the absence of a declared field in its note",
 			register(append(append([]string{}, fenceRows...),
-				row("Slot-qualified interrupt", "`pkg/adapter/lifecycle.go:21`", "no `slot_id` on `InterruptRequest`"))...),
+				row("Fenced interrupt", "`pkg/adapter/lifecycle.go:21`", "no `coordination_generation` on `InterruptRequest`"))...),
 			"which the proto declares",
 		},
 		{
@@ -284,7 +269,6 @@ func TestClaimRegisterProtoCheckAcceptsAnAgreeingRegister(t *testing.T) {
 	const proto = `message InterruptRequest {
   SessionId session_id = 1;
   int64 coordination_generation = 4;
-  SlotId slot_id = 5;
 }
 
 message CoordinatorFenceRequest {
@@ -294,8 +278,6 @@ message CoordinatorFenceRequest {
 `
 	body := `{"kind":"claim-register","version":1,"claims":[
       {"claim":"InterruptRequest.coordination_generation generation fence field","status":"UNWIRED","surface":"schemas/lenny-adapter.proto","deferral_id":"R16"},
-      {"claim":"InterruptRequest slot identifier field","status":"UNWIRED","surface":"schemas/lenny-adapter.proto","deferral_id":"R22"},
-      {"claim":"Slot-qualified interrupt","status":"ABSENT","surface":"` + "`pkg/adapter/lifecycle.go:21`" + ` ignores the request's slot identifier","deferral_id":"R22"},
       {"claim":"` + "`CoordinatorFence`" + `","status":"WIRED","surface":"pkg/adapter/coordination.go:85"}]}`
 	if got := registerProtoDisagreements([]byte(body), proto); len(got) != 0 {
 		t.Errorf("the check refused an agreeing register: %q", got)

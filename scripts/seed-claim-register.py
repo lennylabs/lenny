@@ -142,14 +142,17 @@ SURFACE_OVERRIDES = {
         "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, "
                 "so the wire field is present and the per-slot restore is not implemented",
     },
-    "Slot-qualified interrupt, deadline, usage, and barrier": {
-        "surface": "`pkg/adapter/lifecycle.go:21`, `pkg/adapter/lifecycle.go:72`, "
-                   "`pkg/adapter/usage.go:259`, and `pkg/adapter/coordination.go:211` "
-                   "each ignore the request's slot identifier",
-        "note": "the four request messages carry a slot identifier and every handler "
-                "dispatches per pod, so the wire field is present and the "
-                "slot-qualified dispatch is not implemented",
-    },
+}
+
+# Mechanisms the frozen reference table still names whose capability the
+# platform removed rather than deferred. A retired mechanism carries no claim
+# to verify, so the seeding loop drops its row instead of re-emitting it from
+# the table. Proposal 0073 removed the duplicate slot address from the gRPC
+# leg, which is what retired the entry below: every session is bound to a slot
+# on every pod and the request names it by the session identifier, so there is
+# no slot-qualified dispatch left to defer.
+RETIRED = {
+    "Slot-qualified interrupt, deadline, usage, and barrier",
 }
 
 # Rows the proposal writes explicitly, because no status table carries them.
@@ -193,10 +196,6 @@ GENERATION_FENCE = [
     "SendMessageRequest", "ShutdownRequest", "CheckpointRequest",
     "RotateCredentialsRequest", "ExtendCredentialLeaseRequest",
     "RevokeCredentialsRequest", "ExportPathsRequest",
-]
-SLOT_BEARING = [
-    "InterruptRequest", "SignalDeadlineRequest", "ReportUsageRequest",
-    "CheckpointBarrierRequest",
 ]
 
 
@@ -257,7 +256,7 @@ def main():
     args = ap.parse_args()
 
     claims, fallbacks, dropped = [], [], []
-    overridden = set()
+    overridden, retired = set(), set()
     for cells in rows_of_section(REFERENCE, SECTION):
         if len(cells) < 3:
             continue
@@ -287,6 +286,9 @@ def main():
                 row["deferral_id"] = step
                 if fell_back:
                     fallbacks.append(claim)
+            if row["claim"] in RETIRED:
+                retired.add(row["claim"])
+                continue
             override = SURFACE_OVERRIDES.get(row["claim"])
             if override:
                 row["surface"] = override["surface"]
@@ -300,6 +302,13 @@ def main():
         # and leave the register stating a surface the tree contradicts.
         raise SystemExit("surface override matched no table row: " + ", ".join(missed))
 
+    unmatched = sorted(RETIRED - retired)
+    if unmatched:
+        # A retirement whose claim the table no longer names has nothing left to
+        # suppress, so the entry is stale and the run fails rather than passing
+        # silently.
+        raise SystemExit("retired claim matched no table row: " + ", ".join(unmatched))
+
     claims.extend(EXPLICIT)
     for msg in GENERATION_FENCE:
         claims.append({
@@ -311,24 +320,6 @@ def main():
             "note": "the field is carried on the request and no production reader "
                     "compares it until the generation fence lands",
         })
-    for msg in SLOT_BEARING:
-        claims.append({
-            "claim": f"{msg} slot identifier field",
-            "status": "UNWIRED",
-            "spec_anchor": "#286-exclusivity-and-concurrency-model",
-            "deferral_id": "R22",
-            "surface": "schemas/lenny-adapter.proto",
-            "note": "the slot dimension is carried and unread until concurrent-slot "
-                    "resume and restore lands",
-        })
-    claims.append({
-        "claim": "ResumeRequest.slot_id",
-        "status": "UNWIRED",
-        "spec_anchor": "#286-exclusivity-and-concurrency-model",
-        "deferral_id": "R22",
-        "surface": "schemas/lenny-adapter.proto",
-        "note": "the carved resume path reads the slot identifier when it lands",
-    })
 
     seen = {}
     for c in claims:

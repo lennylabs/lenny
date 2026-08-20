@@ -325,17 +325,16 @@ func newRecycleAdapter(t *testing.T, ops *recycleScrubOps, reporter *recycleScru
 	t.Helper()
 	srv := adapter.New("adapter-test")
 	base := t.TempDir()
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
-	// The §6.4 concurrent-slot roots so the concurrent BindSlot path can
-	// materialize a per-slot workspace; the session-mode recycle tests never
-	// take the slot path, so setting them is inert for them.
+	// The §6.4 per-slot roots, which are the only layout: every session's
+	// tree nests under the workspace base.
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
-	// The whole-pod scrub runs its cleanup commands with cwd = WorkspaceRoot, so
-	// the root must exist for the argv-mode cleanup exec to chdir into it.
-	for _, d := range []string{srv.WorkspaceRoot, srv.CredentialsDir} {
+	// The whole-pod scrub runs its cleanup commands with cwd = the workspace
+	// base, so the base must exist for the argv-mode cleanup exec to chdir
+	// into it.
+	for _, d := range []string{srv.WorkspaceBase, srv.CredentialsDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir adapter dir %s: %v", d, err)
 		}
@@ -665,7 +664,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 	// never wired. A reporter IS wired, so a PodScrubFailed would reach the
 	// gateway if the driver emitted one.
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = recycleFakeRuntime{}
 	srv.ScrubOps = nil // never wired: the wiring gap the fix guards against
 	srv.PodScrubReporter = reporter
@@ -1089,7 +1088,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 		if _, err := counter.Release(ctx, podName); err != nil {
 			t.Fatalf("release live slot %d: %v", i, err)
 		}
-		if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+		if err := reporter.RecordSessionScrub(ctx, podName, "sess", false); err != nil {
 			t.Fatalf("RecordSessionScrub release %d: %v", i, err)
 		}
 
@@ -1128,7 +1127,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// drain-request idempotently but does NOT re-increment the retirement
 	// counter: the exact-equality gate holds it to one per retirement while the
 	// stamp stays retry-safe.
-	if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+	if err := reporter.RecordSessionScrub(ctx, podName, "sess", false); err != nil {
 		t.Fatalf("RecordSessionScrub release 4: %v", err)
 	}
 	if !perReleaseDrainRequested(t, c, podName) {

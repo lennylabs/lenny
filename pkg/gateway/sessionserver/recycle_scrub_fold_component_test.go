@@ -91,7 +91,7 @@ func (n *noopRecycleBoundary) OnRecycling(podID string) { n.armed = append(n.arm
 func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// A recycling microvm pool carrying the §5.2 deployer cleanup commands and

@@ -214,7 +214,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			"ConfigureWorkspace applies only to SDK-warm pods that declare capabilities.preConnect: true; this is a pod-warm adapter")
 	}
 
-	fresh, err := s.claimSessionForConfigure(sessionID)
+	fresh, startMCP, err := s.claimSessionSlot(sessionID, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -233,12 +233,12 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			connectors:        connectors,
 		})
 		if err != nil {
-			s.releaseSession()
+			s.releaseSessionSlot(sessionID)
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 		}
-		if s.RuntimeKind != RuntimeKindMCP {
+		if s.RuntimeKind != RuntimeKindMCP && startMCP {
 			if err := s.startPlatformMCP(nonce); err != nil {
-				s.releaseSession()
+				s.releaseSessionSlot(sessionID)
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
 			// §9.3: open the per-connector MCP servers. F-9.1.2.
@@ -248,9 +248,17 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 
 	if err := sw.ConfigureWorkspace(ctx, sessionID, cwd); err != nil {
 		if fresh {
-			s.releaseSession()
+			s.releaseSessionSlot(sessionID)
 		}
 		return nil, status.Errorf(codes.Internal, "configure SDK-warm workspace: %v", err)
+	}
+	// The §6.1 SDK-warm start gives the session to the pod's shared
+	// runtime process through a call that is not spelled Runtime.Start:
+	// SDKWarmInProcessRuntime.ConfigureWorkspace is r.Start. The write is
+	// guarded on the freshness arm because the RPC is idempotent under the
+	// §4.7 table and an unguarded site would count one session twice.
+	if fresh {
+		s.noteRuntimeStarted(sessionID)
 	}
 	return &adapterv1.ConfigureWorkspaceResponse{}, nil
 }
@@ -278,25 +286,41 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 	s.mu.Lock()
 	s.sdkConnected = false
 	s.mu.Unlock()
-	s.releaseSession()
+	// The demotion takes the session off the pod's shared runtime process
+	// (DemoteSDK is r.InProcessRuntime.Close), so the generation state
+	// moves with it before the release evaluates the pod-surface gate.
+	// The request carries no session identifier, so the release names the
+	// registry's single entry, which is well defined on this pod class:
+	// §6.4 admits preConnect only at maxConcurrentSessions: 1. A demote on
+	// an already-empty registry releases nothing.
+	if sessionID := s.anyRegisteredSession(); sessionID != "" {
+		s.noteRuntimeClosed(sessionID)
+		s.releaseSessionSlot(sessionID)
+	} else {
+		s.cancelPodMCPIfRuntimeIdle()
+	}
 	return &adapterv1.DemoteSDKResponse{Demoted: true}, nil
 }
 
-// claimSessionForConfigure claims the pod for sessionID on the SDK-warm
-// path. It reports fresh=true on the first claim and fresh=false on an
-// idempotent repeat for the same session (§4.7 ConfigureWorkspace
-// idempotency). A different session on an already-claimed pod is
-// Unavailable, matching StartSession.
-func (s *Server) claimSessionForConfigure(sessionID string) (fresh bool, err error) {
+// anyRegisteredSession returns the identifier of the registry's single
+// entry, empty when the registry holds none. It serves the SDK-warm
+// DemoteSDK, whose request carries no session identifier and whose pod
+// class holds at most one entry. spec: §6.4.
+func (s *Server) anyRegisteredSession() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sessionID == sessionID {
-		return false, nil
+	for id := range s.slots {
+		return id
 	}
-	if s.sessionID != "" {
-		return false, status.Errorf(codes.Unavailable,
-			"pod is not idle: session %s is already assigned", s.sessionID)
-	}
-	s.sessionID = sessionID
-	return true, nil
+	return ""
+}
+
+// isSDKWarm reports whether this adapter drives a §6.1 pre-connected
+// SDK-warm runtime. The merged claim gates its different-session refusal
+// on it: that pod class holds one runtime process with one working
+// directory, so a second session there would rewrite the §15.4.3 nonce
+// the incumbent already authenticated with.
+func (s *Server) isSDKWarm() bool {
+	_, ok := s.sdkWarmRuntime()
+	return ok
 }

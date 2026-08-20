@@ -44,7 +44,7 @@ func endedSpanNamed(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnl
 // materialization. F-16.3.6.
 func TestFinalizeWorkspaceEmitsSpan_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("mkdir", "docs", "", "755"),
@@ -66,7 +66,7 @@ func TestFinalizeWorkspaceEmitsSpan_spec_16_3(t *testing.T) {
 // the error on the span (the §16.3 PERMANENT category).
 func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
@@ -89,7 +89,7 @@ func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 // `session.run_setup` span fires on a clean setup run. F-16.3.6.
 func TestRunSetupEmitsSpan_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	if _, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "true")); err != nil {
 		t.Fatalf("RunSetup: %v", err)
@@ -110,7 +110,7 @@ func TestRunSetupEmitsSpan_spec_16_3(t *testing.T) {
 // is in the runtime's own setup command).
 func TestRunSetupSpanRecordsCommandFailure_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	// `false` exits non-zero, which surfaces as a hard setup failure.
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "false"))

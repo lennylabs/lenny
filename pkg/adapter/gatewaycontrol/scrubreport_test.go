@@ -13,14 +13,14 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// TestReportSessionScrubReleased: a released per-slot cleanup is reported
-// with the pod, session, slot, and a RELEASED outcome on the wire.
+// TestReportSessionScrubReleased: a released per-session cleanup is
+// reported with the pod, the session, and a RELEASED outcome on the wire.
 // spec: 4.7 (Adapter → Gateway RPCs), 5.2 (scrub model)
 func TestReportSessionScrubReleased_spec_5_2(t *testing.T) {
 	stub := &stubGatewayControl{}
 	client := dialStub(t, stub)
 
-	err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", "slot-3", gatewaycontrol.SessionScrubReleased)
+	err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", gatewaycontrol.SessionScrubReleased)
 	if err != nil {
 		t.Fatalf("ReportSessionScrub: %v", err)
 	}
@@ -31,28 +31,25 @@ func TestReportSessionScrubReleased_spec_5_2(t *testing.T) {
 	if got.GetSessionId().GetValue() != "sess-1" {
 		t.Errorf("session id = %q, want sess-1", got.GetSessionId().GetValue())
 	}
-	if got.GetSlotId().GetValue() != "slot-3" {
-		t.Errorf("slot id = %q, want slot-3", got.GetSlotId().GetValue())
-	}
 	if got.GetOutcome() != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_RELEASED {
 		t.Errorf("outcome = %v, want RELEASED", got.GetOutcome())
 	}
 }
 
-// TestReportSessionScrubLeakedOmitsSlotWhenEmpty: a leaked cleanup on a
-// single-session pod (maxConcurrentSessions: 1) carries no slot id, so the
-// optional SlotId sub-message is absent on the wire.
+// TestReportSessionScrubLeaked: a leaked cleanup carries the session it
+// names and the LEAKED outcome. The report is addressed by the session
+// alone, on a pod of either concurrency.
 // spec: 5.2 (leaked slot semantics)
-func TestReportSessionScrubLeakedOmitsSlotWhenEmpty_spec_5_2(t *testing.T) {
+func TestReportSessionScrubLeaked_spec_5_2(t *testing.T) {
 	stub := &stubGatewayControl{}
 	client := dialStub(t, stub)
 
-	if err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", "", gatewaycontrol.SessionScrubLeaked); err != nil {
+	if err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", gatewaycontrol.SessionScrubLeaked); err != nil {
 		t.Fatalf("ReportSessionScrub: %v", err)
 	}
 	got := stub.gotSessionScrubReq
-	if got.GetSlotId() != nil {
-		t.Errorf("slot id = %+v, want nil for a single-session pod", got.GetSlotId())
+	if got.GetSessionId().GetValue() != "sess-1" {
+		t.Errorf("session id = %q, want sess-1", got.GetSessionId().GetValue())
 	}
 	if got.GetOutcome() != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED {
 		t.Errorf("outcome = %v, want LEAKED", got.GetOutcome())
@@ -66,7 +63,7 @@ func TestReportSessionScrubTransportError_spec_4_7(t *testing.T) {
 	stub := &stubGatewayControl{sessionScrubErr: status.Error(codes.Unavailable, "gateway down")}
 	client := dialStub(t, stub)
 
-	err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", "", gatewaycontrol.SessionScrubReleased)
+	err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", gatewaycontrol.SessionScrubReleased)
 	if err == nil {
 		t.Fatal("ReportSessionScrub should return the gateway error")
 	}
@@ -142,7 +139,7 @@ func TestScrubOutcomeUnspecifiedMapsToProtoZero_spec_5_2(t *testing.T) {
 	stub := &stubGatewayControl{}
 	client := dialStub(t, stub)
 
-	if err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", "", gatewaycontrol.SessionScrubUnspecified); err != nil {
+	if err := client.ReportSessionScrub(context.Background(), "pod-7", "sess-1", gatewaycontrol.SessionScrubUnspecified); err != nil {
 		t.Fatalf("ReportSessionScrub: %v", err)
 	}
 	if got := stub.gotSessionScrubReq.GetOutcome(); got != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_UNSPECIFIED {

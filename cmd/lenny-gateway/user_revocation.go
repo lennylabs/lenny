@@ -126,7 +126,7 @@ func (p *podTerminateFanOut) terminateLocal(ctx context.Context, req podterminat
 			continue
 		}
 		callCtx, cancel := context.WithTimeout(ctx, userTerminateRPCTimeout)
-		_, err := bind.Adapter.Terminate(callCtx, bind.SessionID, reason, userTerminateDeadline)
+		_, err := bind.Adapter.Shutdown(callCtx, bind.SessionID, reason, userTerminateDeadline)
 		cancel()
 		if err != nil {
 			log.Printf("lenny-gateway: §11.4 full_revoke: terminate pod for session %s (user %s/%s) failed: %v",

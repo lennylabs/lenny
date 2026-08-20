@@ -164,8 +164,7 @@ func deliveryGateCluster(t *testing.T) client.Client {
 // different control than the credential-delivery gate.
 func TestCredentialDeliveryGateFailsClosedAtFinalize(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = noopRuntime{}
 

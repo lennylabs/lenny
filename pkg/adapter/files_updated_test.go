@@ -51,9 +51,15 @@ func TestSignalFilesUpdatedNoRuntimeIsBenign_spec_7_4_433(t *testing.T) {
 // after promotion. F-7.4.6.
 func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
-	staging := t.TempDir()
-	// The running agent's existing workspace content.
-	if err := os.WriteFile(filepath.Join(root, "work.txt"), []byte("agent work"), 0o644); err != nil {
+	// The running agent's existing workspace content, in its own slot tree.
+	current := filepath.Join(root, "slots", "sess-mid", "current")
+	staging := filepath.Join(root, "slots", "sess-mid", "staging")
+	for _, d := range []string{current, staging} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(current, "work.txt"), []byte("agent work"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// A staged upload the gateway streamed via PrepareWorkspace.
@@ -67,7 +73,7 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
-	srv := &Server{WorkspaceRoot: root, StagingDir: staging, Lifecycle: lc}
+	srv := &Server{WorkspaceBase: root, Lifecycle: lc}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:  &adapterv1.SessionId{Value: "sess-mid"},
@@ -91,10 +97,10 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	}
 
 	// Overlay landed and the agent's pre-existing file survived.
-	if b, _ := os.ReadFile(filepath.Join(root, "uploads", "added.bin")); string(b) != "new content" {
+	if b, _ := os.ReadFile(filepath.Join(current, "uploads", "added.bin")); string(b) != "new content" {
 		t.Errorf("overlaid file = %q, want %q", b, "new content")
 	}
-	if b, _ := os.ReadFile(filepath.Join(root, "work.txt")); string(b) != "agent work" {
+	if b, _ := os.ReadFile(filepath.Join(current, "work.txt")); string(b) != "agent work" {
 		t.Errorf("mid-session overlay clobbered the agent's existing file: %q", b)
 	}
 	// files_updated was signaled.
@@ -113,23 +119,28 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 // and stays silent on the CH-RUNTIMEOPS. F-7.4.6.
 func TestFinalizeWorkspacePreStartDoesNotSignal_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
-	// A leftover file the whole-tree promotion is expected to discard.
-	if err := os.WriteFile(filepath.Join(root, "stale.txt"), []byte("stale"), 0o644); err != nil {
+	// A leftover file in the session's own tree the whole-tree promotion
+	// is expected to discard.
+	current := filepath.Join(root, "slots", "sess-pre", "current")
+	if err := os.MkdirAll(current, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "stale.txt"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
-	srv := &Server{WorkspaceRoot: root, Lifecycle: lc}
+	srv := &Server{WorkspaceBase: root, Lifecycle: lc}
 
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-pre",
 		wsSource("inlineFile", "fresh.txt", "fresh", "644"))); err != nil {
 		t.Fatalf("FinalizeWorkspace(pre-start): %v", err)
 	}
 	// Whole-tree replacement: the fresh file is present, the stale one gone.
-	if _, err := os.Stat(filepath.Join(root, "fresh.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(current, "fresh.txt")); err != nil {
 		t.Errorf("pre-start finalize did not materialize the plan: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "stale.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(current, "stale.txt")); !os.IsNotExist(err) {
 		t.Errorf("pre-start finalize did not replace the prior tree")
 	}
 	// No files_updated frame is emitted on the pre-start path.

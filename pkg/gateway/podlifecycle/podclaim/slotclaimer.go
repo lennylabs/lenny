@@ -725,18 +725,19 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // (the ceil-threshold drain, the per-release maxSessionsPerPod drain, or the
 // WarmPoolController uptime drain) rather than at this release.
 //
-// recycled reports whether this release crossed the occupancy-zero edge of a
+// recycled reports that this release crossed the occupancy-zero edge of a
 // recycling pool: the last slot released cleanly, the Redis counter reached
-// zero, and the per-pod claim was patched bound → recycling. On that edge the
-// caller (Binder.ReleaseSlot) sends the adapter the whole-pod recycle Shutdown
-// that triggers the §5.2 scrub, so the signal is threaded back rather than kept
-// internal. It is false on every other release (a sibling slot remains, the
-// slot leaked, the pool does not recycle, or the claim had already vanished).
+// zero, and the per-pod claim was patched bound → recycling. A caller that
+// sends the adapter a request acts on it, which is what triggers the §5.2
+// whole-pod scrub. It is false on every other release (a sibling slot
+// remains, the slot leaked, the pool does not recycle, or the claim had
+// already vanished), so Binder.ReleaseSlotReservation, which passes recycle
+// false, never receives it.
 //
 // spec: §5.2 (occupancy-zero recycle disposition); §6.2 (leaked slot
 // remains counted); §6.2; §5.2 (whole-pod scrub trigger, threaded to the
 // binder via recycled).
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record now that the gateway does not mirror the

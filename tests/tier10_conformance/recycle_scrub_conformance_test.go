@@ -165,7 +165,7 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 	done := make(chan struct{})
 
 	s := adapter.New("conformance")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.ScrubOps = ops
 	s.PodScrubReporter = reporter
@@ -261,7 +261,7 @@ func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
 	done := make(chan struct{})
 
 	s := adapter.New("conformance")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.ScrubOps = ops
 	s.PodScrubReporter = reporter
@@ -316,14 +316,13 @@ type scrubConformanceSessionReporter struct {
 type scrubConformanceSessionReport struct {
 	podID     string
 	sessionID string
-	slotID    string
 	outcome   gatewaycontrol.SessionScrubOutcome
 }
 
-func (r *scrubConformanceSessionReporter) ReportSessionScrub(_ context.Context, podID, sessionID, slotID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+func (r *scrubConformanceSessionReporter) ReportSessionScrub(_ context.Context, podID, sessionID string, outcome gatewaycontrol.SessionScrubOutcome) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, scrubConformanceSessionReport{podID: podID, sessionID: sessionID, slotID: slotID, outcome: outcome})
+	r.reports = append(r.reports, scrubConformanceSessionReport{podID: podID, sessionID: sessionID, outcome: outcome})
 	return nil
 }
 
@@ -378,7 +377,6 @@ func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: "slot-1"},
 	}); err != nil {
 		t.Fatalf("StartSession(slot-1): %v", err)
 	}
@@ -387,7 +385,6 @@ func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	// returns an error, so the cleanup leaked.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-1"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(slot-1): %v", err)
@@ -411,8 +408,8 @@ func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	if got.sessionID != "slot-sess" {
 		t.Errorf("reported sessionId = %q, want slot-sess", got.sessionID)
 	}
-	if got.slotID != "slot-1" {
-		t.Errorf("reported slotId = %q, want slot-1", got.slotID)
+	if got.sessionID == "" {
+		t.Error("reported session id is empty; the report is addressed by the session it names")
 	}
 }
 
@@ -437,7 +434,7 @@ func TestRecycleScrubVMRestartReportsUniformlyConformance(t *testing.T) {
 	done := make(chan struct{})
 
 	s := adapter.New("conformance")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.ScrubOps = ops
 	s.PodScrubReporter = reporter

@@ -214,12 +214,13 @@ func shortSocketName(t *testing.T, name string) string {
 // directory and a fake runtime.
 func sessionServer(t *testing.T) (*adapter.Server, *fakeRuntime, string) {
 	t.Helper()
-	root := t.TempDir()
+	base := t.TempDir()
 	rt := &fakeRuntime{}
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = base
+	s.WorkspaceRoot = base
 	s.Runtime = rt
-	return s, rt, root
+	return s, rt, base
 }
 
 func startReq(sessionID string) *adapterv1.StartSessionRequest {
@@ -241,14 +242,24 @@ func TestStartSessionStartsRuntime(t *testing.T) {
 	}
 }
 
-func TestStartSessionRejectsSecondSession(t *testing.T) {
+// spec: 4.7 (StartSession Unavailable for a repeated start), 5.2 (every
+// session is bound to a slot on every pod)
+//
+// A second session arrives on its own slot and is admitted; what the claim
+// refuses is a second start for a session that has already started. The
+// ceiling on how many sessions a pod takes is the gateway's, which
+// allocates the slot and counts occupancy at the same site.
+func TestStartSessionRefusesARepeatedStartAndAdmitsASecondSession_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("first StartSession: %v", err)
 	}
-	_, err := s.StartSession(context.Background(), startReq("sess-2"))
+	if _, err := s.StartSession(context.Background(), startReq("sess-2")); err != nil {
+		t.Errorf("second session's StartSession = %v, want admitted on its own slot", err)
+	}
+	_, err := s.StartSession(context.Background(), startReq("sess-1"))
 	if status.Code(err) != codes.Unavailable {
-		t.Errorf("second StartSession code = %v, want Unavailable", status.Code(err))
+		t.Errorf("repeated start code = %v, want Unavailable", status.Code(err))
 	}
 }
 
@@ -295,8 +306,8 @@ func TestSendMessageRejectsUnknownSession(t *testing.T) {
 		SessionId:    &adapterv1.SessionId{Value: "sess-other"},
 		EnvelopeJson: []byte(`{}`),
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("code = %v, want NotFound for a session not assigned to the pod", status.Code(err))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition for a session the pod holds no bound entry for", status.Code(err))
 	}
 }
 
@@ -392,16 +403,34 @@ func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 	}
 }
 
-func TestShutdownRejectsUnknownSession(t *testing.T) {
-	s, _, _ := sessionServer(t)
+// spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
+//
+// The teardown clause is conditional rather than guarded, so a request
+// naming a session the registry holds no bound entry for is a no-op that
+// reports a clean exit. Returning an error there would make every revoked
+// session hold its slot for the life of the pod, because the gateway's
+// slot release returns early on a leaked outcome without decrementing the
+// occupancy counter.
+//
+// diagnosis: a failure means a second teardown for an already-released
+// session is refused again, which the §11.4 full revoke and the
+// occupancy-zero recycle edge both produce on every release.
+func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
+	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	_, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-other"},
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("code = %v, want NotFound", status.Code(err))
+	if err != nil {
+		t.Fatalf("Shutdown for a session the pod does not hold = %v, want a clean no-op", err)
+	}
+	if !resp.GetExitedCleanly() {
+		t.Error("ExitedCleanly = false for a session the pod does not hold")
+	}
+	if len(rt.closed) != 0 {
+		t.Errorf("the no-op teardown closed %v on the shared runtime, want nothing", rt.closed)
 	}
 }
 

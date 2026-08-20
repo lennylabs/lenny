@@ -75,7 +75,7 @@ func TestShutdownDemoteSDKDemotesPreConnected_spec_6_1_67(t *testing.T) {
 func TestShutdownDemoteSDKForceTerminatesOnTimeout_spec_6_1_67(t *testing.T) {
 	rt := newBlockingSDKWarmRuntime()
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	if err := s.PreConnect(context.Background()); err != nil {
 		t.Fatalf("PreConnect: %v", err)
@@ -149,7 +149,7 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	// closes the pipes so ForceTerminate returns promptly.
 	rt := adapter.NewSDKWarmInProcessRuntime(sdkWarmEchoLoop)
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.Runtime = rt
 	if err := s.PreConnect(context.Background()); err != nil {
@@ -157,7 +157,7 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	}
 	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceRoot,
+		Cwd:       s.WorkspaceBase,
 	}); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}

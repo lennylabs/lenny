@@ -143,7 +143,7 @@ func wiredAdapterClient(t *testing.T, sessionID string) (*adapterclient.Client, 
 	})
 
 	s := adapter.New("integration")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Lifecycle = lc
 	// The production assembly: set the UsageMeter and the lifecycle token
 	// sink so the read loop folds llm_request_completed counts into the

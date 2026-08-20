@@ -279,7 +279,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
 | `id` | string | Unique call identifier. Used to correlate the inbound `tool_result`. Recommended format: `tc_` prefix with monotonic counter or random suffix. |
 | `name` | string | Tool name (e.g., `read_file`, `write_file`) |
 | `arguments` | object | Tool-specific parameters |
-| `slotId` | string, optional | Names the session this call belongs to. Echo the identifier the adapter handed you on the frame you are responding to. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
+| `slotId` | string | Names the session this call belongs to. Echo the identifier the adapter handed you on the frame you are responding to. A frame that omits it is rejected on every pod. |
 
 **Built-in adapter-local tools:**
 
@@ -322,13 +322,13 @@ Informational. The adapter forwards status updates to the gateway for client vis
 |-------|------|-------------|
 | `type` | string | Always `"set_tracing_context"` |
 | `context` | object | Map of string keys to string values carrying opaque, non-sensitive tracing identifiers |
-| `slotId` | string, optional | Names the session registering the identifiers. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
+| `slotId` | string | Names the session registering the identifiers. Echo the identifier the adapter handed you. A frame that omits it is rejected on every pod. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
 
 Registers tracing identifiers for the session that emitted the frame. The gateway merges the submitted context into that session's recorded context, validates the merged result against the tracing-context rules at registration time, and attaches the registered context to each child's delegation lease when the session delegates. The adapter itself stores no context and attaches none to later requests. The frame is available at all integration levels.
 
 **Addressing.** The adapter hands the runtime a per-session identifier on every pod, and the runtime echoes that identifier in the frame's `slotId`. The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and to that session's slot, on every pod. The adapter applies the frame only when the frame's `slotId` matches the stream's session and the adapter's registry still holds that address with a bound session. The comparison is exact string equality.
 
-Two dispositions reject a frame. A frame that carries no `slotId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream by that stream's demultiplexer, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame. A frame's identifier names no live binding either when it is not the receiving stream's own session, or when the adapter's registry no longer holds that identifier with a bound session, which is the case while an ending session's stream drains after its slot is released.
+Two dispositions reject a frame. A frame that carries no `slotId` addresses no stream on any pod: it is relayed to no stream by that stream's demultiplexer, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame. A frame's identifier names no live binding either when it is not the receiving stream's own session, or when the adapter's registry no longer holds that identifier with a bound session, which is the case while an ending session's stream drains after its slot is released.
 
 ---
 

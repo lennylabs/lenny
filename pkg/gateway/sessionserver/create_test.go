@@ -172,7 +172,7 @@ func TestCreateAndStartServiceHappyPath(t *testing.T) {
 // spec: §7.1 create-and-start atomicity; §15.1.
 func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// A pool with no idle Sandbox exhausts the warm-pod claim, so the
@@ -1505,7 +1505,7 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 // claim or did not stamp the §4.6 binding on the row.
 func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1576,7 +1576,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 // create-handler code, not the shared classifier's default.
 func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// A pool with no idle Sandbox exhausts the claim path (and, absent
@@ -1629,7 +1629,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 // A failure here means claimAtCreate did not take the service-mode branch.
 func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1678,7 +1678,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 // claim when store.Create failed.
 func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1720,7 +1720,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 // pre-running terminal session, so the pod stays bound forever.
 func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(

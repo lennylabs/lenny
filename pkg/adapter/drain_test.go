@@ -21,7 +21,7 @@ func TestShutdownDrainsViaLifecycle_spec_15_4_2(t *testing.T) {
 	rt := &holdRuntime{}
 	s.Runtime = rt
 	s.Lifecycle = lc
-	if err := s.claimSession("sess-1"); err != nil {
+	if err := s.claimSessionForTest("sess-1"); err != nil {
 		t.Fatalf("claimSession: %v", err)
 	}
 

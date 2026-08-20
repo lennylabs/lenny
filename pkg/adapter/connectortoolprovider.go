@@ -25,18 +25,28 @@ type ConnectorToolForwarder interface {
 
 // connectorToolProvider adapts a ConnectorToolForwarder to the
 // mcp.ToolProvider one intra-pod @lenny-connector-<id> MCP server
-// consumes, binding every List/Call to the pod's single session and the
-// one connector the socket serves. spec: §9.3. F-9.1.2.
+// consumes, binding every List/Call to the one connector the socket
+// serves. The socket is pod-wide, so the calling session is resolved at
+// call time on the same terms as the platform provider rather than
+// captured at construction. spec: §9.3; §15.4.3. F-9.1.2.
 type connectorToolProvider struct {
 	forwarder   ConnectorToolForwarder
-	sessionID   string
+	server      *Server
 	connectorID string
 }
 
 func (p *connectorToolProvider) List(ctx context.Context) ([]mcp.Tool, error) {
-	return p.forwarder.ListConnectorTools(ctx, p.sessionID, p.connectorID)
+	sessionID, err := p.server.callingSession()
+	if err != nil {
+		return nil, err
+	}
+	return p.forwarder.ListConnectorTools(ctx, sessionID, p.connectorID)
 }
 
 func (p *connectorToolProvider) Call(ctx context.Context, name string, arguments json.RawMessage) (json.RawMessage, error) {
-	return p.forwarder.CallConnectorTool(ctx, p.sessionID, p.connectorID, name, arguments)
+	sessionID, err := p.server.callingSession()
+	if err != nil {
+		return nil, err
+	}
+	return p.forwarder.CallConnectorTool(ctx, sessionID, p.connectorID, name, arguments)
 }

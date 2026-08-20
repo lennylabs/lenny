@@ -162,9 +162,11 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 		t.Fatalf("streaming-echo did not advertise credential_rotation on the lifecycle handshake")
 	}
 
-	credDir := t.TempDir()
+	credRoot := t.TempDir()
 	adapterSrv := adapter.New("streaming-echo")
-	adapterSrv.CredentialsDir = credDir
+	adapterSrv.CredentialsDir = credRoot
+	// Every assignment lands on the session's own §6.1 credential file.
+	credDir := filepath.Join(credRoot, "slots", clSession)
 	adapterSrv.Lifecycle = rt.channel
 	adapterSrv.RuntimeName = "streaming-echo"
 	adapterSrv.CheckpointPoolLabel = clPool

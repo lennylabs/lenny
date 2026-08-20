@@ -74,7 +74,7 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 				"PrepareWorkspace frame requires a session id")
 		}
 		if stagingDir == "" {
-			dir, derr := s.resolvePrepareStagingDir(req.GetSlotId().GetValue())
+			dir, derr := s.resolvePrepareStagingDir(req.GetSessionId().GetValue())
 			if derr != nil {
 				closeAll()
 				spanErr = tracing.CategorizeError(derr, tracing.CategoryPermanent)
@@ -119,27 +119,27 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 }
 
 // resolvePrepareStagingDir returns the staging directory PrepareWorkspace
-// streams uploads into. For a §6.4 concurrent slot it ensures the slot
-// tree exists and returns the slot's /workspace/slots/{slotId}/staging.
-// For the single-session base path it returns the pod-global StagingDir,
-// returning FailedPrecondition when unconfigured and creating it if
-// absent (mirroring the prior behavior).
-func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
-	if s.useSlot(slotID) {
-		paths, err := s.ensureSlotPaths(slotID)
-		if err != nil {
-			return "", status.Errorf(codes.InvalidArgument, "resolve slot %s staging: %v", slotID, err)
-		}
-		return paths.Staging, nil
+// streams the named session's uploads into: its
+// /workspace/slots/{sessionId}/staging, whose tree it creates on first
+// reference. The per-slot tree is the only layout.
+//
+// An empty resolved path is refused with FailedPrecondition rather than
+// returned. slotlayout.Resolve leaves Staging empty when the workspace
+// base is unset, and workspace.StagingPath joins the upload's hashed name
+// onto whatever directory it is given, so an adapter started without a
+// workspace base would otherwise write every upload into the adapter
+// process's working directory. spec: §6.4.
+func (s *Server) resolvePrepareStagingDir(sessionID string) (string, error) {
+	paths, err := s.ensureSlotPaths(sessionID)
+	if err != nil {
+		return "", status.Errorf(codes.InvalidArgument,
+			"resolve staging for session %s: %v", sessionID, err)
 	}
-	if s.StagingDir == "" {
+	if paths.Staging == "" {
 		return "", status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a staging directory")
 	}
-	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
-		return "", status.Errorf(codes.Internal, "create staging directory: %v", err)
-	}
-	return s.StagingDir, nil
+	return paths.Staging, nil
 }
 
 // FinalizeWorkspace materializes the §14 WorkspacePlan into the
@@ -165,26 +165,24 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		span.End()
 	}()
 
-	if req.GetSessionId().GetValue() == "" {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id"),
 			tracing.CategoryPermanent,
 		)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
-	// spec: §6.4 — a slot-qualified finalize materializes
-	// into the slot's per-slot tree (/workspace/slots/{slotId}/staging
-	// promoted to /current) and creates that tree on first reference.
-	// The single-session layout uses the pod-global WorkspaceRoot/StagingDir.
-	workspaceRoot, stagingDir := s.WorkspaceRoot, s.StagingDir
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		paths, perr := s.ensureSlotPaths(slotID)
-		if perr != nil {
-			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
-		}
-		workspaceRoot, stagingDir = paths.Current, paths.Staging
+	// spec: §6.4 — the finalize materializes into the session's own tree
+	// (/workspace/slots/{sessionId}/staging promoted to /current) and
+	// creates that tree on first reference.
+	paths, perr := s.ensureSlotPaths(sessionID)
+	if perr != nil {
+		spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
+		return nil, status.Errorf(codes.InvalidArgument,
+			"resolve workspace for session %s: %v", sessionID, perr)
 	}
+	workspaceRoot, stagingDir := paths.Current, paths.Staging
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
@@ -324,25 +322,23 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		span.End()
 	}()
 
-	if req.GetSessionId().GetValue() == "" {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "RunSetup requires a session id"),
 			tracing.CategoryPermanent,
 		)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
-	// spec: §6.4 — a slot-qualified setup runs against the slot's
-	// own /workspace/slots/{slotId}/current cwd. The single-session layout
-	// uses the pod-global WorkspaceRoot.
-	workspaceRoot := s.WorkspaceRoot
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		paths, perr := s.ensureSlotPaths(slotID)
-		if perr != nil {
-			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
-		}
-		workspaceRoot = paths.Current
+	// spec: §6.4 — the setup runs against the session's own
+	// /workspace/slots/{sessionId}/current cwd.
+	paths, perr := s.ensureSlotPaths(sessionID)
+	if perr != nil {
+		spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
+		return nil, status.Errorf(codes.InvalidArgument,
+			"resolve workspace for session %s: %v", sessionID, perr)
 	}
+	workspaceRoot := paths.Current
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),

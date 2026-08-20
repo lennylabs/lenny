@@ -133,28 +133,26 @@ func slotShutdownServer(t *testing.T, closeErr error) (*adapter.Server, *scrubSe
 // startAndShutdownSlot starts one concurrent-workspace slot then shuts it down,
 // returning the ShutdownResponse so the caller can correlate the wire outcome
 // with the ExitedCleanly flag the same closeErr sets.
-func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID, slotID string) *adapterv1.ShutdownResponse {
+func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID string) *adapterv1.ShutdownResponse {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	}); err != nil {
-		t.Fatalf("StartSession(slot %s): %v", slotID, err)
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
 	}
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	})
 	if err != nil {
-		t.Fatalf("Shutdown(slot %s): %v", slotID, err)
+		t.Fatalf("Shutdown(%s): %v", sessionID, err)
 	}
 	return resp
 }
 
 // TestReportSessionScrubRequestRoundTrip pins that every field of the
-// ReportSessionScrubRequest (pod id, session id, slot id, outcome)
+// ReportSessionScrubRequest (pod id, session id, outcome)
 // survives a proto binary marshal/unmarshal, so a sender and a receiver
 // built from the same schema agree on the wire.
 // spec: 4.7 (Adapter → Gateway RPCs), 5.2 (scrub model)
@@ -168,7 +166,6 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 	in := &adapterv1.ReportSessionScrubRequest{
 		PodId:     "pod-7",
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-3"},
 		Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
 	}
 	raw, err := proto.Marshal(in)
@@ -281,7 +278,7 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 	s, srv := slotShutdownServer(t, errors.New("runtime close timed out reclaiming slot resources"))
 
-	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+	resp := startAndShutdownSlot(t, s, "sess-a")
 
 	// The wire outcome derives from the same closeErr that sets ExitedCleanly:
 	// a failed close is an unclean exit and a leaked cleanup.
@@ -301,9 +298,6 @@ func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 	if got.GetSessionId().GetValue() != "sess-a" {
 		t.Errorf("session id = %q, want sess-a", got.GetSessionId().GetValue())
 	}
-	if got.GetSlotId().GetValue() != "slot-a" {
-		t.Errorf("slot id = %q, want slot-a", got.GetSlotId().GetValue())
-	}
 }
 
 // TestAdapterSlotShutdownEmitsReleasedOnCleanClose is the released-outcome
@@ -319,7 +313,7 @@ func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 func TestAdapterSlotShutdownEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	s, srv := slotShutdownServer(t, nil)
 
-	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+	resp := startAndShutdownSlot(t, s, "sess-a")
 
 	if !resp.GetExitedCleanly() {
 		t.Error("ExitedCleanly = false for a clean runtime close")
@@ -330,8 +324,8 @@ func TestAdapterSlotShutdownEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	if got := srv.sessionReports[0].GetOutcome(); got != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_RELEASED {
 		t.Errorf("outcome = %v, want RELEASED for a clean slot cleanup", got)
 	}
-	if got := srv.sessionReports[0].GetSlotId().GetValue(); got != "slot-a" {
-		t.Errorf("slot id = %q, want slot-a", got)
+	if got := srv.sessionReports[0].GetSessionId().GetValue(); got != "sess-a" {
+		t.Errorf("session id = %q, want sess-a", got)
 	}
 }
 

@@ -212,7 +212,8 @@ func podBindBinder(c client.Client, dial func(string) (*adapterclient.Client, er
 func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -294,7 +295,8 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -378,7 +380,8 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -453,7 +456,8 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 // session row left behind; the registry stays empty too.
 func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// The cluster serves only the "echo" runtime; the request asks for a
@@ -506,7 +510,8 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.WorkspaceBase = wsRoot
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -595,7 +600,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	// The plan stored at create was re-parsed at start and materialized
 	// onto the pod's adapter workspace.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-2step-1", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("stored workspace plan was not materialized: %v", err)
 	}
@@ -617,7 +622,8 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -725,7 +731,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 
 	// The workspace must not be materialized yet: /create only claims the pod
 	// and buffers uploads; materialization is the §4.3 finalize barrier's job.
-	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(wsRoot, "slots", "sess-fin-mat", "current", "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("CLAUDE.md materialized before finalize (err=%v); materialization must run at /finalize", err)
 	}
 
@@ -741,7 +747,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	}
 	// The workspace plan stored at create was materialized onto the pod's
 	// adapter workspace at finalize, before /start ran.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-fin-mat", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("workspace plan was not materialized at finalize: %v", err)
 	}
@@ -775,7 +781,8 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 // aborted.
 func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -901,7 +908,8 @@ func manyEntryTar(t *testing.T, count int) []byte {
 // same non-conformant archive indefinitely (F-CS1).
 func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1014,7 +1022,8 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 // failed.
 func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1177,8 +1186,8 @@ func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
 // finalizing → ready write-failure branch, so the lease leaked.
 func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
@@ -1303,7 +1312,8 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.Store, *podsession.Registry, client.Client) {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1537,7 +1547,8 @@ func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
 // path is archived to the session_tree_archive.
 func TestResumeArchivesFailedChild(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1592,7 +1603,8 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -1647,7 +1659,8 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 // pod is available. The §15.1 envelope still surfaces a retryable 503.
 func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// A pool with no idle sandbox triggers podclaim.ErrNoIdlePod and
@@ -1704,7 +1717,8 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
@@ -1820,7 +1834,8 @@ func poolBindQueuePool(t *testing.T, name, runtimeRef string, waitSeconds int) p
 func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	// The pool starts with no idle Sandbox, so the first claim attempt
@@ -1895,7 +1910,8 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 // or the timeout return value is not the exhaustion envelope.
 func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// No idle Sandbox is ever added, so the queue exhausts its (tiny) wait
@@ -1956,7 +1972,8 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 // path queues a reject pool.
 func TestSessionStartRejectFailsImmediately(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -2038,7 +2055,8 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 // branch for executionMode=service.
 func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// The cluster carries a service-mode pool, its service-mode template, and

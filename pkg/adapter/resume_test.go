@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -225,12 +226,8 @@ func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) 
 	if got, err := os.ReadFile(filepath.Join(root, "only.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
-	entries, err := os.ReadDir(sessionsRoot)
-	if err != nil {
-		t.Fatalf("read /sessions: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("/sessions has %d entries, want 0 (workspace-only bundle)", len(entries))
+	if n := countFiles(t, sessionsRoot); n != 0 {
+		t.Errorf("/sessions holds %d files, want 0 (workspace-only bundle)", n)
 	}
 }
 
@@ -249,8 +246,8 @@ func TestResumeWithNoChunksRestoresNothing(t *testing.T) {
 	if len(rt.started) != 1 || rt.started[0] != "sess-1" {
 		t.Errorf("runtime started for %v, want [sess-1]", rt.started)
 	}
-	if entries, _ := os.ReadDir(root); len(entries) != 0 {
-		t.Errorf("workspace has %d entries, want 0 for a chunk-less resume", len(entries))
+	if n := countFiles(t, root); n != 0 {
+		t.Errorf("the workspace holds %d files, want 0 for a chunk-less resume", n)
 	}
 }
 
@@ -280,16 +277,23 @@ func TestResumeRequiresTransportWhenChunksPresent(t *testing.T) {
 	}
 }
 
-func TestResumeRejectsANonIdlePod(t *testing.T) {
+// spec: 4.7 (Resume takes the same claim as StartSession), 5.2
+//
+// A resume for a second session arrives on its own slot and is admitted on
+// a pod-warm pod; what the claim refuses is a resume for a session that
+// has already started.
+func TestResumeAdmitsASecondSessionAndRefusesARepeat_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	// The pod already holds sess-1; resuming another session is rejected.
-	_, err := s.Resume(context.Background(), resumeReqChunks("sess-2", "ckpt-1", chunks))
+	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-2", "ckpt-1", chunks)); err != nil {
+		t.Errorf("resume for a second session = %v, want admitted on its own slot", err)
+	}
+	_, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks))
 	if status.Code(err) != codes.Unavailable {
-		t.Errorf("code = %v, want Unavailable for a non-idle pod", status.Code(err))
+		t.Errorf("code = %v, want Unavailable for a session that has already started", status.Code(err))
 	}
 }
 
@@ -368,4 +372,24 @@ func TestResumeWorkspaceRootMismatchReleasesClaim_spec_7_3_15(t *testing.T) {
 	if _, err := s.Resume(context.Background(), req2); err != nil {
 		t.Errorf("F-7.3.15: pod was not released on mismatch: %v", err)
 	}
+}
+
+// countFiles counts the regular files under dir, recursively. The
+// per-slot tree the bind creates is directories alone, so a file count
+// distinguishes a restore from the empty trees a bind leaves behind.
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	if err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			n++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return n
 }

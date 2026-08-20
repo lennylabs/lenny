@@ -71,14 +71,19 @@ func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding
 	}); err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	base := t.TempDir()
+	// The session's own §6.4 tree, which is the only workspace layout.
+	root := filepath.Join(base, "slots", "sess_mid", "current")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "existing.txt"), []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	reg := podsession.NewRegistry()
 	if withBinding {
-		ad := dialRealAdapter(t, &adapter.Server{WorkspaceRoot: root, StagingDir: t.TempDir()})
+		ad := dialRealAdapter(t, &adapter.Server{WorkspaceBase: base})
 		reg.Put(&podsession.BindResult{SessionID: "sess_mid", TenantID: "acme", Adapter: ad})
 	}
 

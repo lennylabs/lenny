@@ -82,7 +82,7 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 	// challenge when SO_PEERCRED is disabled so the static nonce is not
 	// replayable on the connector sockets either.
 	srv.RequireChallenge = s.NonceOnlyMode
-	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, sessionID: sessionID, connectorID: c.ID}
+	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, server: s, connectorID: c.ID}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
 	s.mu.Lock()

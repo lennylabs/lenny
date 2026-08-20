@@ -52,9 +52,6 @@ func (s *Server) tracingFrameAddressesStream(sessionID, frameSlot, slotID string
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if slotID == "" {
-		return s.sessionID == sessionID && len(s.slots) == 0
-	}
 	st, ok := s.slotStateLocked(slotID)
 	return ok && st.sessionID == sessionID
 }

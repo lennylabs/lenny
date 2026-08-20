@@ -92,9 +92,7 @@ func recvEvent(t *testing.T, stream *fakeControlStream) controlEvent {
 // surfaced on the AdapterEvents stream with its type and fields.
 func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 	s := New("served")
-	s.mu.Lock()
-	s.sessionID = "sess-1"
-	s.mu.Unlock()
+	s.noteRuntimeStarted("sess-1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -123,12 +121,12 @@ func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 		t.Errorf("LEASE_REJECTED event = %+v", ev)
 	}
 
-	s.EmitAdapterTerminating("coordinator_lost")
+	s.EmitAdapterTerminating("sess-1", "coordinator_lost")
 	if ev := recvEvent(t, stream); ev.Type != eventAdapterTerminating || ev.Reason != "coordinator_lost" {
 		t.Errorf("AdapterTerminating event = %+v", ev)
 	}
 
-	s.EmitFinalUsageReport(Usage{InputTokens: 10, OutputTokens: 20, WallClockMS: 30})
+	s.EmitFinalUsageReport("sess-1", Usage{InputTokens: 10, OutputTokens: 20, WallClockMS: 30})
 	ev := recvEvent(t, stream)
 	if ev.Type != eventFinalUsageReport || ev.Usage == nil || ev.Usage.InputTokens != 10 || ev.Usage.OutputTokens != 20 || ev.Usage.WallClockMs != 30 {
 		t.Errorf("FINAL_USAGE_REPORT event = %+v", ev)
@@ -183,9 +181,7 @@ func (s stubUsage) Cumulative(context.Context, string) (Usage, error) { return s
 func TestEmitFinalUsageOnShutdownPath_spec_4_7(t *testing.T) {
 	s := New("served")
 	s.Usage = stubUsage{u: Usage{InputTokens: 5, OutputTokens: 7, WallClockMS: 9}}
-	s.mu.Lock()
-	s.sessionID = "sess-fin"
-	s.mu.Unlock()
+	s.noteRuntimeStarted("sess-fin")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

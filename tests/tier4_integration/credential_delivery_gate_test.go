@@ -125,8 +125,7 @@ func deliveryGateCluster(t *testing.T) client.Client {
 func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T) {
 	rt := &eagerRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 

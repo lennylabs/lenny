@@ -192,9 +192,9 @@ func TestExtendCredentialLeaseAcceptedOverWire_spec_4_9(t *testing.T) {
 // diagnosis: ExtendCredentialLease ignores slot_id and takes the
 // single-session path, so a concurrent-pool slot's lease deadline is never
 // extended and its still-valid credential is torn down under a transient Token
-// Service outage. Confirm Server.ExtendCredentialLease dispatches to
-// extendCredentialLeaseSlot when slot_id is set.
-func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
+// Service outage. Confirm Server.ExtendCredentialLease resolves the
+// session's own timer from the session identifier the request carries.
+func TestExtendCredentialLeaseRoutesToTheSessionsOwnTimer_spec_6_1(t *testing.T) {
 	client, credsDir := adapterServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -203,7 +203,6 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 	shortExpiry := time.Now().Add(time.Second)
 	if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: slotID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 		Leases:    map[string]*adapterv1.CredentialLease{provider: directLease("la", shortExpiry)},
 	}); err != nil {
 		t.Fatalf("AssignCredentials(slot): %v", err)
@@ -220,7 +219,6 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 
 	resp, err := client.ExtendCredentialLease(ctx, &adapterv1.ExtendCredentialLeaseRequest{
 		SessionId:       &adapterv1.SessionId{Value: slotID},
-		SlotId:          &adapterv1.SlotId{Value: slotID},
 		Provider:        provider,
 		LeaseId:         "la",
 		ExpiresAtUnixMs: time.Now().Add(2 * time.Hour).UnixMilli(),

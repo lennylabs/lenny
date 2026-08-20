@@ -126,7 +126,7 @@ func TestStartSessionWritesManifest(t *testing.T) {
 	// the session's experimentContext and tracingContext end to end.
 	manifestDir := t.TempDir()
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = manifestDir
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
@@ -181,9 +181,10 @@ func TestStartSessionWritesManifest(t *testing.T) {
 func TestPrepareWorkspaceStagesUploads(t *testing.T) {
 	// §4.7: PrepareWorkspace streams uploaded files into the staging
 	// area, keyed by upload_ref.
-	stagingDir := t.TempDir()
+	base := t.TempDir()
+	stagingDir := filepath.Join(base, "slots", "sess-1", "staging")
 	srv := adapter.New("adapter-test-build")
-	srv.StagingDir = stagingDir
+	srv.WorkspaceBase = base
 	cl := dialAdapter(t, srv)
 
 	uploads := map[string][]byte{
@@ -219,9 +220,10 @@ func TestPrepareWorkspaceStagesUploads(t *testing.T) {
 func TestPrepareWorkspaceConcatenatesChunks(t *testing.T) {
 	// An upload larger than the client chunk size arrives as multiple
 	// frames; the adapter concatenates them in order into one file.
-	stagingDir := t.TempDir()
+	base := t.TempDir()
+	stagingDir := filepath.Join(base, "slots", "sess-1", "staging")
 	srv := adapter.New("adapter-test-build")
-	srv.StagingDir = stagingDir
+	srv.WorkspaceBase = base
 	cl := dialAdapter(t, srv)
 
 	large := bytes.Repeat([]byte("lenny"), 40_000) // 200 KB, several frames
@@ -248,7 +250,7 @@ func TestPrepareWorkspaceConcatenatesChunks(t *testing.T) {
 }
 
 func TestPrepareWorkspaceWithoutStagingDir(t *testing.T) {
-	srv := adapter.New("adapter-test-build") // no StagingDir configured
+	srv := adapter.New("adapter-test-build") // no workspace base configured
 	cl := dialAdapter(t, srv)
 	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
 		map[string][]byte{"x": []byte("y")})
@@ -259,7 +261,7 @@ func TestPrepareWorkspaceWithoutStagingDir(t *testing.T) {
 
 func TestPrepareWorkspaceRejectsEmptyRef(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.StagingDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
 		map[string][]byte{"": []byte("payload")})
@@ -270,8 +272,9 @@ func TestPrepareWorkspaceRejectsEmptyRef(t *testing.T) {
 
 func TestClientFinalizeWorkspace(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	root := t.TempDir()
-	srv.WorkspaceRoot = root
+	base := t.TempDir()
+	srv.WorkspaceBase = base
+	root := filepath.Join(base, "slots", "sess-1", "current")
 	cl := dialAdapter(t, srv)
 
 	if _, err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
@@ -289,7 +292,7 @@ func TestClientFinalizeWorkspace(t *testing.T) {
 
 func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
 	_, err := cl.FinalizeWorkspace(context.Background(), "sess-1", &adapterv1.WorkspacePlan{
@@ -305,8 +308,9 @@ func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 
 func TestClientRunSetup(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	root := t.TempDir()
-	srv.WorkspaceRoot = root
+	base := t.TempDir()
+	srv.WorkspaceBase = base
+	root := filepath.Join(base, "slots", "sess-1", "current")
 	cl := dialAdapter(t, srv)
 
 	outputs, err := cl.RunSetup(context.Background(), "sess-1", []*adapterv1.SetupCommand{
@@ -328,7 +332,7 @@ func TestClientRunSetup(t *testing.T) {
 
 func TestClientRunSetupFailingCommand(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
 	outputs, err := cl.RunSetup(context.Background(), "sess-1",
@@ -349,8 +353,10 @@ func TestClientRunSetupFailingCommand(t *testing.T) {
 
 func TestClientAssignCredentials(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	credDir := t.TempDir()
-	srv.CredentialsDir = credDir
+	credRoot := t.TempDir()
+	srv.CredentialsDir = credRoot
+	srv.WorkspaceBase = t.TempDir()
+	credDir := filepath.Join(credRoot, "slots", "sess-1")
 	cl := dialAdapter(t, srv)
 
 	err := cl.AssignCredentials(context.Background(), "sess-1",
@@ -385,6 +391,7 @@ func TestClientAssignCredentials(t *testing.T) {
 func TestClientAssignCredentialsEmptyMapIsAccepted(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.CredentialsDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
 	// A session that needs no upstream credentials assigns an empty set.
@@ -396,6 +403,7 @@ func TestClientAssignCredentialsEmptyMapIsAccepted(t *testing.T) {
 func TestClientAssignCredentialsRejectsEmptySessionID(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.CredentialsDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
 	err := cl.AssignCredentials(context.Background(), "", nil)
@@ -417,7 +425,7 @@ func TestClientAssignCredentialsRejectsUnconfiguredAdapter(t *testing.T) {
 func TestSessionRoundTrip(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
@@ -430,14 +438,14 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 
 	envelope := []byte(`{"type":"user","content":"hello"}`)
-	if err := cl.SendMessage(ctx, "sess-x", "", envelope); err != nil {
+	if err := cl.SendMessage(ctx, "sess-x", envelope); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
 		t.Errorf("runtime received %v, want one copy of the envelope", rt.envelopes)
 	}
 
-	clean, err := cl.Shutdown(ctx, "sess-x")
+	clean, err := cl.Shutdown(ctx, "sess-x", "", 0)
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -452,7 +460,7 @@ func TestSessionRoundTrip(t *testing.T) {
 func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
@@ -474,12 +482,12 @@ func TestInterruptDeliversTheSignalToTheRuntime(t *testing.T) {
 
 func TestSendMessageRejectsAnUnassignedSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
 	// No StartSession ran, so the pod holds no session.
-	err := cl.SendMessage(context.Background(), "sess-absent", "", []byte(`{"type":"user"}`))
+	err := cl.SendMessage(context.Background(), "sess-absent", []byte(`{"type":"user"}`))
 	if err == nil {
 		t.Error("SendMessage to an unassigned session succeeded, want a failure")
 	}
@@ -488,7 +496,7 @@ func TestSendMessageRejectsAnUnassignedSession(t *testing.T) {
 func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	rt := &fakeRuntime{output: make(chan []byte, 4)}
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
@@ -496,7 +504,7 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	stream, err := cl.Attach(ctx, "sess-x", "")
+	stream, err := cl.Attach(ctx, "sess-x")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -518,18 +526,24 @@ func TestAttachStreamsRuntimeOutput(t *testing.T) {
 	}
 }
 
-func TestShutdownRejectsAnUnassignedSession(t *testing.T) {
+// spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
+//
+// The teardown is idempotent: a request naming a session the adapter holds
+// no bound entry for is a no-op reporting a clean exit, which is what
+// keeps the §11.4 revoke and the concurrent recycle edge from computing a
+// leaked outcome and holding the released slot for the life of the pod.
+func TestShutdownIsANoOpForAnUnbboundSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	clean, err := cl.Shutdown(context.Background(), "sess-absent")
-	if err == nil {
-		t.Error("Shutdown of an unassigned session succeeded, want a failure")
+	clean, err := cl.Shutdown(context.Background(), "sess-absent", "", 0)
+	if err != nil {
+		t.Errorf("Shutdown of a session the pod does not hold = %v, want a clean no-op", err)
 	}
-	if clean {
-		t.Error("Shutdown reported a clean exit on an error")
+	if !clean {
+		t.Error("Shutdown reported an unclean exit for a session the pod does not hold")
 	}
 }
 
@@ -662,7 +676,7 @@ func TestTerminateSendsReasonAndDeadline(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	clean, err := cl.Terminate(context.Background(), "sess-t", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -687,7 +701,7 @@ func TestTerminateZeroDeadlineSendsZero(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	if _, err := cl.Terminate(context.Background(), "sess-t", "USER_REVOKED", 0); err != nil {
+	if _, err := cl.Shutdown(context.Background(), "sess-t", "USER_REVOKED", 0); err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
 	if rec.gotShutdown.GetDeadlineMs() != 0 {
@@ -699,7 +713,7 @@ func TestTerminateZeroDeadlineSendsZero(t *testing.T) {
 func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
@@ -707,7 +721,7 @@ func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-x", Runtime: "claude-code"}); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	clean, err := cl.Terminate(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
+	clean, err := cl.Shutdown(ctx, "sess-x", "USER_REVOKED", 10*time.Second)
 	if err != nil {
 		t.Fatalf("Terminate: %v", err)
 	}
@@ -719,18 +733,21 @@ func TestTerminateEndsTheSessionOnThePod(t *testing.T) {
 	}
 }
 
-func TestTerminateRejectsAnUnassignedSession(t *testing.T) {
+// spec: 4.7, 5.2, 11.4 — the reason-carrying form is the same idempotent
+// teardown, which is what the §11.4 full revoke depends on: the revoked
+// session's later terminal release sends a second request for it.
+func TestShutdownWithAReasonIsANoOpForAnUnboundSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
 
-	clean, err := cl.Terminate(context.Background(), "sess-absent", "USER_REVOKED", 10*time.Second)
-	if err == nil {
-		t.Error("Terminate of an unassigned session succeeded, want a failure")
+	clean, err := cl.Shutdown(context.Background(), "sess-absent", "USER_REVOKED", 10*time.Second)
+	if err != nil {
+		t.Errorf("Shutdown of a session the pod does not hold = %v, want a clean no-op", err)
 	}
-	if clean {
-		t.Error("Terminate reported a clean exit on an error")
+	if !clean {
+		t.Error("Shutdown reported an unclean exit for a session the pod does not hold")
 	}
 }
 
@@ -785,7 +802,7 @@ func TestShutdownLeavesTheRecycleSubMessageNil(t *testing.T) {
 	rec := &recordingAdapter{}
 	cl := dialRecordingAdapter(t, rec)
 
-	if _, err := cl.Shutdown(context.Background(), "sess-t"); err != nil {
+	if _, err := cl.Shutdown(context.Background(), "sess-t", "", 0); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
 	if rec.gotShutdown == nil {
@@ -864,7 +881,8 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 
 	const chunkURL = "https://objectstore.example/chunk-0"
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
+	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = &fakeRuntime{}
 	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
@@ -910,7 +928,8 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	const chunkURL = "https://objectstore.example/chunk-0"
 	chunks := []adapterclient.ChunkGrant{{Index: 0, URL: chunkURL, Length: int64(archived.Len())}}
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
+	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = &fakeRuntime{}
 	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
@@ -957,7 +976,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 // the restore rather than silently restoring nothing.
 func TestResumeRejectsChunksWithoutTransport(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	// No CheckpointTransport configured: the adapter cannot fetch chunks.
 	cl := dialAdapter(t, srv)
@@ -988,7 +1007,7 @@ func (m fakeUsageMeter) Cumulative(context.Context, string) (adapter.Usage, erro
 
 func TestReportUsageReturnsAccounting(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 1200, OutputTokens: 340, WallClockMS: 5000}}
 	cl := dialAdapter(t, srv)
@@ -1008,7 +1027,7 @@ func TestReportUsageReturnsAccounting(t *testing.T) {
 
 func TestReportUsageRejectsAnUnassignedSession(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = fakeUsageMeter{}
 	cl := dialAdapter(t, srv)
@@ -1021,7 +1040,7 @@ func TestReportUsageRejectsAnUnassignedSession(t *testing.T) {
 
 func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	// No Usage meter configured: the adapter cannot report usage.
 	cl := dialAdapter(t, srv)
@@ -1041,7 +1060,7 @@ func TestReportUsageRejectsAMissingMeter(t *testing.T) {
 // spec: §4.9.
 func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 1, OutputTokens: 1}}
 	cl := dialAdapter(t, srv)
@@ -1060,7 +1079,7 @@ func TestReportUsageForLeaseRejectsProxyMode_Spec4_9_1468(t *testing.T) {
 // spec: §4.9.
 func TestReportUsageForLeaseAcceptsDirectMode_Spec4_9_1468(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = fakeUsageMeter{usage: adapter.Usage{InputTokens: 11, OutputTokens: 22}}
 	cl := dialAdapter(t, srv)
@@ -1105,7 +1124,7 @@ func (m splitUsageMeter) Cumulative(context.Context, string) (adapter.Usage, err
 // spec: §4.7 (ReportUsageRequest.cumulative), §11.2 (crash-recovery MAX rule).
 func TestReportUsageThreadsCumulativeFlag_Spec4_7(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = splitUsageMeter{
 		delta:      adapter.Usage{InputTokens: 5, OutputTokens: 3, WallClockMS: 100},
@@ -1144,7 +1163,7 @@ func TestReportUsageThreadsCumulativeFlag_Spec4_7(t *testing.T) {
 // spec: §4.7 (ReportUsageRequest.cumulative), §4.9.
 func TestReportUsageForLeaseThreadsCumulativeFlag_Spec4_7(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 	srv.Usage = splitUsageMeter{
 		delta:      adapter.Usage{InputTokens: 1, OutputTokens: 1},
@@ -1254,6 +1273,7 @@ func TestRotateCredentialsPropagatesAdapterError(t *testing.T) {
 func TestRotateCredentialsRejectsEmptySessionID(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
 	srv.CredentialsDir = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
 	// The adapter's RotateCredentials requires a session id.
@@ -1265,8 +1285,10 @@ func TestRotateCredentialsRejectsEmptySessionID(t *testing.T) {
 
 func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 	srv := adapter.New("adapter-test-build")
-	credDir := t.TempDir()
-	srv.CredentialsDir = credDir
+	credRoot := t.TempDir()
+	srv.CredentialsDir = credRoot
+	srv.WorkspaceBase = t.TempDir()
+	credDir := filepath.Join(credRoot, "slots", "sess-rot")
 	cl := dialAdapter(t, srv)
 	ctx := context.Background()
 
@@ -1360,21 +1382,21 @@ func TestExtendCredentialLeasePropagatesAdapterError(t *testing.T) {
 	}
 }
 
-// capturingAdapter is a minimal AdapterServer that records the SlotId
-// carried on the SendMessage and Attach requests it receives, so a test
-// can assert the gateway-side client stamps (or omits) the §6.4 slotId on
-// the outbound adapter path.
+// capturingAdapter is a minimal AdapterServer that records the session
+// address carried on the SendMessage and Attach requests it receives, so a
+// test can assert the gateway-side client addresses the outbound adapter
+// path by the session identifier alone.
 type capturingAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 
-	mu              sync.Mutex
-	sendMessageSlot string
-	attachSlots     []string
+	mu                 sync.Mutex
+	sendMessageSession string
+	attachSessions     []string
 }
 
 func (a *capturingAdapter) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
 	a.mu.Lock()
-	a.sendMessageSlot = req.GetSlotId().GetValue()
+	a.sendMessageSession = req.GetSessionId().GetValue()
 	a.mu.Unlock()
 	return &adapterv1.SendMessageResponse{}, nil
 }
@@ -1386,7 +1408,7 @@ func (a *capturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.Atta
 			return nil //nolint:nilerr // EOF/cancel ends the capture cleanly.
 		}
 		a.mu.Lock()
-		a.attachSlots = append(a.attachSlots, req.GetSlotId().GetValue())
+		a.attachSessions = append(a.attachSessions, req.GetSessionId().GetValue())
 		a.mu.Unlock()
 	}
 }
@@ -1394,7 +1416,7 @@ func (a *capturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.Atta
 func (a *capturingAdapter) recordedAttachSlots() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]string(nil), a.attachSlots...)
+	return append([]string(nil), a.attachSessions...)
 }
 
 // dialCapturingAdapter serves a capturingAdapter over bufconn and returns
@@ -1420,41 +1442,28 @@ func dialCapturingAdapter(t *testing.T) (*capturingAdapter, *adapterclient.Clien
 	return rec, cl
 }
 
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestSendMessageStampsTheResolvedSlotIDForAConcurrentPoolBind(t *testing.T) {
+// spec: 7.2 (per-session routing), 5.2 (the session identifier is the
+// slot's identifier), 28.5.3
+func TestSendMessageAddressesTheRequestBySession(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
-	if err := cl.SendMessage(context.Background(), "sess-x", "slot_01", []byte(`{"type":"message"}`)); err != nil {
+	if err := cl.SendMessage(context.Background(), "sess-x", []byte(`{"type":"message"}`)); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	rec.mu.Lock()
-	got := rec.sendMessageSlot
+	got := rec.sendMessageSession
 	rec.mu.Unlock()
-	if got != "slot_01" {
-		t.Errorf("SendMessage carried slotId %q, want slot_01", got)
+	if got != "sess-x" {
+		t.Errorf("SendMessage carried session %q, want sess-x", got)
 	}
 }
 
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestSendMessageStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
-	rec, cl := dialCapturingAdapter(t)
-	if err := cl.SendMessage(context.Background(), "sess-x", "", []byte(`{"type":"message"}`)); err != nil {
-		t.Fatalf("SendMessage: %v", err)
-	}
-	rec.mu.Lock()
-	got := rec.sendMessageSlot
-	rec.mu.Unlock()
-	if got != "" {
-		t.Errorf("SendMessage on an exclusive bind carried slotId %q, want empty", got)
-	}
-}
-
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestAttachStampsTheResolvedSlotIDOnTheBindingAndEverySendFrame(t *testing.T) {
+// spec: 7.2 (per-session routing), 5.2, 28.5.3
+func TestAttachAddressesTheBindingAndEverySendFrameBySession(t *testing.T) {
 	rec, cl := dialCapturingAdapter(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	stream, err := cl.Attach(ctx, "sess-x", "slot_01")
+	stream, err := cl.Attach(ctx, "sess-x")
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -1463,29 +1472,9 @@ func TestAttachStampsTheResolvedSlotIDOnTheBindingAndEverySendFrame(t *testing.T
 	}
 	_ = stream.CloseSend()
 
-	// The binding frame and the content frame must both carry the slotId.
-	if got := waitForAttachSlots(t, rec, 2); got[0] != "slot_01" || got[1] != "slot_01" {
-		t.Errorf("Attach frames carried slotIds %v, want both slot_01", got)
-	}
-}
-
-// spec: 7.2 (per-slot routing), 28.5.3 (slotId multiplexing)
-func TestAttachStampsNoSlotIDForAnExclusiveBind(t *testing.T) {
-	rec, cl := dialCapturingAdapter(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream, err := cl.Attach(ctx, "sess-x", "")
-	if err != nil {
-		t.Fatalf("Attach: %v", err)
-	}
-	if err := stream.Send([]byte(`{"type":"message"}`)); err != nil {
-		t.Fatalf("Send: %v", err)
-	}
-	_ = stream.CloseSend()
-
-	if got := waitForAttachSlots(t, rec, 2); got[0] != "" || got[1] != "" {
-		t.Errorf("Attach frames on an exclusive bind carried slotIds %v, want both empty", got)
+	// The binding frame and the content frame must both carry the session.
+	if got := waitForAttachSlots(t, rec, 2); got[0] != "sess-x" || got[1] != "sess-x" {
+		t.Errorf("Attach frames carried sessions %v, want both sess-x", got)
 	}
 }
 

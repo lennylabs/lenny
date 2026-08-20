@@ -79,7 +79,7 @@ func sdkWarmServer(t *testing.T) (*adapter.Server, *fakeSDKWarmRuntime) {
 	t.Helper()
 	rt := &fakeSDKWarmRuntime{}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	return s, rt
 }

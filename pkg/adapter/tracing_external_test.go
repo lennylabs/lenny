@@ -84,7 +84,7 @@ func TestStartSessionSpanRecordsRuntimeStartError_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
 	root := t.TempDir()
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Runtime = &fakeRuntime{startErr: errors.New("runtime crashed")}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err == nil {
@@ -203,7 +203,7 @@ func TestAttachToolCallSpanRecordsToolError_spec_16_3(t *testing.T) {
 func TestPrepareWorkspaceEmitsUploadSpan_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
 	s := adapter.New("test")
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	client, _ := adapterClient(t, s)
 
 	stream, err := client.PrepareWorkspace(context.Background())

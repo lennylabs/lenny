@@ -41,9 +41,8 @@ func (okCheckpointTransport) GetChunk(context.Context, string, map[string]string
 func barrierServer(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 	t.Helper()
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = t.TempDir()
-	srv.StagingDir = t.TempDir()
 	srv.CheckpointTransport = okCheckpointTransport{}
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
@@ -71,6 +70,7 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   checkpointID,
+			SessionId:      &adapterv1.SessionId{Value: "s1"},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},

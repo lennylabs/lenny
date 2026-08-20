@@ -82,18 +82,20 @@ func (noopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) 
 // dispatch. It satisfies both adapter.PlatformToolForwarder and
 // adapter.ConnectorToolForwarder.
 type recordingForwarder struct {
-	mu             sync.Mutex
-	platformCalls  []string
-	connectorCalls []string
+	mu               sync.Mutex
+	platformCalls    []string
+	platformSessions []string
+	connectorCalls   []string
 }
 
 func (f *recordingForwarder) ListPlatformTools(context.Context, string) ([]mcp.Tool, error) {
 	return []mcp.Tool{{Name: privilegedPlatformTool, Description: "delegate a subtask"}}, nil
 }
 
-func (f *recordingForwarder) CallPlatformTool(_ context.Context, _, toolName string, _ json.RawMessage) (json.RawMessage, error) {
+func (f *recordingForwarder) CallPlatformTool(_ context.Context, sessionID, toolName string, _ json.RawMessage) (json.RawMessage, error) {
 	f.mu.Lock()
 	f.platformCalls = append(f.platformCalls, toolName)
+	f.platformSessions = append(f.platformSessions, sessionID)
 	f.mu.Unlock()
 	return json.RawMessage(`{"content":[{"type":"text","text":"delegated"}]}`), nil
 }
@@ -119,6 +121,15 @@ func (f *recordingForwarder) platformCallCount() int {
 	return len(f.platformCalls)
 }
 
+// platformCallSessions returns the session each forwarded platform call
+// was made under, which is the identifier the gateway installs as the
+// authenticated principal for the call.
+func (f *recordingForwarder) platformCallSessions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.platformSessions...)
+}
+
 func (f *recordingForwarder) connectorCallCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -132,7 +143,7 @@ func (f *recordingForwarder) connectorCallCount() int {
 func nonceProbeManifest(t *testing.T, fwd *recordingForwarder) *adapter.Manifest {
 	t.Helper()
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = noopRuntime{}
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
@@ -151,14 +162,7 @@ func nonceProbeManifest(t *testing.T, fwd *recordingForwarder) *adapter.Manifest
 		})
 	})
 
-	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
-	}
-	var m adapter.Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("decode manifest: %v", err)
-	}
+	m := decodeManifestFile(t, s.ManifestDir)
 	if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket == "" {
 		t.Fatalf("manifest carries no platform MCP socket: %+v", m.PlatformMcpServer)
 	}
@@ -167,6 +171,21 @@ func nonceProbeManifest(t *testing.T, fwd *recordingForwarder) *adapter.Manifest
 	}
 	if m.MCPNonce == "" {
 		t.Fatal("manifest carries no MCP nonce")
+	}
+	return m
+}
+
+// decodeManifestFile parses the §15.4 adapter manifest the adapter wrote
+// into dir.
+func decodeManifestFile(t *testing.T, dir string) *adapter.Manifest {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m adapter.Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode manifest: %v", err)
 	}
 	return &m
 }

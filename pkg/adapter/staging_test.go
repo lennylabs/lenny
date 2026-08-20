@@ -52,13 +52,13 @@ func finalizeReq(sessionID string, sources ...*adapterv1.WorkspaceSource) *adapt
 
 func TestFinalizeWorkspaceMaterializes(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("mkdir", "docs", "", "755"),
 		wsSource("inlineFile", "docs/readme.md", "hello", "644"))); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "docs", "readme.md"))
+	b, err := os.ReadFile(filepath.Join(slotCurrent(srv, "sess-1"), "docs", "readme.md"))
 	if err != nil {
 		t.Fatalf("read materialized file: %v", err)
 	}
@@ -69,14 +69,14 @@ func TestFinalizeWorkspaceMaterializes(t *testing.T) {
 
 func TestFinalizeWorkspaceEmptyPlan(t *testing.T) {
 	// A session with an empty workspace plan finalizes as a no-op.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1")); err != nil {
 		t.Errorf("FinalizeWorkspace with an empty plan = %v, want nil", err)
 	}
 }
 
 func TestFinalizeWorkspaceRequiresSessionID(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("", wsSource("mkdir", "x", "", "")))
 	if status.Code(err) != codes.InvalidArgument {
@@ -84,7 +84,7 @@ func TestFinalizeWorkspaceRequiresSessionID(t *testing.T) {
 	}
 }
 
-func TestFinalizeWorkspaceRequiresWorkspaceRoot(t *testing.T) {
+func TestFinalizeWorkspaceRequiresWorkspaceBase(t *testing.T) {
 	srv := &Server{}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("mkdir", "x", "", "")))
@@ -97,7 +97,7 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 	// The §14 path-containment guard in workspace.Materialize rejects a
 	// source that escapes the workspace root; the RPC surfaces it as
 	// InvalidArgument.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("inlineFile", "../escape.txt", "x", "644")))
 	if status.Code(err) != codes.InvalidArgument {
@@ -115,7 +115,7 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 // the workspace the link is created; without it the same source is
 // rejected. spec: §7.4; §13.4 — F-7.4.4, F-7.4.1.
 func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	sources := []*adapterv1.WorkspaceSource{
 		wsSource("inlineFile", "target.txt", "hi", "644"),
@@ -124,18 +124,18 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	reqWithSymlinkOptIn := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
-		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: srv.WorkspaceRoot},
+		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: slotCurrent(srv, "sess-1")},
 	}
 	if _, err := srv.FinalizeWorkspace(context.Background(), reqWithSymlinkOptIn); err != nil {
 		t.Fatalf("FinalizeWorkspace with AllowSymlinks=true: %v", err)
 	}
-	if info, err := os.Lstat(filepath.Join(srv.WorkspaceRoot, "link")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if info, err := os.Lstat(filepath.Join(slotCurrent(srv, "sess-1"), "link")); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("expected symlink to be created; Lstat = %v %v", info, err)
 	}
 
 	// Default policy (nil) must reject the same symlink source with
 	// InvalidArgument (the gRPC mapping of workspace.Materialize errors).
-	srv2 := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
+	srv2 := &Server{WorkspaceBase: t.TempDir()}
 	reqDefault := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
@@ -153,7 +153,7 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 // materialization. F-14.1.3.
 func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
@@ -178,7 +178,7 @@ func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testi
 		t.Errorf("status error code detail = %v, want WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", code)
 	}
 	// The reject must happen before any filesystem write.
-	if _, statErr := os.Stat(filepath.Join(root, "written.txt")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(slotCurrent(srv, "sess-1"), "written.txt")); statErr == nil {
 		t.Error("materialization wrote a file despite the schemaVersion reject; the gate ran too late")
 	}
 }
@@ -188,7 +188,7 @@ func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testi
 // FinalizeWorkspaceResponse, carrying `unknownType` and the plan's
 // `schemaVersion`. F-14.1.2.
 func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	resp, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("teleport", "x", "", "")))
 	if err != nil {
@@ -215,7 +215,7 @@ func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 // FinalizeWorkspaceResponse carrying `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so the gateway can republish them. F-14.1.9.
 func TestFinalizeWorkspaceTranscribesPathCollision_spec_14_338(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	resp, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("inlineFile", "conf/app.yaml", "first", "644"),
 		wsSource("inlineFile", "conf/app.yaml", "second", "644")))
@@ -246,19 +246,19 @@ func TestFinalizeWorkspaceTranscribesPathCollision_spec_14_338(t *testing.T) {
 
 func TestRunSetupExecutesCommands(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	if _, err := srv.RunSetup(context.Background(),
 		runSetupReq("sess-1", nil, "echo ok > result.txt", "mkdir sub")); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "result.txt"))
+	b, err := os.ReadFile(filepath.Join(slotCurrent(srv, "sess-1"), "result.txt"))
 	if err != nil {
 		t.Fatalf("read result.txt: %v", err)
 	}
 	if strings.TrimSpace(string(b)) != "ok" {
 		t.Errorf("result.txt = %q, want ok", b)
 	}
-	if fi, err := os.Stat(filepath.Join(root, "sub")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(slotCurrent(srv, "sess-1"), "sub")); err != nil || !fi.IsDir() {
 		t.Errorf("setup command did not create the sub directory: %v", err)
 	}
 }
@@ -266,21 +266,21 @@ func TestRunSetupExecutesCommands(t *testing.T) {
 func TestRunSetupNoCommands(t *testing.T) {
 	// The §4.7 sequence calls RunSetup even for a plan with no setup
 	// commands; an empty list completes the phase as a no-op.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	if _, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil)); err != nil {
 		t.Errorf("RunSetup with no commands = %v, want nil", err)
 	}
 }
 
 func TestRunSetupRequiresSessionID(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("", nil, "true"))
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("RunSetup without a session id = %v, want InvalidArgument", err)
 	}
 }
 
-func TestRunSetupRequiresWorkspaceRoot(t *testing.T) {
+func TestRunSetupRequiresWorkspaceBase(t *testing.T) {
 	srv := &Server{}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "true"))
 	if status.Code(err) != codes.FailedPrecondition {
@@ -289,7 +289,7 @@ func TestRunSetupRequiresWorkspaceRoot(t *testing.T) {
 }
 
 func TestRunSetupFailingCommandIsRejected(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "exit 3"))
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
@@ -300,7 +300,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	// §5.1: a setupPolicy with on_timeout "fail" aborts the phase when
 	// the aggregate cap is exceeded. Threading the policy through the
 	// RunSetup RPC is what this exercises.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	policy := &adapterv1.SetupPolicy{TimeoutSeconds: 1, OnTimeout: "fail"}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", policy, "sleep 30"))
 	if status.Code(err) != codes.FailedPrecondition {
@@ -316,7 +316,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 // `setup_aggregate_timeout_warn` line carrying the session id, cap, and
 // command count. F-7.5.13.
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	policy := &adapterv1.SetupPolicy{TimeoutSeconds: 1, OnTimeout: "warn"}
 
 	logBuf, restore := captureLogOutput(t)
@@ -329,4 +329,11 @@ func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
 	if !strings.Contains(got, "setup_aggregate_timeout_warn") || !strings.Contains(got, "session=sess-1") {
 		t.Errorf("warn disposition should emit the setup_aggregate_timeout_warn observability line; got log: %q", got)
 	}
+}
+
+// slotCurrent is the session's own §6.4 cwd,
+// `<base>/slots/{sessionId}/current`, which is the only workspace layout
+// and the directory the workspace-prep RPCs materialize into.
+func slotCurrent(srv *Server, sessionID string) string {
+	return filepath.Join(srv.WorkspaceBase, "slots", sessionID, "current")
 }

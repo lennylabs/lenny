@@ -153,9 +153,7 @@ func TestReportUsageHandlerPassesCumulativeFlag_spec_11_2(t *testing.T) {
 	s := New("served")
 	m := NewSessionUsageMeter(fixedClock())
 	s.Usage = m
-	s.mu.Lock()
-	s.sessionID = "sess-h"
-	s.mu.Unlock()
+	bindSessionForTest(t, s, "sess-h")
 	m.Add("sess-h", 30, 12)
 
 	ctx := context.Background()
@@ -193,9 +191,7 @@ func TestReportUsageHandlerPassesCumulativeFlag_spec_11_2(t *testing.T) {
 func TestReportUsageWithMeterIsImplemented_spec_4_7(t *testing.T) {
 	s := New("served")
 	s.Usage = NewSessionUsageMeter(fixedClock())
-	s.mu.Lock()
-	s.sessionID = "sess-impl"
-	s.mu.Unlock()
+	bindSessionForTest(t, s, "sess-impl")
 
 	_, err := s.ReportUsage(context.Background(),
 		&adapterv1.ReportUsageRequest{SessionId: &adapterv1.SessionId{Value: "sess-impl"}})
@@ -231,9 +227,10 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	// completed-LLM frame folds its tokens into the wired meter under the
 	// pod's current session.
 	s := New("served")
-	s.mu.Lock()
-	s.sessionID = "sess-wire"
-	s.mu.Unlock()
+	bindSessionForTest(t, s, "sess-wire")
+	// The sink resolves through soleSession, which names a session only
+	// once the pod's shared runtime process has been given it and no other.
+	s.noteRuntimeStarted("sess-wire")
 	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
@@ -247,7 +244,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 		t.Fatal("WireDirectModeUsage did not wire the token sink onto CH-RUNTIMEOPS")
 	}
 
-	// The wired sink folds into the returned meter under the current session.
+	// The wired sink folds into the returned meter under that session.
 	lc.usage.AddTokens(11, 4)
 	u, err := m.Cumulative(context.Background(), "sess-wire")
 	if err != nil {
@@ -264,9 +261,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 // rather than a fabricated zero.
 func TestReportUsageWithoutMeterIsUnimplemented_spec_4_7(t *testing.T) {
 	s := New("served")
-	s.mu.Lock()
-	s.sessionID = "sess-nomtr"
-	s.mu.Unlock()
+	bindSessionForTest(t, s, "sess-nomtr")
 
 	_, err := s.ReportUsage(context.Background(),
 		&adapterv1.ReportUsageRequest{SessionId: &adapterv1.SessionId{Value: "sess-nomtr"}})
@@ -347,4 +342,22 @@ func TestSessionUsageMeterConcurrentFoldRaceSmoke_spec_11_2(t *testing.T) {
 	if want := int64(adders * perAdder); got != want {
 		t.Fatalf("concurrent total input = %d, want %d", got, want)
 	}
+}
+
+// bindSessionForTest binds the named session's slot entry so a
+// session-scoped RPC's checkSessionBound admits it, which is the state a
+// completed bind leaves on every pod. spec: §5.2.
+func bindSessionForTest(t *testing.T, s *Server, sessionID string) {
+	t.Helper()
+	if s.WorkspaceBase == "" {
+		s.WorkspaceBase = t.TempDir()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.ensureSlotStateLocked(sessionID)
+	if err != nil {
+		t.Fatalf("ensure slot state for %s: %v", sessionID, err)
+	}
+	st.sessionID = sessionID
+	st.started = true
 }

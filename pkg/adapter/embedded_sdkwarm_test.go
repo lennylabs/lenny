@@ -37,7 +37,7 @@ func sdkWarmEchoLoop(_ context.Context, in io.Reader, out io.Writer) error {
 func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	rt := adapter.NewSDKWarmInProcessRuntime(sdkWarmEchoLoop)
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.Runtime = rt
 
@@ -55,7 +55,7 @@ func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	// Claim: ConfigureWorkspace binds the pre-connected loop to the session.
 	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceRoot,
+		Cwd:       s.WorkspaceBase,
 	}); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
