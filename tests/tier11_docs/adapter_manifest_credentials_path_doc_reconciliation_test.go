@@ -64,6 +64,20 @@ func TestAdapterManifestDocsCarryTheCredentialsPathMember(t *testing.T) {
 		retiredPodGlobalCredentialPath,
 	})
 
+	// The manifest lead states the currency rule §4.7 fixes: the file is
+	// rewritten before each session's binary is spawned and is authoritative
+	// for the session whose start last wrote it. A blanket instruction to read
+	// the manifest once at startup contradicts that rule for
+	// `credentialsPath`, because one runtime process serves every slot on the
+	// pod and a co-tenant session's credential file sits at a different
+	// per-slot path that only a later manifest names.
+	requireAllContain(t, "adapter-contract.md Adapter Manifest section", manifest, []string{
+		"The `credentialsPath` member names the session whose start last wrote it, so a process serving a co-tenant session cannot rely on a value it read at its own startup.",
+	})
+	requireNoneContain(t, "adapter-contract.md Adapter Manifest section", manifest, []string{
+		"read the values your process needs at startup rather than re-reading the file later",
+	})
+
 	requireNoneContain(t, "adapter-contract.md", contract, []string{
 		"Basic-level runtimes do not need to read the manifest at all",
 	})

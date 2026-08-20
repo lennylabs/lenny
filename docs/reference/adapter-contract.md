@@ -458,7 +458,7 @@ At the Standard and Full levels, you can optionally expose an HTTP health check 
 
 ## Adapter Manifest
 
-The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is one pod-global file, read-only to the agent container, and the adapter rewrites it before each session's binary is spawned, including each session on a recycling pod. It is authoritative for the session whose start last wrote it. On a pod holding more than one bound session, a later session's start replaces the `sessionId`, `mcpNonce`, and `credentialsPath` members while an earlier session's binary is still running, so read the values your process needs at startup rather than re-reading the file later.
+The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is one pod-global file, read-only to the agent container, and the adapter rewrites it before each session's binary is spawned, including each session on a recycling pod. It is authoritative for the session whose start last wrote it. On a pod holding more than one bound session, a later session's start replaces the `sessionId`, `mcpNonce`, and `credentialsPath` members while an earlier session's binary is still running. The `mcpNonce` a process authenticates with is the value present when that process started. The `credentialsPath` member names the session whose start last wrote it, so a process serving a co-tenant session cannot rely on a value it read at its own startup.
 
 ```json
 {
