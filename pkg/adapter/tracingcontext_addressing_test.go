@@ -47,6 +47,12 @@ func tracingDrops() float64 {
 	return testutil.ToFloat64(adapter.SetTracingContextDroppedCounter())
 }
 
+// unaddressedRejections reads the §28.5.3 unaddressed-frame counter for
+// the set_tracing_context frame type.
+func unaddressedRejections() float64 {
+	return testutil.ToFloat64(adapter.UnaddressedFrameRejectedCounter("set_tracing_context"))
+}
+
 // openTracingAttach binds an Attach stream to sessionID and returns it.
 // The session identifier is the stream's whole address.
 func openTracingAttach(t *testing.T, client adapterv1.AdapterClient, sessionID string) adapterv1.Adapter_AttachClient {
@@ -136,24 +142,40 @@ func captureDropLogs(t *testing.T) func() []string {
 	}
 }
 
-// dropLog is one expected drop diagnostic: the slot the frame was tagged
-// with, and the (session, slot) address of the Attach stream that dropped
-// it. A drop counted by an unlabelled counter is only attributable to a
-// misaddressed frame, a wrong-slot stamp, or a teardown-window arrival
-// through this line, so the line must name all three fields in that order.
+// dropLog is one expected drop diagnostic: the session the frame was
+// addressed to, and the (session, slot) address of the Attach stream that
+// dropped it. A drop counted by an unlabelled counter is only attributable
+// to a misaddressed frame, a wrong-session stamp, or a teardown-window
+// arrival through this line, so the line must name all three fields in
+// that order.
 type dropLog struct {
-	frameSlot  string
-	session    string
-	streamSlot string
+	frameSession string
+	session      string
+	streamSlot   string
 }
 
-// matches reports whether line names the frame's slot, then the stream's
-// session, then the stream's slot.
+// matches reports whether line names the frame's session, then the
+// stream's session, then the stream's slot.
 func (d dropLog) matches(line string) bool {
-	frame := strings.Index(line, fmt.Sprintf("slot %q", d.frameSlot))
-	session := strings.Index(line, "session "+d.session)
+	frame := strings.Index(line, fmt.Sprintf("for session %q", d.frameSession))
+	session := strings.Index(line, "bound to session "+d.session)
 	stream := strings.LastIndex(line, fmt.Sprintf("slot %q", d.streamSlot))
 	return frame >= 0 && session > frame && stream > session
+}
+
+// rejectLog is one expected unaddressed-frame diagnostic, which names the
+// session of the stream that rejected the frame. The frame carries no
+// session of its own, so the stream's binding is the whole address the
+// line can name.
+type rejectLog struct {
+	session string
+}
+
+// matches reports whether line is the unaddressed-frame rejection for this
+// stream's session.
+func (r rejectLog) matches(line string) bool {
+	return strings.Contains(line, "carrying no session identifier") &&
+		strings.Contains(line, "bound to session "+r.session)
 }
 
 // requireDropLogs asserts the drop path emitted exactly one protocol-error
@@ -173,9 +195,40 @@ func requireDropLogs(t *testing.T, logs func() []string, want ...dropLog) {
 			}
 		}
 		if n != 1 {
-			t.Errorf("%d protocol-error line(s) name frame slot %q on stream (session %s, slot %q), want 1; got %q",
-				n, w.frameSlot, w.session, w.streamSlot, got)
+			t.Errorf("%d protocol-error line(s) name frame session %q on stream (session %s, slot %q), want 1; got %q",
+				n, w.frameSession, w.session, w.streamSlot, got)
 		}
+	}
+}
+
+// requireRejectLogs asserts the rejection path emitted exactly one
+// protocol-error line per expected rejecting stream.
+func requireRejectLogs(t *testing.T, logs func() []string, want ...rejectLog) {
+	t.Helper()
+	got := logs()
+	if len(got) != len(want) {
+		t.Fatalf("set_tracing_context protocol-error log lines = %d %q, want %d", len(got), got, len(want))
+	}
+	for _, w := range want {
+		n := 0
+		for _, line := range got {
+			if w.matches(line) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%d protocol-error line(s) reject an unaddressed frame on the stream bound to session %s, want 1; got %q",
+				n, w.session, got)
+		}
+	}
+}
+
+// requireUnaddressed asserts the unaddressed-frame counter moved by want
+// since before.
+func requireUnaddressed(t *testing.T, before, want float64) {
+	t.Helper()
+	if got := unaddressedRejections() - before; got != want {
+		t.Errorf("unaddressed set_tracing_context frame counter moved by %v, want %v", got, want)
 	}
 }
 
@@ -229,22 +282,27 @@ func TestSetTracingContextAddressedToOwnSessionRegistersOnce_spec_28_5_3(t *test
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (the address is
-// populated on every session-scoped frame) — an unaddressed frame
-// addresses no stream on any pod. Every stream receives it through the
-// fan-out and every one of them drops, counts, and logs it, so no
-// session's tracing context is written.
+// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (an absent address
+// on a pod holding more than one slot) — a frame carrying no session
+// identifier names nothing the pod can resolve when it holds more than one
+// slot. Every stream receives it through the fan-out and every one of them
+// rejects, counts, and logs it, so no session's tracing context is
+// written. The rejection is counted on the unaddressed-frame series rather
+// than on the misaddressed-frame drop series, because the two partition
+// the rejections between them.
 //
 // diagnosis: a failure means an unaddressed frame is registering against
 // some session again, which merges one runtime's tracing identifiers into
-// a co-tenant's delegation lease.
-func TestSetTracingContextUnaddressedIsDropped_spec_28_5_3(t *testing.T) {
+// a co-tenant's delegation lease, or that the rejection is attributed to
+// the wrong counter.
+func TestSetTracingContextUnaddressedOnAMultiSlotPodIsRejected_spec_28_5_3(t *testing.T) {
 	_, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
 	streamA := openTracingAttach(t, client, "sess-a")
 	streamB := openTracingAttach(t, client, "sess-b")
 	rt.waitForSubscribers(t, 2)
 
-	before := tracingDrops()
+	beforeDrops := tracingDrops()
+	beforeRejects := unaddressedRejections()
 	logs := captureDropLogs(t)
 	rt.output <- tracingFrame("")
 	rt.output <- statusFrame("sess-a")
@@ -254,10 +312,39 @@ func TestSetTracingContextUnaddressedIsDropped_spec_28_5_3(t *testing.T) {
 
 	requireCalls(t, fwd)
 	// Both streams see the unaddressed frame, so both reject it.
-	requireDrops(t, before, 2)
-	requireDropLogs(t, logs,
-		dropLog{frameSlot: "", session: "sess-a", streamSlot: "sess-a"},
-		dropLog{frameSlot: "", session: "sess-b", streamSlot: "sess-b"})
+	requireUnaddressed(t, beforeRejects, 2)
+	requireDrops(t, beforeDrops, 0)
+	requireRejectLogs(t, logs, rejectLog{session: "sess-a"}, rejectLog{session: "sess-b"})
+}
+
+// spec: 4.6.1 (an absent address on a pod holding at most one slot
+// resolves to the receiving stream's own binding), 28.5.3
+// (set_tracing_context addressing) — a Basic-level runtime that echoes no
+// identifier has the stdout frame as its only tracing path, and on a pod
+// holding one slot the frame can address no session other than the one the
+// receiving stream is bound to. It resolves rather than being rejected,
+// and neither rejection counter moves.
+//
+// diagnosis: a failure means the adapter rejects every untagged
+// set_tracing_context frame, which silently disables tracing for every
+// Basic-level runtime, since the JSONL frame is the only tracing path such
+// a runtime has.
+func TestSetTracingContextUnaddressedOnASingleSlotPodResolvesToTheStream_spec_4_6_1(t *testing.T) {
+	_, rt, fwd, client := concurrentTracingPod(t, "sess-a")
+	streamA := openTracingAttach(t, client, "sess-a")
+	rt.waitForSubscribers(t, 1)
+
+	beforeDrops := tracingDrops()
+	beforeRejects := unaddressedRejections()
+	logs := captureDropLogs(t)
+	rt.output <- tracingFrame("")
+	rt.output <- statusFrame("sess-a")
+	awaitStatus(t, streamA)
+
+	requireCalls(t, fwd, "sess-a")
+	requireUnaddressed(t, beforeRejects, 0)
+	requireDrops(t, beforeDrops, 0)
+	requireDropLogs(t, logs)
 }
 
 // spec: 28.5.3 (set_tracing_context addressing) — a frame addressed to a
@@ -283,18 +370,17 @@ func TestSetTracingContextAddressedToACoTenantNeverReachesStream_spec_28_5_3(t *
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing) — address equality is
-// exact string equality with an absent or unreadable address counting as
-// the empty string, and the adapter reads no other outcome off the frame.
-// A frame whose address the adapter cannot read as a string therefore
-// resolves to the empty address and fails equality against every stream,
-// which is the fail-closed direction now that no stream carries an empty
-// address.
+// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (an absent address
+// on a pod holding more than one slot) — address resolution is exact
+// string equality, with an absent or unreadable address counting as the
+// empty string, and the adapter reads no other outcome off the frame. A
+// frame whose address the adapter cannot read as a string therefore
+// carries no address at all, and on a pod holding more than one slot it is
+// rejected rather than resolved, which is the fail-closed direction.
 //
 // diagnosis: a failure means the adapter applies an addressing outcome the
-// addressing rule does not define, accepting a frame the two conditions
-// reject because it decodes the address value's JSON type as a third
-// answer.
+// addressing rule does not define, accepting a frame the rule rejects
+// because it decodes the address value's JSON type as a third answer.
 func TestSetTracingContextUnreadableAddressIsTheEmptyAddress_spec_28_5_3(t *testing.T) {
 	frames := map[string]string{
 		"number": `{"type":"set_tracing_context","slotId":1,"context":{"langsmith_run_id":"run_abc"}}`,
@@ -302,20 +388,25 @@ func TestSetTracingContextUnreadableAddressIsTheEmptyAddress_spec_28_5_3(t *test
 		"object": `{"type":"set_tracing_context","slotId":{"id":"sess-a"},"context":{"langsmith_run_id":"run_abc"}}`,
 	}
 	for name, frame := range frames {
-		t.Run(name+" is dropped", func(t *testing.T) {
-			_, rt, fwd, client := concurrentTracingPod(t, "sess-a")
+		t.Run(name+" is rejected", func(t *testing.T) {
+			// A pod holding a second slot is what makes an unreadable
+			// address unresolvable: there is more than one session the
+			// frame could name and nothing in it says which.
+			_, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
 			streamA := openTracingAttach(t, client, "sess-a")
 			rt.waitForSubscribers(t, 1)
 
-			before := tracingDrops()
+			beforeDrops := tracingDrops()
+			beforeRejects := unaddressedRejections()
 			logs := captureDropLogs(t)
 			rt.output <- []byte(frame)
 			rt.output <- statusFrame("sess-a")
 			awaitStatus(t, streamA)
 
 			requireCalls(t, fwd)
-			requireDrops(t, before, 1)
-			requireDropLogs(t, logs, dropLog{frameSlot: "", session: "sess-a", streamSlot: "sess-a"})
+			requireUnaddressed(t, beforeRejects, 1)
+			requireDrops(t, beforeDrops, 0)
+			requireRejectLogs(t, logs, rejectLog{session: "sess-a"})
 		})
 	}
 }
@@ -341,5 +432,5 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 
 	requireCalls(t, fwd)
 	requireDrops(t, before, 1)
-	requireDropLogs(t, logs, dropLog{frameSlot: "sess-a", session: "sess-a", streamSlot: "sess-a"})
+	requireDropLogs(t, logs, dropLog{frameSession: "sess-a", session: "sess-a", streamSlot: "sess-a"})
 }

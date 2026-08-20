@@ -176,7 +176,8 @@ These counters are emitted by the adapter process inside each agent pod. The def
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_adapter_sopeercred_disabled_total` | Counter | -- | Increments on every pod start in nonce-only mode (`requireSoPeercred: false`). Outside the default scrape set. Deployers who wire an adapter scrape target alert on `lenny_adapter_sopeercred_disabled_total > 0`. | Deployer-configured adapter alert (see [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary)). |
 | `lenny_adapter_sopeercred_selftest_failed_total` | Counter | -- | Increments when the adapter's `SO_PEERCRED` self-test fails. Outside the default scrape set. | Operational monitoring. |
-| `lenny_adapter_set_tracing_context_dropped_total` | Counter | -- | Increments when a runtime's `set_tracing_context` frame does not address the Attach stream that delivered it and the adapter drops it. Outside the default scrape set. | Operational monitoring. |
+| `lenny_adapter_set_tracing_context_dropped_total` | Counter | -- | Increments when a runtime's `set_tracing_context` frame names a session that is not the live binding of the Attach stream that delivered it and the adapter drops it. Outside the default scrape set. | Operational monitoring. |
+| `lenny_adapter_unaddressed_frame_rejected_total` | Counter | `frame_type` | Increments once per Attach stream that rejects a session-scoped frame carrying no per-session identifier on a pod holding more than one slot. One such frame on a pod holding two live streams increments the counter twice. Outside the default scrape set. | Operational monitoring. |
 
 ---
 

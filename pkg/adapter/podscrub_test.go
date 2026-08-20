@@ -483,10 +483,13 @@ func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing
 	// the gateway retire, not an in-guest branch), so the request carries only
 	// the cleanup parameters. spec: 5.2 (whole-pod scrub parameters).
 	for i, profile := range []string{"standard", "in-place", "vm-restart"} {
-		cfg := s.scrubConfig(&adapterv1.RecycleScrub{
+		cfg, err := s.scrubConfig(&adapterv1.RecycleScrub{
 			CleanupCommands:       []string{"echo cleanup"},
 			CleanupTimeoutSeconds: 12,
 		})
+		if err != nil {
+			t.Fatalf("profile %q: scrubConfig: %v", profile, err)
+		}
 		if cfg.ShellMode {
 			t.Errorf("profile %q: ShellMode = true, want false (no cleanup shell field)", profile)
 		}
@@ -717,5 +720,57 @@ func mustMkdirAll(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+// TestRecycleScrubWithUnreadableSlotsContainerReportsFailure asserts the
+// recycle scrub fails its outcome when it cannot read a slots container.
+// The per-slot enumeration is what the purge and the step-6 verification
+// run over, so a container the adapter cannot read is a pod whose
+// per-session workspaces and credential leases may all still be on disk
+// with nothing having examined them. Reading that failure as "this pod
+// held no slot" would report SUCCEEDED for a scrub that purged and
+// verified nothing, and the gateway would return the pod to the pool with
+// the previous sessions' residue intact.
+//
+// diagnosis: an unreadable slots container is being folded into the empty
+// set again, so the between-session isolation path fails open and a
+// recycled pod can carry one session's workspace and credential lease into
+// the next.
+// spec: 5.2 (whole-pod scrub, credential purge and workspace removal), 6.4
+// (per-slot layout)
+func TestRecycleScrubWithUnreadableSlotsContainerReportsFailure_spec_5_2(t *testing.T) {
+	s, reporter, _, done := recycleServer(t)
+	credBase := t.TempDir()
+	s.CredentialsDir = credBase
+	// A regular file where the per-slot credentials container belongs:
+	// os.ReadDir fails with ENOTDIR, which is a read failure rather than
+	// absence, on every uid the tests run as.
+	if err := os.WriteFile(filepath.Join(credBase, "slots"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write the slots path: %v", err)
+	}
+	// No session is started: the residue the scrub has to reach belongs to
+	// a leaked slot whose registry entry is already gone, which is why the
+	// enumeration is on-disk in the first place.
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-unreadable"},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	waitScrubDone(t, done)
+
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportPodScrub calls = %d, want exactly 1", len(reports))
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubFailed {
+		t.Fatalf("outcome = %v, want PodScrubFailed for a slots container the scrub could not read",
+			reports[0].outcome)
+	}
+	if !strings.Contains(reports[0].detail, "slots") {
+		t.Errorf("failure detail = %q, want it to name the slots container it could not enumerate",
+			reports[0].detail)
 	}
 }

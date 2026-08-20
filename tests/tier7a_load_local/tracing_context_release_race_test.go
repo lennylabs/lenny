@@ -13,13 +13,15 @@
 // asserts all four:
 //
 //   - Accounting. Every frame the addressing decision reaches is either
-//     forwarded to the gateway or counted on the drop counter, and never
-//     both and never neither.
+//     forwarded to the gateway or counted as refused, on the drop counter
+//     or on the unaddressed-frame counter, and never both and never
+//     neither.
 //   - Session binding. A forward carries the session id of the stream that
 //     carried the frame, so a frame fanned out to a sibling stream cannot
 //     register against that sibling's session.
-//   - Address equality. A frame carrying an address the stream does not
-//     hold is never forwarded, even while the release is in flight.
+//   - Address resolution. A frame carrying no per-session identifier on a
+//     pod holding more than one slot is never forwarded, even while the
+//     release is in flight.
 //   - Release ordering. A frame the handler decides after the teardown has
 //     returned is never forwarded. The bound is taken on the decision
 //     rather than on the emission: once the teardown returns, the release
@@ -38,19 +40,13 @@
 // then lets the relay go, so every parked frame is known to be decided
 // after the release and every one of them must drop.
 //
-// The registry the live-binding condition reads has two terms on the
-// pod-global branch, and a pod holding slots and a pod-global session at
-// once is the state in which they disagree. The coexisting case builds that
-// state and releases both bindings, so both terms move while frames are
-// being decided. Releasing the pod-global session before the slot leaves no
-// instant at which both terms hold, so any forward at all in that ordering
-// means the decision read the two terms at two different times. That case
-// resolves a tear only when the reads are further apart than the interval
-// between the two teardowns; the tier-1 case in `pkg/adapter` that toggles
-// the registry underneath the decision resolves one of any width.
+// The live-binding condition reads two terms of the same registry entry,
+// and the tier-1 case in `pkg/adapter` that toggles the registry underneath
+// the decision resolves a tear between them of any width. The cases here
+// drive the same decision under a real teardown instead.
 //
 // Once the release has completed and been observed, every later frame
-// drops.
+// addressed to the released binding drops.
 //
 // spec: §28.5.3 (set_tracing_context addressing, live-binding
 // confirmation), §8.3 (tracing context, per-session scope), §6.4 (slot
@@ -82,8 +78,8 @@ import (
 )
 
 // tracingRaceFrameCap bounds how many addressed frames one emitter writes
-// and tracingRaceMisaddressedCap bounds the interleaved frames carrying an
-// address the stream under test does not hold. Both emitters run until the
+// and tracingRaceUnaddressedCap bounds the interleaved frames carrying no
+// per-session identifier at all. Both emitters run until the
 // release sentinel comes back rather than to their cap, so the caps only
 // stop a run whose teardown never lands. tracingRaceRuns is how many times
 // the whole scenario repeats so the release lands at varying points in the
@@ -91,10 +87,10 @@ import (
 // post-release phase writes. `lenny-test stress --test <Name> --runs <N>`
 // is the flake-budget form for driving the window harder.
 const (
-	tracingRaceFrameCap        = 4096
-	tracingRaceMisaddressedCap = 4096
-	tracingRaceRuns            = 16
-	tracingRaceSettleFrames    = 64
+	tracingRaceFrameCap       = 4096
+	tracingRaceUnaddressedCap = 4096
+	tracingRaceRuns           = 16
+	tracingRaceSettleFrames   = 64
 )
 
 // tracingRaceInFlightFrames is how many frames the in-flight case parks in
@@ -111,10 +107,11 @@ const tracingRaceJitter = 400 * time.Microsecond
 // a recorded forward can be traced back to the frame that produced it.
 const raceFrameSeqKey = "lenny_race_seq"
 
-// raceMisaddressedSeq labels a frame emitted on an address the stream under
-// test does not hold. No correct addressing decision forwards one, so the
-// label appearing in a recorded forward is itself the failure.
-const raceMisaddressedSeq = "misaddressed"
+// raceUnaddressedSeq labels a frame emitted with no per-session
+// identifier while the pod holds more than one slot. No correct addressing
+// decision forwards one, so the label appearing in a recorded forward is
+// itself the failure.
+const raceUnaddressedSeq = "unaddressed"
 
 // raceRuntime is the RuntimeProcess double for these cases. One runtime
 // process per pod serves every slot, so a single output stream is fanned
@@ -311,6 +308,37 @@ func tracingDropCount(t *testing.T) float64 {
 	return 0
 }
 
+// tracingUnaddressedCount reads the §28.5.3 unaddressed-frame counter off
+// the default registry, summing every frame-type series, because a frame
+// carrying no per-session identifier on a pod holding more than one slot is
+// refused on this counter rather than on the drop counter.
+func tracingUnaddressedCount(t *testing.T) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	var total float64
+	for _, f := range fams {
+		if f.GetName() != "lenny_adapter_unaddressed_frame_rejected_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			total += m.GetCounter().GetValue()
+		}
+	}
+	return total
+}
+
+// tracingRefusalCount is every frame the addressing decision refused, on
+// either counter: a frame naming an identifier that is not the stream's
+// live binding, and a frame naming no identifier at all on a pod holding
+// more than one slot.
+func tracingRefusalCount(t *testing.T) float64 {
+	t.Helper()
+	return tracingDropCount(t) + tracingUnaddressedCount(t)
+}
+
 // raceAdapter builds an adapter Server over the fan-out runtime with a
 // recording platform forwarder, serves it over an in-memory listener, and
 // returns the pieces a case drives.
@@ -436,12 +464,13 @@ func (e *raceEmitter) emitAddressed(rt *raceRuntime, slotID string) {
 	e.emit(rt, slotID, tracingRaceFrameCap, strconv.Itoa)
 }
 
-// emitMisaddressed writes frames carrying an address the stream under test
-// does not hold. They reach the same fan-out, so they exercise the
-// address-equality condition and, on a concurrent pod, the sibling stream's
-// own handler.
-func (e *raceEmitter) emitMisaddressed(rt *raceRuntime, slotID string) {
-	e.emit(rt, slotID, tracingRaceMisaddressedCap, func(int) string { return raceMisaddressedSeq })
+// emitUnaddressed writes frames carrying no per-session identifier. They
+// pass every stream's demultiplexer, so they reach the handler of the
+// stream under test and of every sibling stream, where a pod holding more
+// than one slot refuses them because nothing in the frame says which
+// session they address.
+func (e *raceEmitter) emitUnaddressed(rt *raceRuntime) {
+	e.emit(rt, "", tracingRaceUnaddressedCap, func(int) string { return raceUnaddressedSeq })
 }
 
 // awaitReleaseSentinel is what makes the release-ordering bound
@@ -487,15 +516,18 @@ func shutdownSessionRequest(sessionID string) *adapterv1.ShutdownRequest {
 // every decision accounted for exactly once, no forward against a session
 // the stream is not bound to, no forward of a frame the stream does not
 // address, and no forward of a frame the handler decided after the release
-// completed. decidedAtRelease is the forward count the release sentinel
+// completed. refused is every frame the decision rejected, on the drop
+// counter and on the unaddressed counter together, because the two
+// counters partition the rejections between them.
+// decidedAtRelease is the forward count the release sentinel
 // observed; a forward at or after that index was decided against a released
 // binding.
-func checkTracingAccounting(t *testing.T, run int, sessionID string, decisions int, got []raceForward, drops float64, decidedAtRelease int) {
+func checkTracingAccounting(t *testing.T, run int, sessionID string, decisions int, got []raceForward, refused float64, decidedAtRelease int) {
 	t.Helper()
-	if float64(len(got))+drops != float64(decisions) {
+	if float64(len(got))+refused != float64(decisions) {
 		t.Fatalf("run %d: %d frames reached the addressing decision but %d were forwarded and %v "+
-			"counted as dropped; a frame was both forwarded and counted, or lost without either",
-			run, decisions, len(got), drops)
+			"refused; a frame was both forwarded and refused, or lost without either",
+			run, decisions, len(got), refused)
 	}
 	for i, fw := range got {
 		if fw.session != sessionID {
@@ -503,9 +535,10 @@ func checkTracingAccounting(t *testing.T, run int, sessionID string, decisions i
 				"registered tracing identifiers against a session this stream is not bound to",
 				run, i, fw.session, sessionID)
 		}
-		if fw.seq == raceMisaddressedSeq {
-			t.Fatalf("run %d: forward %d carried a frame addressed to another stream: address "+
-				"equality admitted a frame it must reject", run, i)
+		if fw.seq == raceUnaddressedSeq {
+			t.Fatalf("run %d: forward %d carried a frame carrying no per-session identifier on a "+
+				"pod holding more than one slot: address resolution admitted a frame it must "+
+				"reject", run, i)
 		}
 		if i >= decidedAtRelease {
 			t.Fatalf("run %d: forward %d carried frame %q, which the handler decided after the "+
@@ -556,13 +589,20 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 			s, rt, fwd, client := raceAdapter(t)
 			startRaceSlot(t, s, "sess-slot-a")
 			startRaceSlot(t, s, "sess-slot-b")
+			// A third slot with no Attach stream keeps the pod holding
+			// more than one slot for the whole run, including after the
+			// teardown releases sess-slot-a. An unaddressed frame is
+			// therefore unresolvable at every point of the race, which is
+			// what makes "never forwarded" the invariant of every
+			// interleaving. spec: §4.6.1.
+			startRaceSlot(t, s, "sess-slot-c")
 			streamA := openRaceAttach(t, client, "sess-slot-a", "sess-slot-a")
 			streamB := openRaceAttach(t, client, "sess-slot-b", "sess-slot-b")
 			rt.waitForSubscribers(t, 2)
 
-			before := tracingDropCount(t)
+			before := tracingRefusalCount(t)
 			addressed := &raceEmitter{}
-			misaddressed := &raceEmitter{}
+			unaddressed := &raceEmitter{}
 			var wg sync.WaitGroup
 			wg.Add(3)
 			// The emitter, the untagged writer, and the teardown run with
@@ -577,13 +617,13 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 				defer wg.Done()
 				// An untagged frame is fanned out to every slot's stream,
 				// so it reaches this stream's handler and the sibling's.
-				misaddressed.emitMisaddressed(rt, "")
+				unaddressed.emitUnaddressed(rt)
 			}()
 			go func() {
 				defer wg.Done()
 				shutdownAfterJitter(t, client, rt, "sess-slot-a", shutdownSessionRequest("sess-slot-a"))
 			}()
-			decidedAtRelease := awaitReleaseSentinel(t, streamA, "sess-slot-a", fwd, addressed, misaddressed)
+			decidedAtRelease := awaitReleaseSentinel(t, streamA, "sess-slot-a", fwd, addressed, unaddressed)
 			wg.Wait()
 			// Both streams decide the untagged frames, so both must be
 			// drained before the accounting is read.
@@ -594,9 +634,9 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 			// Every tagged frame is decided on this stream alone (the
 			// demux drops it on the sibling); every untagged frame is
 			// decided on both streams.
-			decisions := addressed.written + 2*misaddressed.written
+			decisions := addressed.written + 2*unaddressed.written
 			checkTracingAccounting(t, run, "sess-slot-a", decisions, raced,
-				tracingDropCount(t)-before, decidedAtRelease)
+				tracingRefusalCount(t)-before, decidedAtRelease)
 
 			// The slot is gone for good, so every later frame on its
 			// address fails live-binding confirmation.
@@ -626,12 +666,17 @@ func TestSetTracingContextSessionReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t 
 		t.Run(fmt.Sprintf("run%02d", run), func(t *testing.T) {
 			s, rt, fwd, client := raceAdapter(t)
 			startRaceSlot(t, s, "sess-solo")
+			// A co-tenant slot with no Attach stream keeps the pod holding
+			// more than one slot across the teardown, so an unaddressed
+			// frame stays unresolvable while the session under test is
+			// released underneath its stream. spec: §4.6.1.
+			startRaceSlot(t, s, "sess-solo-peer")
 			stream := openRaceAttach(t, client, "sess-solo", "sess-solo")
 			rt.waitForSubscribers(t, 1)
 
-			before := tracingDropCount(t)
+			before := tracingRefusalCount(t)
 			addressed := &raceEmitter{}
-			misaddressed := &raceEmitter{}
+			unaddressed := &raceEmitter{}
 			var wg sync.WaitGroup
 			wg.Add(3)
 			go func() {
@@ -641,22 +686,22 @@ func TestSetTracingContextSessionReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t 
 			go func() {
 				defer wg.Done()
 				// A frame carrying no address reaches every stream through
-				// the fan-out and must be rejected on address equality
-				// alone, on a pod of either concurrency.
-				misaddressed.emitMisaddressed(rt, "")
+				// the fan-out and is refused while the pod holds more than
+				// one slot, whatever the release has done to the binding.
+				unaddressed.emitUnaddressed(rt)
 			}()
 			go func() {
 				defer wg.Done()
 				shutdownAfterJitter(t, client, rt, "sess-solo", shutdownSessionRequest("sess-solo"))
 			}()
-			decidedAtRelease := awaitReleaseSentinel(t, stream, "sess-solo", fwd, addressed, misaddressed)
+			decidedAtRelease := awaitReleaseSentinel(t, stream, "sess-solo", fwd, addressed, unaddressed)
 			wg.Wait()
 			drainToStatus(t, rt, stream, "sess-solo")
 
 			raced := fwd.forwards()
-			decisions := addressed.written + misaddressed.written
+			decisions := addressed.written + unaddressed.written
 			checkTracingAccounting(t, run, "sess-solo", decisions, raced,
-				tracingDropCount(t)-before, decidedAtRelease)
+				tracingRefusalCount(t)-before, decidedAtRelease)
 
 			checkPostReleaseSilence(t, run, rt, stream, "sess-solo", fwd, len(raced))
 		})

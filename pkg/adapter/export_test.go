@@ -13,6 +13,15 @@ func SetTracingContextDroppedCounter() prometheus.Counter {
 	return setTracingContextDropped.WithLabelValues()
 }
 
+// UnaddressedFrameRejectedCounter exposes the §28.5.3 unaddressed-frame
+// counter for the given frame type so the package's external tests can
+// assert that a frame carrying no per-session identifier on a pod holding
+// more than one slot is counted on its own series rather than on the
+// misaddressed-frame drop counter.
+func UnaddressedFrameRejectedCounter(frameType string) prometheus.Counter {
+	return unaddressedFrameRejected.WithLabelValues(frameType)
+}
+
 // ReleaseSlotForTest runs both release steps for the session the way the
 // rollback paths do, so an external test can drive the §28.5.3 teardown
 // window in which an Attach stream is still draining output after its

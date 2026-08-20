@@ -405,16 +405,21 @@ func (r *Report) verify(ops Ops, cfg Config) {
 	r.record(StepVerify, false, verifyErr)
 }
 
-// removeAll removes every path in the set, returning the first failure so
-// one surviving member fails the step rather than being masked by a later
-// success.
+// removeAll removes every path in the set and reports every failure. It
+// never short-circuits: the credential purge runs before the deployer's
+// cleanupCommands precisely so no session's credential file is on disk
+// while third-party code runs as the pod user, and returning on the first
+// unremovable member would leave the rest of the set in place for that
+// window. Each member is attempted and the joined error fails the step.
+// spec: §5.2 (the credential purge precedes cleanupCommands).
 func removeAll(ops Ops, paths []string) error {
+	var errs []error
 	for _, p := range paths {
 		if err := ops.RemoveAll(p); err != nil {
-			return fmt.Errorf("remove %s: %w", p, err)
+			errs = append(errs, fmt.Errorf("remove %s: %w", p, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // CleanupEnv returns the env a cleanupCommand runs with: the §7.5 minimal

@@ -102,7 +102,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// the workspace under workspace.WorkspacePrefix and the §6.4
 	// /sessions session file under workspace.SessionsPrefix. A resume that
 	// carries no chunks (conversation-only) restores nothing.
-	restored, extractErr := s.restoreChunks(ctx, sessionID, req.GetChunks())
+	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
 	if extractErr != nil {
 		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
@@ -158,28 +158,17 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 
 // restoreChunks fetches each presigned GET capability in ascending index
 // order, concatenates the chunk bodies into one byte stream, and extracts
-// the checkpoint bundle into the resuming session's own checkpoint roots.
-// It returns the uncompressed bytes restored. An empty chunk set restores
-// nothing (a conversation-only or coordinator-handoff resume), which is
-// not an error.
-//
-// spec: §6.4 — the per-slot tree is the only layout, so the restore
-// destination is the session's /workspace/slots/{sessionId}/current and
-// /sessions/{sessionId}, the same roots a capture reads. Resolving the
-// destination per session is what keeps a restore from replaying a
-// checkpoint into a directory no session runs in.
+// the checkpoint bundle into the checkpoint roots. It returns the
+// uncompressed bytes restored. An empty chunk set restores nothing (a
+// conversation-only or coordinator-handoff resume), which is not an error.
 //
 // spec: §10.1.7 — the concatenation of all chunks in index order is
 // consumed as a single tar (or tar.gz) stream fed end-to-end into one
 // decompress→untar pipeline; chunk boundaries are never parsed in
 // isolation.
-func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*adapterv1.ChunkGrant) (int64, error) {
+func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGrant) (int64, error) {
 	if len(chunks) == 0 {
 		return 0, nil
-	}
-	roots, err := s.checkpointRootsForSession(sessionID)
-	if err != nil {
-		return 0, err
 	}
 	ordered := make([]*adapterv1.ChunkGrant, len(chunks))
 	copy(ordered, chunks)
@@ -203,7 +192,7 @@ func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*
 		_ = pw.Close()
 	}()
 
-	restored, extractErr := workspace.ExtractTree(roots, pr)
+	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), pr)
 	_ = pr.Close()
 	return restored, extractErr
 }

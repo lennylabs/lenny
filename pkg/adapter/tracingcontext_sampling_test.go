@@ -17,8 +17,7 @@ const tracingSamplingToggleWindow = 300 * time.Millisecond
 // spec: 28.5.3 (set_tracing_context addressing, live-binding
 // confirmation), 6.4 (slot claim and release lifecycle)
 //
-// diagnosis: the pod-global branch of the addressing decision reads the
-// registry more than once. The registry alternates between a pod holding a
+// diagnosis: the addressing decision reads the registry more than once. The registry alternates between a pod holding a
 // slot and the stream's session (the empty-registry term fails) and a pod
 // holding neither (the session term fails), and every instantaneous
 // sampling of those two states rejects the frame. A decision that admits
@@ -57,10 +56,10 @@ func TestSetTracingContextAddressingSamplesTheRegistryOnce_spec_28_5_3(t *testin
 	for time.Now().Before(deadline) {
 		for i := 0; i < 1024; i++ {
 			decisions++
-			// An untagged frame on a slotless stream: both addresses are
-			// the empty string, so address equality holds and only the
-			// live-binding confirmation can reject.
-			if s.tracingFrameAddressesStream(sessionID, "", "") {
+			// An untagged frame on a pod holding at most one slot
+			// resolves to the delivering stream's own binding, so only
+			// the live-binding confirmation can reject it.
+			if s.resolveTracingFrame(sessionID, "", sessionID) == frameAddressed {
 				close(stop)
 				wg.Wait()
 				t.Fatalf("addressing decision %d admitted an untagged frame on a pod that never held "+

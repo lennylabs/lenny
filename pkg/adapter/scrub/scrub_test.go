@@ -21,8 +21,9 @@ type fakeOps struct {
 	ipcErr   error
 	clearErr map[string]error // dir -> err
 
-	removed []string
-	cleared []string
+	removed   []string
+	removeErr map[string]error // path -> err
+	cleared   []string
 
 	// state maps a path to its reported (exists, empty). A path absent from
 	// the map reports (false, true) — does not exist, vacuously empty.
@@ -37,9 +38,10 @@ type pathState struct {
 
 func newFakeOps() *fakeOps {
 	return &fakeOps{
-		clearErr: map[string]error{},
-		state:    map[string]pathState{},
-		stateErr: map[string]error{},
+		clearErr:  map[string]error{},
+		removeErr: map[string]error{},
+		state:     map[string]pathState{},
+		stateErr:  map[string]error{},
 	}
 }
 
@@ -56,7 +58,7 @@ func (f *fakeOps) PurgeIPCShm(context.Context) error {
 func (f *fakeOps) RemoveAll(path string) error {
 	f.calls = append(f.calls, "rm:"+path)
 	f.removed = append(f.removed, path)
-	return nil
+	return f.removeErr[path]
 }
 
 func (f *fakeOps) ClearContents(dir string) error {
@@ -498,3 +500,61 @@ type killSafeOps struct{ DefaultOps }
 
 func (killSafeOps) KillUserProcesses(context.Context) error { return nil }
 func (killSafeOps) PurgeIPCShm(context.Context) error       { return nil }
+
+// spec: §5.2 (step 0 purges the credential file before cleanupCommands
+// run; step 2 removes the workspace)
+//
+// The purge is ordered ahead of the deployer's cleanupCommands so that no
+// session's credential file is on disk while third-party code runs as the
+// pod user. Every session on the pod owns its own credential file, so a
+// purge that returned on the first unremovable member would leave the rest
+// of the set in place for exactly that window. Every member is attempted
+// and every failure is reported.
+//
+// diagnosis: the credential purge short-circuits on the first failure
+// again, so one unremovable file shields the rest of the pod's per-session
+// credential files from the purge and they are still on disk while the
+// deployer's cleanup commands run.
+func TestRun_PurgeAttemptsEveryMemberAfterAFailure_spec_5_2(t *testing.T) {
+	ops := newFakeOps()
+	ops.removeErr["/run/lenny/slots/sess-b/credentials.json"] = errors.New("permission denied")
+	ops.removeErr["/workspace/slots/sess-b"] = errors.New("io error")
+	creds := []string{
+		"/run/lenny/slots/sess-a/credentials.json",
+		"/run/lenny/slots/sess-b/credentials.json",
+		"/run/lenny/slots/sess-c/credentials.json",
+	}
+	workspaces := []string{
+		"/workspace/slots/sess-a",
+		"/workspace/slots/sess-b",
+		"/workspace/slots/sess-c",
+	}
+	rep, err := Run(context.Background(), ops, Config{
+		CredentialFiles: creds,
+		WorkspaceDirs:   workspaces,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, want := range append(append([]string{}, creds...), workspaces...) {
+		found := false
+		for _, got := range ops.removed {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s was never attempted; the purge short-circuited on an earlier failure", want)
+		}
+	}
+	for _, step := range []StepName{StepCredentialPurge, StepRemoveWorkspace} {
+		if stepErr(rep, step) == nil {
+			t.Errorf("%s reported no error, want the failing member's error", step)
+		}
+	}
+	if rep.Result != Failed {
+		t.Errorf("scrub result = %v, want %v", rep.Result, Failed)
+	}
+}

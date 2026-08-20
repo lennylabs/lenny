@@ -81,15 +81,27 @@ var (
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
 	// §28.5.3: set_tracing_context frames dropped because the frame
-	// did not address the Attach stream that delivered it. A non-zero value
-	// means a runtime stamped a slot id that names another stream, omitted
-	// one on a concurrent pod, or emitted the frame after its binding was
-	// released.
+	// named an identifier that is not the live binding of the Attach stream
+	// that delivered it. A non-zero value means a runtime stamped a session
+	// identifier that names another stream, or emitted the frame after its
+	// binding was released. A frame carrying no identifier at all is
+	// counted by unaddressedFrameRejected instead.
 	setTracingContextDropped = mustCounter(prometheus.CounterOpts{
 		Name: "lenny_adapter_set_tracing_context_dropped_total",
 		Help: "set_tracing_context frames dropped because they did not " +
 			"address the Attach stream that delivered them (§28.5.3).",
 	})
+	// §28.5.3: session-scoped frames rejected because they carry no
+	// per-session identifier on a pod holding more than one slot, where
+	// nothing in the frame says which session they address. The rejection
+	// is taken per Attach stream, so one such frame on a pod holding two
+	// live streams increments this twice. Labelled by frame type.
+	unaddressedFrameRejected = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_adapter_unaddressed_frame_rejected_total",
+		Help: "Session-scoped frames carrying no per-session identifier " +
+			"rejected on a pod holding more than one slot (§28.5.3), " +
+			"labelled by frame type.",
+	}, []string{"frame_type"})
 	// §10.1.4: 1 while the adapter is in the coordinator-loss hold
 	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
 	coordinatorHold = mustGauge(prometheus.GaugeOpts{
@@ -195,6 +207,14 @@ func incControlEventDropped(event, reason string) {
 // incSetTracingContextDropped records a §28.5.3 set_tracing_context
 // frame the adapter dropped because it addressed another Attach stream.
 func incSetTracingContextDropped() { setTracingContextDropped.WithLabelValues().Inc() }
+
+// incUnaddressedFrameRejected records a §28.5.3 session-scoped frame the
+// adapter rejected because it carried no per-session identifier on a pod
+// holding more than one slot. It is counted once per rejecting Attach
+// stream, which is where the decision is taken.
+func incUnaddressedFrameRejected(frameType string) {
+	unaddressedFrameRejected.WithLabelValues(frameType).Inc()
+}
 
 // setCoordinatorHold publishes the §10.1 coordinator-hold gauge, which
 // reads 1 while the adapter is in hold state and 0 once a fence resolves

@@ -4,7 +4,9 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -59,8 +61,13 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 				"pod", rc.GetPodId())
 			return
 		}
-		rep, err := scrub.Run(ctx, s.ScrubOps, s.scrubConfig(rc))
-		outcome, detail := scrubOutcome(rep, err)
+		cfg, enumErr := s.scrubConfig(rc)
+		rep, err := scrub.Run(ctx, s.ScrubOps, cfg)
+		// A slots container the adapter could not read fails the scrub's
+		// outcome even when every enumerated step succeeded: the steps ran
+		// over a set that may be missing every leaked session's residue.
+		// spec: §5.2 (whole-pod scrub outcome).
+		outcome, detail := scrubOutcome(rep, errors.Join(err, enumErr))
 		if s.PodScrubReporter == nil {
 			// The dev path has no gateway link; the missing-report timeout is
 			// the backstop. Nothing to report through.
@@ -102,15 +109,24 @@ func (s *Server) SetScrubDoneHook(f func()) {
 // default because the pool configuration carries no cleanup shell field, so
 // cleanup commands run in the default argv mode.
 //
+// An enumeration failure is returned beside the config rather than folded
+// into an empty set, because an empty set is what the scrub reads as "this
+// pod held no slot" and a container the adapter cannot read may hold every
+// leaked session's workspace and credential lease. The caller runs the
+// scrub with what was enumerated and fails its outcome on the error, so the
+// pod is retired rather than recycled with unverified residue.
+//
 // spec: §5.2 (whole-pod scrub parameters).
-func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) scrub.Config {
+func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) (scrub.Config, error) {
+	creds, credErr := s.slotCredentialFiles()
+	trees, treeErr := s.slotWorkspaceTrees()
 	return scrub.Config{
-		CredentialFiles: s.slotCredentialFiles(),
-		WorkspaceDirs:   s.slotWorkspaceTrees(),
+		CredentialFiles: creds,
+		WorkspaceDirs:   trees,
 		CleanupDir:      s.WorkspaceBase,
 		CleanupCommands: rc.GetCleanupCommands(),
 		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
-	}
+	}, errors.Join(credErr, treeErr)
 }
 
 // slotCredentialFiles enumerates the §6.1 per-session credential files the
@@ -120,33 +136,43 @@ func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) scrub.Config {
 // a leaked slot whose registry entry is already gone. An unset credentials
 // root yields an empty set, which the scrub treats as "skip the step 0
 // purge". spec: §5.2; §6.1.
-func (s *Server) slotCredentialFiles() []string {
+func (s *Server) slotCredentialFiles() ([]string, error) {
+	dirs, err := slotChildren(slotlayout.SlotsDir(s.CredentialsDir))
+	if err != nil {
+		return nil, err
+	}
 	var files []string
-	for _, dir := range slotChildren(slotlayout.SlotsDir(s.CredentialsDir)) {
+	for _, dir := range dirs {
 		files = append(files, filepath.Join(dir, credfile.FileName))
 	}
-	return files
+	return files, nil
 }
 
 // slotWorkspaceTrees enumerates the per-session workspace trees the scrub
 // removes in step 2 and re-verifies absent in step 6, from the on-disk
 // children of /workspace/slots, on the same terms as
 // slotCredentialFiles. spec: §5.2; §6.4.
-func (s *Server) slotWorkspaceTrees() []string {
+func (s *Server) slotWorkspaceTrees() ([]string, error) {
 	return slotChildren(slotlayout.SlotsDir(s.WorkspaceBase))
 }
 
 // slotChildren lists the immediate subdirectories of a slots container.
-// An unset or unreadable container yields nothing: the scrub's step 6
-// then verifies an empty set, which is the same outcome as a pod that
-// held no slot.
-func slotChildren(slotsDir string) []string {
+// An unset container, and one that does not exist, yield nothing: a pod
+// that held no slot has no per-slot residue and the scrub's step 6 then
+// verifies an empty set. Any other read failure is returned, because it
+// leaves the adapter unable to say whether the container holds a leaked
+// session's tree and reading it as "no slots" would report a scrub that
+// purged and verified nothing as having succeeded.
+func slotChildren(slotsDir string) ([]string, error) {
 	if slotsDir == "" {
-		return nil
+		return nil, nil
 	}
 	entries, err := os.ReadDir(slotsDir)
 	if err != nil {
-		return nil
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("enumerate slots under %s: %w", slotsDir, err)
 	}
 	dirs := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -154,7 +180,7 @@ func slotChildren(slotsDir string) []string {
 			dirs = append(dirs, filepath.Join(slotsDir, e.Name()))
 		}
 	}
-	return dirs
+	return dirs, nil
 }
 
 // scrubOutcome converts a completed scrub Report (or a start error) into the
