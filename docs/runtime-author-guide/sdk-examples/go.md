@@ -337,13 +337,13 @@ func truncate(s string, n int) string {
 ### Message Flow
 
 ```
-1. Adapter sends:    {"type":"message","id":"msg_001","input":[{"type":"text","inline":"Summarize files"}]}
+1. Adapter sends:    {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
 2. Runtime sends:    {"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/current"}}
-3. Adapter sends:    {"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"main.go\nutil.go"}]}
+3. Adapter sends:    {"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
 4. Runtime sends:    {"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/main.go"}}
-5. Adapter sends:    {"type":"tool_result","id":"tc_002","content":[{"type":"text","inline":"package main..."}]}
+5. Adapter sends:    {"type":"tool_result","id":"tc_002","slotId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
 6. Runtime sends:    {"type":"tool_call","id":"tc_003","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/util.go"}}
-7. Adapter sends:    {"type":"tool_result","id":"tc_003","content":[{"type":"text","inline":"package util..."}]}
+7. Adapter sends:    {"type":"tool_result","id":"tc_003","slotId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
 8. Runtime sends:    {"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
 ```
 

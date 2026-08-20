@@ -4,7 +4,7 @@
 // for the two surfaces the same specification change corrects: the
 // gateway-to-adapter shutdown RPC name, and the scope of the per-slot cleanup.
 //
-// §4.6.1's population rule has the adapter address every session-scoped frame
+// §28.5.3's addressing rule has the adapter address every session-scoped frame
 // by the session it belongs to, on every pod, and §15.4.3 excepts that
 // identifier from the envelope fields a Basic-level runtime may ignore: such a
 // runtime echoes it on the frames it emits in response. Several reader-facing
@@ -24,8 +24,8 @@
 // infrastructure), the same posture as the other tier-11 doc checks.
 //
 // spec: 4.1 (request message scope), 4.7 (runtime adapter RPCs), 5.2 (per-slot
-// cleanup and whole-pod scrub), 15.1 (integration levels), 28.5.3 (intra-pod
-// frame addressing)
+// cleanup and whole-pod scrub), 15.4.3 (runtime integration levels), 28.5.3
+// (intra-pod frame addressing)
 
 package tier11_docs_test
 
@@ -131,7 +131,7 @@ func echoedIdentifier(key string) *regexp.Regexp {
 	return regexp.MustCompile(regexp.QuoteMeta(key) + "|" + regexp.QuoteMeta(goField) + "|" + regexp.QuoteMeta(snake))
 }
 
-// spec: 4.6.1, 15.1, 28.5.3
+// spec: 15.4.3, 28.5.3
 // diagnosis: a reader-facing page presents a hand-written Basic-level runtime
 //
 //	that emits a `response` or a `tool_call` carrying no per-session
@@ -291,7 +291,7 @@ func addressOmittedWhenAbsent(key string) []struct {
 	}
 }
 
-// spec: 4.6.1, 15.1, 28.5.3
+// spec: 15.4.3, 28.5.3
 // diagnosis: a reader-facing runtime sample writes the per-session address
 //
 //	unconditionally, so a frame emitted before the runtime has read an inbound
@@ -311,7 +311,7 @@ func TestBasicLevelRuntimeSamplesOmitTheAddressWhenAbsent(t *testing.T) {
 	}
 }
 
-// spec: 4.6.1, 15.1, 28.5.3
+// spec: 15.4.3, 28.5.3
 // diagnosis: docs/reference/adapter-contract.md grants a Basic-level runtime
 //
 //	an unqualified permission to ignore every envelope field outside `type`,
@@ -340,7 +340,7 @@ func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *te
 	}
 }
 
-// spec: 4.6.1, 28.5.3
+// spec: 15.4.3, 28.5.3
 // diagnosis: a `response` or `tool_call` literal on
 //
 //	docs/reference/adapter-contract.md carries no per-session address. Every
@@ -436,4 +436,65 @@ func residualStateTable(t *testing.T, label, page string) string {
 		body = body[:end]
 	}
 	return body
+}
+
+// annotatedTracePages are the reader-facing pages that carry a worked
+// step-by-step trace of the intra-pod protocol, written as a fenced block with
+// no language tag. A trace states both halves of the conversation, so it is the
+// one place a page can show the adapter handing a runtime an unaddressed frame
+// while the same runtime emits an addressed one.
+var annotatedTracePages = append(
+	[]string{filepath.Join("docs", "reference", "adapter-contract.md")},
+	basicLevelRuntimeSamplePages...,
+)
+
+// tracedSessionScopedFrame matches a JSON frame literal of any session-scoped
+// type inside an annotated trace. The scan covers the adapter-written
+// `message` and `tool_result` as well as the runtime-written `response` and
+// `tool_call`, because the addressing rule binds the adapter's frames too.
+var tracedSessionScopedFrame = regexp.MustCompile(`"type"\s*:\s*"(message|tool_result|response|tool_call)"`)
+
+// spec: 15.4.3, 28.5.3
+// diagnosis: an annotated protocol trace on a reader-facing page shows a
+//
+//	session-scoped frame with no per-session address. The adapter populates the
+//	address on the frames it writes and the runtime echoes it on the frames it
+//	writes, so every line of a trace spells it. A trace addressed on the runtime
+//	half alone shows a runtime echoing an identifier the same trace never
+//	delivered, which contradicts the sample source the page carries above it.
+func TestAnnotatedTracesAddressBothHalvesOfTheConversation(t *testing.T) {
+	root := repoRoot(t)
+	key := publishedFrameAddressKey(t, root)
+	stale := retiredFrameAddressKey(key)
+
+	traced := 0
+	for _, rel := range annotatedTracePages {
+		blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		for _, b := range blocks {
+			if b.Language != "" {
+				continue
+			}
+			for i, line := range strings.Split(b.Body, "\n") {
+				if !tracedSessionScopedFrame.MatchString(line) {
+					continue
+				}
+				traced++
+				at := fmt.Sprintf("%s:%d", rel, b.StartLine+i+1)
+				if strings.Contains(line, stale) {
+					t.Errorf("%s: this traced frame spells the per-session address key %q, which the published JSON Lines schema does not declare\n%s", at, stale, strings.TrimSpace(line))
+					continue
+				}
+				if strings.Contains(line, key) {
+					continue
+				}
+				t.Errorf("%s: this traced frame carries no per-session address; the adapter populates it on the frames it writes and the runtime echoes it on the frames it writes, so both halves of a trace spell it\n%s", at, strings.TrimSpace(line))
+			}
+		}
+	}
+	if traced == 0 {
+		t.Error("no annotated protocol trace carries a session-scoped frame (pages restructured?); the addressing rule is no longer held on the traces")
+	}
 }
