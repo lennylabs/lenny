@@ -235,6 +235,7 @@ func intraPodNonceSites() []nonceStatementSite {
 	spec28 := []string{"spec", "28_communication-channels.md"}
 	spec04 := []string{"spec", "04_system-components.md"}
 	spec29 := []string{"spec", "29_communication-scenarios.md"}
+	spec06 := []string{"spec", "06_warm-pod-model.md"}
 	return []nonceStatementSite{
 		{
 			label:  "spec/15 §15.4.3 Authentication lead",
@@ -312,6 +313,19 @@ func intraPodNonceSites() []nonceStatementSite {
 			},
 		},
 		{
+			// The credential-lease paragraph restates the manifest write that
+			// precedes each session's runtime start. It stated the currency
+			// rule in its retired form while §4.7.5 carried the replacement,
+			// so it is swept with the sites that cite it.
+			label:  "spec/06 §6.1 per-session credential lease paragraph",
+			path:   spec06,
+			anchor: "**Per-session credential lease lifecycle.**",
+			want: []string{
+				"rewrites the pod-global adapter manifest before each session's runtime start",
+				"before that session's binary is spawned",
+			},
+		},
+		{
 			label:  "docs/reference/adapter-contract.md Adapter Manifest lead",
 			path:   []string{"docs", "reference", "adapter-contract.md"},
 			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
@@ -335,10 +349,16 @@ func intraPodNonceSites() []nonceStatementSite {
 // file its own session's start wrote, which is false on a pod holding a second
 // bound session: that session's start replaces the `sessionId`, `mcpNonce`, and
 // `credentialsPath` members while the earlier binary is still running.
+// The sweep is case-insensitive, because the retired sentence opened a
+// paragraph and so spelled its first word with a capital, and it carries both
+// the definite and the possessive spelling of the currency clause.
 var retiredManifestStabilityPhrasings = []string{
 	"regenerated per session",
+	"regenerated for each session",
 	"stable for the duration",
 	"current for the session",
+	"current for its session",
+	"does not change while the runtime is processing",
 }
 
 // spec: 4.7, 4.7.5, 15.4.3, 28.5.3, 28.6, 29.4
@@ -368,6 +388,6 @@ func TestIntraPodMCPNonceStatementsAgreeAcrossSpecAndDocs(t *testing.T) {
 		}
 		requireAllContain(t, site.label, block, site.want)
 		requireNoneContain(t, site.label, block, retiredNoncePhrasings)
-		requireNoneContain(t, site.label, block, retiredManifestStabilityPhrasings)
+		requireNoneContainFold(t, site.label, block, retiredManifestStabilityPhrasings)
 	}
 }

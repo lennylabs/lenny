@@ -261,3 +261,17 @@ func requireNoneContain(t *testing.T, label, body string, banned []string) {
 		}
 	}
 }
+
+// requireNoneContainFold is requireNoneContain with an ASCII case-insensitive
+// comparison. A retired sentence reintroduced at the start of a paragraph
+// carries a capitalised first word, so a case-sensitive sweep passes over the
+// exact wording it exists to catch.
+func requireNoneContainFold(t *testing.T, label, body string, banned []string) {
+	t.Helper()
+	lowered := strings.ToLower(body)
+	for _, b := range banned {
+		if strings.Contains(lowered, strings.ToLower(b)) {
+			t.Errorf("%s still contains the stale phrase %q (case-insensitive)", label, b)
+		}
+	}
+}

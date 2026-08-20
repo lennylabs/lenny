@@ -66,16 +66,20 @@ func TestAdapterManifestDocsCarryTheCredentialsPathMember(t *testing.T) {
 
 	// The manifest lead states the currency rule §4.7 fixes: the file is
 	// rewritten before each session's binary is spawned and is authoritative
-	// for the session whose start last wrote it. A blanket instruction to read
-	// the manifest once at startup contradicts that rule for
-	// `credentialsPath`, because one runtime process serves every slot on the
-	// pod and a co-tenant session's credential file sits at a different
-	// per-slot path that only a later manifest names.
+	// for the session whose start last wrote it. The manifest read a runtime
+	// performs at its own start is the only delivery path for the credential
+	// path, so the page names that read and bounds it with the collision it
+	// has to survive: one runtime process can serve every slot on the pod, and
+	// a co-tenant session's credential file sits at a different per-slot path
+	// that only a later manifest names.
 	requireAllContain(t, "adapter-contract.md Adapter Manifest section", manifest, []string{
-		"The `credentialsPath` member names the session whose start last wrote it, so a process serving a co-tenant session cannot rely on a value it read at its own startup.",
+		"A runtime reads `credentialsPath` from the manifest at its own start; on a pod holding more than one bound session a later start replaces the member, so a shared runtime process serving a co-tenant session must not treat a later manifest read as its own session's path.",
 	})
+	// A page that forbids the startup read outright leaves no surface that
+	// delivers the path: the `credentials_rotated` frame is Full-level only,
+	// and §4.7 delivers `credentialsPath` on the manifest alone.
 	requireNoneContain(t, "adapter-contract.md Adapter Manifest section", manifest, []string{
-		"read the values your process needs at startup rather than re-reading the file later",
+		"cannot rely on a value it read at its own startup",
 	})
 
 	requireNoneContain(t, "adapter-contract.md", contract, []string{
