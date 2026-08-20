@@ -30,45 +30,57 @@ import (
 // which is a historical statement rather than a claim about current behavior.
 var slotAttributionRoots = []string{"pkg", "cmd", "sdks", "migrations"}
 
-// slotAttributionActor matches the participant the correction is about. A
-// sentence that does not name the adapter is outside the gate, because the
-// gateway is the minter and prose that says so is correct.
-var slotAttributionActor = regexp.MustCompile(`(?i)\badapter\b`)
+// slotAttributionGatewaySubject matches the participant the correction makes
+// the minter, either by name or through the gateway-side claim path that
+// mints the identifier. A clause with one of these subjects states the rule
+// §5.2 fixes, so a minting phrase inside it is correct prose and is exempt.
+var slotAttributionGatewaySubject = regexp.MustCompile(`(?i)\bgateway\b|\bslot[- ]claim\b|\bSlotClaimer\b`)
 
 // slotAttributionDirect are the compound spellings that name the adapter as
 // the assigner on their own, without needing a surrounding sentence.
 var slotAttributionDirect = regexp.MustCompile(`(?i)adapter[- ]assign(s|ed|ment)`)
 
-// slotAttributionVerbPhrases describe the minting of a slot without naming a
-// subject. They are reported only inside a sentence that also names the
-// adapter: the same phrase with the gateway as its subject states the rule
-// §5.2 fixes and must keep passing.
+// slotAttributionVerbPhrases describe the minting of a slot. They are
+// reported in every clause that does not name the gateway, because the
+// subject that carries the misattribution is often a pod-side actor other
+// than the adapter itself ("a slot bind assigns a slot") or is elided
+// entirely by a quotation ("... on slotId assignment"). Requiring the word
+// "adapter" in the clause would let both of those spellings through.
 var slotAttributionVerbPhrases = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bassign(s|ed|ing)? a slot`),
 	regexp.MustCompile(`(?i)\bon slot(id)? assignment`),
 }
 
+// slotAttributionEllipsis matches the elision marks a quoted specification
+// sentence uses. They are folded to a space before the text is split into
+// clauses, so that an elided quote stays one clause and the words on either
+// side of the elision are still read together.
+var slotAttributionEllipsis = regexp.MustCompile(`\.{2,}|…`)
+
 // slotAttributionClauses splits comment text into clauses on the sentence and
-// clause punctuation, so that the adapter named in one clause does not
-// implicate a gateway-subject clause beside it.
-var slotAttributionClauses = regexp.MustCompile(`[.;:]`)
+// clause punctuation, so that the gateway named in one clause does not exempt
+// an adapter-subject clause beside it. A period splits only when whitespace or
+// the end of the text follows it, which keeps a section number such as §6.4
+// whole.
+var slotAttributionClauses = regexp.MustCompile(`[;:]|\.(\s|$)`)
 
 // slotAttributionMatch reports the banned spelling in the comment text, or the
-// empty string when the text attributes nothing to the adapter. A subjectless
-// verb phrase counts only when the adapter precedes it in the same clause, so
-// prose that makes the gateway the assigner reads clean.
+// empty string when the text puts the minting of a slot identifier nowhere but
+// the gateway. A minting phrase counts unless its own clause names the
+// gateway, so prose that makes the gateway the assigner reads clean while a
+// clause with any other subject, named or elided, is reported.
 func slotAttributionMatch(text string) string {
 	if m := slotAttributionDirect.FindString(text); m != "" {
 		return m
 	}
-	for _, clause := range slotAttributionClauses.Split(text, -1) {
-		actor := slotAttributionActor.FindStringIndex(clause)
-		if actor == nil {
+	folded := slotAttributionEllipsis.ReplaceAllString(text, " ")
+	for _, clause := range slotAttributionClauses.Split(folded, -1) {
+		if slotAttributionGatewaySubject.MatchString(clause) {
 			continue
 		}
 		for _, re := range slotAttributionVerbPhrases {
-			if loc := re.FindStringIndex(clause); loc != nil && loc[0] > actor[0] {
-				return clause[loc[0]:loc[1]]
+			if m := re.FindString(clause); m != "" {
+				return m
 			}
 		}
 	}
@@ -157,12 +169,17 @@ var slotAttributionCases = []struct {
 	{"adapter as the assigner", "The adapter assigns a slot for the session.", true},
 	{"adapter-assigned compound", "The workspace root is the adapter-assigned slot path.", true},
 	{"adapter with a subjectless phrase", "The adapter bumps the counter on slot assignment.", true},
+	{"pod-side subject other than the adapter", "slots holds the §6.4 concurrent-workspace per-slot state, keyed by slotId. Populated when a slot bind assigns a slot. Each slot owns its own workspace tree, state, and credential lease set.", true},
+	{"elided quotation of the retired sentence", `spec: §6.4 — "Adapter — creates ... per-slot directory trees ... on slotId assignment".`, true},
+	{"quotation of the retired directory sentence", `spec: §6.4 — "The adapter creates the slot directory on slotId assignment".`, true},
 	{"gateway as the assigner", "The gateway assigns a slot at claim time.", false},
 	{"gateway assigning an identifier", "The gateway enforces the cap before it ever assigns a slotId.", false},
 	{"gateway phrase beside an adapter clause", "The gateway assigns a slot; the adapter creates its tree.", false},
 	{"gateway phrase before the adapter in one clause", "The gateway assigns a slot that the adapter then registers", false},
 	{"bare slot assignment with the gateway", "The counter is bumped on slot assignment by the gateway.", false},
 	{"adapter registering a slot", "The adapter registers the slot the gateway minted.", false},
+	{"gateway-side claim path named without the word gateway", "The slot-claim path skips a candidate pod whose uptime exceeds it before assigning a slot.", false},
+	{"gateway minting inside a section number", "Resolved per §6.4: the gateway assigns a slot at claim time.", false},
 }
 
 // diagnosis: the attribution gate's predicate no longer matches the rule it
