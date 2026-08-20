@@ -54,6 +54,20 @@ var infraColumns = map[string]bool{
 	"created_at": true,
 }
 
+// droppedColumns are checkpoint_manifest columns that migration 0178 creates
+// and a later migration drops. Migration 0178's own `.up.sql` text keeps the
+// CREATE TABLE line that first declared them, so they stay in the extracted
+// set, while §10.1 no longer names them: the partial-manifest scoping key,
+// the supersede rule, and the reassembly predicate are all keyed on
+// `session_id` alone. Each entry states why the column is gone, and the
+// reverse assertion below drains the map, so an entry survives only while
+// §10.1 names the column nowhere.
+var droppedColumns = map[string]string{
+	// spec: §10.1 (the manifest's scoping key is session_id), §12.5
+	// (retention and supersession operate on session_id)
+	"slot_id": "the manifest is scoped on session_id alone, so the per-slot column was dropped",
+}
+
 // migrationColumnRE matches a column definition line in migration 0178, e.g.
 // `    manifest_reason                TEXT        NOT NULL DEFAULT 'in_progress',`.
 var migrationColumnRE = regexp.MustCompile(`^\s+([a-z_]+)\s+(TEXT|UUID|BIGINT|INTEGER|BOOLEAN|TIMESTAMPTZ)\b`)
@@ -104,12 +118,32 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 		if infraColumns[col] {
 			continue
 		}
+		if _, dropped := droppedColumns[col]; dropped {
+			continue
+		}
 		// §10.1 names some columns bare (`chunk_count`) and some with a
 		// trailing type or value inside the code span (`reservation_released_at
 		// TIMESTAMPTZ NULL`, `partial: true`), so accept the column name opening
 		// a code span and closed by a backtick, space, or colon.
 		if !columnNamedInCodeSpan(s101, col) {
 			t.Errorf("migration 0178 column %q is not named in §10.1; the manifest column set and its normative enumeration must agree", col)
+		}
+	}
+
+	// The exception list drains rather than accumulates. An entry naming a
+	// column migration 0178 never creates is dead, and one §10.1 names again
+	// is a live column the agreement above must cover.
+	migrationSet := make(map[string]bool, len(migrationCols))
+	for _, col := range migrationCols {
+		migrationSet[col] = true
+	}
+	for col, reason := range droppedColumns {
+		if !migrationSet[col] {
+			t.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, reason)
+			continue
+		}
+		if columnNamedInCodeSpan(s101, col) {
+			t.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, reason)
 		}
 	}
 }

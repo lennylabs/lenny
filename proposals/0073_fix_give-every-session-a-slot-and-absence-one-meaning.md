@@ -266,13 +266,13 @@ rule, the text moves to the code's step, and the step that carries it names the 
 - [x] **S7 · spec** — SPEC-5. §29.10 is split, its addressing mechanisms move to the owning sections, the
       heading is retitled, and the two inbound references take the new fragment.
       Depends on: S1, S3
-- [ ] **S8 · spec** — SPEC-6. The `slot_01` examples, the four `"slotId": null` examples, and the
+- [x] **S8 · spec** — SPEC-6. The `slot_01` examples, the four `"slotId": null` examples, and the
       identifier-order rules are corrected in the specification and the documentation. The specification
       examples spell the key SCHEMA-2 publishes at S10 and land here with the rest of the spec phase,
       because ordering rule 2 does not reach `spec/`; the documentation examples take their key rename
       with CODE-6 at S16 under §4.6.2(i), so this step corrects their value alone.
       Depends on: S1
-- [ ] **S9 · spec** — SPEC-9. The `spec/10` scoping key, supersede rule, and reassembly predicate are re-keyed
+- [x] **S9 · spec** — SPEC-9. The `spec/10` scoping key, supersede rule, and reassembly predicate are re-keyed
       on `session_id`, the sentinel sentence is deleted, and `spec/12` and `spec/16` take the matching rows.
       The step also stages the `spec/10:58` sentence recording what the coordinator hold's timeout
       terminates and emits, which is the specification half of CODE-3.
