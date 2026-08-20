@@ -46,7 +46,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 
 ### What the platform gives you
 
-- **Workspace files** at `/workspace/current/` -- that's your working directory.
+- **Workspace files** at `/workspace/slots/{sessionId}/current/` -- the session's working directory, derived from its own session identifier.
 - **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) through the `tool_call` / `tool_result` stdin/stdout exchange.
 - **Process lifecycle management** -- the sidecar starts your binary, delivers messages, and coordinates shutdown.
 

@@ -91,6 +91,7 @@ When a pod is claimed for a session, the gateway materializes the client's files
       current/  # This session's working directory --- populated during finalization
       staging/  # This session's upload staging area --- files land here first
   staging/      # Pod-global staging area, created at warm time
+  shared/       # Pod-shared assets, populated at warm time  [read-only]
 /sessions/
   {sessionId}/  # This session's files (conversation logs, runtime state)  [tmpfs]
 /artifacts/
@@ -98,7 +99,7 @@ When a pod is claimed for a session, the gateway materializes the client's files
 /tmp/           # Writable scratch area, shared across the pod's sessions  [tmpfs]
 ```
 
-No pod-global workspace directory exists. Every session's working directory is derived from its own session identifier, and a runtime must not assume a path shared by the pod's sessions.
+No pod-global working directory (`/workspace/current`) exists. Every session's working directory is `/workspace/slots/{sessionId}/current`, derived from its own session identifier. The pod-global `/workspace/staging` and the read-only `/workspace/shared/` are the only trees shared across the pod's sessions.
 
 - `/sessions/` and `/tmp/` use tmpfs (data is guaranteed gone when the pod terminates).
 - `/workspace/` and `/artifacts/` use disk-backed emptyDir. Node-level disk encryption is required for production.
