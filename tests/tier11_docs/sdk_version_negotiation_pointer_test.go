@@ -201,15 +201,15 @@ func versionNegotiationPointerFindings(pages map[string]string) []string {
 		return []string{"the SDK versioning statement carries no version-negotiation pointer"}
 	}
 
-	file, fragment := apiSurfaceSpecFile, target
-	if idx := strings.Index(target, "#"); idx >= 0 {
-		if idx > 0 {
-			file = target[:idx]
-		}
-		fragment = target[idx+1:]
-	} else {
+	idx := strings.Index(target, "#")
+	if idx < 0 {
 		return []string{fmt.Sprintf("the version-negotiation pointer %q addresses no heading", target)}
 	}
+	file := apiSurfaceSpecFile
+	if idx > 0 {
+		file = target[:idx]
+	}
+	fragment := target[idx+1:]
 
 	page, held := pages[file]
 	if !held {

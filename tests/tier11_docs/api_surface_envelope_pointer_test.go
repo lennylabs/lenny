@@ -277,9 +277,10 @@ func apiEnvelopeCitationSiteFindings(pages map[string]string, citation apiEnvelo
 		return []string{fmt.Sprintf("the %s citation %q addresses no heading", citation.Site, citation.Target)}
 	}
 	file, fragment := citation.Target[:idx], citation.Target[idx+1:]
-	if file == "" {
+	switch file {
+	case "":
 		file = apiSurfaceSpecFile
-	} else if file == apiSurfaceSpecFile {
+	case apiSurfaceSpecFile:
 		return []string{fmt.Sprintf("the %s citation targets %q, addressing this page in the file-qualified form; the definition sits on this page, so the citation takes the same-page form", citation.Site, citation.Target)}
 	}
 
