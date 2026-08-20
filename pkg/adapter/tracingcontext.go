@@ -32,20 +32,17 @@ type setTracingContextFrame struct {
 //     names a session. The caller reads the frame's address with
 //     frameSlotID, which yields the empty string for any frame that
 //     carries no readable slotId.
-//  2. Live-binding confirmation: the registry still binds that address to
-//     this stream's session, and the address is unambiguous. A slotless
-//     stream requires the pod's session to still be this stream's session
-//     and the slot registry to be empty, because a pod holding registered
-//     slots has taken the §6.4 per-slot path and an untagged frame there
-//     names no single session. A slot-bound stream requires the slot's
-//     registry entry to still name this stream's session.
+//  2. Live-binding confirmation: the registry still holds the stream's
+//     address and the entry it holds still names this stream's session.
+//     Every session is bound to a slot on every pod, so there is one
+//     resolution here rather than a slotless case beside a slot-bound
+//     one, and the entry is the only thing that can confirm the binding.
 //
 // Condition 2 reads state that changes over the session's lifetime, so it
-// may only reject. The registry is sampled once under a single s.mu hold
-// so both of its terms read one consistent state; a second locked read
-// could observe a slot claimed or released between the two. Modeled on
-// checkSessionBound, which validates the same binding at Attach bind
-// time. spec: §28.5.3, §6.4.
+// may only reject. The registry is read under a single s.mu hold so both
+// of its terms read one consistent state. Modeled on checkSessionBound,
+// which validates the same binding at Attach bind time.
+// spec: §28.5.3, §6.4.
 func (s *Server) tracingFrameAddressesStream(sessionID, frameSlot, slotID string) bool {
 	if frameSlot != slotID {
 		return false

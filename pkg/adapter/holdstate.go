@@ -179,11 +179,18 @@ func (s *Server) onHoldTimeout() {
 	s.EmitAdapterTerminating(session, reasonCoordinatorLost)
 	s.writeHoldPostMortem(session, gen)
 
-	// Best-effort graceful runtime termination.
+	// Best-effort graceful runtime termination. The close takes the
+	// session off the pod's shared runtime process, so the generation
+	// state moves with it: a terminated session must not keep naming the
+	// process's sole occupant, or the intra-pod MCP surface would keep
+	// forwarding a tool call under a principal whose session has ended and
+	// the pod surface could never be cancelled for the next claim.
+	// spec: §10.1; §15.4.3.
 	if s.Runtime != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_ = s.Runtime.Close(ctx, session)
 		cancel()
+		s.noteRuntimeClosed(session)
 	}
 }
 

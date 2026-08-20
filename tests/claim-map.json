@@ -67,11 +67,10 @@
     },
     {
       "claim": "Checkpoint restore onto a concurrent pod",
-      "status": "ABSENT",
+      "status": "WIRED",
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint roots rather than the session's own tree",
-      "deferral_id": "R22",
-      "note": "the request addresses its session by the session identifier and the restore path resolves no per-session root from it, so the per-slot restore is not implemented"
+      "surface": "`pkg/adapter/resume.go` restoreChunks extracts into the roots `checkpointRootsForSession` resolves for the resuming session",
+      "note": "the request addresses its session by the session identifier and the restore resolves that session's own per-slot workspace and session roots from it, which is the same bundle a capture reads"
     },
     {
       "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",

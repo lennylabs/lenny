@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: MIT
+
+//go:build security
+
+// Tier-9 §10.1 coordinator-lost termination against the §9.1 / §15.4.3
+// intra-pod MCP surface, driven on the real adapter.Server.
+//
+// The adapter enters hold state when the coordinating gateway's control
+// stream drops with a session still live, and self-terminates that session
+// when no new coordinator fences within the hold timeout. The termination
+// closes the session on the pod's one shared runtime process. The pod-wide
+// platform MCP socket outlives that close, and every call on it is
+// forwarded to the gateway under a session identifier the gateway installs
+// as the authenticated principal. A surface that still named the
+// terminated session would execute tool calls under the user and the
+// delegation budget of a session the platform has already ended, and no
+// gateway-side check catches it.
+//
+// spec: §10.1; §9.1; §15.4.3; §13.1.
+package tier9_security_test
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// holdTerminationPod starts one session on an adapter wired to fwd and a
+// live platform MCP socket, with a short §10.1 hold timeout, and returns
+// the server together with the manifest a conforming runtime reads.
+func holdTerminationPod(t *testing.T, fwd *recordingForwarder, sessionID string) (*adapter.Server, *adapter.Manifest) {
+	t.Helper()
+	s := adapter.New("test")
+	s.WorkspaceBase = t.TempDir()
+	s.Runtime = noopRuntime{}
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortMCPSocket(t)
+	s.PlatformForwarder = fwd
+	s.ConnectorForwarder = fwd
+	s.CoordinatorHoldTimeout = 20 * time.Millisecond
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
+	return s, readProbeManifest(t, s)
+}
+
+// serveAdapterOverBufconn serves s on an in-memory listener and returns a
+// connected client, so a test can open and drop the gateway control stream
+// the way a crashed coordinating replica does.
+func serveAdapterOverBufconn(t *testing.T, s *adapter.Server) adapterv1.AdapterClient {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := adapter.NewGRPCServer(s)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return adapterv1.NewAdapterClient(conn)
+}
+
+// dropCoordinatorStream opens the gateway control stream, waits until the
+// adapter has attached it (an event the adapter emits arrives only once the
+// stream is the pod's sink), and then drops it, which is the §10.1
+// coordinator-loss signal.
+func dropCoordinatorStream(t *testing.T, s *adapter.Server, client adapterv1.AdapterClient) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := client.AdapterEvents(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("open the gateway control stream: %v", err)
+	}
+	probing := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-probing:
+				return
+			default:
+			}
+			s.EmitRateLimited("hold-probe")
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	if _, err := stream.Recv(); err != nil {
+		close(probing)
+		cancel()
+		t.Fatalf("the adapter never attached the control stream: %v", err)
+	}
+	close(probing)
+	cancel()
+}
+
+// spec: 10.1 (coordinator-lost self-termination), 9.1 (platform tool
+// surface), 15.4.3 (intra-pod MCP), 13.1 (isolation boundaries)
+//
+// diagnosis: a failure means the pod's intra-pod MCP surface still names a
+// session the coordinator-lost hold already terminated. Every tools/call a
+// runtime makes after that termination executes under the ended session's
+// user and delegation budget, which is a fail-open in the resolution that
+// exists to fail closed.
+func TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1(t *testing.T) {
+	fwd := &recordingForwarder{}
+	s, m := holdTerminationPod(t, fwd, "sess-alice")
+	client := serveAdapterOverBufconn(t, s)
+
+	dropCoordinatorStream(t, s, client)
+
+	// The hold timeout fires and terminates the session; the pod's shared
+	// runtime process is then serving nobody.
+	deadline := time.Now().Add(10 * time.Second)
+	for s.SoleSessionID() != "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("the coordinator-lost termination left %q named as the runtime's sole session",
+				s.SoleSessionID())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	conn, err := net.Dial("unix", m.PlatformMcpServer.Socket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
+
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"_lennyNonce": m.MCPNonce, "protocolVersion": "2025-03-26"},
+	}); err != nil {
+		t.Fatalf("send initialize: %v", err)
+	}
+	var initResp map[string]json.RawMessage
+	if err := dec.Decode(&initResp); err != nil {
+		t.Fatalf("read initialize response: %v", err)
+	}
+	if _, isErr := initResp["error"]; isErr {
+		t.Fatalf("nonce-bearing initialize errored: %s", initResp["error"])
+	}
+
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": privilegedPlatformTool, "arguments": map[string]any{}},
+	}); err != nil {
+		t.Fatalf("send tools/call: %v", err)
+	}
+	var callResp map[string]json.RawMessage
+	if err := dec.Decode(&callResp); err != nil {
+		t.Fatalf("read tools/call response: %v", err)
+	}
+	if _, isErr := callResp["error"]; !isErr {
+		t.Error("tools/call after the coordinator-lost termination succeeded; the surface must refuse " +
+			"rather than forward under a terminated session's principal")
+	}
+	if got := fwd.platformCallCount(); got != 0 {
+		t.Errorf("the surface forwarded %d platform call(s) after the terminated session's close, want 0", got)
+	}
+}

@@ -140,7 +140,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Errorf("docs/reference/adapter-contract.md set_tracing_context entry: the example frame does not carry the per-session address as a non-empty string; the published JSONL schema rejects any other type, so a runtime author copying the example emits a frame the adapter drops")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
-		"| `slotId` | string |",
+		"| `slotId` | string, optional |",
 		// The addressing rule and its outcome.
 		"resolves the frame against the stream that delivered it",
 		"matches the stream's session",
@@ -148,8 +148,8 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// Absence resolves rather than selects a scope: it is the receiving
 		// stream's own binding on a pod holding at most one slot, and an
 		// error on a pod holding more.
-		"A frame that omits it is rejected on every pod.",
-		"addresses no stream on any pod",
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"on a pod holding more than one slot it is rejected and relayed to no stream",
 		// Both rejecting dispositions are stated, and each names its own
 		// counter. The two series partition the rejections between them, so
 		// a page that names one of them alone tells an operator to
@@ -185,8 +185,8 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 	requireAllContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
 		"The JSONL frame carries the per-session identifier in `slotId` on every pod",
 		"the runtime echoes the identifier the adapter handed it",
-		"A frame that omits it is rejected on every pod.",
-		"addresses no stream on any pod: it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
@@ -206,8 +206,8 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// The echo obligation reaches a Basic-level author here and
 		// nowhere else on the page.
 		"a Basic-level runtime echoes the identifier the adapter handed it",
-		"A frame that omits it is rejected on every pod.",
-		"addresses no stream on any pod: it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
+		"resolves to the receiving stream's own binding on a pod holding at most one slot",
+		"on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
 		"names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 	})
 	requireNoneContain(t, "platform-tools.md tool-availability paragraph", availability, []string{

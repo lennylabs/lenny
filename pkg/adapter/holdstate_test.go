@@ -446,3 +446,58 @@ func TestCoordinatorHoldDoesNotArmOnAnUnstartedEntry_spec_10_1(t *testing.T) {
 		})
 	}
 }
+
+// spec: 10.1 (coordinator-lost self-termination), 9.1 (platform tool
+// surface), 15.4.3 (intra-pod MCP), 11.2 (direct-mode usage)
+//
+// The hold timeout closes the session on the pod's one shared runtime
+// process, so that session leaves the runtime generation with the close.
+// A termination that left it in the generation kept naming a terminated
+// session as the process's sole occupant: the intra-pod MCP surface went
+// on forwarding tool calls under its principal, direct-mode token counts
+// went on folding into its budget, and the pod surface could never be
+// cancelled because the process never read as idle.
+//
+// diagnosis: a failure means the coordinator-lost close and the runtime
+// generation have come apart again. The pod keeps acting as a terminated
+// session after its coordinator was lost, which is a fail-open in the
+// gate that exists to fail closed.
+func TestCoordinatorHoldTerminationLeavesTheRuntimeGeneration_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	clk := &fakeExpiryClock{}
+	rt := &holdRuntime{}
+	s := New("hold-generation")
+	s.WorkspaceBase = t.TempDir()
+	s.HoldAfterFunc = clk.After
+	s.Runtime = rt
+	if err := s.claimSessionForTest("sess-42"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if got := s.soleSession(); got != "sess-42" {
+		t.Fatalf("sole session before the hold = %q, want sess-42", got)
+	}
+
+	s.enterHoldState("sess-42")
+	armed := clk.last()
+	if armed == nil {
+		t.Fatal("hold timer not armed")
+	}
+	armed.fire()
+
+	if len(rt.closed) != 1 || rt.closed[0] != "sess-42" {
+		t.Fatalf("runtime Close calls = %v, want [sess-42]", rt.closed)
+	}
+	if got := s.soleSession(); got != "" {
+		t.Errorf("sole session after the coordinator-lost close = %q, want empty", got)
+	}
+	if _, err := s.callingSession(); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("intra-pod MCP calling session after the termination = %v, want FailedPrecondition; "+
+			"the surface must not forward under a terminated session's principal", status.Code(err))
+	}
+	s.mu.Lock()
+	idle := s.runtimeIdleLocked()
+	s.mu.Unlock()
+	if !idle {
+		t.Error("the shared runtime process still reads as occupied after the terminated session's close, so the pod surface can never be cancelled")
+	}
+}

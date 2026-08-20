@@ -877,3 +877,53 @@ func (noopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) 
 	}()
 	return ch, nil
 }
+
+// TestCheckpointStreamRejectsAnUnaddressedStart pins the inbound rule for
+// the session-scoped Checkpoint stream on the wire: the opening frame's
+// session_id is the whole stream's address, so a stream that opens without
+// a usable one is refused with InvalidArgument before any probe frame is
+// sent.
+//
+// spec: 4.1, 4.2, 6.4
+// diagnosis: The adapter served a Checkpoint stream whose opening frame
+// named no session. The gateway reads the FailedPrecondition a bare
+// registry miss returns as "the pod lost this session" and re-places it,
+// and the unvalidated address reached the pod-level op lock and the slot
+// layout on the way there. Re-check the boundary guard at the top of
+// pkg/adapter Checkpoint.
+func TestCheckpointStreamRejectsAnUnaddressedStart(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session *adapterv1.SessionId
+	}{
+		{name: "absent session_id", session: nil},
+		{name: "empty session_id", session: &adapterv1.SessionId{Value: ""}},
+		{name: "path-traversal session_id", session: &adapterv1.SessionId{Value: "../escape"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := realAdapterClient(t, &recordingTransport{})
+			stream, err := client.Checkpoint(context.Background())
+			if err != nil {
+				t.Fatalf("open Checkpoint stream: %v", err)
+			}
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+					CheckpointId:   "gw-ckpt-unaddressed",
+					SessionId:      tc.session,
+					Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
+					ChunkSizeBytes: 1 << 20,
+					ChunkEncoding:  "tar",
+				}},
+			}); err != nil {
+				t.Fatalf("send start: %v", err)
+			}
+			msg, err := stream.Recv()
+			if err == nil {
+				t.Fatalf("the adapter answered an unaddressed Checkpoint stream with %T, want InvalidArgument", msg.GetMsg())
+			}
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("code = %v, want InvalidArgument for %s", status.Code(err), tc.name)
+			}
+		})
+	}
+}

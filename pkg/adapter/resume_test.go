@@ -131,7 +131,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	if len(rt.started) != 1 || rt.started[0] != "sess-1" {
 		t.Errorf("runtime started for %v, want [sess-1]", rt.started)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "restored.txt"))
 	if err != nil {
 		t.Fatalf("the checkpoint workspace was not restored: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "multi.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "multi.txt"))
 	if err != nil {
 		t.Fatalf("the concatenated checkpoint workspace was not restored: %v", err)
 	}
@@ -190,12 +190,13 @@ func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	// The workspace tree restored to WorkspaceRoot.
-	if got, err := os.ReadFile(filepath.Join(root, "work/file.txt")); err != nil || string(got) != "ws" {
+	// The workspace tree restored to the session's own §6.4 slot cwd.
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "work/file.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
-	// The session file restored to SessionsRoot — the §7.3 step (f) path.
-	got, err := os.ReadFile(filepath.Join(sessionsRoot, ".session.json"))
+	// The session file restored to the session's own /sessions/{sessionId}
+	// tree — the §7.3 step (f) path under the §6.4 layout.
+	got, err := os.ReadFile(filepath.Join(sessionsRoot, "sess-1", ".session.json"))
 	if err != nil {
 		t.Fatalf("the session file was not restored to /sessions: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) 
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(root, "only.txt")); err != nil || string(got) != "ws" {
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "only.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
 	if n := countFiles(t, sessionsRoot); n != 0 {
@@ -319,6 +320,46 @@ func TestResumeReleasesThePodWhenChunkFetchFails(t *testing.T) {
 // ResumeRequest.expected_workspace_root.
 func slotWorkspaceRoot(base, sessionID string) string {
 	return filepath.Join(base, "slots", sessionID, "current")
+}
+
+// spec: §6.4 (the per-slot tree is the only layout), §7.3 steps (e) and
+// (f) (replay the workspace checkpoint and the session file)
+//
+// The restore destination is the resuming session's own tree on every
+// pod, the same bundle a capture reads. A restore that extracted into the
+// workspace base instead wrote the checkpoint into a directory no session
+// runs in: the resumed agent passed the step (d) root assertion and then
+// started against an empty cwd, with no error anywhere on the path.
+func TestResumeRestoresIntoTheSessionsOwnTree_spec_6_4(t *testing.T) {
+	s, _, base := sessionServer(t)
+	sessionsRoot := t.TempDir()
+	s.SessionsRoot = sessionsRoot
+	chunks := serveArchive(s, bundleOf(
+		t,
+		map[string]string{"work/file.txt": "ws"},
+		map[string]string{".session.json": `{"id":"sess-1"}`},
+	))
+
+	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	// The session's own cwd holds the restored workspace, and its own
+	// /sessions tree holds the restored session file.
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(base, "sess-1"), "work/file.txt")); err != nil || string(got) != "ws" {
+		t.Fatalf("restored workspace file under the session's slot cwd = %q (err %v), want %q", got, err, "ws")
+	}
+	if _, err := os.Stat(filepath.Join(sessionsRoot, "sess-1", ".session.json")); err != nil {
+		t.Fatalf("the session file was not restored under the session's own /sessions tree: %v", err)
+	}
+	// Nothing landed outside that tree: neither the workspace base itself
+	// nor the /sessions base carries the restored entries.
+	if _, err := os.Stat(filepath.Join(base, "work")); err == nil {
+		t.Error("the checkpoint was extracted into the workspace base, which no session runs in")
+	}
+	if _, err := os.Stat(filepath.Join(sessionsRoot, ".session.json")); err == nil {
+		t.Error("the session file was extracted into the /sessions base rather than the session's own tree")
+	}
 }
 
 // spec: §7.3 step (d) — "Recreate same absolute `cwd` path."

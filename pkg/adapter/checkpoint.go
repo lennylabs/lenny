@@ -10,32 +10,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
-
-// checkpointRoots returns the §4.4 checkpoint bundle: the session
-// workspace under workspace.WorkspacePrefix, plus the §6.4
-// /sessions session-file tmpfs under workspace.SessionsPrefix when the
-// adapter is configured with a SessionsRoot. The sessions root is
-// skipped (no entries) when unset or absent on disk, so a runtime that
-// keeps no session file checkpoints workspace-only exactly as before.
-//
-// spec: §7.3 step (e) (replay workspace checkpoint) and step (f)
-// (restore session file to expected path) — both replayed from
-// this one bundle on Resume.
-func (s *Server) checkpointRoots() []workspace.NamedRoot {
-	roots := []workspace.NamedRoot{
-		{Prefix: workspace.WorkspacePrefix, Root: s.WorkspaceRoot},
-	}
-	if s.SessionsRoot != "" {
-		roots = append(roots, workspace.NamedRoot{
-			Prefix: workspace.SessionsPrefix, Root: s.SessionsRoot,
-		})
-	}
-	return roots
-}
 
 // probeWorkspaceBytes measures the on-disk workspace byte total for the
 // §4.4 pre-checkpoint size probe, summing every checkpoint root
@@ -92,12 +71,27 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 			"adapter is not configured with a checkpoint transport")
 	}
 
+	// spec: §4.1 — Checkpoint is session-scoped, so the opening frame's
+	// session identifier is the address the whole stream is served under.
+	// An empty or unsafe address is a malformed request rather than a
+	// session the pod does not hold: it is refused with InvalidArgument
+	// before any root is resolved and before the op lock is taken, so a
+	// path-traversal segment never reaches the slot layout and an
+	// unaddressed stream never queues behind a real session's checkpoint.
+	sessionID := start.GetSessionId().GetValue()
+	if sessionID == "" {
+		return status.Error(codes.InvalidArgument, "Checkpoint requires a session id")
+	}
+	if err := slotlayout.ValidateSlotID(sessionID); err != nil {
+		return status.Errorf(codes.InvalidArgument, "Checkpoint session id: %v", err)
+	}
+
 	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the session the
 	// opening frame names, which is the stream's sole per-session address.
 	// A session the registry holds no bound entry for is rejected with
 	// FailedPrecondition before the op lock is taken or any grant is
 	// minted.
-	roots, err := s.checkpointRootsForSession(start.GetSessionId().GetValue())
+	roots, err := s.checkpointRootsForSession(sessionID)
 	if err != nil {
 		return err
 	}
@@ -110,7 +104,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// A barrier-window checkpoint runs through the same lock; the barrier's
 	// quiescence has already drained dispatch, so the lock is uncontended
 	// there by construction.
-	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSessionId().GetValue())
+	release, err := s.ops.Begin(ctx, opCheckpoint, sessionID)
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
 		// finalises the manifest row partial.

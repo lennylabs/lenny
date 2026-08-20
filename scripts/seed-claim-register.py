@@ -128,21 +128,22 @@ def canonical(text):
     return text
 
 
-# Rows whose surface the frozen reference cannot state, keyed by the claim the
-# table names. The reference recorded the capability by the absence of a request
-# field, and the wire has since dropped that field: the request names its session
-# by the session identifier alone. Carrying the reference's wording forward would
-# make the register contradict the proto it cites, so the row names the handler
-# that does not resolve the session's own tree and states in its note that the
-# behavior is not implemented. The status stays `ABSENT`: §28.4 reads it as
-# specified and not implemented, which is what an unresolved root is.
-SURFACE_OVERRIDES = {
+# Rows whose status or surface the frozen reference cannot state, keyed by the
+# claim the table names. The reference recorded the capability by the absence of
+# a request field, and the wire has since dropped that field: the request names
+# its session by the session identifier alone. Carrying the reference's wording
+# forward would make the register contradict the proto it cites. An entry may
+# restate the status as well as the surface, because a row the tree has since
+# implemented is `WIRED` and a `WIRED` row names no closing step; the seeding
+# loop drops the deferral when the override raises a row to `WIRED`.
+ROW_OVERRIDES = {
     "Checkpoint restore onto a concurrent pod": {
-        "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint "
-                   "roots rather than the session's own tree",
+        "status": "WIRED",
+        "surface": "`pkg/adapter/resume.go` restoreChunks extracts into the roots "
+                   "`checkpointRootsForSession` resolves for the resuming session",
         "note": "the request addresses its session by the session identifier and the "
-                "restore path resolves no per-session root from it, so the per-slot "
-                "restore is not implemented",
+                "restore resolves that session's own per-slot workspace and session "
+                "roots from it, which is the same bundle a capture reads",
     },
 }
 
@@ -291,18 +292,22 @@ def main():
             if row["claim"] in RETIRED:
                 retired.add(row["claim"])
                 continue
-            override = SURFACE_OVERRIDES.get(row["claim"])
+            override = ROW_OVERRIDES.get(row["claim"])
             if override:
                 row["surface"] = override["surface"]
                 row["note"] = override["note"]
+                if "status" in override:
+                    row["status"] = override["status"]
+                    if row["status"] == "WIRED":
+                        row.pop("deferral_id", None)
                 overridden.add(row["claim"])
             claims.append(row)
 
-    missed = sorted(set(SURFACE_OVERRIDES) - overridden)
+    missed = sorted(set(ROW_OVERRIDES) - overridden)
     if missed:
         # An override whose claim the table no longer names would drop silently
         # and leave the register stating a surface the tree contradicts.
-        raise SystemExit("surface override matched no table row: " + ", ".join(missed))
+        raise SystemExit("row override matched no table row: " + ", ".join(missed))
 
     unmatched = sorted(RETIRED - retired)
     if unmatched:
