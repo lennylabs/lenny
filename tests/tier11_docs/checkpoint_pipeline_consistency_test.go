@@ -55,27 +55,50 @@ var infraColumns = map[string]bool{
 	"created_at": true,
 }
 
+// droppedColumn records a checkpoint_manifest column that migration 0178
+// creates and a later migration drops. dropMigration names that migration in
+// prose so a reader of the exception can resolve which change removed the
+// column, and reason states why it is gone.
+type droppedColumn struct {
+	// dropMigration is the numeric prefix of the migration that drops the
+	// column. It is a record for the reader rather than an input to the drain
+	// conditions below: a number the migration tree has not yet allocated must
+	// not turn this gate red on its own.
+	dropMigration string
+	// reason states why the column is gone.
+	reason string
+}
+
 // droppedColumns are checkpoint_manifest columns migration 0178 creates and a
 // later migration drops. Migration 0178's own `.up.sql` text keeps the CREATE
 // TABLE line that first declared them, so they stay in the extracted set,
-// while §10.1 no longer names them. Each entry states why the column is gone,
-// the form tests/tier2_component/migrations/prod_columns_test.go already uses
-// for the columns the prod chain retires: the record carries the reason in
-// prose and the gate asserts nothing about which migration performs the drop.
+// while §10.1 no longer names them. Each entry names the migration that drops
+// the column and states why, the form
+// tests/tier2_component/migrations/prod_columns_test.go already uses for the
+// columns the prod chain retires: its 0040 entry records that migration 0167
+// drops sandbox_warm_pools.concurrency_style, naming the dropping migration in
+// the record's own prose.
 //
 // The set drains rather than accumulates. Its two conditions are the two
 // droppedColumnDrainError states: an entry naming a column migration 0178 does
 // not create is dead, and an entry for a column §10.1 names again is a live
-// column the agreement must cover.
-var droppedColumns = map[string]string{
+// column the agreement must cover. Both are read off the two sources the
+// agreement itself reads, so a drop migration that has not landed yet cannot
+// make the gate red before the change that allocates it.
+//
+// The §10.1 re-key and this exception did not land in one commit: the section
+// dropped its `slot_id` code spans at commit b60beff6 and the exception landed
+// at b3002ef5, so TestCheckpointManifestColumnSetMatchesMigration0178 fails
+// over that range. The window is recorded here rather than rewritten out of
+// the published history.
+var droppedColumns = map[string]droppedColumn{
 	// spec: §10.1 (the partial manifest, the supersede rule, and the
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
 	// and supersession operate on session_id)
-	//
-	// The migration that re-keys the checkpoint pipeline on session_id drops
-	// checkpoint_manifest.slot_id together with session_checkpoints.slot_id
-	// and re-keys the three indexes on session_id.
-	"slot_id": "the manifest is scoped on session_id alone, so the per-slot column was dropped",
+	"slot_id": {
+		dropMigration: "0180",
+		reason:        "the manifest is scoped on session_id alone, so migration 0180 drops checkpoint_manifest.slot_id together with session_checkpoints.slot_id and re-keys the three indexes on session_id",
+	},
 }
 
 // droppedColumnDrainError reports why a droppedColumns entry no longer stands,
@@ -165,8 +188,8 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 	for _, col := range migrationCols {
 		migrationSet[col] = true
 	}
-	for col, reason := range droppedColumns {
-		if err := droppedColumnDrainError(col, reason, migrationSet[col], columnNamedInCodeSpan(s101, col)); err != nil {
+	for col, entry := range droppedColumns {
+		if err := droppedColumnDrainError(col, entry.reason, migrationSet[col], columnNamedInCodeSpan(s101, col)); err != nil {
 			t.Error(err)
 		}
 	}
@@ -223,6 +246,32 @@ func TestDroppedColumnExceptionDrainsOnItsTwoConditions(t *testing.T) {
 				t.Errorf("droppedColumnDrainError(%q, _, %v, %v) = %v, want nil", col, tc.createdBy178, tc.namedInSpec, err)
 			}
 		})
+	}
+}
+
+// spec: 10.1, 12.5
+// diagnosis: a dropped-column exception no longer names the migration that
+//
+//	drops its column. The exception suppresses the §10.1 column agreement for a
+//	column migration 0178 still declares, so its record must let a reader
+//	resolve which change removed the column, the way
+//	tests/tier2_component/migrations/prod_columns_test.go's retirement records
+//	name the dropping migration. A failure here means an entry carries no drop
+//	migration, carries one that is not a migration number, or states a reason
+//	that does not name it.
+func TestDroppedColumnExceptionNamesTheMigrationThatDropsIt(t *testing.T) {
+	migrationPrefix := regexp.MustCompile(`^[0-9]{4}$`)
+	for col, entry := range droppedColumns {
+		if !migrationPrefix.MatchString(entry.dropMigration) {
+			t.Errorf("droppedColumns[%q].dropMigration = %q, want a four-digit migration prefix naming the migration that drops the column", col, entry.dropMigration)
+			continue
+		}
+		if entry.reason == "" {
+			t.Errorf("droppedColumns[%q] states no reason", col)
+		}
+		if !strings.Contains(entry.reason, entry.dropMigration) {
+			t.Errorf("droppedColumns[%q].reason = %q, want prose naming migration %s, so the record reads as a retirement record on its own", col, entry.reason, entry.dropMigration)
+		}
 	}
 }
 
