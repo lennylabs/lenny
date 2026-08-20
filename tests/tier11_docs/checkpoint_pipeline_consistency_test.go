@@ -55,145 +55,45 @@ var infraColumns = map[string]bool{
 	"created_at": true,
 }
 
-// droppedColumn records a checkpoint_manifest column that migration 0178
-// creates and a later migration drops. The entry names that drop migration, so
-// a reader resolves which change removed the column from the record itself,
-// and it names the column's table, because two tables carry a column of this
-// name and the drop is confirmed per table.
-type droppedColumn struct {
-	// migration is the numeric prefix of the migration that drops the column.
-	// It is the record of the change, and the gate reconciles it against the
-	// migrations in the tree: while that migration is absent no other
-	// migration may drop the column, and once it is present it must be the
-	// one that does.
-	migration string
-	// table is the table the dropped column belongs to. Two tables carry a
-	// column of the same name, so the drop is confirmed per table.
-	table string
-	// reason states why the column is gone.
-	reason string
-}
-
 // droppedColumns are checkpoint_manifest columns migration 0178 creates and a
 // later migration drops. Migration 0178's own `.up.sql` text keeps the CREATE
 // TABLE line that first declared them, so they stay in the extracted set,
-// while §10.1 no longer names them. Each entry names its drop migration and
-// states why the column is gone, the form
-// tests/tier2_component/migrations/prod_columns_test.go already uses for the
-// columns the prod chain retires. The set drains rather than accumulates: an
-// entry naming a column migration 0178 does not create, or one §10.1 names
-// again, fails the gate, as does one whose named migration disagrees with the
-// migration that drops the column in the tree.
-var droppedColumns = map[string]droppedColumn{
+// while §10.1 no longer names them. Each entry states why the column is gone,
+// the form tests/tier2_component/migrations/prod_columns_test.go already uses
+// for the columns the prod chain retires: the record carries the reason in
+// prose and the gate asserts nothing about which migration performs the drop.
+//
+// The set drains rather than accumulates. Its two conditions are the two
+// droppedColumnDrainError states: an entry naming a column migration 0178 does
+// not create is dead, and an entry for a column §10.1 names again is a live
+// column the agreement must cover.
+var droppedColumns = map[string]string{
 	// spec: §10.1 (the partial manifest, the supersede rule, and the
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
 	// and supersession operate on session_id)
-	"slot_id": {
-		// Migration 0180 drops checkpoint_manifest.slot_id together with
-		// session_checkpoints.slot_id and re-keys the three indexes on
-		// session_id.
-		migration: "0180",
-		table:     "checkpoint_manifest",
-		reason:    "the manifest is scoped on session_id alone, so migration 0180 drops the per-slot column",
-	},
+	//
+	// The migration that re-keys the checkpoint pipeline on session_id drops
+	// checkpoint_manifest.slot_id together with session_checkpoints.slot_id
+	// and re-keys the three indexes on session_id.
+	"slot_id": "the manifest is scoped on session_id alone, so the per-slot column was dropped",
 }
 
-// sqlLineCommentRE matches a SQL line comment through the end of its line, so
-// a drop written inside a commented-out block is not read as a live statement.
-var sqlLineCommentRE = regexp.MustCompile(`--[^\n]*`)
-
-// alterTableStatementRE captures each `ALTER TABLE <table> ... ;` statement
-// body, so a DROP COLUMN is attributed to the table its own statement names.
-func alterTableStatementRE(table string) *regexp.Regexp {
-	return regexp.MustCompile(`(?is)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?` + regexp.QuoteMeta(table) + `\b([^;]*);`)
-}
-
-// dropColumnRE matches the drop of one column in the repository's own idiom:
-// `DROP COLUMN <col>` and `DROP COLUMN IF EXISTS <col>` alike, with the clause
-// free to sit on its own line and to close with a comma or a semicolon.
-func dropColumnRE(column string) *regexp.Regexp {
-	return regexp.MustCompile(`(?is)\bDROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?` + regexp.QuoteMeta(column) + `\b`)
-}
-
-// sqlDropsColumn reports whether the migration body drops `table`.`column`.
-// The check is qualified by table, because two tables carry a `slot_id` column
-// and one migration drops both, so an unqualified substring match is satisfied
-// by the wrong statement. Line comments are stripped first so a commented-out
-// drop does not count.
-func sqlDropsColumn(sql, table, column string) bool {
-	live := sqlLineCommentRE.ReplaceAllString(sql, "")
-	drop := dropColumnRE(column)
-	for _, stmt := range alterTableStatementRE(table).FindAllStringSubmatch(live, -1) {
-		if drop.MatchString(stmt[1]) {
-			return true
-		}
-	}
-	return false
-}
-
-// migrationExists reports whether a migration whose numeric prefix is
-// `migration` has landed under migrations/.
-func migrationExists(t *testing.T, root, migration string) bool {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, "migrations", migration+"_*.up.sql"))
-	if err != nil {
-		t.Fatalf("glob migrations/%s_*.up.sql: %v", migration, err)
-	}
-	return len(matches) > 0
-}
-
-// reconcileDropMigration reports the disagreement, if any, between a
-// droppedColumn entry's named drop migration and the migrations in the tree
-// that actually drop the column. `named` is the entry's migration prefix,
-// `exists` reports whether that migration has landed, and `drops` are the
-// migration file names whose `.up.sql` drops the column, in migration order.
+// droppedColumnDrainError reports why a droppedColumns entry no longer stands,
+// or nil while it does. An exception is suppressing the column agreement
+// above, so it is held to exactly two conditions: the column is one migration
+// 0178 creates, and §10.1 names it nowhere. Both are read off the two sources
+// the agreement itself reads, so the entry is never coupled to a migration
+// number that has not been allocated.
 //
-// The reconciliation runs in both directions so the exception cannot outlive
-// or precede the migration it names: before the named migration lands nothing
-// else may drop the column, and once it lands it must be the migration that
-// does, and the only one.
-func reconcileDropMigration(named string, exists bool, drops []string) error {
-	if !exists {
-		if len(drops) > 0 {
-			return fmt.Errorf("the entry names migration %s as the drop, but that migration has not landed and %s already drops the column", named, strings.Join(drops, ", "))
-		}
-		return nil
+// spec: §10.1 (the manifest column enumeration)
+func droppedColumnDrainError(col, reason string, createdByMigration, namedInSpec bool) error {
+	if !createdByMigration {
+		return fmt.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, reason)
 	}
-	if len(drops) == 0 {
-		return fmt.Errorf("migration %s has landed but does not drop the column the entry says it drops", named)
-	}
-	if len(drops) > 1 {
-		return fmt.Errorf("more than one migration drops the column (%s); the entry names %s as the single drop", strings.Join(drops, ", "), named)
-	}
-	if !strings.HasPrefix(drops[0], named+"_") {
-		return fmt.Errorf("the column is dropped by %s, but the entry names migration %s", drops[0], named)
+	if namedInSpec {
+		return fmt.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, reason)
 	}
 	return nil
-}
-
-// dropMigrationsFor returns the migration file names under migrations/ whose
-// `.up.sql` drops `table`.`column`, in lexicographic (migration) order. An
-// empty result means no migration has dropped the column yet, which is the
-// state before the drop lands; the droppedColumns entry stands as the record
-// until then.
-func dropMigrationsFor(t *testing.T, root, table, column string) []string {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
-	if err != nil {
-		t.Fatalf("glob migrations/*.up.sql: %v", err)
-	}
-	sort.Strings(matches)
-	var found []string
-	for _, m := range matches {
-		body, err := os.ReadFile(m)
-		if err != nil {
-			t.Fatalf("read %s: %v", m, err)
-		}
-		if sqlDropsColumn(string(body), table, column) {
-			found = append(found, filepath.Base(m))
-		}
-	}
-	return found
 }
 
 // migrationColumnRE matches a column definition line in migration 0178, e.g.
@@ -265,156 +165,62 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 	for _, col := range migrationCols {
 		migrationSet[col] = true
 	}
-	for col, dropped := range droppedColumns {
-		if !migrationSet[col] {
-			t.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, dropped.reason)
-			continue
-		}
-		if columnNamedInCodeSpan(s101, col) {
-			t.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, dropped.reason)
-		}
-		// The entry's named drop migration is reconciled against the tree, so
-		// the exception is coupled to that migration rather than standing on
-		// its own: a wrong number, a missing drop once the migration lands,
-		// and a drop by some other migration each fail here.
-		if err := reconcileDropMigration(
-			dropped.migration,
-			migrationExists(t, root, dropped.migration),
-			dropMigrationsFor(t, root, dropped.table, col),
-		); err != nil {
-			t.Errorf("droppedColumns entry for %s.%s disagrees with the migrations in the tree: %v", dropped.table, col, err)
+	for col, reason := range droppedColumns {
+		if err := droppedColumnDrainError(col, reason, migrationSet[col], columnNamedInCodeSpan(s101, col)); err != nil {
+			t.Error(err)
 		}
 	}
 }
 
 // spec: 10.1, 12.5
-// diagnosis: the dropped-column record has come uncoupled from the migration
+// diagnosis: the dropped-column exception's drain conditions have changed. The
 //
-//	it names. The §10.1 column-agreement check is suppressed for a column only
-//	on the strength of a droppedColumns entry naming the migration that drops
-//	it, and that name is reconciled against the tree in both directions. A
-//	failure here means the reconciliation stopped catching one of them: an
-//	exception standing before its named migration while some other migration
-//	already dropped the column, an exception whose named migration landed
-//	without the drop (the migration reordered, or landed without its
-//	checkpoint_manifest half), or a column dropped by a migration other than
-//	the one the record names. Any of those leaves the exception masking the
-//	agreement with nothing holding it to a real change.
-func TestDroppedColumnRecordIsReconciledAgainstItsNamedDropMigration(t *testing.T) {
-	const named = "0180"
+//	§10.1 column-agreement check is suppressed for a column only on the
+//	strength of a droppedColumns entry, so the entry is held to exactly two
+//	conditions: the column is one migration 0178 creates, and §10.1 names it
+//	nowhere. A failure here means one of those two stopped draining the entry,
+//	or that a third condition was added and the exception now depends on
+//	something other than the two sources the agreement itself reads.
+func TestDroppedColumnExceptionDrainsOnItsTwoConditions(t *testing.T) {
+	const (
+		col    = "slot_id"
+		reason = "the manifest is scoped on session_id alone"
+	)
 	cases := []struct {
-		name    string
-		exists  bool
-		drops   []string
-		wantErr bool
+		name         string
+		createdBy178 bool
+		namedInSpec  bool
+		wantErr      bool
 	}{
 		{
-			name:   "before the named migration lands, no drop is the record standing alone",
-			exists: false,
+			name:         "a column 0178 creates and §10.1 does not name is the exception standing",
+			createdBy178: true,
 		},
 		{
-			name:    "before the named migration lands, another migration dropping the column is a disagreement",
-			exists:  false,
-			drops:   []string{"0181_something_else.up.sql"},
-			wantErr: true,
+			name:        "a column 0178 does not create is a dead entry",
+			namedInSpec: false,
+			wantErr:     true,
 		},
 		{
-			name:   "once the named migration lands and carries the drop, the record holds",
-			exists: true,
-			drops:  []string{"0180_drop_slot_id.up.sql"},
+			name:         "a column §10.1 names again is a live column the agreement must cover",
+			createdBy178: true,
+			namedInSpec:  true,
+			wantErr:      true,
 		},
 		{
-			name:    "the named migration landing without the drop fails",
-			exists:  true,
-			drops:   nil,
-			wantErr: true,
-		},
-		{
-			name:    "the column dropped by a migration other than the named one fails",
-			exists:  true,
-			drops:   []string{"0181_drop_slot_id.up.sql"},
-			wantErr: true,
-		},
-		{
-			name:    "two migrations dropping the column fails",
-			exists:  true,
-			drops:   []string{"0180_drop_slot_id.up.sql", "0181_drop_slot_id_again.up.sql"},
-			wantErr: true,
-		},
-		{
-			name:    "a longer prefix sharing the named migration's digits is not the named migration",
-			exists:  true,
-			drops:   []string{"01800_drop_slot_id.up.sql"},
-			wantErr: true,
+			name:        "a column 0178 does not create and §10.1 names is still a dead entry",
+			namedInSpec: true,
+			wantErr:     true,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := reconcileDropMigration(named, tc.exists, tc.drops)
+			err := droppedColumnDrainError(col, reason, tc.createdBy178, tc.namedInSpec)
 			if tc.wantErr && err == nil {
-				t.Errorf("reconcileDropMigration(%q, %v, %v) = nil, want an error", named, tc.exists, tc.drops)
+				t.Errorf("droppedColumnDrainError(%q, _, %v, %v) = nil, want an error", col, tc.createdBy178, tc.namedInSpec)
 			}
 			if !tc.wantErr && err != nil {
-				t.Errorf("reconcileDropMigration(%q, %v, %v) = %v, want nil", named, tc.exists, tc.drops, err)
-			}
-		})
-	}
-}
-
-// spec: 10.1, 12.5
-// diagnosis: the dropped-column record's drop detection no longer matches the
-//
-//	way this repository writes a column drop, or it credits one table's drop to
-//	another. Migrations spell the drop as `ALTER TABLE t\n    DROP COLUMN IF
-//	EXISTS c;`, and a single migration drops the identically named slot_id
-//	column from both checkpoint_manifest and session_checkpoints. A failure here
-//	means the detection has narrowed to one literal spelling (so a conforming
-//	drop reads as absent), widened past the ALTER TABLE statement that owns the
-//	clause (so the other table's drop satisfies it), or started counting a drop
-//	written inside a SQL comment.
-func TestDropColumnDetectionIsTableQualifiedAndMatchesTheMigrationIdiom(t *testing.T) {
-	const manifest = "checkpoint_manifest"
-	cases := []struct {
-		name string
-		sql  string
-		want bool
-	}{
-		{
-			name: "idempotent multi-line drop, the prevailing migration idiom",
-			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id;\n",
-			want: true,
-		},
-		{
-			name: "bare drop in a multi-column clause",
-			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN slot_id,\n    DROP COLUMN IF EXISTS legacy;\n",
-			want: true,
-		},
-		{
-			name: "drop of the same column on another table does not count",
-			sql:  "ALTER TABLE session_checkpoints\n    DROP COLUMN IF EXISTS slot_id;\n",
-			want: false,
-		},
-		{
-			name: "the manifest drop is found alongside the other table's drop",
-			sql: "ALTER TABLE session_checkpoints\n    DROP COLUMN IF EXISTS slot_id;\n" +
-				"ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id;\n",
-			want: true,
-		},
-		{
-			name: "a drop inside a SQL comment is not a drop",
-			sql:  "-- ALTER TABLE checkpoint_manifest DROP COLUMN IF EXISTS slot_id;\n",
-			want: false,
-		},
-		{
-			name: "a differently prefixed column is not the column",
-			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id_legacy;\n",
-			want: false,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := sqlDropsColumn(tc.sql, manifest, "slot_id"); got != tc.want {
-				t.Errorf("sqlDropsColumn(%q, %q, \"slot_id\") = %v, want %v", tc.sql, manifest, got, tc.want)
+				t.Errorf("droppedColumnDrainError(%q, _, %v, %v) = %v, want nil", col, tc.createdBy178, tc.namedInSpec, err)
 			}
 		})
 	}
