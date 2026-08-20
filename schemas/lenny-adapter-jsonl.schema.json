@@ -22,7 +22,7 @@
       "title": "message",
       "description": "Inbound content delivery from gateway → adapter → agent. The unified envelope used for client prompts, inter-session messages, and platform-injected control text. See spec/15_external-api-surface.md §15.4.",
       "type": "object",
-      "required": ["schemaVersion", "type", "id", "from", "input"],
+      "required": ["schemaVersion", "type", "id", "from", "sessionId", "input"],
       "properties": {
         "schemaVersion": {
           "type": "integer",
@@ -57,6 +57,7 @@
         },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The adapter populates it on every session-scoped frame on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. `from.id` separately names the sending session, which may be a different session; delivery follows `sessionId`."
         },
         "input": {
@@ -138,6 +139,7 @@
         },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
@@ -147,7 +149,7 @@
       "title": "tool_result",
       "description": "Inbound result for a prior tool_call. The id matches the originating tool_call.id. Results with no matching call are dropped and logged.",
       "type": "object",
-      "required": ["type", "id", "content"],
+      "required": ["type", "id", "content", "sessionId"],
       "properties": {
         "type": { "const": "tool_result" },
         "id": {
@@ -163,6 +165,7 @@
         "isError": { "type": "boolean", "default": false },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`."
         }
       }
@@ -195,6 +198,7 @@
         },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       },
@@ -215,6 +219,7 @@
         "message": { "type": "string", "description": "Human-readable status message." },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
@@ -234,6 +239,7 @@
         },
         "sessionId": {
           "type": "string",
+          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }

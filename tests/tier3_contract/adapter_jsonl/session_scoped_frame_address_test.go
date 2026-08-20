@@ -28,6 +28,18 @@ var sessionScopedFrames = []string{
 	"set_tracing_context",
 }
 
+// adapterPopulatedFrames are the session-scoped frames the adapter emits
+// towards the runtime. The adapter populates the address on every one of
+// them on every pod, so absence has no defined outcome on this leg and the
+// published schema requires the property.
+var adapterPopulatedFrames = []string{"messageEnvelope", "tool_result"}
+
+// runtimeEmittedFrames are the session-scoped frames the runtime emits
+// towards the adapter. An absent address on this leg resolves to the
+// receiving stream's own binding on a pod holding at most one slot, so the
+// published schema leaves the property optional.
+var runtimeEmittedFrames = []string{"tool_call", "response", "status", "set_tracing_context"}
+
 // protocolFrames are the frame definitions that carry no per-session address.
 var protocolFrames = []string{"heartbeat", "heartbeat_ack"}
 
@@ -65,6 +77,24 @@ func frameProperties(t *testing.T, defs map[string]any, frame string) map[string
 	return props
 }
 
+// frameRequired returns the set of property names one frame definition
+// declares as required.
+func frameRequired(t *testing.T, defs map[string]any, frame string) map[string]bool {
+	t.Helper()
+	def, ok := defs[frame].(map[string]any)
+	if !ok {
+		t.Fatalf("published JSONL schema declares no %q frame (renamed or removed?)", frame)
+	}
+	required := map[string]bool{}
+	list, _ := def["required"].([]any)
+	for _, name := range list {
+		if s, ok := name.(string); ok {
+			required[s] = true
+		}
+	}
+	return required
+}
+
 // spec: 28.5.3 (session-scoped frame schemas and addressing), 15.4 (published wire artifacts), 5.2 (a slot on every pod)
 // diagnosis: the published JSONL schema does not declare the per-session
 //
@@ -94,6 +124,9 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 			if addr["type"] != "string" {
 				t.Errorf("%s declares `sessionId` as %v, want a string", frame, addr["type"])
 			}
+			if addr["minLength"] != float64(1) {
+				t.Errorf("%s declares `sessionId` with minLength %v, want 1; an empty address is neither an address nor its absence", frame, addr["minLength"])
+			}
 			desc, _ := addr["description"].(string)
 			if desc == "" {
 				t.Errorf("%s declares `sessionId` with no description; the population rule is what the published artifact states", frame)
@@ -121,11 +154,14 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 //	`sessionId` is not a string. The adapter compares the address as exact
 //	string equality and reads a value it cannot decode as a string as no
 //	address at all, so a non-string value becomes an unaddressed frame that
-//	a pod holding more than one slot rejects and relays to no stream. The
+//	a pod holding more than one slot rejects and relays to no stream. An
+//	empty string is worse than absent: it is present, so it does not
+//	resolve to the receiving stream's binding on a single-slot pod, and it
+//	equals no session, so the frame reaches no stream on any pod. The
 //	published schema is where a runtime author's authoring mistake is
 //	caught, and it catches it only while the property is declared under the
 //	name the wire carries.
-func TestSessionScopedFramesRejectNonStringSessionAddress(t *testing.T) {
+func TestSessionScopedFramesRejectUnusableSessionAddress(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
 
@@ -145,11 +181,93 @@ func TestSessionScopedFramesRejectNonStringSessionAddress(t *testing.T) {
 			if err := validateFrame(t, schema, addressed); err != nil {
 				t.Errorf("addressed %s frame failed the JSONL schema: %v\n  payload: %s", frame, err, addressed)
 			}
-			for _, bad := range []string{"1", "null", `{"id":"sess_abc123"}`} {
+			for _, bad := range []string{"1", "null", `{"id":"sess_abc123"}`, `""`} {
 				payload := fmt.Sprintf(tmpl, bad)
 				if err := validateFrame(t, schema, payload); err == nil {
 					t.Errorf("%s frame with a non-string address validated, want rejection: %s", frame, payload)
 				}
+			}
+		})
+	}
+}
+
+// spec: 28.5.3 (session-scoped frame schemas and addressing), 15.4 (published wire artifacts), 5.2 (a slot on every pod)
+// diagnosis: the published JSONL schema does not encode the population rule's
+//
+//	split by leg. On the adapter-to-runtime leg the adapter populates the
+//	per-session address on every frame on every pod, so absence has no
+//	defined outcome there and the canonical frame block declares the
+//	property required. On the runtime-to-adapter leg an absent address
+//	resolves to the receiving stream's own binding on a pod holding at most
+//	one slot, so the property is optional there. A schema that leaves the
+//	address optional on the adapter-emitted frames publishes an unaddressed
+//	`tool_result` as conforming, and the compliance suite generated from
+//	this artifact stops enforcing the invariant on the one leg where
+//	absence means nothing.
+func TestAdapterPopulatedFramesRequireSessionAddress(t *testing.T) {
+	t.Parallel()
+	defs := jsonlFrameDefs(t)
+
+	for _, frame := range adapterPopulatedFrames {
+		frame := frame
+		t.Run(frame, func(t *testing.T) {
+			t.Parallel()
+			if !frameRequired(t, defs, frame)["sessionId"] {
+				t.Errorf("%s does not require `sessionId`; the adapter populates it on every pod, so an unaddressed frame has no defined outcome on this leg", frame)
+			}
+		})
+	}
+
+	for _, frame := range runtimeEmittedFrames {
+		frame := frame
+		t.Run(frame, func(t *testing.T) {
+			t.Parallel()
+			if frameRequired(t, defs, frame)["sessionId"] {
+				t.Errorf("%s requires `sessionId`; a runtime on a pod holding at most one slot may omit it and have it resolve to the receiving stream's own binding", frame)
+			}
+		})
+	}
+}
+
+// spec: 28.5.3 (session-scoped frame schemas and addressing), 15.4 (published wire artifacts)
+// diagnosis: the published JSONL schema validated an adapter-emitted
+//
+//	session-scoped frame that carries no address, or rejected a
+//	runtime-emitted one that carries none. A runtime author validates
+//	against this artifact, so the first case publishes a `tool_result` or
+//	`message` the adapter never emits and the receiving side cannot route,
+//	and the second case makes the single-slot omission the addressing rule
+//	permits unpublishable.
+func TestUnaddressedFramesValidateByLeg(t *testing.T) {
+	t.Parallel()
+	schema := compileJSONL(t)
+
+	rejected := map[string]string{
+		"message":     `{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[]}`,
+		"tool_result": `{"type":"tool_result","id":"tc_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","content":[]}`,
+	}
+	for frame, payload := range rejected {
+		frame, payload := frame, payload
+		t.Run("rejects_unaddressed_"+frame, func(t *testing.T) {
+			t.Parallel()
+			if err := validateFrame(t, schema, payload); err == nil {
+				t.Errorf("unaddressed %s frame validated, want rejection: %s", frame, payload)
+			}
+		})
+	}
+
+	accepted := map[string]string{
+		"tool_call":           `{"type":"tool_call","id":"tc_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","name":"read_file","arguments":{}}`,
+		"response":            `{"type":"response","text":"done"}`,
+		"status":              `{"type":"status","state":"thinking"}`,
+		"set_tracing_context": `{"type":"set_tracing_context","context":{}}`,
+	}
+	for frame, payload := range accepted {
+		frame, payload := frame, payload
+		t.Run("accepts_unaddressed_"+frame, func(t *testing.T) {
+			t.Parallel()
+			if err := validateFrame(t, schema, payload); err != nil {
+				t.Errorf("unaddressed %s frame failed the JSONL schema: %v\n  payload: %s", frame, err, payload)
 			}
 		})
 	}

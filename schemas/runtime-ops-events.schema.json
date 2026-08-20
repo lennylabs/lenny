@@ -163,7 +163,7 @@
     },
     "files_updated": {
       "title": "files_updated",
-      "description": "Adapter → runtime. A §7.4 mid-session upload promoted new files into the addressed session's /workspace/slots/{sessionId}/current. Sent only after the atomic overlay completes, so the runtime never observes partially-written files. The agent re-reads the workspace. One-way: no acknowledgement is expected.",
+      "description": "Adapter → runtime. A §7.4 mid-session upload promoted new files into `/workspace/slots/{sessionId}/current`. Sent only after the atomic overlay completes, so the runtime never observes partially-written files. The agent re-reads the workspace. One-way: no acknowledgement is expected.",
       "type": "object",
       "properties": {
         "type": { "const": "files_updated" }

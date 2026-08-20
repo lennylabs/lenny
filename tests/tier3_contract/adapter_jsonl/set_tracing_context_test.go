@@ -55,7 +55,6 @@ func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 	for name, frame := range map[string]string{
 		"untagged": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"}}`,
 		"tagged":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":"sess_abc123"}`,
-		"empty":    `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":""}`,
 	} {
 		if err := validateFrame(t, schema, frame); err != nil {
 			t.Errorf("%s set_tracing_context frame failed the JSONL schema: %v\n  payload: %s", name, err, frame)
@@ -66,15 +65,16 @@ func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 // spec: 28.5.3 (CH-MSGSOCK outbound set_tracing_context schema)
 // diagnosis: the published JSONL schema accepted a set_tracing_context
 //
-//	frame whose sessionId is not a string. The adapter compares the
-//	frame's sessionId to the delivering stream's session as exact
-//	string equality and reads any value it cannot decode as a
-//	string as no identifier at all, so a non-string value silently
-//	becomes an unaddressed frame that a pod holding more than one
-//	slot rejects. The schema is where that authoring mistake is
-//	caught, and it catches it only while the property is declared
-//	under the name the wire carries.
-func TestSetTracingContextRejectsNonStringSessionID(t *testing.T) {
+//	frame whose sessionId is not a non-empty string. The adapter compares
+//	the frame's sessionId to the delivering stream's session as exact
+//	string equality and reads any value it cannot decode as a string as no
+//	identifier at all, so a non-string value silently becomes an
+//	unaddressed frame that a pod holding more than one slot rejects. An
+//	empty string is a third case the addressing rule leaves undefined: it
+//	is present, so it does not resolve to the receiving stream's binding on
+//	a single-slot pod, and it equals no session, so it is relayed nowhere.
+//	The schema admits an address or its absence and nothing between them.
+func TestSetTracingContextRejectsNonStringOrEmptySessionID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
 
@@ -82,6 +82,7 @@ func TestSetTracingContextRejectsNonStringSessionID(t *testing.T) {
 		"number": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":1}`,
 		"null":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":null}`,
 		"object": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":{"id":"sess_abc123"}}`,
+		"empty":  `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":""}`,
 	} {
 		if err := validateFrame(t, schema, frame); err == nil {
 			t.Errorf("%s sessionId validated against the JSONL schema, want rejection: %s", name, frame)
