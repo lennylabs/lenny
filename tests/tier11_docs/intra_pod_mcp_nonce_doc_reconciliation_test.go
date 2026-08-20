@@ -315,9 +315,16 @@ func intraPodNonceSites() []nonceStatementSite {
 			label:  "docs/reference/adapter-contract.md Adapter Manifest lead",
 			path:   []string{"docs", "reference", "adapter-contract.md"},
 			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
+			// The reader-facing mirror states the nonce arming rule as well as
+			// the manifest's currency, so a runtime author reading only this
+			// page presents the value that bound the server it connects to
+			// rather than the value present at its own process start.
 			want: []string{
 				"one pod-global file",
 				"authoritative for the session whose start last wrote it",
+				noncePodWideRule,
+				nonceArmingRule,
+				nonceNoReArmRule,
 			},
 		},
 	}
