@@ -69,7 +69,7 @@ A pod that serves more than one session carries residual state that survives bet
 | Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
 | Service (`executionMode: service`) | None | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
 
-The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting. The whole-pod scrub runs at occupancy zero on a recycling pod. What is distinctive to the `Concurrent` row is the co-tenancy its third column names.
+The per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting. The whole-pod scrub runs at occupancy zero on a recycling pod. What is distinctive to the `Concurrent` row is the co-tenancy its `Residual state across sessions` column names.
 
 ---
 

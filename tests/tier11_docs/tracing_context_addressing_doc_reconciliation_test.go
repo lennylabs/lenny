@@ -37,18 +37,11 @@ package tier11_docs_test
 import (
 	"encoding/json"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
-
-// documentedTracingSlotIDExample matches the address the documented
-// `set_tracing_context` example frame carries. The published JSONL schema
-// accepts a non-empty string and rejects every other type, so the pattern
-// pins the example's form without pinning the identifier it happens to use.
-var documentedTracingSlotIDExample = regexp.MustCompile(`"slotId"\s*:\s*"[^"]+"`)
 
 // adapterContractDoc reads docs/reference/adapter-contract.md into a string.
 func adapterContractDoc(t *testing.T, root string) string {
@@ -139,11 +132,11 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/reference/adapter-contract.md: `set_tracing_context` entry not found (renamed or removed?)")
 	}
 	// The documented frame carries the session address in the wire form the
-	// published JSONL schema accepts: a non-empty JSON string. The four
-	// sibling frames on the same page still print a `null` address, which the
-	// schema rejects and the adapter reads as untagged, so the example is
-	// pinned to the string form by pattern rather than by its current value.
-	if !documentedTracingSlotIDExample.MatchString(entry) {
+	// published JSONL schema accepts: a non-empty JSON string. Sibling frames
+	// on the same page have printed a `null` address, which the schema rejects
+	// and the adapter reads as untagged, so the example is pinned to the string
+	// form by pattern rather than by its current value.
+	if !frameAddressValue(publishedFrameAddressKey(t, root)).MatchString(entry) {
 		t.Errorf("docs/reference/adapter-contract.md set_tracing_context entry: the example frame does not carry a non-empty string `slotId`; the published JSONL schema rejects any other type, so a runtime author copying the example emits a frame the adapter drops")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{

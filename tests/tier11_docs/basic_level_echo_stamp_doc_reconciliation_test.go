@@ -117,6 +117,47 @@ func retiredFrameAddressKey(published string) string {
 	return ""
 }
 
+// frameAddressValue matches the per-session address key bound to a non-empty
+// JSON string, which is the only form the published JSON Lines schema accepts.
+// The gates below match the address by value rather than by key spelling
+// because a literal that prints the key bound to `null` states the opposite of
+// the rule it would otherwise satisfy: the adapter reads a null address as
+// untagged.
+func frameAddressValue(key string) *regexp.Regexp {
+	return regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `"\s*:\s*"[^"]+"`)
+}
+
+// frameAddressKeyBound matches the per-session address key bound to any value,
+// so a literal that spells the key with a type the schema rejects is reported
+// against the schema's string requirement rather than as a missing address.
+func frameAddressKeyBound(key string) *regexp.Regexp {
+	return regexp.MustCompile(`"?` + regexp.QuoteMeta(key) + `"?\s*[:=]`)
+}
+
+// checkFrameAddress reports a session-scoped frame literal that does not carry
+// the per-session address in the form the published JSON Lines schema accepts.
+// The three dispositions are reported apart, because the retired key, a key the
+// literal omits, and a key bound to a value the schema rejects are three
+// different edits to the page.
+//
+// spec: 4.6.1, 28.5.3
+func checkFrameAddress(t *testing.T, at, key, literal string) {
+	t.Helper()
+	trimmed := strings.TrimSpace(literal)
+	if stale := retiredFrameAddressKey(key); stale != "" && strings.Contains(literal, stale) {
+		t.Errorf("%s: this frame literal spells the per-session address key %q, which the published JSON Lines schema does not declare; the page and the schema name one key\n%s", at, stale, trimmed)
+		return
+	}
+	if frameAddressValue(key).MatchString(literal) {
+		return
+	}
+	if frameAddressKeyBound(key).MatchString(literal) {
+		t.Errorf("%s: this frame literal binds the per-session address %q to a value the published JSON Lines schema rejects; the schema accepts only a non-empty JSON string there and the adapter reads a null address as untagged\n%s", at, key, trimmed)
+		return
+	}
+	t.Errorf("%s: this frame literal carries no per-session address; every session-scoped frame is addressed on every pod\n%s", at, trimmed)
+}
+
 // addressSpellings returns the wire spelling of the per-session address key
 // together with the member spellings the sample languages give it: an exported
 // Go field, and a snake-case Python name. `slotId` gives `SlotID` and
@@ -352,7 +393,6 @@ func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *te
 func TestAdapterContractFrameLiteralsCarryTheAddress(t *testing.T) {
 	root := repoRoot(t)
 	key := publishedFrameAddressKey(t, root)
-	stale := retiredFrameAddressKey(key)
 	rel := filepath.Join("docs", "reference", "adapter-contract.md")
 
 	blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
@@ -363,14 +403,7 @@ func TestAdapterContractFrameLiteralsCarryTheAddress(t *testing.T) {
 	for _, b := range blocks {
 		for _, e := range sessionScopedEmissions(b.Body) {
 			emitting++
-			if strings.Contains(e.Text, stale) {
-				t.Errorf("%s:%d: this frame literal spells the per-session address key %q, which the published JSON Lines schema does not declare; the reference page and the schema name one key\n%s", rel, b.StartLine+e.Offset, stale, e.Text)
-				continue
-			}
-			if strings.Contains(e.Text, key) {
-				continue
-			}
-			t.Errorf("%s:%d: this frame literal carries no per-session address; every session-scoped frame is addressed on every pod\n%s", rel, b.StartLine+e.Offset, e.Text)
+			checkFrameAddress(t, fmt.Sprintf("%s:%d", rel, b.StartLine+e.Offset), key, e.Text)
 		}
 	}
 	if emitting == 0 {
@@ -466,7 +499,6 @@ var tracedSessionScopedFrame = regexp.MustCompile(`"type"\s*:\s*"(message|tool_r
 func TestAnnotatedTracesAddressBothHalvesOfTheConversation(t *testing.T) {
 	root := repoRoot(t)
 	key := publishedFrameAddressKey(t, root)
-	stale := retiredFrameAddressKey(key)
 
 	traced := 0
 	for _, rel := range annotatedTracePages {
@@ -483,15 +515,7 @@ func TestAnnotatedTracesAddressBothHalvesOfTheConversation(t *testing.T) {
 					continue
 				}
 				traced++
-				at := fmt.Sprintf("%s:%d", rel, b.StartLine+i+1)
-				if strings.Contains(line, stale) {
-					t.Errorf("%s: this traced frame spells the per-session address key %q, which the published JSON Lines schema does not declare\n%s", at, stale, strings.TrimSpace(line))
-					continue
-				}
-				if strings.Contains(line, key) {
-					continue
-				}
-				t.Errorf("%s: this traced frame carries no per-session address; the adapter populates it on the frames it writes and the runtime echoes it on the frames it writes, so both halves of a trace spell it\n%s", at, strings.TrimSpace(line))
+				checkFrameAddress(t, fmt.Sprintf("%s:%d", rel, b.StartLine+i+1), key, line)
 			}
 		}
 	}
