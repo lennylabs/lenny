@@ -69,8 +69,9 @@ func (s *Server) resolveSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 // call for the same slot returns the existing state without recreating
 // the tree's content. Callers hold s.mu.
 //
-// spec: §6.4 — "The adapter creates the slot directory on
-// slotId assignment".
+// spec: §6.4 — the gateway mints the slot's identifier at claim time,
+// and the adapter creates that session's slot tree on the first
+// reference to the identifier.
 func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
 	if s.slots == nil {
 		s.slots = map[string]*slotState{}

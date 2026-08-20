@@ -7,9 +7,10 @@ import (
 	"os"
 )
 
-// EnsureTree creates the per-slot directory tree the §6.4 adapter
-// responsibility requires on slot assignment: the slot's `current/`,
-// `staging/`, `/sessions/{slotId}/`, `/artifacts/{slotId}/`, and the
+// EnsureTree creates the per-slot directory tree §6.4 makes the adapter
+// responsible for, on the adapter's first reference to an identifier the
+// gateway minted at claim time: the slot's `current/`, `staging/`,
+// `/sessions/{slotId}/`, `/artifacts/{slotId}/`, and the
 // `/run/lenny/slots/{slotId}/` credential directory. It is idempotent —
 // re-creating an existing slot tree is a no-op — so a retried slot bind
 // does not error. Each directory is chmod'd to its exact mode after
@@ -17,8 +18,9 @@ import (
 // lenny-cred-readers group needs. A path that is empty (its root was
 // unconfigured) is skipped.
 //
-// spec: §6.4 — "Adapter — creates ... per-slot directory
-// trees ... on slotId assignment".
+// spec: §6.4 — "The gateway mints the sessionId at claim time; the
+// adapter creates the session's slot tree on the first reference to that
+// identifier".
 func EnsureTree(p SlotPaths) error {
 	for _, d := range []struct {
 		path string

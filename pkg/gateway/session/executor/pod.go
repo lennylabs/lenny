@@ -146,7 +146,7 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	if bind.MaxConcurrentSessions > 1 && bind.SlotID == "" {
 		return nil, fmt.Errorf("podexec: session %s: %w", sessionID, ErrSlotIDRequired)
 	}
-	// A concurrent-pool bind (SlotID != "") carries the adapter-assigned slot
+	// A concurrent-pool bind (SlotID != "") carries the gateway-minted slot
 	// onto the Attach stream so the reconciled adapter and the runtime's
 	// dispatch loop key on it; an exclusive session-mode bind leaves it empty
 	// and the single-session path emits no slotId. spec: §7.2 (per-slot

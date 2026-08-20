@@ -817,7 +817,7 @@ func (c *Client) ReportUsageForLease(ctx context.Context, sessionID string, deli
 // AttachStream is a live §4.7 bidirectional content stream to a pod's
 // adapter. Send forwards a client-to-agent envelope; Recv returns the
 // next agent-to-gateway envelope. A concurrent-pool stream carries the
-// adapter-assigned §6.4 slotId so the reconciled adapter and the
+// gateway-minted §6.4 slotId so the reconciled adapter and the
 // runtime's dispatch loop key on it; an exclusive session-mode stream
 // leaves it empty.
 type AttachStream struct {

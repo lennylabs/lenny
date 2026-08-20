@@ -6,10 +6,10 @@
 // conformance tiers exercise.
 //
 // A concurrent pool multiplexes several simultaneous sessions onto one
-// pod, each in its own slot. The adapter assigns a slotId per slot and
-// tags every binary-protocol frame with it; the runtime implements a
-// dispatch loop keyed on slotId, demultiplexing the slots over the single
-// stdin channel. echo-concurrent implements that loop:
+// pod, each in its own slot. The gateway mints a slotId per slot at claim
+// time and the adapter tags every binary-protocol frame with it; the
+// runtime implements a dispatch loop keyed on slotId, demultiplexing the
+// slots over the single stdin channel. echo-concurrent implements that loop:
 //
 //   - Each inbound frame's optional `slotId` field selects a slot. Frames
 //     for distinct slotIds are demultiplexed to mutex-guarded per-slot

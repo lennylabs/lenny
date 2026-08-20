@@ -360,10 +360,11 @@ type Server struct {
 	expiryTimers map[string]*expiryTimer
 
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
-	// slotId. Populated when a slot bind assigns a slot. Each slot owns its
-	// own workspace tree, state, and credential lease set; one pod-global
-	// runtime serves every slot, multiplexed on slotId over the single
-	// runtime connection. Guarded by mu. spec: §6.4.
+	// slotId. Populated on the adapter's first reference to a slotId the
+	// gateway minted at claim time, which a slot bind carries. Each slot
+	// owns its own workspace tree, state, and credential lease set; one
+	// pod-global runtime serves every slot, multiplexed on slotId over the
+	// single runtime connection. Guarded by mu. spec: §6.4.
 	slots map[string]*slotState
 }
 

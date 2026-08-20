@@ -5,8 +5,9 @@
 //
 // Under session mode with `sessionPolicy.maxConcurrentSessions > 1` the
 // single `/workspace/current` layout does not apply. Instead each active
-// slot owns an isolated tree the adapter creates on slot assignment and
-// removes on slot cleanup (spec §6.4):
+// slot owns an isolated tree the adapter creates on its first reference to
+// the identifier the gateway minted at claim time, and removes on slot
+// cleanup (spec §6.4):
 //
 //	/workspace/slots/{slotId}/current/    this slot's cwd
 //	/workspace/slots/{slotId}/staging/    this slot's upload staging area
