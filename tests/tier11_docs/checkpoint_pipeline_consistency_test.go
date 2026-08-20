@@ -54,18 +54,58 @@ var infraColumns = map[string]bool{
 	"created_at": true,
 }
 
-// droppedColumns are checkpoint_manifest columns that migration 0178 creates
-// and a later migration drops. Migration 0178's own `.up.sql` text keeps the
-// CREATE TABLE line that first declared them, so they stay in the extracted
-// set, while §10.1 no longer names them: the partial-manifest scoping key,
-// the supersede rule, and the reassembly predicate are all keyed on
-// `session_id` alone. Each entry states why the column is gone, and the
-// reverse assertion below drains the map, so an entry survives only while
-// §10.1 names the column nowhere.
-var droppedColumns = map[string]string{
-	// spec: §10.1 (the manifest's scoping key is session_id), §12.5
-	// (retention and supersession operate on session_id)
-	"slot_id": "the manifest is scoped on session_id alone, so the per-slot column was dropped",
+// droppedColumn records a checkpoint_manifest column that migration 0178
+// creates and a later migration drops, naming that drop migration so a reader
+// can resolve which change removed the column.
+type droppedColumn struct {
+	// migration is the numeric prefix of the migration that drops the column.
+	migration string
+	// reason states why the column is gone.
+	reason string
+}
+
+// droppedColumns are checkpoint_manifest columns migration 0178 creates and a
+// later migration drops. Migration 0178's own `.up.sql` text keeps the CREATE
+// TABLE line that first declared them, so they stay in the extracted set,
+// while §10.1 no longer names them. Each entry names its drop migration, the
+// form tests/tier2_component/migrations/prod_columns_test.go already uses for
+// the columns the prod chain retires. The set drains rather than accumulates:
+// an entry naming a column migration 0178 does not create, or one §10.1 names
+// again, fails the gate, and once the named drop migration exists it must
+// carry the matching DROP COLUMN.
+var droppedColumns = map[string]droppedColumn{
+	// spec: §10.1 (the partial manifest, the supersede rule, and the
+	// reassembly predicate are keyed on session_id alone), §12.5 (retention
+	// and supersession operate on session_id)
+	"slot_id": {
+		migration: "0180",
+		reason:    "the manifest is scoped on session_id alone, so migration 0180 drops the per-slot column",
+	},
+}
+
+// migrationDropsColumn reports whether the migration whose numeric prefix is
+// `migration` exists under migrations/ and, when it does, whether its `.up.sql`
+// drops `column`. An absent migration reports (false, false): the droppedColumns
+// entry then stands as the record of the migration that will drop the column.
+func migrationDropsColumn(t *testing.T, root, migration, column string) (exists, drops bool) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(root, "migrations", migration+"_*.up.sql"))
+	if err != nil {
+		t.Fatalf("glob migrations/%s_*.up.sql: %v", migration, err)
+	}
+	if len(matches) == 0 {
+		return false, false
+	}
+	for _, m := range matches {
+		body, err := os.ReadFile(m)
+		if err != nil {
+			t.Fatalf("read %s: %v", m, err)
+		}
+		if strings.Contains(strings.ToUpper(string(body)), "DROP COLUMN "+strings.ToUpper(column)) {
+			return true, true
+		}
+	}
+	return true, false
 }
 
 // migrationColumnRE matches a column definition line in migration 0178, e.g.
@@ -137,13 +177,18 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 	for _, col := range migrationCols {
 		migrationSet[col] = true
 	}
-	for col, reason := range droppedColumns {
+	for col, dropped := range droppedColumns {
 		if !migrationSet[col] {
-			t.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, reason)
+			t.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, dropped.reason)
 			continue
 		}
 		if columnNamedInCodeSpan(s101, col) {
-			t.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, reason)
+			t.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, dropped.reason)
+		}
+		// The named drop migration is the entry's whole justification, so once
+		// it exists it must carry the drop the entry claims for it.
+		if exists, drops := migrationDropsColumn(t, root, dropped.migration, col); exists && !drops {
+			t.Errorf("droppedColumns names migration %s as the drop of checkpoint_manifest.%s, but that migration's .up.sql drops no such column", dropped.migration, col)
 		}
 	}
 }
