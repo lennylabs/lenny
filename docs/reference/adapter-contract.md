@@ -44,7 +44,7 @@ ASCII fallback for the diagram above (lenny-pod-containers):
 -->
 
 
-The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, and what capabilities are available. Basic-level runtimes do not need to read the manifest at all --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract.
+The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, where its credential file is, and what capabilities are available. A Basic-level runtime does not need the manifest for core operation --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract --- and a Basic-level runtime that reads a credential file reads `credentialsPath` from the manifest to find it.
 
 ---
 
@@ -458,7 +458,7 @@ At the Standard and Full levels, you can optionally expose an HTTP health check 
 
 ## Adapter Manifest
 
-The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is read-only to the agent container, complete and authoritative when your binary starts, and regenerated per session. On a recycling pod the adapter regenerates the manifest and `mcpNonce` before the next session's binary is spawned.
+The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is one pod-global file, read-only to the agent container, and the adapter rewrites it before each session's binary is spawned, including each session on a recycling pod. It is authoritative for the session whose start last wrote it. On a pod holding more than one bound session, a later session's start replaces the `sessionId`, `mcpNonce`, and `credentialsPath` members while an earlier session's binary is still running, so read the values your process needs at startup rather than re-reading the file later.
 
 ```json
 {
@@ -485,6 +485,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
   "sessionId": "sess_abc",
   "taskId": "sess_abc",
   "mcpNonce": "a3f1...c7e2",
+  "credentialsPath": "/run/lenny/slots/sess_abc/credentials.json",
   "observability": {
     "otlpEndpoint": "http://otel-collector.lenny-system:4317"
   }
@@ -495,7 +496,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 | Level | What to read |
 |------|-------------|
-| Basic | Not required for core operation. The four built-in tools are a fixed contract. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
+| Basic | Not required for core operation. The four built-in tools are a fixed contract. A Basic-level runtime that reads a credential file reads `credentialsPath` for its location. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
 | Standard | `platformMcpServer.socket`, `connectorServers`, `mcpNonce` --- to connect to and authenticate with local MCP servers. |
 | Full | Standard fields plus `runtimeOps.socket`. |
 
@@ -512,6 +513,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | `sessionId` | The session identifier for this pod. |
 | `taskId` | The session's external-protocol task identifier. A session has exactly one execution, so it equals the session id; the adapter derives it from `sessionId`. |
 | `mcpNonce` | Hex nonce for authenticating MCP connections. |
+| `credentialsPath` | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json`. The adapter writes the file before spawning the binary and rewrites it in place when this session's credentials rotate. A runtime that reads credential material reads this field rather than assuming a fixed location. |
 | `observability.otlpEndpoint` | OTLP collector endpoint for runtime-emitted OpenTelemetry spans. |
 
 **Forward compatibility:** Your runtime must silently ignore unknown top-level fields. The adapter may add new fields in future versions without incrementing `version`. A `version` increment indicates a breaking change to existing field semantics.

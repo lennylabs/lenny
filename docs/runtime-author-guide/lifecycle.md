@@ -108,7 +108,7 @@ The trees shared across the pod's sessions are the pod-global `/workspace/stagin
 
 ### Adapter Manifest
 
-Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. At the Basic level, you can ignore this file. At the Standard level, you read it to discover MCP server sockets:
+Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. At the Basic level, the manifest is not required for core operation, and a Basic-level runtime that reads a credential file reads `credentialsPath` from the manifest to find it. At the Standard level, you read it to discover MCP server sockets:
 
 ```json
 {
@@ -120,7 +120,8 @@ Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`
   "connectorServers": [
     { "id": "github", "socket": "@lenny-connector-github" }
   ],
-  "mcpNonce": "a1b2c3d4e5f6..."
+  "mcpNonce": "a1b2c3d4e5f6...",
+  "credentialsPath": "/run/lenny/slots/sess_abc123/credentials.json"
 }
 ```
 
@@ -289,9 +290,9 @@ When a provider credential is rate-limited, expires, or is revoked, the platform
 
 ```
 1. Adapter sends on CH-RUNTIMEOPS:
-   {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/credentials.json","leaseId":"lease_xyz"}
+   {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/slots/sess_abc123/credentials.json","leaseId":"lease_xyz"}
 
-2. Your runtime re-reads the credentials file and rebinds the provider client to the new credential.
+2. Your runtime re-reads the credential file named by `credentialsPath` and rebinds the provider client to the new credential.
 
 3. Your runtime replies:
    {"type":"credentials_acknowledged","leaseId":"lease_xyz","provider":"anthropic"}

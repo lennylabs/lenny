@@ -1,11 +1,11 @@
 {{- /*
 lenny-ephemeral-container-cred-guard ValidatingAdmissionWebhook
 (§17.2 item 13, §13.1). Rejects any ephemeral debug container attached
-to an agent pod that could read the credential file at
-/run/lenny/credentials.json — by running as the adapter or agent UID,
-by joining the lenny-cred-readers group, by eliding securityContext
-fields that inherit the pod fsGroup, or by mounting the credential
-volume. Scoped to agent namespaces and the pods/ephemeralcontainers
+to an agent pod that could read a session's credential file at
+/run/lenny/slots/{sessionId}/credentials.json — by running as the
+adapter or agent UID, by joining the lenny-cred-readers group, by
+eliding securityContext fields that inherit the pod fsGroup, or by
+mounting the credential volume. Scoped to agent namespaces and the pods/ephemeralcontainers
 subresource; fail-closed.
 */ -}}
 {{- if .Values.admissionWebhooks.enabled }}

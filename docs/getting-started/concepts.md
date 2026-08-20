@@ -581,7 +581,7 @@ sequenceDiagram
     CredentialPool-->>Gateway: Credentials available
     Gateway->>Gateway: Assign lease from pool
     Gateway->>Pod: AssignCredentials(lease)
-    Pod->>Pod: Write credentials to /run/lenny/credentials.json
+    Pod->>Pod: Write credentials to /run/lenny/slots/{sessionId}/credentials.json
     Note over Pod: Runtime starts, uses credentials
     Pod->>Gateway: RATE_LIMITED event
     Gateway->>CredentialPool: Get alternate credential

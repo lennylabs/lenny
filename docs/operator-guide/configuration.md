@@ -392,7 +392,7 @@ credentialPools:
 | Mode | Security | How It Works |
 |---|---|---|
 | `proxy` | **Recommended** -- key never enters pod | Pod sends requests to gateway LLM Proxy; gateway injects real API key |
-| `direct` | Key delivered to pod in `/run/lenny/credentials.json` | Pod contacts LLM provider directly; suitable for single-tenant/dev only |
+| `direct` | Key delivered to the session's credential file at `/run/lenny/slots/{sessionId}/credentials.json` on the pod | Pod contacts LLM provider directly; suitable for single-tenant/dev only |
 
 ### Credential Health and Rotation
 

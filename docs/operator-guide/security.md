@@ -194,7 +194,7 @@ credentialPools:
 
 **Direct mode** (default for single-tenant; permitted in multi-tenant only with `sandboxed` or `microvm` isolation):
 
-1. Gateway writes the API key to `/run/lenny/credentials.json` on the pod
+1. Gateway writes the API key to the session's credential file at `/run/lenny/slots/{sessionId}/credentials.json` on the pod
 2. Pod contacts the LLM provider directly
 3. Credential file is removed on session end, and re-leased per session on a recycling pod
 

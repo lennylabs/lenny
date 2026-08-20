@@ -96,7 +96,7 @@ An external MCP server (e.g., GitHub, Jira) registered as a top-level admin API 
 ### Credential Lease
 {: #credential-lease }
 
-A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. A fresh lease is assigned per session, including each session served by a recycling pod, and per slot when `sessionPolicy.maxConcurrentSessions > 1`. See [Configuration Reference](configuration).
+A time-bounded assignment of a credential from a credential pool to a specific session. Leases are managed by the Token Service and include the materialized provider configuration. A fresh lease is assigned per session on every pod, including each session served by a recycling pod, and it is materialized at that session's own `/run/lenny/slots/{sessionId}/credentials.json`. See [Configuration Reference](configuration).
 
 ### Credential Pool
 {: #credential-pool }

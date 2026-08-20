@@ -311,7 +311,27 @@ func intraPodNonceSites() []nonceStatementSite {
 				"authoritative for the session whose start last wrote it",
 			},
 		},
+		{
+			label:  "docs/reference/adapter-contract.md Adapter Manifest lead",
+			path:   []string{"docs", "reference", "adapter-contract.md"},
+			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
+			want: []string{
+				"one pod-global file",
+				"authoritative for the session whose start last wrote it",
+			},
+		},
 	}
+}
+
+// retiredManifestStabilityPhrasings are the readings the currency rule
+// replaces. Each one tells a runtime author that the file it reads stays the
+// file its own session's start wrote, which is false on a pod holding a second
+// bound session: that session's start replaces the `sessionId`, `mcpNonce`, and
+// `credentialsPath` members while the earlier binary is still running.
+var retiredManifestStabilityPhrasings = []string{
+	"regenerated per session",
+	"stable for the duration",
+	"current for the session",
 }
 
 // spec: 4.7, 4.7.5, 15.4.3, 28.5.3, 28.6, 29.4
@@ -341,5 +361,6 @@ func TestIntraPodMCPNonceStatementsAgreeAcrossSpecAndDocs(t *testing.T) {
 		}
 		requireAllContain(t, site.label, block, site.want)
 		requireNoneContain(t, site.label, block, retiredNoncePhrasings)
+		requireNoneContain(t, site.label, block, retiredManifestStabilityPhrasings)
 	}
 }

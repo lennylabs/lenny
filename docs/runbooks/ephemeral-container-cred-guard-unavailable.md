@@ -29,7 +29,7 @@ related:
 
 # ephemeral-container-cred-guard-unavailable
 
-The `lenny-ephemeral-container-cred-guard` ValidatingAdmissionWebhook is the fail-closed gate that prevents an actor with `update` on `pods/ephemeralcontainers` from attaching a debug container that could read the credential file at `/run/lenny/credentials.json`. While the webhook is unreachable, `failurePolicy: Fail` denies every `update` to `pods/ephemeralcontainers` in every agent namespace — the credential-boundary invariant remains protected, but `kubectl debug` and similar ephemeral-container workflows will fail until the webhook recovers.
+The `lenny-ephemeral-container-cred-guard` ValidatingAdmissionWebhook is the fail-closed gate that prevents an actor with `update` on `pods/ephemeralcontainers` from attaching a debug container that could read a session's credential file at `/run/lenny/slots/{sessionId}/credentials.json`. While the webhook is unreachable, `failurePolicy: Fail` denies every `update` to `pods/ephemeralcontainers` in every agent namespace — the credential-boundary invariant remains protected, but `kubectl debug` and similar ephemeral-container workflows will fail until the webhook recovers.
 
 See SPEC §13.1 "`lenny-cred-readers` membership boundary" for the four rejection conditions the webhook enforces; SPEC §17.2 admission-policies inventory item 13 for the webhook's baseline placement.
 
