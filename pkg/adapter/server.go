@@ -362,12 +362,6 @@ type Server struct {
 	// cohortSession is the identifier of the current generation's first
 	// session.
 	cohortSession string
-	// expiryTimers holds the §4.9 direct-mode lease-expiry
-	// timers, keyed by provider. Each fires at its lease's expiresAt to
-	// delete the provider's credential-file entry and report
-	// AUTH_EXPIRED unless a replacement lease arrived first.
-	expiryTimers map[string]*expiryTimer
-
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
 	// slotId. Populated on the adapter's first reference to a slotId the
 	// gateway minted at claim time, which a slot bind carries. Each slot

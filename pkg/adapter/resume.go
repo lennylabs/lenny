@@ -54,19 +54,26 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 
 	// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
 	// The gateway carries the original session's cwd on
-	// `expected_workspace_root`; the adapter MUST refuse a Resume whose
+	// `expected_workspace_root` and derives it from the workspace base the
+	// adapter reported and the session identifier, so the assertion
+	// compares it against this session's own slot root rather than a
+	// pod-global directory. The adapter MUST refuse a Resume whose
 	// replacement pod was provisioned with a different mount path so a
 	// runtime template change between sessions cannot silently restore
-	// into the wrong absolute path. The invariant is otherwise upheld by
-	// construction (the SandboxTemplate's WorkspaceRoot is identical on
-	// the replacement pod), but the assertion is the §7.3 contractual
-	// guard called out by F-7.3.15. An empty `expected_workspace_root`
-	// disables the assertion so a pre-F-7.3.15 client can still resume.
-	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != s.WorkspaceRoot {
+	// into the wrong absolute path. An empty `expected_workspace_root`
+	// disables the assertion.
+	// spec: §6.4 — the slot root is the only workspace layout, so the
+	// comparison is per session on every pod.
+	sessionRoot, err := s.workspaceRootForSession(sessionID)
+	if err != nil {
+		s.releaseSessionSlot(sessionID)
+		return nil, err
+	}
+	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != sessionRoot {
 		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"resume rejected: workspace root mismatch (expected %q, adapter has %q)",
-			expected, s.WorkspaceRoot)
+			expected, sessionRoot)
 	}
 
 	// spec: §7.3 — the gateway passes `last_checkpoint_workspace_bytes`

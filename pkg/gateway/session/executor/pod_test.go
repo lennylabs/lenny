@@ -5,6 +5,7 @@ package executor_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -107,6 +108,24 @@ func TestPodExecutorSendUnboundSession(t *testing.T) {
 	pe := executor.NewPodExecutor(podsession.NewRegistry(), nil)
 	if _, err := pe.Send(context.Background(), "sess-absent", []executor.Message{{Content: "x"}}); err == nil {
 		t.Error("Send for an unbound session succeeded, want a failure")
+	}
+}
+
+// spec: 7.2 (fail-closed dispatch), 5.2 (every session is bound to a slot
+// on every pod, addressed by its session identifier)
+// diagnosis: the executor opened, or served a cached, Attach stream for an
+// empty session address. The adapter cannot attribute such a stream to a
+// slot, so dispatch must be refused with ErrSessionIDRequired before any
+// registry or cache lookup.
+func TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2(t *testing.T) {
+	reg := podsession.NewRegistry()
+	// A binding published under the empty address must not make the
+	// dispatch reachable: the guard precedes the lookup.
+	reg.Put(&podsession.BindResult{SessionID: "", TenantID: "acme"})
+	pe := executor.NewPodExecutor(reg, nil)
+	_, err := pe.Send(context.Background(), "", []executor.Message{{Content: "x"}})
+	if !errors.Is(err, executor.ErrSessionIDRequired) {
+		t.Errorf("Send with no session address = %v, want ErrSessionIDRequired", err)
 	}
 }
 

@@ -163,7 +163,7 @@ func TestDirectLeaseArmsExpiryTimerAtExpiresAt_spec_4_9(t *testing.T) {
 	}
 	tmr, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
 	if !ok || tmr.leaseID != "l1" {
-		t.Errorf("expiryTimers[anthropic_direct] = %+v, want leaseID l1", tmr)
+		t.Errorf("slot timer[anthropic_direct] = %+v, want leaseID l1", tmr)
 	}
 }
 
@@ -444,7 +444,7 @@ func TestExtendCredentialLeaseMovesDeadlineWithoutRewrite_spec_4_9(t *testing.T)
 	}
 	tmr, ok := sessionTimers(s, "sess-1")["anthropic_direct"]
 	if !ok || tmr.leaseID != "l1" {
-		t.Errorf("expiryTimers[anthropic_direct] = %+v, want leaseID l1", tmr)
+		t.Errorf("slot timer[anthropic_direct] = %+v, want leaseID l1", tmr)
 	}
 
 	// Firing the extended timer still deletes the entry and reports
@@ -495,7 +495,7 @@ func TestExtendCredentialLeaseMismatchedLeaseIsNoop_spec_4_9(t *testing.T) {
 	}
 	tmr := sessionTimers(s, "sess-1")["anthropic_direct"]
 	if tmr == nil || tmr.leaseID != "l1" {
-		t.Errorf("expiryTimers[anthropic_direct] = %+v, want unchanged leaseID l1", tmr)
+		t.Errorf("slot timer[anthropic_direct] = %+v, want unchanged leaseID l1", tmr)
 	}
 }
 

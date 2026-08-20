@@ -314,43 +314,65 @@ func TestResumeReleasesThePodWhenChunkFetchFails(t *testing.T) {
 	}
 }
 
+// slotWorkspaceRoot is the session's own §6.4 cwd under a workspace base,
+// which is the value the gateway derives and replays on
+// ResumeRequest.expected_workspace_root.
+func slotWorkspaceRoot(base, sessionID string) string {
+	return filepath.Join(base, "slots", sessionID, "current")
+}
+
 // spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
-// The gateway carries the original session's WorkspaceRoot on
+// The gateway carries the original session's workspace root on
 // ResumeRequest.expected_workspace_root; the adapter MUST refuse a
-// Resume whose mount path disagrees with the adapter's configured
-// WorkspaceRoot. F-7.3.15.
+// Resume whose mount path disagrees with the session's own slot root.
 func TestResumeRejectsWorkspaceRootMismatch_spec_7_3_15(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
-	req.ExpectedWorkspaceRoot = root + "-different"
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1") + "-different"
 	_, err := s.Resume(context.Background(), req)
 	if status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("F-7.3.15: code = %v, want FailedPrecondition for workspace_root mismatch", status.Code(err))
+		t.Errorf("code = %v, want FailedPrecondition for workspace_root mismatch", status.Code(err))
 	}
 }
 
-// spec: §7.3 — a matching workspace_root passes the assertion
-// and the resume proceeds. F-7.3.15.
-func TestResumeAcceptsMatchingWorkspaceRoot_spec_7_3_15(t *testing.T) {
+// spec: §7.3 — the workspace root the gateway derives for the session,
+// which is its §6.4 slot cwd under the workspace base the adapter
+// reported, passes the assertion and the resume proceeds.
+func TestResumeAcceptsTheSessionsSlotWorkspaceRoot_spec_7_3(t *testing.T) {
+	s, _, root := sessionServer(t)
+	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
+	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1")
+	if _, err := s.Resume(context.Background(), req); err != nil {
+		t.Fatalf("the session's own slot workspace root was rejected: %v", err)
+	}
+}
+
+// spec: §7.3 step (d); §6.4 — the slot tree is the only workspace layout,
+// so an expectation naming the workspace base rather than the session's
+// slot cwd is a mismatch and the resume is refused. The assertion
+// compares per session; a pod-global directory never satisfies it.
+func TestResumeRejectsTheWorkspaceBaseAsTheExpectedRoot_spec_7_3(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
 	req.ExpectedWorkspaceRoot = root
-	if _, err := s.Resume(context.Background(), req); err != nil {
-		t.Fatalf("F-7.3.15: matching workspace_root rejected: %v", err)
+	_, err := s.Resume(context.Background(), req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition for the workspace base as the expected root", status.Code(err))
 	}
 }
 
-// spec: an empty ExpectedWorkspaceRoot disables the assertion so a
-// pre-F-7.3.15 client can resume without the hint. F-7.3.15.
+// spec: §7.3 — an empty ExpectedWorkspaceRoot disables the assertion, so
+// a client that carries no expectation still resumes.
 func TestResumeAcceptsEmptyExpectedWorkspaceRoot_spec_7_3_15(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
 	req.ExpectedWorkspaceRoot = ""
 	if _, err := s.Resume(context.Background(), req); err != nil {
-		t.Fatalf("F-7.3.15: empty workspace_root must be permissive, got: %v", err)
+		t.Fatalf("empty workspace_root must be permissive, got: %v", err)
 	}
 }
 
@@ -361,16 +383,16 @@ func TestResumeWorkspaceRootMismatchReleasesClaim_spec_7_3_15(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
-	req.ExpectedWorkspaceRoot = root + "-different"
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1") + "-different"
 	if _, err := s.Resume(context.Background(), req); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Resume: %v", err)
 	}
-	// A subsequent Resume on a different session id must succeed — the
+	// A subsequent Resume on a different session id must succeed: the
 	// pod was released by the first failed Resume.
 	req2 := resumeReqChunks("sess-2", "ckpt-1", chunks)
-	req2.ExpectedWorkspaceRoot = root
+	req2.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-2")
 	if _, err := s.Resume(context.Background(), req2); err != nil {
-		t.Errorf("F-7.3.15: pod was not released on mismatch: %v", err)
+		t.Errorf("pod was not released on mismatch: %v", err)
 	}
 }
 

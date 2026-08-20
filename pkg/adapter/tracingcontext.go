@@ -44,8 +44,8 @@ type setTracingContextFrame struct {
 // may only reject. The registry is sampled once under a single s.mu hold
 // so both of its terms read one consistent state; a second locked read
 // could observe a slot claimed or released between the two. Modeled on
-// checkSession and checkSlotSession, which validate the same binding at
-// Attach bind time. spec: §28.5.3, §6.4.
+// checkSessionBound, which validates the same binding at Attach bind
+// time. spec: §28.5.3, §6.4.
 func (s *Server) tracingFrameAddressesStream(sessionID, frameSlot, slotID string) bool {
 	if frameSlot != slotID {
 		return false

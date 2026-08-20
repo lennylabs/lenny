@@ -129,18 +129,20 @@ def canonical(text):
 
 
 # Rows whose surface the frozen reference cannot state, keyed by the claim the
-# table names. The reference recorded two capabilities by the absence of a
-# request field, and the tree now declares both fields while no handler reads
-# either. Carrying the reference's wording forward would make the register
-# contradict the proto it cites, so each of these rows names the handler that
-# ignores the field and states in its note that the field is carried and the
+# table names. The reference recorded the capability by the absence of a request
+# field, and the wire has since dropped that field: the request names its session
+# by the session identifier alone. Carrying the reference's wording forward would
+# make the register contradict the proto it cites, so the row names the handler
+# that does not resolve the session's own tree and states in its note that the
 # behavior is not implemented. The status stays `ABSENT`: §28.4 reads it as
-# specified and not implemented, which is what an unread field is.
+# specified and not implemented, which is what an unresolved root is.
 SURFACE_OVERRIDES = {
     "Checkpoint restore onto a concurrent pod": {
-        "surface": "`pkg/adapter/resume.go:25` reads no slot dimension from the request",
-        "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, "
-                "so the wire field is present and the per-slot restore is not implemented",
+        "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint "
+                   "roots rather than the session's own tree",
+        "note": "the request addresses its session by the session identifier and the "
+                "restore path resolves no per-session root from it, so the per-slot "
+                "restore is not implemented",
     },
 }
 

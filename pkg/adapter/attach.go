@@ -50,7 +50,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		return err
 	}
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
-		if err := s.writeSlotEnvelope(rt, sessionID, slotID, env); err != nil {
+		if err := s.writeSlotEnvelope(rt, sessionID, env); err != nil {
 			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 		}
 	}
@@ -82,7 +82,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// loop has stopped selecting on it.
 	recvErr := make(chan error, 1)
 	go func() {
-		recvErr <- s.attachRecvLoop(stream, sessionID, slotID, rt)
+		recvErr <- s.attachRecvLoop(stream, sessionID, rt)
 	}()
 
 	for {
@@ -177,7 +177,7 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID, slotID string
 			tracing.CategoryUpstream,
 		))
 	}
-	if err := s.writeSlotEnvelope(rt, sessionID, slotID, result); err != nil {
+	if err := s.writeSlotEnvelope(rt, sessionID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
 	}
@@ -229,36 +229,34 @@ func stripRuntimeFrom(line []byte) []byte {
 
 // attachRecvLoop forwards each client envelope on the Attach stream to
 // the runtime's stdin until the stream ends. Each envelope is stamped
-// with the slot's slotId (when this is a per-slot Attach) so the shared
-// runtime's dispatch loop routes it to the slot's cwd.
-func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID, slotID string, rt RuntimeProcess) error {
+// with the session's address so the shared runtime's dispatch loop routes
+// it to that session's cwd.
+func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse], sessionID string, rt RuntimeProcess) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			return err
 		}
 		if env := msg.GetEnvelopeJson(); len(env) > 0 {
-			if err := s.writeSlotEnvelope(rt, sessionID, slotID, env); err != nil {
+			if err := s.writeSlotEnvelope(rt, sessionID, env); err != nil {
 				return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 			}
 		}
 	}
 }
 
-// writeSlotEnvelope stamps the slot's slotId onto an outbound envelope and
-// forwards it to the shared runtime over the single connection. On the
-// single-session base path (slotID == "") the envelope is written verbatim,
-// preserving the one-runtime-per-pod whole-pod behavior. spec: §6.4; §28.5.3 — inbound frames carry slotId when
-// maxConcurrentSessions > 1.
-func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID, slotID string, envelope []byte) error {
-	if slotID != "" {
-		stamped, err := stampSlotID(envelope, slotID)
-		if err != nil {
-			return err
-		}
-		envelope = stamped
+// writeSlotEnvelope stamps the session's address onto an outbound
+// envelope and forwards it to the shared runtime over the single
+// connection. Every session is bound to a slot on every pod and a
+// session-mode slot's identifier is its session's identifier, so the
+// stamp is unconditional and every inbound frame carries it.
+// spec: §5.2; §6.4; §28.5.3.
+func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID string, envelope []byte) error {
+	stamped, err := stampSlotID(envelope, sessionID)
+	if err != nil {
+		return err
 	}
-	return rt.WriteEnvelope(sessionID, envelope)
+	return rt.WriteEnvelope(sessionID, stamped)
 }
 
 // demuxSlotOutput filters the shared runtime's interleaved output stream

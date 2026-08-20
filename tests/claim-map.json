@@ -69,9 +69,9 @@
       "claim": "Checkpoint restore onto a concurrent pod",
       "status": "ABSENT",
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "surface": "`pkg/adapter/resume.go:25` reads no slot dimension from the request",
+      "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint roots rather than the session's own tree",
       "deferral_id": "R22",
-      "note": "`ResumeRequest` carries `slot_id` and the restore path ignores it, so the wire field is present and the per-slot restore is not implemented"
+      "note": "the request addresses its session by the session identifier and the restore path resolves no per-session root from it, so the per-slot restore is not implemented"
     },
     {
       "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",

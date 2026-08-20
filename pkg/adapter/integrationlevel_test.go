@@ -75,13 +75,14 @@ func TestGetObservedIntegrationLevelRPC_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 — releaseSession clears the MCP-handshake signal so the next
-// session's runtime must reconnect to be observed at Standard.
-func TestObservedLevelResetOnReleaseSession_spec_5_1(t *testing.T) {
+// spec: §5.1 — releasing the session's slot clears the MCP-handshake
+// signal so the next session's runtime must reconnect to be observed at
+// Standard.
+func TestObservedLevelResetOnSlotRelease_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
 	s.ReleaseSlotForTest("")
 	if lvl := s.observedIntegrationLevel(context.Background(), 0); lvl != observedLevelBasic {
-		t.Errorf("after releaseSession level = %q, want basic", lvl)
+		t.Errorf("after the slot release level = %q, want basic", lvl)
 	}
 }

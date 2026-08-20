@@ -56,6 +56,11 @@ var (
 	// absenceAssertion matches a row that records a capability as unimplemented
 	// by naming a field the message does not carry.
 	absenceAssertion = regexp.MustCompile("no `(\\w+)` on `(\\w+)`")
+	// presenceAssertion matches a row that explains a capability by naming a
+	// field the message carries. A removal that leaves such a row behind makes
+	// the register describe a wire the proto no longer declares, which is the
+	// mirror of the absence case.
+	presenceAssertion = regexp.MustCompile("`(\\w+)` carries `(\\w+)`")
 )
 
 // protoFields returns, per message, the set of field names the proto declares.
@@ -129,6 +134,18 @@ func registerProtoDisagreements(registerBody []byte, protoBody string) []string 
 					))
 				}
 			}
+			// A message the proto does not declare at all is a name from
+			// another carrier, so only a declared message is held to the
+			// field it is said to carry.
+			for _, m := range presenceAssertion.FindAllStringSubmatch(text, -1) {
+				declared, ok := fields[m[1]]
+				if ok && !declared[m[2]] {
+					findings = append(findings, fmt.Sprintf(
+						"%q says %s carries %s, which the proto does not declare",
+						c.Claim, m[1], m[2],
+					))
+				}
+			}
 		}
 	}
 
@@ -158,7 +175,8 @@ func namedField(claimText string) (string, string, bool) {
 // spec: 28.4 (claim register), 6.4 (concurrent sessions per pod), 10.1 (coordinator handoff)
 // diagnosis: the claim register and the adapter proto disagree. Either a row
 // names a field the proto does not declare, a row records a capability as
-// unimplemented by asserting the absence of a field the proto declares, or a
+// unimplemented by asserting the absence of a field the proto declares, a row
+// explains a capability by a field the proto no longer declares, or a
 // request message carries the generation fence with no row tracking it. A
 // register that contradicts the wire contract cannot be read as a work queue.
 func TestClaimRegisterAgreesWithTheAdapterProto(t *testing.T) {
@@ -180,7 +198,8 @@ func TestClaimRegisterAgreesWithTheAdapterProto(t *testing.T) {
 // spec: 28.4 (claim register), 6.4 (concurrent sessions per pod), 10.1 (coordinator handoff)
 // diagnosis: the register-to-proto check stopped reporting a disagreement it
 // must refuse, so a register naming an absent field, contradicting itself about
-// a declared field, or omitting a fence row would be accepted.
+// a declared field, explaining a capability by a removed field, or omitting a
+// fence row would be accepted.
 func TestClaimRegisterProtoCheckRefusesADisagreeingRegister(t *testing.T) {
 	t.Parallel()
 	const proto = `message InterruptRequest {
@@ -231,6 +250,13 @@ message CheckpointRequest {
 			register(append(append([]string{}, fenceRows...),
 				row("Fenced interrupt", "`pkg/adapter/lifecycle.go:21`", "no `coordination_generation` on `InterruptRequest`"))...),
 			"which the proto declares",
+		},
+		{
+			"row explaining a capability by a field the proto no longer declares",
+			register(append(append([]string{}, fenceRows...),
+				row("Restore onto the session's own tree", "`pkg/adapter/resume.go`",
+					"`InterruptRequest` carries `slot_id` and the restore path ignores it"))...),
+			"which the proto does not declare",
 		},
 		{
 			"fence field carried on a request with no row",

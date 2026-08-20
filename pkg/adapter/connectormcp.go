@@ -54,8 +54,8 @@ func (s *Server) sessionConnectors(ctx context.Context, sessionID string) []sess
 // forwarding tools/list and tools/call to the gateway over
 // GatewayControl, scoped to the session and that one connector. It is
 // best-effort: a per-connector listen failure is logged and skipped so
-// the remaining connectors still serve. releaseSession stops every
-// server started here. spec: §9.3. F-9.1.2.
+// the remaining connectors still serve. The session's slot release stops
+// every server started here. spec: §9.3. F-9.1.2.
 func (s *Server) startConnectorMCPServers(sessionID, nonce string, conns []sessionConnector) {
 	if nonce == "" || s.ConnectorForwarder == nil {
 		return

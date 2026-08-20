@@ -227,8 +227,8 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 		t.Errorf("outcome = %v, want PodScrubSucceeded", reports[0].outcome)
 	}
 
-	// The pod process stays alive across the recycle boundary: releaseSession
-	// returned it to idle, so a replacement session can bind.
+	// The pod process stays alive across the recycle boundary: the slot
+	// release returned it to idle, so a replacement session can bind.
 	startRecycleSession(t, s, "sess-2")
 }
 

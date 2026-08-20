@@ -122,6 +122,14 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 // use. The lock is held across the open so a session never races two
 // streams into existence.
 func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapterclient.AttachStream, error) {
+	// spec: §7.2; §5.2 — the stream is addressed by the session
+	// identifier, which names the slot that session holds on the pod
+	// whatever the pool's concurrency. Fail closed on an empty one before
+	// any lookup, rather than opening a stream the adapter cannot
+	// attribute or serving one cached under the empty address.
+	if sessionID == "" {
+		return nil, fmt.Errorf("podexec: %w", ErrSessionIDRequired)
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if s, ok := e.streams[sessionID]; ok {
@@ -130,13 +138,6 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	bind, ok := e.registry.Get(sessionID)
 	if !ok {
 		return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
-	}
-	// spec: §7.2; §5.2 — the stream is addressed by the session
-	// identifier, which names the slot that session holds on the pod
-	// whatever the pool's concurrency. Fail closed on an empty one rather
-	// than opening a stream the adapter cannot attribute.
-	if sessionID == "" {
-		return nil, fmt.Errorf("podexec: %w", ErrSessionIDRequired)
 	}
 	s, err := bind.Adapter.Attach(ctx, sessionID)
 	if err != nil {

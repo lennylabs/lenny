@@ -158,16 +158,16 @@ func guardOnExtend(leases *credleasestore.Store, adapterCli *adapterclient.Clien
 
 // serveGuardAdapter serves a real adapter.Server over an in-memory gRPC
 // connection and returns a gateway adapter client wired to it plus the
-// credentials directory the direct-mode file is written under.
+// credentials root the per-session direct-mode files are written under.
 func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 	t.Helper()
 	base := t.TempDir()
-	credsDir := filepath.Join(base, "run", "lenny")
-	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+	credsRoot := filepath.Join(base, "run", "lenny")
+	if err := os.MkdirAll(credsRoot, 0o755); err != nil {
 		t.Fatalf("make credentials dir: %v", err)
 	}
 	s := adapter.New("guard-integration")
-	s.CredentialsDir = credsDir
+	s.CredentialsDir = credsRoot
 	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
 	s.ArtifactsRoot = filepath.Join(base, "artifacts")
@@ -186,10 +186,18 @@ func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 		t.Fatalf("dial guard adapter: %v", err)
 	}
 	t.Cleanup(func() { _ = cl.Close() })
-	return cl, credsDir
+	return cl, credsRoot
 }
 
-// credentialFileHasProvider reports whether the adapter credential file under
+// guardSessionCredentialsDir names the session's own §6.1 credential
+// directory under the adapter's credentials root. Every session is bound to
+// a slot on every pod, so the file always lands under slots/{sessionId}.
+// spec: §6.1.
+func guardSessionCredentialsDir(credsRoot, sessionID string) string {
+	return filepath.Join(credsRoot, "slots", sessionID)
+}
+
+// credentialFileHasProvider reports whether the session credential file under
 // dir still carries an entry for provider. A missing file (the entry was
 // deleted) yields false.
 func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
@@ -236,7 +244,8 @@ func guardDirectStoreRecord(leaseID, sessionID string, issuedAt, expiresAt time.
 // or the extension path made a Token Service call. The worker did not
 // recognize the breaker-open sentinel, or OnExtend did not reach the adapter.
 func TestGuardDirectModeReArmsAdapterTimerNoTokenServiceCall_spec_4_9(t *testing.T) {
-	adapterCli, credsDir := serveGuardAdapter(t)
+	adapterCli, credsRoot := serveGuardAdapter(t)
+	credsDir := guardSessionCredentialsDir(credsRoot, "run-direct")
 	ctx := context.Background()
 
 	start := time.Now()
