@@ -55,9 +55,9 @@
           "default": 0,
           "description": "Gateway-injected hop count in the delegation tree. Informational."
         },
-        "slotId": {
+        "sessionId": {
           "type": "string",
-          "description": "Slot identifier. Present only on pods whose pool sets `maxConcurrentSessions > 1`."
+          "description": "The session this frame is addressed to. The adapter populates it on every session-scoped frame on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. `from.id` separately names the sending session, which may be a different session; delivery follows `sessionId`."
         },
         "input": {
           "type": "array",
@@ -79,14 +79,14 @@
         },
         "id": {
           "type": "string",
-          "description": "Identifier whose shape depends on kind. client: `client_{opaque}`. agent: `sess_{session_id}`. system: literal `lenny-gateway`. external: `conn_{connector_id}`."
+          "description": "Identifier whose shape depends on kind. client: `client_{opaque}`. agent: `sess_{session_id}`. system: literal `lenny-gateway`. external: `conn_{connector_id}`. When kind is `agent` this names the sending session, which may differ from the `sessionId` the frame is addressed to."
         }
       }
     },
 
     "heartbeat": {
       "title": "heartbeat",
-      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter sends SIGTERM.",
+      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter sends SIGTERM. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
       "type": "object",
       "required": ["type", "ts"],
       "properties": {
@@ -97,7 +97,7 @@
 
     "heartbeat_ack": {
       "title": "heartbeat_ack",
-      "description": "Outbound acknowledgement of an inbound heartbeat.",
+      "description": "Outbound acknowledgement of an inbound heartbeat. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
       "type": "object",
       "required": ["type"],
       "properties": {
@@ -136,7 +136,10 @@
           "default": false,
           "description": "When true, the adapter records a §7.2 KindToolUse interaction, publishes a `tool_use_requested(tool_call_id, tool, args)` SSE event on the session's event stream, and blocks the tool invocation until the user resolves via POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve|deny. A denial returns the tool a structured `tool_result` carrying `isError: true` and the deny reason; an approval forwards the call. Absent or false means the call executes immediately (no approval gate)."
         },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       }
     },
 
@@ -158,7 +161,10 @@
           "description": "Result content as a list of MessagePart objects."
         },
         "isError": { "type": "boolean", "default": false },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`."
+        }
       }
     },
 
@@ -187,7 +193,10 @@
             "message": { "type": "string" }
           }
         },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       },
       "oneOf": [
         { "required": ["output"] },
@@ -197,13 +206,17 @@
 
     "status": {
       "title": "status",
-      "description": "Outbound optional status update, surfaced to the client as a low-priority signal.",
+      "description": "Outbound optional status update, surfaced to the client as a low-priority signal. A session-scoped frame: it is addressed to the session named by `sessionId` and relayed to that session's stream alone.",
       "type": "object",
       "required": ["type", "state"],
       "properties": {
         "type": { "const": "status" },
         "state": { "type": "string", "minLength": 1, "description": "Status label (for example: thinking, analyzing, calling_tool)." },
-        "message": { "type": "string", "description": "Human-readable status message." }
+        "message": { "type": "string", "description": "Human-readable status message." },
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       }
     },
 
@@ -219,7 +232,10 @@
           "description": "Opaque tracing context. Typical keys: langsmith_run_id, otel_trace_id, otel_span_id, tracestate.",
           "additionalProperties": true
         },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       }
     }
   }

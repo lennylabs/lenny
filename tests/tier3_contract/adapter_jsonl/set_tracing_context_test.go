@@ -37,11 +37,13 @@ func validateFrame(t *testing.T, schema *jsonschema.Schema, raw string) error {
 // spec: 28.5.3 (CH-MSGSOCK outbound set_tracing_context schema), 15.4 (published wire artifacts)
 // diagnosis: the published JSONL schema rejected a conforming
 //
-//	set_tracing_context frame carrying a slotId. The adapter
-//	addresses the frame by the slot it names, so a schema that
-//	does not declare slotId makes the addressed form
-//	unpublishable.
-func TestSetTracingContextFrameCarriesSlotID(t *testing.T) {
+//	set_tracing_context frame carrying a sessionId. The frame is
+//	addressed to the session that sessionId names, so a schema
+//	that does not declare sessionId makes the addressed form
+//	unpublishable. The untagged form stays valid because a runtime
+//	on a pod holding at most one slot may omit the identifier and
+//	have it resolve to the receiving stream's own binding.
+func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
 
@@ -52,8 +54,8 @@ func TestSetTracingContextFrameCarriesSlotID(t *testing.T) {
 
 	for name, frame := range map[string]string{
 		"untagged": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"}}`,
-		"tagged":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"slotId":"slot_01"}`,
-		"empty":    `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"slotId":""}`,
+		"tagged":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":"sess_abc123"}`,
+		"empty":    `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":""}`,
 	} {
 		if err := validateFrame(t, schema, frame); err != nil {
 			t.Errorf("%s set_tracing_context frame failed the JSONL schema: %v\n  payload: %s", name, err, frame)
@@ -64,23 +66,25 @@ func TestSetTracingContextFrameCarriesSlotID(t *testing.T) {
 // spec: 28.5.3 (CH-MSGSOCK outbound set_tracing_context schema)
 // diagnosis: the published JSONL schema accepted a set_tracing_context
 //
-//	frame whose slotId is not a string. The adapter compares the
-//	frame's slotId to the delivering stream's slotId as exact
+//	frame whose sessionId is not a string. The adapter compares the
+//	frame's sessionId to the delivering stream's session as exact
 //	string equality and reads any value it cannot decode as a
-//	string as no slotId at all, so a non-string value silently
-//	becomes an untagged frame that a concurrent pod drops. The
-//	schema is where that authoring mistake is caught.
-func TestSetTracingContextRejectsNonStringSlotID(t *testing.T) {
+//	string as no identifier at all, so a non-string value silently
+//	becomes an unaddressed frame that a pod holding more than one
+//	slot rejects. The schema is where that authoring mistake is
+//	caught, and it catches it only while the property is declared
+//	under the name the wire carries.
+func TestSetTracingContextRejectsNonStringSessionID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
 
 	for name, frame := range map[string]string{
-		"number": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"slotId":1}`,
-		"null":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"slotId":null}`,
-		"object": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"slotId":{"id":"slot_01"}}`,
+		"number": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":1}`,
+		"null":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":null}`,
+		"object": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":{"id":"sess_abc123"}}`,
 	} {
 		if err := validateFrame(t, schema, frame); err == nil {
-			t.Errorf("%s slotId validated against the JSONL schema, want rejection: %s", name, frame)
+			t.Errorf("%s sessionId validated against the JSONL schema, want rejection: %s", name, frame)
 		}
 	}
 }
