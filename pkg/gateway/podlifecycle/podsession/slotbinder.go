@@ -270,9 +270,9 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
 	}
 	// spec: §6.4 — the slot's workspace materializes into
-	// its own /workspace/slots/{slotId}/ tree. slotID is the per-slot
-	// identifier the adapter keys the tree on.
-	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, slotID, req.TenantID, req.Plan, allow)
+	// its own /workspace/slots/{sessionId}/ tree, which the adapter keys on
+	// the session identifier the request already names.
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)

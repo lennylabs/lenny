@@ -5,12 +5,14 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -336,4 +338,103 @@ func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
 // and the directory the workspace-prep RPCs materialize into.
 func slotCurrent(srv *Server, sessionID string) string {
 	return filepath.Join(srv.WorkspaceBase, "slots", sessionID, "current")
+}
+
+// prepareWorkspaceStreamStub feeds a fixed sequence of frames to the
+// PrepareWorkspace handler in-process. The embedded grpc.ServerStream
+// supplies the header/trailer methods the generated stream interface
+// requires; the handler calls none of them.
+type prepareWorkspaceStreamStub struct {
+	grpc.ServerStream
+	ctx    context.Context
+	frames []*adapterv1.PrepareWorkspaceRequest
+	next   int
+	resp   *adapterv1.PrepareWorkspaceResponse
+}
+
+func (s *prepareWorkspaceStreamStub) Context() context.Context { return s.ctx }
+
+func (s *prepareWorkspaceStreamStub) Recv() (*adapterv1.PrepareWorkspaceRequest, error) {
+	if s.next >= len(s.frames) {
+		return nil, io.EOF
+	}
+	f := s.frames[s.next]
+	s.next++
+	return f, nil
+}
+
+func (s *prepareWorkspaceStreamStub) SendAndClose(resp *adapterv1.PrepareWorkspaceResponse) error {
+	s.resp = resp
+	return nil
+}
+
+func uploadFrame(sessionID, ref, chunk string) *adapterv1.PrepareWorkspaceRequest {
+	return &adapterv1.PrepareWorkspaceRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		UploadRef: ref,
+		Chunk:     []byte(chunk),
+	}
+}
+
+// TestPrepareWorkspaceStagesUnderTheSessionSlotTree asserts that an
+// upload stages into the named session's
+// /workspace/slots/{sessionId}/staging directory, which is the only
+// staging layout: no upload lands in a pod-global /workspace/staging.
+// spec: §6.4 (per-session workspace tree), §4.2 (session-addressed
+// adapter requests).
+func TestPrepareWorkspaceStagesUnderTheSessionSlotTree(t *testing.T) {
+	base := t.TempDir()
+	srv := &Server{WorkspaceBase: base}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("sess-1", "lenny-blob://t/a", "hello")},
+	}
+	if err := srv.PrepareWorkspace(stream); err != nil {
+		t.Fatalf("PrepareWorkspace: %v", err)
+	}
+	if stream.resp.GetStagedBytes() != int64(len("hello")) {
+		t.Errorf("stagedBytes = %d, want %d", stream.resp.GetStagedBytes(), len("hello"))
+	}
+	slotStaging := filepath.Join(base, "slots", "sess-1", "staging")
+	entries, err := os.ReadDir(slotStaging)
+	if err != nil {
+		t.Fatalf("read per-session staging dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("per-session staging holds %d entries, want 1", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(base, "staging")); !os.IsNotExist(err) {
+		t.Errorf("pod-global /workspace/staging exists (%v); the per-session tree is the only layout", err)
+	}
+}
+
+// TestPrepareWorkspaceRefusesAnUnresolvableStagingPath asserts that an
+// adapter with no workspace base refuses the upload with
+// FailedPrecondition rather than writing the staged file into its own
+// working directory. spec: §6.4.
+func TestPrepareWorkspaceRefusesAnUnresolvableStagingPath(t *testing.T) {
+	srv := &Server{}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("sess-1", "lenny-blob://t/a", "hello")},
+	}
+	err := srv.PrepareWorkspace(stream)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("PrepareWorkspace without a workspace base = %v, want FailedPrecondition", err)
+	}
+}
+
+// TestPrepareWorkspaceRequiresASessionID asserts that a frame carrying no
+// session id is refused: absence of the address is an error rather than a
+// scope. spec: §4.2.
+func TestPrepareWorkspaceRequiresASessionID(t *testing.T) {
+	srv := &Server{WorkspaceBase: t.TempDir()}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("", "lenny-blob://t/a", "hello")},
+	}
+	err := srv.PrepareWorkspace(stream)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("PrepareWorkspace with an empty session id = %v, want InvalidArgument", err)
+	}
 }

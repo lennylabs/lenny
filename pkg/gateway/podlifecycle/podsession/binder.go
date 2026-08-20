@@ -884,7 +884,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.workspaceRoot(req.SessionID), archive.DefaultWorkspaceRoot),
 	}
-	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, "", req.TenantID, req.Plan, allow)
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
 	if err != nil {
 		reclaim()
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
@@ -1251,10 +1251,7 @@ func (b *Binder) releaseCredentials(sessionID string) {
 // strip-components-skip warnings the gateway raised during extraction. A
 // plan that carries upload sources but binds through a Binder with no
 // blob store fails rather than materializing an incomplete workspace.
-// slotID selects the §6.4 concurrent-workspace per-slot staging area
-// (/workspace/slots/{slotId}/staging) when non-empty; session-mode Bind
-// passes "" so uploads stage into the pod-global /workspace/staging.
-func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, slotID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	uploads := make(map[string][]byte)
 
 	// §7.4 / §13.4 — extract uploadArchive and gitClone

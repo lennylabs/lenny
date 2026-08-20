@@ -40,10 +40,11 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		span.End()
 	}()
 
-	// spec: §6.4 — a slot-qualified upload stages into the
-	// slot's /workspace/slots/{slotId}/staging area. The staging directory
-	// is resolved from the first frame (every frame carries the same slot
-	// id); the single-session layout uses the pod-global StagingDir.
+	// spec: §6.4 — the uploads stage into the named session's
+	// /workspace/slots/{sessionId}/staging area, whose tree is created on
+	// first reference. The staging directory is resolved once, from the
+	// first frame's session id, and an unresolvable (empty) staging path is
+	// refused with FailedPrecondition.
 	var stagingDir string
 	open := map[string]*os.File{}
 	closeAll := func() {
