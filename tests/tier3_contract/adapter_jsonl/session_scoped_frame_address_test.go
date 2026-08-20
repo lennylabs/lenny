@@ -124,8 +124,8 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 			if addr["type"] != "string" {
 				t.Errorf("%s declares `sessionId` as %v, want a string", frame, addr["type"])
 			}
-			if addr["minLength"] != float64(1) {
-				t.Errorf("%s declares `sessionId` with minLength %v, want 1; an empty address is neither an address nor its absence", frame, addr["minLength"])
+			if _, ok := addr["minLength"]; ok {
+				t.Errorf("%s constrains the length of `sessionId`; the addressing rule resolves an empty address the way it resolves an absent one, so the published artifact declares the type alone", frame)
 			}
 			desc, _ := addr["description"].(string)
 			if desc == "" {
@@ -155,10 +155,11 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 //	string equality and reads a value it cannot decode as a string as no
 //	address at all, so a non-string value becomes an unaddressed frame that
 //	a pod holding more than one slot rejects and relays to no stream. An
-//	empty string is worse than absent: it is present, so it does not
-//	resolve to the receiving stream's binding on a single-slot pod, and it
-//	equals no session, so the frame reaches no stream on any pod. The
-//	published schema is where a runtime author's authoring mistake is
+//	empty string is a different case and validates: the addressing rule
+//	resolves an absent and an empty address alike, and the adapter's
+//	demultiplexer reads them alike, so a schema that refuses the empty form
+//	publishes as nonconforming a frame the adapter accepts and resolves.
+//	The published schema is where a runtime author's authoring mistake is
 //	caught, and it catches it only while the property is declared under the
 //	name the wire carries.
 func TestSessionScopedFramesRejectUnusableSessionAddress(t *testing.T) {
@@ -181,11 +182,15 @@ func TestSessionScopedFramesRejectUnusableSessionAddress(t *testing.T) {
 			if err := validateFrame(t, schema, addressed); err != nil {
 				t.Errorf("addressed %s frame failed the JSONL schema: %v\n  payload: %s", frame, err, addressed)
 			}
-			for _, bad := range []string{"1", "null", `{"id":"sess_abc123"}`, `""`} {
+			for _, bad := range []string{"1", "null", `{"id":"sess_abc123"}`} {
 				payload := fmt.Sprintf(tmpl, bad)
 				if err := validateFrame(t, schema, payload); err == nil {
 					t.Errorf("%s frame with a non-string address validated, want rejection: %s", frame, payload)
 				}
+			}
+			empty := fmt.Sprintf(tmpl, `""`)
+			if err := validateFrame(t, schema, empty); err != nil {
+				t.Errorf("%s frame with an empty address failed the JSONL schema: %v\n  payload: %s", frame, err, empty)
 			}
 		})
 	}

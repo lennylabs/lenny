@@ -40,9 +40,10 @@ func validateFrame(t *testing.T, schema *jsonschema.Schema, raw string) error {
 //	set_tracing_context frame carrying a sessionId. The frame is
 //	addressed to the session that sessionId names, so a schema
 //	that does not declare sessionId makes the addressed form
-//	unpublishable. The untagged form stays valid because a runtime
-//	on a pod holding at most one slot may omit the identifier and
-//	have it resolve to the receiving stream's own binding.
+//	unpublishable. The untagged and empty forms stay valid because a
+//	runtime on a pod holding at most one slot may omit the identifier and
+//	have it resolve to the receiving stream's own binding, and the adapter
+//	reads an empty identifier as the same absence.
 func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
@@ -55,6 +56,7 @@ func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 	for name, frame := range map[string]string{
 		"untagged": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"}}`,
 		"tagged":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":"sess_abc123"}`,
+		"empty":    `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":""}`,
 	} {
 		if err := validateFrame(t, schema, frame); err != nil {
 			t.Errorf("%s set_tracing_context frame failed the JSONL schema: %v\n  payload: %s", name, err, frame)
@@ -65,16 +67,14 @@ func TestSetTracingContextFrameCarriesSessionID(t *testing.T) {
 // spec: 28.5.3 (CH-MSGSOCK outbound set_tracing_context schema)
 // diagnosis: the published JSONL schema accepted a set_tracing_context
 //
-//	frame whose sessionId is not a non-empty string. The adapter compares
-//	the frame's sessionId to the delivering stream's session as exact
-//	string equality and reads any value it cannot decode as a string as no
-//	identifier at all, so a non-string value silently becomes an
-//	unaddressed frame that a pod holding more than one slot rejects. An
-//	empty string is a third case the addressing rule leaves undefined: it
-//	is present, so it does not resolve to the receiving stream's binding on
-//	a single-slot pod, and it equals no session, so it is relayed nowhere.
-//	The schema admits an address or its absence and nothing between them.
-func TestSetTracingContextRejectsNonStringOrEmptySessionID(t *testing.T) {
+//	frame whose sessionId is not a string. The adapter compares the frame's
+//	sessionId to the delivering stream's session as exact string equality
+//	and reads any value it cannot decode as a string as no identifier at
+//	all, so a non-string value silently becomes an unaddressed frame that a
+//	pod holding more than one slot rejects. An empty string is not in this
+//	set: the addressing rule gives an absent and an empty identifier the
+//	same resolution, so the schema constrains the type alone.
+func TestSetTracingContextRejectsNonStringSessionID(t *testing.T) {
 	t.Parallel()
 	schema := compileJSONL(t)
 
@@ -82,7 +82,6 @@ func TestSetTracingContextRejectsNonStringOrEmptySessionID(t *testing.T) {
 		"number": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":1}`,
 		"null":   `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":null}`,
 		"object": `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":{"id":"sess_abc123"}}`,
-		"empty":  `{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc123"},"sessionId":""}`,
 	} {
 		if err := validateFrame(t, schema, frame); err == nil {
 			t.Errorf("%s sessionId validated against the JSONL schema, want rejection: %s", name, frame)

@@ -57,7 +57,6 @@
         },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The adapter populates it on every session-scoped frame on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. `from.id` separately names the sending session, which may be a different session; delivery follows `sessionId`."
         },
         "input": {
@@ -139,7 +138,6 @@
         },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
@@ -165,7 +163,6 @@
         "isError": { "type": "boolean", "default": false },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`."
         }
       }
@@ -198,7 +195,6 @@
         },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       },
@@ -219,7 +215,6 @@
         "message": { "type": "string", "description": "Human-readable status message." },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
@@ -239,7 +234,6 @@
         },
         "sessionId": {
           "type": "string",
-          "minLength": 1,
           "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
