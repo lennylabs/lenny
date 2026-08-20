@@ -63,7 +63,9 @@ type droppedColumn struct {
 	// drops the column, or empty while no migration has been allocated for the
 	// drop. When it is set, a migration with that prefix must be present in the
 	// tree and must drop the column from the table; the record may not assert a
-	// migration identity nothing verifies.
+	// migration identity nothing verifies. Leaving it empty is the interim form
+	// only: once the tree carries a migration dropping the column, the record
+	// must name it.
 	dropMigration string
 	// reason states why the column is gone. While dropMigration is empty the
 	// reason names the drop by what the change does, table-qualified, so the
@@ -86,7 +88,9 @@ type droppedColumn struct {
 // not create is dead, and an entry for a column §10.1 names again is a live
 // column the agreement must cover. Both are read off the two sources the
 // agreement itself reads, so a drop migration that has not landed yet cannot
-// make the gate red before the change that allocates it.
+// make the gate red before the change that allocates it. Once it does land,
+// droppedColumnRecordError requires the entry to name it, so the exception
+// cannot stay migration-less after the column is actually dropped.
 var droppedColumns = map[string]droppedColumn{
 	// spec: §10.1 (the partial manifest, the supersede rule, and the
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
@@ -248,28 +252,61 @@ func TestDroppedColumnExceptionDrainsOnItsTwoConditions(t *testing.T) {
 // §10.1 column agreement for.
 const manifestTable = "checkpoint_manifest"
 
-// migrationSource resolves a migration's up-SQL text by its four-digit numeric
-// prefix, reporting whether the tree carries a migration with that prefix. It
-// is injected so the record check can be exercised against a synthetic tree as
-// well as against migrations/.
-type migrationSource func(prefix string) (body string, found bool, err error)
+// migrationTree is the set of migrations the record check resolves a
+// retirement record against. It is injected so the check can be exercised
+// against a synthetic tree as well as against migrations/.
+type migrationTree struct {
+	// byPrefix resolves a migration's up-SQL text by its four-digit numeric
+	// prefix, reporting whether the tree carries a migration with that prefix.
+	byPrefix func(prefix string) (body string, found bool, err error)
+	// dropperOf reports the four-digit prefix of a migration whose up-SQL
+	// drops col from table, and whether the tree carries one. It is what ties
+	// a record that names no migration to the tree: once the drop lands, the
+	// record must name it.
+	dropperOf func(table, col string) (prefix string, found bool, err error)
+}
 
-// repoMigrationSource reads migrations/<prefix>_*.up.sql from the repository
-// tree rooted at root.
-func repoMigrationSource(root string) migrationSource {
-	return func(prefix string) (string, bool, error) {
-		matches, err := filepath.Glob(filepath.Join(root, "migrations", prefix+"_*.up.sql"))
-		if err != nil {
-			return "", false, fmt.Errorf("glob migration %s: %w", prefix, err)
-		}
-		if len(matches) == 0 {
+// repoMigrationTree reads migrations/*.up.sql from the repository tree rooted
+// at root.
+func repoMigrationTree(root string) migrationTree {
+	dir := filepath.Join(root, "migrations")
+	return migrationTree{
+		byPrefix: func(prefix string) (string, bool, error) {
+			matches, err := filepath.Glob(filepath.Join(dir, prefix+"_*.up.sql"))
+			if err != nil {
+				return "", false, fmt.Errorf("glob migration %s: %w", prefix, err)
+			}
+			if len(matches) == 0 {
+				return "", false, nil
+			}
+			body, err := os.ReadFile(matches[0])
+			if err != nil {
+				return "", false, fmt.Errorf("read migration %s: %w", prefix, err)
+			}
+			return string(body), true, nil
+		},
+		dropperOf: func(table, col string) (string, bool, error) {
+			matches, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+			if err != nil {
+				return "", false, fmt.Errorf("glob migrations: %w", err)
+			}
+			sort.Strings(matches)
+			for _, path := range matches {
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return "", false, fmt.Errorf("read migration %s: %w", filepath.Base(path), err)
+				}
+				if !migrationDropsColumn(string(body), table, col) {
+					continue
+				}
+				prefix := filepath.Base(path)
+				if len(prefix) < 4 {
+					return "", false, fmt.Errorf("migration %s has no four-digit prefix", filepath.Base(path))
+				}
+				return prefix[:4], true, nil
+			}
 			return "", false, nil
-		}
-		body, err := os.ReadFile(matches[0])
-		if err != nil {
-			return "", false, fmt.Errorf("read migration %s: %w", prefix, err)
-		}
-		return string(body), true, nil
+		},
 	}
 }
 
@@ -283,18 +320,27 @@ func migrationDropsColumn(body, table, col string) bool {
 
 // droppedColumnRecordError reports why a droppedColumns entry's retirement
 // record does not resolve to the change that drops the column, or nil while it
-// does. An entry that names no migration must name the drop table-qualified in
-// its own prose; an entry that names one must name a migration the tree
-// carries, and that migration must drop the column from the table.
+// does. An entry that names one migration must name a migration the tree
+// carries, and that migration must drop the column from the table. An entry
+// that names none must name the drop table-qualified in its own prose, and
+// stands only while the tree carries no migration dropping the column: once
+// the drop lands, the record has a number to name and must name it.
 //
 // spec: §10.1 (the manifest column enumeration)
-func droppedColumnRecordError(table, col string, entry droppedColumn, src migrationSource) error {
+func droppedColumnRecordError(table, col string, entry droppedColumn, tree migrationTree) error {
 	if entry.reason == "" {
 		return fmt.Errorf("droppedColumns[%q] states no reason", col)
 	}
 	if entry.dropMigration == "" {
 		if !strings.Contains(entry.reason, table+"."+col) {
 			return fmt.Errorf("droppedColumns[%q] names no drop migration, so its reason (%s) must name the drop as %s.%s", col, entry.reason, table, col)
+		}
+		dropper, found, err := tree.dropperOf(table, col)
+		if err != nil {
+			return fmt.Errorf("resolve the migration dropping %s.%s: %w", table, col, err)
+		}
+		if found {
+			return fmt.Errorf("droppedColumns[%q] names no drop migration, but migration %s drops %s.%s: set dropMigration to %s and name it in the reason", col, dropper, table, col, dropper)
 		}
 		return nil
 	}
@@ -304,7 +350,7 @@ func droppedColumnRecordError(table, col string, entry droppedColumn, src migrat
 	if !strings.Contains(entry.reason, entry.dropMigration) {
 		return fmt.Errorf("droppedColumns[%q].reason = %q, want prose naming migration %s, so the record reads as a retirement record on its own", col, entry.reason, entry.dropMigration)
 	}
-	body, found, err := src(entry.dropMigration)
+	body, found, err := tree.byPrefix(entry.dropMigration)
 	if err != nil {
 		return fmt.Errorf("resolve droppedColumns[%q].dropMigration: %w", col, err)
 	}
@@ -332,31 +378,53 @@ var migrationPrefixRE = regexp.MustCompile(`^[0-9]{4}$`)
 //	something else.
 func TestDroppedColumnExceptionResolvesToTheChangeThatDropsIt(t *testing.T) {
 	root := repoRoot(t)
-	src := repoMigrationSource(root)
+	tree := repoMigrationTree(root)
 	for col, entry := range droppedColumns {
-		if err := droppedColumnRecordError(manifestTable, col, entry, src); err != nil {
+		if err := droppedColumnRecordError(manifestTable, col, entry, tree); err != nil {
 			t.Error(err)
 		}
+	}
+}
+
+// syntheticTree builds a migrationTree over an in-memory prefix-to-up-SQL map,
+// so the record check can be exercised against a tree that does and does not
+// carry the drop.
+func syntheticTree(migrations map[string]string) migrationTree {
+	return migrationTree{
+		byPrefix: func(prefix string) (string, bool, error) {
+			body, ok := migrations[prefix]
+			return body, ok, nil
+		},
+		dropperOf: func(table, col string) (string, bool, error) {
+			prefixes := make([]string, 0, len(migrations))
+			for prefix := range migrations {
+				prefixes = append(prefixes, prefix)
+			}
+			sort.Strings(prefixes)
+			for _, prefix := range prefixes {
+				if migrationDropsColumn(migrations[prefix], table, col) {
+					return prefix, true, nil
+				}
+			}
+			return "", false, nil
+		},
 	}
 }
 
 // spec: 10.1, 12.5
 // diagnosis: the dropped-column record check no longer rejects a record that
 //
-//	names a migration the tree does not carry or that drops another column. The
+//	names a migration the tree does not carry or that drops another column, or
+//	one that names no migration while the tree already carries the drop. The
 //	check is what keeps the exception from asserting a migration identity
-//	nothing verifies, so a failure here means a record naming an unallocated or
-//	unrelated migration would now pass the gate above.
+//	nothing verifies and from staying migration-less after the drop lands, so a
+//	failure here means such a record would now pass the gate above.
 func TestDroppedColumnRecordRejectsAMigrationThatDoesNotDropTheColumn(t *testing.T) {
 	const dropSQL = "ALTER TABLE checkpoint_manifest DROP COLUMN IF EXISTS slot_id;"
-	tree := map[string]string{
+	tree := syntheticTree(map[string]string{
 		"0181": dropSQL,
 		"0182": "ALTER TABLE checkpoint_manifest DROP COLUMN IF EXISTS chunk_count;",
-	}
-	src := func(prefix string) (string, bool, error) {
-		body, ok := tree[prefix]
-		return body, ok, nil
-	}
+	})
 	cases := []struct {
 		name    string
 		entry   droppedColumn
@@ -367,8 +435,9 @@ func TestDroppedColumnRecordRejectsAMigrationThatDoesNotDropTheColumn(t *testing
 			entry: droppedColumn{dropMigration: "0181", reason: "migration 0181 drops it"},
 		},
 		{
-			name:  "a record naming no migration but naming the drop table-qualified stands",
-			entry: droppedColumn{reason: "the change that re-keys persistence drops checkpoint_manifest.slot_id"},
+			name:    "a record naming no migration is rejected once a migration drops the column",
+			entry:   droppedColumn{reason: "the change that re-keys persistence drops checkpoint_manifest.slot_id"},
+			wantErr: true,
 		},
 		{
 			name:    "a record naming an unallocated migration is rejected",
@@ -397,7 +466,7 @@ func TestDroppedColumnRecordRejectsAMigrationThatDoesNotDropTheColumn(t *testing
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := droppedColumnRecordError(manifestTable, "slot_id", tc.entry, src)
+			err := droppedColumnRecordError(manifestTable, "slot_id", tc.entry, tree)
 			if tc.wantErr && err == nil {
 				t.Errorf("droppedColumnRecordError(%+v) = nil, want an error", tc.entry)
 			}
@@ -405,6 +474,43 @@ func TestDroppedColumnRecordRejectsAMigrationThatDoesNotDropTheColumn(t *testing
 				t.Errorf("droppedColumnRecordError(%+v) = %v, want nil", tc.entry, err)
 			}
 		})
+	}
+}
+
+// spec: 10.1, 12.5
+// diagnosis: the dropped-column record check no longer distinguishes a tree
+//
+//	that carries the drop from one that does not. A record that names no
+//	migration is the interim form, valid only while the drop is unallocated. A
+//	failure here means either that interim form stopped being accepted before
+//	the drop landed, or that it stayed acceptable after it, leaving the
+//	exception permanently unable to name the change that removed the column.
+func TestDroppedColumnRecordAcceptsProseOnlyUntilTheDropLands(t *testing.T) {
+	const reason = "the change that re-keys persistence on session_id drops checkpoint_manifest.slot_id"
+	entry := droppedColumn{reason: reason}
+
+	before := syntheticTree(map[string]string{
+		"0178": "CREATE TABLE checkpoint_manifest (\n    slot_id UUID NOT NULL\n);",
+	})
+	if err := droppedColumnRecordError(manifestTable, "slot_id", entry, before); err != nil {
+		t.Errorf("prose-only record before the drop lands = %v, want nil", err)
+	}
+
+	after := syntheticTree(map[string]string{
+		"0178": "CREATE TABLE checkpoint_manifest (\n    slot_id UUID NOT NULL\n);",
+		"0181": "ALTER TABLE checkpoint_manifest DROP COLUMN IF EXISTS slot_id;",
+	})
+	err := droppedColumnRecordError(manifestTable, "slot_id", entry, after)
+	if err == nil {
+		t.Fatal("prose-only record after the drop lands = nil, want an error naming the drop migration")
+	}
+	if !strings.Contains(err.Error(), "0181") {
+		t.Errorf("error = %v, want it to name migration 0181 so the author can set dropMigration", err)
+	}
+
+	named := droppedColumn{dropMigration: "0181", reason: reason + ", in migration 0181"}
+	if err := droppedColumnRecordError(manifestTable, "slot_id", named, after); err != nil {
+		t.Errorf("record naming migration 0181 after the drop lands = %v, want nil", err)
 	}
 }
 
