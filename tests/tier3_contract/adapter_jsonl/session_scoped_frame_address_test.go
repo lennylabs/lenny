@@ -34,6 +34,16 @@ var sessionScopedFrames = []string{
 // published schema requires the property.
 var adapterPopulatedFrames = []string{"messageEnvelope", "tool_result"}
 
+// adapterPopulated indexes adapterPopulatedFrames for membership tests over
+// the whole session-scoped set.
+var adapterPopulated = func() map[string]bool {
+	m := make(map[string]bool, len(adapterPopulatedFrames))
+	for _, f := range adapterPopulatedFrames {
+		m[f] = true
+	}
+	return m
+}()
+
 // runtimeEmittedFrames are the session-scoped frames the runtime emits
 // towards the adapter. An absent address on this leg resolves to the
 // receiving stream's own binding on a pod holding at most one slot, so the
@@ -124,8 +134,12 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 			if addr["type"] != "string" {
 				t.Errorf("%s declares `sessionId` as %v, want a string", frame, addr["type"])
 			}
-			if _, ok := addr["minLength"]; ok {
-				t.Errorf("%s constrains the length of `sessionId`; the addressing rule resolves an empty address the way it resolves an absent one, so the published artifact declares the type alone", frame)
+			if adapterPopulated[frame] {
+				if addr["minLength"] != float64(1) {
+					t.Errorf("%s declares `sessionId` with minLength %v, want 1; the adapter populates the address on every pod, so an empty address is as non-conforming as an absent one on this leg", frame, addr["minLength"])
+				}
+			} else if _, ok := addr["minLength"]; ok {
+				t.Errorf("%s constrains the length of `sessionId`; a runtime may omit the address on a pod holding at most one slot, and the adapter resolves an empty address the way it resolves an absent one, so the published artifact declares the type alone on this leg", frame)
 			}
 			desc, _ := addr["description"].(string)
 			if desc == "" {
@@ -155,10 +169,15 @@ func TestSessionScopedFramesDeclareSessionAddress(t *testing.T) {
 //	string equality and reads a value it cannot decode as a string as no
 //	address at all, so a non-string value becomes an unaddressed frame that
 //	a pod holding more than one slot rejects and relays to no stream. An
-//	empty string is a different case and validates: the addressing rule
-//	resolves an absent and an empty address alike, and the adapter's
-//	demultiplexer reads them alike, so a schema that refuses the empty form
-//	publishes as nonconforming a frame the adapter accepts and resolves.
+//	empty string splits by leg. On the runtime-to-adapter leg it validates,
+//	because the addressing rule resolves an absent and an empty address
+//	alike and the adapter's demultiplexer reads them alike, so a schema that
+//	refuses the empty form there publishes as nonconforming a frame the
+//	adapter accepts and resolves. On the adapter-to-runtime leg the adapter
+//	populates the address on every pod, so an empty address is as
+//	non-conforming as an absent one and the schema refuses it; accepting it
+//	would leave the required declaration satisfiable by a value the
+//	addressing rule reads as no address at all.
 //	The published schema is where a runtime author's authoring mistake is
 //	caught, and it catches it only while the property is declared under the
 //	name the wire carries.
@@ -172,6 +191,7 @@ func TestSessionScopedFramesRejectUnusableSessionAddress(t *testing.T) {
 		"tool_call":           `{"type":"tool_call","id":"tc_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","name":"read_file","arguments":{},"sessionId":%s}`,
 		"tool_result":         `{"type":"tool_result","id":"tc_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","content":[],"sessionId":%s}`,
 		"set_tracing_context": `{"type":"set_tracing_context","context":{},"sessionId":%s}`,
+		"messageEnvelope":     `{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[],"sessionId":%s}`,
 	}
 
 	for frame, tmpl := range frames {
@@ -189,7 +209,14 @@ func TestSessionScopedFramesRejectUnusableSessionAddress(t *testing.T) {
 				}
 			}
 			empty := fmt.Sprintf(tmpl, `""`)
-			if err := validateFrame(t, schema, empty); err != nil {
+			err := validateFrame(t, schema, empty)
+			if adapterPopulated[frame] {
+				if err == nil {
+					t.Errorf("%s frame with an empty address validated, want rejection; the adapter populates the address on every pod, so an empty address is as non-conforming as an absent one on this leg: %s", frame, empty)
+				}
+				return
+			}
+			if err != nil {
 				t.Errorf("%s frame with an empty address failed the JSONL schema: %v\n  payload: %s", frame, err, empty)
 			}
 		})
