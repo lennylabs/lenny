@@ -257,13 +257,13 @@ rule, the text moves to the code's step, and the step that carries it names the 
       conditional. The lane includes code because SPEC-3 also stages the `lenny-ctl` runtime scaffold
       templates and the served OpenAPI document.
       Depends on: S1, S4
-- [ ] **S6 · spec, test** — SPEC-4. The two `spec/06` credential paragraphs merge into one per-slot
+- [x] **S6 · spec, test** — SPEC-4. The two `spec/06` credential paragraphs merge into one per-slot
       credential-lease paragraph on the renamed path, recording what the rotation delivers per session and
       what stays pod-wide. The step also lands §8's tier-11 intra-pod MCP nonce reconciliation, whose
       predicate reads SPEC-1's specification sites together with the §4.7.5 mirror at
       `docs/reference/adapter-contract.md:458` this deliverable restates.
       Depends on: S1, S5
-- [ ] **S7 · spec** — SPEC-5. §29.10 is split, its addressing mechanisms move to the owning sections, the
+- [x] **S7 · spec** — SPEC-5. §29.10 is split, its addressing mechanisms move to the owning sections, the
       heading is retitled, and the two inbound references take the new fragment.
       Depends on: S1, S3
 - [ ] **S8 · spec** — SPEC-6. The `slot_01` examples, the four `"slotId": null` examples, and the

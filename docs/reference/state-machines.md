@@ -225,9 +225,20 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 
 The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
 
+### Per-slot sub-states
+
+Every session is bound to a [slot](glossary#slot) on the pod that runs it, whatever the pool's `maxConcurrentSessions`, and each slot progresses through its own sub-states beside the pod-level phase. The sub-states are tracked per session and are never projected onto `Sandbox.status.phase`.
+
+| From | To | Trigger |
+|:-----|:---|:--------|
+| `slot_assigned` | `receiving_uploads` | Workspace materialization begins for this slot |
+| `receiving_uploads` | `running` | Workspace ready; the session is dispatched to the runtime with its session identifier |
+| `running` | `slot_cleanup` | Session completes or fails |
+| `slot_cleanup` | `released` | Slot workspace removed, processes killed, slot released |
+
 ### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
 
-A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while per-slot sub-states track each [slot](glossary#slot)'s progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
+A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while the per-slot sub-states above track each slot's progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -237,7 +248,7 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 | `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
-Per-slot sub-states: `slot_assigned` -> `receiving_uploads` -> `running` -> `slot_cleanup`.
+Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection), and `slot_cleanup -> leaked` when the cleanup timeout is exceeded and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
 
 ---
 

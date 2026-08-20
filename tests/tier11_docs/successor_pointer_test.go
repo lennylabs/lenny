@@ -52,6 +52,7 @@ type reducedSection struct {
 var reducedSections = []reducedSection{
 	{"spec/04_system-components.md", "4.7", "28.5"},
 	{"spec/15_external-api-surface.md", "15.4", "28.5"},
+	{"spec/29_communication-scenarios.md", "29.10", "28.5"},
 }
 
 // inDomain reports whether the check inspects the named section.
@@ -157,7 +158,7 @@ func undeclaredPointers(lines []string, rs reducedSection, declared map[string]b
 // present, so the empty population is itself a failure.
 func vacuityFault(sections, pointers int) string {
 	if sections == 0 {
-		return "no reduced section is named; the check would pass vacuously over the §4.7 and §15.4 reductions it is landed for"
+		return "no reduced section is named; the check would pass vacuously over the reductions it is landed for"
 	}
 	if pointers == 0 {
 		return fmt.Sprintf("the run inspected %d reduced section(s) and no successor pointer; the check would pass vacuously", sections)
