@@ -89,11 +89,12 @@ type droppedColumn struct {
 // against. The exception carries the retired column instead.
 //
 // The set drains rather than accumulates, on the conditions
-// droppedColumnDrainError states: an entry naming a column migration 0178 does
-// not create is dead, an entry for a column §10.1 names again is a live column
-// the agreement must cover, an entry naming no migration while the tree
-// already drops the column must name that migration, and a named migration
-// must exist and carry the drop of that table's column.
+// droppedColumnDrainError states: an entry recorded against a table other than
+// checkpoint_manifest cannot except a manifest column, an entry naming a column
+// migration 0178 does not create is dead, an entry for a column §10.1 names
+// again is a live column the agreement must cover, an entry naming no migration
+// while the tree already drops the column must name that migration, and a named
+// migration must exist and carry the drop of that table's column.
 var droppedColumns = map[string]droppedColumn{
 	// spec: §10.1 (the partial manifest, the supersede rule, and the
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
@@ -117,17 +118,38 @@ type dropState struct {
 	unrecorded string
 }
 
+// manifestTable is the table the §10.1 column agreement is stated over. A
+// dropped-column exception only excepts a column of this table; an entry
+// recorded against any other table cannot suppress the agreement, and fails
+// the drain check below rather than shielding a manifest column.
+const manifestTable = "checkpoint_manifest"
+
+// suppressesManifestColumn reports whether set excepts manifestTable.col from
+// the §10.1 column agreement. The lookup is table-scoped, so an entry recorded
+// against a sibling table that carries a column of the same name (as
+// session_checkpoints carries its own slot_id) never suppresses the agreement
+// for the manifest column.
+//
+// spec: §10.1 (the manifest column enumeration)
+func suppressesManifestColumn(set map[string]droppedColumn, col string) bool {
+	d, ok := set[col]
+	return ok && d.table == manifestTable
+}
+
 // droppedColumnDrainError reports why a droppedColumns entry no longer stands,
 // or nil while it does. An exception is suppressing the column agreement
 // above, so it is held to the conditions the droppedColumns comment states:
-// the column is one migration 0178 creates, §10.1 names it nowhere, an entry
-// naming no migration is not outlived by a drop the tree already carries, and
-// a named migration exists and drops that table's column. While the drop is
-// unwritten the entry stands as the record of the change that will perform it.
+// the entry is recorded against checkpoint_manifest, the column is one
+// migration 0178 creates, §10.1 names it nowhere, an entry naming no migration
+// is not outlived by a drop the tree already carries, and a named migration
+// exists and drops that table's column. While the drop is unwritten the entry
+// stands as the record of the change that will perform it.
 //
 // spec: §10.1 (the manifest column enumeration)
 func droppedColumnDrainError(col string, d droppedColumn, createdByMigration, namedInSpec bool, drop dropState) error {
 	switch {
+	case d.table != manifestTable:
+		return fmt.Errorf("droppedColumns[%q] is recorded against table %q, so it cannot except a %s column (%s)", col, d.table, manifestTable, d.reason)
 	case !createdByMigration:
 		return fmt.Errorf("droppedColumns names %q (%s), which migration 0178 does not create", col, d.reason)
 	case namedInSpec:
@@ -291,7 +313,7 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 		if infraColumns[col] {
 			continue
 		}
-		if _, dropped := droppedColumns[col]; dropped {
+		if suppressesManifestColumn(droppedColumns, col) {
 			continue
 		}
 		// §10.1 names some columns bare (`chunk_count`) and some with a
@@ -303,7 +325,8 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 		}
 	}
 
-	// The exception list drains rather than accumulates. An entry naming a
+	// The exception list drains rather than accumulates. An entry recorded
+	// against another table cannot except a manifest column, an entry naming a
 	// column migration 0178 never creates is dead, one §10.1 names again is a
 	// live column the agreement above must cover, an entry naming no migration
 	// while the tree already drops the column must record that migration, and a
@@ -324,12 +347,13 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 // diagnosis: the dropped-column exception's drain conditions have changed. The
 //
 //	§10.1 column-agreement check is suppressed for a column only on the
-//	strength of a droppedColumns entry, so the entry is held to four
-//	conditions: the column is one migration 0178 creates, §10.1 names it
-//	nowhere, an entry naming no migration is not outlived by a drop the
-//	migration tree already carries, and a named migration exists and drops that
-//	table's column. A failure here means one of those stopped draining the
-//	entry, so an exception can now outlive the retirement it records.
+//	strength of a droppedColumns entry, so the entry is held to its recorded
+//	conditions: it is recorded against checkpoint_manifest, the column is one
+//	migration 0178 creates, §10.1 names it nowhere, an entry naming no migration
+//	is not outlived by a drop the migration tree already carries, and a named
+//	migration exists and drops that table's column. A failure here means one of
+//	those stopped draining the entry, so an exception can now outlive the
+//	retirement it records.
 func TestDroppedColumnExceptionDrainsOnItsRecordedConditions(t *testing.T) {
 	const col = "slot_id"
 	named := droppedColumn{
@@ -368,6 +392,26 @@ func TestDroppedColumnExceptionDrainsOnItsRecordedConditions(t *testing.T) {
 			entry:        named,
 			createdBy178: true,
 			drop:         dropState{exists: true, carries: true},
+		},
+		{
+			name: "an entry recorded against a sibling table cannot except a manifest column",
+			entry: droppedColumn{
+				table:  "session_checkpoints",
+				reason: "the manifest is scoped on session_id alone",
+			},
+			createdBy178: true,
+			wantErr:      true,
+		},
+		{
+			name: "an entry recorded against a sibling table is dead even when the named drop resolves",
+			entry: droppedColumn{
+				table:     "session_checkpoints",
+				migration: "0181",
+				reason:    "the manifest is scoped on session_id alone",
+			},
+			createdBy178: true,
+			drop:         dropState{exists: true, carries: true},
+			wantErr:      true,
 		},
 		{
 			name:    "a column 0178 does not create is a dead entry",
@@ -445,6 +489,57 @@ func TestDroppedColumnExceptionRecordResolves(t *testing.T) {
 		// entry does not name. Any value it does carry is a migration prefix.
 		if dropped.migration != "" && !migrationPrefix.MatchString(dropped.migration) {
 			t.Errorf("droppedColumns[%q] names drop migration %q, want a four-digit migration prefix", col, dropped.migration)
+		}
+	}
+}
+
+// spec: 10.1, 12.5
+// diagnosis: the §10.1 manifest column agreement is being suppressed
+//
+//	table-blind. A column is excepted from the agreement only by a
+//	droppedColumns entry recorded against checkpoint_manifest;
+//	session_checkpoints carries a slot_id of its own, so an entry recorded
+//	against it must leave the manifest column held to the agreement. A failure
+//	here means an entry for a sibling table's column now shields the manifest
+//	column of the same name, which is the state the gate exists to catch.
+func TestDroppedColumnSuppressionIsTableScoped(t *testing.T) {
+	const col = "slot_id"
+	cases := []struct {
+		name string
+		set  map[string]droppedColumn
+		want bool
+	}{
+		{
+			name: "an entry recorded against checkpoint_manifest excepts the manifest column",
+			set:  map[string]droppedColumn{col: {table: "checkpoint_manifest", reason: "keyed on session_id alone"}},
+			want: true,
+		},
+		{
+			name: "an entry recorded against a sibling table does not except the manifest column",
+			set:  map[string]droppedColumn{col: {table: "session_checkpoints", reason: "keyed on session_id alone"}},
+		},
+		{
+			name: "an entry carrying no table does not except the manifest column",
+			set:  map[string]droppedColumn{col: {reason: "keyed on session_id alone"}},
+		},
+		{
+			name: "a column with no entry is not excepted",
+			set:  map[string]droppedColumn{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := suppressesManifestColumn(tc.set, col); got != tc.want {
+				t.Errorf("suppressesManifestColumn(%+v, %q) = %v, want %v", tc.set, col, got, tc.want)
+			}
+		})
+	}
+
+	// The shipped set only ever excepts manifest columns, so every entry in it
+	// suppresses the agreement it is recorded for.
+	for c, d := range droppedColumns {
+		if !suppressesManifestColumn(droppedColumns, c) {
+			t.Errorf("droppedColumns[%q] is recorded against table %q, so it excepts no checkpoint_manifest column", c, d.table)
 		}
 	}
 }
