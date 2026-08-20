@@ -53,6 +53,10 @@ const proposal = input.proposalPath.startsWith("/")
   : repo + "/" + input.proposalPath;
 const maxPlanRounds = input.maxPlanRounds || 2;
 const maxStepAttempts = input.maxStepAttempts || 50;
+// Consecutive dead agents (see the loop below) that stop the run. Small,
+// because the condition it detects is an account or transport failure that a
+// retry cannot clear, and every spin costs wall-clock for nothing.
+const maxDeadAttempts = input.maxDeadAttempts || 3;
 const maxVerifyRounds = input.maxVerifyRounds || 25;
 const maxReviewRounds = input.maxReviewRounds || 50;
 const coverageFloor = input.coverageFloor || 80;
@@ -480,6 +484,18 @@ for (let i = 0; i < plan.steps.length; i++) {
   let stepFindings = [];
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
+  // A dead agent is not a failed attempt. agent() returns null when the
+  // subagent never ran: the account hit a usage limit, or the call died on a
+  // terminal API error after its own retries. That says nothing about the code
+  // this step is writing, so consuming the step's attempt budget for it is
+  // wrong twice over. It spins against a condition no retry can clear (one run
+  // burned thirty attempts in a tight loop against a weekly limit that had
+  // hours left on it), and it exhausts the budget a genuinely difficult step
+  // needs, so the step aborts for the wrong reason and the log blames the
+  // implementer. Dead attempts are counted separately and abort the run
+  // quickly, because the operator's move is to wait or re-authenticate rather
+  // than to let the loop keep trying.
+  let deadAttempts = 0;
   // Inner loop: implement/fix → verify → review, until green-and-conformant
   // or the attempt cap. Each iteration is one fix attempt.
   while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
@@ -526,9 +542,27 @@ for (let i = 0; i < plan.steps.length; i++) {
       stepFindings = [];
       issues =
         "The implementer agent returned no result (it was skipped or errored). Re-implement this step from the proposal and its tests across the listed tiers, run them to green, then commit.";
-      log("Step " + step.id + " attempt " + attempt + "/" + maxStepAttempts + ": implementer returned no result");
+      deadAttempts++;
+      attempt--; // the agent never ran; do not spend the step's budget on it
+      log(
+        "Step " + step.id + ": implementer returned no result (" + deadAttempts +
+          "/" + maxDeadAttempts + " dead attempt(s); attempt " + (attempt + 1) +
+          "/" + maxStepAttempts + " not consumed)",
+      );
+      if (deadAttempts >= maxDeadAttempts) {
+        log(
+          "Step " + step.id + ": " + deadAttempts + " consecutive dead agent(s). " +
+            "The subagents are not running, which no further retry fixes: the account is " +
+            "rate-limited, out of credit, or the session needs re-authenticating. Stopping so " +
+            "the run can be resumed once that clears; the completed steps are committed.",
+        );
+        break;
+      }
       continue;
     }
+    // The agent ran, so a later dead call is a fresh incident rather than a
+    // continuation of this one.
+    deadAttempts = 0;
 
     // Independent verify: a different agent re-runs the step's tiers and
     // gates green. The implementer's self-report is advisory.
@@ -642,7 +676,15 @@ for (let i = 0; i < plan.steps.length; i++) {
   // committed for inspection and resume.
   if (!(stepGreen && stepReviewClean)) {
     const remaining = plan.steps.length - i - 1;
-    const reason = !stepGreen ? "tests not green" : "design-conformance divergences outstanding";
+    // Name the real cause. A run stopped because its subagents were not
+    // running is resumable as soon as that clears, while a genuinely stuck
+    // step needs someone to read the findings; reporting the first as the
+    // second sends the operator to the wrong place.
+    const reason = deadAttempts >= maxDeadAttempts
+      ? "subagents are not running (rate limit, exhausted credit, or expired auth), so the step was never attempted on its merits"
+      : !stepGreen
+        ? "tests not green"
+        : "design-conformance divergences outstanding";
     log(
       "Step " +
         step.id +
