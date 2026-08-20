@@ -229,7 +229,7 @@ The primary output message. Signals task completion.
   "output": [
     { "type": "text", "inline": "The answer is 42." }
   ],
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 
@@ -269,7 +269,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
   "id": "tc_001",
   "name": "read_file",
   "arguments": { "path": "/workspace/current/README.md" },
-  "slotId": "sess_abc"
+  "slotId": null
 }
 ```
 

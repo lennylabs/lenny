@@ -136,8 +136,8 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 	// on the same page have printed a `null` address, which the schema rejects
 	// and the adapter reads as untagged, so the example is pinned to the string
 	// form by pattern rather than by its current value.
-	if !frameAddressValue(publishedFrameAddressKey(t, root)).MatchString(entry) {
-		t.Errorf("docs/reference/adapter-contract.md set_tracing_context entry: the example frame does not carry a non-empty string `slotId`; the published JSONL schema rejects any other type, so a runtime author copying the example emits a frame the adapter drops")
+	if !frameAddressValue.MatchString(entry) {
+		t.Errorf("docs/reference/adapter-contract.md set_tracing_context entry: the example frame does not carry the per-session address as a non-empty string; the published JSONL schema rejects any other type, so a runtime author copying the example emits a frame the adapter drops")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
 		"| `slotId` | string, optional |",
