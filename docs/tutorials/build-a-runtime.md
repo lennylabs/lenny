@@ -46,8 +46,8 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 Here is a minimal session exchange:
 
 ```
-STDIN  -> {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}
-STDOUT <- {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Echo: Hello"}]}
+STDIN  -> {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}
+STDOUT <- {"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"Echo: Hello"}]}
 STDIN  -> {"type":"heartbeat","ts":1717430410}
 STDOUT <- {"type":"heartbeat_ack"}
 STDIN  -> {"type":"shutdown","reason":"drain","deadline_ms":10000}
@@ -76,9 +76,9 @@ type Message struct {
 	Type       string      `json:"type"`
 	ID         string      `json:"id,omitempty"`
 	Input      []InputPart `json:"input,omitempty"`
-	// SessionID names the session this frame is addressed to. The adapter
+	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SessionID  string      `json:"sessionId,omitempty"`
+	SlotID  string      `json:"slotId,omitempty"`
 	Reason     string      `json:"reason,omitempty"`
 	DeadlineMs int         `json:"deadline_ms,omitempty"`
 	Ts         int64       `json:"ts,omitempty"`
@@ -93,7 +93,7 @@ type InputPart struct {
 // Response is the outbound message format.
 type Response struct {
 	Type      string       `json:"type"`
-	SessionID string       `json:"sessionId,omitempty"`
+	SlotID string       `json:"slotId,omitempty"`
 	Output    []MessagePart `json:"output,omitempty"`
 }
 
@@ -131,8 +131,8 @@ func main() {
 
 			resp := Response{
 				Type: "response",
-				// Echo the inbound sessionId on the frames emitted in response.
-				SessionID: msg.SessionID,
+				// Echo the inbound slotId on the frames emitted in response.
+				SlotID: msg.SlotID,
 				Output: []MessagePart{
 					{Type: "text", Inline: fmt.Sprintf("[%d] Echo: %s", seq, text)},
 				},
@@ -203,9 +203,9 @@ type InboundMessage struct {
 	Type       string      `json:"type"`
 	ID         string      `json:"id,omitempty"`
 	Input      []InputPart `json:"input,omitempty"`
-	// SessionID names the session this frame is addressed to. The adapter
+	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SessionID  string      `json:"sessionId,omitempty"`
+	SlotID  string      `json:"slotId,omitempty"`
 	Ts         int64       `json:"ts,omitempty"`
 	Reason     string      `json:"reason,omitempty"`
 	DeadlineMs int         `json:"deadline_ms,omitempty"`
@@ -229,14 +229,14 @@ type MessagePart struct {
 
 type ResponseMsg struct {
 	Type      string       `json:"type"`
-	SessionID string       `json:"sessionId,omitempty"`
+	SlotID string       `json:"slotId,omitempty"`
 	Output    []MessagePart `json:"output"`
 }
 
 type ToolCallMsg struct {
 	Type      string                 `json:"type"`
 	ID        string                 `json:"id"`
-	SessionID string                 `json:"sessionId,omitempty"`
+	SlotID string                 `json:"slotId,omitempty"`
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
@@ -335,7 +335,7 @@ func main() {
 				call := ToolCallMsg{
 					Type:      "tool_call",
 					ID:        callID,
-					SessionID: msg.SessionID,
+					SlotID: msg.SlotID,
 					Name:      "write_file",
 					Arguments: map[string]interface{}{
 						"path":    "result.txt",
@@ -353,7 +353,7 @@ func main() {
 				// Not a math expression; provide a help message
 				resp := ResponseMsg{
 					Type:      "response",
-					SessionID: msg.SessionID,
+					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -366,7 +366,7 @@ func main() {
 				// Return the calculation result
 				resp := ResponseMsg{
 					Type:      "response",
-					SessionID: msg.SessionID,
+					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -395,7 +395,7 @@ func main() {
 				}
 				resp := ResponseMsg{
 					Type:      "response",
-					SessionID: msg.SessionID,
+					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -407,7 +407,7 @@ func main() {
 			} else {
 				resp := ResponseMsg{
 					Type:      "response",
-					SessionID: msg.SessionID,
+					SlotID: msg.SlotID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -482,13 +482,13 @@ go build -o calc-runtime ./cmd/calc-runtime/
 You can test the protocol manually by piping JSON lines:
 
 ```bash
-echo '{"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"3 + 7"}]}' | ./calc-runtime
+echo '{"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"3 + 7"}]}' | ./calc-runtime
 ```
 
 Expected output:
 
 ```
-{"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"[1] 3 + 7 = 10"}]}
+{"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"[1] 3 + 7 = 10"}]}
 ```
 
 Test heartbeat handling:

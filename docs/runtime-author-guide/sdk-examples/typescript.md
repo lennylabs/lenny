@@ -45,7 +45,7 @@ interface InboundMessage {
   input?: MessagePart[];
   // Names the session this frame is addressed to. The adapter populates it on
   // every pod, and the runtime echoes it on the frames it emits in response.
-  sessionId?: string;
+  slotId?: string;
   ts?: number;
   reason?: string;
   deadline_ms?: number;
@@ -57,14 +57,14 @@ interface InboundMessage {
 interface ToolCall {
   type: "tool_call";
   id: string;
-  sessionId?: string;
+  slotId?: string;
   name: string;
   arguments: Record<string, string>;
 }
 
 interface Response {
   type: "response";
-  sessionId?: string;
+  slotId?: string;
   output: MessagePart[];
 }
 
@@ -72,9 +72,9 @@ interface Response {
 
 let toolCallCounter = 0;
 let pendingToolCallId = "";
-// sessionId of the message being processed; echoed on every session-scoped
+// slotId of the message being processed; echoed on every session-scoped
 // frame this runtime emits.
-let currentSessionId: string | undefined;
+let currentSlotId: string | undefined;
 let phase = 0; // 0=idle, 1=listing, 2=reading, 3=summarizing
 let fileList: string[] = [];
 let fileContents: string[] = [];
@@ -100,7 +100,7 @@ function writeJSON(obj: unknown): void {
 function writeResponse(text: string): void {
   const resp: Response = {
     type: "response",
-    sessionId: currentSessionId,
+    slotId: currentSlotId,
     output: [{ type: "text", inline: text }],
   };
   writeJSON(resp);
@@ -134,7 +134,7 @@ function listDir(path: string): void {
   const call: ToolCall = {
     type: "tool_call",
     id,
-    sessionId: currentSessionId,
+    slotId: currentSlotId,
     name: "list_dir",
     arguments: { path },
   };
@@ -152,7 +152,7 @@ function readNextFile(): void {
   const call: ToolCall = {
     type: "tool_call",
     id,
-    sessionId: currentSessionId,
+    slotId: currentSlotId,
     name: "read_file",
     arguments: { path: filePath },
   };
@@ -167,7 +167,7 @@ function readNextFile(): void {
 function handleMessage(msg: InboundMessage): void {
   // Record the session this message addresses so every frame emitted in
   // response echoes it, then reset state for this task.
-  currentSessionId = msg.sessionId;
+  currentSlotId = msg.slotId;
   fileList = [];
   fileContents = [];
   currentFileIndex = 0;

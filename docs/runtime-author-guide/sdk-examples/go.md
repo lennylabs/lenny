@@ -47,10 +47,10 @@ type InboundMessage struct {
 	Type       string       `json:"type"`
 	ID         string       `json:"id,omitempty"`
 	Input      []MessagePart `json:"input,omitempty"`
-	// SessionID names the session this frame is addressed to. The adapter
+	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod, and the runtime echoes it on the
 	// session-scoped frames it emits in response.
-	SessionID  string       `json:"sessionId,omitempty"`
+	SlotID  string       `json:"slotId,omitempty"`
 	TS         int64        `json:"ts,omitempty"`
 	Reason     string       `json:"reason,omitempty"`
 	DeadlineMs int          `json:"deadline_ms,omitempty"`
@@ -71,7 +71,7 @@ type MessagePart struct {
 type ToolCall struct {
 	Type      string            `json:"type"`
 	ID        string            `json:"id"`
-	SessionID string            `json:"sessionId,omitempty"`
+	SlotID string            `json:"slotId,omitempty"`
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments"`
 }
@@ -79,7 +79,7 @@ type ToolCall struct {
 // Response signals task completion.
 type Response struct {
 	Type      string       `json:"type"`
-	SessionID string       `json:"sessionId,omitempty"`
+	SlotID string       `json:"slotId,omitempty"`
 	Output    []MessagePart `json:"output"`
 }
 
@@ -93,9 +93,9 @@ type HeartbeatAck struct {
 // pendingToolCall tracks an outstanding tool call ID so we can correlate results.
 var pendingToolCallID string
 
-// currentSessionID holds the sessionId of the message being processed. Every
+// currentSlotID holds the slotId of the message being processed. Every
 // session-scoped frame the runtime emits echoes it back to the adapter.
-var currentSessionID string
+var currentSlotID string
 
 // toolCallCounter generates unique tool call IDs.
 var toolCallCounter atomic.Int64
@@ -166,7 +166,7 @@ func main() {
 func handleMessage(msg InboundMessage) {
 	// Reset state for this task. Record the session this message addresses so
 	// every frame emitted in response echoes it.
-	currentSessionID = msg.SessionID
+	currentSlotID = msg.SlotID
 	fileContents = nil
 	fileList = nil
 	currentFileIndex = 0
@@ -253,7 +253,7 @@ func listDir(path string) {
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SessionID: currentSessionID,
+		SlotID: currentSlotID,
 		Name:      "list_dir",
 		Arguments: map[string]string{"path": path},
 	})
@@ -270,7 +270,7 @@ func readNextFile() {
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SessionID: currentSessionID,
+		SlotID: currentSlotID,
 		Name:      "read_file",
 		Arguments: map[string]string{"path": filePath},
 	})
@@ -294,7 +294,7 @@ func produceSummary() {
 func writeResponse(text string) {
 	resp := Response{
 		Type:      "response",
-		SessionID: currentSessionID,
+		SlotID: currentSlotID,
 		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},
@@ -337,14 +337,14 @@ func truncate(s string, n int) string {
 ### Message Flow
 
 ```
-1. Adapter sends:    {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
-2. Runtime sends:    {"type":"tool_call","id":"tc_001","sessionId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/current"}}
-3. Adapter sends:    {"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
-4. Runtime sends:    {"type":"tool_call","id":"tc_002","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/main.go"}}
-5. Adapter sends:    {"type":"tool_result","id":"tc_002","sessionId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
-6. Runtime sends:    {"type":"tool_call","id":"tc_003","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/util.go"}}
-7. Adapter sends:    {"type":"tool_result","id":"tc_003","sessionId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
-8. Runtime sends:    {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
+1. Adapter sends:    {"type":"message","id":"msg_001","input":[{"type":"text","inline":"Summarize files"}]}
+2. Runtime sends:    {"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/current"}}
+3. Adapter sends:    {"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"main.go\nutil.go"}]}
+4. Runtime sends:    {"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/main.go"}}
+5. Adapter sends:    {"type":"tool_result","id":"tc_002","content":[{"type":"text","inline":"package main..."}]}
+6. Runtime sends:    {"type":"tool_call","id":"tc_003","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/util.go"}}
+7. Adapter sends:    {"type":"tool_result","id":"tc_003","content":[{"type":"text","inline":"package util..."}]}
+8. Runtime sends:    {"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
 ```
 
 ### Key Design Choices

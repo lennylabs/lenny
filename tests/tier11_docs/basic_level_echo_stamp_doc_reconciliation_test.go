@@ -30,6 +30,9 @@
 package tier11_docs_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -56,9 +59,77 @@ var basicLevelRuntimeSamplePages = []string{
 // identifier.
 var sessionScopedEmission = regexp.MustCompile(`(?i)"?type"?\s*[:=]\s*"(response|tool_call)"`)
 
-// echoedIdentifier matches the per-session identifier in the wire spelling and
-// in the member spelling each sample language uses for it.
-var echoedIdentifier = regexp.MustCompile(`sessionId|SessionID|session_id`)
+// frameAddressKeys is the set of spellings the per-session frame address key
+// has ever been published under. The published schema names exactly one of
+// them, and every reader-facing page carries that one.
+var frameAddressKeys = []string{"slotId", "sessionId"}
+
+// publishedFrameAddressKey returns the wire spelling of the per-session address
+// key that schemas/lenny-adapter-jsonl.schema.json currently publishes on the
+// `response` frame. Deriving the spelling from the schema is what makes the
+// assertions below travel with the key rename: the documentation set is held to
+// the key the tree emits at this commit rather than to a literal that has to be
+// edited in step with it.
+func publishedFrameAddressKey(t *testing.T, root string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "schemas", "lenny-adapter-jsonl.schema.json"))
+	if err != nil {
+		t.Fatalf("read the published JSON Lines schema: %v", err)
+	}
+	var doc struct {
+		Defs map[string]struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse the published JSON Lines schema: %v", err)
+	}
+	frame, ok := doc.Defs["response"]
+	if !ok {
+		t.Fatal("schemas/lenny-adapter-jsonl.schema.json: no `response` frame definition (renamed or removed?)")
+	}
+	var found string
+	for _, key := range frameAddressKeys {
+		if _, ok := frame.Properties[key]; !ok {
+			continue
+		}
+		if found != "" {
+			t.Fatalf("schemas/lenny-adapter-jsonl.schema.json: the `response` frame declares both %q and %q; the per-session address has one key", found, key)
+		}
+		found = key
+	}
+	if found == "" {
+		t.Fatalf("schemas/lenny-adapter-jsonl.schema.json: the `response` frame declares none of %v as its per-session address", frameAddressKeys)
+	}
+	return found
+}
+
+// retiredFrameAddressKey returns the spelling the published key replaced. A
+// reader-facing page carrying it names a key the tree does not emit.
+func retiredFrameAddressKey(published string) string {
+	for _, key := range frameAddressKeys {
+		if key != published {
+			return key
+		}
+	}
+	return ""
+}
+
+// addressSpellings returns the wire spelling of the per-session address key
+// together with the member spellings the sample languages give it: an exported
+// Go field, and a snake-case Python name. `slotId` gives `SlotID` and
+// `slot_id`.
+func addressSpellings(key string) (goField, snake string) {
+	stem := strings.TrimSuffix(key, "Id")
+	return strings.ToUpper(stem[:1]) + stem[1:] + "ID", stem + "_id"
+}
+
+// echoedIdentifier matches the per-session identifier in the published wire
+// spelling and in the member spelling each sample language uses for it.
+func echoedIdentifier(key string) *regexp.Regexp {
+	goField, snake := addressSpellings(key)
+	return regexp.MustCompile(regexp.QuoteMeta(key) + "|" + regexp.QuoteMeta(goField) + "|" + regexp.QuoteMeta(snake))
+}
 
 // spec: 4.6.1, 15.1, 28.5.3
 // diagnosis: a reader-facing page presents a hand-written Basic-level runtime
@@ -71,6 +142,9 @@ var echoedIdentifier = regexp.MustCompile(`sessionId|SessionID|session_id`)
 //	author has no way to learn that from the page they copied.
 func TestBasicLevelRuntimeSamplesEchoTheSessionIdentifier(t *testing.T) {
 	root := repoRoot(t)
+	key := publishedFrameAddressKey(t, root)
+	echoed := echoedIdentifier(key)
+	stale := echoedIdentifier(retiredFrameAddressKey(key))
 
 	for _, rel := range basicLevelRuntimeSamplePages {
 		page := filepath.Join(root, rel)
@@ -85,7 +159,11 @@ func TestBasicLevelRuntimeSamplesEchoTheSessionIdentifier(t *testing.T) {
 		for _, b := range blocks {
 			for _, e := range sessionScopedEmissions(b.Body) {
 				emitting++
-				if echoedIdentifier.MatchString(e.Text) {
+				if stale.MatchString(e.Text) {
+					t.Errorf("%s:%d: this `response` or `tool_call` construction spells the per-session address key %q, which the published JSON Lines schema does not declare; the samples and the schema name one key\n%s", rel, b.StartLine+e.Offset, retiredFrameAddressKey(key), e.Text)
+					continue
+				}
+				if echoed.MatchString(e.Text) {
 					continue
 				}
 				t.Errorf("%s:%d: this `response` or `tool_call` construction names no per-session identifier; a Basic-level runtime echoes the identifier the adapter handed it on every session-scoped frame it emits\n%s", rel, b.StartLine+e.Offset, e.Text)
@@ -191,17 +269,26 @@ func TestAdapterContractNamesTheShutdownRPCUnderItsWireName(t *testing.T) {
 // A frame carrying the key bound to a null value fails the published JSON Lines
 // schema, which accepts a string there; a frame that omits the key resolves to
 // the binding of the stream that delivered it on a pod holding at most one
-// slot.
-var addressOmittedWhenAbsent = []struct {
+// slot. Each construct is written against the published key, so it also pins
+// the declaration the emissions echo from.
+func addressOmittedWhenAbsent(key string) []struct {
 	page      string
 	construct string
-}{
-	{filepath.Join("docs", "runtime-author-guide", "echo-runtime.md"), "`json:\"sessionId,omitempty\"`"},
-	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "go.md"), "`json:\"sessionId,omitempty\"`"},
-	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "python.md"), "if current_session_id is not None:"},
-	{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "typescript.md"), "let currentSessionId: string | undefined;"},
-	{filepath.Join("docs", "tutorials", "build-a-runtime.md"), "`json:\"sessionId,omitempty\"`"},
-	{filepath.Join("docs", "tutorials", "recursive-delegation.md"), "`json:\"sessionId,omitempty\"`"},
+} {
+	goField, snake := addressSpellings(key)
+	goTag := fmt.Sprintf("`json:%q`", key+",omitempty")
+	camel := "current" + goField[:len(goField)-2] + "Id"
+	return []struct {
+		page      string
+		construct string
+	}{
+		{filepath.Join("docs", "runtime-author-guide", "echo-runtime.md"), goTag},
+		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "go.md"), goTag},
+		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "python.md"), fmt.Sprintf("if current_%s is not None:", snake)},
+		{filepath.Join("docs", "runtime-author-guide", "sdk-examples", "typescript.md"), fmt.Sprintf("let %s: string | undefined;", camel)},
+		{filepath.Join("docs", "tutorials", "build-a-runtime.md"), goTag},
+		{filepath.Join("docs", "tutorials", "recursive-delegation.md"), goTag},
+	}
 }
 
 // spec: 4.6.1, 15.1, 28.5.3
@@ -216,19 +303,13 @@ var addressOmittedWhenAbsent = []struct {
 func TestBasicLevelRuntimeSamplesOmitTheAddressWhenAbsent(t *testing.T) {
 	root := repoRoot(t)
 
-	for _, sample := range addressOmittedWhenAbsent {
+	for _, sample := range addressOmittedWhenAbsent(publishedFrameAddressKey(t, root)) {
 		page := readDocPage(t, filepath.Join(root, sample.page))
 		if !strings.Contains(page, sample.construct) {
 			t.Errorf("%s: the sample does not keep the per-session address off a frame that has none (expected %q); a null address fails the published JSON Lines schema", sample.page, sample.construct)
 		}
 	}
 }
-
-// contractAddressKey matches the per-session address key in the spelling the
-// adapter-contract reference page carries for it. The page spells the frame key
-// `slotId` until the frame-key rename lands, and the assertions below travel
-// with the page when it takes the wire spelling.
-var contractAddressKey = regexp.MustCompile(`slotId|sessionId`)
 
 // spec: 4.6.1, 15.1, 28.5.3
 // diagnosis: docs/reference/adapter-contract.md grants a Basic-level runtime
@@ -241,13 +322,14 @@ var contractAddressKey = regexp.MustCompile(`slotId|sessionId`)
 //	field table says the adapter populates two lines above it.
 func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *testing.T) {
 	root := repoRoot(t)
+	key := publishedFrameAddressKey(t, root)
 	page := adapterContractDoc(t, root)
 
 	line := lineContaining(page, "**Basic-level runtimes:**")
 	if line == "" {
 		t.Fatal("docs/reference/adapter-contract.md: no `message` field table states what a Basic-level runtime reads (renamed or removed?)")
 	}
-	if !contractAddressKey.MatchString(line) {
+	if !strings.Contains(line, key) {
 		t.Errorf("docs/reference/adapter-contract.md: the Basic-level permission names no per-session address field: %q", line)
 	}
 	requireAllContain(t, "adapter-contract.md Basic-level permission", line, []string{
@@ -268,6 +350,8 @@ func TestAdapterContractExceptsTheAddressFromTheBasicLevelIgnorePermission(t *te
 //	page's own field reference being violated.
 func TestAdapterContractFrameLiteralsCarryTheAddress(t *testing.T) {
 	root := repoRoot(t)
+	key := publishedFrameAddressKey(t, root)
+	stale := retiredFrameAddressKey(key)
 	rel := filepath.Join("docs", "reference", "adapter-contract.md")
 
 	blocks, err := extractFencedBlocksIncluding(filepath.Join(root, rel), true)
@@ -278,7 +362,11 @@ func TestAdapterContractFrameLiteralsCarryTheAddress(t *testing.T) {
 	for _, b := range blocks {
 		for _, e := range sessionScopedEmissions(b.Body) {
 			emitting++
-			if contractAddressKey.MatchString(e.Text) {
+			if strings.Contains(e.Text, stale) {
+				t.Errorf("%s:%d: this frame literal spells the per-session address key %q, which the published JSON Lines schema does not declare; the reference page and the schema name one key\n%s", rel, b.StartLine+e.Offset, stale, e.Text)
+				continue
+			}
+			if strings.Contains(e.Text, key) {
 				continue
 			}
 			t.Errorf("%s:%d: this frame literal carries no per-session address; every session-scoped frame is addressed on every pod\n%s", rel, b.StartLine+e.Offset, e.Text)

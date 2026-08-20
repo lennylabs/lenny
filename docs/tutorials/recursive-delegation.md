@@ -85,9 +85,9 @@ type InboundMessage struct {
 	ID    string      `json:"id,omitempty"`
 	Input []InputPart `json:"input,omitempty"`
 	Ts    int64       `json:"ts,omitempty"`
-	// SessionID names the session this frame is addressed to. The adapter
+	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SessionID string  `json:"sessionId,omitempty"`
+	SlotID string  `json:"slotId,omitempty"`
 }
 
 type InputPart struct {
@@ -102,7 +102,7 @@ type MessagePart struct {
 
 type ResponseMsg struct {
 	Type      string       `json:"type"`
-	SessionID string       `json:"sessionId,omitempty"`
+	SlotID string       `json:"slotId,omitempty"`
 	Output    []MessagePart `json:"output"`
 }
 
@@ -173,7 +173,7 @@ func main() {
 			// Send final response
 			resp := ResponseMsg{
 				Type:      "response",
-				SessionID: msg.SessionID,
+				SlotID: msg.SlotID,
 				Output: []MessagePart{
 					{Type: "text", Inline: result},
 				},
@@ -239,7 +239,7 @@ func runBasicLevel() {
 			result := processTask(text)
 			writeJSON(ResponseMsg{
 				Type:      "response",
-				SessionID: msg.SessionID,
+				SlotID: msg.SlotID,
 				Output:    []MessagePart{{Type: "text", Inline: result}},
 			})
 		case "heartbeat":
@@ -288,9 +288,9 @@ type InboundMessage struct {
 	ID    string      `json:"id,omitempty"`
 	Input []InputPart `json:"input,omitempty"`
 	Ts    int64       `json:"ts,omitempty"`
-	// SessionID names the session this frame is addressed to. The adapter
+	// SlotID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SessionID string  `json:"sessionId,omitempty"`
+	SlotID string  `json:"slotId,omitempty"`
 }
 
 type InputPart struct {
@@ -305,7 +305,7 @@ type MessagePart struct {
 
 type ResponseMsg struct {
 	Type      string       `json:"type"`
-	SessionID string       `json:"sessionId,omitempty"`
+	SlotID string       `json:"slotId,omitempty"`
 	Output    []MessagePart `json:"output"`
 }
 
@@ -391,7 +391,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(subTasks) == 0 {
 		writeJSON(ResponseMsg{
 			Type:      "response",
-			SessionID: msg.SessionID,
+			SlotID: msg.SlotID,
 			Output:    []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
 		})
 		return
@@ -408,7 +408,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if err != nil {
 		writeJSON(ResponseMsg{
 			Type:      "response",
-			SessionID: msg.SessionID,
+			SlotID: msg.SlotID,
 			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
 		})
 		return
@@ -422,7 +422,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(agents) == 0 {
 		writeJSON(ResponseMsg{
 			Type:      "response",
-			SessionID: msg.SessionID,
+			SlotID: msg.SlotID,
 			Output:    []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
 		})
 		return
@@ -476,7 +476,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if len(childIDs) == 0 {
 		writeJSON(ResponseMsg{
 			Type:      "response",
-			SessionID: msg.SessionID,
+			SlotID: msg.SlotID,
 			Output:    []MessagePart{{Type: "text", Inline: "All delegations failed."}},
 		})
 		return
@@ -497,7 +497,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	if err != nil {
 		writeJSON(ResponseMsg{
 			Type:      "response",
-			SessionID: msg.SessionID,
+			SlotID: msg.SlotID,
 			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
 		})
 		return
@@ -521,7 +521,7 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	writeJSON(ResponseMsg{
 		Type:      "response",
-		SessionID: msg.SessionID,
+		SlotID: msg.SlotID,
 		Output: []MessagePart{
 			{Type: "text", Inline: strings.Join(outputLines, "\n")},
 		},

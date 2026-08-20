@@ -53,9 +53,9 @@ phase = 0
 # Pending tool call ID (for correlating results).
 pending_tool_call_id = None
 
-# sessionId of the message being processed. The adapter populates it on every
+# slotId of the message being processed. The adapter populates it on every
 # pod, and every session-scoped frame this runtime emits echoes it back.
-current_session_id = None
+current_slot_id = None
 
 # List of files discovered via list_dir.
 file_list = []
@@ -81,7 +81,7 @@ def write_json(obj):
     sys.stdout.flush()
 
 
-def with_session_id(frame):
+def with_slot_id(frame):
     """Stamp the session identifier on a session-scoped frame.
 
     The key is omitted when the inbound envelope carried none, so the frame is
@@ -89,15 +89,15 @@ def with_session_id(frame):
     a string here, and a frame that omits the key resolves to the binding of
     the stream that delivered it on a pod holding at most one slot.
     """
-    if current_session_id is not None:
-        frame["sessionId"] = current_session_id
+    if current_slot_id is not None:
+        frame["slotId"] = current_slot_id
     return frame
 
 
 def write_response(text):
     """Send a response message signaling task completion."""
     global phase
-    write_json(with_session_id({
+    write_json(with_slot_id({
         "type": "response",
         "output": [
             {"type": "text", "inline": text}
@@ -127,7 +127,7 @@ def list_dir(path):
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json(with_session_id({
+    write_json(with_slot_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "list_dir",
@@ -140,7 +140,7 @@ def read_file(path):
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json(with_session_id({
+    write_json(with_slot_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "read_file",
@@ -152,11 +152,11 @@ def read_file(path):
 
 def handle_message(msg):
     """Process a new task message."""
-    global phase, file_list, file_contents, current_file_index, current_session_id
+    global phase, file_list, file_contents, current_file_index, current_slot_id
 
     # Record the session this message addresses so every frame emitted in
     # response echoes it, then reset state for this task.
-    current_session_id = msg.get("sessionId")
+    current_slot_id = msg.get("slotId")
     file_list = []
     file_contents = []
     current_file_index = 0
