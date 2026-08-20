@@ -137,7 +137,7 @@ The unified message type for all inbound content: initial task, mid-session inje
   "threadId": "t_01",
   "delivery": "queued",
   "delegationDepth": 0,
-  "slotId": null
+  "slotId": "sess_abc"
 }
 ```
 
@@ -177,7 +177,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
     { "type": "text", "inline": "file contents here" }
   ],
   "isError": false,
-  "slotId": null
+  "slotId": "sess_abc"
 }
 ```
 
@@ -229,7 +229,7 @@ The primary output message. Signals task completion.
   "output": [
     { "type": "text", "inline": "The answer is 42." }
   ],
-  "slotId": null
+  "slotId": "sess_abc"
 }
 ```
 
@@ -269,7 +269,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
   "id": "tc_001",
   "name": "read_file",
   "arguments": { "path": "/workspace/slots/sess_abc/current/README.md" },
-  "slotId": null
+  "slotId": "sess_abc"
 }
 ```
 
@@ -314,7 +314,7 @@ Informational. The adapter forwards status updates to the gateway for client vis
 {
   "type": "set_tracing_context",
   "context": { "langsmith_run_id": "run_abc123" },
-  "slotId": "slot_01"
+  "slotId": "sess_abc"
 }
 ```
 
