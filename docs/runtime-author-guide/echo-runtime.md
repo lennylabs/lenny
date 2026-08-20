@@ -264,7 +264,7 @@ When the pod starts, the adapter:
 2. Writes the adapter manifest to `/run/lenny/adapter-manifest.json`.
 3. Signals readiness to the gateway (pod enters the warm pool).
 4. Waits for session assignment.
-5. Receives workspace files from the gateway and materializes them to `/workspace/current/`.
+5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
 6. Spawns your binary with stdin/stdout pipes connected.
 7. Delivers the first `message` on stdin.
 8. Relays your `response` from stdout to the gateway.
@@ -347,7 +347,7 @@ case "message":
 		ID:        "tc_001",
 		SlotID:    msg.SlotID,
 		Name:      "read_file",
-		Arguments: map[string]string{"path": "/workspace/current/input.txt"},
+		Arguments: map[string]string{"path": "/workspace/slots/" + msg.SlotID + "/current/input.txt"},
 	}
 	writeJSON(readCall)
 

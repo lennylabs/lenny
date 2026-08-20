@@ -176,7 +176,7 @@ func handleMessage(msg InboundMessage) {
 
 	// Step 1: List files in the workspace. The frame this message triggers is
 	// addressed to the session the message itself was addressed to.
-	listDir(msg.SlotID, "/workspace/current")
+	listDir(msg.SlotID, "/workspace/slots/"+msg.SlotID+"/current")
 }
 
 // handleToolResult processes the result of a tool call.
@@ -264,7 +264,7 @@ func readNextFile(slotID string) {
 	}
 	id := nextToolCallID()
 	pendingToolCallID = id
-	filePath := "/workspace/current/" + fileList[currentFileIndex]
+	filePath := "/workspace/slots/" + slotID + "/current/" + fileList[currentFileIndex]
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
@@ -340,11 +340,11 @@ func truncate(s string, n int) string {
 
 ```
 1. Adapter sends:    {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
-2. Runtime sends:    {"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/current"}}
+2. Runtime sends:    {"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/slots/sess_abc/current"}}
 3. Adapter sends:    {"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
-4. Runtime sends:    {"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/main.go"}}
+4. Runtime sends:    {"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/main.go"}}
 5. Adapter sends:    {"type":"tool_result","id":"tc_002","slotId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
-6. Runtime sends:    {"type":"tool_call","id":"tc_003","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/util.go"}}
+6. Runtime sends:    {"type":"tool_call","id":"tc_003","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/util.go"}}
 7. Adapter sends:    {"type":"tool_result","id":"tc_003","slotId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
 8. Runtime sends:    {"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
 ```

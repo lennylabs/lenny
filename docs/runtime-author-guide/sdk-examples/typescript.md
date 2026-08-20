@@ -149,7 +149,7 @@ function readNextFile(slotId: string | undefined): void {
   if (currentFileIndex >= fileList.length) return;
   const id = nextToolCallId();
   pendingToolCallId = id;
-  const filePath = `/workspace/current/${fileList[currentFileIndex]}`;
+  const filePath = `/workspace/slots/${slotId}/current/${fileList[currentFileIndex]}`;
   const call: ToolCall = {
     type: "tool_call",
     id,
@@ -181,7 +181,7 @@ function handleMessage(msg: InboundMessage): void {
 
   // Step 1: List files in the workspace. The tool_call this message triggers
   // is addressed to the session the message itself was addressed to.
-  listDir(msg.slotId, "/workspace/current");
+  listDir(msg.slotId, `/workspace/slots/${msg.slotId}/current`);
 }
 
 /**

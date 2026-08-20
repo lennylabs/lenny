@@ -170,7 +170,8 @@ def handle_message(msg):
 
     # Step 1: List files in the workspace. The tool_call this message triggers
     # is addressed to the session the message itself was addressed to.
-    list_dir(msg.get("slotId"), "/workspace/current")
+    session_id = msg.get("slotId")
+    list_dir(session_id, f"/workspace/slots/{session_id}/current")
 
 
 def handle_tool_result(msg):
@@ -237,7 +238,7 @@ def read_next_file(slot_id):
     """Send a read_file tool call for the next file in the list."""
     if current_file_index >= len(file_list):
         return
-    file_path = f"/workspace/current/{file_list[current_file_index]}"
+    file_path = f"/workspace/slots/{slot_id}/current/{file_list[current_file_index]}"
     read_file(slot_id, file_path)
 
 
