@@ -215,7 +215,7 @@
       "UploadToSessionRequest": {
         "type": "object",
         "required": ["files"],
-        "description": "§7.4 mid-session upload payload: the files to overlay onto a running session's /workspace/current.",
+        "description": "§7.4 mid-session upload payload: the files to overlay onto a running session's /workspace/slots/{sessionId}/current.",
         "properties": {
           "files": {
             "type": "array",
@@ -858,7 +858,7 @@
       "post": {
         "operationId": "postV1SessionsByIdUploadToSession",
         "summary": "Upload files into a running session's workspace (mid-session upload)",
-        "description": "The §7.4 mid-session upload surface. Admitted only when the bound runtime declares capabilities.midSessionUpload and the deployer policy permits it; uses the caller's session-scoped bearer credential (no uploadToken). The gateway streams the files into the pod's /workspace/staging and overlays them onto /workspace/current, signaling the runtime once promotion completes so the agent never sees partially-written files.",
+        "description": "The §7.4 mid-session upload surface. Admitted only when the bound runtime declares capabilities.midSessionUpload and the deployer policy permits it; uses the caller's session-scoped bearer credential (no uploadToken). The gateway streams the files into the session's /workspace/slots/{sessionId}/staging and overlays them onto /workspace/slots/{sessionId}/current, signaling the runtime once promotion completes so the agent never sees partially-written files.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": {

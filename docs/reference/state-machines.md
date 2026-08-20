@@ -84,7 +84,7 @@ stateDiagram-v2
 | State | Description |
 |:------|:------------|
 | `created` | Session record created in Postgres. Pod claimed. Credential lease assigned. Upload token issued. Waiting for workspace upload. Governed by `maxCreatedStateTimeoutSeconds` (default: 300s). |
-| `finalizing` | `FinalizeWorkspace` called. Staging files validated and promoted to `/workspace/current`. Setup commands executing. |
+| `finalizing` | `FinalizeWorkspace` called. Staging files validated and promoted to `/workspace/slots/{sessionId}/current`. Setup commands executing. |
 | `ready` | Workspace materialized. Pod ready to start the agent session. |
 | `starting` | `StartSession` called. Agent binary launching. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |

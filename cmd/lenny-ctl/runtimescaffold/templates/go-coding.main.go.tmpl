@@ -2,8 +2,10 @@
 
 // Command {{.Name}} is a Full-level coding-agent runtime built on the Go
 // runtime-author SDK. It follows the shared coding-agent pattern: the
-// session workspace is the repository root at /workspace/current, and
-// artifacts that must survive teardown are written to /workspace/output.
+// session workspace is the repository root at
+// /workspace/slots/{sessionId}/current, derived per session from the
+// session identifier the message carries, and artifacts that must
+// survive teardown are written to /workspace/output.
 //
 // The runtime is started with WithFullLevel, so the SDK opens the
 // lifecycle channel and completes the lifecycle_capabilities /
@@ -13,8 +15,8 @@
 // rebinds rotated credentials.
 //
 // The message handler is an echo placeholder. Replace OnMessage with
-// the agent loop: read the workspace under workspaceCurrent, run the
-// model and tools, and write artifacts under workspaceOutput.
+// the agent loop: read the workspace under workspaceRoot(msg.SessionID),
+// run the model and tools, and write artifacts under workspaceOutput.
 //
 // Exit codes: 0 success, 1 runtime error, 2 protocol error.
 package main
@@ -34,14 +36,18 @@ const (
 	exitProtocolError = 2
 )
 
-// Workspace paths for the shared coding-agent pattern. The gateway
-// materializes the session workspace under workspaceCurrent before the
-// first message; the agent writes durable artifacts under
-// workspaceOutput.
-const (
-	workspaceCurrent = "/workspace/current"
-	workspaceOutput  = "/workspace/output"
-)
+// workspaceOutput is the durable artifact directory of the shared
+// coding-agent pattern.
+const workspaceOutput = "/workspace/output"
+
+// workspaceRoot returns the working directory of the session named by
+// sessionID. Every session has its own workspace tree and there is no
+// pod-global workspace path, so the agent loop derives its root from the
+// session identifier the SDK delivers on each message.
+// spec: §6.4 — /workspace/slots/{sessionId}/current is the session cwd
+func workspaceRoot(sessionID string) string {
+	return "/workspace/slots/" + sessionID + "/current"
+}
 
 // handler is a Full-level coding-agent runtime.Handler. The message path
 // is an echo placeholder; the coding behavior belongs in OnMessage.
@@ -57,7 +63,7 @@ func (h *handler) OnCreate(context.Context, runtime.CreateRequest) error {
 }
 
 // OnMessage echoes the inbound parts. Replace this body with the agent
-// loop over the workspace at workspaceCurrent.
+// loop over the workspace at workspaceRoot(msg.SessionID).
 func (h *handler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
 	n := h.seq.Add(1)
 	in := msg.Envelope.Input

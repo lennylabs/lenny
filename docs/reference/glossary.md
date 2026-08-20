@@ -436,7 +436,7 @@ A Kubernetes controller (2+ replicas, leader election) that manages agent pod li
 ### Workspace
 {: #workspace }
 
-The pod-local filesystem (`/workspace/current`) containing the session's working files. Workspaces are materialized from client uploads during session creation, periodically checkpointed to durable storage, and sealed on session completion. Workspaces are never shared across sessions or pods.
+The pod-local filesystem (`/workspace/slots/{sessionId}/current`) containing the session's working files. Workspaces are materialized from client uploads during session creation, periodically checkpointed to durable storage, and sealed on session completion. Workspaces are never shared across sessions or pods.
 
 ### Workspace Plan
 {: #workspace-plan }

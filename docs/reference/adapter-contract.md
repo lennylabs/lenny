@@ -56,10 +56,10 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 
 | RPC | Description |
 |-----|-------------|
-| `PrepareWorkspace` | Accept streamed files into the staging area (`/workspace/staging`) |
-| `FinalizeWorkspace` | Validate staging, materialize to `/workspace/current` |
+| `PrepareWorkspace` | Accept streamed files into the session's staging area (`/workspace/slots/{sessionId}/staging`) |
+| `FinalizeWorkspace` | Validate staging, materialize to `/workspace/slots/{sessionId}/current` |
 | `RunSetup` | Execute bounded setup commands (deployer-defined) |
-| `StartSession` | Start the agent runtime with `cwd=/workspace/current` (pod-warm mode) |
+| `StartSession` | Start the agent runtime with `cwd=/workspace/slots/{sessionId}/current` (pod-warm mode) |
 | `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode). Timeout: 10s. |
 | `DemoteSDK` | Tear down the pre-connected SDK process and return the pod to pod-warm state |
 | `Attach` | Connect client stream to running session |
@@ -130,7 +130,7 @@ The unified message type for all inbound content: initial task, mid-session inje
   "type": "message",
   "id": "msg_001",
   "input": [
-    { "type": "text", "inline": "Summarize the files in /workspace/current" }
+    { "type": "text", "inline": "Summarize the files in /workspace/slots/sess_abc/current" }
   ],
   "from": { "kind": "client", "id": "client_8f3a2b" },
   "inReplyTo": null,
@@ -268,7 +268,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
   "type": "tool_call",
   "id": "tc_001",
   "name": "read_file",
-  "arguments": { "path": "/workspace/current/README.md" },
+  "arguments": { "path": "/workspace/slots/sess_abc/current/README.md" },
   "slotId": null
 }
 ```
@@ -609,7 +609,7 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 
 ```
 Agent writes to stdout:
-{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/current/README.md"}}
+{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/README.md"}}
 
 Adapter reads file and writes to stdin:
 {"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"# My Project\nThis is a sample project."}],"isError":false}

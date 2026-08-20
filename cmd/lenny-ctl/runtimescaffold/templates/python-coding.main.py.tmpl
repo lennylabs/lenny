@@ -4,8 +4,9 @@
 SDK (``lenny-runtime``).
 
 It follows the shared coding-agent pattern: the session workspace is the
-repository root at ``/workspace/current``, and artifacts that must
-survive teardown are written to ``/workspace/output``.
+repository root at ``/workspace/slots/{sessionId}/current``, derived per
+session from the session identifier the message carries, and artifacts
+that must survive teardown are written to ``/workspace/output``.
 
 The runtime is started with ``level="full"``, so the SDK opens the
 lifecycle channel and completes the ``lifecycle_capabilities`` /
@@ -16,8 +17,8 @@ rebinds rotated credentials.
 
 The message handler is an echo placeholder. Replace
 :meth:`on_message` with the agent loop: read the workspace under
-``WORKSPACE_CURRENT``, run the model and tools, and write artifacts
-under ``WORKSPACE_OUTPUT``.
+``workspace_root(msg.session_id)``, run the model and tools, and write
+artifacts under ``WORKSPACE_OUTPUT``.
 
 Exit codes: 0 success, 1 runtime error, 2 protocol error.
 """
@@ -44,12 +45,21 @@ _EXIT_OK = 0
 _EXIT_RUNTIME_ERROR = 1
 _EXIT_PROTOCOL_ERROR = 2
 
-# Workspace paths for the shared coding-agent pattern. The gateway
-# materializes the session workspace under WORKSPACE_CURRENT before the
-# first message; the agent writes durable artifacts under
-# WORKSPACE_OUTPUT.
-WORKSPACE_CURRENT = "/workspace/current"
+# WORKSPACE_OUTPUT is the durable artifact directory of the shared
+# coding-agent pattern.
 WORKSPACE_OUTPUT = "/workspace/output"
+
+
+def workspace_root(session_id: str) -> str:
+    """Return the working directory of the session named by ``session_id``.
+
+    Every session has its own workspace tree and there is no pod-global
+    workspace path, so the agent loop derives its root from the session
+    identifier the SDK delivers on each message.
+
+    spec: §6.4 -- /workspace/slots/{sessionId}/current is the session cwd
+    """
+    return f"/workspace/slots/{session_id}/current"
 
 
 class RuntimeHandler:
@@ -73,7 +83,7 @@ class RuntimeHandler:
         """Echo the inbound parts.
 
         Replace this body with the agent loop over the workspace at
-        ``WORKSPACE_CURRENT``.
+        ``workspace_root(msg.session_id)``.
         """
         self._seq += 1
         out = []

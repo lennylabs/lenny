@@ -249,10 +249,10 @@ rule, the text moves to the code's step, and the step that carries it names the 
       at `spec/05:558` is restated on `error.sessionId`. The exhaustion sentence lands here with the rest
       of the spec phase, because ordering rule 2 does not reach `spec/`.
       Depends on: S1
-- [ ] **S4 · spec** — SPEC-8. §5.2 states D5's identity invariant, and the five specification sentences and
+- [x] **S4 · spec** — SPEC-8. §5.2 states D5's identity invariant, and the five specification sentences and
       nine code comments that attribute slot assignment to the adapter are corrected.
       Depends on: S2
-- [ ] **S5 · spec, code** — SPEC-3. §6.4 collapses the two filesystem layouts into one, the placeholder
+- [x] **S5 · spec, code** — SPEC-3. §6.4 collapses the two filesystem layouts into one, the placeholder
       becomes `{sessionId}`, `/workspace/current` is retired, and `spec/18:532` drops the Phase 12c
       conditional. The lane includes code because SPEC-3 also stages the `lenny-ctl` runtime scaffold
       templates and the served OpenAPI document.

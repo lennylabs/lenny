@@ -201,8 +201,8 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 
 **What it stores:**
 
-- **Workspace checkpoint snapshots:** Periodic tars of `/workspace/current` that enable session recovery after pod failure.
-- **Session file snapshots:** Copies of `/sessions/` contents at checkpoint time.
+- **Workspace checkpoint snapshots:** Periodic tars of the session's `/workspace/slots/{sessionId}/current` that enable session recovery after pod failure.
+- **Session file snapshots:** Copies of the session's own `/sessions/{sessionId}` contents at checkpoint time; a checkpoint captures no co-tenant's session files.
 - **Checkpoint metadata:** Generation counters, timestamps, and pod state at checkpoint time.
 - **Session logs and runtime stderr:** Durable log storage for debugging and audit.
 - **Resume metadata:** Information needed to restore a session on a new pod.
@@ -275,7 +275,7 @@ Each agent pod contains two processes:
 **Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
 - Reads messages from stdin (Basic integration level) or connects to MCP servers and the CH-RUNTIMEOPS (Standard or Full integration level).
 - Reads the adapter manifest to discover available tools and credentials.
-- Operates on files in `/workspace/current`.
+- Operates on files in `/workspace/slots/{sessionId}/current`.
 - Writes responses to stdout.
 
 Pods run with strict security settings: non-root user, all capabilities dropped, read-only root filesystem, writable paths limited to tmpfs and workspace volumes. The selected `RuntimeClass` (runc, gVisor, or Kata) determines the container/VM isolation level.
@@ -528,7 +528,7 @@ Every agent pod runs with:
 
 | Pods CAN | Pods CANNOT |
 |----------|-------------|
-| Read/write files in `/workspace/current` | Access the Kubernetes API server |
+| Read/write files in `/workspace/slots/{sessionId}/current` | Access the Kubernetes API server |
 | Call LLM providers through the gateway's LLM Proxy (proxy-mode pools) or directly with a short-lived materialized credential (direct-mode pools) | Hold long-lived API keys or secrets |
 | Use MCP tools via the adapter's local MCP servers | Communicate with other pods |
 | `PUT` and `GET` checkpoint chunk objects to object storage against a gateway-minted presigned capability (single key, single method, short expiry) | Access Postgres or Redis directly, or reach object storage without a gateway-signed presigned capability |

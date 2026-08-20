@@ -92,7 +92,7 @@ Upload workspace files before finalization (or mid-session if `capabilities.midS
 
 ### POST /v1/sessions/{id}/finalize
 
-Seal the workspace and run setup commands. Moves uploaded files from staging to `/workspace/current`. After finalization, no further pre-start uploads are accepted.
+Seal the workspace and run setup commands. Moves uploaded files from the session's staging area to `/workspace/slots/{sessionId}/current`. After finalization, no further pre-start uploads are accepted.
 
 **Valid precondition states:** `created`.
 **Resulting transition:** `finalizing` then `ready`.

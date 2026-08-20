@@ -21,9 +21,9 @@ If you already have a coding agent that runs as a CLI (LLM-backed or otherwise),
 2. Fork the runtime repo, rename the module, and wire in your CLI invocation.
 3. Map the CLI's `stdout` to `agent_output` events; map its `stderr` to `log` events.
 4. Translate the CLI's input-waiting state to Lenny's `input_required` status.
-5. Handle the workspace: your CLI runs inside `/workspace/current`, which Lenny materializes from the session's workspace plan.
+5. Handle the workspace: your CLI runs inside `/workspace/slots/{sessionId}/current`, which Lenny materializes from the session's workspace plan.
 6. Surface tool calls. If your CLI exposes tool-call JSON, forward it as structured events; otherwise, parse text markers.
-7. Export artifacts: on session end, Lenny seals `/workspace/current` and delivers it to the gateway automatically.
+7. Export artifacts: on session end, Lenny seals `/workspace/slots/{sessionId}/current` and delivers it to the gateway automatically.
 8. Add conformance tests so your runtime passes the same suite as the reference runtimes.
 
 ## Canonical reference

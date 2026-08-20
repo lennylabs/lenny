@@ -72,7 +72,7 @@ Use these spellings and formulations everywhere. Do not introduce synonyms.
 | `runtime` | The agent adapter image (e.g. `claude-code`, `chat`). Not "worker", "executor", or "handler". |
 | `pool` | A horizontally-scaled, pre-warmed set of pods for a runtime. |
 | `gateway` | The client-facing service. Not "proxy" or "API server". |
-| `workspace` | The mounted, session-local filesystem at `/workspace/current`. |
+| `workspace` | The mounted, session-local filesystem at `/workspace/slots/{sessionId}/current`. |
 | `WorkspacePlan` | Camel-case when used as the schema name; lowercase "workspace plan" in prose only when not referring to the schema. |
 | `isolation profile` | Canonical: `standard` (runc, dev only), `sandboxed` (gVisor, default), `microvm` (Kata). |
 | `RuntimeClass` | Kubernetes-level: `runc`, `gvisor`, `kata`. Distinct from isolation profile. |

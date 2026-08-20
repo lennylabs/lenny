@@ -34,10 +34,10 @@ ASCII fallback for the diagram above (pod-warm-path):
 | State | What Happens |
 |-------|-------------|
 | `warming` | Pod is scheduled, container starts, adapter boots, health checks pass. No session is bound. |
-| `idle` | Pod is healthy and claimable. Listed in the warm pool. `/workspace/current` exists but is empty. |
+| `idle` | Pod is healthy and claimable. Listed in the warm pool. `/workspace/slots/` exists and is empty; a session's slot tree is created at slot assignment. |
 | `claimed` | Gateway has selected this pod for a session. No other session can claim it. |
-| `receiving_uploads` | Client files are streaming into `/workspace/staging`. |
-| `finalizing_workspace` | Files are validated and promoted from `/workspace/staging` to `/workspace/current`. |
+| `receiving_uploads` | Client files are streaming into the session's `/workspace/slots/{sessionId}/staging`. |
+| `finalizing_workspace` | Files are validated and promoted from `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. |
 | `running_setup` | Setup commands (if any) execute in the workspace. Bounded by `setupTimeoutSeconds` (default: 300s). |
 | `starting_session` | Agent binary is spawned with stdin/stdout pipes connected. |
 | `attached` | Session is live. Bidirectional message flow begins. |
@@ -74,24 +74,31 @@ In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: fa
 
 When a pod is claimed for a session, the gateway materializes the client's files into the workspace:
 
-1. **Upload phase:** Files stream from the client through the gateway into `/workspace/staging` on the pod. Each file is validated (no path traversal, no symlinks outside workspace, size limits enforced).
+1. **Upload phase:** Files stream from the client through the gateway into the session's `/workspace/slots/{sessionId}/staging` on the pod. Each file is validated (no path traversal, no symlinks outside workspace, size limits enforced).
 
-2. **Finalization:** The gateway promotes files from `/workspace/staging` to `/workspace/current`. Archive extraction (tar.gz, tar.bz2, zip) happens here with zip-slip protection.
+2. **Finalization:** The gateway promotes files from `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. Archive extraction (tar.gz, tar.bz2, zip) happens here with zip-slip protection.
 
-3. **Setup commands:** If the runtime defines setup commands (e.g., `npm install`), they run in `/workspace/current` with a bounded timeout. Setup command output is captured for diagnostics.
+3. **Setup commands:** If the runtime defines setup commands (e.g., `npm install`), they run in `/workspace/slots/{sessionId}/current` with a bounded timeout. Setup command output is captured for diagnostics.
 
-4. **Agent start:** Your binary is spawned with its working directory set to `/workspace/current`.
+4. **Agent start:** Your binary is spawned with its working directory set to `/workspace/slots/{sessionId}/current`.
 
 ### Filesystem Layout
 
 ```
 /workspace/
-  current/      # Your working directory --- populated during finalization
-  staging/      # Upload staging area --- files land here first
-/sessions/      # Session files (conversation logs, runtime state)    [tmpfs]
-/artifacts/     # Logs, outputs, checkpoints
-/tmp/           # Writable scratch area                               [tmpfs]
+  slots/
+    {sessionId}/
+      current/  # This session's working directory --- populated during finalization
+      staging/  # This session's upload staging area --- files land here first
+  staging/      # Pod-global staging area, created at warm time
+/sessions/
+  {sessionId}/  # This session's files (conversation logs, runtime state)  [tmpfs]
+/artifacts/
+  {sessionId}/  # This session's logs, outputs, checkpoints
+/tmp/           # Writable scratch area, shared across the pod's sessions  [tmpfs]
 ```
+
+No pod-global workspace directory exists. Every session's working directory is derived from its own session identifier, and a runtime must not assume a path shared by the pod's sessions.
 
 - `/sessions/` and `/tmp/` use tmpfs (data is guaranteed gone when the pod terminates).
 - `/workspace/` and `/artifacts/` use disk-backed emptyDir. Node-level disk encryption is required for production.

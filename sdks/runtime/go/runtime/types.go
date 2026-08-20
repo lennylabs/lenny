@@ -205,9 +205,9 @@ type CreateRequest struct {
 	// RuntimeOptions is the effective caller options map.
 	RuntimeOptions map[string]any `json:"runtimeOptions,omitempty"`
 	// WorkspacePlan references the §14 materialized workspace plan. Its
-	// files are staged under /workspace/current (or the per-slot path when
-	// the pool sets maxConcurrentSessions > 1) before OnCreate is invoked.
-	// spec: §15.7 (WorkspacePlan staged before the single OnCreate)
+	// files are staged under /workspace/slots/{sessionId}/current before
+	// OnCreate is invoked.
+	// spec: §15.7 (WorkspacePlan staged before the single OnCreate), §6.4 (one pod filesystem layout)
 	WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
 	// Credentials is the current §4.7 credential bundle. The SDK
 	// refreshes it in place on rotation rather than re-invoking

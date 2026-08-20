@@ -62,7 +62,7 @@ stateDiagram-v2
 
 **created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session but the agent binary has not started. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
 
-**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
+**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from the session's `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
 
 **ready** -- Workspace materialization and setup commands have completed successfully. The session is ready for the agent binary to start.
 
@@ -357,13 +357,13 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 ### Workspace lifecycle
 
-**Staging:** When a client uploads files, they are streamed through the gateway into the pod's staging area (`/workspace/staging`). Files are staged but not yet visible to the runtime.
+**Staging:** When a client uploads files, they are streamed through the gateway into the session's staging area (`/workspace/slots/{sessionId}/staging`). Files are staged but not yet visible to the runtime.
 
-**Materialization:** When the client calls `FinalizeWorkspace`, all declarative [workspace sources](#workspace-sources) are materialized into `/workspace/current` (client uploads flow through `/workspace/staging` for atomicity). Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
+**Materialization:** When the client calls `FinalizeWorkspace`, all declarative [workspace sources](#workspace-sources) are materialized into `/workspace/slots/{sessionId}/current` (client uploads flow through the session's `/workspace/slots/{sessionId}/staging` for atomicity). Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
 
-**Runtime operation:** The agent reads and writes files in `/workspace/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
+**Runtime operation:** The agent reads and writes files in `/workspace/slots/{sessionId}/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
 
-**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence: the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it is best-effort.
+**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/slots/{sessionId}/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence: the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it is best-effort.
 
 **Sealing:** When the session completes, the workspace is exported to durable storage as a sealed, immutable snapshot. This snapshot is the session's final artifact and can be used to derive new sessions.
 
@@ -395,7 +395,7 @@ For the full schema — including `depth`, `submodules`, per-provider auth, and 
 
 ### Setup commands
 
-After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/current` as the working directory, during the session's `finalizing` state. Setup completes (or fails) before the agent binary starts.
+After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/slots/{sessionId}/current` as the working directory, during the session's `finalizing` state. Setup completes (or fails) before the agent binary starts.
 
 Setup commands are strictly scoped by the runtime's `setupCommandPolicy`:
 
@@ -433,8 +433,8 @@ All session inputs and outputs enter and exit pods through the gateway. There ar
 
 Checkpoints are the mechanism by which Lenny survives pod failures. A checkpoint is an atomic unit comprising:
 
-- A workspace snapshot (tar of `/workspace/current`).
-- A session file snapshot (copy of `/sessions/` contents).
+- A workspace snapshot (tar of the session's `/workspace/slots/{sessionId}/current`).
+- A session file snapshot (copy of the session's own `/sessions/{sessionId}` contents; a checkpoint captures no co-tenant's session files).
 - Checkpoint metadata (generation, timestamp, pod state).
 
 If either snapshot fails, the entire checkpoint is discarded; partial checkpoints are never stored. Periodic checkpoints run at a configurable interval (default: 600 seconds), with jitter to prevent thundering-herd storms across sessions.

@@ -507,3 +507,59 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestCodingScaffoldsDeriveWorkspaceFromSession_spec_6_4 checks that the
+// coding-agent cells emit the one pod filesystem layout: the session's
+// working directory is /workspace/slots/{sessionId}/current, derived
+// from the session identifier the SDK hands the handler, and no emitted
+// source names a pod-global workspace path. Before the layouts were
+// collapsed each language template declared "/workspace/current" as a
+// constant, so a scaffolded runtime wrote to a directory that no pod
+// has.
+// spec: §6.4 (one pod filesystem layout), §6.1 (warm pod anatomy)
+func TestCodingScaffoldsDeriveWorkspaceFromSession_spec_6_4(t *testing.T) {
+	cases := []struct {
+		lang    Language
+		source  string
+		derives []string
+	}{
+		{LangGo, "main.go", []string{`"/workspace/slots/" + sessionID + "/current"`, "func workspaceRoot(sessionID string) string"}},
+		{LangPython, "main.py", []string{`f"/workspace/slots/{session_id}/current"`, "def workspace_root(session_id: str) -> str:"}},
+		{LangTypeScript, "main.ts", []string{"`/workspace/slots/${sessionId}/current`", "function workspaceRoot(sessionId: string): string"}},
+	}
+	for _, c := range cases {
+		t.Run(string(c.lang), func(t *testing.T) {
+			base := t.TempDir()
+			var stdout, stderr bytes.Buffer
+			if code := Generate(Spec{
+				Name:     "coder",
+				Language: c.lang,
+				Template: TemplateCoding,
+			}, base, &stdout, &stderr); code != ExitOK {
+				t.Fatalf("generate: exit %d, stderr=%q", code, stderr.String())
+			}
+			dir := filepath.Join(base, "coder")
+			for _, name := range []string{c.source, "runtime.yaml"} {
+				raw, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatalf("read %s: %v", name, err)
+				}
+				if strings.Contains(string(raw), "/workspace/current") {
+					t.Errorf("%s names the retired pod-global /workspace/current", name)
+				}
+				if !strings.Contains(string(raw), "/workspace/slots/") {
+					t.Errorf("%s does not name the per-session slot workspace tree", name)
+				}
+			}
+			source, err := os.ReadFile(filepath.Join(dir, c.source))
+			if err != nil {
+				t.Fatalf("read %s: %v", c.source, err)
+			}
+			for _, want := range c.derives {
+				if !strings.Contains(string(source), want) {
+					t.Errorf("%s does not derive the workspace root from the session identifier: missing %q", c.source, want)
+				}
+			}
+		})
+	}
+}
