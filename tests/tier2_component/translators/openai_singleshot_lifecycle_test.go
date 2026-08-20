@@ -192,7 +192,7 @@ func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*ada
 	// the per-slot materialization path (WorkspaceBase/slots/{slotId}) the
 	// concurrent-workspace bind drives has a real tree to write into.
 	base := t.TempDir()
-	srv.WorkspaceBase = filepath.Join(base, "workspace", "current")
+	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")

@@ -1340,7 +1340,9 @@
         "pkg/adapter/mcp/...",
         "pkg/gateway/mcpfabric/mcptools/discover_agents_filtering_test.go",
         "tests/testinfra/stubs/mcpserver/mcpserver_test.go",
-        "tests/tier4_integration/external_mcp_tool_test.go"
+        "tests/tier4_integration/external_mcp_tool_test.go",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go",
+        "tests/tier9_security/adapter_shared_mcp_surface_test.go"
       ],
       "packages": [
         "pkg/mcp"
@@ -1521,7 +1523,8 @@
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
         "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
-        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2437,7 +2440,9 @@
         "tests/tier9_security/image_signing_test.go",
         "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go",
+        "tests/tier9_security/adapter_shared_mcp_surface_test.go"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -2997,7 +3002,9 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
-        "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection"
+        "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go",
+        "tests/tier9_security/adapter_shared_mcp_surface_test.go"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
