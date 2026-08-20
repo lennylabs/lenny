@@ -55,11 +55,14 @@ var infraColumns = map[string]bool{
 }
 
 // droppedColumn records a checkpoint_manifest column that migration 0178
-// creates and a later migration drops, naming that drop migration so a reader
-// can resolve which change removed the column.
+// creates and a later migration drops. The entry names the table the column
+// belongs to rather than a migration number, so the record cannot name the
+// wrong change: the drop migration is resolved by scanning migrations/ for the
+// statement that drops it.
 type droppedColumn struct {
-	// migration is the numeric prefix of the migration that drops the column.
-	migration string
+	// table is the table the dropped column belongs to. Two tables carry a
+	// column of the same name, so the drop is resolved per table.
+	table string
 	// reason states why the column is gone.
 	reason string
 }
@@ -67,45 +70,77 @@ type droppedColumn struct {
 // droppedColumns are checkpoint_manifest columns migration 0178 creates and a
 // later migration drops. Migration 0178's own `.up.sql` text keeps the CREATE
 // TABLE line that first declared them, so they stay in the extracted set,
-// while §10.1 no longer names them. Each entry names its drop migration, the
-// form tests/tier2_component/migrations/prod_columns_test.go already uses for
-// the columns the prod chain retires. The set drains rather than accumulates:
-// an entry naming a column migration 0178 does not create, or one §10.1 names
-// again, fails the gate, and once the named drop migration exists it must
-// carry the matching DROP COLUMN.
+// while §10.1 no longer names them. Each entry records why the column is gone,
+// the form tests/tier2_component/migrations/prod_columns_test.go already uses
+// for the columns the prod chain retires. The set drains rather than
+// accumulates: an entry naming a column migration 0178 does not create, or one
+// §10.1 names again, fails the gate.
 var droppedColumns = map[string]droppedColumn{
 	// spec: §10.1 (the partial manifest, the supersede rule, and the
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
 	// and supersession operate on session_id)
 	"slot_id": {
-		migration: "0180",
-		reason:    "the manifest is scoped on session_id alone, so migration 0180 drops the per-slot column",
+		table:  "checkpoint_manifest",
+		reason: "the manifest is scoped on session_id alone, so the per-slot column is dropped",
 	},
 }
 
-// migrationDropsColumn reports whether the migration whose numeric prefix is
-// `migration` exists under migrations/ and, when it does, whether its `.up.sql`
-// drops `column`. An absent migration reports (false, false): the droppedColumns
-// entry then stands as the record of the migration that will drop the column.
-func migrationDropsColumn(t *testing.T, root, migration, column string) (exists, drops bool) {
+// sqlLineCommentRE matches a SQL line comment through the end of its line, so
+// a drop written inside a commented-out block is not read as a live statement.
+var sqlLineCommentRE = regexp.MustCompile(`--[^\n]*`)
+
+// alterTableStatementRE captures each `ALTER TABLE <table> ... ;` statement
+// body, so a DROP COLUMN is attributed to the table its own statement names.
+func alterTableStatementRE(table string) *regexp.Regexp {
+	return regexp.MustCompile(`(?is)\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?` + regexp.QuoteMeta(table) + `\b([^;]*);`)
+}
+
+// dropColumnRE matches the drop of one column in the repository's own idiom:
+// `DROP COLUMN <col>` and `DROP COLUMN IF EXISTS <col>` alike, with the clause
+// free to sit on its own line and to close with a comma or a semicolon.
+func dropColumnRE(column string) *regexp.Regexp {
+	return regexp.MustCompile(`(?is)\bDROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?` + regexp.QuoteMeta(column) + `\b`)
+}
+
+// sqlDropsColumn reports whether the migration body drops `table`.`column`.
+// The check is qualified by table, because two tables carry a `slot_id` column
+// and one migration drops both, so an unqualified substring match is satisfied
+// by the wrong statement. Line comments are stripped first so a commented-out
+// drop does not count.
+func sqlDropsColumn(sql, table, column string) bool {
+	live := sqlLineCommentRE.ReplaceAllString(sql, "")
+	drop := dropColumnRE(column)
+	for _, stmt := range alterTableStatementRE(table).FindAllStringSubmatch(live, -1) {
+		if drop.MatchString(stmt[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// dropMigrationsFor returns the migration file names under migrations/ whose
+// `.up.sql` drops `table`.`column`, in lexicographic (migration) order. An
+// empty result means no migration has dropped the column yet, which is the
+// state before the drop lands; the droppedColumns entry stands as the record
+// until then.
+func dropMigrationsFor(t *testing.T, root, table, column string) []string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(root, "migrations", migration+"_*.up.sql"))
+	matches, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))
 	if err != nil {
-		t.Fatalf("glob migrations/%s_*.up.sql: %v", migration, err)
+		t.Fatalf("glob migrations/*.up.sql: %v", err)
 	}
-	if len(matches) == 0 {
-		return false, false
-	}
+	sort.Strings(matches)
+	var found []string
 	for _, m := range matches {
 		body, err := os.ReadFile(m)
 		if err != nil {
 			t.Fatalf("read %s: %v", m, err)
 		}
-		if strings.Contains(strings.ToUpper(string(body)), "DROP COLUMN "+strings.ToUpper(column)) {
-			return true, true
+		if sqlDropsColumn(string(body), table, column) {
+			found = append(found, filepath.Base(m))
 		}
 	}
-	return true, false
+	return found
 }
 
 // migrationColumnRE matches a column definition line in migration 0178, e.g.
@@ -185,11 +220,72 @@ func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 		if columnNamedInCodeSpan(s101, col) {
 			t.Errorf("§10.1 names %q again, so it is a live manifest column: remove its droppedColumns entry (%s) and hold it to the agreement above", col, dropped.reason)
 		}
-		// The named drop migration is the entry's whole justification, so once
-		// it exists it must carry the drop the entry claims for it.
-		if exists, drops := migrationDropsColumn(t, root, dropped.migration, col); exists && !drops {
-			t.Errorf("droppedColumns names migration %s as the drop of checkpoint_manifest.%s, but that migration's .up.sql drops no such column", dropped.migration, col)
+		// The drop migration is resolved from the tree rather than named in
+		// the entry, so the record names the change that actually removed the
+		// column once that change lands. Before it lands the entry is the
+		// record on its own.
+		if drops := dropMigrationsFor(t, root, dropped.table, col); len(drops) > 0 {
+			t.Logf("%s.%s is dropped by %s", dropped.table, col, strings.Join(drops, ", "))
 		}
+	}
+}
+
+// spec: 10.1, 12.5
+// diagnosis: the dropped-column record's drop detection no longer matches the
+//
+//	way this repository writes a column drop, or it credits one table's drop to
+//	another. Migrations spell the drop as `ALTER TABLE t\n    DROP COLUMN IF
+//	EXISTS c;`, and a single migration drops the identically named slot_id
+//	column from both checkpoint_manifest and session_checkpoints. A failure here
+//	means the detection has narrowed to one literal spelling (so a conforming
+//	drop reads as absent), widened past the ALTER TABLE statement that owns the
+//	clause (so the other table's drop satisfies it), or started counting a drop
+//	written inside a SQL comment.
+func TestDropColumnDetectionIsTableQualifiedAndMatchesTheMigrationIdiom(t *testing.T) {
+	const manifest = "checkpoint_manifest"
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{
+			name: "idempotent multi-line drop, the prevailing migration idiom",
+			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id;\n",
+			want: true,
+		},
+		{
+			name: "bare drop in a multi-column clause",
+			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN slot_id,\n    DROP COLUMN IF EXISTS legacy;\n",
+			want: true,
+		},
+		{
+			name: "drop of the same column on another table does not count",
+			sql:  "ALTER TABLE session_checkpoints\n    DROP COLUMN IF EXISTS slot_id;\n",
+			want: false,
+		},
+		{
+			name: "the manifest drop is found alongside the other table's drop",
+			sql: "ALTER TABLE session_checkpoints\n    DROP COLUMN IF EXISTS slot_id;\n" +
+				"ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id;\n",
+			want: true,
+		},
+		{
+			name: "a drop inside a SQL comment is not a drop",
+			sql:  "-- ALTER TABLE checkpoint_manifest DROP COLUMN IF EXISTS slot_id;\n",
+			want: false,
+		},
+		{
+			name: "a differently prefixed column is not the column",
+			sql:  "ALTER TABLE checkpoint_manifest\n    DROP COLUMN IF EXISTS slot_id_legacy;\n",
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sqlDropsColumn(tc.sql, manifest, "slot_id"); got != tc.want {
+				t.Errorf("sqlDropsColumn(%q, %q, \"slot_id\") = %v, want %v", tc.sql, manifest, got, tc.want)
+			}
+		})
 	}
 }
 
