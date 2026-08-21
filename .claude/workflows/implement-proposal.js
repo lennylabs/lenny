@@ -239,6 +239,10 @@ const files = [...new Set(plan.specEdits.map((e) => e.targetFile))];
 
 // ---- Apply spec (or, on a re-run, confirm it is already aligned) ----
 
+// How many times a drifted spec is repaired before the run gives up and asks
+// for a human. Small: the verifier names what is missing, so a repair that
+// does not close the gap is not going to close it on the fifth try either.
+const maxAlignRepairs = input.maxAlignRepairs || 3;
 let specStatus = "applied"; // applied | applied-with-blockers | not-clean | aligned | no-spec-edits
 let unappliable = [];
 let deviations = [];
@@ -253,7 +257,7 @@ if (plan.specEdits.length === 0) {
   // diff-based check would be empty. Confirm by presence instead.
   phase("Apply spec");
   log("Status is Applied to spec; verifying the staged edits are present");
-  const align = await agent(
+  let align = await agent(
     "Confirm an already-applied proposal's staged spec edits are present in spec/.\n\n" +
       "You are a read-only verifier; do not edit any file. Work in " +
       repo +
@@ -262,16 +266,73 @@ if (plan.specEdits.length === 0) {
       ". For each staged edit in its 'Proposed spec changes' section, read the named spec/ file and confirm the staged block is present at its anchor. Set aligned true only when every staged edit is present; list any missing ones.",
     { schema: ALIGNMENT, label: "verify-aligned", phase: "Apply spec" },
   );
+  // Drift is repaired, not reported. A run that stops here leaves the tree in
+  // the worst available state: the status says Applied to spec, most of the
+  // edits are in, and the few that are missing are named precisely enough to
+  // land. Refusing to land them means the next run re-derives the same list and
+  // refuses again, so the only way forward is a hand edit, which is exactly the
+  // unreviewed spec change the pipeline exists to prevent. The verifier names
+  // each missing edit with its anchor, so the repair is targeted rather than a
+  // re-application of the whole proposal, and it re-verifies afterwards: a
+  // repair that does not close the gap is still a refusal, just an informed one.
+  let alignRepairs = 0;
+  while ((!align || !align.aligned) && alignRepairs < maxAlignRepairs) {
+    alignRepairs++;
+    const missing = (align && align.missing) || [];
+    log(
+      "Spec drifted from the proposal: " + missing.length +
+        " staged edit(s) missing. Landing them (repair " + alignRepairs + "/" + maxAlignRepairs + ")",
+    );
+    const repair = await agent(
+      "Land the staged spec edits of an approved proposal that a previous run left unapplied. Work in " +
+        repo +
+        ".\n\nProposal: " +
+        proposal +
+        "\n\nThe rest of this proposal is already applied. A presence check just found ONLY these staged " +
+        "edits missing from spec/, each named with the file and anchor the proposal stages it at:\n\n" +
+        missing.map((m, i) => i + 1 + ". " + m).join("\n") +
+        "\n\nApply exactly these and nothing else. Read the proposal's staged block for each one and write " +
+        "what it stages, at the anchor it names. Locate every anchor by its quoted text and its heading " +
+        "rather than by a line number, because the surrounding file has changed since the proposal was " +
+        "written and the numbers have drifted. Where the same rename has already landed at other sites, " +
+        "match how those sites read: a straggler is spelled the way its siblings are, not in a new way.\n\n" +
+        "Do not re-apply an edit that is already present, do not touch a spec/ site the list does not name, " +
+        "and do not edit the proposal. Commit on the current branch when you are done.\n\n" +
+        SPEC_RULES + SUMMARY_BLOCK + BLANKS_BLOCK +
+        "\n\nReport what you applied, anything you could not apply and why, and any deviation you had to " +
+        "take from the staged text to satisfy the rules above.",
+      { schema: APPLY_RESULT, label: "apply-missing:r" + alignRepairs, phase: "Apply spec" },
+    );
+    if (repair) {
+      appliedIds = new Set([...appliedIds, ...(repair.applied || [])]);
+      unappliable = unappliable.concat(repair.unappliable || []);
+      deviations = deviations.concat(repair.deviations || []);
+      applyHistory.push({ repair: alignRepairs, ...repair });
+    }
+    align = await agent(
+      "Confirm an already-applied proposal's staged spec edits are present in spec/.\n\n" +
+        "You are a read-only verifier; do not edit any file. Work in " +
+        repo +
+        ".\n\nProposal: " +
+        proposal +
+        ". For each staged edit in its 'Proposed spec changes' section, read the named spec/ file and confirm the staged block is present at its anchor. Set aligned true only when every staged edit is present; list any missing ones.",
+      { schema: ALIGNMENT, label: "verify-aligned:r" + alignRepairs, phase: "Apply spec" },
+    );
+  }
   if (!align || !align.aligned) {
     return {
       status: "not-aligned",
       statusLine: plan.statusLine,
       reason:
-        "the proposal reads Applied to spec but its staged edits are not all present in spec/: " +
+        "the proposal reads Applied to spec and " + alignRepairs +
+        " repair pass(es) did not close the gap. Still missing: " +
         ((align && align.missing) || []).join("; ") +
-        ". The spec drifted from the proposal; re-land it before implementing.",
+        ". This needs a human: the staged text and the spec have diverged in a way the applier cannot resolve.",
+      unappliable,
+      deviations,
     };
   }
+  if (alignRepairs > 0) log("Spec drift repaired in " + alignRepairs + " pass(es); the staged edits are all present");
   specStatus = "aligned";
 } else {
   // Fresh apply: the proposal is Approved and spec/ is a clean baseline.
