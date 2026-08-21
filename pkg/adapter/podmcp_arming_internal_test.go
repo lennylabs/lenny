@@ -118,6 +118,12 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	if !initializeWithNonce(t, s.MCPSocket, "nonce-bob") {
 		t.Error("the platform MCP server did not authenticate bob's manifest nonce")
 	}
+	// The claim took over the departed session's surface rather than
+	// leaving it bound to the pod-wide socket, so the retired nonce is
+	// refused.
+	if initializeWithNonce(t, s.MCPSocket, "nonce-alice") {
+		t.Error("the socket still answers the departed session's nonce, so bob's claim did not stop the stale server")
+	}
 }
 
 // spec: §15.4.3 — a release that leaves no session holding the arming

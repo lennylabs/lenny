@@ -3440,17 +3440,22 @@ tier-7a case observe both directions.
 Because the servers and the handshake signal are pod-wide, the start is claimed once per pod and the
 cancellation is pod-wide when it runs, gated on the release leaving the pod's shared runtime process serving
 no session. The merged claim decides the start inside its own `s.mu` critical section, returning a boolean
-when `mcpCancel` is nil and the registry holds no entry but the claimant's; the handler performs
+when the registry holds no entry but the claimant's, and taking over and stopping a surface armed by a
+session the registry no longer holds so the pod-wide socket is free for the claimant's own arming; the handler performs
 `startPlatformMCP(nonce)` and `startConnectorMCPServers` after the manifest write and outside `s.mu`, where
 both run today (`pkg/adapter/session.go:150`, `pkg/adapter/resume.go:119`), because the §15.4.3 nonce and
 the connector list are produced after the claim (`session.go:127`, `:129`) and `startPlatformMCP` takes
 `s.mu` itself (`pkg/adapter/platformmcp.go:40-42`, `:47-49`). The release cancels `mcpCancel` and every
-entry of `connectorCancels` and clears `mcpHandshakeSeen` whichever session's entry it removes, gated on one
-condition: that the release leaves the pod's shared runtime process serving no session, which is
+entry of `connectorCancels` and clears `mcpHandshakeSeen` whichever session's entry it removes, gated on two
+conditions: that the release leaves the pod's shared runtime process serving no session, which is
 `runtimeLive` at zero once the release's `noteRuntimeClosed` has run, and zero throughout on a rollback that
-armed the servers and never reached a start. No arming identifier is stored, because a release that ends the
-generation cancels a surface no surviving session can use, and a release that leaves the process serving a
-session cancels nothing. The gate is what keeps a co-tenant's rollback from tearing down a surface
+armed the servers and never reached a start, and that the session which armed the surface no longer holds a
+slot. The arming session's identifier is stored, because the two writers interleave: a successor's claim can
+take the arming between a departing session's deregistration and the return of that session's
+`Runtime.Close`, and a release gated on idleness alone would then cancel the surface the successor has
+already armed, leaving it holding a manifest nonce no server answers for the life of the pod, since its own
+claim has already returned. The claim and the cancellation read and write that one identifier under `s.mu`,
+so the two decisions are ordered against each other. The gate is what keeps a co-tenant's rollback from tearing down a surface
 `soleSession()` is naming, which the accessor's generation predicate makes reachable: a pod holding one
 started session and one registered-but-unbound entry serves that session, where the retired registry-keyed
 predicate refused it. A later claim that finds the registry holding only its own entry re-arms on a fresh
