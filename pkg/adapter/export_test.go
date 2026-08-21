@@ -3,6 +3,9 @@
 package adapter
 
 import (
+	"context"
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -58,4 +61,32 @@ func (s *Server) claimSessionForTest(sessionID string) error {
 func (s *Server) RegisterUnboundSlotForTest(sessionID string) error {
 	_, err := s.ensureSlotPaths(sessionID)
 	return err
+}
+
+// BeginCheckpointOpForTest takes the §4.7 pod operation lock for a
+// checkpoint addressed to sessionID, so an external test can put the lock
+// in a known admission state before driving a Checkpoint RPC. It returns
+// the release func the caller must invoke once it is done holding the
+// lock.
+func (s *Server) BeginCheckpointOpForTest(ctx context.Context, sessionID string) (func(), error) {
+	return s.ops.Begin(ctx, opCheckpoint, sessionID)
+}
+
+// WaitPendingCheckpointForTest blocks until a checkpoint addressed to
+// sessionID has entered the operation lock's pending set, or until the
+// timeout elapses. It reports whether the checkpoint became pending, so an
+// external test can build the pending set deterministically rather than
+// sleeping.
+func (s *Server) WaitPendingCheckpointForTest(sessionID string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s.ops.mu.Lock()
+		_, ok := s.ops.checkpoints[sessionID]
+		s.ops.mu.Unlock()
+		if ok {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
 }

@@ -188,43 +188,44 @@ func TestOpLockPromotesCheckpointsInSessionIdentifierOrder(t *testing.T) {
 	}
 }
 
-// TestOpLockCoalescesSameSlotAdmitsDistinctSlot pins the per-session
-// dedup: a re-fire for an already-pending session identifier coalesces,
-// while a distinct session identifier is admitted into the pending set.
+// TestOpLockCoalescesSameSessionAdmitsDistinctSession pins the
+// per-session dedup: a re-fire for an already-pending session identifier
+// coalesces, while a distinct session identifier is admitted into the
+// pending set.
 //
-// spec: 5.2 (per-session checkpoint serialization), 4.7 (one pending
+// spec: 5.2 (one session's checkpoint upload at a time), 4.7 (one pending
 // checkpoint per distinct session identifier).
-func TestOpLockCoalescesSameSlotAdmitsDistinctSlot(t *testing.T) {
+func TestOpLockCoalescesSameSessionAdmitsDistinctSession(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "slot-a")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol")
 	if err != nil {
 		t.Fatalf("Begin running checkpoint: %v", err)
 	}
 	defer rel1()
 
-	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-	waitPendingSession(t, &l, "slot-b")
+	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice") }()
+	waitPendingSession(t, &l, "9c02ae55-alice")
 
-	// A re-fire for the already-pending slot coalesces.
-	if _, err := l.Begin(context.Background(), opCheckpoint, "slot-b"); !errors.Is(err, errOpCoalesced) {
-		t.Fatalf("same-slot re-fire err = %v, want errOpCoalesced", err)
+	// A re-fire for the already-pending session coalesces.
+	if _, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice"); !errors.Is(err, errOpCoalesced) {
+		t.Fatalf("same-session re-fire err = %v, want errOpCoalesced", err)
 	}
 
-	// A distinct slot is admitted into the pending set.
-	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-c") }()
-	waitPendingSession(t, &l, "slot-c")
+	// A distinct session identifier is admitted into the pending set.
+	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "e41fbb70-bob") }()
+	waitPendingSession(t, &l, "e41fbb70-bob")
 }
 
 // TestOpLockRejectsSecondQueuedInterrupt pins that an interrupt returns
 // errOpBusy while any operation is pending, whether a second interrupt
-// holds the whole-pod queue or a per-slot checkpoint is pending.
+// holds the whole-pod queue or a checkpoint for some session is pending.
 //
 // spec: 4.7 (a pending interrupt holds the whole-pod queue; an interrupt
 // never displaces a pending checkpoint).
 func TestOpLockRejectsSecondQueuedInterrupt(t *testing.T) {
 	t.Run("behind a pending interrupt", func(t *testing.T) {
 		var l opLock
-		rel1, err := l.Begin(context.Background(), opCheckpoint, "")
+		rel1, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol")
 		if err != nil {
 			t.Fatalf("Begin checkpoint: %v", err)
 		}
@@ -242,14 +243,14 @@ func TestOpLockRejectsSecondQueuedInterrupt(t *testing.T) {
 
 	t.Run("behind a pending checkpoint", func(t *testing.T) {
 		var l opLock
-		rel1, err := l.Begin(context.Background(), opCheckpoint, "slot-a")
+		rel1, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol")
 		if err != nil {
 			t.Fatalf("Begin checkpoint: %v", err)
 		}
 		defer rel1()
 
-		go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-		waitPendingSession(t, &l, "slot-b")
+		go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice") }()
+		waitPendingSession(t, &l, "9c02ae55-alice")
 
 		// An interrupt never displaces a pending checkpoint.
 		if _, err := l.Begin(context.Background(), opInterrupt, ""); !errors.Is(err, errOpBusy) {
@@ -258,7 +259,7 @@ func TestOpLockRejectsSecondQueuedInterrupt(t *testing.T) {
 	})
 }
 
-func TestOpLockBusyWhenSlotFullDifferentKind(t *testing.T) {
+func TestOpLockBusyWhenRunningDifferentKind(t *testing.T) {
 	var l opLock
 	rel1, err := l.Begin(context.Background(), opCheckpoint, "")
 	if err != nil {
@@ -271,7 +272,7 @@ func TestOpLockBusyWhenSlotFullDifferentKind(t *testing.T) {
 
 	// A checkpoint arriving behind a pending interrupt is rejected: the
 	// pending interrupt holds the whole-pod queue.
-	if _, err := l.Begin(context.Background(), opCheckpoint, "slot-a"); !errors.Is(err, errOpBusy) {
+	if _, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol"); !errors.Is(err, errOpBusy) {
 		t.Fatalf("checkpoint behind pending interrupt err = %v, want errOpBusy", err)
 	}
 }
@@ -346,20 +347,21 @@ func TestOpLockContextCancelWhileQueued(t *testing.T) {
 		t.Fatalf("queued Begin err = %v, want context.DeadlineExceeded", err)
 	}
 
-	// Cancellation freed the pending slot; a new operation can queue.
+	// Cancellation freed the pending queue; a new operation can queue.
 	go func() { _, _ = l.Begin(context.Background(), opInterrupt, "") }()
 	waitQueued(t, &l)
 }
 
 // TestOpLockContextCancelWithdrawsPendingCheckpoint pins that a cancelled
-// per-slot checkpoint is withdrawn from the pending set, so a subsequent
-// checkpoint for the same slot is admitted rather than coalesced.
+// checkpoint for a session is withdrawn from the pending set, so a
+// subsequent checkpoint for the same session is admitted rather than
+// coalesced.
 //
-// spec: 4.7 (per-slot pending set), 5.2 (per-slot checkpoint
-// serialization).
+// spec: 4.7 (one pending checkpoint per distinct session identifier), 5.2
+// (one session's checkpoint upload at a time).
 func TestOpLockContextCancelWithdrawsPendingCheckpoint(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "slot-a")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol")
 	if err != nil {
 		t.Fatalf("Begin running checkpoint: %v", err)
 	}
@@ -367,20 +369,20 @@ func TestOpLockContextCancelWithdrawsPendingCheckpoint(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := l.Begin(ctx, opCheckpoint, "slot-b"); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := l.Begin(ctx, opCheckpoint, "9c02ae55-alice"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled checkpoint err = %v, want context.DeadlineExceeded", err)
 	}
 
 	l.mu.Lock()
-	_, stillPending := l.checkpoints["slot-b"]
+	_, stillPending := l.checkpoints["9c02ae55-alice"]
 	l.mu.Unlock()
 	if stillPending {
 		t.Fatal("cancelled checkpoint was not withdrawn from the pending set")
 	}
 
-	// The withdrawn slot can be re-admitted.
-	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-	waitPendingSession(t, &l, "slot-b")
+	// The withdrawn session can be re-admitted.
+	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice") }()
+	waitPendingSession(t, &l, "9c02ae55-alice")
 }
 
 // TestOpLockPendingInterruptOccupiesNoCheckpointKey pins that a waiting

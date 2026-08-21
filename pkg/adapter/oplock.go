@@ -31,9 +31,12 @@ var (
 	// retries with backoff).
 	errOpBusy = errors.New("adapter operation lock is busy")
 	// errOpCoalesced is returned when a checkpoint Begin names a session
-	// identifier that is already pending. The pending checkpoint for that
-	// session covers this request, so the caller treats it as a
-	// successful no-op.
+	// identifier that is already pending. The request is refused because
+	// the already-pending checkpoint for the same session identifier
+	// covers it. Server.Checkpoint surfaces the refusal to the gateway as
+	// codes.Aborted, the same status a busy lock returns, so the gateway
+	// finalises the manifest row partial for this attempt.
+	// spec: §4.7 (one pending checkpoint per distinct session identifier).
 	errOpCoalesced = errors.New("adapter checkpoint coalesced into the pending checkpoint")
 )
 
@@ -75,7 +78,8 @@ type opLock struct {
 // a pending interrupt is recorded outside the pending checkpoint set. It
 // blocks until the operation may run or ctx is cancelled. When the
 // operation cannot wait it returns immediately: errOpCoalesced for a
-// checkpoint whose session identifier is already pending, or errOpBusy
+// checkpoint whose session identifier is already pending, which
+// Server.Checkpoint reports to the gateway as codes.Aborted, or errOpBusy
 // for an interrupt behind a pending operation or a checkpoint behind a
 // pending interrupt. On success the returned release func must be called
 // once the operation completes. spec: §4.7 (Checkpoint/Interrupt mutual

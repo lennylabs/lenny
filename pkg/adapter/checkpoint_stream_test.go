@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -847,5 +848,68 @@ func TestCheckpointStreamRefusesAnUnaddressedStart_spec_4_2(t *testing.T) {
 				t.Fatalf("Checkpoint with %s: code = %v, want InvalidArgument", tc.name, status.Code(err))
 			}
 		})
+	}
+}
+
+// spec: §4.7 (one pending checkpoint per distinct session identifier),
+// §10.1 (the gateway finalises the manifest row partial on an aborted
+// attempt) —
+// a Checkpoint whose session identifier already has a checkpoint pending
+// on the pod operation lock is refused, and the refusal reaches the
+// gateway as codes.Aborted, the same status a busy lock returns. The
+// non-happy path is an adapter that reports a coalesced checkpoint as a
+// successful no-op, which would tell the gateway an attempt it never
+// captured had completed.
+func TestCheckpointStreamCoalescedAttemptIsAborted_spec_4_7(t *testing.T) {
+	s := slotCheckpointServer(t, &recordingTransport{})
+	ctx := context.Background()
+	for _, session := range []string{"3b7d19f4-carol", "9c02ae55-alice"} {
+		if _, err := s.StartSession(ctx, slotStartReq(session)); err != nil {
+			t.Fatalf("StartSession(%s): %v", session, err)
+		}
+	}
+	client, _ := adapterClient(t, s)
+
+	// One checkpoint runs and a second waits, so the pending set holds
+	// exactly the session the coalescing attempt addresses.
+	release, err := s.BeginCheckpointOpForTest(ctx, "3b7d19f4-carol")
+	if err != nil {
+		t.Fatalf("hold the running op: %v", err)
+	}
+	defer release()
+	pendingCtx, cancelPending := context.WithCancel(ctx)
+	defer cancelPending()
+	go func() {
+		rel, berr := s.BeginCheckpointOpForTest(pendingCtx, "9c02ae55-alice")
+		if berr == nil {
+			<-pendingCtx.Done()
+			rel()
+		}
+	}()
+	if !s.WaitPendingCheckpointForTest("9c02ae55-alice", 2*time.Second) {
+		t.Fatal("the queued checkpoint did not enter the pending set")
+	}
+
+	stream, err := client.Checkpoint(ctx)
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-coalesced",
+			SessionId:      &adapterv1.SessionId{Value: "9c02ae55-alice"},
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("coalesced checkpoint: code = %v (err %v), want Aborted", status.Code(err), err)
+	}
+	// The refusal is the coalescing branch rather than some other abort.
+	if !strings.Contains(err.Error(), "coalesced") {
+		t.Fatalf("coalesced checkpoint error = %v, want the op lock's coalescing refusal", err)
 	}
 }
