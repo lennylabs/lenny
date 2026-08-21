@@ -7,20 +7,20 @@
 //
 // The arming state has two writers that interleave. A start claims the
 // pod-wide platform and connector MCP servers inside its own critical
-// section and arms them on the nonce it wrote into the pod manifest. A
-// release cancels those servers when the pod's shared runtime process is
-// serving no session. The window this case drives is the one in which the
-// two cross: the departing session's entry is already out of the slot
-// registry, its Runtime.Close has not returned, the successor's start
-// claims the pod and arms on a fresh nonce, and only then does the
-// departing session's close return and its release evaluate the gate.
+// section, and it takes that claim only while no surface is armed and the
+// slot registry holds no entry but its own. A release cancels those
+// servers when the pod's shared runtime process is serving no session,
+// which is the whole of that gate. The window this case drives is the one
+// in which the two cross: the departing session's entry is already out of
+// the slot registry, its Runtime.Close has not returned, the successor's
+// start claims the pod, and only then does the departing session's close
+// return and its release evaluate the gate.
 //
-// The property is that a session whose start returned finds a server
-// listening that authenticates the nonce its manifest carries. The
-// alternative is silent: the successor holds a manifest naming a socket
-// nothing serves, its own claim has already returned, and no later claim
-// re-arms for the life of the pod, so every tool call the runtime makes
-// fails the §15.4.3 handshake.
+// The properties are that the successor's start never binds the one
+// pod-wide socket a second time behind the running server, and that the
+// release is the only canceller, so a pod whose runtime generation has
+// ended is left unarmed and the next claim that holds the pod alone
+// re-arms on its own manifest nonce.
 //
 // spec: §15.4.3 (intra-pod MCP surface, nonce handshake), §5.2 (slot
 // registry, one claim per session), §4.7 (Shutdown teardown order).
@@ -162,12 +162,13 @@ func waitClosed(t *testing.T, ch <-chan struct{}, what string) {
 
 // spec: 15.4.3 (once-per-pod MCP arming), 5.2 (slot registry), 4.7
 // (Shutdown teardown order)
-// diagnosis: the successor session's start returned with a manifest nonce
-// no server accepts. The departing session's release cancelled the pod's
-// MCP surface after the successor's claim had armed it, and the successor
-// cannot re-arm because its own claim has already returned. Every
-// §15.4.3 handshake on that pod fails from then on.
-func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
+// diagnosis: the handoff window mishandled the pod-wide MCP surface. A
+// successor start that binds the socket behind the departing session's
+// running server fails with EADDRINUSE, and a release that leaves the
+// surface armed after the runtime generation ended keeps a departed
+// session's nonce answering on the pod and blocks the next claim from
+// re-arming on its own.
+func TestPodMCPArmingHandoffLeavesOneSurface_spec_15_4_3(t *testing.T) {
 	base := t.TempDir()
 	manifestDir := t.TempDir()
 	rt := newGatedRuntime()
@@ -186,6 +187,7 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("start alice: %v", err)
 	}
+	aliceNonce := manifestNonce(t, manifestDir)
 
 	// alice departs: hold the teardown open inside Runtime.Close, after
 	// the locked step took her entry out of the slot registry.
@@ -200,7 +202,8 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 	waitClosed(t, closeEntered, "alice's runtime close to begin")
 
 	// bob starts in that window and parks inside Runtime.Start, after the
-	// claim, the manifest write, and the MCP arming.
+	// claim and the manifest write. alice's server is still listening, so
+	// bob's claim declines the arming rather than binding behind it.
 	startEntered, releaseStart := rt.gate("bob", false)
 	startDone := make(chan struct{})
 	var startErr error
@@ -222,17 +225,35 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 		t.Fatalf("start bob: %v", startErr)
 	}
 
-	nonce := manifestNonce(t, manifestDir)
-	if nonce == "" {
-		t.Fatal("the pod manifest carries no MCP nonce for the surviving session")
+	// The release that ended the runtime generation left the pod unarmed,
+	// so the departed session's nonce answers nowhere.
+	if mcpInitializeAccepted(t, s.MCPSocket, aliceNonce) {
+		t.Error("the pod's MCP surface still authenticates the departed session's nonce after the release that left the shared runtime process serving no session")
 	}
-	if !mcpInitializeAccepted(t, s.MCPSocket, nonce) {
-		t.Error("the platform MCP server does not authenticate the surviving session's manifest nonce")
+
+	// bob ends and carol claims the pod alone on an unarmed surface, which
+	// re-arms on carol's own manifest nonce.
+	if _, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId: &adapterv1.SessionId{Value: "bob"},
+	}); err != nil {
+		t.Fatalf("shut bob down: %v", err)
+	}
+	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "carol"}, Runtime: "echo",
+	}); err != nil {
+		t.Fatalf("start carol: %v", err)
+	}
+	carolNonce := manifestNonce(t, manifestDir)
+	if carolNonce == "" || carolNonce == aliceNonce {
+		t.Fatalf("carol's manifest carries no fresh MCP nonce (%q)", carolNonce)
+	}
+	if !mcpInitializeAccepted(t, s.MCPSocket, carolNonce) {
+		t.Error("the claim that found the pod unarmed did not re-arm the platform MCP server on its own nonce")
 	}
 
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "bob"},
+			SessionId: &adapterv1.SessionId{Value: "carol"},
 		})
 	})
 }

@@ -53,20 +53,14 @@ func initializeWithNonce(t *testing.T, socket, nonce string) bool {
 // spec: §15.4.3 (intra-pod MCP surface, once-per-pod arming), §5.2 (slot
 // registry)
 //
-// The arming decision and the pod-surface cancellation are two writers of
-// the same state, and they interleave: a successor's claim runs after the
-// departing session's entry is deregistered but before that session's
-// Runtime.Close has returned, so the departing release finds the pod's
-// shared runtime process idle. Deciding the cancellation on that idleness
-// alone tears down the surface the successor has already armed, and the
-// successor's own claim has returned, so nothing re-arms for the life of
-// the pod and every call authenticated with its manifest nonce fails.
-//
-// The claim therefore takes the arming whenever the registry holds no
-// entry but its own, tearing down the departed session's surface first,
-// and the cancellation refuses while the session that armed the surface
-// still holds a slot.
-func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
+// The arming is taken once per pod, and the two terms of the claim's
+// predicate are both load-bearing. A claim that holds the pod alone but
+// arrives while a surface is still armed leaves that surface alone rather
+// than binding the one pod-wide socket a second time: the release is the
+// only canceller. The claimant learns it did not take the start, so the
+// handler skips startPlatformMCP instead of failing its bind with
+// EADDRINUSE.
+func TestPodMCPArmingDeclinedWhileSurfaceIsArmed_spec_15_4_3(t *testing.T) {
 	s := New("adapter-test")
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
@@ -84,45 +78,60 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	s.noteRuntimeStarted("alice")
 
 	// alice's Shutdown: the locked cancel-deregister step has run and the
-	// runtime close is still in flight.
+	// runtime close is still in flight, so bob's claim holds the pod alone
+	// while alice's surface is still up.
 	if _, removed, _ := s.deregisterSlot("alice"); !removed {
 		t.Fatal("deregister alice removed no entry")
 	}
-
-	// bob's start claims the pod in that window.
 	_, startMCP, err = s.claimSessionSlot("bob", false, false)
 	if err != nil {
 		t.Fatalf("claim bob: %v", err)
 	}
-	if !startMCP {
-		t.Fatal("a claim holding the pod alone did not take the MCP start, so bob's manifest nonce would reach no server")
+	if startMCP {
+		t.Fatal("a claim took the once-per-pod MCP start while a surface was still armed, so its bind races the running server on the one pod-wide socket")
 	}
-	if err := s.startPlatformMCP("nonce-bob"); err != nil {
-		t.Fatalf("arm the platform MCP server for bob: %v", err)
+	if !initializeWithNonce(t, s.MCPSocket, "nonce-alice") {
+		t.Error("the claim tore down the armed surface, which is the release's decision rather than the claim's")
 	}
+}
 
-	// alice's Runtime.Close returns and its release evaluates the
-	// pod-surface gate while bob's Runtime.Start has not yet returned.
-	s.noteRuntimeClosed("alice")
-	s.cancelPodMCPIfRuntimeIdle()
+// spec: §15.4.3 (intra-pod MCP surface cancellation), §5.2 (slot registry)
+//
+// The release-side cancellation is gated on one condition: that the
+// release leaves the pod's shared runtime process serving no session. A
+// surface armed by a session that never reached a start is cancelled by
+// whichever release finds that process idle, including a co-tenant's
+// rollback, because an idle process serves no session for the surface to
+// act as and the next claim re-arms on its own nonce.
+func TestPodMCPCancelledOnIdleRuntimeWhileArmingSessionHoldsSlot_spec_15_4_3(t *testing.T) {
+	s := New("adapter-test")
+	s.WorkspaceBase = t.TempDir()
+	s.MCPSocket = mcpSocketPath(t, "p.sock")
+
+	if _, startMCP, err := s.claimSessionSlot("alice", false, false); err != nil || !startMCP {
+		t.Fatalf("claim alice: startMCP=%v err=%v", startMCP, err)
+	}
+	if err := s.startPlatformMCP("nonce-alice"); err != nil {
+		t.Fatalf("arm the platform MCP server for alice: %v", err)
+	}
+	// alice armed the surface and never reached Runtime.Start, so the
+	// shared process serves no session. bob claims and rolls back.
+	if _, _, err := s.claimSessionSlot("bob", false, false); err != nil {
+		t.Fatalf("claim bob: %v", err)
+	}
+	s.releaseSessionSlot("bob")
 
 	s.mu.Lock()
-	armed, owner := s.mcpCancel != nil, s.mcpSession
+	armed := s.mcpCancel != nil
 	s.mu.Unlock()
-	if !armed {
-		t.Fatal("alice's release cancelled the surface bob armed")
+	if armed {
+		t.Fatal("a release that left the shared runtime process serving no session did not cancel the pod surface")
 	}
-	if owner != "bob" {
-		t.Errorf("arming session = %q, want bob", owner)
+	if _, err := net.Dial("unix", s.MCPSocket); err == nil {
+		t.Error("the platform MCP socket still accepts connections after the release")
 	}
-	if !initializeWithNonce(t, s.MCPSocket, "nonce-bob") {
-		t.Error("the platform MCP server did not authenticate bob's manifest nonce")
-	}
-	// The claim took over the departed session's surface rather than
-	// leaving it bound to the pod-wide socket, so the retired nonce is
-	// refused.
-	if initializeWithNonce(t, s.MCPSocket, "nonce-alice") {
-		t.Error("the socket still answers the departed session's nonce, so bob's claim did not stop the stale server")
+	if _, held := s.slots["alice"]; !held {
+		t.Fatal("alice lost its slot entry, so the case no longer covers a cancellation while the arming session holds one")
 	}
 }
 
@@ -144,10 +153,10 @@ func TestPodMCPArmingCancelledWhenNoSessionHoldsIt_spec_15_4_3(t *testing.T) {
 	s.releaseSessionSlot("alice")
 
 	s.mu.Lock()
-	armed, owner := s.mcpCancel != nil, s.mcpSession
+	armed := s.mcpCancel != nil
 	s.mu.Unlock()
-	if armed || owner != "" {
-		t.Fatalf("the rollback left the surface armed (cancel set = %v, owner = %q)", armed, owner)
+	if armed {
+		t.Fatal("the rollback left the pod surface armed")
 	}
 	if _, err := net.Dial("unix", s.MCPSocket); err == nil {
 		t.Error("the platform MCP socket still accepts connections after the release")
@@ -194,10 +203,10 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 	// bob rolls back; alice is still served by the shared runtime process.
 	s.releaseSessionSlot("bob")
 	s.mu.Lock()
-	armed, owner := s.mcpCancel != nil, s.mcpSession
+	armed := s.mcpCancel != nil
 	s.mu.Unlock()
-	if !armed || owner != "alice" {
-		t.Fatalf("the co-tenant's rollback disarmed the incumbent's surface (cancel set = %v, owner = %q)", armed, owner)
+	if !armed {
+		t.Fatal("the co-tenant's rollback disarmed the surface the incumbent's live runtime is using")
 	}
 	if !initializeWithNonce(t, s.MCPSocket, "nonce-alice") {
 		t.Error("the platform MCP server stopped authenticating the incumbent's nonce")
