@@ -57,10 +57,6 @@ const maxStepAttempts = input.maxStepAttempts || 50;
 // because the condition it detects is an account or transport failure that a
 // retry cannot clear, and every spin costs wall-clock for nothing.
 const maxDeadAttempts = input.maxDeadAttempts || 3;
-// Conformance findings whose remedy was to edit the proposal. Dropped from the
-// fix loop and surfaced at the end, because each one is a claim that the
-// proposal is wrong, which is a question for a human rather than for the fixer.
-const proposalRemedyFindings = [];
 const maxVerifyRounds = input.maxVerifyRounds || 25;
 const maxReviewRounds = input.maxReviewRounds || 50;
 const coverageFloor = input.coverageFloor || 80;
@@ -618,7 +614,7 @@ for (let i = 0; i < plan.steps.length; i++) {
       STEP_REVIEW_LENSES.map((l) => () =>
         agentTry(
           "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
-            "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong: that judgement is made by a human at the end of the run, and such a finding is discarded before the fixer sees it.\n\n" +
+            "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
             "Read the proposal at " +
             proposal +
             " (its spec edits are applied), focusing on the sections this step implements (" +
@@ -645,32 +641,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     // found a divergence.
     const liveReviews = reviewResults.filter(Boolean);
     const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
-    // Drop any finding that asks for the PROPOSAL to change. A conformance
-    // reviewer compares the code against the proposal, so the proposal is its
-    // measuring stick and never its subject; a finding whose remedy edits that
-    // file is outside the reviewer's remit by construction. This is filtered
-    // here rather than left to the reviewer's compliance because the finding
-    // does not merely waste an attempt: it is copied verbatim into the next
-    // fix prompt, so it persists across every later attempt of the step, and a
-    // dispatch carrying it can be refused outright as an instruction to undo a
-    // change a human asked to keep — which stalls the step with no agent ever
-    // running and no transcript to explain why.
-    const proposalTargeted = (f) =>
-      /proposals?\//i.test(String((f && f.fix) || "") + " " + String((f && f.where) || "")) ||
-      /\b(revert|undo|roll ?back|restore)\b[^.]{0,80}\bproposal\b/i.test(
-        String((f && f.fix) || "") + " " + String((f && f.title) || ""),
-      );
-    const rawFindings = liveReviews.flatMap((r) => r.findings);
-    const droppedFindings = rawFindings.filter(proposalTargeted);
-    stepFindings = rawFindings.filter((f) => !proposalTargeted(f));
-    for (const d of droppedFindings) {
-      log(
-        "Step " + step.id + ": dropped a conformance finding whose remedy edits the proposal (" +
-          String((d && d.title) || "untitled").slice(0, 120) +
-          "). The proposal is what this review measures against; a departure from it is reported at the end of the run.",
-      );
-      proposalRemedyFindings.push({ step: step.id, attempt, ...d });
-    }
+    stepFindings = liveReviews.flatMap((r) => r.findings);
     stepReviewClean = stepFindings.length === 0 && allReviewersRan;
     log(
       "Step " +
@@ -1153,6 +1124,29 @@ if (green && reviewFixApplied) {
   }
 }
 
+// Did the proposal change during the build, and if so what did the change say?
+// Read from git rather than from any agent's self-report, because an agent that
+// edited the file against instruction is not the source to ask about it.
+const proposalEditReport = await agentTry(
+  "Report whether one file changed during a range of commits, and if so what the changes said. This is a " +
+    "read-only audit: do not edit, revert, or restore anything, and run no command that writes.\n\n" +
+    "Repository: " + repo + "\nFile: " + proposal + "\nRange: " + baseRef + "..HEAD\n\n" +
+    "Run `git log --oneline " + baseRef + "..HEAD -- " + proposal + "` to list the commits that touched it. " +
+    "For each, read its diff for that file with `git show <sha> -- " + proposal + "` and its full message with " +
+    "`git show -s --format=%B <sha>`. Report what each edit did to the document's meaning, naming the section " +
+    "and quoting the sentences it replaced and the sentences it wrote, and give the reason the commit message " +
+    "states, verbatim. Do not judge whether the edit was right; a human decides that from your report. When no " +
+    "commit touched the file, report edited=false with an empty list, which is the expected result.",
+  { schema: PROPOSAL_EDITS, label: "proposal-edit-audit", phase: "Review" },
+);
+if (proposalEditReport && proposalEditReport.edited) {
+  log(
+    "THE PROPOSAL WAS EDITED DURING THE BUILD, which the step rules forbid: " +
+      ((proposalEditReport.commits || []).length) +
+      " commit(s). Kept and reported rather than reverted; see proposalEdits in the result.",
+  );
+}
+
 return {
   status: finalGreen && reviewClean ? "implemented" : "implemented-not-green",
   blastRadius: plan.blastRadius,
@@ -1167,9 +1161,9 @@ return {
   proposalDeviations: stepResults.flatMap((r) =>
     (r.deviations || []).map((d) => ({ step: r.step, title: r.title, ...d })),
   ),
-  // Conformance findings that asked for the proposal to change rather than the
-  // code. Withheld from the fix loop; each is a claim the proposal is wrong.
-  proposalRemedyFindings,
+  // Edits the build made to the proposal despite being forbidden to. Recorded
+  // rather than prevented or reverted; see PROPOSAL_EDITS.
+  proposalEdits: proposalEditReport,
   skippedSteps,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
   green: finalGreen,
