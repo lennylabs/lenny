@@ -167,6 +167,24 @@ func SlotsDir(base string) string {
 	return filepath.Join(base, slotsSegment)
 }
 
+// SessionCurrentDir returns the session's §6.4 cwd,
+// `<base>/slots/{sessionId}/current`, under the workspace base the
+// adapter reports on the §15.5 handshake. It is the one derivation the
+// gateway performs from the reported base and a session identifier. An
+// empty base, an empty identifier, or an identifier that is not a safe
+// path segment yields the empty string, which every caller treats the way
+// it treats an unreported base. spec: §6.4; §7.3.
+func SessionCurrentDir(base, sessionID string) string {
+	if base == "" {
+		return ""
+	}
+	paths, err := Resolve(Roots{Workspace: base}, sessionID)
+	if err != nil {
+		return ""
+	}
+	return paths.Current
+}
+
 // slotRoot returns `/workspace/slots/{slotId}` for the workspace-side
 // removal, the parent of both current/ and staging/.
 func (p SlotPaths) slotRoot() string {

@@ -126,11 +126,11 @@ type SlotBindRequest struct {
 // the BindResult carries the slot's SlotID. Any failure after the slot
 // reservation is returned so the caller can retry on another slot.
 func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult, error) {
-	sandboxName, slotID, podIP, cl, err := b.connectSlot(ctx, req)
+	sandboxName, slotID, podIP, workspaceBase, cl, err := b.connectSlot(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, cl)
+	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl)
 }
 
 // ClaimSlot performs the §7.1 step-4 claim at session create for a §5.2
@@ -156,7 +156,10 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 // reservation); §6.3.
 func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
-	sandboxName, slotID, podIP, cl, err := b.connectSlot(ctx, req)
+	// The reported workspace base is discarded here: the create-time claim
+	// persists no workspace column, and BindReservedSlot re-reports the
+	// base on its own handshake when the bind reconnects. spec: §6.4.
+	sandboxName, slotID, podIP, _, cl, err := b.connectSlot(ctx, req)
 	if err != nil {
 		// connectSlot returns a SlotBindError once the slot has been reserved
 		// (a resolveSandbox/dial/handshake failure after the active_slots
@@ -248,7 +251,7 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		))
 	}
-	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, cl)
+	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, resp.GetWorkspaceBase(), cl)
 }
 
 // materializeSlot runs the post-reservation §4.7 workspace-and-start
@@ -259,7 +262,7 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 // per-slot lease per §6), and starts the session. Any failure closes the
 // adapter connection, records the §5.2 failure counter, and returns a
 // SlotBindError so the caller can release the reservation and retry.
-func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP string, cl *adapterclient.Client) (*BindResult, error) {
+func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client) (*BindResult, error) {
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4) exactly as in
@@ -315,12 +318,16 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
 	}
 	return &BindResult{
-		SessionID:             req.SessionID,
-		TenantID:              req.TenantID,
-		SandboxName:           sandboxName,
-		PodIP:                 podIP,
-		SlotID:                slotID,
-		Adapter:               cl,
+		SessionID:   req.SessionID,
+		TenantID:    req.TenantID,
+		SandboxName: sandboxName,
+		PodIP:       podIP,
+		SlotID:      slotID,
+		Adapter:     cl,
+		// spec: §6.4; §7.3 — the slot bind reports the same workspace base
+		// the base-mode bind reports, verbatim, so the one persist site
+		// derives `<base>/slots/{sessionId}/current` once for both paths.
+		WorkspaceBase:         workspaceBase,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
 		// spec: §5.2 — carry the pool's recycle.enabled flag so
@@ -399,7 +406,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 // SlotClaimer is returned unwrapped so the gateway's session-creation
 // handler can map it to WARM_POOL_EXHAUSTED with the §5.2
 // "concurrent_slots_exhausted" reason.
-func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP string, cl *adapterclient.Client, err error) {
+func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, err error) {
 	claimer := &podclaim.SlotClaimer{
 		Client:         b.Client,
 		Namespace:      b.Namespace,
@@ -423,9 +430,9 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		if errors.Is(err, podclaim.ErrNoConcurrentSlot) ||
 			errors.Is(err, podclaim.ErrTenantMismatch) ||
 			errors.Is(err, podclaim.ErrNoIdlePod) {
-			return "", "", "", nil, err
+			return "", "", "", "", nil, err
 		}
-		return "", "", "", nil, fmt.Errorf("podsession: claim concurrent slot: %w", err)
+		return "", "", "", "", nil, fmt.Errorf("podsession: claim concurrent slot: %w", err)
 	}
 	sandboxName = res.SandboxName
 	slotID = res.SlotID
@@ -438,30 +445,30 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	// four post-connection bind stages).
 	sb, err := b.resolveSandbox(ctx, sandboxName)
 	if err != nil {
-		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
+		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
 	}
 	podIP = sb.Status.PodIP
 
 	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
 	cl, err = b.DialAdapter(addr)
 	if err != nil {
-		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
 			fmt.Errorf("podsession: dial slot adapter at %s: %w", addr, err))
 	}
 
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
 			fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err))
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
-		return "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
+		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
 			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
 		))
 	}
-	return sandboxName, slotID, podIP, cl, nil
+	return sandboxName, slotID, podIP, resp.GetWorkspaceBase(), cl, nil
 }
 
 // slotBindError wraps a post-reservation slot failure with the pod and

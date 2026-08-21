@@ -533,14 +533,14 @@ type BindResult struct {
 	// Nil when materialization produced no warnings or when Bind
 	// returned before FinalizeWorkspace ran. F-7.4.15.
 	WorkspacePlanWarnings []*adapterv1.WorkspacePlanWarning
-	// WorkspaceRoot is the §7.3 / §6.1 absolute cwd path the
-	// pod's adapter reported on the §15.5 version handshake. The gateway
-	// persists it on the session row so a subsequent Resume can pass it
-	// back via ResumeRequest.expected_workspace_root for the adapter to
-	// assert "same absolute cwd path" before extracting any checkpoint
-	// bytes. Empty when the adapter is on an older protocol that did
-	// not report the field. F-7.3.15.
-	WorkspaceRoot string
+	// WorkspaceBase is the §6.4 workspace base the pod's adapter reported
+	// on the §15.5 version handshake, verbatim. The session's §7.3 cwd is
+	// `<base>/slots/{sessionId}/current`, derived once where the value is
+	// persisted on the session row, so a subsequent Resume can pass that
+	// root back via ResumeRequest.expected_workspace_root for the adapter
+	// to assert "same absolute cwd path" before extracting any checkpoint
+	// bytes. Empty when the adapter reported no base. F-7.3.15.
+	WorkspaceBase string
 	// SetupOutputs carries the §7.5 captured stdout/stderr/exit
 	// for each setup command the adapter ran. The gateway persists this
 	// trail on the session row so it is visible through §15.1
@@ -685,13 +685,13 @@ type ClaimResult struct {
 	// disposition as a reserved concurrent slot that /start reconnects to
 	// via BindReservedSlot rather than re-reserving. spec: §5.2.
 	SlotID string
-	// WorkspaceRoot is the §7.3 absolute cwd the pod's adapter reported on
-	// the §15.5 handshake at claim. Persisted so Prepare's archive symlink
-	// canonicalization and Launch's SDK-warm ConfigureWorkspace cwd both
-	// use the negotiated root without re-handshaking before they need it.
-	// Empty for a ClaimSlot result: the per-slot workspace root is
-	// negotiated when BindReservedSlot reconnects.
-	WorkspaceRoot string
+	// WorkspaceBase is the §6.4 workspace base the pod's adapter reported
+	// on the §15.5 handshake at claim, verbatim. Prepare's archive symlink
+	// canonicalization and Launch's SDK-warm ConfigureWorkspace cwd derive
+	// the session's `<base>/slots/{sessionId}/current` root from it without
+	// re-handshaking before they need it. Empty for a ClaimSlot result: the
+	// base is reported when BindReservedSlot reconnects.
+	WorkspaceBase string
 	// PodClaim is the §6.3 "pod claim and routing" phase duration (claim,
 	// pod-IP resolution, mTLS dial, version handshake), for the create
 	// handler to record on the §6.3 / §16.1 pod_claim phase histogram.
@@ -705,9 +705,10 @@ type ClaimResult struct {
 // before Prepare returns; Launch reconnects from the binding (§4.6).
 // spec: §4.3 (proposal), §6.3.
 type PrepareResult struct {
-	// WorkspaceRoot is the §7.3 cwd the adapter reported when Prepare
-	// reconnected, carried onto the session row for a later Resume.
-	WorkspaceRoot string
+	// WorkspaceBase is the §6.4 workspace base the adapter reported when
+	// Prepare reconnected, verbatim. The session row records the root
+	// derived from it for a later Resume.
+	WorkspaceBase string
 	// Demoted reports whether the §6.1 SDK-warm pod was demoted to pod-warm
 	// during Prepare. Launch reads it to decide StartSession vs.
 	// ConfigureWorkspace without re-running the blocking-path match.
@@ -769,7 +770,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	res.Timings.CredentialAssignment = prep.Timings.CredentialAssignment
 	res.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
 	res.SetupOutputs = prep.SetupOutputs
-	res.WorkspaceRoot = prep.WorkspaceRoot
+	res.WorkspaceBase = prep.WorkspaceBase
 	return res, nil
 }
 
@@ -796,7 +797,7 @@ func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, erro
 		SandboxName:   sb.Name,
 		Pool:          req.Pool,
 		PodIP:         sb.Status.PodIP,
-		WorkspaceRoot: neg.workspaceRoot(req.SessionID),
+		WorkspaceBase: neg.WorkspaceBase,
 		PodClaim:      time.Since(phaseStart),
 	}, nil
 }
@@ -882,7 +883,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// re-validation location.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
-		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), neg.workspaceRoot(req.SessionID), archive.DefaultWorkspaceRoot),
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID), archive.DefaultWorkspaceRoot),
 	}
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
 	if err != nil {
@@ -927,7 +928,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 
 	cl.Close()
 	return &PrepareResult{
-		WorkspaceRoot:         neg.workspaceRoot(req.SessionID),
+		WorkspaceBase:         neg.WorkspaceBase,
 		Demoted:               demoted,
 		WorkspacePlanWarnings: finalizeWarnings,
 		SetupOutputs:          setupOutputs,
@@ -977,7 +978,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// runtime from cold (StartSession). A demoted or pod-warm pod uses
 	// StartSession.
 	if req.PreConnect && !req.Demoted {
-		if err := cl.ConfigureWorkspace(ctx, req.SessionID, neg.workspaceRoot(req.SessionID), req.ExperimentContext, req.TracingContext); err != nil {
+		if err := cl.ConfigureWorkspace(ctx, req.SessionID, slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID), req.ExperimentContext, req.TracingContext); err != nil {
 			reclaim()
 			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
 		}
@@ -1022,7 +1023,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
 		Adapter:               cl,
 		Timings:               t,
-		WorkspaceRoot:         neg.workspaceRoot(req.SessionID),
+		WorkspaceBase:         neg.WorkspaceBase,
 	}, nil
 }
 
@@ -1597,7 +1598,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 			SandboxName:   sb.Name,
 			PodIP:         sb.Status.PodIP,
 			Adapter:       cl,
-			WorkspaceRoot: neg.workspaceRoot(req.SessionID),
+			WorkspaceBase: neg.WorkspaceBase,
 		},
 		Mode:               res.Mode,
 		RecoveryGeneration: res.RecoveryGeneration,
@@ -1613,21 +1614,6 @@ type negotiated struct {
 	// per-slot tree under. A session's §7.3 cwd is derived from it and the
 	// session identifier. Empty when the adapter reports none. F-7.3.15.
 	WorkspaceBase string
-}
-
-// workspaceRoot derives the §7.3 absolute cwd path of one session on the
-// pod: <base>/slots/{sessionId}/current. An adapter that reported no base
-// yields the empty string, which the callers treat as "unreported" the way
-// they treated an unreported root. spec: §6.4; §7.3.
-func (n negotiated) workspaceRoot(sessionID string) string {
-	if n.WorkspaceBase == "" || sessionID == "" {
-		return ""
-	}
-	paths, err := slotlayout.Resolve(slotlayout.Roots{Workspace: n.WorkspaceBase}, sessionID)
-	if err != nil {
-		return ""
-	}
-	return paths.Current
 }
 
 // connect claims an idle pod from the pool, resolves the claimed Sandbox,

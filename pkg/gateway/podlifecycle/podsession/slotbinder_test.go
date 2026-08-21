@@ -90,6 +90,9 @@ type concurrentAdapter struct {
 	// drive the fail-closed leaked path (a transport error keeps the slot
 	// counted).
 	shutdownErr error
+	// workspaceBase is the §6.4 base the handshake reports, the value the
+	// slot bind carries verbatim onto its BindResult.
+	workspaceBase string
 }
 
 func newConcurrentAdapter() *concurrentAdapter {
@@ -112,6 +115,7 @@ func (a *concurrentAdapter) NegotiateVersion(_ context.Context, req *adapterv1.N
 		Capabilities:            []string{"concurrentWorkspace"},
 		AdapterVersion:          "concurrent-fake",
 		Incompatible:            sel == "",
+		WorkspaceBase:           a.workspaceBase,
 	}, nil
 }
 

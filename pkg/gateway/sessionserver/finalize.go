@@ -358,9 +358,10 @@ func (s *Server) applyFinalizePrepareResult(ctx context.Context, tenantID, id, r
 			log.Printf("sessionserver: persist setup output for session %s: %v", id, err)
 		}
 	}
-	// spec: §7.3 — capture the adapter's negotiated workspace root so a
-	// later Resume can assert the replacement pod's WorkspaceRoot matches.
-	s.persistWorkspaceRoot(ctx, resultTenantID, resultSessionID, prep.WorkspaceRoot)
+	// spec: §7.3; §6.4 — capture the workspace base the adapter reported so
+	// the persist derives the session's slot root and a later Resume can
+	// assert the replacement pod's resolved root matches.
+	s.persistWorkspaceRoot(ctx, resultTenantID, resultSessionID, prep.WorkspaceBase)
 	// spec: §7.4 — republish each strip-components-skip advisory the
 	// gateway and adapter raised during materialization on the per-session SSE
 	// bus so a client can audit the skipped archive entries.

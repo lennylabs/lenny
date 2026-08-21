@@ -123,7 +123,8 @@ var frameAddressKeyBound = regexp.MustCompile(`"?(` + addressAlternation(wireSpe
 var echoedIdentifier = regexp.MustCompile(
 	addressAlternation(wireSpelling) + "|" +
 		addressAlternation(goFieldSpelling) + "|" +
-		addressAlternation(snakeSpelling))
+		addressAlternation(snakeSpelling),
+)
 
 // checkFrameAddress reports a session-scoped frame literal that does not carry
 // the per-session address in the form the published JSON Lines schema accepts.
@@ -743,7 +744,8 @@ var addressReadBack = regexp.MustCompile(
 	`\[\s*["'](` + addressAlternation(wireSpelling) + `)["']\s*\]|` +
 		`\.(` + addressAlternation(wireSpelling) + "|" +
 		addressAlternation(goFieldSpelling) + "|" +
-		addressAlternation(snakeSpelling) + `)\b`)
+		addressAlternation(snakeSpelling) + `)\b`,
+)
 
 // spec: 4.1 (request message scope), 15.4.3, 28.5.3
 // diagnosis: the conformance page states the Basic-level echo obligation in

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
@@ -2605,7 +2606,7 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 	result.Timings.CredentialAssignment = prep.Timings.CredentialAssignment
 	result.WorkspacePlanWarnings = prep.WorkspacePlanWarnings
 	result.SetupOutputs = prep.SetupOutputs
-	result.WorkspaceRoot = prep.WorkspaceRoot
+	result.WorkspaceBase = prep.WorkspaceBase
 	// spec: §6.3 / §5 (0007 proposal) — record the prepare/launch phases
 	// measured here (workspace_materialization, setup_commands,
 	// credential_assignment, agent_session_start). result.Timings.PodClaim is
@@ -2845,13 +2846,14 @@ func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResu
 	}
 	s.podRegistry.Put(result)
 	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
-	// spec: §7.3 — capture the adapter's reported WorkspaceRoot
-	// from the §15.5 handshake (carried through BindResult) on the first
-	// non-empty bind so a subsequent Resume can assert the replacement
-	// pod's WorkspaceRoot matches. The pgstore guard ignores an empty
-	// payload so a later bind without the field never overwrites a
-	// recorded value. F-7.3.15.
-	s.persistWorkspaceRoot(ctx, result.TenantID, result.SessionID, result.WorkspaceRoot)
+	// spec: §7.3; §6.4 — capture the workspace base the adapter reported
+	// on the §15.5 handshake (carried verbatim through BindResult on both
+	// bind paths) on the first non-empty bind. persistWorkspaceRoot derives
+	// the session's slot root from it, so a subsequent Resume can assert
+	// the replacement pod's resolved root matches. The pgstore guard
+	// ignores an empty payload so a later bind without the field never
+	// overwrites a recorded value. F-7.3.15.
+	s.persistWorkspaceRoot(ctx, result.TenantID, result.SessionID, result.WorkspaceBase)
 	// F-7.4.15: republish any §14 advisory warnings the adapter raised
 	// during FinalizeWorkspace materialization. The
 	// `workspace_plan_strip_components_skip` warning per §7.4
@@ -3256,19 +3258,25 @@ func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, 
 	}
 }
 
-// persistWorkspaceRoot records the adapter-reported absolute cwd path on
-// the session row at the first non-empty bind. The pgstore-side write
-// guard ignores empty payloads so a follow-on bind that did not capture
-// a value (older adapter, replay path) cannot clobber a recorded one.
-// The recorded value feeds the §7.3
-// assertion on a subsequent Resume — the gateway reads row.WorkspaceRoot
-// and passes it via ResumeRequest.expected_workspace_root for the
-// replacement pod's adapter to compare against its own WorkspaceRoot.
-// Best-effort: a store failure logs and continues; the in-memory
-// BindResult still carries the value for the current replica.
+// persistWorkspaceRoot derives the session's §6.4 slot root,
+// `<base>/slots/{sessionId}/current`, from the workspace base the adapter
+// reported and records it on the session row at the first non-empty bind.
+// The derivation lives here rather than at the call sites because the
+// write is first-non-empty-wins: a caller that passed an underived base
+// would fix the column at the pod's base whenever it ran first, and the
+// §7.3 step (d) guard would then reject every resume.
 //
-// spec: §7.3 step (d). F-7.3.15.
-func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, root string) {
+// The pgstore-side write guard ignores empty payloads so a follow-on bind
+// that did not capture a base cannot clobber a recorded root. The recorded
+// value feeds the §7.3 assertion on a subsequent Resume: the gateway reads
+// row.WorkspaceRoot and passes it via ResumeRequest.expected_workspace_root
+// for the replacement pod's adapter to compare against the root it
+// resolves for the session. Best-effort: a store failure logs and
+// continues.
+//
+// spec: §7.3 step (d); §6.4. F-7.3.15.
+func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, workspaceBase string) {
+	root := slotlayout.SessionCurrentDir(workspaceBase, sessionID)
 	if root == "" {
 		return
 	}

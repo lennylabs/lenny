@@ -3,6 +3,8 @@
 package adapter
 
 import (
+	"context"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -39,45 +41,93 @@ import (
 //
 // spec: §4.7; §5.2; §15.4.3.
 func (s *Server) claimSessionSlot(sessionID string, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, err error) {
+	fresh, startMCP, stale, err := s.claimSessionSlotUnderLock(sessionID, sdkWarm, idempotentRepeat)
+	// A surface armed by a session the registry no longer holds is torn
+	// down outside s.mu, before the claimant arms its own on a fresh
+	// nonce. spec: §15.4.3.
+	runCancels(stale)
+	return fresh, startMCP, err
+}
+
+// claimSessionSlotUnderLock is claimSessionSlot's critical section. It
+// returns the cancel functions of a stale pod MCP surface the claim took
+// over, for the caller to run once the lock is released.
+func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, stale []context.CancelFunc, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sdkWarm {
 		for id, other := range s.slots {
 			if id != sessionID && other.sessionID != "" {
-				return false, false, status.Errorf(codes.Unavailable,
+				return false, false, nil, status.Errorf(codes.Unavailable,
 					"pod is not idle: session %s is already assigned", other.sessionID)
 			}
 		}
 	}
 	st, err := s.ensureSlotStateLocked(sessionID)
 	if err != nil {
-		return false, false, status.Errorf(codes.InvalidArgument,
+		return false, false, nil, status.Errorf(codes.InvalidArgument,
 			"resolve slot for session %s: %v", sessionID, err)
 	}
 	if st.started {
 		if idempotentRepeat {
-			return false, false, nil
+			return false, false, nil, nil
 		}
-		return false, false, status.Errorf(codes.Unavailable,
+		return false, false, nil, status.Errorf(codes.Unavailable,
 			"session %s has already started on this pod", sessionID)
 	}
 	st.sessionID = sessionID
 	st.started = true
-	return true, s.claimPodMCPStartLocked(), nil
+	startMCP, stale = s.claimPodMCPStartLocked(sessionID)
+	return true, startMCP, stale, nil
 }
 
 // claimPodMCPStartLocked reports whether the caller must arm the pod's
-// platform and per-connector MCP servers, and records the claim so a
-// concurrent claim does not also take it. The servers are pod-wide, so
-// they are armed only while the registry holds no entry but the
-// claimant's; a claim on a co-tenanted pod finds the surface already
-// accounted for. Callers hold s.mu. spec: §15.4.3.
-func (s *Server) claimPodMCPStartLocked() bool {
-	if s.mcpArmed || s.mcpCancel != nil || len(s.slots) != 1 {
-		return false
+// platform and per-connector MCP servers, and records the claiming
+// session so a concurrent claim does not also take the one socket. The
+// servers are pod-wide, so they are armed only while the registry holds
+// no entry but the claimant's; a claim on a co-tenanted pod finds the
+// surface already accounted for.
+//
+// A claim that holds the pod alone takes the arming even when a surface
+// is still up, because that surface was armed by a session the registry
+// no longer holds and serves that session's nonce. Its cancel functions
+// are returned so the claimant tears it down before arming its own. The
+// arming decision and the cancellation predicate read and write the same
+// identifier under s.mu, so a departing session's release cannot cancel
+// the surface a successor's claim has already taken.
+//
+// Callers hold s.mu. spec: §15.4.3.
+func (s *Server) claimPodMCPStartLocked(sessionID string) (startMCP bool, stale []context.CancelFunc) {
+	if len(s.slots) != 1 || s.mcpSession == sessionID {
+		return false, nil
 	}
-	s.mcpArmed = true
-	return true
+	stale = s.takePodMCPCancelsLocked()
+	s.mcpSession = sessionID
+	return true, stale
+}
+
+// takePodMCPCancelsLocked clears the pod's intra-pod MCP surface state
+// and returns the cancel functions that stop the running servers, for the
+// caller to run once s.mu is released. Callers hold s.mu.
+// spec: §15.4.3; §5.1 — F-5.1.11.
+func (s *Server) takePodMCPCancelsLocked() []context.CancelFunc {
+	cancels := make([]context.CancelFunc, 0, len(s.connectorCancels)+1)
+	if s.mcpCancel != nil {
+		cancels = append(cancels, s.mcpCancel)
+		s.mcpCancel = nil
+	}
+	cancels = append(cancels, s.connectorCancels...)
+	s.connectorCancels = nil
+	s.mcpHandshakeSeen = false
+	return cancels
+}
+
+// runCancels runs every cancel function in order. It is called with no
+// lock held: a cancel stops a server goroutine that takes s.mu itself.
+func runCancels(cancels []context.CancelFunc) {
+	for _, c := range cancels {
+		c()
+	}
 }
 
 // deregisterSlotLocked is the first of the two release steps: under s.mu
@@ -144,29 +194,42 @@ func (s *Server) releaseSessionSlot(sessionID string) {
 
 // cancelPodMCPIfRuntimeIdle stops the pod's platform and per-connector
 // MCP servers and clears the §15.4.3 handshake signal when the pod's
-// shared runtime process is serving no session. No arming identifier is
-// stored: a release that ends the generation cancels a surface no
-// surviving session can use, and a release that leaves the process
-// serving a session cancels nothing. spec: §15.4.3; §5.1 — F-5.1.11.
+// shared runtime process is serving no session and the session that armed
+// the surface no longer holds a slot. A release that ends the generation
+// cancels a surface no surviving session can use, and a release that
+// leaves the process serving a session cancels nothing.
+//
+// The arming identifier is half the predicate because the two writers
+// interleave: a successor's claim can take the arming between a departing
+// session's deregistration and the return of that session's
+// Runtime.Close, and the departing release then finds the process idle.
+// Cancelling there would leave the successor holding a manifest nonce
+// with no server listening, and its own claim has already returned, so
+// nothing would re-arm for the life of the pod.
+//
+// spec: §15.4.3; §5.1 — F-5.1.11.
 func (s *Server) cancelPodMCPIfRuntimeIdle() {
 	s.mu.Lock()
-	if !s.runtimeIdleLocked() {
+	if !s.runtimeIdleLocked() || s.mcpArmingHeldLocked() {
 		s.mu.Unlock()
 		return
 	}
-	cancel := s.mcpCancel
-	s.mcpCancel = nil
-	s.mcpArmed = false
-	s.mcpHandshakeSeen = false
-	connectorCancels := s.connectorCancels
-	s.connectorCancels = nil
+	cancels := s.takePodMCPCancelsLocked()
+	s.mcpSession = ""
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	runCancels(cancels)
+}
+
+// mcpArmingHeldLocked reports that the session which armed the pod's MCP
+// surface still holds a slot on the pod, so the surface is one a live
+// claimant is using rather than a departed session's residue. Callers
+// hold s.mu. spec: §15.4.3.
+func (s *Server) mcpArmingHeldLocked() bool {
+	if s.mcpSession == "" {
+		return false
 	}
-	for _, c := range connectorCancels {
-		c()
-	}
+	_, held := s.slots[s.mcpSession]
+	return held
 }
 
 // checkSessionBound validates an inbound session-scoped RPC against the

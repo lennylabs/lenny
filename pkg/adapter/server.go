@@ -342,11 +342,13 @@ type Server struct {
 	// controller renders for the whole pod, so it is started at most once
 	// per pod rather than once per session.
 	mcpCancel context.CancelFunc
-	// mcpArmed records that a claim has taken the once-per-pod MCP start,
-	// decided inside the claim's own critical section so two concurrent
-	// starts cannot both bind the one socket. Cleared by the pod-surface
-	// cancellation. spec: §15.4.3.
-	mcpArmed bool
+	// mcpSession names the session whose claim took the once-per-pod MCP
+	// start, empty when the surface is unarmed. The claim records it
+	// inside its own critical section so two concurrent starts cannot both
+	// bind the one socket, and the pod-surface cancellation reads it so a
+	// departing session cannot cancel a surface the pod's current claimant
+	// still needs. Cleared by that cancellation. spec: §15.4.3.
+	mcpSession string
 	// connectorCancels stops the §9.3 per-connector MCP servers, one
 	// cancel per connector socket. Reset to nil after every server is
 	// stopped. F-9.1.2.

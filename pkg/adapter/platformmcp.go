@@ -42,9 +42,28 @@ func (s *Server) startPlatformMCP(nonce string) error {
 		srv.Provider = &platformToolProvider{forwarder: s.PlatformForwarder, server: s}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
 	s.mu.Lock()
-	s.mcpCancel = cancel
+	s.mcpCancel = serveUntilCancelled(cancel, func() { _ = srv.Serve(ctx, serveLis, nonce) })
 	s.mu.Unlock()
 	return nil
+}
+
+// serveUntilCancelled runs serve on its own goroutine and returns the stop
+// function that cancels it and waits for the server to return. The wait is
+// what makes the socket reusable: Serve owns the listener and closes it on
+// cancel, so a caller that arms a fresh server on the same pod-wide socket
+// after stopping the previous one finds the address free and the socket
+// file already unlinked. It is also the single closer of that listener, so
+// no second close can unlink a socket a later server created.
+// spec: §15.4.3; §9.3.
+func serveUntilCancelled(cancel context.CancelFunc, serve func()) context.CancelFunc {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serve()
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }

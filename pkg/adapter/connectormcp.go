@@ -84,9 +84,9 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 	srv.RequireChallenge = s.NonceOnlyMode
 	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, server: s, connectorID: c.ID}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
+	stop := serveUntilCancelled(cancel, func() { _ = srv.Serve(ctx, serveLis, nonce) })
 	s.mu.Lock()
-	s.connectorCancels = append(s.connectorCancels, cancel)
+	s.connectorCancels = append(s.connectorCancels, stop)
 	s.mu.Unlock()
 	return nil
 }
