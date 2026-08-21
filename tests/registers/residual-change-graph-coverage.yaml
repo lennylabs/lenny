@@ -444,6 +444,12 @@ entries:
     reason: |-
       a schema under the schema tree that no glob key covers while its siblings carry one; it leaves the class when that tree gains a key for it
   - member: |-
+      scripts/check-workflow-scripts.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a checker over the agent workflow drivers, which no test tier is selected from
+  - member: |-
       scripts/reconcile-test-gaps.py
     class: change-graph-coverage
     disposition: excluded

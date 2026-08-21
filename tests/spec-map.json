@@ -150,6 +150,7 @@
       "title": "Edge Gateway Replicas",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier0_static/adapter_proto_message_scope_test.go::TestAdapterProtoRequestMessagesAreClassifiedByScope",
         "pkg/gateway/...",
         "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPRuntimeEndpointExchangeConformsToSchema",
         "tests/tier3_contract/mcp_runtimes/endpoint_test.go::TestMCPSchemaValidatorRejectsNonConformingFrames",
@@ -3004,7 +3005,8 @@
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection",
         "tests/tier9_security/adapter_hold_termination_surface_test.go",
-        "tests/tier9_security/adapter_shared_mcp_surface_test.go"
+        "tests/tier9_security/adapter_shared_mcp_surface_test.go",
+        "tests/tier7a_load_local/podmcp_arming_handoff_test.go::TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
@@ -4858,6 +4860,7 @@
       "tests": [
         "tests/tier0_static/claim_register_test.go",
         "tests/tier0_static/claim_register_proto_agreement_test.go",
+        "tests/tier0_static/claim_register_generator_test.go",
         "tests/tier0_static/citation_document_test.go"
       ],
       "packages": [],

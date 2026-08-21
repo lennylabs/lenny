@@ -32,8 +32,6 @@ import (
 // has acquired a production reader is the reachability question §28.4 leaves to
 // the step that builds that gate.
 
-const adapterProtoPath = "schemas/lenny-adapter.proto"
-
 // generationFenceField is the fence field §10.1's handoff protocol carries on a
 // gateway-to-pod request.
 const generationFenceField = "coordination_generation"
@@ -45,11 +43,6 @@ const generationFenceField = "coordination_generation"
 var fenceReadersExempt = map[string]bool{"CoordinatorFenceRequest": true}
 
 var (
-	// protoMessageOpen matches the opening line of a top-level message.
-	protoMessageOpen = regexp.MustCompile(`^message (\w+) \{`)
-	// protoField matches a field declaration inside a message body, including
-	// the arms of a oneof.
-	protoField = regexp.MustCompile(`^\s*(?:repeated\s+)?[\w.]+\s+(\w+)\s*=\s*\d+\s*;`)
 	// claimQualifiedField matches a row that names one message field in the
 	// `Message.field` spelling the register uses.
 	claimQualifiedField = regexp.MustCompile(`^(\w+)\.(\w+)`)
@@ -57,42 +50,6 @@ var (
 	// by naming a field the message does not carry.
 	absenceAssertion = regexp.MustCompile("no `(\\w+)` on `(\\w+)`")
 )
-
-// protoFields returns, per message, the set of field names the proto declares.
-// The adapter proto declares every message at the top level, so a brace depth
-// counter is enough to bound a body.
-func protoFields(body string) map[string]map[string]bool {
-	fields := map[string]map[string]bool{}
-	var current string
-	depth := 0
-	for _, line := range strings.Split(body, "\n") {
-		if current == "" {
-			if m := protoMessageOpen.FindStringSubmatch(line); m != nil {
-				fields[m[1]] = map[string]bool{}
-				// A message declared and closed on one line, as an empty
-				// message is, opens no body to scan.
-				if depth = braceDelta(line); depth > 0 {
-					current = m[1]
-				}
-			}
-			continue
-		}
-		depth += braceDelta(line)
-		if depth <= 0 {
-			current = ""
-			continue
-		}
-		if m := protoField.FindStringSubmatch(line); m != nil {
-			fields[current][m[1]] = true
-		}
-	}
-	return fields
-}
-
-// braceDelta is how far one line moves the brace depth.
-func braceDelta(line string) int {
-	return strings.Count(line, "{") - strings.Count(line, "}")
-}
 
 // registerProtoDisagreements returns the findings the register's own text and
 // the proto's own text support together.
