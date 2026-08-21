@@ -47,3 +47,15 @@ func (s *Server) ClaimSessionForTest(sessionID string) error {
 func (s *Server) claimSessionForTest(sessionID string) error {
 	return s.ClaimSessionForTest(sessionID)
 }
+
+// RegisterUnboundSlotForTest creates the session's registry entry and its
+// on-disk tree without binding or starting it, the way the §4.7
+// workspace-prep RPCs (PrepareWorkspace, FinalizeWorkspace, RunSetup) do
+// when they run ahead of StartSession. It lets an external test put the
+// pod in the state the §28.5.3 slot count must fail closed on: one bound
+// session serving traffic while a second session's workspace is still
+// being prepared.
+func (s *Server) RegisterUnboundSlotForTest(sessionID string) error {
+	_, err := s.ensureSlotPaths(sessionID)
+	return err
+}

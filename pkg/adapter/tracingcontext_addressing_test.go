@@ -434,3 +434,40 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 	requireDrops(t, before, 1)
 	requireDropLogs(t, logs, dropLog{frameSession: "sess-a", session: "sess-a", streamSlot: "sess-a"})
 }
+
+// spec: 4.6.1 (the slot count that decides an absent address is every
+// entry in the adapter's slot registry, bound or registered-but-unbound),
+// 28.5.3 (set_tracing_context addressing) — the registry entry a
+// workspace-prep RPC creates ahead of StartSession already counts, so a
+// frame carrying no session identifier is rejected while a second
+// session's workspace is being prepared rather than resolving to the one
+// session that happens to be bound. Counting the bound entries alone
+// would resolve it to the incumbent, which is the fail-open direction the
+// counting basis exists to close.
+//
+// diagnosis: a failure means the slot count is taken over bound entries
+// alone, so on a pod that is preparing a second session an unaddressed
+// frame registers one runtime's tracing identifiers against the
+// incumbent session instead of being rejected.
+func TestSetTracingContextUnaddressedWhileASecondSlotIsUnboundIsRejected_spec_4_6_1(t *testing.T) {
+	s, rt, fwd, client := concurrentTracingPod(t, "sess-a")
+	streamA := openTracingAttach(t, client, "sess-a")
+	rt.waitForSubscribers(t, 1)
+	// The second session's workspace is being prepared: its slot entry
+	// exists and its tree is created, but nothing has bound or started it.
+	if err := s.RegisterUnboundSlotForTest("sess-b"); err != nil {
+		t.Fatalf("register unbound slot for sess-b: %v", err)
+	}
+
+	beforeDrops := tracingDrops()
+	beforeRejects := unaddressedRejections()
+	logs := captureDropLogs(t)
+	rt.output <- tracingFrame("")
+	rt.output <- statusFrame("sess-a")
+	awaitStatus(t, streamA)
+
+	requireCalls(t, fwd)
+	requireUnaddressed(t, beforeRejects, 1)
+	requireDrops(t, beforeDrops, 0)
+	requireRejectLogs(t, logs, rejectLog{session: "sess-a"})
+}
