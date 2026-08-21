@@ -120,9 +120,13 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 
 	// spec: §4.7 — the Checkpoint RPC shares the pod-level op lock with
 	// Interrupt so at most one runs at a time. The lock admits one pending
-	// checkpoint per distinct session and promotes them in identifier
-	// order (spec: §5.2), so a concurrent-session drain checkpoints every
-	// session.
+	// checkpoint per distinct session identifier and promotes the lowest
+	// identifier next (spec: §5.2), so a concurrent-session drain
+	// checkpoints every session. Session identifiers are opaque, so that
+	// order is a lexicographic tie-break chosen so the promotion pick is a
+	// pure function of the pending set rather than of the iteration order
+	// of the pending map. It carries no ordinal, arrival-order, or
+	// fairness meaning and it establishes no liveness property.
 	// A barrier-window checkpoint runs through the same lock; the barrier's
 	// quiescence has already drained dispatch, so the lock is uncontended
 	// there by construction.

@@ -28,24 +28,6 @@ func waitQueued(t *testing.T, l *opLock) {
 	t.Fatal("operation did not enter the pending set")
 }
 
-// waitPendingCheckpoints blocks until at least n distinct-slot
-// checkpoints are pending, so an ordering test can queue several waiters
-// before releasing the running operation.
-func waitPendingCheckpoints(t *testing.T, l *opLock, n int) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		l.mu.Lock()
-		got := len(l.checkpoints)
-		l.mu.Unlock()
-		if got >= n {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatalf("fewer than %d checkpoints entered the pending set", n)
-}
-
 // waitPendingSession blocks until a checkpoint for sessionID is pending.
 func waitPendingSession(t *testing.T, l *opLock, sessionID string) {
 	t.Helper()
@@ -123,9 +105,11 @@ func TestOpLockSerializesAndPromotes(t *testing.T) {
 	}
 }
 
-// promotionOrder queues one checkpoint per session identifier in queued
-// order behind a running checkpoint, releases it, and returns the order
-// the lock promoted the queued checkpoints in.
+// promotionOrder queues one checkpoint per session identifier behind a
+// running checkpoint and returns the order the lock promoted them in.
+// Each waiter is admitted to the pending set before the next is launched,
+// so the pending set is built in exactly the arrival order the caller
+// gave and a caller can vary that order across runs.
 func promotionOrder(t *testing.T, queued []string) []string {
 	t.Helper()
 	var l opLock
@@ -145,8 +129,11 @@ func promotionOrder(t *testing.T, queued []string) []string {
 			promoted <- session
 			rel2()
 		}()
+		// Block until this waiter is in the pending set before
+		// launching the next one, so arrival order is the caller's
+		// rather than the scheduler's.
+		waitPendingSession(t, &l, session)
 	}
-	waitPendingCheckpoints(t, &l, len(queued))
 
 	// Release the running checkpoint; promotions cascade one at a time.
 	rel()
@@ -399,8 +386,10 @@ func TestOpLockContextCancelWithdrawsPendingCheckpoint(t *testing.T) {
 // that map, empty or otherwise, ever stands for the pod-scoped
 // interrupt. The promotion rule is a lexicographic tie-break over
 // session identifiers, and an interrupt carries none.
-// spec: §4.7 (Checkpoint/Interrupt mutual exclusion), §4.10 (a session
-// is addressed by its session identifier on every pod)
+// spec: §4.7 (Checkpoint/Interrupt mutual exclusion; one pending
+// checkpoint per distinct session identifier, a pending interrupt holds
+// the whole-pod queue), §5.2 (one session's checkpoint upload at a time,
+// in the lexicographic tie-break over session identifiers)
 func TestOpLockPendingInterruptOccupiesNoCheckpointKey(t *testing.T) {
 	var l opLock
 	rel, err := l.Begin(context.Background(), opCheckpoint, "session-a")
