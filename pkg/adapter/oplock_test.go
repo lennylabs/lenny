@@ -46,20 +46,20 @@ func waitPendingCheckpoints(t *testing.T, l *opLock, n int) {
 	t.Fatalf("fewer than %d checkpoints entered the pending set", n)
 }
 
-// waitPendingSlot blocks until a checkpoint for slotID is pending.
-func waitPendingSlot(t *testing.T, l *opLock, slotID string) {
+// waitPendingSession blocks until a checkpoint for sessionID is pending.
+func waitPendingSession(t *testing.T, l *opLock, sessionID string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		l.mu.Lock()
-		_, ok := l.checkpoints[slotID]
+		_, ok := l.checkpoints[sessionID]
 		l.mu.Unlock()
 		if ok {
 			return
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("checkpoint for slot %q did not enter the pending set", slotID)
+	t.Fatalf("checkpoint for session %q did not enter the pending set", sessionID)
 }
 
 func TestOpKindString(t *testing.T) {
@@ -123,32 +123,26 @@ func TestOpLockSerializesAndPromotes(t *testing.T) {
 	}
 }
 
-// TestOpLockPromotesCheckpointsInSlotIDOrder pins the slot-ID-order
-// promotion rule: distinct-slot checkpoints queued in non-ascending order
-// are promoted in ascending slotID order.
-//
-// spec: 5.2 (one slot's checkpoint upload at a time, in slot-ID order),
-// 4.7 (Checkpoint/Interrupt mutual exclusion, slot-ID-order promotion).
-func TestOpLockPromotesCheckpointsInSlotIDOrder(t *testing.T) {
+// promotionOrder queues one checkpoint per session identifier in queued
+// order behind a running checkpoint, releases it, and returns the order
+// the lock promoted the queued checkpoints in.
+func promotionOrder(t *testing.T, queued []string) []string {
+	t.Helper()
 	var l opLock
-	rel, err := l.Begin(context.Background(), opCheckpoint, "slot-0")
+	rel, err := l.Begin(context.Background(), opCheckpoint, "1f0a2c8e-running")
 	if err != nil {
 		t.Fatalf("Begin running checkpoint: %v", err)
 	}
-
-	// Queue distinct slots in non-ascending order. Each waiter records its
-	// slot when promoted, then releases so the next lowest slot promotes.
-	queued := []string{"slot-c", "slot-a", "slot-b"}
 	promoted := make(chan string, len(queued))
-	for _, slot := range queued {
-		slot := slot
+	for _, session := range queued {
+		session := session
 		go func() {
-			rel2, err := l.Begin(context.Background(), opCheckpoint, slot)
+			rel2, err := l.Begin(context.Background(), opCheckpoint, session)
 			if err != nil {
-				t.Errorf("queued Begin for %q: %v", slot, err)
+				t.Errorf("queued Begin for %q: %v", session, err)
 				return
 			}
-			promoted <- slot
+			promoted <- session
 			rel2()
 		}()
 	}
@@ -160,30 +154,57 @@ func TestOpLockPromotesCheckpointsInSlotIDOrder(t *testing.T) {
 	var order []string
 	for range queued {
 		select {
-		case slot := <-promoted:
-			order = append(order, slot)
+		case session := <-promoted:
+			order = append(order, session)
 		case <-time.After(2 * time.Second):
 			t.Fatalf("only %d of %d checkpoints promoted", len(order), len(queued))
 		}
 	}
-	want := []string{"slot-a", "slot-b", "slot-c"}
-	if !sort.StringsAreSorted(order) {
-		t.Errorf("promotion order = %v, want ascending slot-ID order", order)
+	return order
+}
+
+// TestOpLockPromotesCheckpointsInSessionIdentifierOrder pins the
+// promotion rule: the lock holds one pending checkpoint per distinct
+// session identifier and promotes the lowest identifier next. Session
+// identifiers are opaque, so the order is a lexicographic tie-break
+// chosen so the promotion pick is a pure function of the pending set
+// rather than of the pending map's iteration order or of the order the
+// checkpoints arrived in. The test asserts that property directly: three
+// different arrival orders over the same opaque identifiers all promote
+// in the same lexicographic order, and none of the identifiers carries an
+// ordinal the pick could be reading instead.
+//
+// spec: 5.2 (one session's checkpoint upload at a time, in the
+// lexicographic tie-break over session identifiers), 4.7
+// (Checkpoint/Interrupt mutual exclusion, one pending checkpoint per
+// distinct session identifier)
+func TestOpLockPromotesCheckpointsInSessionIdentifierOrder(t *testing.T) {
+	want := []string{"3b7d19f4-carol", "9c02ae55-alice", "e41fbb70-bob"}
+	arrivals := [][]string{
+		{"9c02ae55-alice", "e41fbb70-bob", "3b7d19f4-carol"},
+		{"e41fbb70-bob", "3b7d19f4-carol", "9c02ae55-alice"},
+		{"3b7d19f4-carol", "9c02ae55-alice", "e41fbb70-bob"},
 	}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Errorf("promotion order = %v, want %v", order, want)
-			break
+	for _, queued := range arrivals {
+		order := promotionOrder(t, queued)
+		if !sort.StringsAreSorted(order) {
+			t.Errorf("arrival %v: promotion order = %v, want lexicographically ascending", queued, order)
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Errorf("arrival %v: promotion order = %v, want %v", queued, order, want)
+				break
+			}
 		}
 	}
 }
 
-// TestOpLockCoalescesSameSlotAdmitsDistinctSlot pins the per-slot dedup:
-// a re-fire for an already-pending slotID coalesces, while a distinct
-// slotID is admitted into the pending set.
+// TestOpLockCoalescesSameSlotAdmitsDistinctSlot pins the per-session
+// dedup: a re-fire for an already-pending session identifier coalesces,
+// while a distinct session identifier is admitted into the pending set.
 //
-// spec: 5.2 (per-slot checkpoint serialization), 4.7 (one pending
-// checkpoint per distinct slotId).
+// spec: 5.2 (per-session checkpoint serialization), 4.7 (one pending
+// checkpoint per distinct session identifier).
 func TestOpLockCoalescesSameSlotAdmitsDistinctSlot(t *testing.T) {
 	var l opLock
 	rel1, err := l.Begin(context.Background(), opCheckpoint, "slot-a")
@@ -193,7 +214,7 @@ func TestOpLockCoalescesSameSlotAdmitsDistinctSlot(t *testing.T) {
 	defer rel1()
 
 	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-	waitPendingSlot(t, &l, "slot-b")
+	waitPendingSession(t, &l, "slot-b")
 
 	// A re-fire for the already-pending slot coalesces.
 	if _, err := l.Begin(context.Background(), opCheckpoint, "slot-b"); !errors.Is(err, errOpCoalesced) {
@@ -202,7 +223,7 @@ func TestOpLockCoalescesSameSlotAdmitsDistinctSlot(t *testing.T) {
 
 	// A distinct slot is admitted into the pending set.
 	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-c") }()
-	waitPendingSlot(t, &l, "slot-c")
+	waitPendingSession(t, &l, "slot-c")
 }
 
 // TestOpLockRejectsSecondQueuedInterrupt pins that an interrupt returns
@@ -239,7 +260,7 @@ func TestOpLockRejectsSecondQueuedInterrupt(t *testing.T) {
 		defer rel1()
 
 		go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-		waitPendingSlot(t, &l, "slot-b")
+		waitPendingSession(t, &l, "slot-b")
 
 		// An interrupt never displaces a pending checkpoint.
 		if _, err := l.Begin(context.Background(), opInterrupt, ""); !errors.Is(err, errOpBusy) {
@@ -370,5 +391,5 @@ func TestOpLockContextCancelWithdrawsPendingCheckpoint(t *testing.T) {
 
 	// The withdrawn slot can be re-admitted.
 	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
-	waitPendingSlot(t, &l, "slot-b")
+	waitPendingSession(t, &l, "slot-b")
 }

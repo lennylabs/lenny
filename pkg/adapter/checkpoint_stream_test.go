@@ -406,12 +406,13 @@ func driveCheckpointConc(stream adapterv1.Adapter_CheckpointClient, url string) 
 	}
 }
 
-// spec: §5.2 (one slot's checkpoint upload at a time, in slot-ID order) —
-// three or more per-slot checkpoints opened concurrently on one pod are each
-// admitted and each captures its own slot's subtree; none is coalesced away.
-// The non-happy path is the pre-fix depth-one op lock coalescing the third
-// and later slots into the queued one, returning codes.Aborted and
-// terminating those slots uncheckpointed.
+// spec: §5.2 (one session's checkpoint upload at a time, in the
+// lexicographic tie-break over session identifiers) — three or more
+// per-session checkpoints opened concurrently on one pod are each admitted
+// and each captures its own session's subtree; none is coalesced away. The
+// non-happy path is the pre-fix depth-one op lock coalescing the third and
+// later sessions into the queued one, returning codes.Aborted and
+// terminating those sessions uncheckpointed.
 func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
 	transport := &recordingTransport{}
 	s := slotCheckpointServer(t, transport)
