@@ -134,7 +134,7 @@ Session mode is parameterized by the `sessionPolicy` block, which `service` mode
 | :--- | :--- | :--- | :--- |
 | One session per pod (default) | 1 | `false` | The pod is exclusive to a single session and terminates when the session ends. |
 | Pod reuse | 1 | `true` | The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions. |
-| Concurrent | N | `true` | The pod serves up to N simultaneous sessions in per-slot workspaces and recycles when occupancy reaches zero. |
+| Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero. |
 | Bounded cohort | N | `false` | The pod serves up to N simultaneous sessions, then terminates after the cohort drains. |
 
 Departing from one session per pod requires explicit acknowledgments, because the alternatives weaken isolation. `recycle.enabled: true` requires `recycle.acknowledgeBestEffortScrub: true`, because the between-session workspace scrub is best-effort and is not a security boundary. `maxConcurrentSessions > 1` requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, because concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack. A pool that recycles pods or runs more than one session per pod is pinned to a single tenant for its lifetime. Cross-tenant pod reuse is permitted only on the sequential-reuse path (`maxConcurrentSessions: 1` with `recycle.enabled: true`) under `microvm` isolation with `recycle.allowCrossTenantReuse: true`.

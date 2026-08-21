@@ -98,7 +98,7 @@ Agent runtimes run in one of two execution modes; session mode is parameterized 
 | :--- | :--- | :--- | :--- |
 | `session`, `recycle.enabled: false`, `maxConcurrentSessions: 1` | One session owns the pod end-to-end | Strongest -- no reuse between sessions | Coding agents, long-running interactive work (default) |
 | `session`, `recycle.enabled: true` | Pod is scrubbed at occupancy zero and reused for the next session | Best-effort scrub between sessions | High-throughput sequential work |
-| `session`, `maxConcurrentSessions > 1` | One pod serves several sessions at once in per-slot workspaces | Process-level only | Lightweight concurrent handlers |
+| `session`, `maxConcurrentSessions > 1` | Several sessions share one pod at the same time | Process-level only | Lightweight concurrent handlers |
 | `service` | Each message is routed to any ready replica | Process-level, no scrub | Stateless high-throughput handlers |
 
 Pod recycling, concurrent sessions, and service mode relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgments to enable them (`acknowledgeBestEffortScrub` for recycling, `acknowledgeProcessLevelIsolation` for concurrent sessions) and refuses unsafe combinations. Recycling requires no runtime cooperation and works at every integration level.
