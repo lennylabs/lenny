@@ -90,31 +90,36 @@ func messageScopeDisagreements(specBody, protoBody string) []string {
 	var findings []string
 	for _, msg := range duplicates {
 		findings = append(findings, fmt.Sprintf(
-			"the table classifies %s more than once, so it declares two scopes for one request message", msg))
+			"the table classifies %s more than once, so it declares two scopes for one request message", msg,
+		))
 	}
 	for msg, service := range inScope {
 		row, ok := rows[msg]
 		if !ok {
 			findings = append(findings, fmt.Sprintf(
 				"%s is the request type of a %s method and the table carries no row for it",
-				msg, service))
+				msg, service,
+			))
 			continue
 		}
 		if row.service != service {
 			findings = append(findings, fmt.Sprintf(
 				"the table names %s as a %s request message and %s declares it",
-				msg, row.service, service))
+				msg, row.service, service,
+			))
 		}
 		if !declaredScope(row.scope) {
 			findings = append(findings, fmt.Sprintf(
 				"the table's %s row declares the scope %q, which is neither session nor pod",
-				msg, row.scope))
+				msg, row.scope,
+			))
 		}
 	}
 	for msg := range rows {
 		if _, ok := inScope[msg]; !ok {
 			findings = append(findings, fmt.Sprintf(
-				"the table carries a row for %s, which neither service declares as a request message", msg))
+				"the table carries a row for %s, which neither service declares as a request message", msg,
+			))
 		}
 	}
 	sort.Strings(findings)

@@ -106,18 +106,21 @@ func claimRegisterRowDifferences(t *testing.T, seeded, committed []byte) []strin
 		case !ok:
 			findings = append(findings, fmt.Sprintf(
 				"the generator emits the row %q and %s does not carry it, so a row source the generator still holds re-emits a retired row",
-				name, claimRegisterPath))
+				name, claimRegisterPath,
+			))
 		case row != other:
 			findings = append(findings, fmt.Sprintf(
 				"the row %q differs: the generator emits %+v and %s carries %+v",
-				name, row, claimRegisterPath, other))
+				name, row, claimRegisterPath, other,
+			))
 		}
 	}
 	for name := range committedRows {
 		if _, ok := seededRows[name]; !ok {
 			findings = append(findings, fmt.Sprintf(
 				"%s carries the row %q and the generator emits no such row, so the row has no row source behind it",
-				claimRegisterPath, name))
+				claimRegisterPath, name,
+			))
 		}
 	}
 	sort.Strings(findings)
