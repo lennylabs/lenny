@@ -301,6 +301,25 @@ const REVIEW = {
   },
 };
 
+// A ticked checklist box is the run's own record that the step landed, written
+// by the pipeline after that step went green and conformant. On a resumed or
+// re-entered run it is the authority on what is already done: re-running a
+// completed step re-does committed work and can undo the later steps built on
+// top of it. Read here rather than inferred by the planner from the tree,
+// because the planner infers a step is done from the surface being present,
+// which is weaker evidence and which it can get wrong in either direction.
+const TICKED = {
+  type: "object",
+  required: ["ticked"],
+  properties: {
+    ticked: {
+      type: "array",
+      description: "The step id of every checklist line whose box is `[x]`, e.g. S1, S4. Empty when none are ticked or the proposal has no checklist.",
+      items: { type: "string" },
+    },
+  },
+};
+
 const SHA = {
   type: "object",
   required: ["sha"],
@@ -323,6 +342,10 @@ let plan = skipBuild ? { steps: [] } : await agentTry(
     "depends on. It was written and maintained while the proposal was reviewed, so it is the sequence, and you " +
     "are not being asked to invent one. Carry its steps across in order, keeping their ids, their deliverable " +
     "ids, their tiers, and their dependencies.\n\n" +
+    "A STEP WHOSE CHECKBOX IS ALREADY `[x]` IS DONE. The pipeline ticks a box only after that step went " +
+    "green and design-conformant, so on a resumed run the tick is the record of work that already landed. " +
+    "Carry such a step across with alreadyDone set and build nothing for it; re-doing it re-does committed " +
+    "work and can undo the steps built on top of it. The run enforces this independently of your answer.\n\n" +
     "THEN CHECK IT AGAINST THE TREE, because a checklist written during review can be stale or wrong in three " +
     "ways, and the run must survive all three rather than stopping at them.\n" +
     "  A step whose surface is ALREADY PRESENT. Grep-confirm before you assume; a proposal can be partially " +
@@ -382,6 +405,33 @@ for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
       "\n\nReturn the full revised plan (blast radius + ordered steps), incorporating the gaps and preserving the parts that were correct. Re-sequence if a gap is a prerequisite-ordering problem.",
     { schema: PLAN, label: "plan-revise:r" + round, phase: "Plan" },
   );
+}
+
+// Startup reconciliation: a step whose checklist box is already ticked is
+// skipped, whatever the plan says about it.
+if (!skipBuild && plan.steps.length > 0) {
+  const ticks = await agentTry(
+    "Read the implementation checklist in " + proposal + " and report which steps are already marked " +
+      "complete. Run `grep -nE '^- \\[[ x]\\] \\*\\*S' " + proposal + "` and return the step id of every " +
+      "line whose checkbox is `[x]` rather than `[ ]`. The id is the token right after the `**`, such as " +
+      "`S1` or `S12`. Return ids only, and do not edit anything.",
+    { schema: TICKED, label: "checklist-ticks", phase: "Plan", model: "haiku" },
+  );
+  const tickedSet = new Set(((ticks && ticks.ticked) || []).map((t) => String(t).trim()));
+  if (tickedSet.size > 0) {
+    let forced = 0;
+    for (const st of plan.steps) {
+      if (st.checklistStep && tickedSet.has(String(st.checklistStep).trim()) && !st.alreadyDone) {
+        st.alreadyDone = true;
+        forced++;
+      }
+    }
+    log(
+      "Checklist: " + tickedSet.size + " step(s) already ticked (" +
+        Array.from(tickedSet).join(", ") + ")" +
+        (forced > 0 ? "; " + forced + " of them were not marked done by the planner and are now skipped" : ""),
+    );
+  }
 }
 
 log("Build sequence: " + plan.steps.length + " steps");
