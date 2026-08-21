@@ -8,6 +8,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // waitQueued blocks until an operation has entered the lock's pending
@@ -434,4 +436,55 @@ func TestOpLockPendingInterruptOccupiesNoCheckpointKey(t *testing.T) {
 		t.Fatalf("pending checkpoint keys = %d after interrupt withdrawal, want 0", keys)
 	}
 	rel()
+}
+
+// TestInterruptRPCOccupiesNoCheckpointKey pins the Interrupt call site's
+// own justification for taking the pod lock: an interrupt is pod-scoped,
+// so it is recorded in the lock's pending-interrupt state rather than as
+// a key of the pending checkpoint set, and it is refused with BUSY while
+// a checkpoint is pending rather than joining that set under any key.
+// spec: §4.7 (Checkpoint/Interrupt mutual exclusion, one pending
+// checkpoint per distinct session identifier), §5.2 (every session is
+// bound to a slot and is addressed by its session identifier)
+func TestInterruptRPCOccupiesNoCheckpointKey(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	if err := s.claimSessionForTest("sess-a"); err != nil {
+		t.Fatalf("claim sess-a: %v", err)
+	}
+
+	// One checkpoint runs and a second waits, so the pending set holds
+	// exactly one session key when the interrupt arrives.
+	rel, err := s.ops.Begin(context.Background(), opCheckpoint, "sess-running")
+	if err != nil {
+		t.Fatalf("Begin running checkpoint: %v", err)
+	}
+	defer rel()
+	go func() { _, _ = s.ops.Begin(context.Background(), opCheckpoint, "sess-waiting") }()
+	waitPendingSession(t, &s.ops, "sess-waiting")
+
+	resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-a"},
+		Mode:      adapterv1.InterruptRequest_MODE_HARD,
+	})
+	if err != nil {
+		t.Fatalf("Interrupt behind a pending checkpoint: %v", err)
+	}
+	if got := resp.GetStatus(); got != adapterv1.InterruptResponse_STATUS_BUSY {
+		t.Errorf("Interrupt status = %v, want BUSY behind a pending checkpoint", got)
+	}
+
+	s.ops.mu.Lock()
+	keys := make([]string, 0, len(s.ops.checkpoints))
+	for k := range s.ops.checkpoints {
+		keys = append(keys, k)
+	}
+	pending := s.ops.interruptPending
+	s.ops.mu.Unlock()
+	sort.Strings(keys)
+	if len(keys) != 1 || keys[0] != "sess-waiting" {
+		t.Errorf("pending checkpoint keys = %v, want only the waiting session; the interrupt took no key", keys)
+	}
+	if pending {
+		t.Error("a refused interrupt was recorded as pending")
+	}
 }

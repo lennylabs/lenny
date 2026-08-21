@@ -199,10 +199,10 @@ func TestShutdownSlotToleratesReporterError_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestBaseRecycleShutdownEmitsSessionScrub asserts CODE-B in base mode: a base
+// TestBaseRecycleShutdownEmitsSessionScrub asserts that in base mode a base
 // (maxConcurrentSessions == 1) recycling Shutdown emits exactly one
-// ReportSessionScrub with an empty slot id for the ending session before the
-// whole-pod scrub, so advanceScrubCounters reads back a non-zero sessions_served
+// ReportSessionScrub for the ending session, addressed by its session
+// identifier, before the whole-pod scrub, so advanceScrubCounters reads back a non-zero sessions_served
 // and maxSessionsPerPod becomes functional in base mode. Base-mode
 // maxSessionsPerPod was inert because this path never emitted the report.
 //
