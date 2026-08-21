@@ -242,6 +242,35 @@ const files = [...new Set(plan.specEdits.map((e) => e.targetFile))];
 // How many times a drifted spec is repaired before the run gives up and asks
 // for a human. Small: the verifier names what is missing, so a repair that
 // does not close the gap is not going to close it on the fifth try either.
+// Areas the caller already suspects the spec review will find something in.
+// Each round gains one reviewer that hunts these specifically, running beside
+// the normal per-file verifiers rather than replacing them. Its findings are
+// concatenated onto theirs with no dedup and no merge step: two phrasings of
+// one defect reaching the fixer is cheap, and any step that can drop a finding
+// on this path is not worth the fidelity it costs.
+const specReviewFocus = (
+  Array.isArray(input.specReviewFocus)
+    ? input.specReviewFocus
+    : input.specReviewFocus
+      ? [input.specReviewFocus]
+      : []
+)
+  .map((a) => String(a).trim())
+  .filter(Boolean);
+if (specReviewFocus.length > 0) {
+  log("Spec review focus: " + specReviewFocus.length + " area(s) get a dedicated reviewer each round");
+}
+const FOCUS_BLOCK =
+  specReviewFocus.length === 0
+    ? ""
+    : "\n\nAREAS TO CONCENTRATE ON. The caller has reason to believe the spec drifted from the proposal in " +
+      "these places specifically:\n" +
+      specReviewFocus.map((a, i) => i + 1 + ". " + a).join("\n") +
+      "\n\nGo after each one directly and exhaustively: find every site it covers, including sites outside " +
+      "the anchors the proposal names, and check each against what the proposal stages. These areas are where " +
+      "to look hardest, not the limit of what to report; a discrepancy you find elsewhere is still a " +
+      "discrepancy. Reporting nothing for an area is a valid answer when the area is genuinely clean.";
+
 const maxAlignRepairs = input.maxAlignRepairs || 3;
 let specStatus = "applied"; // applied | applied-with-blockers | not-clean | aligned | no-spec-edits
 let unappliable = [];
@@ -257,15 +286,35 @@ if (plan.specEdits.length === 0) {
   // diff-based check would be empty. Confirm by presence instead.
   phase("Apply spec");
   log("Status is Applied to spec; verifying the staged edits are present");
-  let align = await agent(
-    "Confirm an already-applied proposal's staged spec edits are present in spec/.\n\n" +
+  // The presence check, plus a focused reviewer when the caller named areas.
+  // Both return the same shape, and their `missing` lists are concatenated
+  // verbatim: no dedup, so a site both of them name is landed once by the
+  // repair agent and reported twice, which is the harmless direction.
+  const checkAligned = async (tag) => {
+    const base =
+      "Confirm an already-applied proposal's staged spec edits are present in spec/.\n\n" +
       "You are a read-only verifier; do not edit any file. Work in " +
       repo +
       ".\n\nProposal: " +
       proposal +
-      ". For each staged edit in its 'Proposed spec changes' section, read the named spec/ file and confirm the staged block is present at its anchor. Set aligned true only when every staged edit is present; list any missing ones.",
-    { schema: ALIGNMENT, label: "verify-aligned", phase: "Apply spec" },
-  );
+      ". For each staged edit in its 'Proposed spec changes' section, read the named spec/ file and confirm the staged block is present at its anchor. Set aligned true only when every staged edit is present; list any missing ones.";
+    const runs = [() => agent(base, { schema: ALIGNMENT, label: "verify-aligned" + tag, phase: "Apply spec" })];
+    if (specReviewFocus.length > 0) {
+      runs.push(() =>
+        agent(base + FOCUS_BLOCK, {
+          schema: ALIGNMENT,
+          label: "verify-aligned:focus" + tag,
+          phase: "Apply spec",
+        }),
+      );
+    }
+    const out = (await parallel(runs)).filter(Boolean);
+    if (out.length === 0) return null;
+    const missing = out.flatMap((r) => r.missing || []);
+    // Fail closed: a reviewer that did not return is not evidence of alignment.
+    return { aligned: out.length === runs.length && missing.length === 0, missing };
+  };
+  let align = await checkAligned("");
   // Drift is repaired, not reported. A run that stops here leaves the tree in
   // the worst available state: the status says Applied to spec, most of the
   // edits are in, and the few that are missing are named precisely enough to
@@ -309,15 +358,7 @@ if (plan.specEdits.length === 0) {
       deviations = deviations.concat(repair.deviations || []);
       applyHistory.push({ repair: alignRepairs, ...repair });
     }
-    align = await agent(
-      "Confirm an already-applied proposal's staged spec edits are present in spec/.\n\n" +
-        "You are a read-only verifier; do not edit any file. Work in " +
-        repo +
-        ".\n\nProposal: " +
-        proposal +
-        ". For each staged edit in its 'Proposed spec changes' section, read the named spec/ file and confirm the staged block is present at its anchor. Set aligned true only when every staged edit is present; list any missing ones.",
-      { schema: ALIGNMENT, label: "verify-aligned:r" + alignRepairs, phase: "Apply spec" },
-    );
+    align = await checkAligned(":r" + alignRepairs);
   }
   if (!align || !align.aligned) {
     return {
@@ -554,6 +595,33 @@ if (plan.specEdits.length === 0) {
       checks.push(() =>
         agent(sweepPrompt(round), { schema: DISCREPANCIES, label: "verify:" + ss + ":rules-sweep:r" + round, phase: "Apply spec" }),
       );
+      if (specReviewFocus.length > 0) {
+        // Its own prompt rather than a per-file verifier's: this reviewer is
+        // scoped to the areas the caller named, across every file the sub-step
+        // touched, so binding it to one file would hide exactly the drift it
+        // was added to find.
+        checks.push(() =>
+          agent(
+            "You verify that applied spec edits align exactly with the proposal that staged them, " +
+              "concentrating on areas the caller has singled out. Round " +
+              round +
+              ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
+              repo +
+              ".\n\nProposal: " +
+              proposal +
+              ". Files this sub-step touched: " +
+              ssFiles.join(", ") +
+              ". Edits staged for them:\n" +
+              JSON.stringify(verifiableEdits, null, 2) +
+              "\n\nMethod: read the proposal's staged text for each area below, then read the current spec " +
+              "files and `git diff -- spec/` to see what actually changed. Report a discrepancy wherever the " +
+              "spec does not say what the proposal stages. Quote the staged text as `expected` and the " +
+              "current text as `observed`, both exactly, and name the file and location." +
+              FOCUS_BLOCK,
+            { schema: DISCREPANCIES, label: "verify:" + ss + ":focus:r" + round, phase: "Apply spec" },
+          ),
+        );
+      }
       const results = (await parallel(checks)).filter(Boolean);
       if (results.length === 0) {
         applyHistory.push({ substep: ss, round, discrepancies: -1, note: "verifiers failed" });

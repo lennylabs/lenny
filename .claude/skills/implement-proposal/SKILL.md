@@ -61,11 +61,14 @@ The script lives at `.claude/workflows/implement-proposal.js` (subworkflow at `.
   "repoRoot": "<absolute repo root>",
   "date": "<YYYY-MM-DD>",
   "implementCode": true,
-  "reverifyDoneSteps": false
+  "reverifyDoneSteps": false,
+  "specReviewFocus": []
 }
 ```
 
 Set `implementCode` to `false` for spec-only; every tier each step and the final verify reach is run.
+
+Pass `specReviewFocus` as a list of areas the spec review should concentrate on, for example `["the {slotId} to {sessionId} placeholder rename", "the Basic-level echo obligation in the conformance battery"]`. Each round then runs one extra reviewer alongside the normal per-file verifiers and the rules sweep, scoped to those areas across every file the sub-step touched rather than to one file. Its findings are concatenated onto the others with no deduplication, so a site both reviewers name is reported twice and landed once; nothing between the reviewers and the fix agents can drop a finding. Use it when a previous run left drift you can already name. Omit it and the review behaves exactly as before.
 
 Set `reverifyDoneSteps` to `true` to re-check the steps a previous run already ticked. Each is reviewed for design conformance and invariants without being rebuilt or re-tested, because its code is committed and its tiers passed when it landed. A step that passes is skipped as usual; one that fails enters the normal fix, verify, and review loop and is held to the same green-and-conformant bar as a fresh step. Use it when the checklist may be optimistic, after an interrupted run or when the proposal changed once some steps had landed. It costs two review agents per ticked step, so it defaults to `false`. Agents inherit the session model and effort level; run this skill with a strong model at high effort.
 
