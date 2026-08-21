@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -556,5 +557,65 @@ func TestRun_PurgeAttemptsEveryMemberAfterAFailure_spec_5_2(t *testing.T) {
 	}
 	if rep.Result != Failed {
 		t.Errorf("scrub result = %v, want %v", rep.Result, Failed)
+	}
+}
+
+// spec: §5.2 (the deployer's cleanupCommands run at the recycle boundary,
+// after every session on the pod has been torn down)
+//
+// Each session's teardown removes that session's slot tree and credential
+// file before the pod scrub runs, so by the time the cleanupCommands run
+// the two slot containers are empty and no slot root exists to run them
+// in. They run with the workspace base as their working directory. This
+// case drives the real cleanup executor and asserts what a deployer's
+// command observes: its own PWD is the base, nothing remains under the
+// base's slots container, and nothing remains under the credential root's
+// slots container.
+//
+// diagnosis: the cleanup working directory was left empty or pointed at
+// one session's slot root, so the deployer's cleanup code runs in a
+// directory that the preceding per-session teardowns already removed, or
+// beside another session's residue.
+func TestRun_CleanupRunsInTheWorkspaceBaseWithNoSlotResidue_spec_5_2(t *testing.T) {
+	base := t.TempDir()
+	credRoot := t.TempDir()
+	// The per-session teardowns have already run, so both containers exist
+	// and hold nothing.
+	if err := os.MkdirAll(filepath.Join(base, "slots"), 0o700); err != nil {
+		t.Fatalf("seed workspace slots container: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(credRoot, "slots"), 0o700); err != nil {
+		t.Fatalf("seed credential slots container: %v", err)
+	}
+
+	observed := filepath.Join(t.TempDir(), "observed")
+	rep, err := Run(context.Background(), newFakeOps(), Config{
+		CleanupDir: base,
+		CleanupCommands: []string{
+			"sh -c 'pwd > " + observed + "; ls " + filepath.Join(base, "slots") +
+				" >> " + observed + " 2>&1; ls " + filepath.Join(credRoot, "slots") +
+				" >> " + observed + " 2>&1'",
+		},
+		ShellMode: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Succeeded {
+		t.Fatalf("Result = %v, want Succeeded: %+v", rep.Result, rep.Steps)
+	}
+
+	out, readErr := os.ReadFile(observed)
+	if readErr != nil {
+		t.Fatalf("cleanup command wrote no observation: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] != base {
+		t.Errorf("cleanup PWD = %q, want the workspace base %q", lines[0], base)
+	}
+	for _, residue := range lines[1:] {
+		if residue != "" {
+			t.Errorf("cleanup observed slot residue %q; every session's teardown precedes the pod scrub", residue)
+		}
 	}
 }

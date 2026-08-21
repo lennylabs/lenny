@@ -271,6 +271,36 @@ func TestStartSessionRejectsEmptySessionID(t *testing.T) {
 	}
 }
 
+// malformedSessionAddresses are the values slotlayout.ValidateSlotID
+// refuses: a value that is not a safe single path segment. The session
+// identifier crosses the wire into filesystem paths, so a handler that
+// resolved a root from one of these would write outside the session's own
+// slot tree.
+var malformedSessionAddresses = []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"}
+
+// TestStartSessionRejectsAMalformedSessionAddress asserts the fail-closed
+// arm of the address guard: a session id that is not a safe path segment
+// is refused with InvalidArgument before a root is resolved, before a
+// registry entry exists, and before any tree is written.
+// spec: §4.2 (the address is required and well formed), §6.4 (the per-slot
+// tree the address resolves)
+func TestStartSessionRejectsAMalformedSessionAddress_spec_4_2(t *testing.T) {
+	for _, id := range malformedSessionAddresses {
+		s, rt, _ := sessionServer(t)
+		_, err := s.StartSession(context.Background(), startReq(id))
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("StartSession(%q) code = %v, want InvalidArgument", id, status.Code(err))
+		}
+		if len(rt.started) != 0 {
+			t.Errorf("StartSession(%q) started the runtime: %+v", id, rt.started)
+		}
+		entries, readErr := os.ReadDir(filepath.Join(s.WorkspaceBase, "slots"))
+		if readErr == nil && len(entries) != 0 {
+			t.Errorf("StartSession(%q) wrote a slot tree: %v", id, entries)
+		}
+	}
+}
+
 func TestStartSessionRequiresConfiguration(t *testing.T) {
 	s := adapter.New("test") // no WorkspaceRoot, no Runtime
 	_, err := s.StartSession(context.Background(), startReq("sess-1"))

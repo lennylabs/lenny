@@ -50,7 +50,7 @@ import (
 // for so the case can assert the ending session's runtime was torn down. The
 // guard keeps it -race clean when the async scrub goroutine and the test read
 // concurrently. closeErr, when set, is returned from Close so the per-slot
-// leaked-outcome case can drive a cleanup failure through the concurrent-slot
+// leaked-outcome case can drive a cleanup failure through the slot
 // release path.
 type scrubConformanceRuntime struct {
 	mu       sync.Mutex
@@ -243,17 +243,16 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 // (runtime adapter recycle disposition).
 //
 // diagnosis: a failure means a conforming adapter does not run the §5.2
-// whole-pod scrub on a concurrent-mode recycle Shutdown. A concurrent-session
-// pod (maxConcurrentSessions > 1) sets only per-slot session state, never the
-// pod-global session, so the gateway's occupancy-zero recycle Shutdown carries
-// the last-released slot's session id and NO slot id against a pod whose
-// pod-global session is empty. A conforming adapter must dispatch the whole-pod
-// scrub on that request rather than rejecting it with a "pod has no assigned
-// session" precondition failure. An adapter that gates the scrub behind a
-// pod-global session (the pre-CODE-A behavior) leaves every recycling
-// concurrent pool to the gateway missing-report timeout and can no longer reuse
-// it, so this case pins the concurrent occupancy-zero reuse contract.
-func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
+// whole-pod scrub on an occupancy-zero recycle Shutdown whose named session
+// the adapter no longer holds. The gateway sends that request after the last
+// slot on the pod has already been released, so the recycle disposition it
+// carries parameterizes a whole-pod scrub beside a per-session teardown that
+// has nothing left to tear down. A conforming adapter must dispatch the scrub
+// on that request rather than refusing it because the named session is not
+// bound. An adapter that gates the scrub behind a live session leaves every
+// recycling pool to the gateway missing-report timeout and can no longer reuse
+// the pod, so this case pins the occupancy-zero reuse contract.
+func TestRecycleScrubAtOccupancyZeroConformance(t *testing.T) {
 	const podID = "pod-recycle-concurrent"
 	rt := &scrubConformanceRuntime{}
 	ops := &scrubConformanceOps{}
@@ -267,10 +266,11 @@ func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
 	s.PodScrubReporter = reporter
 	s.SetScrubDoneHook(func() { close(done) })
 
-	// No StartSession: a concurrent-session pod never sets the pod-global
-	// session (only per-slot state). The recycle Shutdown carries the
-	// last-released slot's session id (so the non-empty session_id guard admits
-	// it) and no slot id (it is a whole-pod, not a per-slot, teardown).
+	// No StartSession: the gateway sends the recycle Shutdown once occupancy
+	// has reached zero, so the session it names is already released and the
+	// adapter's registry holds no entry for it. The request still carries that
+	// session id, which is the only address the message has, and the whole-pod
+	// scrub runs from the recycle disposition beside the teardown clause.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
 		Recycle: &adapterv1.RecycleScrub{
@@ -279,21 +279,21 @@ func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
 			CleanupTimeoutSeconds: 30,
 		},
 	}); err != nil {
-		t.Fatalf("concurrent-mode recycle Shutdown: %v (the adapter gated the scrub behind a pod-global session)", err)
+		t.Fatalf("occupancy-zero recycle Shutdown: %v (the adapter gated the scrub behind a live session)", err)
 	}
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("concurrent-mode recycle scrub did not finish within 5s")
+		t.Fatal("occupancy-zero recycle scrub did not finish within 5s")
 	}
 
 	if killed, verified := ops.ran(); !killed || !verified {
-		t.Errorf("concurrent-mode whole-pod scrub did not run: killed=%v verified=%v", killed, verified)
+		t.Errorf("occupancy-zero whole-pod scrub did not run: killed=%v verified=%v", killed, verified)
 	}
 	reports := reporter.snapshot()
 	if len(reports) != 1 {
-		t.Fatalf("concurrent-mode ReportPodScrub calls = %d, want exactly 1: %+v", len(reports), reports)
+		t.Fatalf("occupancy-zero ReportPodScrub calls = %d, want exactly 1: %+v", len(reports), reports)
 	}
 	if reports[0].podID != podID {
 		t.Errorf("reported podId = %q, want %q", reports[0].podID, podID)
@@ -306,8 +306,8 @@ func TestRecycleScrubConcurrentModeConformance(t *testing.T) {
 // scrubConformanceSessionReporter is a SessionScrubReporter double capturing
 // every ReportSessionScrub the adapter emits, so the per-session leaked-outcome
 // conformance case can assert the adapter emits exactly one report carrying the
-// cached pod id, the released session, the slot id, and the §5.2 per-slot
-// cleanup outcome. The mutex keeps it -race clean.
+// cached pod id, the released session, and the §5.2 per-slot cleanup
+// outcome. The mutex keeps it -race clean.
 type scrubConformanceSessionReporter struct {
 	mu      sync.Mutex
 	reports []scrubConformanceSessionReport
@@ -339,31 +339,31 @@ func (r *scrubConformanceSessionReporter) snapshot() []scrubConformanceSessionRe
 //
 // diagnosis: a failure means a conforming adapter mis-reports a failed per-slot
 //
-//	cleanup on the §6.4 concurrent-slot release. The adapter derives the
-//	per-slot outcome from the same runtime-Close error that sets
-//	ShutdownResponse.ExitedCleanly, so a Close that could not reclaim the
-//	slot's resources must yield exactly one ReportSessionScrub carrying
-//	SESSION_SCRUB_OUTCOME_LEAKED with the pod/session/slot ids, and a clean
-//	Close must yield SESSION_SCRUB_OUTCOME_RELEASED. The leaked outcome is the
-//	sole feeder of the gateway leak ledger, the persistent leaked-slot count,
-//	and the maxSessionsPerPod drain chain, so an adapter that always emits
-//	released (or drops the report) silently disables the entire leaked-pod
-//	liveness path and a permanently leaked concurrent pod is never reclaimed.
+//	cleanup on the §6.4 slot release. The adapter derives the per-slot outcome
+//	from the same runtime-Close error that sets ShutdownResponse.ExitedCleanly,
+//	so a Close that could not reclaim the slot's resources must yield exactly
+//	one ReportSessionScrub carrying SESSION_SCRUB_OUTCOME_LEAKED addressed by
+//	the pod and the session it names, and a clean Close must yield
+//	SESSION_SCRUB_OUTCOME_RELEASED. The leaked outcome is the sole feeder of
+//	the gateway leak ledger, the persistent leaked-slot count, and the
+//	maxSessionsPerPod drain chain, so an adapter that always emits released (or
+//	drops the report) silently disables the entire leaked-pod liveness path and
+//	a permanently leaked pod is never reclaimed.
 func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	const podID = "pod-slot-leaked"
 	// The adapter reads its own pod identity once from the Downward API
 	// POD_NAME env at construction and keys every ReportSessionScrub on it.
 	t.Setenv("POD_NAME", podID)
 
-	// A concurrent-slot release whose runtime Close FAILS to reclaim the slot's
+	// A slot release whose runtime Close FAILS to reclaim the slot's
 	// resources: the adapter must derive the leaked outcome from that error.
 	rt := &scrubConformanceRuntime{closeErr: errors.New("shred timed out reclaiming slot tree")}
 	reporter := &scrubConformanceSessionReporter{}
 
 	base := t.TempDir()
 	s := adapter.New("conformance")
-	// The §6.4 concurrent-slot roots the slot path materializes a per-slot
-	// workspace under. The pod-global WorkspaceRoot is not on the slot path.
+	// The §6.4 roots every session's per-slot workspace is materialized
+	// under. The slot layout is the only layout on every pod.
 	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
 	s.ArtifactsRoot = filepath.Join(base, "artifacts")
@@ -371,23 +371,23 @@ func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	s.Runtime = rt
 	s.SessionScrubReporter = reporter
 
-	// Start one slot (maxConcurrentSessions > 1 routes StartSession through the
-	// per-slot path when a slot id is carried), then release it. A concurrent
-	// pod sets only per-slot session state.
+	// Start one session, which binds the pod's one slot, then release it.
+	// Every session is bound to a slot on every pod, so the start and the
+	// teardown take the slot path whatever the pool's concurrency.
 	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
 		Runtime:   "echo",
 	}); err != nil {
-		t.Fatalf("StartSession(slot-1): %v", err)
+		t.Fatalf("StartSession(slot-sess): %v", err)
 	}
 
-	// The slot-qualified Shutdown tears down the one slot. The runtime Close
-	// returns an error, so the cleanup leaked.
+	// Shutdown tears the named session down. The runtime Close returns an
+	// error, so the cleanup leaked.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
 	})
 	if err != nil {
-		t.Fatalf("Shutdown(slot-1): %v", err)
+		t.Fatalf("Shutdown(slot-sess): %v", err)
 	}
 	// The outcome and the ExitedCleanly flag derive from the same Close error.
 	if resp.GetExitedCleanly() {

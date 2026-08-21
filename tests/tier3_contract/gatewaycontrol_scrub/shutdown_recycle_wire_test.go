@@ -187,3 +187,115 @@ func TestRecycleScrubHasNoScrubProfileField_spec_5_2(t *testing.T) {
 		t.Errorf("RecycleScrub still resolves a scrub_profile field by name (number %d)", f.Number())
 	}
 }
+
+// TestShutdownMessagePostRemovalDescriptor pins the whole of the shutdown
+// message after the duplicate address came off it: ShutdownRequest declares
+// exactly session_id, reason, deadline_ms, recycle, and
+// coordination_generation, reserves the number and the name the duplicate
+// held, and carries no field of the retired wrapper type; ShutdownResponse
+// declares exactly exited_cleanly and exit_code; and the Shutdown RPC is
+// declared on service Adapter, which is the single end-of-session teardown
+// the gateway calls on every release.
+// spec: 4.5 (one address per request), 4.7 (Shutdown), 5.2 (a session-mode
+// slot's identifier is its session's identifier)
+//
+// diagnosis: a failure means the shutdown message drifted from the
+// post-removal contract — the duplicate address came back, a removed number
+// was recycled, a field was added or dropped, or the RPC moved off service
+// Adapter. Every one of those changes the bytes on the teardown path, which
+// no round-trip case above would catch because both of its ends regenerate
+// from the same proto.
+func TestShutdownMessagePostRemovalDescriptor_spec_4_5(t *testing.T) {
+	reqDesc := (&adapterv1.ShutdownRequest{}).ProtoReflect().Descriptor()
+
+	wantReq := map[protoreflect.FieldNumber]protoreflect.Name{
+		1: "session_id",
+		2: "reason",
+		3: "deadline_ms",
+		5: "recycle",
+		6: "coordination_generation",
+	}
+	assertFieldSet(t, reqDesc, wantReq)
+
+	if !reservesNumber(reqDesc, 4) {
+		t.Error("ShutdownRequest does not reserve field number 4, which the duplicate address held")
+	}
+	if !reservesName(reqDesc, "slot_id") {
+		t.Error(`ShutdownRequest does not reserve the name "slot_id"`)
+	}
+	for i := 0; i < reqDesc.Fields().Len(); i++ {
+		f := reqDesc.Fields().Get(i)
+		if f.Kind() == protoreflect.MessageKind && f.Message().FullName() == "lenny.adapter.v1.SlotId" {
+			t.Errorf("ShutdownRequest.%s carries the retired address wrapper", f.Name())
+		}
+	}
+
+	assertFieldSet(t, (&adapterv1.ShutdownResponse{}).ProtoReflect().Descriptor(),
+		map[protoreflect.FieldNumber]protoreflect.Name{
+			1: "exited_cleanly",
+			2: "exit_code",
+		})
+
+	svcs := reqDesc.ParentFile().Services()
+	adapter := svcs.ByName("Adapter")
+	if adapter == nil {
+		t.Fatal("the adapter proto declares no service Adapter")
+	}
+	rpc := adapter.Methods().ByName("Shutdown")
+	if rpc == nil {
+		t.Fatal("service Adapter declares no Shutdown RPC; it is the one end-of-session teardown")
+	}
+	if got := rpc.Input().FullName(); got != "lenny.adapter.v1.ShutdownRequest" {
+		t.Errorf("Adapter.Shutdown takes %s, want lenny.adapter.v1.ShutdownRequest", got)
+	}
+	if got := rpc.Output().FullName(); got != "lenny.adapter.v1.ShutdownResponse" {
+		t.Errorf("Adapter.Shutdown returns %s, want lenny.adapter.v1.ShutdownResponse", got)
+	}
+}
+
+// assertFieldSet reports every difference between md's declared fields and
+// want, keyed by field number, so a drift names the field rather than a
+// count alone.
+func assertFieldSet(t *testing.T, md protoreflect.MessageDescriptor, want map[protoreflect.FieldNumber]protoreflect.Name) {
+	t.Helper()
+	fields := md.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Get(i)
+		wantName, ok := want[f.Number()]
+		if !ok {
+			t.Errorf("%s declares an unexpected field %d = %q", md.Name(), f.Number(), f.Name())
+			continue
+		}
+		if wantName != f.Name() {
+			t.Errorf("%s field %d = %q, want %q", md.Name(), f.Number(), f.Name(), wantName)
+		}
+	}
+	for num, name := range want {
+		if fields.ByNumber(num) == nil {
+			t.Errorf("%s declares no field %d (%s)", md.Name(), num, name)
+		}
+	}
+}
+
+// reservesNumber reports whether md reserves the given field number.
+func reservesNumber(md protoreflect.MessageDescriptor, num protoreflect.FieldNumber) bool {
+	ranges := md.ReservedRanges()
+	for i := 0; i < ranges.Len(); i++ {
+		r := ranges.Get(i)
+		if num >= r[0] && num < r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// reservesName reports whether md reserves the given field name.
+func reservesName(md protoreflect.MessageDescriptor, name protoreflect.Name) bool {
+	names := md.ReservedNames()
+	for i := 0; i < names.Len(); i++ {
+		if names.Get(i) == name {
+			return true
+		}
+	}
+	return false
+}

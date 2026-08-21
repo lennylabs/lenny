@@ -424,6 +424,35 @@ func TestPrepareWorkspaceRefusesAnUnresolvableStagingPath(t *testing.T) {
 	}
 }
 
+// TestPrepareWorkspaceRejectsAMalformedSessionAddress asserts the
+// fail-closed arm of the address guard on the workspace-prep leg: a
+// session id that is not a safe single path segment is refused with
+// InvalidArgument before a staging root is resolved and before any tree is
+// written, so a hostile identifier cannot place uploaded bytes outside the
+// session's own slot tree.
+// spec: §4.2 (the address is required and well formed), §6.4 (the per-slot
+// tree the address resolves)
+func TestPrepareWorkspaceRejectsAMalformedSessionAddress_spec_4_2(t *testing.T) {
+	for _, id := range []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"} {
+		base := t.TempDir()
+		srv := &Server{WorkspaceBase: base}
+		stream := &prepareWorkspaceStreamStub{
+			ctx:    context.Background(),
+			frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame(id, "lenny-blob://t/a", "hello")},
+		}
+		err := srv.PrepareWorkspace(stream)
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("PrepareWorkspace(%q) = %v, want InvalidArgument", id, status.Code(err))
+		}
+		if entries, readErr := os.ReadDir(filepath.Join(base, "slots")); readErr == nil && len(entries) != 0 {
+			t.Errorf("PrepareWorkspace(%q) wrote a slot tree: %v", id, entries)
+		}
+		if len(srv.slots) != 0 {
+			t.Errorf("PrepareWorkspace(%q) left a registry entry: %v", id, srv.slots)
+		}
+	}
+}
+
 // TestPrepareWorkspaceRequiresASessionID asserts that a frame carrying no
 // session id is refused: absence of the address is an error rather than a
 // scope. spec: §4.2.
