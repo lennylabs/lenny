@@ -39,6 +39,7 @@ var sessionScopedFrameSections = []string{
 	"`message` ---",
 	"`tool_result` ---",
 	"`tool_call` ---",
+	"`status` ---",
 	"`set_tracing_context` ---",
 }
 
@@ -94,9 +95,10 @@ func TestSessionScopedFrameReferenceStatesThePopulationRule(t *testing.T) {
 		})
 	}
 
-	// The runtime writes `tool_call` and `set_tracing_context`, so each states
-	// the echo obligation and what an omitted identifier resolves to.
-	for _, heading := range []string{"`tool_call` ---", "`set_tracing_context` ---"} {
+	// The runtime writes `tool_call`, `status`, and `set_tracing_context`, so
+	// each states the echo obligation and what an omitted identifier resolves
+	// to.
+	for _, heading := range []string{"`tool_call` ---", "`status` ---", "`set_tracing_context` ---"} {
 		entry := section(contract, heading)
 		if entry == "" {
 			t.Fatalf("docs/reference/adapter-contract.md: %s entry not found (renamed or removed?)", heading)
@@ -104,6 +106,12 @@ func TestSessionScopedFrameReferenceStatesThePopulationRule(t *testing.T) {
 		requireAllContain(t, "adapter-contract.md "+heading+" entry", entry, []string{
 			"Echo the identifier",
 			"resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more",
+		})
+		// The section's JSON example is the literal an author copies, so it
+		// carries the identifier rather than showing the unaddressed form the
+		// adapter rejects on a pod holding more than one slot.
+		requireAllContain(t, "adapter-contract.md "+heading+" example", entry, []string{
+			`"slotId": "sess_abc"`,
 		})
 	}
 }

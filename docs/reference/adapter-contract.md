@@ -303,8 +303,15 @@ Must be sent in response to every inbound `heartbeat`. No other fields.
 #### `status` --- Optional Status Update
 
 ```json
-{ "type": "status", "state": "thinking", "message": "Analyzing code..." }
+{ "type": "status", "state": "thinking", "message": "Analyzing code...", "slotId": "sess_abc" }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Always `"status"` |
+| `state` | string | Status label (for example `thinking`, `analyzing`, or `calling_tool`) |
+| `message` | string, optional | Human-readable detail |
+| `slotId` | string, optional | Names the session this status belongs to. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
 
 Informational. The adapter forwards status updates to the gateway for client visibility. Not required at any integration level.
 
@@ -510,7 +517,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
-| `sessionId` | The session identifier for this pod. |
+| `sessionId` | The session whose start last wrote the manifest. On a pod holding more than one bound session a later start replaces it, so a runtime reads it at its own start rather than re-reading it later. |
 | `taskId` | The session's external-protocol task identifier. A session has exactly one execution, so it equals the session id; the adapter derives it from `sessionId`. |
 | `mcpNonce` | Hex nonce for authenticating MCP connections. |
 | `credentialsPath` | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json`. The adapter writes the file before spawning the binary and rewrites it in place when this session's credentials rotate. A runtime that reads credential material reads this field rather than assuming a fixed location. |
