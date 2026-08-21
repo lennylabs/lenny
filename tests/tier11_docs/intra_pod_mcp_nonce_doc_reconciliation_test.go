@@ -348,7 +348,8 @@ func intraPodNonceSites() []nonceStatementSite {
 // replaces. Each one tells a runtime author that the file it reads stays the
 // file its own session's start wrote, which is false on a pod holding a second
 // bound session: that session's start replaces the `sessionId`, `mcpNonce`, and
-// `credentialsPath` members while the earlier binary is still running.
+// `credentialsPath` members while the earlier session's runtime is still
+// processing.
 // The sweep is case-insensitive, because the retired sentence opened a
 // paragraph and so spelled its first word with a capital, and it carries both
 // the definite and the possessive spelling of the currency clause.

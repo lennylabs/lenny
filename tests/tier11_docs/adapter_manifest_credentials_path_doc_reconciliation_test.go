@@ -65,7 +65,7 @@ func TestAdapterManifestDocsCarryTheCredentialsPathMember(t *testing.T) {
 	})
 
 	// The manifest lead states the currency rule §4.7 fixes: the file is
-	// rewritten before each session's binary is spawned and is authoritative
+	// rewritten before each session's runtime start and is authoritative
 	// for the session whose start last wrote it. The manifest read a runtime
 	// performs at its own start is the only delivery path for the credential
 	// path, so the page names that read and bounds it with the collision it

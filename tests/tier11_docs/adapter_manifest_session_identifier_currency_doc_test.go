@@ -3,10 +3,10 @@
 // Tier-11 documentation check for the manifest member that names the session.
 //
 // The adapter manifest is one pod-global file that the adapter rewrites before
-// each session's binary is spawned, so it is authoritative for the session
-// whose start last wrote it. On a pod holding more than one bound session a
-// later start replaces `sessionId`, and an earlier session's binary is still
-// running against the value it read at its own start.
+// each session's runtime start, so it is authoritative for the session whose
+// start last wrote it. On a pod holding more than one bound session a later
+// start replaces `sessionId`, and an earlier session's runtime is still
+// processing against the value it read at its own start.
 //
 // The retired reading is that the member names the pod. A field row that
 // scopes the value to the pod tells a co-tenanted runtime that a later
