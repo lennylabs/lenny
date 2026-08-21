@@ -78,7 +78,7 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 
 | RPC | Description |
 |-----|-------------|
-| `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release, on a pod of any concurrency and any recycle setting. The gateway increments the pod's served-session count and feeds the leak ledger. |
+| `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release, on a pod of any concurrency and any recycle setting. The request is session-scoped: it is addressed by the identifier of the released session and names no slot. The gateway increments the pod's served-session count and feeds the leak ledger. |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod. The gateway computes the recycle disposition from the outcome and `sessionPolicy`. |
 
 **Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime exits at each session end as in the default mode; the adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, then reports through these RPCs.
