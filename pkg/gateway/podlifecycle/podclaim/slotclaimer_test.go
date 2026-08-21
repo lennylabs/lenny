@@ -492,7 +492,7 @@ func TestReleaseSlotDecrementsAndDeletesClaimOnLastSlot(t *testing.T) {
 // so the gateway would over-assign a new slot into the leaked slot's
 // unreleased resources. §6.2 requires a leaked slot to stay counted until pod
 // termination: ReleaseSlot(leaked=true) must skip the counter decrement and
-// leave the pod above occupancy zero. Pre-fix code discarded the ShutdownSlot
+// leave the pod above occupancy zero. Pre-fix code discarded the Shutdown
 // exitedCleanly result and decremented unconditionally, so this test fails
 // against it (the counter would drop to 1 and the leaked-slot occupancy would
 // be freed for over-assignment).

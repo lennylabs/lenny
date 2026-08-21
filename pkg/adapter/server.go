@@ -187,9 +187,9 @@ type Server struct {
 	ScrubOps scrub.Ops
 	// podID is the adapter's own pod name, read once from the Downward API
 	// POD_NAME env at construction (New) and cached immutably for the process
-	// lifetime. The session- and pod-scrub report paths key on it: ShutdownSlot
-	// carries no pod_id and the base recycle Shutdown carries pod_id only inside
-	// RecycleScrub, so the adapter takes its pod identity from this env. An
+	// lifetime. The session- and pod-scrub report paths key on it: a session
+	// Shutdown carries no pod_id and the recycle Shutdown carries pod_id only
+	// inside RecycleScrub, so the adapter takes its pod identity from this env. An
 	// absent or misnamed env leaves it empty, which the gateway rejects
 	// InvalidArgument, so the whole scrub-report chain is disabled fail-closed
 	// rather than reporting under an empty key. Set once before any RPC handler

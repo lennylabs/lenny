@@ -167,7 +167,7 @@ const (
 	// reads to learn its own pod name. spec: §4.7, §5.2 — the adapter
 	// reports each per-slot cleanup outcome via ReportSessionScrub and
 	// the whole-pod scrub outcome via ReportPodScrub, both keyed on the
-	// pod identity. ShutdownSlot carries no podId and the base recycle
+	// pod identity. A session Shutdown carries no podId and the recycle
 	// Shutdown carries it only inside RecycleScrub, so the adapter takes
 	// its pod identity from this Downward API env and caches it. An
 	// absent or misnamed env yields an empty cached podID, which the
@@ -591,7 +591,7 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 			// outcome (ReportSessionScrub) and the whole-pod scrub outcome
 			// (ReportPodScrub) keyed on the pod identity. It reads that
 			// identity from this Downward API POD_NAME env and caches it,
-			// since ShutdownSlot carries no podId and the base recycle
+			// since a session Shutdown carries no podId and the recycle
 			// Shutdown carries it only inside RecycleScrub.
 			Env:             []corev1.EnvVar{podNameEnv()},
 			Ports:           []corev1.ContainerPort{{Name: "grpc", ContainerPort: adapterPort}},

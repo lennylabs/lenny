@@ -245,12 +245,13 @@ type MessageResponse struct {
 // replica (deliverMessageBatch): it resumes suspended → running and
 // delivers, failing closed to `queued` inbox buffering on failure.
 //
-// Per-slot routing for §5.2 concurrent-workspace pods is internal: the
-// client never supplies a slotId, the gateway derives the bound slot from
-// the session, and the executor stamps the resolved slotId on the outbound
-// adapter envelope (see pkg/gateway/executor). A concurrent-session bind
-// that resolves no slot fails closed with the §7.2 SLOT_ID_REQUIRED
-// invariant rather than misdelivering.
+// Slot routing is internal: the client supplies no slot address, and the
+// session identifier the request already carries names the slot that
+// session holds on its pod whatever the pool's concurrency, so the
+// executor addresses the outbound adapter envelope with it (see
+// pkg/gateway/session/executor). A bind that resolves no session
+// identifier fails closed on the §7.2 dispatch invariant rather than
+// misdelivering.
 //
 // Production wires these as the gateway moves from in-memory to
 // Redis + Postgres backings.

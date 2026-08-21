@@ -517,14 +517,14 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 // connection so the adapter keeps the pod process alive, runs the §5.2 scrub,
 // and reports its outcome via ReportPodScrub. The adapter connection is closed
 // only after that recycle Shutdown, so the whole-pod scrub trigger travels the
-// same live connection the per-slot ShutdownSlot used. spec: §5.2 (whole-pod
+// same live connection the ending session's Shutdown used. spec: §5.2 (whole-pod
 // scrub trigger); §4.7 (Shutdown recycle disposition).
 func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// spec: §6.2 (leaked slot remains counted) — a slot whose adapter cleanup
 	// did not complete cleanly is leaked: its resources are not reclaimed until
 	// pod termination, so the Redis slot counter must keep counting it and the
 	// gateway must not over-assign a new slot into the leaked slot's occupancy.
-	// A transport error on ShutdownSlot is treated as leaked too (fail closed:
+	// A transport error on that Shutdown is treated as leaked too (fail closed:
 	// on doubt the slot stays counted rather than freeing occupancy the adapter
 	// may still hold).
 	leaked := false

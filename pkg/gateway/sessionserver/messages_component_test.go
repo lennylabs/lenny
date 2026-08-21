@@ -41,10 +41,9 @@ import (
 // slot-claim path uses SSA, which the fake client does not implement), wires a
 // PodExecutor over a slot-recording adapter, and drives the §15.1
 // POST /v1/sessions/{id}/messages handler. The §6.4 slot is 1:1 with the
-// session, so the gateway resolves session→slot from the live BindResult and
-// stamps the resolved slotId on the outbound adapter envelope; a concurrent
-// bind that resolved no slot fails closed with the internal §7.2
-// SLOT_ID_REQUIRED invariant.
+// session, so the session identifier is the address the gateway puts on the
+// outbound adapter envelope; a bind that resolved no session identifier
+// fails closed on the internal §7.2 dispatch invariant.
 
 // perSlotAdapter records the slotId the PodExecutor stamped on each session's
 // Attach binding frame and on each forwarded message envelope, so a component

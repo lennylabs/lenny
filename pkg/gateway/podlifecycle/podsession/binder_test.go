@@ -1160,7 +1160,7 @@ type recordingShutdownAdapter struct {
 	reqs []*adapterv1.ShutdownRequest
 	// uncleanExit makes every Shutdown response report ExitedCleanly=false so a
 	// concurrent-slot release test can drive the §6.2 leaked-slot path (the
-	// leaked outcome the binder derives from the ShutdownSlot response). The
+	// leaked outcome the binder derives from the Shutdown response). The
 	// zero value keeps the clean-exit behavior existing recycle tests rely on.
 	uncleanExit bool
 }

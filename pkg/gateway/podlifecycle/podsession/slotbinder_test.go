@@ -500,14 +500,14 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 }
 
 // spec: §6.2 (leaked slot remains counted), §5.2 (slot assignment atomicity)
-// diagnosis: Binder.ReleaseSlot discarded the ShutdownSlot exitedCleanly
+// diagnosis: Binder.ReleaseSlot discarded the Shutdown exitedCleanly
 // result and decremented the pod's Redis slot counter for a leaked slot, so
 // the pod's occupancy dropped and the per-pod claim was deleted (or the pod
 // was over-assigned). §6.2 requires a leaked slot to stay counted until pod
 // termination: the last slot of a two-slot pod leaking must keep the pod above
 // occupancy zero, so the per-pod claim survives and no new slot is
 // over-assigned into the leaked slot's resources. Pre-fix code (the discarded
-// `_, _ = ShutdownSlot(...)`) fails this test: it would decrement the counter
+// `_, _ = Shutdown(...)`) fails this test: it would decrement the counter
 // to zero and delete the claim.
 func TestReleaseSlotLeakedKeepsPodCounted(t *testing.T) {
 	a := newConcurrentAdapter()
@@ -553,7 +553,7 @@ func TestReleaseSlotLeakedKeepsPodCounted(t *testing.T) {
 }
 
 // spec: §6.2 (leaked slot remains counted), §5.2 (slot assignment atomicity)
-// diagnosis: a ShutdownSlot transport error was treated as a clean release, so
+// diagnosis: a Shutdown transport error was treated as a clean release, so
 // a slot whose adapter never confirmed cleanup was decremented from the pod's
 // occupancy. §6.2 fail-closed: on doubt the slot stays counted rather than
 // freeing occupancy the adapter may still hold. Pre-fix code discarded the
@@ -580,7 +580,7 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 		t.Fatalf("ReleaseSlot with a shutdown transport error: %v", err)
 	}
 	if !podClaimExists(t, c, "sbx-1") {
-		t.Error("a ShutdownSlot transport error must keep the slot counted (fail closed, §6.2); the claim must survive")
+		t.Error("a Shutdown transport error must keep the slot counted (fail closed, §6.2); the claim must survive")
 	}
 }
 
@@ -590,13 +590,13 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 // whole-pod scrub at occupancy zero. On the last clean slot drain
 // Binder.ReleaseSlot must send the adapter a whole-pod recycle Shutdown (a
 // RecycleScrub sub-message) carrying the last-released slot's session id, the
-// folded pod_id (SandboxName) plus the pool's cleanup parameters, and NO
-// slot_id, so the adapter runs the scrub rather than the per-slot teardown.
-// Pre-fix code closed the adapter connection right after the per-slot
-// ShutdownSlot and had no recycled signal from SlotClaimer.ReleaseSlot, so the
+// folded pod_id (SandboxName) plus the pool's cleanup parameters, so the
+// adapter runs the scrub beside the named session's teardown.
+// Pre-fix code closed the adapter connection right after that session's
+// Shutdown and had no recycled signal from SlotClaimer.ReleaseSlot, so the
 // recycle Shutdown never fired and every recycling concurrent pool was retired
 // by the missing-report timeout. This test fails against the pre-fix binder: it
-// would observe only the per-slot Shutdown (slot_id set, recycle nil).
+// would observe only the ending session's Shutdown (recycle nil).
 func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T) {
 	a := newConcurrentAdapter()
 	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
