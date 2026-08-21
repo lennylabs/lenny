@@ -692,11 +692,21 @@ if (!implementCode) {
 log("Implementing the spec change via the implement-proposal-build subworkflow");
 let build;
 try {
-  build = await workflow("implement-proposal-build", {
-    proposalPath: input.proposalPath,
-    date,
-    repoRoot: repo,
-  });
+  // Invoked by path rather than by name. A named workflow resolves to a copy
+  // the runtime cached, which can be older than the file on disk: a run
+  // launched six seconds after a commit to this subworkflow used the previous
+  // revision, so several fixes appeared to have no effect and were debugged
+  // twice. A path is read from disk at call time, so the child that runs is the
+  // child that was edited.
+  build = await workflow(
+    { scriptPath: repo + "/.claude/workflows/implement-proposal-build.js" },
+    {
+      proposalPath: input.proposalPath,
+      date,
+      repoRoot: repo,
+      reverifyDoneSteps: !!input.reverifyDoneSteps,
+    },
+  );
 } catch (e) {
   return {
     status: "aborted",

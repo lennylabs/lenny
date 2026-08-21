@@ -57,6 +57,18 @@ const maxStepAttempts = input.maxStepAttempts || 50;
 // because the condition it detects is an account or transport failure that a
 // retry cannot clear, and every spin costs wall-clock for nothing.
 const maxDeadAttempts = input.maxDeadAttempts || 3;
+// Re-verify a step whose checklist box is already ticked instead of skipping
+// it. Off by default: the tick is the pipeline's own record that the step went
+// green and conformant, so re-checking costs two review agents per step and
+// earns nothing on a healthy run. Worth turning on when the checklist may be
+// optimistic, after an interrupted run or when the proposal changed once some
+// steps had landed. The step's code is committed and its tiers passed when it
+// landed, so the question worth re-asking is conformance rather than green.
+const reverifyDoneSteps = !!input.reverifyDoneSteps;
+// Steps that were ticked, failed re-verification, and had to be repaired. A
+// step recorded as done that was not is worth surfacing rather than quietly
+// fixing.
+const reverifyRepaired = [];
 const maxVerifyRounds = input.maxVerifyRounds || 25;
 const maxReviewRounds = input.maxReviewRounds || 50;
 const coverageFloor = input.coverageFloor || 80;
@@ -308,6 +320,41 @@ const REVIEW = {
 // top of it. Read here rather than inferred by the planner from the tree,
 // because the planner infers a step is done from the surface being present,
 // which is weaker evidence and which it can get wrong in either direction.
+// The proposal is read-only to this phase and every agent is told so in the
+// strongest terms the prompt can carry. An instruction is not an enforcement
+// mechanism, so the run also looks: nothing blocks the edit, nothing reverts
+// it, and if one happened it is reported to a human with its diff rather than
+// silently kept or silently undone. Deciding what the proposal should have
+// said is the human's call, and this report is what that decision is made on.
+const PROPOSAL_EDITS = {
+  type: "object",
+  required: ["edited", "commits"],
+  properties: {
+    edited: { type: "boolean", description: "Whether any commit in the range touched the proposal file" },
+    commits: {
+      type: "array",
+      description: "One entry per commit that touched the proposal, oldest first. Empty when none did.",
+      items: {
+        type: "object",
+        required: ["sha", "subject", "whatChanged"],
+        properties: {
+          sha: { type: "string" },
+          subject: { type: "string", description: "The commit subject line" },
+          whatChanged: {
+            type: "string",
+            description:
+              "What the edit did to the proposal's meaning, read from the diff: which section, what it said before, what it says now. Quote the changed sentences rather than paraphrasing them.",
+          },
+          statedReason: {
+            type: "string",
+            description: "The reason the commit message gives, verbatim, or an empty string when it gives none",
+          },
+        },
+      },
+    },
+  },
+};
+
 const TICKED = {
   type: "object",
   required: ["ticked"],
@@ -484,12 +531,48 @@ const stepResults = [];
 let priorContext = "";
 let replanCount = 0;
 const skippedSteps = [];
+// The design-conformance review of one step's work, by every lens. Extracted
+// because it runs in two places: inside the attempt loop against the diff that
+// attempt just produced, and on its own against a step an earlier run already
+// built and ticked. `ref` is the commit the step's work is measured from; for a
+// re-verified step that is the run's base, because the step's commits predate
+// this run.
+async function reviewStep(step, ref, tag) {
+  return await parallel(
+      STEP_REVIEW_LENSES.map((l) => () =>
+        agentTry(
+          "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
+            "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
+            "Read the proposal at " +
+            proposal +
+            " (its spec edits are applied), focusing on the sections this step implements (" +
+            ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
+            "), and read ONLY this step's diff: `git diff " +
+            ref +
+            "..HEAD` in " +
+            repo +
+            ". You are read-only; report findings only.\n\n" +
+            "Scope: judge only what THIS step is responsible for (its work: " +
+            step.work +
+            "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
+            l.text,
+          {
+            schema: REVIEW,
+            label: "review:" + step.id + ":" + l.key + ":" + tag,
+            phase: "Build",
+          },
+        ),
+      ),
+    );
+
+}
+
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
   // A step the planner found already present builds nothing. It stays in the
   // sequence so later steps' dependencies still resolve, and it is reported so
   // the proposal's checklist can be corrected.
-  if (step.alreadyDone) {
+  if (step.alreadyDone && !reverifyDoneSteps) {
     log("Step " + step.id + ": already present in the tree; nothing to build");
     skippedSteps.push({ id: step.id, why: "already present" });
     stepResults.push({ step: step.id, skipped: "already present" });
@@ -548,6 +631,41 @@ for (let i = 0; i < plan.steps.length; i++) {
   let stepFindings = [];
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
+
+  // A step an earlier run ticked is re-verified rather than rebuilt: its code
+  // is committed and its tiers passed when it landed, so what is worth asking
+  // again is whether it still matches the proposal. Measured from the run's
+  // base, because the step's own commits predate this run. A clean result skips
+  // the step as before; findings fall through into the loop below, which fixes,
+  // re-runs the tiers, and re-reviews until the step is green and conformant —
+  // the same bar a fresh step is held to.
+  if (step.alreadyDone) {
+    log("Step " + step.id + ": already ticked; re-verifying conformance and invariants");
+    const rv = (await reviewStep(step, baseRef, "reverify")).filter(Boolean);
+    const rvRan = rv.length === STEP_REVIEW_LENSES.length;
+    const rvFindings = rv.flatMap((r) => r.findings);
+    if (rvRan && rvFindings.length === 0) {
+      log("Step " + step.id + ": re-verified clean; moving on");
+      skippedSteps.push({ id: step.id, why: "already present, re-verified clean" });
+      stepResults.push({ step: step.id, skipped: "already present", reverified: true });
+      continue;
+    }
+    log(
+      "Step " + step.id + ": re-verify found " + rvFindings.length + " finding(s)" +
+        (rvRan ? "" : " (a reviewer did not return, so conformance is unconfirmed)") + "; repairing",
+    );
+    stepFindings = rvFindings;
+    issues = rvFindings.length > 0
+      ? "This step was implemented by an earlier run and its checklist box is ticked, but a re-verification " +
+        "found it no longer matches the proposal's design. Fix the code to match the proposal for this step " +
+        "(do not change scope, do not touch spec/, do not edit the proposal). Its tests already exist, so " +
+        "strengthen them where a finding has a runtime effect the current tests pass over, and keep every " +
+        "test green:\n" + JSON.stringify(rvFindings, null, 2)
+      : "This step was implemented by an earlier run, but a re-verification reviewer did not return, so its " +
+        "conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its " +
+        "sections; fix any divergence and keep the tests green.";
+    reverifyRepaired.push({ id: step.id, checklistStep: step.checklistStep, findings: rvFindings });
+  }
   // A dead agent is not a failed attempt. agent() returns null when the
   // subagent never ran: the account hit a usage limit, or the call died on a
   // terminal API error after its own retries. That says nothing about the code
@@ -565,7 +683,7 @@ for (let i = 0; i < plan.steps.length; i++) {
   while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
     attempt++;
     res = await agentTry(
-      attempt === 1
+      attempt === 1 && !issues
         ? "Implement one step of a build sequence for an applied spec proposal.\n\n" +
             "HARD CONSTRAINT: implement only this step. Do not start later steps. Do not edit spec/. Work in " +
             repo +
@@ -660,32 +778,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     }
 
     // Adversarial design-conformance review of THIS step's diff only.
-    const reviewResults = await parallel(
-      STEP_REVIEW_LENSES.map((l) => () =>
-        agentTry(
-          "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
-            "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
-            "Read the proposal at " +
-            proposal +
-            " (its spec edits are applied), focusing on the sections this step implements (" +
-            ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
-            "), and read ONLY this step's diff: `git diff " +
-            stepRef +
-            "..HEAD` in " +
-            repo +
-            ". You are read-only; report findings only.\n\n" +
-            "Scope: judge only what THIS step is responsible for (its work: " +
-            step.work +
-            "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
-            l.text,
-          {
-            schema: REVIEW,
-            label: "review:" + step.id + ":" + l.key + ":r" + attempt,
-            phase: "Build",
-          },
-        ),
-      ),
-    );
+    const reviewResults = await reviewStep(step, stepRef, "r" + attempt);
     // Fail closed: a reviewer that died (null) is not evidence of conformance.
     // Only declare the step review-clean when every reviewer ran and none
     // found a divergence.
@@ -1208,6 +1301,8 @@ return {
   // Where the landed code departs from what the proposal states. The build
   // never edits the proposal to close one, so this is the only place a
   // proposal defect surfaces, and it is addressed to a human.
+  // Steps that were ticked but failed re-verification and had to be repaired.
+  reverifyRepaired,
   proposalDeviations: stepResults.flatMap((r) =>
     (r.deviations || []).map((d) => ({ step: r.step, title: r.title, ...d })),
   ),

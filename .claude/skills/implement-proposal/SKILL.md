@@ -60,11 +60,14 @@ The script lives at `.claude/workflows/implement-proposal.js` (subworkflow at `.
   "proposalPath": "proposals/<file>.md",
   "repoRoot": "<absolute repo root>",
   "date": "<YYYY-MM-DD>",
-  "implementCode": true
+  "implementCode": true,
+  "reverifyDoneSteps": false
 }
 ```
 
-Set `implementCode` to `false` for spec-only; every tier each step and the final verify reach is run. Agents inherit the session model and effort level; run this skill with a strong model at high effort.
+Set `implementCode` to `false` for spec-only; every tier each step and the final verify reach is run.
+
+Set `reverifyDoneSteps` to `true` to re-check the steps a previous run already ticked. Each is reviewed for design conformance and invariants without being rebuilt or re-tested, because its code is committed and its tiers passed when it landed. A step that passes is skipped as usual; one that fails enters the normal fix, verify, and review loop and is held to the same green-and-conformant bar as a fresh step. Use it when the checklist may be optimistic, after an interrupted run or when the proposal changed once some steps had landed. It costs two review agents per ticked step, so it defaults to `false`. Agents inherit the session model and effort level; run this skill with a strong model at high effort.
 
 ### Step 3: Interruptions
 
@@ -73,7 +76,7 @@ On interruption (auth expiry, crash): stop the stale task with TaskStop, then re
 ### Step 4: Report
 
 1. Run `git status --porcelain` and `git log --oneline` for the run's commits. Confirm the spec landed as its own commit, the code changes are under `pkg/`, `cmd/`, `charts/`, `schemas/`, and `tests/`, and `BUILD-GAPS.md` carries the closed findings.
-2. Report `checklistDeviations` and `skippedSteps` whenever either is non-empty, whatever the status. They are where the proposal's implementation checklist did not match the tree, and they are the input to correcting it. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
+2. Report `reverifyRepaired` whenever it is non-empty: each entry is a step the checklist recorded as done that no longer matched the proposal and had to be repaired, which means the tick was wrong and the proposal or the earlier run needs a second look. Report `checklistDeviations` and `skippedSteps` whenever either is non-empty, whatever the status. They are where the proposal's implementation checklist did not match the tree, and they are the input to correcting it. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
 3. On `status: "implemented"`: report the spec commit, the blast radius, the build steps with their commits, the final green status, the changed-line coverage, that the design-conformance review came back clean, and the findings closed. Suggest pushing; do not push unless asked.
 4. On `status: "spec-only"`: the spec is landed, verified, and committed; report it and the findings left for the code stage.
 5. On `status: "implemented-not-green"`: report which tiers failed, whether coverage fell below the floor, and any unresolved design-conformance findings (`reviewFindings`); the findings are left OPEN and the commits remain on the branch. The `resumeNote` says how to continue.
