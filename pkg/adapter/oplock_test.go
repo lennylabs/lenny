@@ -57,7 +57,7 @@ func TestOpKindString(t *testing.T) {
 
 func TestOpLockIdleAcquireImmediate(t *testing.T) {
 	var l opLock
-	rel, err := l.Begin(context.Background(), opCheckpoint, "")
+	rel, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice")
 	if err != nil {
 		t.Fatalf("Begin on idle lock: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestOpLockIdleAcquireImmediate(t *testing.T) {
 
 func TestOpLockSerializesAndPromotes(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice")
 	if err != nil {
 		t.Fatalf("Begin checkpoint: %v", err)
 	}
@@ -261,7 +261,7 @@ func TestOpLockRejectsSecondQueuedInterrupt(t *testing.T) {
 
 func TestOpLockBusyWhenRunningDifferentKind(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice")
 	if err != nil {
 		t.Fatalf("Begin checkpoint: %v", err)
 	}
@@ -274,6 +274,40 @@ func TestOpLockBusyWhenRunningDifferentKind(t *testing.T) {
 	// pending interrupt holds the whole-pod queue.
 	if _, err := l.Begin(context.Background(), opCheckpoint, "3b7d19f4-carol"); !errors.Is(err, errOpBusy) {
 		t.Fatalf("checkpoint behind pending interrupt err = %v, want errOpBusy", err)
+	}
+}
+
+// TestOpLockInterruptHoldsWholePodQueueForTheSoleSession pins that the
+// whole-pod queue a pending interrupt holds is unconditional: it applies
+// on a pod holding a single session, and it refuses that session's own
+// checkpoint, so no checkpoint is admitted behind a pending interrupt
+// whatever the pool's concurrency. Only an interrupt is pod-scoped and
+// carries the empty identifier; every checkpoint addresses a session.
+//
+// spec: 4.7 (a pending interrupt holds the whole-pod queue and any
+// further checkpoint or interrupt is dropped with a BUSY status)
+func TestOpLockInterruptHoldsWholePodQueueForTheSoleSession(t *testing.T) {
+	var l opLock
+	const sole = "9c02ae55-alice"
+	rel1, err := l.Begin(context.Background(), opCheckpoint, sole)
+	if err != nil {
+		t.Fatalf("Begin checkpoint for the sole session: %v", err)
+	}
+	defer rel1()
+
+	go func() { _, _ = l.Begin(context.Background(), opInterrupt, "") }()
+	waitQueued(t, &l)
+
+	if _, err := l.Begin(context.Background(), opCheckpoint, sole); !errors.Is(err, errOpBusy) {
+		t.Fatalf("checkpoint for the sole session behind a pending interrupt err = %v, want errOpBusy", err)
+	}
+	// The refusal is the whole-pod queue rather than coalescing: the
+	// pending set holds no checkpoint key while an interrupt is pending.
+	l.mu.Lock()
+	pending := len(l.checkpoints)
+	l.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending checkpoint keys = %d, want 0 while an interrupt is pending", pending)
 	}
 }
 
@@ -302,7 +336,7 @@ func TestOpLockSecondInterruptDuringRunningInterruptBusy(t *testing.T) {
 // checkpoint releases the lock.
 func TestOpLockInterruptDuringCheckpointDeliversAfterComplete(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice")
 	if err != nil {
 		t.Fatalf("Begin checkpoint: %v", err)
 	}
@@ -335,7 +369,7 @@ func TestOpLockInterruptDuringCheckpointDeliversAfterComplete(t *testing.T) {
 
 func TestOpLockContextCancelWhileQueued(t *testing.T) {
 	var l opLock
-	rel1, err := l.Begin(context.Background(), opCheckpoint, "")
+	rel1, err := l.Begin(context.Background(), opCheckpoint, "9c02ae55-alice")
 	if err != nil {
 		t.Fatalf("Begin checkpoint: %v", err)
 	}
