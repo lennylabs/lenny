@@ -100,6 +100,25 @@ console.log("\n2. flag ON, re-verify clean: reviewed by both lenses, then skippe
   check("both lenses ran on the ticked step", rv.length === 2, rv.length + " ran");
   check("no implement/fix agent ran for it", !calls.some((c) => c.label.startsWith("build:S1") && !c.label.endsWith(":base")));
   check("logged as re-verified clean", logs.some((l) => /Step S1: re-verified clean/.test(l)));
+
+  // The defect this guards: a re-verify pointed at `git diff <base>..HEAD`
+  // reads an EMPTY diff, because a ticked step's commits landed in an earlier
+  // run and sit behind this run's base. The reviewer would report clean having
+  // looked at nothing, so the whole feature would pass vacuously.
+  const rvPrompt = calls.find((c) => c.label === "review:S1:conformance:reverify").prompt;
+  // The prompt may MENTION git diff while explaining why there is none; what it
+  // must not do is instruct the reviewer to read one.
+  check("the re-verify is not told to read a diff",
+    !/read ONLY this step's diff/.test(rvPrompt) && !/git diff \w+\.\.HEAD/.test(rvPrompt),
+    (rvPrompt.match(/read ONLY this step's diff|git diff \w+\.\.HEAD/) || [""])[0]);
+  check("the re-verify is told to read the current tree", /CURRENT STATE OF THE TREE/.test(rvPrompt));
+  check("the re-verify names the step's targets", rvPrompt.includes("pkg/a"));
+  check("the re-verify says the step came from an earlier run", /EARLIER run/.test(rvPrompt));
+
+  // The in-loop path must be untouched: a step this run built IS reviewed by diff.
+  const { calls: c2 } = await run({ reverifyDoneSteps: false, reverifyFindings: [] });
+  const loopPrompt = c2.find((c) => /^review:S2:conformance:r/.test(c.label)).prompt;
+  check("a freshly built step is still reviewed by diff", /git diff deadbeef\.\.HEAD/.test(loopPrompt));
 }
 
 console.log("\n3. flag ON, re-verify finds a divergence: repaired through the normal loop");

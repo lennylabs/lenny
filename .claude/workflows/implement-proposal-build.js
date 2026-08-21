@@ -541,17 +541,31 @@ async function reviewStep(step, ref, tag) {
   return await parallel(
       STEP_REVIEW_LENSES.map((l) => () =>
         agentTry(
-          "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
+          (ref
+            ? "Adversarially review ONE just-implemented build step against the proposal's design.\n\n"
+            : "Adversarially review ONE ALREADY-IMPLEMENTED build step against the proposal's design.\n\n") +
             "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
             "Read the proposal at " +
             proposal +
             " (its spec edits are applied), focusing on the sections this step implements (" +
             ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
-            "), and read ONLY this step's diff: `git diff " +
-            ref +
-            "..HEAD` in " +
-            repo +
-            ". You are read-only; report findings only.\n\n" +
+            "), " +
+            (ref
+              ? "and read ONLY this step's diff: `git diff " + ref + "..HEAD` in " + repo + "."
+              : // No diff exists for this step. Its commits landed in an earlier
+                // run, so they sit behind this run's base ref and `git diff
+                // base..HEAD` would be empty at the top of the loop and would
+                // carry other steps' work later in it. Either way it would not
+                // show this step, and a reviewer handed nothing reports nothing,
+                // which is a clean verdict that means only that it looked at
+                // the wrong thing. Read the tree instead.
+                "and read the CURRENT STATE OF THE TREE for what this step owns: " +
+                ((step.targets || []).join(", ") || "the files and packages this step's work names") +
+                ", in " + repo + ". There is no diff to read: this step was implemented and committed by an " +
+                "EARLIER run, so its work is already part of the baseline and `git diff` against this run's " +
+                "base shows nothing of it. Judge the code as it now stands against what the proposal " +
+                "specifies, exactly as if you were seeing it for the first time.") +
+            " You are read-only; report findings only.\n\n" +
             "Scope: judge only what THIS step is responsible for (its work: " +
             step.work +
             "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
@@ -641,7 +655,7 @@ for (let i = 0; i < plan.steps.length; i++) {
   // the same bar a fresh step is held to.
   if (step.alreadyDone) {
     log("Step " + step.id + ": already ticked; re-verifying conformance and invariants");
-    const rv = (await reviewStep(step, baseRef, "reverify")).filter(Boolean);
+    const rv = (await reviewStep(step, null, "reverify")).filter(Boolean);
     const rvRan = rv.length === STEP_REVIEW_LENSES.length;
     const rvFindings = rv.flatMap((r) => r.findings);
     if (rvRan && rvFindings.length === 0) {
