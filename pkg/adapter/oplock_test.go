@@ -393,3 +393,56 @@ func TestOpLockContextCancelWithdrawsPendingCheckpoint(t *testing.T) {
 	go func() { _, _ = l.Begin(context.Background(), opCheckpoint, "slot-b") }()
 	waitPendingSession(t, &l, "slot-b")
 }
+
+// TestOpLockPendingInterruptOccupiesNoCheckpointKey pins that a waiting
+// interrupt is recorded outside the pending checkpoint set, so no key of
+// that map, empty or otherwise, ever stands for the pod-scoped
+// interrupt. The promotion rule is a lexicographic tie-break over
+// session identifiers, and an interrupt carries none.
+// spec: §4.7 (Checkpoint/Interrupt mutual exclusion), §4.10 (a session
+// is addressed by its session identifier on every pod)
+func TestOpLockPendingInterruptOccupiesNoCheckpointKey(t *testing.T) {
+	var l opLock
+	rel, err := l.Begin(context.Background(), opCheckpoint, "session-a")
+	if err != nil {
+		t.Fatalf("Begin checkpoint: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, berr := l.Begin(ctx, opInterrupt, "")
+		done <- berr
+	}()
+	waitQueued(t, &l)
+
+	l.mu.Lock()
+	pending := l.interruptPending
+	keys := len(l.checkpoints)
+	l.mu.Unlock()
+	if !pending {
+		t.Fatal("queued interrupt is not recorded in interruptPending")
+	}
+	if keys != 0 {
+		t.Fatalf("pending checkpoint keys = %d, want 0 while only an interrupt waits", keys)
+	}
+
+	// Withdrawing the interrupt clears the same two fields and still
+	// leaves the checkpoint set untouched.
+	cancel()
+	if werr := <-done; !errors.Is(werr, context.Canceled) {
+		t.Fatalf("cancelled interrupt Begin err = %v, want context.Canceled", werr)
+	}
+	l.mu.Lock()
+	pending = l.interruptPending
+	keys = len(l.checkpoints)
+	l.mu.Unlock()
+	if pending {
+		t.Fatal("withdrawn interrupt still recorded in interruptPending")
+	}
+	if keys != 0 {
+		t.Fatalf("pending checkpoint keys = %d after interrupt withdrawal, want 0", keys)
+	}
+	rel()
+}

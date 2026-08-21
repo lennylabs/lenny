@@ -52,9 +52,10 @@ var (
 // carries no ordinal, arrival-order, or fairness meaning and it
 // establishes no liveness property. The pending checkpoint set is keyed
 // by session identifier on every pod whatever the pool's concurrency,
-// admitting one pending checkpoint per distinct session identifier; the
-// empty key is reserved for the whole-pod interrupt. The zero value is
-// ready to use.
+// admitting one pending checkpoint per distinct session identifier. A pending
+// interrupt is not a member of that set: it lives in interruptPending
+// and interruptPromote and never occupies a checkpoint key. The zero
+// value is ready to use.
 type opLock struct {
 	mu      sync.Mutex
 	running bool
@@ -69,8 +70,9 @@ type opLock struct {
 	checkpoints map[string]chan struct{}
 }
 
-// Begin acquires the lock for an operation of kind targeting sessionID
-// (the empty whole-pod id for interrupts, which are pod-scoped). It
+// Begin acquires the lock for an operation of kind targeting sessionID.
+// An interrupt is pod-scoped, so sessionID is unused for opInterrupt and
+// a pending interrupt is recorded outside the pending checkpoint set. It
 // blocks until the operation may run or ctx is cancelled. When the
 // operation cannot wait it returns immediately: errOpCoalesced for a
 // checkpoint whose session identifier is already pending, or errOpBusy
