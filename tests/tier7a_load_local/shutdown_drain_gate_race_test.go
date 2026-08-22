@@ -160,6 +160,27 @@ func (p *drainPeer) awaitTerminate(wait time.Duration) bool {
 	}
 }
 
+// settle waits until the reader goroutine has gone quiet for the given
+// span. An assertion that bounds the frame count from above has to give
+// the reader time to decode whatever the adapter already wrote, otherwise
+// it reads a partial total and passes over a surplus frame still in the
+// socket buffer.
+func (p *drainPeer) settle(quiet time.Duration) {
+	timer := time.NewTimer(quiet)
+	defer timer.Stop()
+	for {
+		select {
+		case <-p.frames:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(quiet)
+		case <-timer.C:
+			return
+		}
+	}
+}
+
 // drainPod returns an adapter whose CH-RUNTIMEOPS is wired to a live peer
 // and whose runtime parks on the gates the case arms.
 func drainPod(t *testing.T, rt adapter.RuntimeProcess) (*adapter.Server, *drainPeer) {
@@ -280,6 +301,13 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("shut alice down: %v", err)
 		}
+		// The adapter writes the frame before Shutdown returns, but the
+		// peer decodes it on its reader goroutine, so the count is only
+		// authoritative once that read has landed.
+		if !peer.awaitTerminate(30 * time.Second) {
+			t.Fatal("no CH-RUNTIMEOPS drain signal reached the runtime; the incoming " +
+				"session's registered-but-unbound entry must not withhold the drain")
+		}
 		if got := peer.count("terminate"); got != 1 {
 			t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want 1; the incoming session's "+
 				"registered-but-unbound entry must not withhold the drain", got)
@@ -311,6 +339,7 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 		}
 		// bob is still bound, so the pod-global drain is withheld and the
 		// shared connection survives alice's close.
+		peer.settle(500 * time.Millisecond)
 		if got := peer.count("terminate"); got != 0 {
 			t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want 0 while a co-tenant is still bound", got)
 		}
@@ -352,6 +381,7 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 			})
 		}()
 		wg.Wait()
+		peer.settle(500 * time.Millisecond)
 		if got := peer.count("terminate"); got > 1 {
 			t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want at most 1", got)
 		}
