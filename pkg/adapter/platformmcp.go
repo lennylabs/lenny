@@ -44,6 +44,7 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.mcpCancel = serveUntilCancelled(cancel, func() { _ = srv.Serve(ctx, serveLis, nonce) })
+	s.mcpArmedNonce = nonce
 	s.mu.Unlock()
 	return nil
 }

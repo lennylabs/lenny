@@ -203,14 +203,31 @@ func TestSessionTeardownLeavesNoSurfaceForTheEndedSession_spec_11_4(t *testing.T
 		fwd := &recordingForwarder{}
 		s, m := teardownPod(t, fwd, "sess-alice", "sess-bob")
 		connectorSocket := soleConnectorSocket(t, m)
+		// Before the teardown the pod's two sockets already answer the
+		// manifest nonce, so an unauthenticated probe after the teardown
+		// reports a surface that stopped honouring the nonce rather than
+		// one that never did.
+		if _, authenticated, _ := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); !authenticated {
+			t.Fatal("the co-tenanted pod's platform socket did not authenticate the manifest nonce before any teardown")
+		}
+		if _, authenticated, _ := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce); !authenticated {
+			t.Fatal("the co-tenanted pod's connector socket did not authenticate the manifest nonce before any teardown")
+		}
 		revoke(t, s, "sess-alice")
 
 		// The pod's shared runtime process is still serving bob, so the
 		// pod-wide endpoints stay up. What closes alice's access is the
-		// refusal, because the surface cannot name one session.
-		reachable, _, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce)
+		// refusal, because the surface cannot name one session. Each probe
+		// asserts that it reached that refusal: an undispatched call whose
+		// handshake failed says the pod-wide surface was re-armed on
+		// another nonce, which is a different defect wearing the same
+		// answer.
+		reachable, authenticated, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce)
 		if !reachable {
 			t.Error("the co-tenant's pod-wide platform endpoint was cancelled by its neighbour's teardown")
+		}
+		if !authenticated {
+			t.Error("the platform socket stopped authenticating the pod's manifest nonce while a co-tenant is still live, so the refusal under test was never reached")
 		}
 		if dispatched {
 			t.Error("the platform tool surface dispatched a call after one of the pod's two sessions ended")
@@ -230,18 +247,22 @@ func TestSessionTeardownLeavesNoSurfaceForTheEndedSession_spec_11_4(t *testing.T
 		// process both were given to. The refusal covers tools/list as well
 		// as tools/call, and the connector surface as well as the platform
 		// one: each is gated on the same sole-session test.
-		if _, _, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); dispatched {
-			t.Error("the surviving session's own tools/call was dispatched while its neighbour's code may still be resident")
+		if _, authenticated, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); !authenticated || dispatched {
+			t.Errorf("the surviving session's own platform tools/call: authenticated=%v dispatched=%v, want the §9.1 sole-session refusal on an authenticated connection",
+				authenticated, dispatched)
 		}
-		connReachable, _, connDispatched := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce)
+		connReachable, connAuthenticated, connDispatched := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce)
 		if !connReachable {
 			t.Error("the co-tenant's pod-wide connector endpoint was cancelled by its neighbour's teardown")
+		}
+		if !connAuthenticated {
+			t.Error("the connector socket stopped authenticating the pod's manifest nonce while a co-tenant is still live, so the refusal under test was never reached")
 		}
 		if connDispatched {
 			t.Error("the connector tool surface dispatched a call after one of the pod's two sessions ended")
 		}
-		if _, _, listed := connectorToolListOutcome(t, connectorSocket, m.MCPNonce); listed {
-			t.Error("the connector tool surface answered tools/list while the pod's shared process may hold two sessions' code")
+		if _, listAuthenticated, listed := connectorToolListOutcome(t, connectorSocket, m.MCPNonce); !listAuthenticated || listed {
+			t.Error("the connector tools/list did not reach the §9.1 sole-session refusal on an authenticated connection while the pod's shared process may hold two sessions' code")
 		}
 		if got := fwd.connectorCallCount(); got != 0 {
 			t.Errorf("forwarded connector calls = %d on a pod that has served two sessions, want 0", got)

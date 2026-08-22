@@ -22,12 +22,14 @@
 // The live server keeps the nonce of the start that armed it, whether or
 // not the manifest still carries that nonce: the pod holds one manifest
 // file, both starts rewrite it in place, and which document survives is a
-// separate, interleaving-dependent property. The case therefore asserts
-// what holds on every interleaving. The pod's two intra-pod sockets are
-// bound and refuse a nonce no start published, and the surviving
-// document, when the two rewrites did not interleave in the file, names
-// one of the two starting sessions, carries a nonce, names those two
-// sockets, and opens both of them or neither.
+// separate, interleaving-dependent property. The case reads the arming
+// from the adapter and asserts that it names one of the two starting
+// sessions and that its nonce opens both of the pod's intra-pod sockets,
+// which is what a loser that cancelled and rebound the winner's servers
+// breaks. The sockets also refuse a nonce no start published, and the
+// surviving document, when the two rewrites did not interleave in the
+// file, names one of the two starting sessions, carries a nonce, and
+// names those two sockets.
 //
 // spec: §4.7 (session start), §15.4.3 (intra-pod MCP surface, nonce
 // handshake).
@@ -252,6 +254,26 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			if !mcpSurfaceListening(t, connectorSocket) {
 				t.Error("no server is bound to the pod's connector MCP socket after both starts returned")
 			}
+			// The live servers keep the nonce of the start that armed
+			// them, and that start is one of the two racing calls. A
+			// loser that cancelled the winner's servers through the
+			// shared cancel and rebound them on its own nonce leaves the
+			// arming intact but the winner's manifest naming a nonce
+			// nothing answers, so the arming is read from the adapter
+			// rather than from the raced file.
+			armedSession, armedNonce := s.PodMCPArming()
+			if armedSession != "alice" && armedSession != "bob" {
+				t.Errorf("the pod's MCP arming names session %q, want one of the two starting sessions", armedSession)
+			}
+			if armedNonce == "" {
+				t.Fatal("the pod's intra-pod MCP surface holds no armed nonce after both starts returned")
+			}
+			if !nonceAuthenticates(t, s.MCPSocket, armedNonce) {
+				t.Error("the pod's platform MCP socket does not answer the nonce its arming start published")
+			}
+			if !nonceAuthenticates(t, connectorSocket, armedNonce) {
+				t.Error("the pod's connector MCP socket does not answer the nonce its arming start published, so the two surfaces were armed by different starts")
+			}
 			m, whole := racedManifest(t, s)
 			if !whole {
 				// The two in-place rewrites interleaved. The arming
@@ -274,20 +296,6 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			}
 			if len(m.ConnectorServers) != 1 || m.ConnectorServers[0].ID != raceConnectorID || m.ConnectorServers[0].Socket != connectorSocket {
 				t.Fatalf("manifest connector servers = %+v, want the one resolved connector on %q", m.ConnectorServers, connectorSocket)
-			}
-			// The live servers keep the nonce of the start that armed them.
-			// Which of the two starts that was is interleaving-dependent and
-			// only the surviving document's nonce is knowable once both
-			// calls have returned, so the case asserts the two surfaces
-			// agree: that nonce opens the platform socket exactly when it
-			// opens the connector socket. A loser that re-armed one surface,
-			// or that cancelled one of the winner's servers and rebound it,
-			// splits the two answers apart.
-			platformArmed := nonceAuthenticates(t, s.MCPSocket, m.MCPNonce)
-			connectorArmed := nonceAuthenticates(t, connectorSocket, m.MCPNonce)
-			if platformArmed != connectorArmed {
-				t.Errorf("the surviving manifest's nonce authenticates on the platform socket = %t and on the connector socket = %t, want the two surfaces armed by the same start",
-					platformArmed, connectorArmed)
 			}
 		})
 	}

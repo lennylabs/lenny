@@ -349,6 +349,12 @@ type Server struct {
 	// departing session cannot cancel a surface the pod's current claimant
 	// still needs. Cleared by that cancellation. spec: §15.4.3.
 	mcpSession string
+	// mcpArmedNonce is the §15.4.3 nonce the pod's running intra-pod MCP
+	// servers authenticate, empty when no server is bound. It is written
+	// by the start that armed them and cleared with their cancels, so it
+	// names the arming that is live rather than the last one written to
+	// the pod's one manifest file. spec: §15.4.3.
+	mcpArmedNonce string
 	// connectorCancels stops the §9.3 per-connector MCP servers, one
 	// cancel per connector socket. Reset to nil after every server is
 	// stopped. F-9.1.2.

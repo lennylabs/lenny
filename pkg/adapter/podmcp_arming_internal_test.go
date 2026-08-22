@@ -203,3 +203,50 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 		t.Error("the platform MCP server stopped authenticating the incumbent's nonce")
 	}
 }
+
+// spec: §15.4.3 (intra-pod MCP surface, once-per-pod arming)
+//
+// PodMCPArming is the reading of the live arming a caller outside the
+// package cannot take from the pod's one manifest file, which every start
+// rewrites in place. It reports the session whose claim took the start
+// together with the nonce the running servers authenticate, and both go
+// empty when the release that ends the generation cancels them.
+func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {
+	s := New("adapter-test")
+	s.WorkspaceBase = t.TempDir()
+	s.MCPSocket = mcpSocketPath(t, "p.sock")
+
+	if session, nonce := s.PodMCPArming(); session != "" || nonce != "" {
+		t.Errorf("PodMCPArming on an unarmed pod = (%q, %q), want both empty", session, nonce)
+	}
+
+	if _, startMCP, err := s.claimSessionSlot("alice", false, false); err != nil || !startMCP {
+		t.Fatalf("claim alice: startMCP=%v err=%v", startMCP, err)
+	}
+	if err := s.startPlatformMCP("nonce-alice"); err != nil {
+		t.Fatalf("arm the platform MCP server for alice: %v", err)
+	}
+	s.noteRuntimeStarted("alice")
+
+	session, nonce := s.PodMCPArming()
+	if session != "alice" {
+		t.Errorf("PodMCPArming session = %q, want alice", session)
+	}
+	if nonce != "nonce-alice" {
+		t.Errorf("PodMCPArming nonce = %q, want the nonce the running server authenticates", nonce)
+	}
+	if !initializeWithNonce(t, s.MCPSocket, nonce) {
+		t.Error("the nonce PodMCPArming reports does not open the pod's platform MCP socket")
+	}
+
+	// The release that leaves the pod's shared runtime process serving no
+	// session cancels the surface, so the arming it reported is gone.
+	if _, removed, _ := s.deregisterSlot("alice"); !removed {
+		t.Fatal("deregister alice removed no entry")
+	}
+	s.noteRuntimeClosed("alice")
+	s.cancelPodMCPIfRuntimeIdle()
+	if session, nonce := s.PodMCPArming(); session != "" || nonce != "" {
+		t.Errorf("PodMCPArming after the pod's surface was cancelled = (%q, %q), want both empty", session, nonce)
+	}
+}
