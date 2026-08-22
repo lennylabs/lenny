@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"sort"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -274,17 +275,94 @@ func (s *Server) checkSessionBound(sessionID string) error {
 	return nil
 }
 
-// anyStartedSession returns the identifier of one session the adapter has
-// started on this pod, empty when none has started. The §10.1 coordinator
-// hold arms on it: a closed gateway control stream is a coordinator loss
-// only while the pod is serving a session. spec: §10.1.
-func (s *Server) anyStartedSession() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, st := range s.slots {
+// heldSession is one member of the set the §10.1 hold timeout terminates:
+// a session the adapter had started and whose registry entry pass 1
+// deregistered, carried with the deregistered state so pass 2 can remove
+// its per-slot tree. spec: §10.1.4; §6.4.
+type heldSession struct {
+	sessionID string
+	state     *slotState
+}
+
+// countStartedSessionsLocked reports how many registry entries carry the
+// started flag. Callers hold s.mu. spec: §4.7.
+func (s *Server) countStartedSessionsLocked() int {
+	n := 0
+	for _, st := range s.slots {
 		if st.started {
-			return id
+			n++
 		}
 	}
-	return ""
+	return n
+}
+
+// hasStartedSession reports whether the adapter has started any session on
+// this pod. The §10.1 coordinator hold arms on it: a closed gateway
+// control stream is a coordinator loss only while the pod is serving a
+// session it started.
+//
+// The predicate is the started flag rather than the entry's bound state,
+// because the §4.7 bind sequence assigns credentials before the start, so
+// a bind that failed after credential assignment leaves a bound entry for
+// a session the gateway has since re-placed on another pod. Arming on that
+// entry would terminate, notify, and bill a session that is live
+// elsewhere. spec: §10.1; §4.7.
+func (s *Server) hasStartedSession() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.countStartedSessionsLocked() > 0
+}
+
+// startedSessionCount returns how many sessions the adapter has started on
+// this pod. The §10.1 arming log carries it in place of a session
+// identifier, because the hold names the pod rather than a session.
+// spec: §10.1.
+func (s *Server) startedSessionCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.countStartedSessionsLocked()
+}
+
+// deregisterStartedSessions is the first pass of the §10.1.4 hold
+// termination: under one s.mu hold it collects every started entry,
+// cancels each entry's direct-mode expiry timers, deletes each entry, and
+// returns the members sorted by session identifier.
+//
+// Emptying the registry in one critical section before any termination
+// work is what makes the termination and a concurrent gateway Shutdown
+// mutually exclusive. That handler decides on the outcome of its own
+// locked cancel-deregister step, so its step and this one are two
+// acquisitions of one lock: a request whose step runs after this pass
+// removes nothing and skips its teardown, and one whose step runs first
+// takes the member out of the set collected here. Without the pass, every
+// terminated session's entry would survive for the life of the pod,
+// holding the §15.4.2 drain gate false and the §4.6.1 inbound count above
+// one on a pod that goes on serving.
+//
+// The order is fixed rather than incidental: s.slots is a map and Go
+// randomizes a map's range order, so an unsorted collection would leave
+// the order pass 2 terminates in undetermined.
+//
+// spec: §10.1.4; §4.7; §4.9.
+func (s *Server) deregisterStartedSessions() []heldSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.slots))
+	for id, st := range s.slots {
+		if st.started {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	members := make([]heldSession, 0, len(ids))
+	for _, id := range ids {
+		// The bound-entry result exists to decide the §15.4.2 drain, which
+		// this path does not send, so it is discarded here.
+		st, removed, _ := s.deregisterSlotLocked(id)
+		if !removed {
+			continue
+		}
+		members = append(members, heldSession{sessionID: id, state: st})
+	}
+	return members
 }

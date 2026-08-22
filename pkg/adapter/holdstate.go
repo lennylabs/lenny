@@ -37,11 +37,10 @@ const reasonCoordinatorLost = "coordinator_lost"
 //
 // spec: §10.1.
 type holdState struct {
-	mu      sync.Mutex
-	active  bool
-	timer   expiryTimerHandle
-	session string
-	gen     int64
+	mu     sync.Mutex
+	active bool
+	timer  expiryTimerHandle
+	gen    int64
 }
 
 // coordinatorHoldAllowedMethods is the §10.1.4 allowlist: the only
@@ -94,23 +93,31 @@ func (s *Server) onCoordinatorChannelClosed() {
 	// bound to a slot on every pod, so a pod-global session field would
 	// name no session on a pod whose sessions all take the slot path and
 	// the hold would never arm.
-	session := s.anyStartedSession()
-	if session == "" {
+	if !s.hasStartedSession() {
 		return
 	}
-	s.enterHoldState(session)
+	s.enterHoldState()
 }
 
-// enterHoldState arms the §10.1 hold for session: it raises the
-// coordinator-hold gauge, logs coordinator_connection_lost with the last
-// known generation, and starts the hold-timeout timer. It is idempotent —
-// a second close while already held is a no-op.
+// enterHoldState arms the §10.1 hold: it raises the coordinator-hold
+// gauge, logs coordinator_connection_lost with the last known generation
+// and the number of sessions the pod has started, and starts the
+// hold-timeout timer. It is idempotent — a second close while already
+// held is a no-op.
+//
+// The hold names no session. Its unit is the pod, and the set it
+// terminates is read from the slot registry when the timeout fires rather
+// than recorded here, because a session admitted between this arming and
+// the timeout starts after the read and would be missing from a recorded
+// set while still running when the timeout fires.
 //
 // spec: §10.1.
-func (s *Server) enterHoldState(session string) {
-	// Read the generation through the accessor (which takes coord.mu)
-	// before locking hold.mu so the two locks are never held together.
+func (s *Server) enterHoldState() {
+	// Read the generation and the started-session count through their
+	// accessors (which take coord.mu and s.mu) before locking hold.mu so
+	// no two locks are ever held together.
 	gen := s.LastFencedGeneration()
+	started := s.startedSessionCount()
 
 	s.hold.mu.Lock()
 	defer s.hold.mu.Unlock()
@@ -118,11 +125,10 @@ func (s *Server) enterHoldState(session string) {
 		return
 	}
 	s.hold.active = true
-	s.hold.session = session
 	s.hold.gen = gen
 	setCoordinatorHold(true)
 	slog.Warn("coordinator_connection_lost",
-		"session_id", session,
+		"started_sessions", started,
 		"last_generation", gen)
 	s.hold.timer = s.holdAfter(s.coordinatorHoldTimeout(), s.onHoldTimeout)
 }
@@ -145,17 +151,27 @@ func (s *Server) exitHoldState() {
 		s.hold.timer = nil
 	}
 	setCoordinatorHold(false)
-	slog.Info("coordinator_hold_resolved", "session_id", s.hold.session)
+	slog.Info("coordinator_hold_resolved", "last_generation", s.hold.gen)
 }
 
 // onHoldTimeout runs when no new coordinator fenced within
-// coordinatorHoldTimeoutSeconds. It lowers the gauge, notifies the
-// gateway via AdapterTerminating (which drops to the disk post-mortem
-// when the control stream is gone, the usual case since the coordinator
-// is exactly what was lost), and best-effort terminates the runtime so
-// the agent process does not run unsupervised.
+// coordinatorHoldTimeoutSeconds. It lowers the gauge and self-terminates
+// every session the adapter has started on this pod, so no agent process
+// is left running with live provider credentials and no coordinator.
 //
-// spec: §10.1.
+// The termination runs as two passes. Pass 1 is one critical section that
+// deregisters every started entry, which is what makes the termination and
+// a concurrent gateway Shutdown mutually exclusive: that handler decides
+// on the outcome of its own locked cancel-deregister step, so its step and
+// pass 1's are two acquisitions of one lock and one of them is first.
+// Pass 2 then terminates each collected member in turn.
+//
+// The set is read here rather than recorded when the hold armed, because
+// the hold-state interceptor gates admission rather than binding: a
+// StartSession admitted before the arming can claim and start afterwards,
+// and a recorded set would leave that session running unsupervised.
+//
+// spec: §10.1; §10.1.4; §4.7.
 func (s *Server) onHoldTimeout() {
 	s.hold.mu.Lock()
 	if !s.hold.active {
@@ -165,19 +181,52 @@ func (s *Server) onHoldTimeout() {
 	}
 	s.hold.active = false
 	s.hold.timer = nil
-	session := s.hold.session
 	gen := s.hold.gen
 	setCoordinatorHold(false)
 	s.hold.mu.Unlock()
 
-	slog.Warn(reasonCoordinatorLost,
-		"session_id", session,
-		"last_generation", gen)
+	// Pass 1.
+	members := s.deregisterStartedSessions()
+	if len(members) == 0 {
+		// Every started session was released between the arming and the
+		// firing, so there is nothing to terminate and nothing to report.
+		return
+	}
 
-	// §10.1.4 — notify the gateway so it can transition the session
-	// without waiting for the 60s orphan-session reconciler.
-	s.EmitAdapterTerminating(session, reasonCoordinatorLost)
-	s.writeHoldPostMortem(session, gen)
+	// Pass 2. One close context is shared by every member, which keeps the
+	// bound the single-session timeout had: a runtime process serving more
+	// than one session returns from a non-last close without touching the
+	// child, so only the last member's close consumes the grace.
+	closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, m := range members {
+		s.terminateHeldSession(closeCtx, m, gen)
+	}
+}
+
+// terminateHeldSession runs the §10.1.4 coordinator-lost termination for
+// one member of the set the hold timeout deregistered.
+//
+// The final usage flush is here rather than left to the gateway's later
+// terminal Shutdown, because pass 1 removed the entry that request's own
+// locked step would have had to remove for its teardown to run, so that
+// request skips the teardown that carries the flush.
+//
+// The loop sends no CH-RUNTIMEOPS drain signal and reports no §5.2 session
+// scrub. The drain asks the runtime to finish its current exchange inside
+// a grace window a coordinator collects, and this is the path on which no
+// coordinator exists; the scrub report is the record of a scrub a Shutdown
+// teardown performed, and this path performs none.
+//
+// spec: §10.1.4; §4.7; §6.4.
+func (s *Server) terminateHeldSession(ctx context.Context, m heldSession, gen int64) {
+	slog.Warn(reasonCoordinatorLost,
+		"session_id", m.sessionID,
+		"last_generation", gen)
+	s.writeHoldPostMortem(m.sessionID, gen)
+	// §4.7 — flush this member's final usage report so the gateway can run
+	// budget_return.lua (§8.3) with its complete token totals.
+	s.emitFinalUsage(ctx, m.sessionID)
 
 	// Best-effort graceful runtime termination. The close takes the
 	// session off the pod's shared runtime process, so the generation
@@ -185,13 +234,23 @@ func (s *Server) onHoldTimeout() {
 	// process's sole occupant, or the intra-pod MCP surface would keep
 	// forwarding a tool call under a principal whose session has ended and
 	// the pod surface could never be cancelled for the next claim.
+	// The loop passes no teardown condition: the runtime's own active set
+	// closes the shared process on the last member.
 	// spec: §10.1; §15.4.3.
 	if s.Runtime != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = s.Runtime.Close(ctx, session)
-		cancel()
-		s.noteRuntimeClosed(session)
+		_ = s.Runtime.Close(ctx, m.sessionID)
 	}
+	s.noteRuntimeClosed(m.sessionID)
+	// The second release step. It follows the close so the agent process is
+	// not reading a credential file the teardown has already removed.
+	_ = removeSlotTree(m.state)
+
+	// §10.1.4 — notify the gateway so it can transition this session
+	// without waiting for the 60s orphan-session reconciler. The event
+	// names the member the loop is terminating: leaving the stamp to the
+	// pod-global accessor would emit an empty session on exactly the
+	// concurrent pods this path reaches.
+	s.EmitAdapterTerminating(m.sessionID, reasonCoordinatorLost)
 }
 
 // inHoldState reports whether the adapter is currently in §10.1 hold
