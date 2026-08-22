@@ -137,9 +137,9 @@ func (s *Server) takePodMCPCancelsLocked() []context.CancelFunc {
 // nonce alone is empty when the claimant is a type: mcp runtime, for
 // which the adapter arms no server. It is the exported reading of the
 // arming a caller cannot recover from the pod's one manifest file, which
-// two concurrent starts rewrite in place: the manifest names whichever
-// write landed last, while this names the start the live servers belong
-// to. spec: §15.4.3.
+// each start republishes by renaming a freshly staged document over it:
+// the manifest names whichever rename landed last, while this names the
+// start the live servers belong to. spec: §15.4.3.
 func (s *Server) PodMCPArming() (sessionID, nonce string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

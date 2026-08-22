@@ -208,7 +208,8 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 //
 // PodMCPArming is the reading of the live arming a caller outside the
 // package cannot take from the pod's one manifest file, which every start
-// rewrites in place. It reports the session whose claim took the start
+// republishes by renaming a freshly staged document over it. It reports
+// the session whose claim took the start
 // together with the nonce the running servers authenticate, and both go
 // empty when the release that ends the generation cancels them.
 func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {

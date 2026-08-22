@@ -28,16 +28,57 @@ func TestLoadLocalTierRunsUnderTheRaceDetector(t *testing.T) {
 	}
 }
 
-// spec: §17.4 — a stress budget is spent on a concurrency-sensitive case,
-// so each iteration runs with the race detector on. A budget run with the
-// detector off counts passes without checking the property the budget
-// exists to protect.
+// spec: §17.4 — a stress budget spent on a concurrency-sensitive case
+// runs each iteration with the race detector on, because a budget run
+// with the detector off counts passes without checking the property the
+// budget exists to protect. The detector is a per-budget decision taken
+// from the tier being stressed: a budget on any other test keeps a plain
+// argv, since the detector needs cgo and distorts the wall-clock timing a
+// latency scenario measures.
 func TestStressIterationsRunUnderTheRaceDetector(t *testing.T) {
-	cmd := buildGoTestStressCmd("^TestX$", "./tests/tier7a_load_local/...", "load_local", 60)
+	cmd := buildGoTestStressCmd("^TestX$", "./tests/tier7a_load_local/...", "load_local", 60, true)
 	if !slices.Contains(cmd.Args, "-race") {
 		t.Errorf("stress iteration argv = %v, want it to carry -race", cmd.Args)
 	}
 	if !strings.HasSuffix(cmd.Path, "go") && !strings.Contains(cmd.Path, "go") {
 		t.Errorf("stress iteration runs %q, want the go tool", cmd.Path)
+	}
+	plain := buildGoTestStressCmd("^TestX$", "./pkg/sandboxclaim/...", "", 60, false)
+	if slices.Contains(plain.Args, "-race") {
+		t.Errorf("a stress budget that did not ask for the detector got argv %v", plain.Args)
+	}
+}
+
+// spec: §17.4 — the detector default follows the tier a budget is spent
+// on. The concurrency tiers get it; a budget against an ordinary package
+// or a wall-clock scenario tier does not, so a routine quarantine check
+// keeps working on a builder with no C toolchain and a latency budget
+// measures un-instrumented timing. An explicit --race overrides either
+// way, and an unknown value is rejected rather than silently defaulted.
+func TestStressRaceDefaultFollowsTheTierBeingStressed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mode   string
+		tag    string
+		target string
+		want   bool
+	}{
+		{"auto on the local load tag", "auto", "load_local", "./...", true},
+		{"auto on the local load package", "auto", "", "./tests/tier7a_load_local/...", true},
+		{"auto on an ordinary package", "auto", "", "./pkg/...", false},
+		{"auto on the kind load tier", "auto", "load_kind", "./tests/tier7b_load_kind/...", false},
+		{"explicit on", "on", "", "./pkg/...", true},
+		{"explicit off", "off", "load_local", "./...", false},
+	} {
+		got, err := resolveStressRace(tc.mode, tc.tag, tc.target)
+		if err != nil {
+			t.Fatalf("%s: resolveStressRace returned %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: detector = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if _, err := resolveStressRace("sometimes", "", "./..."); err == nil {
+		t.Error("resolveStressRace accepted an unknown --race value, want an error")
 	}
 }

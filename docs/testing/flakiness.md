@@ -19,7 +19,7 @@ lenny-test stress --test TestSandboxClaim --runs 50
 lenny-test stress --pattern 'TestSession.*' --runs 25
 ```
 
-The harness runs `go test -count=1 -run <name>` once per iteration. It stops at the first failure (the TESTING.md §17.10 budget is zero tolerance) and prints the last 40 lines of stdout/stderr.
+The harness runs `go test -count=1 -run <name>` once per iteration, adding `-race` when the budget is spent on a concurrency tier (the `load_local` build tag or the tier-7a package). Pass `--race on` or `--race off` to override that default. It stops at the first failure (the TESTING.md §17.10 budget is zero tolerance) and prints the last 40 lines of stdout/stderr.
 
 CI runs the sweep weekly via `.github/workflows/flake-budget.yml`:
 - Cadence: Sundays 08:00 UTC

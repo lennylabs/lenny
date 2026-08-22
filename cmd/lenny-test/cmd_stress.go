@@ -22,8 +22,10 @@ import (
 //	lenny-test stress --test TestX --runs 25 --tag integration
 //
 // The command shells out to `go test -run <name> -count=1` once per
-// iteration. Anything beyond a single iteration result is recorded
-// but the exit code reports the first failing run.
+// iteration, with the race detector on when the budget is being spent
+// on a concurrency tier (see stressRaceDefault) or when --race says so.
+// Anything beyond a single iteration result is recorded but the exit
+// code reports the first failing run.
 func runStress(args []string) int {
 	fs := flag.NewFlagSet("stress", flag.ExitOnError)
 	testName := fs.String("test", "", "exact test name to run (regex anchored with ^…$)")
@@ -32,6 +34,7 @@ func runStress(args []string) int {
 	target := fs.String("pkg", "./...", "package selector")
 	tag := fs.String("tag", "", "optional build tag (e.g. component, contract, integration)")
 	timeoutSec := fs.Int("timeout-seconds", 600, "per-run timeout")
+	race := fs.String("race", "auto", "run each iteration under the race detector: auto (on for the concurrency tiers), on, off")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -45,6 +48,11 @@ func runStress(args []string) int {
 	}
 	if *runs <= 0 {
 		fmt.Fprintln(os.Stderr, "stress: --runs must be positive")
+		return 2
+	}
+	useRace, err := resolveStressRace(*race, *tag, *target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stress: %v\n", err)
 		return 2
 	}
 
@@ -64,7 +72,7 @@ func runStress(args []string) int {
 	// silent "0 tests" would otherwise look like a clean 50/50 pass
 	// when in fact nothing ran. Print the names so the operator can
 	// see what's about to be hammered.
-	matched, err := listMatchingTests(runArg, *target, *tag)
+	matched, err := listMatchingTests(runArg, *target, *tag, useRace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "stress: discovery failed: %v\n", err)
 		return 2
@@ -82,6 +90,9 @@ func runStress(args []string) int {
 	if *tag != "" {
 		fmt.Printf(" (tag=%s)", *tag)
 	}
+	if useRace {
+		fmt.Printf(" [race detector on]")
+	}
 	fmt.Println()
 	fmt.Printf("stress: %d test(s) matched discovery:\n", len(matched))
 	for _, n := range matched {
@@ -92,7 +103,7 @@ func runStress(args []string) int {
 	pass := 0
 	fail := 0
 	for i := 1; i <= *runs; i++ {
-		cmd := buildGoTestStressCmd(runArg, *target, *tag, *timeoutSec)
+		cmd := buildGoTestStressCmd(runArg, *target, *tag, *timeoutSec, useRace)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			fail++
@@ -118,14 +129,46 @@ func runStress(args []string) int {
 	return 0
 }
 
-// buildGoTestStressCmd assembles `go test -race -count=1 -run <runArg>`
-// for a single stress iteration. runArg is already the anchored
-// regex (or unanchored pattern); the caller does not pass a bare
-// test name. The detector is on because a stress budget is spent on
-// concurrency-sensitive cases, whose failure mode is a data race that a
-// pass/fail count alone does not surface.
-func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int) *exec.Cmd {
-	args := []string{"test", "-race", "-count=1", "-run", runArg}
+// stressRaceDefault reports whether a budget against this build tag and
+// package selector runs under the race detector by default. The
+// concurrency tiers assert ordering and atomicity properties whose
+// violations are data races on shared state, so a budget spent there is
+// worth little without the detector. Every other budget keeps a plain
+// argv: the detector needs cgo, and it distorts the wall-clock timing a
+// latency scenario measures against its target. spec: §17.4.
+func stressRaceDefault(tag, target string) bool {
+	switch tag {
+	case "load_local", "load_cloud":
+		return true
+	}
+	return strings.Contains(target, "tier7a_load_local")
+}
+
+// resolveStressRace turns the --race tri-state into the detector
+// decision for this budget. "auto" defers to stressRaceDefault.
+func resolveStressRace(mode, tag, target string) (bool, error) {
+	switch mode {
+	case "auto":
+		return stressRaceDefault(tag, target), nil
+	case "on", "true":
+		return true, nil
+	case "off", "false":
+		return false, nil
+	}
+	return false, fmt.Errorf("--race must be one of auto, on, off (got %q)", mode)
+}
+
+// buildGoTestStressCmd assembles `go test -count=1 -run <runArg>` for a
+// single stress iteration, with `-race` when race is set. runArg is
+// already the anchored regex (or unanchored pattern); the caller does
+// not pass a bare test name. The caller decides the detector from the
+// tier being stressed rather than this function forcing it, so a budget
+// on a non-concurrency test keeps a plain argv that builds without cgo.
+func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int, race bool) *exec.Cmd {
+	args := []string{"test", "-count=1", "-run", runArg}
+	if race {
+		args = append(args, "-race")
+	}
 	if timeoutSec > 0 {
 		args = append(args, fmt.Sprintf("-timeout=%ds", timeoutSec))
 	}
@@ -139,9 +182,14 @@ func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int) *exec.Cmd 
 // listMatchingTests asks `go test -list <regex>` which tests under
 // the target package(s) match the regex. The output is a flat list
 // of test names, one per line, interleaved with "ok" footers per
-// package; we filter the footers out and return the names.
-func listMatchingTests(runArg, target, tag string) ([]string, error) {
+// package; we filter the footers out and return the names. race mirrors
+// the iteration argv so discovery builds the package the same way the
+// iterations do.
+func listMatchingTests(runArg, target, tag string, race bool) ([]string, error) {
 	args := []string{"test", "-list", runArg}
+	if race {
+		args = append(args, "-race")
+	}
 	if tag != "" {
 		args = append(args, "-tags="+tag)
 	}
