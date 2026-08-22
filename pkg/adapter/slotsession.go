@@ -67,7 +67,7 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotent
 		for id, other := range s.slots {
 			if id != sessionID && other.sessionID != "" {
 				return false, false, nil, status.Errorf(codes.Unavailable,
-					"pod is not idle: session %s has already started on this pod", id)
+					"pod is not idle: session %s is already bound on this pod", id)
 			}
 		}
 	}
@@ -246,7 +246,7 @@ func (s *Server) mcpArmingHeldLocked() bool {
 // slot registry. Every session is bound to a slot on every pod, so this
 // is the one session check: it admits an entry bound to the named session
 // (started or not) and refuses one that is absent or registered but not
-// yet bound. spec: §4.1; §5.2.
+// yet bound. spec: §5.2; §6.4.
 func (s *Server) checkSessionBound(sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

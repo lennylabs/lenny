@@ -3852,7 +3852,7 @@ type CheckpointStart struct {
 	// CheckpointRequest envelope nor the Checkpoint RPC signature carries
 	// one, so the opening frame is where the stream is addressed. The
 	// adapter resolves the checkpoint roots and the per-session op lock
-	// from it. spec: §4.1; §10.1.7.
+	// from it. spec: §4.7.2; §10.1.7.
 	SessionId     *SessionId `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

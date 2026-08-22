@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -164,5 +165,55 @@ func TestSDKWarmClaimAdmitsTheSameSessionOnItsBoundNotStartedEntry_spec_4_7(t *t
 	}
 	if !startMCP {
 		t.Error("startMCP = false, want true for the pod's sole session")
+	}
+}
+
+// spec: 5.2 (the slot entry states and the slot identity invariant), 6.1
+// (preConnect is admitted only at maxConcurrentSessions: 1)
+//
+// The SDK-warm different-session refusal reports the state its predicate
+// tests. The predicate admits the union of bound-not-started and started
+// incumbents, so its status message must say the pod already holds
+// another session's binding rather than assert that session started: an
+// incumbent that is merely bound wrote no manifest, was issued no nonce,
+// and never reached the runtime's start. The message must also stay
+// distinguishable from the same-session started refusal, so an operator
+// reading a bind failure can tell a co-tenant on the pod from a repeat
+// start of their own session.
+func TestSDKWarmRefusalNamesTheBindingRatherThanAStart_spec_5_2(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	s.mu.Lock()
+	st, err := s.ensureSlotStateLocked("sess-bound")
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("ensure slot state: %v", err)
+	}
+	st.sessionID = "sess-bound"
+	s.mu.Unlock()
+
+	_, _, err = s.claimSessionSlot("sess-b", true, false)
+	if err == nil {
+		t.Fatal("second session admitted beside a bound-not-started entry; want Unavailable")
+	}
+	msg := status.Convert(err).Message()
+	if strings.Contains(msg, "has already started") {
+		t.Errorf("refusal message = %q; it reports a start for an incumbent that only bound", msg)
+	}
+	if !strings.Contains(msg, "sess-bound") {
+		t.Errorf("refusal message = %q; want the incumbent session named", msg)
+	}
+
+	// The same-session started refusal is a different failure and must
+	// read differently.
+	s2 := &Server{WorkspaceBase: t.TempDir()}
+	if _, _, err := s2.claimSessionSlot("sess-a", true, false); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	_, _, err = s2.claimSessionSlot("sess-a", true, false)
+	if err == nil {
+		t.Fatal("repeat start admitted; want Unavailable")
+	}
+	if started := status.Convert(err).Message(); started == msg {
+		t.Errorf("the co-tenant refusal and the repeat-start refusal share the message %q", msg)
 	}
 }
