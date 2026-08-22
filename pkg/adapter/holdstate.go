@@ -39,7 +39,7 @@ const reasonCoordinatorLost = "coordinator_lost"
 type holdState struct {
 	mu     sync.Mutex
 	active bool
-	timer  expiryTimerHandle
+	timer  TimerHandle
 	gen    int64
 }
 
@@ -60,7 +60,7 @@ var coordinatorHoldAllowedMethods = map[string]bool{
 
 // holdAfter schedules f to run after d through the injected test seam
 // when set and time.AfterFunc otherwise.
-func (s *Server) holdAfter(d time.Duration, f func()) expiryTimerHandle {
+func (s *Server) holdAfter(d time.Duration, f func()) TimerHandle {
 	if s.HoldAfterFunc != nil {
 		return s.HoldAfterFunc(d, f)
 	}

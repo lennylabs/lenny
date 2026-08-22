@@ -134,69 +134,6 @@ func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1.4 — when no coordinator fences within the timeout the
-// adapter notifies the gateway (AdapterTerminating), writes a disk
-// post-mortem, lowers the gauge, and closes the runtime.
-func TestHoldStateTimeoutTerminates_spec_10_1(t *testing.T) {
-	setCoordinatorHold(false)
-	clk := &fakeExpiryClock{}
-	rt := &holdRuntime{}
-	dir := t.TempDir()
-	s := New("hold-test")
-	s.HoldAfterFunc = clk.After
-	s.Runtime = rt
-	s.PostMortemDir = dir
-	if err := s.claimSessionForTest("sess-42"); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	// Record a fenced generation so the post-mortem carries it.
-	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
-		SessionId:              &adapterv1.SessionId{Value: "sess-42"},
-		CoordinationGeneration: 7,
-	}); err != nil {
-		t.Fatalf("fence: %v", err)
-	}
-
-	dropBefore := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
-	s.enterHoldState()
-	armed := clk.last()
-	if armed == nil {
-		t.Fatal("hold timer not armed")
-	}
-	armed.fire()
-
-	if s.inHoldState() {
-		t.Fatal("hold must clear after timeout")
-	}
-	if holdGauge() != 0 {
-		t.Errorf("gauge = %v, want 0 after timeout", holdGauge())
-	}
-	if len(rt.closed) != 1 || rt.closed[0] != "sess-42" {
-		t.Errorf("runtime Close calls = %v, want [sess-42]", rt.closed)
-	}
-	dropAfter := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
-	if dropAfter-dropBefore != 1 {
-		t.Errorf("AdapterTerminating drop delta = %v, want 1 (no coordinator stream)", dropAfter-dropBefore)
-	}
-
-	pm := filepath.Join(dir, "coordinator_lost-sess-42.json")
-	data, err := os.ReadFile(pm)
-	if err != nil {
-		t.Fatalf("post-mortem not written: %v", err)
-	}
-	var rec struct {
-		SessionID      string `json:"sessionId"`
-		Reason         string `json:"reason"`
-		LastGeneration int64  `json:"lastGeneration"`
-	}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		t.Fatalf("decode post-mortem: %v", err)
-	}
-	if rec.SessionID != "sess-42" || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != 7 {
-		t.Errorf("post-mortem = %+v", rec)
-	}
-}
-
 // spec: §10.1.4 — a fence that races in before the timeout fires
 // disarms the termination; a stale timer callback is a no-op.
 func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
@@ -326,7 +263,7 @@ func TestCoordinatorHoldTimeoutDefault_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: 10.1 (coordinator-loss hold), 4.11 (the four states a registry
+// spec: 10.1 (coordinator-loss hold), 4.7 (the four states a registry
 // entry holds), 5.2 (every session is bound to a slot on every pod)
 //
 // The hold arms from the slot registry's started entries. Every session is
@@ -390,7 +327,7 @@ func TestCoordinatorHoldArmsFromStartedSlotRegistry_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: 10.1, 4.11 (registered and bound-not-started are not started)
+// spec: 10.1, 4.7 (registered and bound-not-started are not started)
 //
 // A pod whose only entry has not been started is serving no agent process,
 // so a closed control stream there is not a coordinator loss. Arming on it
@@ -643,7 +580,7 @@ func drainControlEvents(t *testing.T, stream *fakeControlStream, want int) []con
 }
 
 // spec: 10.1 (coordinator-lost self-termination), 10.1.4 (the hold
-// timeout), 4.11 (the started entries the timeout terminates)
+// timeout), 4.7 (the started entries the timeout terminates)
 //
 // The timeout terminates every session the adapter started on the pod,
 // once per member. A single-valued termination on a pod holding two
@@ -719,7 +656,70 @@ func TestCoordinatorHoldTimeoutTerminatesEveryStartedSession_spec_10_1(t *testin
 	}
 }
 
-// spec: 10.1.4 (the hold timeout's deregistration pass), 4.11 (the
+// spec: 10.1.4 (the coordinator-lost termination), 4.7 (the started
+// entries the timeout terminates)
+//
+// The production interleaving has no control sink: AdapterEvents clears
+// the pod's sink in the same defer that arms the hold, so every envelope
+// the timeout emits is dropped. The drop is one AdapterTerminating per
+// terminated session, which is the arity the loop is responsible for. A
+// termination that emitted once for the pod records one drop however many
+// sessions it ended, and every case that watches an attached sink stays
+// green.
+//
+// diagnosis: a failure means the coordinator-lost termination has gone
+// back to a single pod-scoped emission, so a co-tenant's session ends with
+// no terminal notification and the gateway waits out the 60s
+// orphan-session reconciler for it.
+func TestCoordinatorHoldTimeoutDropsItsEmissionsWithNoSink_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newSharedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	// Record a fenced generation so the post-mortems carry it.
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
+		SessionId:              &adapterv1.SessionId{Value: "sess-a"},
+		CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("fence: %v", err)
+	}
+
+	dropBefore := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
+	fireHoldTimeout(t, s, clk)
+
+	if s.inHoldState() {
+		t.Fatal("hold must clear after timeout")
+	}
+	if holdGauge() != 0 {
+		t.Errorf("gauge = %v, want 0 after timeout", holdGauge())
+	}
+	dropAfter := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
+	if got := dropAfter - dropBefore; got != 2 {
+		t.Errorf("AdapterTerminating drop delta = %v, want 2 (one per terminated session, no coordinator stream)", got)
+	}
+
+	for _, id := range []string{"sess-a", "sess-b"} {
+		data, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+id+".json"))
+		if err != nil {
+			t.Fatalf("post-mortem for %s not written: %v", id, err)
+		}
+		var rec struct {
+			SessionID      string `json:"sessionId"`
+			Reason         string `json:"reason"`
+			LastGeneration int64  `json:"lastGeneration"`
+		}
+		if err := json.Unmarshal(data, &rec); err != nil {
+			t.Fatalf("decode post-mortem for %s: %v", id, err)
+		}
+		if rec.SessionID != id || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != 7 {
+			t.Errorf("post-mortem for %s = %+v", id, rec)
+		}
+	}
+	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Errorf("runtime Close calls = %v, want [sess-a sess-b]", got)
+	}
+}
+
+// spec: 10.1.4 (the hold timeout's deregistration pass), 4.7 (the
 // registry entry a termination removes), 5.2 (per-session teardown)
 //
 // The timeout deregisters every started entry in one critical section
@@ -763,7 +763,7 @@ func TestCoordinatorHoldTimeoutEmptiesTheSlotRegistry_spec_10_1(t *testing.T) {
 }
 
 // spec: 10.1.4 (the coordinator-lost termination), 6.4 (the per-slot
-// tree), 4.11 (a bound-not-started entry is not terminated)
+// tree), 4.7 (a bound-not-started entry is not terminated)
 //
 // Pass 2 removes each terminated member's per-slot tree, which carries
 // that session's §6.1 credential file. A termination that left it behind

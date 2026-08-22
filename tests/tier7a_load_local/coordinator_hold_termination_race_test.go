@@ -28,13 +28,19 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
@@ -297,11 +303,71 @@ func (r *holdScrubReporter) counts() map[string]int {
 	return out
 }
 
+// holdFakeTimer is one armed §10.1 hold timer. Firing it runs the
+// timeout inline on the caller's goroutine, which makes the fire instant a
+// program point the case can rendezvous on rather than a wall-clock
+// estimate.
+type holdFakeTimer struct {
+	mu      sync.Mutex
+	fn      func()
+	stopped bool
+}
+
+func (h *holdFakeTimer) Stop() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopped {
+		return false
+	}
+	h.stopped = true
+	return true
+}
+
+// fire runs the timeout unless a fence stopped the timer first.
+func (h *holdFakeTimer) fire() {
+	h.mu.Lock()
+	stopped := h.stopped
+	h.mu.Unlock()
+	if stopped {
+		return
+	}
+	h.fn()
+}
+
+// holdTimerClock is the injected hold-timer seam. It records every timer
+// the adapter arms so a case fires the timeout explicitly.
+type holdTimerClock struct {
+	mu    sync.Mutex
+	armed []*holdFakeTimer
+}
+
+func (c *holdTimerClock) After(_ time.Duration, fn func()) adapter.TimerHandle {
+	h := &holdFakeTimer{fn: fn}
+	c.mu.Lock()
+	c.armed = append(c.armed, h)
+	c.mu.Unlock()
+	return h
+}
+
+// last returns the most recently armed timer, failing the case when the
+// hold never armed.
+func (c *holdTimerClock) last(t *testing.T) *holdFakeTimer {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.armed) == 0 {
+		t.Fatal("the hold never armed a timeout timer")
+	}
+	return c.armed[len(c.armed)-1]
+}
+
 // holdRacePod builds an adapter whose per-slot trees sit under a temp
-// directory, with the §10.1 hold timeout set to hold.
-func holdRacePod(t *testing.T, rt adapter.RuntimeProcess, hold time.Duration) *adapter.Server {
+// directory, with the §10.1 hold timer driven through the injected seam
+// rather than by a wall clock.
+func holdRacePod(t *testing.T, rt adapter.RuntimeProcess) (*adapter.Server, *holdTimerClock) {
 	t.Helper()
 	base := t.TempDir()
+	clk := &holdTimerClock{}
 	s := adapter.New("test")
 	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
@@ -309,8 +375,39 @@ func holdRacePod(t *testing.T, rt adapter.RuntimeProcess, hold time.Duration) *a
 	s.CredentialsDir = filepath.Join(base, "run", "lenny")
 	s.PostMortemDir = t.TempDir()
 	s.Runtime = rt
-	s.CoordinatorHoldTimeout = hold
-	return s
+	s.HoldAfterFunc = clk.After
+	return s, clk
+}
+
+// holdRaceClient serves the adapter over bufconn and returns a client, so
+// an inbound request runs the §10.1.4 hold-state interceptor and is
+// refused with UNAVAILABLE + coordinator_hold until the timeout clears the
+// hold. A direct method call on the Server value bypasses the allowlist.
+func holdRaceClient(t *testing.T, s *adapter.Server) adapterv1.AdapterClient {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := adapter.NewGRPCServer(s)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return adapterv1.NewAdapterClient(conn)
+}
+
+// heldRefusal reports whether err is the hold's coordinator_hold refusal.
+func heldRefusal(err error) bool {
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.Unavailable && strings.Contains(st.Message(), "coordinator_hold")
 }
 
 func startHoldSession(t *testing.T, s *adapter.Server, sessionID string) {
@@ -349,7 +446,7 @@ func awaitClosed(t *testing.T, rt *holdSharedRuntime, sessions ...string) {
 }
 
 // spec: 10.1 (coordinator-loss hold), 10.1.4 (the hold timeout), 5.2
-// (per-session teardown), 4.11 (the started entries the hold terminates)
+// (per-session teardown), 4.7 (the started entries the hold terminates)
 //
 // diagnosis: a failure means the hold termination and a concurrent gateway
 // Shutdown are no longer mutually exclusive, or the terminated set is
@@ -361,7 +458,7 @@ func awaitClosed(t *testing.T, rt *holdSharedRuntime, sessions ...string) {
 func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.T) {
 	t.Run("the terminated set is read when the timeout fires", func(t *testing.T) {
 		rt := newHoldSharedRuntime()
-		s := holdRacePod(t, rt, 150*time.Millisecond)
+		s, clk := holdRacePod(t, rt)
 		meter := adapter.NewSessionUsageMeter(time.Now)
 		meter.Add("sess-a", 5, 1)
 		meter.Add("sess-b", 7, 2)
@@ -382,6 +479,10 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 		// the hold's allowlist admits, so the loop's emissions are visible.
 		observer := newHoldEventStream()
 		observer.attach(t, s)
+
+		// The timeout fires at a program point, after the start the hold
+		// admitted has landed.
+		clk.last(t).fire()
 
 		awaitClosed(t, rt, "sess-a", "sess-b")
 		evs := observer.settle(t, 100*time.Millisecond)
@@ -412,8 +513,7 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 		t.Setenv("POD_NAME", "pod-hold-race")
 		for attempt := 0; attempt < raceAttempts; attempt++ {
 			rt := newHoldSharedRuntime()
-			hold := 60 * time.Millisecond
-			s := holdRacePod(t, rt, hold)
+			s, clk := holdRacePod(t, rt)
 			meter := adapter.NewSessionUsageMeter(time.Now)
 			meter.Add("sess-a", 5, 1)
 			meter.Add("sess-b", 7, 2)
@@ -422,10 +522,10 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 			s.SessionScrubReporter = scrub
 			startHoldSession(t, s, "sess-a")
 			startHoldSession(t, s, "sess-b")
+			client := holdRaceClient(t, s)
 
 			arming := newHoldEventStream()
 			arming.attach(t, s)
-			fires := time.Now().Add(hold)
 			arming.drop()
 			// The allowlist admits a new coordinator re-attaching the
 			// stream without fencing, which is how the loop's emissions
@@ -433,28 +533,63 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 			observer := newHoldEventStream()
 			observer.attach(t, s)
 
-			// Every attempt issues the terminal request for each member at
-			// the instant the timer fires, so one stimulus reaches both
-			// interleavings of the two locked deregistration steps.
-			rs := newRaceStart(2)
+			// The hold is armed, so the allowlist refuses a terminal
+			// request. The probe pins the interceptor into the path the
+			// racing requests take below: a request that reached the
+			// handler directly would skip the refusal the retry loop is
+			// written against.
+			if _, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+				SessionId: &adapterv1.SessionId{Value: "sess-probe"},
+			}); !heldRefusal(err) {
+				t.Fatalf("attempt %d: Shutdown while the hold is armed = %v, want the "+
+					"UNAVAILABLE coordinator_hold refusal", attempt, err)
+			}
+
+			// The fire instant and the terminal requests leave one
+			// rendezvous together, and each request is driven on a tight
+			// retry from it: every attempt before the timeout clears the
+			// hold is refused under the allowlist, and the first admitted
+			// one races the deregistration pass's own s.mu acquisition. One
+			// stimulus therefore reaches both interleavings of the two
+			// locked steps.
+			timer := clk.last(t)
+			rs := newRaceStart(3)
 			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rs.arrive()
+				timer.fire()
+			}()
 			for _, id := range []string{"sess-a", "sess-b"} {
 				wg.Add(1)
 				go func(id string) {
 					defer wg.Done()
-					for time.Now().Before(fires) {
-					}
 					rs.arrive()
-					resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-						SessionId: &adapterv1.SessionId{Value: id},
-						Reason:    "session_complete",
-					})
-					if err != nil {
-						t.Errorf("terminal Shutdown(%s) = %v, want the idempotent no-op", id, err)
+					deadline := time.Now().Add(30 * time.Second)
+					for {
+						resp, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+							SessionId: &adapterv1.SessionId{Value: id},
+							Reason:    "session_complete",
+						})
+						if heldRefusal(err) {
+							// Expected before the timeout clears the hold.
+							if time.Now().After(deadline) {
+								t.Errorf("attempt %d: Shutdown(%s) was never admitted after the hold cleared",
+									attempt, id)
+								return
+							}
+							continue
+						}
+						if err != nil {
+							t.Errorf("attempt %d: terminal Shutdown(%s) = %v, want the idempotent no-op",
+								attempt, id, err)
+							return
+						}
+						if !resp.GetExitedCleanly() {
+							t.Errorf("attempt %d: terminal Shutdown(%s) reported an unclean exit", attempt, id)
+						}
 						return
-					}
-					if !resp.GetExitedCleanly() {
-						t.Errorf("terminal Shutdown(%s) reported an unclean exit", id)
 					}
 				}(id)
 			}
@@ -489,7 +624,7 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 }
 
 // spec: 10.1 (coordinator-loss hold), 10.1.4 (the hold timeout), 5.2
-// (per-session teardown), 4.11 (the started flag records the claim)
+// (per-session teardown), 4.7 (the started flag records the claim)
 //
 // The started flag is written by the merged claim rather than by the
 // start, so a member whose claim returned and whose Runtime.Start has not
@@ -505,7 +640,7 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 // than in production.
 func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T) {
 	rt := newHoldSharedRuntime()
-	s := holdRacePod(t, rt, 40*time.Millisecond)
+	s, clk := holdRacePod(t, rt)
 
 	// sess-a claims its slot and parks inside Runtime.Start, so the
 	// registry holds it as started while the process never receives it.
@@ -538,6 +673,7 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 	arming := newHoldEventStream()
 	arming.attach(t, s)
 	arming.drop()
+	clk.last(t).fire()
 
 	awaitClosed(t, rt, "sess-a", "sess-b")
 

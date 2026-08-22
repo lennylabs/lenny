@@ -258,7 +258,7 @@ type Server struct {
 	// ExpiryAfterFunc and ExpiryNow are the §4.9 expiry-timer
 	// test seams. Nil selects time.AfterFunc and time.Now; tests inject
 	// fakes to fire a lease expiry deterministically.
-	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
+	ExpiryAfterFunc func(time.Duration, func()) TimerHandle
 	ExpiryNow       func() time.Time
 
 	// CoordinatorHoldTimeout overrides the §10.1.4
@@ -269,7 +269,7 @@ type Server struct {
 	// HoldAfterFunc is the §10.1 hold-timer test seam. Nil selects
 	// time.AfterFunc; tests inject a fake to fire the hold timeout
 	// deterministically.
-	HoldAfterFunc func(time.Duration, func()) expiryTimerHandle
+	HoldAfterFunc func(time.Duration, func()) TimerHandle
 	// PostMortemDir is the pod-local directory the §10.1.4 hold
 	// timeout writes a coordinator_lost post-mortem record into when no
 	// new coordinator returns and the gateway control stream is gone.

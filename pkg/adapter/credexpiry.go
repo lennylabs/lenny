@@ -25,9 +25,10 @@ import (
 //
 // spec: §4.9.
 
-// expiryTimerHandle is the subset of *time.Timer the expiry tracker
-// needs; the test seam swaps in a fake.
-type expiryTimerHandle interface {
+// TimerHandle is the subset of *time.Timer the timer test seams return.
+// It is exported because the §10.1 hold-timer seam is driven from tests
+// outside this package as well as from the package's own suite.
+type TimerHandle interface {
 	Stop() bool
 }
 
@@ -37,14 +38,14 @@ type expiryTimerHandle interface {
 // rotation).
 type expiryTimer struct {
 	leaseID string
-	handle  expiryTimerHandle
+	handle  TimerHandle
 }
 
 // expiryAfter schedules f to run after d, using the injected test seam
 // when set and time.AfterFunc otherwise. A d at or below zero fires
 // immediately, which deletes an already-expired direct-mode lease on the
 // next acquisition of s.mu.
-func (s *Server) expiryAfter(d time.Duration, f func()) expiryTimerHandle {
+func (s *Server) expiryAfter(d time.Duration, f func()) TimerHandle {
 	if s.ExpiryAfterFunc != nil {
 		return s.ExpiryAfterFunc(d, f)
 	}

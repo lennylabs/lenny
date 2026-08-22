@@ -57,7 +57,7 @@ func (c *fakeExpiryClock) Now() time.Time {
 	return c.cur
 }
 
-func (c *fakeExpiryClock) After(d time.Duration, fn func()) expiryTimerHandle {
+func (c *fakeExpiryClock) After(d time.Duration, fn func()) TimerHandle {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ft := &fakeTimer{d: d, fire: fn}
