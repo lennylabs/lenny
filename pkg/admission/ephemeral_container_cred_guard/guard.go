@@ -8,9 +8,10 @@
 //
 // An actor with `update` on pods/ephemeralcontainers could otherwise
 // attach a debug container that runs as the pod's agent UID or joins
-// the lenny-cred-readers group and reads /run/lenny/credentials.json.
-// The guard rejects any ephemeral container that could reach the
-// credential file, applying the four §13.1 conditions:
+// the lenny-cred-readers group and reads a session's credential file
+// at the pod's /run/lenny/slots/{sessionId}/credentials.json. The
+// guard rejects any ephemeral container that could reach a credential
+// file, applying the four §13.1 conditions:
 //
 //	(i)   runAsUser is the pod's adapter UID or agent UID.
 //	(ii)  runAsGroup or supplementalGroups includes the
@@ -34,8 +35,9 @@ import (
 // RejectionCode is the §15.1 error code stamped on every rejection.
 const RejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 
-// credPathPrefix is the pod directory carrying the §4.7 credential
-// file. A mount at this path or below reaches /run/lenny/credentials.json.
+// credPathPrefix is the pod directory carrying the §4.7 per-session
+// credential files. A mount at /run/lenny or below reaches the
+// per-session credential files under /run/lenny/slots/.
 const credPathPrefix = "/run/lenny"
 
 // VolumeMount is the security-relevant projection of one of an

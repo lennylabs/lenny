@@ -11,7 +11,8 @@
 // The guard is installed fail-closed on the pods/ephemeralcontainers
 // UPDATE subresource in agent namespaces. An actor with update on that
 // subresource could otherwise attach a debug container that inherits
-// the pod-level fsGroup and reads /run/lenny/credentials.json. §13.1
+// the pod-level fsGroup and reads a session's credential file at the
+// pod's /run/lenny/slots/{sessionId}/credentials.json. §13.1
 // condition (iii) rejects any ephemeral container that omits runAsUser,
 // runAsGroup, or supplementalGroups, because an absent value inherits
 // the pod credential-group defaults.
