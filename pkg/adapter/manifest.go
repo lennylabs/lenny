@@ -198,15 +198,42 @@ func WriteManifest(dir string, m Manifest) error {
 		return fmt.Errorf("adapter: encode manifest: %w", err)
 	}
 	path := filepath.Join(dir, ManifestFilename)
-	if err := os.WriteFile(path, b, ManifestFileMode); err != nil {
+	// The manifest is one pod-global file and every session on the pod
+	// writes it, so two starts admitted at once write it concurrently. A
+	// truncate-and-write in place interleaves their bytes and leaves a
+	// runtime reading a document that decodes as neither session's
+	// manifest. The write therefore lands in a temporary file in the same
+	// directory and is renamed over the target, which is atomic within a
+	// filesystem: a reader sees the whole of one session's manifest or the
+	// whole of the other's. spec: §15.4 (per-session manifest), §5.2
+	// (every session is bound to a slot on every pod).
+	tmp, err := os.CreateTemp(dir, ManifestFilename+".*")
+	if err != nil {
+		return fmt.Errorf("adapter: create manifest temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		// A failure before the rename leaves the temporary file behind;
+		// remove it rather than accumulating one per failed start. The
+		// remove after a successful rename finds nothing and is a no-op.
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
 		return fmt.Errorf("adapter: write manifest: %w", err)
 	}
-	// os.WriteFile honors the process umask, so an inherited umask could
-	// strip the group-read bit the agent runtime needs. Chmod the file to
-	// the exact mode to guarantee the §13.1 group-read boundary regardless
-	// of umask.
-	if err := os.Chmod(path, ManifestFileMode); err != nil {
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("adapter: write manifest: %w", err)
+	}
+	// os.CreateTemp honors the process umask and creates at 0o600, so an
+	// inherited umask could strip the group-read bit the agent runtime
+	// needs. Chmod before the rename so the file the runtime can observe
+	// already carries the §13.1 group-read boundary.
+	if err := os.Chmod(tmpPath, ManifestFileMode); err != nil {
 		return fmt.Errorf("adapter: chmod manifest: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("adapter: publish manifest: %w", err)
 	}
 	return nil
 }
