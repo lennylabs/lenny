@@ -23,6 +23,13 @@
 // a count over all registry entries withholds it behind the incoming
 // session's registered-but-unbound entry.
 //
+// Each concurrent case releases its callers from a rendezvous rather than
+// launching them back to back, so both are inside their pre-deregistration
+// read at the same instant, and repeats the whole fixture over fresh pods
+// so both orderings out of that window are reached. A back-to-back launch
+// admits the fully serialized schedule, on which a check-then-act
+// predicate produces exactly one signal and the case passes green.
+//
 // Both cases carry a stress budget:
 //
 //	lenny-test stress --test TestConcurrentShutdownsSendOneDrainSignal_spec_6_4 --runs 50 --pkg ./tests/tier7a_load_local/... --tag load_local
@@ -36,6 +43,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -222,6 +230,19 @@ func startDrainSession(t *testing.T, s *adapter.Server, sessionID string) {
 // after Runtime.Close, where it reaches a dead runtime and the error is
 // swallowed.
 func TestConcurrentShutdownsSendOneDrainSignal_spec_6_4(t *testing.T) {
+	for attempt := range raceAttempts {
+		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+			concurrentShutdownDrainAttempt(t)
+		})
+	}
+}
+
+// concurrentShutdownDrainAttempt builds a fresh two-slot pod and tears
+// both of its sessions down from a rendezvous, so the two calls are inside
+// their pre-deregistration read at the same instant rather than in
+// whatever order the scheduler happened to pick.
+func concurrentShutdownDrainAttempt(t *testing.T) {
+	t.Helper()
 	rt := newGatedRuntime()
 	s, peer := drainPod(t, rt)
 
@@ -234,16 +255,24 @@ func TestConcurrentShutdownsSendOneDrainSignal_spec_6_4(t *testing.T) {
 	aliceClosing, releaseAlice := rt.gate("alice", true)
 	bobClosing, releaseBob := rt.gate("bob", true)
 
+	// The gates constrain Runtime.Close, which is downstream of the
+	// decision under test. The rendezvous is what puts both calls in the
+	// window where each reads the registry before either has
+	// deregistered, which is the schedule a check-then-act evaluation
+	// fails on and a serialized launch never reaches.
+	rendezvous := newRaceStart(2)
 	done := make(chan struct{}, 2)
 	for _, sessionID := range []string{"alice", "bob"} {
 		go func() {
 			defer func() { done <- struct{}{} }()
+			rendezvous.arrive()
 			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 				SessionId: &adapterv1.SessionId{Value: sessionID},
 				Reason:    "session_complete",
 			})
 		}()
 	}
+	rendezvous.release(t)
 	waitClosed(t, aliceClosing, "alice's runtime close to begin")
 	waitClosed(t, bobClosing, "bob's runtime close to begin")
 
@@ -360,38 +389,10 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 	})
 
 	t.Run("unsequenced", func(t *testing.T) {
-		s, peer, dial := socketDrainPod(t)
-		// The pod's one runtime process connects before the first start,
-		// which is the accept that start waits on.
-		conn := dial()
-		defer conn.Close()
-		startDrainSession(t, s, "alice")
-
-		// No ordering between the teardown and the incoming session's
-		// preparation and start. Whichever way the scheduler resolves it,
-		// the pod-global signal is sent at most once and is sent whenever
-		// the teardown left no bound entry behind.
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-				SessionId: &adapterv1.SessionId{Value: "alice"},
+		for attempt := range raceAttempts {
+			t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+				unsequencedDrainAttempt(t)
 			})
-		}()
-		go func() {
-			defer wg.Done()
-			_, _ = s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
-				SessionId: &adapterv1.SessionId{Value: "bob"},
-			})
-			_, _ = s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
-				SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
-			})
-		}()
-		wg.Wait()
-		peer.settle(500 * time.Millisecond)
-		if got := peer.count("terminate"); got > 1 {
-			t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want at most 1", got)
 		}
 	})
 }
@@ -424,5 +425,48 @@ func socketDrainPod(t *testing.T) (*adapter.Server, *drainPeer, func() net.Conn)
 			t.Fatalf("dial runtime socket: %v", derr)
 		}
 		return conn
+	}
+}
+
+// unsequencedDrainAttempt runs the teardown and the incoming session's
+// preparation and start from a rendezvous on a fresh pod, so neither is
+// ordered against the other and both orderings are reached across the
+// attempts. Whichever way the schedule resolves, the pod-global signal is
+// sent at most once and is sent whenever the teardown left no bound entry
+// behind.
+func unsequencedDrainAttempt(t *testing.T) {
+	t.Helper()
+	s, peer, dial := socketDrainPod(t)
+	// The pod's one runtime process connects before the first start,
+	// which is the accept that start waits on.
+	conn := dial()
+	defer conn.Close()
+	startDrainSession(t, s, "alice")
+
+	rendezvous := newRaceStart(2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		rendezvous.arrive()
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			SessionId: &adapterv1.SessionId{Value: "alice"},
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		rendezvous.arrive()
+		_, _ = s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
+			SessionId: &adapterv1.SessionId{Value: "bob"},
+		})
+		_, _ = s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
+		})
+	}()
+	rendezvous.release(t)
+	wg.Wait()
+	peer.settle(500 * time.Millisecond)
+	if got := peer.count("terminate"); got > 1 {
+		t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want at most 1", got)
 	}
 }

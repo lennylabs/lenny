@@ -14,10 +14,17 @@
 // through the shared cancel, leaving the pod with a manifest naming a
 // socket nothing serves.
 //
-// Both legs run two starts for different sessions with no ordering between
-// them. The second leg uses Resume as the second caller, because Resume
-// reaches the arming through its own site and a guard applied to the
-// StartSession body alone passes the first leg and fails this one.
+// Both legs run two starts for different sessions from a rendezvous, so
+// the two calls are in the window between the arming read and the socket
+// bind at the same instant, and both legs repeat over fresh pods so both
+// orderings out of that window are reached. The second leg uses Resume as
+// the second caller, because Resume reaches the arming through its own
+// site and a guard applied to the StartSession body alone passes the first
+// leg and fails this one.
+//
+// The case carries a stress budget:
+//
+//	lenny-test stress --test TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3 --runs 50 --pkg ./tests/tier7a_load_local/... --tag load_local
 //
 // The live server keeps the nonce of the start that armed it, whether or
 // not the manifest still carries that nonce: the pod holds one manifest
@@ -37,6 +44,7 @@ package tier7a_load_local_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -192,101 +200,119 @@ func podConnectorSocket(platformSocket string) string {
 // pod.
 func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 	for _, second := range []string{"start", "resume"} {
-		t.Run(second, func(t *testing.T) {
-			s := mcpRacePod(t)
-			// Registered before the race so every path out of the case,
-			// including the early return on an interleaved manifest, closes
-			// both sessions' runtimes.
-			t.Cleanup(func() {
-				for _, id := range []string{"alice", "bob"} {
-					_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-						SessionId: &adapterv1.SessionId{Value: id},
-					})
-				}
+		for attempt := range raceAttempts {
+			t.Run(fmt.Sprintf("%s_attempt_%d", second, attempt), func(t *testing.T) {
+				podMCPStartRaceAttempt(t, second)
 			})
-			ctx := context.Background()
-			var wg sync.WaitGroup
-			errs := make([]error, 2)
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				_, errs[0] = s.StartSession(ctx, &adapterv1.StartSessionRequest{
-					SessionId: &adapterv1.SessionId{Value: "alice"}, Runtime: "echo",
-				})
-			}()
-			go func() {
-				defer wg.Done()
-				if second == "resume" {
-					_, errs[1] = s.Resume(ctx, &adapterv1.ResumeRequest{
-						SessionId:    &adapterv1.SessionId{Value: "bob"},
-						CheckpointId: "ckpt-1",
-					})
-					return
-				}
-				_, errs[1] = s.StartSession(ctx, &adapterv1.StartSessionRequest{
-					SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
-				})
-			}()
-			wg.Wait()
+		}
+	}
+}
 
-			for i, err := range errs {
-				if err != nil {
-					t.Fatalf("call %d on the shared pod failed: %v", i, err)
-				}
-			}
-			// Both sessions reached the runtime, so both hold a live slot
-			// on the pod rather than one having rolled its claim back.
-			if got := s.SoleSessionID(); got != "" {
-				t.Errorf("SoleSessionID on a pod given two sessions = %q, want empty", got)
-			}
-			// Neither call cancelled the other's servers: the pod's
-			// platform socket and its one connector socket are both still
-			// served after both calls returned, and each refuses a nonce no
-			// start ever published. Both socket paths are pod-global, so
-			// they are known without reading the raced manifest.
-			connectorSocket := podConnectorSocket(s.MCPSocket)
-			if !mcpSurfaceListening(t, s.MCPSocket) {
-				t.Error("no server is bound to the pod's platform MCP socket after both starts returned")
-			}
-			if !mcpSurfaceListening(t, connectorSocket) {
-				t.Error("no server is bound to the pod's connector MCP socket after both starts returned")
-			}
-			// The live servers keep the nonce of the start that armed
-			// them, and that start is one of the two racing calls. A
-			// loser that cancelled the winner's servers through the
-			// shared cancel and rebound them on its own nonce leaves the
-			// arming intact but the winner's manifest naming a nonce
-			// nothing answers, so the arming is read from the adapter
-			// rather than from the raced file.
-			armedSession, armedNonce := s.PodMCPArming()
-			if armedSession != "alice" && armedSession != "bob" {
-				t.Errorf("the pod's MCP arming names session %q, want one of the two starting sessions", armedSession)
-			}
-			if armedNonce == "" {
-				t.Fatal("the pod's intra-pod MCP surface holds no armed nonce after both starts returned")
-			}
-			if !nonceAuthenticates(t, s.MCPSocket, armedNonce) {
-				t.Error("the pod's platform MCP socket does not answer the nonce its arming start published")
-			}
-			if !nonceAuthenticates(t, connectorSocket, armedNonce) {
-				t.Error("the pod's connector MCP socket does not answer the nonce its arming start published, so the two surfaces were armed by different starts")
-			}
-			m := racedManifest(t, s)
-			// The surviving document is whichever write landed last. It
-			// names a starting session, carries that session's nonce, and
-			// names the pod's two intra-pod sockets.
-			if m.SessionID != "alice" && m.SessionID != "bob" {
-				t.Errorf("manifest sessionId = %q, want one of the two starting sessions", m.SessionID)
-			}
-			if m.MCPNonce == "" {
-				t.Error("the manifest carries no MCP nonce after both starts returned")
-			}
-			if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket != s.MCPSocket {
-				t.Fatalf("manifest platform MCP server = %+v, want the pod's socket %q", m.PlatformMcpServer, s.MCPSocket)
-			}
-			if len(m.ConnectorServers) != 1 || m.ConnectorServers[0].ID != raceConnectorID || m.ConnectorServers[0].Socket != connectorSocket {
-				t.Fatalf("manifest connector servers = %+v, want the one resolved connector on %q", m.ConnectorServers, connectorSocket)
-			}
+// podMCPStartRaceAttempt builds a fresh pod and drives one start against
+// one second caller from a rendezvous, so both calls are between their
+// arming read and their socket bind at the same instant. An
+// unsynchronized launch lets the second call begin after the first has
+// already returned, which is the sequential ordering a merged-start pair
+// already covers and which this case exists to go beyond. The case is
+// repeated over fresh pods so both orderings out of that window are
+// reached.
+func podMCPStartRaceAttempt(t *testing.T, second string) {
+	t.Helper()
+	s := mcpRacePod(t)
+	// Registered before the race so every path out of the case,
+	// including the early return on an interleaved manifest, closes
+	// both sessions' runtimes.
+	t.Cleanup(func() {
+		for _, id := range []string{"alice", "bob"} {
+			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+				SessionId: &adapterv1.SessionId{Value: id},
+			})
+		}
+	})
+	ctx := context.Background()
+	rendezvous := newRaceStart(2)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		rendezvous.arrive()
+		_, errs[0] = s.StartSession(ctx, &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: "alice"}, Runtime: "echo",
 		})
+	}()
+	go func() {
+		defer wg.Done()
+		rendezvous.arrive()
+		if second == "resume" {
+			_, errs[1] = s.Resume(ctx, &adapterv1.ResumeRequest{
+				SessionId:    &adapterv1.SessionId{Value: "bob"},
+				CheckpointId: "ckpt-1",
+			})
+			return
+		}
+		_, errs[1] = s.StartSession(ctx, &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
+		})
+	}()
+	rendezvous.release(t)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("call %d on the shared pod failed: %v", i, err)
+		}
+	}
+	// Both sessions reached the runtime, so both hold a live slot
+	// on the pod rather than one having rolled its claim back.
+	if got := s.SoleSessionID(); got != "" {
+		t.Errorf("SoleSessionID on a pod given two sessions = %q, want empty", got)
+	}
+	// Neither call cancelled the other's servers: the pod's
+	// platform socket and its one connector socket are both still
+	// served after both calls returned, and each refuses a nonce no
+	// start ever published. Both socket paths are pod-global, so
+	// they are known without reading the raced manifest.
+	connectorSocket := podConnectorSocket(s.MCPSocket)
+	if !mcpSurfaceListening(t, s.MCPSocket) {
+		t.Error("no server is bound to the pod's platform MCP socket after both starts returned")
+	}
+	if !mcpSurfaceListening(t, connectorSocket) {
+		t.Error("no server is bound to the pod's connector MCP socket after both starts returned")
+	}
+	// The live servers keep the nonce of the start that armed them, and
+	// that start is one of the two racing calls. A loser that cancelled
+	// the winner's servers through the shared cancel and rebound them on
+	// its own nonce leaves the arming intact but the winner's manifest
+	// naming a nonce nothing answers, so the arming is read from the
+	// adapter rather than from the raced file.
+	armedSession, armedNonce := s.PodMCPArming()
+	if armedSession != "alice" && armedSession != "bob" {
+		t.Errorf("the pod's MCP arming names session %q, want one of the two starting sessions", armedSession)
+	}
+	if armedNonce == "" {
+		t.Fatal("the pod's intra-pod MCP surface holds no armed nonce after both starts returned")
+	}
+	if !nonceAuthenticates(t, s.MCPSocket, armedNonce) {
+		t.Error("the pod's platform MCP socket does not answer the nonce its arming start published")
+	}
+	if !nonceAuthenticates(t, connectorSocket, armedNonce) {
+		t.Error("the pod's connector MCP socket does not answer the nonce its arming start published, so the two surfaces were armed by different starts")
+	}
+	m := racedManifest(t, s)
+	// The surviving document is whichever write landed last. It names a
+	// starting session, carries that session's nonce, and names the pod's
+	// two intra-pod sockets.
+	if m.SessionID != "alice" && m.SessionID != "bob" {
+		t.Errorf("manifest sessionId = %q, want one of the two starting sessions", m.SessionID)
+	}
+	if m.MCPNonce == "" {
+		t.Error("the manifest carries no MCP nonce after both starts returned")
+	}
+	if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket != s.MCPSocket {
+		t.Fatalf("manifest platform MCP server = %+v, want the pod's socket %q", m.PlatformMcpServer, s.MCPSocket)
+	}
+	if len(m.ConnectorServers) != 1 || m.ConnectorServers[0].ID != raceConnectorID || m.ConnectorServers[0].Socket != connectorSocket {
+		t.Fatalf("manifest connector servers = %+v, want the one resolved connector on %q", m.ConnectorServers, connectorSocket)
 	}
 }
