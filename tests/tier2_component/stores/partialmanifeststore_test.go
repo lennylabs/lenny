@@ -152,7 +152,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 	// are keyed on the session alone. partial_manifest_active_uniq is a
 	// unique index on session_id where partial and not deleted, so a second
 	// active partial row for one session supersedes the first, and
-	// LatestActiveForSession resolves the survivor.
+	// LatestActive resolves the survivor.
 	t.Run("the session-keyed selector resolves the surviving active partial row", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		session := newUUID(t)
@@ -171,16 +171,16 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		} else if f.DeletedAt.IsZero() {
 			t.Error("first row still active; the session-keyed supersede did not fire")
 		}
-		got, err := store.LatestActiveForSession(ctx, tenant, session)
+		got, err := store.LatestActive(ctx, tenant, session)
 		if err != nil {
-			t.Fatalf("LatestActiveForSession: %v", err)
+			t.Fatalf("LatestActive: %v", err)
 		}
 		if got.CheckpointID != second {
-			t.Errorf("LatestActiveForSession = %q, want the surviving row %q", got.CheckpointID, second)
+			t.Errorf("LatestActive = %q, want the surviving row %q", got.CheckpointID, second)
 		}
 		// A session holding no active partial row returns ErrNotFound.
-		if _, err := store.LatestActiveForSession(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-			t.Errorf("LatestActiveForSession(unknown session): got %v, want ErrNotFound", err)
+		if _, err := store.LatestActive(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive(unknown session): got %v, want ErrNotFound", err)
 		}
 	})
 

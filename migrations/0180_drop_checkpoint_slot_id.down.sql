@@ -1,20 +1,19 @@
 -- Reverse 0180: re-add the two slot_id columns at their original
--- definitions, restore the three indexes that carried the slot dimension,
--- and put the retired pod-global workspace root back on every session row
--- whose value is the slot root this migration derived for it.
+-- definitions and restore the three indexes that carried the slot dimension.
+--
+-- sessions.workspace_root is left as it stands. A down migration cannot tell
+-- a row the forward rewrite produced from a row that already recorded its own
+-- slot root before the migration ran, so reversing the rewrite by predicate
+-- would put the retired pod-global path onto sessions whose value was correct
+-- both before and after. The recorded root is re-derived from the base the
+-- adapter reports and re-persisted at the next handshake, so leaving it alone
+-- costs nothing (§6.4, §7.3 step (d)).
+--
+-- The collapse of duplicate active partial rows is likewise not reversed: the
+-- superseded rows stay soft-deleted, which is a state the §10.1.7 supersede
+-- rule produces on its own.
 --
 -- spec: §4.9, §6.4, §7.3, §10.1, §12.5.
-
--- sessions carries the §12.3 tenant-guard trigger, so the reverse rewrite
--- takes the same platform cross-tenant sentinel and opt-in the forward
--- migration uses. Both are SET LOCAL and end with this transaction.
-SET LOCAL lenny.allow_all_sentinel = 'true';
-SET LOCAL app.current_tenant = '__all__';
-UPDATE sessions
-    SET workspace_root = '/workspace/current'
-    WHERE workspace_root = '/workspace/slots/' || id::text || '/current';
-SET LOCAL app.current_tenant TO DEFAULT;
-SET LOCAL lenny.allow_all_sentinel TO DEFAULT;
 
 DROP INDEX IF EXISTS idx_checkpoint_manifest_active;
 DROP INDEX IF EXISTS partial_manifest_active_uniq;

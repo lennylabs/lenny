@@ -188,7 +188,13 @@ type Store interface {
 	// is never destroyed by the resume-time cleaner. Returns ErrNotFound
 	// when no active partial row exists.
 	//
-	// spec: §10.1.7 — the resume-time cleaner selects partial rows.
+	// This is exactly the set Put supersedes, so the upload driver reads
+	// the prior attempt through it. The partial_manifest_active_uniq index
+	// admits at most one active partial row per session, so the result is
+	// that row when one is present.
+	//
+	// spec: §10.1.7 — the resume-time cleaner selects partial rows, and
+	// supersede is scoped to (tenant_id, session_id).
 	LatestActive(ctx context.Context, tenantID, sessionID string) (Record, error)
 
 	// LatestActiveAny returns the highest-coordination_generation active row
@@ -225,16 +231,6 @@ type Store interface {
 	//
 	// spec: §10.1.7 — fallback to the last successful full checkpoint.
 	LatestFull(ctx context.Context, tenantID, sessionID string) (Record, error)
-
-	// LatestActiveForSession returns the active partial row for
-	// (tenantID, sessionID), the exact set Put supersedes. The
-	// partial_manifest_active_uniq index admits at most one active partial
-	// row per session, so the result is that row when present. It carries
-	// the `partial = TRUE` predicate and returns ErrNotFound when the
-	// session has no active partial row.
-	//
-	// spec: §10.1.7 — supersede is scoped to (tenant_id, session_id).
-	LatestActiveForSession(ctx context.Context, tenantID, sessionID string) (Record, error)
 
 	// ConfirmChunk advances the monotonic chunk_count / workspace_bytes
 	// counters as chunk n commits. It applies the §10.1.7
@@ -513,33 +509,6 @@ func (m *MemoryStore) LatestFull(_ context.Context, tenantID, sessionID string) 
 			continue
 		}
 		if !found || row.CreatedAt.After(best.CreatedAt) {
-			best = row
-			found = true
-		}
-	}
-	if !found {
-		return Record{}, ErrNotFound
-	}
-	return best, nil
-}
-
-// LatestActiveForSession returns the active partial row for
-// (tenantID, sessionID), the exact set the supersede path scopes on.
-//
-// spec: §10.1.7.
-func (m *MemoryStore) LatestActiveForSession(_ context.Context, tenantID, sessionID string) (Record, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var best Record
-	found := false
-	for _, row := range m.rows {
-		if row.TenantID != tenantID || row.SessionID != sessionID {
-			continue
-		}
-		if !row.Partial || !row.DeletedAt.IsZero() {
-			continue
-		}
-		if !found || row.CoordinationGeneration > best.CoordinationGeneration {
 			best = row
 			found = true
 		}

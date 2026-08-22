@@ -348,8 +348,8 @@ func TestFinaliseSoftDeletesZeroChunkRow(t *testing.T) {
 	}
 	// The soft-deleted empty row is invisible to the resume-time cleanup
 	// selector, so no reclaimer ever picks it up.
-	if _, err := store.LatestActiveForSession(context.Background(), "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActiveForSession after zero-chunk finalise = %v, want ErrNotFound", err)
+	if _, err := store.LatestActive(context.Background(), "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActive after zero-chunk finalise = %v, want ErrNotFound", err)
 	}
 
 	// A row that confirmed a chunk finalises partial without soft-deleting:

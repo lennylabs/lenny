@@ -69,11 +69,8 @@ type cpChunkedAdapter struct {
 	stallAfter int
 	// remintObserved records the grants the gateway minted per index.
 	remintObserved map[uint32]int
-	// recvSlotID records the session address the gateway put on the CheckpointStart
-	// frame, so a concurrent-pool test asserts each slot's stream carried
-	// its own slot identity (empty on a maxConcurrentSessions: 1 pod).
-	store *cpStore
-	mu    sync.Mutex
+	store          *cpStore
+	mu             sync.Mutex
 }
 
 func (a *cpChunkedAdapter) grantCount(index uint32) int {
