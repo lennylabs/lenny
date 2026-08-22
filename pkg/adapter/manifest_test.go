@@ -5,6 +5,7 @@ package adapter
 import (
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -353,5 +354,49 @@ func TestManifestExperimentContextMapsProtoFields(t *testing.T) {
 	}
 	if got.ExperimentID != "exp_9" || got.VariantID != "control" || got.Inherited {
 		t.Errorf("manifest experimentContext = %+v", got)
+	}
+}
+
+// spec: §4.7 — the manifest is one pod-global file at a fixed path that
+// the pod's agent container mounts read-only, and a second session's start
+// rewrites it. The rewrite lands in that file rather than replacing it
+// with a new one, so a runtime holding the file open, or a container
+// mounting the single file rather than its directory, reads the rewritten
+// document through the handle it already has. Replacing the file (a write
+// to a sibling followed by a rename) leaves both readers pinned to the
+// document they opened.
+func TestWriteManifestRewritesTheSameFileInPlace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ManifestFilename)
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "alice"}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open manifest: %v", err)
+	}
+	defer f.Close()
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "bob"}); err != nil {
+		t.Fatalf("WriteManifest rewrite: %v", err)
+	}
+	b, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatalf("read the reopened manifest handle: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("decode the manifest read through the handle opened before the rewrite: %v", err)
+	}
+	if m.SessionID != "bob" {
+		t.Errorf("the handle opened before the rewrite reads sessionId %q, want the rewritten %q", m.SessionID, "bob")
+	}
+	// The rewrite leaves the directory holding the manifest alone, so no
+	// staging file accumulates beside it.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read manifest dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != ManifestFilename {
+		t.Errorf("manifest dir holds %d entries after two writes, want only %s", len(entries), ManifestFilename)
 	}
 }
