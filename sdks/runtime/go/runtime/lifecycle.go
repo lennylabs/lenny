@@ -250,8 +250,9 @@ func (lc *Lifecycle) handleCredentialsRotated(line []byte, s *session) {
 		LeaseID  string `json:"leaseId"`
 		// CredentialsPath names the file the adapter rewrote, this
 		// session's own /run/lenny/slots/{sessionId}/credentials.json.
-		// The runtime re-reads that path rather than the one it started
-		// with. spec: §4.7; §6.1.
+		// The runtime re-reads that path for this rotation and keeps the
+		// manifest-resolved path for every later read.
+		// spec: §4.7; §6.1.
 		CredentialsPath string `json:"credentialsPath"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {

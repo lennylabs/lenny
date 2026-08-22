@@ -410,3 +410,103 @@ func TestRotationOnAnUnreadablePathIsReportedAndDoesNotRepointTheRuntime(t *test
 		t.Errorf("the startup read reported %d line(s) for a missing credential file, want silence", quiet)
 	}
 }
+
+// spec: 4.7 (manifest credentialsPath, Full-level rotation protocol),
+// 6.1 (per-session credential file)
+//
+// The manifest-resolved credential path stays authoritative for every
+// read the runtime takes. A credentials_rotated event naming another
+// file is read from that file for the rotation alone; one SDK session
+// serves the whole runtime process, so installing the event's path would
+// re-point every later read at a co-tenant session's credential file.
+func TestRotationOnAnotherPathDoesNotRepointTheResolvedCredentialPath(t *testing.T) {
+	dir := t.TempDir()
+	mine := filepath.Join(dir, "mine.json")
+	if err := os.WriteFile(mine, []byte(`{"mode":"direct","provider":"anthropic"}`), 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
+	other := filepath.Join(dir, "other.json")
+	if err := os.WriteFile(other, []byte(`{"mode":"direct","provider":"openai"}`), 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
+
+	cfg := defaultConfig()
+	cfg.logger = func(string, ...any) {}
+	s := newSession(nil, cfg)
+	s.setCredentialsPath(mine)
+	s.loadCredentials()
+
+	got := s.reloadCredentials(other)
+	if got == nil || got.Provider != "openai" {
+		t.Fatalf("bundle after a rotation naming %s = %+v, want the file the event named", other, got)
+	}
+	if p := s.credentialsPath(); p != mine {
+		t.Fatalf("credential path after a rotation naming another session's file = %q, want the manifest-resolved path %q", p, mine)
+	}
+
+	// The next read lands on the resolved path rather than on the file
+	// the previous event named.
+	if err := os.WriteFile(mine, []byte(`{"mode":"direct","provider":"rotated"}`), 0o600); err != nil {
+		t.Fatalf("rewrite credential file: %v", err)
+	}
+	got = s.reloadCredentials("")
+	if got == nil || got.Provider != "rotated" {
+		t.Fatalf("bundle after a pathless rotation = %+v, want the manifest-resolved path's contents (provider %q)", got, "rotated")
+	}
+}
+
+// spec: 4.7 (Full-level rotation protocol), 6.1 (per-session credential
+// file)
+//
+// The runtime-ops credentials_rotated frame is required to carry a
+// credentialsPath. A frame without one breaks that contract, so the
+// runtime reports it rather than treating the event as an ordinary
+// re-read, and keeps the bundle it holds when the fallback read fails.
+func TestPathlessRotationIsReportedAndKeepsTheHeldBundle(t *testing.T) {
+	dir := t.TempDir()
+	absent := filepath.Join(dir, "absent", "credentials.json")
+
+	var mu sync.Mutex
+	var logs []string
+	cfg := defaultConfig()
+	cfg.logger = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	s := newSession(nil, cfg)
+	s.credentials = &CredentialBundle{Mode: "direct", Provider: "anthropic"}
+	s.setCredentialsPath(absent)
+
+	got := s.reloadCredentials("")
+	if got == nil || got.Provider != "anthropic" {
+		t.Fatalf("bundle after a pathless rotation onto an unreadable file = %+v, want the bundle already held", got)
+	}
+	mu.Lock()
+	reported := strings.Join(logs, "\n")
+	mu.Unlock()
+	if !strings.Contains(reported, "no credentialsPath") {
+		t.Errorf("no diagnostic reported the frame carrying no credentialsPath; logged: %q", reported)
+	}
+	if !strings.Contains(reported, absent) {
+		t.Errorf("no diagnostic named the fallback path %s; logged: %q", absent, reported)
+	}
+
+	// Neither the manifest nor the caller named a path, so there is
+	// nothing to fall back to. The runtime reports that and keeps the
+	// bundle it holds.
+	mu.Lock()
+	logs = nil
+	mu.Unlock()
+	s.setCredentialsPath("")
+	got = s.reloadCredentials("")
+	if got == nil || got.Provider != "anthropic" {
+		t.Fatalf("bundle after a pathless rotation with no resolved path = %+v, want the bundle already held", got)
+	}
+	mu.Lock()
+	reported = strings.Join(logs, "\n")
+	mu.Unlock()
+	if !strings.Contains(reported, "no credentialsPath") {
+		t.Errorf("no diagnostic reported a pathless frame with no resolved credential path; logged: %q", reported)
+	}
+}

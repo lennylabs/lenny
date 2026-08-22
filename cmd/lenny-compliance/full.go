@@ -97,6 +97,32 @@ type fakeAdapter struct {
 	connReady       chan struct{}
 }
 
+// writeCredentialFile writes the §6.1 per-session credential bundle the
+// manifest and every credentials_rotated frame name. The frame contract
+// is that the adapter has already rewritten the file it names, so the
+// harness writes it before the runtime resolves the path.
+// spec: §6.1; §4.7.
+func writeCredentialFile(path, provider string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create credential dir %s: %w", filepath.Dir(path), err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"mode":      "direct",
+		"provider":  provider,
+		"leaseId":   "lease_compliance_" + provider,
+		"apiKey":    "sk-compliance-harness",
+		"baseUrl":   "https://api." + provider + ".example",
+		"expiresAt": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("encode credential bundle: %w", err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return fmt.Errorf("write credential file %s: %w", path, err)
+	}
+	return nil
+}
+
 func newFakeAdapter() (*fakeAdapter, func(), error) {
 	dir, err := os.MkdirTemp("", "lenny-compliance-full-*")
 	if err != nil {
@@ -108,6 +134,10 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	// slots/{sessionId}/, so the harness names that path on the manifest
 	// and on every credentials_rotated frame it sends.
 	credentialsPath := filepath.Join(dir, "run", "lenny", "slots", fullSessionID, "credentials.json")
+	if err := writeCredentialFile(credentialsPath, "anthropic"); err != nil {
+		os.RemoveAll(dir)
+		return nil, nil, err
+	}
 	body, _ := json.Marshal(map[string]any{
 		"sessionId":       fullSessionID,
 		"taskId":          fullSessionID,
@@ -382,6 +412,12 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 		return "", err
 	}
 	if err := handshake(fa); err != nil {
+		return "", err
+	}
+	// The adapter rewrites the session's own credential file before it
+	// names that file on the frame, so the runtime's re-read lands on a
+	// bundle that exists. spec: §4.7; §6.1.
+	if err := writeCredentialFile(fa.credentialsPath, "anthropic"); err != nil {
 		return "", err
 	}
 	leaseID := "lease_" + randomID()

@@ -159,9 +159,10 @@ type session struct {
 	// adapter writes one file per session at
 	// /run/lenny/slots/{sessionId}/credentials.json and names it on the
 	// manifest, so the path is resolved at startup rather than fixed at
-	// construction, and a credentials_rotated frame that names a path
-	// re-points it. credMu guards it along with the parsed bundle,
-	// because the CH-RUNTIMEOPS reader writes both.
+	// construction and stays authoritative for every later read. A
+	// credentials_rotated frame naming a path is read from that path
+	// without replacing this one. credMu guards it along with the parsed
+	// bundle, because the CH-RUNTIMEOPS reader writes both.
 	// spec: §4.7; §6.1.
 	credPath string
 	credMu   sync.RWMutex
@@ -649,27 +650,39 @@ func (s *session) loadCredentials() {
 	}
 }
 
-// reloadCredentials re-reads the §4.7 credential file in place. The
-// CH-RUNTIMEOPS calls it on a credentials_rotated event so a
-// Full-level runtime continues without restart. A non-empty path
-// re-points the runtime at the file the adapter names on that event,
-// which is the rotating session's own credential file.
+// reloadCredentials re-reads the §4.7 credential file on a
+// CH-RUNTIMEOPS credentials_rotated event so a Full-level runtime
+// continues without restart. The event names the file the adapter
+// reports having just rewritten, which is the rotating session's own
+// credential file, so the read failing is an error rather than the
+// no-active-lease case the startup read tolerates: the runtime reports
+// it, keeps the bundle in hand, and still acknowledges the event.
+//
+// The path the runtime reads from is not installed as the session's
+// credential path. That path is resolved once, from the §4.7 manifest
+// member or the construction-time option, and stays authoritative for
+// every later read; one runtime process can serve a session while the
+// event names another session's file.
+//
+// spec: §4.7 (manifest credentialsPath, Full-level rotation protocol);
+// §6.1 (per-session credential file).
 func (s *session) reloadCredentials(path string) *CredentialBundle {
+	if path == "" {
+		// The runtime-ops credentials_rotated frame is required to carry
+		// a credentialsPath. A frame without one breaks that contract, so
+		// report it and fall back to the path resolved at startup rather
+		// than reading nothing.
+		path = s.credentialsPath()
+		if path == "" {
+			s.cfg.logf("runtime: credential rotation: event carries no credentialsPath and no credential path is resolved; keeping the bundle already held")
+		} else {
+			s.cfg.logf("runtime: credential rotation: event carries no credentialsPath; re-reading %q", path)
+		}
+	}
 	if path != "" {
-		// The adapter names a file it reports having just rewritten, so
-		// a read failure here is an error rather than the no-active-lease
-		// case the startup read tolerates. Report it, keep the bundle in
-		// hand, acknowledge the event, and stay pointed at the path
-		// already resolved so a later event carrying no path re-reads
-		// this session's own credential file rather than the one that
-		// failed.
 		if err := s.loadCredentialsFrom(path); err != nil {
 			s.cfg.logf("runtime: credential rotation: %v", err)
-		} else {
-			s.setCredentialsPath(path)
 		}
-	} else {
-		s.loadCredentials()
 	}
 	s.credMu.RLock()
 	defer s.credMu.RUnlock()

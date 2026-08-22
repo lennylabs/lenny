@@ -478,11 +478,13 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 			absentPath, logs.lines())
 	}
 
-	// A rotation that cannot be read does not strand the runtime on the
-	// unreadable file: a later event carrying no credentialsPath re-reads
-	// the path the runtime last resolved, which is the readable file the
-	// previous rotation landed on.
-	writeCredentialBundle(t, rotatedPath, "recovered")
+	// Non-happy path: an event carrying no credentialsPath breaks the
+	// wire contract, which makes the path required. The runtime reports
+	// it and falls back to the manifest-resolved path, which stays
+	// authoritative for every read however many files earlier events
+	// named. The rotated file keeps its own provider, so a runtime that
+	// re-pointed itself at an event's path reads "openai" here.
+	writeCredentialBundle(t, startPath, "recovered")
 	fa.send(t, map[string]any{
 		"type":     "credentials_rotated",
 		"provider": "recovered",
@@ -495,11 +497,14 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 	select {
 	case got := <-rotated:
 		if got == nil || got.Provider != "recovered" {
-			t.Fatalf("bundle after a pathless rotation = %+v, want the file the runtime last resolved (provider %q); the unreadable path was retained",
-				got, "recovered")
+			t.Fatalf("bundle after a pathless rotation = %+v, want the manifest-resolved path %s (provider %q); the runtime read a path an earlier event named",
+				got, startPath, "recovered")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OnCredentialsRotated did not run for the pathless event")
+	}
+	if !logs.waitFor("no credentialsPath", 5*time.Second) {
+		t.Fatalf("no diagnostic reported the rotation event carrying no credentialsPath; the logged lines were %v", logs.lines())
 	}
 
 	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
