@@ -64,6 +64,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -607,27 +608,45 @@ func (s *session) credentialsPath() string {
 	return s.credPath
 }
 
-// loadCredentials parses the §4.7 runtime credential file. A missing
-// file is normal when the runtime's pool has no active lease, and an
-// unresolved path is normal when neither the manifest nor the caller
-// named one.
+// loadCredentialsFrom reads and parses the §4.7 credential file at path
+// and, on success, installs the bundle. It reports the read or parse
+// failure to the caller rather than deciding whether the failure is
+// worth reporting, because the startup read and the rotation read draw
+// opposite conclusions from the same error.
+//
+// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
+func (s *session) loadCredentialsFrom(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read credential file %s: %w", path, err)
+	}
+	var c CredentialBundle
+	if err := json.Unmarshal(data, &c); err != nil {
+		return fmt.Errorf("malformed credential file %s: %w", path, err)
+	}
+	s.credMu.Lock()
+	s.credentials = &c
+	s.credMu.Unlock()
+	return nil
+}
+
+// loadCredentials parses the §4.7 runtime credential file at startup. A
+// missing or unreadable file is normal when the runtime's pool has no
+// active lease, and an unresolved path is normal when neither the
+// manifest nor the caller named one, so a read failure is silent here.
+// A file that exists but does not parse is reported.
 func (s *session) loadCredentials() {
 	path := s.credentialsPath()
 	if path == "" {
 		return
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
+	if err := s.loadCredentialsFrom(path); err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return
+		}
+		s.cfg.logf("runtime: %v", err)
 	}
-	var c CredentialBundle
-	if err := json.Unmarshal(data, &c); err != nil {
-		s.cfg.logf("runtime: malformed credential file %s: %v", path, err)
-		return
-	}
-	s.credMu.Lock()
-	s.credentials = &c
-	s.credMu.Unlock()
 }
 
 // reloadCredentials re-reads the §4.7 credential file in place. The
@@ -637,9 +656,21 @@ func (s *session) loadCredentials() {
 // which is the rotating session's own credential file.
 func (s *session) reloadCredentials(path string) *CredentialBundle {
 	if path != "" {
-		s.setCredentialsPath(path)
+		// The adapter names a file it reports having just rewritten, so
+		// a read failure here is an error rather than the no-active-lease
+		// case the startup read tolerates. Report it, keep the bundle in
+		// hand, acknowledge the event, and stay pointed at the path
+		// already resolved so a later event carrying no path re-reads
+		// this session's own credential file rather than the one that
+		// failed.
+		if err := s.loadCredentialsFrom(path); err != nil {
+			s.cfg.logf("runtime: credential rotation: %v", err)
+		} else {
+			s.setCredentialsPath(path)
+		}
+	} else {
+		s.loadCredentials()
 	}
-	s.loadCredentials()
 	s.credMu.RLock()
 	defer s.credMu.RUnlock()
 	return s.credentials

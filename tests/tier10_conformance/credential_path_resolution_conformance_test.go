@@ -57,6 +57,14 @@ func writeCredentialSlotTree(t *testing.T, root, sessionID, provider string) str
 		t.Fatalf("create slot credential dir: %v", err)
 	}
 	path := filepath.Join(dir, "credentials.json")
+	writeCredentialBundle(t, path, provider)
+	return path
+}
+
+// writeCredentialBundle writes a §6.1 credential bundle for provider at
+// path, replacing whatever stood there.
+func writeCredentialBundle(t *testing.T, path, provider string) {
+	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"mode": "direct", "provider": provider,
 		"leaseId": "lease_" + provider, "apiKey": "sk-" + provider,
@@ -64,7 +72,42 @@ func writeCredentialSlotTree(t *testing.T, root, sessionID, provider string) str
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write credential file: %v", err)
 	}
-	return path
+}
+
+// credLogSink collects the SDK's diagnostic lines so a test can assert
+// what the runtime reported. The SDK logs from its own goroutines, so
+// the sink is mutex-guarded.
+type credLogSink struct {
+	mu  sync.Mutex
+	out []string
+}
+
+func (l *credLogSink) logf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.out = append(l.out, fmt.Sprintf(format, args...))
+}
+
+func (l *credLogSink) lines() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.out...)
+}
+
+// waitFor polls until a logged line names substr, because the SDK logs
+// the failure on the channel goroutine that also writes the
+// acknowledgement.
+func (l *credLogSink) waitFor(substr string, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		for _, line := range l.lines() {
+			if strings.Contains(line, substr) {
+				return true
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
 }
 
 // writeCredPathManifest writes a §4.7 manifest naming credentialsPath
@@ -363,13 +406,14 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 	rotatedPath := writeCredentialSlotTree(t, credRoot, "sess_credpath_rotated", "openai")
 
 	rotated := make(chan *runtime.CredentialBundle, 4)
+	logs := &credLogSink{}
 	stdin := newCredProbeStdin()
 	done := make(chan error, 1)
 	go func() {
 		done <- runtime.Run(
 			&credProbeHandler{},
 			runtime.WithStreams(stdin, &credProbeSink{}),
-			runtime.WithLogger(nil),
+			runtime.WithLogger(logs.logf),
 			runtime.WithSocketTransport(false),
 			runtime.WithFullLevel(),
 			runtime.WithManifestPath(manifest),
@@ -406,12 +450,15 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 		t.Fatal("OnCredentialsRotated did not run")
 	}
 
-	// Non-happy path: an event naming no readable path leaves the bundle
-	// the runtime holds in place and is still acknowledged.
+	// Non-happy path: an event naming a file the runtime cannot read
+	// leaves the bundle the runtime holds in place, is still
+	// acknowledged, and is reported through the SDK's diagnostic sink so
+	// the failure is not silent.
+	absentPath := filepath.Join(credRoot, "slots", "sess_absent", "credentials.json")
 	fa.send(t, map[string]any{
 		"type":            "credentials_rotated",
 		"provider":        "openai",
-		"credentialsPath": filepath.Join(credRoot, "slots", "sess_absent", "credentials.json"),
+		"credentialsPath": absentPath,
 		"leaseId":         "lease_absent",
 	})
 	ack = fa.recv(t, 5*time.Second)
@@ -425,6 +472,34 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OnCredentialsRotated did not run for the unreadable-path event")
+	}
+	if !logs.waitFor(absentPath, 5*time.Second) {
+		t.Fatalf("no diagnostic named the unreadable rotation path %s; the logged lines were %v",
+			absentPath, logs.lines())
+	}
+
+	// A rotation that cannot be read does not strand the runtime on the
+	// unreadable file: a later event carrying no credentialsPath re-reads
+	// the path the runtime last resolved, which is the readable file the
+	// previous rotation landed on.
+	writeCredentialBundle(t, rotatedPath, "recovered")
+	fa.send(t, map[string]any{
+		"type":     "credentials_rotated",
+		"provider": "recovered",
+		"leaseId":  "lease_recovered",
+	})
+	ack = fa.recv(t, 5*time.Second)
+	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_recovered" {
+		t.Fatalf("pathless rotation reply = %v, want credentials_acknowledged for lease_recovered", ack)
+	}
+	select {
+	case got := <-rotated:
+		if got == nil || got.Provider != "recovered" {
+			t.Fatalf("bundle after a pathless rotation = %+v, want the file the runtime last resolved (provider %q); the unreadable path was retained",
+				got, "recovered")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnCredentialsRotated did not run for the pathless event")
 	}
 
 	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})

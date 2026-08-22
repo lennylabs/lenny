@@ -42,21 +42,24 @@ var credentialSweepRoots = []string{
 }
 
 // credentialSweepExtensions are the carriers the literal can hide in.
-// Every reader-facing document, schema, chart template, scaffold
-// template, and SDK source under the swept roots is one of these.
+// Every reader-facing document, schema (both the JSON schemas and the
+// proto definitions that carry the credentials_rotated field contract),
+// chart template, scaffold template, and SDK source under the swept
+// roots is one of these.
 var credentialSweepExtensions = map[string]bool{
-	".md":   true,
-	".yaml": true,
-	".yml":  true,
-	".json": true,
-	".go":   true,
-	".tmpl": true,
-	".py":   true,
-	".ts":   true,
-	".tsx":  true,
-	".js":   true,
-	".sh":   true,
-	".txt":  true,
+	".md":    true,
+	".yaml":  true,
+	".yml":   true,
+	".json":  true,
+	".go":    true,
+	".tmpl":  true,
+	".py":    true,
+	".ts":    true,
+	".tsx":   true,
+	".js":    true,
+	".sh":    true,
+	".txt":   true,
+	".proto": true,
 }
 
 // credentialSweepSkipDirs are directories whose contents are neither
@@ -81,6 +84,37 @@ var credentialSweepSkipDirs = map[string]bool{
 //	file and line to restate on the manifest's credentialsPath.
 func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 	root := repoRoot(t)
+	for _, path := range sweepCredentialSurfaces(t, root) {
+		reportCredentialLiteral(t, root, path)
+	}
+}
+
+// spec: 6.1, 4.7
+// diagnosis: the sweep above walks past the proto definitions under
+//
+//	schemas/, so a reintroduction of the retired pod-global credential
+//	file into the file that carries the credentials_rotated field
+//	contract turns nothing red. The gate is only as wide as the carriers
+//	it reads.
+func TestTheCredentialSweepReadsTheProtoSchemaCarrier(t *testing.T) {
+	root := repoRoot(t)
+	want := filepath.Join(root, "schemas", "lenny-adapter.proto")
+	for _, path := range sweepCredentialSurfaces(t, root) {
+		if path == want {
+			return
+		}
+	}
+	t.Fatalf("%s was not swept; the credentials_rotated field contract is written there",
+		mustRel(t, root, want))
+}
+
+// sweepCredentialSurfaces returns every file the retirement's sweep
+// reads: the carriers under the swept roots, plus the served OpenAPI
+// document, which is generated rather than authored and so is swept by
+// path rather than by directory.
+func sweepCredentialSurfaces(t *testing.T, root string) []string {
+	t.Helper()
+	var swept []string
 	for _, rel := range credentialSweepRoots {
 		dir := filepath.Join(root, rel)
 		walked := 0
@@ -98,7 +132,7 @@ func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 				return nil
 			}
 			walked++
-			reportCredentialLiteral(t, root, path)
+			swept = append(swept, path)
 			return nil
 		})
 		if err != nil {
@@ -108,10 +142,7 @@ func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 			t.Fatalf("walk %s: no files swept (moved or renamed?)", rel)
 		}
 	}
-
-	// The served OpenAPI document is generated rather than authored, so
-	// it is swept by path rather than by directory.
-	reportCredentialLiteral(t, root,
+	return append(swept,
 		filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json"))
 }
 

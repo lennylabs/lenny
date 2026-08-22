@@ -7,6 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -348,5 +351,62 @@ func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
 	}
 	if strings.Contains(string(out), "annotations") {
 		t.Errorf("annotations rendered when empty: %s", out)
+	}
+}
+
+// spec: 4.7 (manifest credentialsPath), 6.1 (per-session credential file)
+//
+// A credentials_rotated event names the file the adapter reports having
+// rewritten, so a read failure on that file is an error the runtime
+// reports rather than the no-active-lease silence the startup read
+// takes. The runtime keeps the bundle it holds and stays pointed at the
+// path it last resolved, so a later event carrying no path re-reads its
+// own credential file rather than the one that failed.
+func TestRotationOnAnUnreadablePathIsReportedAndDoesNotRepointTheRuntime(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.json")
+	if err := os.WriteFile(good, []byte(`{"mode":"direct","provider":"anthropic"}`), 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
+	absent := filepath.Join(dir, "absent", "credentials.json")
+
+	var mu sync.Mutex
+	var logs []string
+	cfg := defaultConfig()
+	cfg.logger = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	s := newSession(nil, cfg)
+	s.setCredentialsPath(good)
+	s.loadCredentials()
+
+	got := s.reloadCredentials(absent)
+	if got == nil || got.Provider != "anthropic" {
+		t.Fatalf("bundle after an unreadable rotation path = %+v, want the bundle already held", got)
+	}
+	mu.Lock()
+	reported := strings.Join(logs, "\n")
+	mu.Unlock()
+	if !strings.Contains(reported, absent) {
+		t.Errorf("no diagnostic named the unreadable rotation path %s; logged: %q", absent, reported)
+	}
+	if p := s.credentialsPath(); p != good {
+		t.Errorf("credential path after a failed rotation = %q, want the path last resolved (%q)", p, good)
+	}
+
+	// The startup read stays silent on a missing file: no active lease
+	// means no credential file.
+	mu.Lock()
+	logs = nil
+	mu.Unlock()
+	s.setCredentialsPath(absent)
+	s.loadCredentials()
+	mu.Lock()
+	quiet := len(logs)
+	mu.Unlock()
+	if quiet != 0 {
+		t.Errorf("the startup read reported %d line(s) for a missing credential file, want silence", quiet)
 	}
 }
