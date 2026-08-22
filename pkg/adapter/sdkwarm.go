@@ -305,7 +305,7 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 // anyRegisteredSession returns the identifier of the registry's single
 // entry, empty when the registry holds none. It serves the SDK-warm
 // DemoteSDK, whose request carries no session identifier and whose pod
-// class holds at most one entry. spec: §6.4.
+// class holds at most one entry. spec: §6.1.
 func (s *Server) anyRegisteredSession() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

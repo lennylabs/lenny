@@ -22,18 +22,20 @@ import (
 // entry can be in ahead of a start — absent, registered, and
 // bound-not-started — and refuses a started one.
 //
-// sdkWarm gates the different-session refusal. A pre-connected pod holds
-// one runtime process with one working directory the handler re-points in
-// place, and §6.1 admits preConnect only at maxConcurrentSessions: 1, so
-// admitting a session while another has already started on that process
-// would rewrite the §15.4.3 nonce the incumbent runtime already
-// authenticated with. That refusal reads the same started flag the
-// same-session arm reads: an entry bound before its start has no
-// incumbent, because no manifest was written for it, no nonce was issued,
-// and the runtime was never pointed at its workspace, so refusing on it
-// would strand the pod on a session the gateway has re-placed elsewhere.
-// On a pod-warm pod a different session arrives on its own slot and is
-// admitted.
+// sdkWarm gates the different-session refusal. §6.1 admits preConnect
+// only at maxConcurrentSessions: 1, so the specification itself fixes
+// this pod class at one session and a second session there has no
+// runtime of its own: the pod holds one pre-connected runtime process
+// with one working directory the handler re-points in place, and
+// admitting a second session would rewrite the §15.4.3 nonce the
+// incumbent runtime already authenticated with. The refusal is therefore
+// keyed on the pod already holding another session's bound entry rather
+// than on the started flag the same-session arm reads, and it is that
+// ceiling of one rather than the live slot count. A pod stranded by a
+// bind that failed between AssignCredentials and ConfigureWorkspace is
+// recovered by DemoteSDK's release and by the gateway reclaiming the
+// pod. On a pod-warm pod a different session arrives on its own slot and
+// is admitted.
 //
 // idempotentRepeat reports a repeat for an already-started session as
 // fresh=false rather than refusing it, which is the §4.7
@@ -63,7 +65,7 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotent
 	defer s.mu.Unlock()
 	if sdkWarm {
 		for id, other := range s.slots {
-			if id != sessionID && other.started {
+			if id != sessionID && other.sessionID != "" {
 				return false, false, nil, status.Errorf(codes.Unavailable,
 					"pod is not idle: session %s has already started on this pod", id)
 			}

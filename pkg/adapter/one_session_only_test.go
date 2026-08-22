@@ -99,32 +99,70 @@ func TestSDKWarmClaimRefusesASessionBesideAStartedOne_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: 4.7 (the credentials-first bind sequence), 6.1 (preConnect is
+// spec: 4.7 (the SDK-warm different-session refusal), 6.1 (preConnect is
 // admitted only at maxConcurrentSessions: 1)
 //
-// The SDK-warm different-session refusal reads the started flag rather
-// than the entry's bound state. A bind that fails after AssignCredentials
-// and before ConfigureWorkspace leaves a bound-not-started entry behind on
-// the pod, with no incumbent runtime: no manifest was written for it, no
-// nonce was issued, and the runtime was never pointed at its workspace.
-// A refusal keyed on the binding would strand the pod, refusing every
-// later session the gateway places on it for the life of the pod.
-func TestSDKWarmClaimAdmitsASessionBesideABoundNotStartedEntry_spec_4_7(t *testing.T) {
+// The SDK-warm different-session refusal reads the entry's bound state
+// rather than the started flag. §6.1 fixes this pod class at
+// maxConcurrentSessions: 1, so a second session on it has no runtime of
+// its own; admitting one beside a bound-not-started entry would report
+// fresh=true while leaving the pod surface unarmed, rewriting the
+// pod-global manifest with a nonce no intra-pod MCP server is serving,
+// and would leave the pod holding two registry entries for a DemoteSDK
+// that releases exactly one.
+func TestSDKWarmClaimRefusesASessionBesideABoundNotStartedEntry_spec_6_1(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
 	s.mu.Lock()
-	st, err := s.ensureSlotStateLocked("sess-stranded")
+	st, err := s.ensureSlotStateLocked("sess-bound")
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("ensure slot state: %v", err)
 	}
-	st.sessionID = "sess-stranded"
+	st.sessionID = "sess-bound"
 	s.mu.Unlock()
 
-	fresh, _, err := s.claimSessionSlot("sess-b", true, false)
+	_, _, err = s.claimSessionSlot("sess-b", true, false)
+	if err == nil {
+		t.Fatal("second session admitted beside a bound-not-started entry; want Unavailable")
+	}
+	if got := status.Code(err); got != codes.Unavailable {
+		t.Errorf("code = %v, want Unavailable", got)
+	}
+	s.mu.Lock()
+	n := len(s.slots)
+	s.mu.Unlock()
+	if n != 1 {
+		t.Errorf("registry holds %d entries, want 1 on a maxConcurrentSessions: 1 pod", n)
+	}
+}
+
+// spec: 4.7 (the credentials-first bind sequence), 6.1 (preConnect is
+// admitted only at maxConcurrentSessions: 1)
+//
+// The same session's own first start is admitted on its bound-not-started
+// entry, because the §4.7 bind sequence assigns credentials before
+// ConfigureWorkspace and binds the entry ahead of the start. That claim
+// reports fresh, which gates the §15.4 manifest write and the intra-pod
+// MCP start.
+func TestSDKWarmClaimAdmitsTheSameSessionOnItsBoundNotStartedEntry_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	s.mu.Lock()
+	st, err := s.ensureSlotStateLocked("sess-a")
 	if err != nil {
-		t.Fatalf("claim beside a bound-not-started entry = %v, want admitted", err)
+		s.mu.Unlock()
+		t.Fatalf("ensure slot state: %v", err)
+	}
+	st.sessionID = "sess-a"
+	s.mu.Unlock()
+
+	fresh, startMCP, err := s.claimSessionSlot("sess-a", true, false)
+	if err != nil {
+		t.Fatalf("claim on its own bound-not-started entry = %v, want admitted", err)
 	}
 	if !fresh {
-		t.Error("fresh = false, want true for the first start of sess-b")
+		t.Error("fresh = false, want true for the first start of sess-a")
+	}
+	if !startMCP {
+		t.Error("startMCP = false, want true for the pod's sole session")
 	}
 }
