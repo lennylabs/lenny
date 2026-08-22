@@ -197,16 +197,46 @@ func WriteManifest(dir string, m Manifest) error {
 	if err != nil {
 		return fmt.Errorf("adapter: encode manifest: %w", err)
 	}
-	path := filepath.Join(dir, ManifestFilename)
-	if err := os.WriteFile(path, b, ManifestFileMode); err != nil {
-		return fmt.Errorf("adapter: write manifest: %w", err)
+	return publishManifestBytes(dir, b)
+}
+
+// publishManifestBytes writes b as the manifest document in dir so that a
+// reader on the pod observes one whole document. Two sessions starting at
+// once on the same pod both rewrite the one pod-global file with no
+// ordering between them (spec: §4.7), so a write applied in place onto the
+// live path can interleave with the other and leave bytes that decode as
+// neither session's manifest. The bytes are staged in a sibling temporary
+// file and renamed over ManifestFilename instead: rename is atomic within
+// the directory, so the published file always carries exactly one start's
+// document, whichever rename landed last.
+func publishManifestBytes(dir string, b []byte) (err error) {
+	tmp, err := os.CreateTemp(dir, ManifestFilename+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("adapter: stage manifest: %w", err)
 	}
-	// os.WriteFile honors the process umask, so an inherited umask could
-	// strip the group-read bit the agent runtime needs. Chmod the file to
-	// the exact mode to guarantee the §13.1 group-read boundary regardless
-	// of umask.
-	if err := os.Chmod(path, ManifestFileMode); err != nil {
-		return fmt.Errorf("adapter: chmod manifest: %w", err)
+	tmpPath := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, werr := tmp.Write(b); werr != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("adapter: write manifest: %w", werr)
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return fmt.Errorf("adapter: close staged manifest: %w", cerr)
+	}
+	// os.CreateTemp creates the file at 0o600 and any explicit mode would
+	// still be filtered by the process umask, so chmod the staged file to
+	// the exact mode before it is published. That guarantees the §13.1
+	// group-read boundary the agent runtime needs, and doing it before the
+	// rename means the published path never exists at the wrong mode.
+	if cerr := os.Chmod(tmpPath, ManifestFileMode); cerr != nil {
+		return fmt.Errorf("adapter: chmod manifest: %w", cerr)
+	}
+	if rerr := os.Rename(tmpPath, filepath.Join(dir, ManifestFilename)); rerr != nil {
+		return fmt.Errorf("adapter: publish manifest: %w", rerr)
 	}
 	return nil
 }

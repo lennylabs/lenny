@@ -352,25 +352,25 @@ func tierSteps() map[string]tierStep {
 		},
 		tierLoadLocal: {
 			name: tierLoadLocal, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("load_local", "./tests/tier7a_load_local/...", tierLongTimeout)
+				return runTaggedTier("load_local", "./tests/tier7a_load_local/...", tierLongTimeout, true)
 			},
 			nextActionHint: "Fix load_local-tier failures before moving to higher tiers.",
 		},
 		tierLoadKind: {
 			name: tierLoadKind, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("load_kind", "./tests/tier7b_load_kind/...", tierLongTimeout)
+				return runTaggedTier("load_kind", "./tests/tier7b_load_kind/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix load_kind-tier failures before moving to higher tiers.",
 		},
 		tierChaos: {
 			name: tierChaos, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout)
+				return runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix chaos-tier failures before moving to higher tiers.",
 		},
 		tierSecurity: {
 			name: tierSecurity, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout)
+				return runTaggedTier("security", "./tests/tier9_security/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix security-tier failures before moving to higher tiers.",
 		},
@@ -380,7 +380,7 @@ func tierSteps() map[string]tierStep {
 		},
 		tierLoadCloud: {
 			name: tierLoadCloud, exec: func(_ []string) (string, string, *tierResult) {
-				return runTaggedTier("load_cloud", "./tests/tier12_load_cloud/...", tierLongTimeout)
+				return runTaggedTier("load_cloud", "./tests/tier12_load_cloud/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix load_cloud-tier failures; tier 12 sits after every other tier and gates pre-release.",
 		},
@@ -1184,16 +1184,28 @@ func runDocsTier() (string, string, *tierResult) {
 	return "pass", "", result
 }
 
+// taggedTierArgs assembles the `go test` arguments for a tagged tier.
+// race enables the detector: the local load tier asserts concurrency,
+// ordering, and atomicity properties whose violations are data races on
+// shared adapter state, so the detector is half of what those cases buy
+// and the tier runs with it on.
+func taggedTierArgs(tag, targetGlob string, timeout time.Duration, race bool) []string {
+	args := []string{"-count=1", fmt.Sprintf("-timeout=%s", timeout)}
+	if race {
+		args = append(args, "-race")
+	}
+	return append(args, "-tags="+tag, targetGlob)
+}
+
 // runTaggedTier runs `go test` over targetGlob under the supplied
 // build tag. Used for tiers whose tests are mostly skip-bearing
 // scaffolds — load, chaos, security — so the tier reports `pass`
 // (with skipped sub-tests) until the backing infrastructure lands.
-func runTaggedTier(tag, targetGlob string, timeout time.Duration) (string, string, *tierResult) {
+func runTaggedTier(tag, targetGlob string, timeout time.Duration, race bool) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	extra := []string{"-count=1", fmt.Sprintf("-timeout=%s", timeout), "-tags=" + tag, targetGlob}
-	result, runErr := runGoTestJSON(extra...)
+	result, runErr := runGoTestJSON(taggedTierArgs(tag, targetGlob, timeout, race)...)
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("%s suite failed: %v\n%s", tag, runErr, result.RawOut), result
 	}

@@ -118,12 +118,14 @@ func runStress(args []string) int {
 	return 0
 }
 
-// buildGoTestStressCmd assembles `go test -count=1 -run <runArg>`
+// buildGoTestStressCmd assembles `go test -race -count=1 -run <runArg>`
 // for a single stress iteration. runArg is already the anchored
 // regex (or unanchored pattern); the caller does not pass a bare
-// test name.
+// test name. The detector is on because a stress budget is spent on
+// concurrency-sensitive cases, whose failure mode is a data race that a
+// pass/fail count alone does not surface.
 func buildGoTestStressCmd(runArg, target, tag string, timeoutSec int) *exec.Cmd {
-	args := []string{"test", "-count=1", "-run", runArg}
+	args := []string{"test", "-race", "-count=1", "-run", runArg}
 	if timeoutSec > 0 {
 		args = append(args, fmt.Sprintf("-timeout=%ds", timeoutSec))
 	}

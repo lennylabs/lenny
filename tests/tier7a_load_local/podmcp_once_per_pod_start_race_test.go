@@ -21,15 +21,14 @@
 //
 // The live server keeps the nonce of the start that armed it, whether or
 // not the manifest still carries that nonce: the pod holds one manifest
-// file, both starts rewrite it in place, and which document survives is a
-// separate, interleaving-dependent property. The case reads the arming
-// from the adapter and asserts that it names one of the two starting
-// sessions and that its nonce opens both of the pod's intra-pod sockets,
-// which is what a loser that cancelled and rebound the winner's servers
-// breaks. The sockets also refuse a nonce no start published, and the
-// surviving document, when the two rewrites did not interleave in the
-// file, names one of the two starting sessions, carries a nonce, and
-// names those two sockets.
+// file, both starts rewrite it, and which document survives is a separate,
+// interleaving-dependent property. The case reads the arming from the
+// adapter and asserts that it names one of the two starting sessions and
+// that its nonce opens both of the pod's intra-pod sockets, which is what
+// a loser that cancelled and rebound the winner's servers breaks. The
+// sockets also refuse a nonce no start published, and the surviving
+// document, whichever of the two rewrites landed last, names one of the
+// two starting sessions, carries a nonce, and names those two sockets.
 //
 // spec: §4.7 (session start), §15.4.3 (intra-pod MCP surface, nonce
 // handshake).
@@ -156,14 +155,12 @@ func nonceAuthenticates(t *testing.T, socket, nonce string) bool {
 	return !isErr
 }
 
-// racedManifest reads the one pod-global manifest both starts wrote and
-// reports whether it decodes as one whole document. Both starts rewrite
-// the file in place with no ordering between them, so their bytes can
-// interleave and leave a residue that decodes as neither session's
-// manifest. That collision is the accepted consequence of the single
-// pod-global file: the case reports it and drops the assertions that read
-// the document, rather than treating it as an arming defect.
-func racedManifest(t *testing.T, s *adapter.Server) (*adapter.Manifest, bool) {
+// racedManifest reads the one pod-global manifest both starts wrote. Each
+// start publishes the file as one whole document, so whichever write
+// landed last the file decodes as exactly that session's manifest and the
+// incumbent's values do not survive. A residue that decodes as neither is
+// a publication defect and fails the case here.
+func racedManifest(t *testing.T, s *adapter.Server) *adapter.Manifest {
 	t.Helper()
 	var m adapter.Manifest
 	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
@@ -171,9 +168,9 @@ func racedManifest(t *testing.T, s *adapter.Server) (*adapter.Manifest, bool) {
 		t.Fatalf("read adapter manifest: %v", err)
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, false
+		t.Fatalf("the manifest the two concurrent starts rewrote does not decode as one session's document: %v", err)
 	}
-	return &m, true
+	return &m
 }
 
 // podConnectorSocket is the intra-pod socket the adapter opens for the
@@ -274,14 +271,7 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			if !nonceAuthenticates(t, connectorSocket, armedNonce) {
 				t.Error("the pod's connector MCP socket does not answer the nonce its arming start published, so the two surfaces were armed by different starts")
 			}
-			m, whole := racedManifest(t, s)
-			if !whole {
-				// The two in-place rewrites interleaved. The arming
-				// assertions above already ran; the ones below read the
-				// document and have nothing to read.
-				t.Log("the pod's two concurrent manifest rewrites interleaved, so the file decodes as neither session's document")
-				return
-			}
+			m := racedManifest(t, s)
 			// The surviving document is whichever write landed last. It
 			// names a starting session, carries that session's nonce, and
 			// names the pod's two intra-pod sockets.
