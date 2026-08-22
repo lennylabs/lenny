@@ -468,8 +468,8 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	}
 	// §4.4 / §12.5 latest-2 rotation. Best-effort: a catalog
 	// or rotation failure does not unwind the successful snapshot. The
-	// rotation is per session (§4.9: the retention catalog carries no slot
-	// dimension).
+	// rotation is per session (§4.4 / §12.5: the retention catalog carries
+	// no slot dimension).
 	c.recordRetention(ctx, tenantID, sessionID, checkpointID, legalHold, trigger)
 	return nil
 }

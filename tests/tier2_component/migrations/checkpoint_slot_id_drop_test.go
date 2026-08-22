@@ -23,10 +23,9 @@ const dropSlotIDPriorVersion = 179
 // by the idempotency case.
 const dropSlotIDUpFile = "0180_drop_checkpoint_slot_id.up.sql"
 
-// spec: 4.9 (the persisted duplicate slot columns are dropped and the three
-// checkpoint indexes are re-keyed on session_id), 10.1 (the at-most-one-
-// active-partial invariant and the resume-selection walk), 12.5 (the "latest
-// 2" retention cap)
+// spec: 10.1 (the at-most-one-active-partial invariant, the resume-selection
+// walk, and the manifest scoping key the persisted duplicate slot columns
+// duplicated), 12.5 (the "latest 2" retention cap the rotation index serves)
 // diagnosis: migration 0180 did not drop session_checkpoints.slot_id and
 //
 //	checkpoint_manifest.slot_id, or did not re-key the rotation index, the
@@ -37,7 +36,7 @@ const dropSlotIDUpFile = "0180_drop_checkpoint_slot_id.up.sql"
 //	on every checkpoint insert, or as a per-slot uniqueness scope the supersede
 //	path no longer expresses. A failure on the rollback half means the
 //	.down.sql did not restore the pre-drop column and index set.
-func TestDropCheckpointSlotIDMigration_spec_4_9(t *testing.T) {
+func TestDropCheckpointSlotIDMigration_spec_10_1(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
@@ -207,8 +206,8 @@ func sessionWorkspaceRoot(t *testing.T, ctx context.Context, pg *containers.Post
 }
 
 // spec: 10.5 (a Phase 3 contract migration is idempotent, so a re-run after
-// the gate passes is a no-op), 4.9 (the persisted duplicate slot columns are
-// dropped)
+// the gate passes is a no-op), 10.1 (the persisted duplicate slot columns are
+// dropped and the manifest keys on session_id alone)
 // diagnosis: re-applying migration 0180's .up.sql against a schema it has
 //
 //	already contracted aborts instead of doing nothing. The gate index and the
@@ -324,8 +323,8 @@ func TestDropCheckpointSlotIDRefusesDuplicateActivePartials_spec_10_1(t *testing
 	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
 }
 
-// spec: 10.1 (the at-most-one-active-partial invariant), 4.9 (the unique index
-// is re-keyed on session_id alone, with no tenant column)
+// spec: 10.1 (the at-most-one-active-partial invariant, whose unique index is
+// re-keyed on session_id alone, with no tenant column)
 // diagnosis: migration 0180's uniqueness gate is keyed on a wider column set
 //
 //	than the index it prepares for. The re-keyed unique index carries no tenant
@@ -333,7 +332,7 @@ func TestDropCheckpointSlotIDRefusesDuplicateActivePartials_spec_10_1(t *testing
 //	tenant. A gate that partitions per tenant passes a pair of rows the index
 //	then rejects, and the migration aborts on a bare unique violation that names
 //	nothing an operator can act on instead of on the gate's own message.
-func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_4_9(t *testing.T) {
+func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_10_1(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})

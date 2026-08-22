@@ -291,7 +291,7 @@ var prodMigrationSchema = []struct {
 	// session_id alone. The column is absent after the full prod chain, so the
 	// entry keeps its number for the lint's every-migration-is-tested rule and
 	// names no column, the way 0040/concurrency_style and 0022/task_policy are
-	// handled above. spec: §4.9, §12.5.
+	// handled above. spec: §10.1, §12.5.
 	{migration: "0112", table: "session_checkpoints"},
 	// 0113 adds the §11.2.1 event-type-specific ("for X events only")
 	// conditional fields to billing_events as a single nullable JSONB
@@ -577,9 +577,9 @@ var prodMigrationSchema = []struct {
 	// sessions.workspace_root onto the per-slot path. It adds no column, so the
 	// entry names none; it is here so TestProdMigrationsRollBackPerStep steps
 	// through its .down.sql and the SQL surface is asserted directly in
-	// TestDropCheckpointSlotIDMigration_spec_4_9 and
-	// TestDropCheckpointSlotIDRewritesWorkspaceRoot_spec_7_3. spec: §4.9,
-	// §10.1, §12.5.
+	// TestDropCheckpointSlotIDMigration_spec_10_1 and
+	// TestDropCheckpointSlotIDRewritesWorkspaceRoot_spec_7_3. spec: §6.4,
+	// §7.3, §10.1, §12.5.
 	{migration: "0180", table: "checkpoint_manifest"},
 }
 

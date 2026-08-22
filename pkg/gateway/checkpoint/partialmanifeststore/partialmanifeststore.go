@@ -75,7 +75,7 @@ type Record struct {
 	// key on. Every session is bound to a slot whose identifier is the
 	// session's own, so the session identifier is the whole key.
 	//
-	// spec: §4.9, §10.1.7.
+	// spec: §10.1.7.
 	SessionID string
 	// CoordinationGeneration is the coordinator's fenced generation at
 	// intent-row INSERT. The resume path selects the row at

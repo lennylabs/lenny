@@ -12,7 +12,7 @@
 -- The forward file's uniqueness gate reads without writing, so there is
 -- nothing on that side to reverse.
 --
--- spec: §4.9, §6.4, §7.3, §10.1, §12.5.
+-- spec: §6.4, §7.3, §10.1, §12.5.
 
 DROP INDEX IF EXISTS idx_checkpoint_manifest_active;
 DROP INDEX IF EXISTS partial_manifest_active_uniq;

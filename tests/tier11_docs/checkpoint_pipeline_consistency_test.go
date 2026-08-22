@@ -941,3 +941,94 @@ func assertSetEqual(t *testing.T, label string, got, want []string) {
 		t.Errorf("%s: sets differ\n  got:  %v\n  want: %v", label, g, w)
 	}
 }
+
+// slotDropMigrationPrefix is the numeric prefix of the migration that drops
+// the persisted duplicate slot identifier from the two checkpoint tables.
+const slotDropMigrationPrefix = "0180"
+
+// slotDropSpecSections are the spec sections that own what the slot-column
+// drop changes: §6.4 and §7.3 own the workspace root the migration rewrites,
+// §10.1 owns the manifest scoping key, the supersede rule, and the reassembly
+// predicate the re-keyed indexes serve, and §12.5 owns the retention cap the
+// rotation index serves. The migration's `-- spec:` line names exactly this
+// set, so a reader following a citation lands on a section that describes
+// checkpoint persistence.
+var slotDropSpecSections = []string{"6.4", "7.3", "10.1", "12.5"}
+
+// specCitationRE captures the section list of a `spec:` citation line in an
+// SQL comment, in either the `-- spec: §a, §b.` or `-- spec: a, b` spelling.
+var specCitationRE = regexp.MustCompile(`(?m)^--\s*spec:\s*(.+)$`)
+
+// specSectionRE captures one dotted section number from a citation list.
+var specSectionRE = regexp.MustCompile(`\d+(?:\.\d+)*`)
+
+// citedSpecSections returns the sorted, de-duplicated section numbers the
+// `-- spec:` lines of an SQL body cite.
+func citedSpecSections(body string) []string {
+	seen := map[string]bool{}
+	for _, m := range specCitationRE.FindAllStringSubmatch(body, -1) {
+		for _, s := range specSectionRE.FindAllString(m[1], -1) {
+			seen[s] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// specSectionHeading returns the heading text of a numbered section under
+// spec/, searching every spec file for a markdown heading whose first token is
+// the section number.
+func specSectionHeading(t *testing.T, root, section string) (string, bool) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, "spec", "*.md"))
+	if err != nil {
+		t.Fatalf("glob spec/*.md: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^#{2,6} ` + regexp.QuoteMeta(section) + ` (.+)$`)
+	for _, f := range files {
+		if m := re.FindStringSubmatch(readMigration(t, f)); m != nil {
+			return strings.TrimSpace(m[1]), true
+		}
+	}
+	return "", false
+}
+
+// spec: 10.1 (the manifest scoping key, the supersede rule, and the
+// reassembly predicate the drop re-keys), 12.5 (the retention cap the rotation
+// index serves)
+// diagnosis: the migration that drops the persisted duplicate slot identifier
+//
+//	cites a spec section that does not own checkpoint persistence, so a reader
+//	following the citation lands somewhere that says nothing about the change,
+//	and the spec-to-test map files the drop under an unrelated section. The
+//	most likely cause is a citation copied from a change proposal's own section
+//	numbering, which does not correspond to the numbering under spec/.
+func TestCheckpointSlotDropCitesTheOwningSpecSections(t *testing.T) {
+	root := repoRoot(t)
+	for _, suffix := range []string{"up", "down"} {
+		matches, err := filepath.Glob(filepath.Join(root, "migrations", slotDropMigrationPrefix+"_*."+suffix+".sql"))
+		if err != nil {
+			t.Fatalf("glob migrations/%s_*.%s.sql: %v", slotDropMigrationPrefix, suffix, err)
+		}
+		if len(matches) != 1 {
+			t.Fatalf("migrations/%s_*.%s.sql: want exactly one file, got %d", slotDropMigrationPrefix, suffix, len(matches))
+		}
+		body := readMigration(t, matches[0])
+		assertSetEqual(t, filepath.Base(matches[0])+" spec citations", citedSpecSections(body), slotDropSpecSections)
+	}
+	// The section the drop must not cite is a live section of the spec that
+	// owns an unrelated mechanism, so naming it is not a dangling reference a
+	// resolver would catch. Pin what it owns, so the reason it is excluded
+	// from the set above stays legible.
+	heading, ok := specSectionHeading(t, root, "4.9")
+	if !ok {
+		t.Fatalf("spec section 4.9 has no heading under spec/")
+	}
+	if !strings.Contains(strings.ToLower(heading), "credential") {
+		t.Fatalf("spec section 4.9 heading = %q, want the credential leasing service; update the exclusion rationale above", heading)
+	}
+}

@@ -1,4 +1,4 @@
--- §4.9 — drop the persisted duplicate slot identifier from the two
+-- §10.1 / §12.5 — drop the persisted duplicate slot identifier from the two
 -- checkpoint tables and re-key the three indexes that carried it.
 --
 -- Every session is bound to a slot on every pod and a session-mode slot's
@@ -22,7 +22,7 @@
 -- holding the empty column default and rows already holding a slot root are
 -- left untouched.
 --
--- spec: §4.9, §6.4, §7.3, §10.1, §12.5.
+-- spec: §6.4, §7.3, §10.1, §12.5.
 
 -- §10.5 Phase 3 column drops. Each drop is fronted by a PL/pgSQL DO $$
 -- preflight gate that counts rows whose slot_id carries anything other than

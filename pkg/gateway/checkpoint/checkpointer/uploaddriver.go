@@ -399,7 +399,7 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	// Scope the lookup to this attempt's session, which is exactly the set
 	// Put supersedes: every session is bound to a slot whose identifier is the
 	// session's own, so the session identifier is the whole scoping key.
-	// spec: §4.9, §10.1.7 — supersede is scoped to (session_id).
+	// spec: §10.1.7 — supersede is scoped to (session_id).
 	prior, err := c.Manifests.LatestActive(d.ctx, d.tenantID, d.sessionID)
 	if err != nil {
 		if errors.Is(err, partialmanifeststore.ErrNotFound) {
