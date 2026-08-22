@@ -135,10 +135,12 @@ func runStress(args []string) int {
 // violations are data races on shared state, so a budget spent there is
 // worth little without the detector. Every other budget keeps a plain
 // argv: the detector needs cgo, and it distorts the wall-clock timing a
-// latency scenario measures against its target. spec: §17.4.
+// latency scenario measures against its target. The cloud load and SLO
+// tier is a wall-clock tier for that reason and is excluded here, which
+// keeps this default and the tier runner one statement (TESTING.md §17.4
+// determinism, §17.10 flake budget).
 func stressRaceDefault(tag, target string) bool {
-	switch tag {
-	case "load_local", "load_cloud":
+	if tag == "load_local" {
 		return true
 	}
 	return strings.Contains(target, "tier7a_load_local")

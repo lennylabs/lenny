@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// spec: §17.4 — the local load tier is where concurrency, ordering, and
-// atomicity behavior is asserted, and the violations those cases hunt are
+// TESTING.md §17.4 (determinism) — the local load tier is where
+// concurrency, ordering, and atomicity behavior is asserted, and the violations those cases hunt are
 // data races on state two goroutines reach at once. The tier therefore
 // invokes `go test` with the detector enabled; without it the cases run
 // but the property half of what they assert goes unchecked.
@@ -28,8 +28,8 @@ func TestLoadLocalTierRunsUnderTheRaceDetector(t *testing.T) {
 	}
 }
 
-// spec: §17.4 — a stress budget spent on a concurrency-sensitive case
-// runs each iteration with the race detector on, because a budget run
+// TESTING.md §17.10 (flake budget) — a stress budget spent on a
+// concurrency-sensitive case runs each iteration with the race detector on, because a budget run
 // with the detector off counts passes without checking the property the
 // budget exists to protect. The detector is a per-budget decision taken
 // from the tier being stressed: a budget on any other test keeps a plain
@@ -49,8 +49,8 @@ func TestStressIterationsRunUnderTheRaceDetector(t *testing.T) {
 	}
 }
 
-// spec: §17.4 — the detector default follows the tier a budget is spent
-// on. The concurrency tiers get it; a budget against an ordinary package
+// TESTING.md §17.10 (flake budget) — the detector default follows the
+// tier a budget is spent on. The concurrency tiers get it; a budget against an ordinary package
 // or a wall-clock scenario tier does not, so a routine quarantine check
 // keeps working on a builder with no C toolchain and a latency budget
 // measures un-instrumented timing. An explicit --race overrides either
@@ -67,6 +67,7 @@ func TestStressRaceDefaultFollowsTheTierBeingStressed(t *testing.T) {
 		{"auto on the local load package", "auto", "", "./tests/tier7a_load_local/...", true},
 		{"auto on an ordinary package", "auto", "", "./pkg/...", false},
 		{"auto on the kind load tier", "auto", "load_kind", "./tests/tier7b_load_kind/...", false},
+		{"auto on the cloud load tier", "auto", "load_cloud", "./tests/tier12_load_cloud/...", false},
 		{"explicit on", "on", "", "./pkg/...", true},
 		{"explicit off", "off", "load_local", "./...", false},
 	} {
