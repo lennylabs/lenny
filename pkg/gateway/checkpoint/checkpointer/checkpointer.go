@@ -81,7 +81,7 @@ type DurationObserver interface {
 // Retention persists the §4.4 / §12.5 latest-2 rotation
 // catalog. The checkpointer records a row for every successful
 // snapshot and runs Rotate immediately after so the table never
-// holds more than RetainedCount active rows per (session, slot).
+// holds more than RetainedCount active rows per session.
 // Best-effort: a failure logs and discards rather than fail the
 // snapshot — the catalog is observability for the §12.5 GC sweep,
 // not a §4.4 correctness gate.
@@ -89,7 +89,7 @@ type DurationObserver interface {
 // spec: §4.4; §12.5.
 type Retention interface {
 	Insert(ctx context.Context, r checkpointretention.Record) error
-	Rotate(ctx context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error)
+	Rotate(ctx context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error)
 }
 
 // Checkpointer takes §4.4 checkpoints of running sessions and records
@@ -229,7 +229,7 @@ type Checkpointer struct {
 	// Empty selects tar.
 	ChunkEncoding string
 
-	// flights holds the per-(session, slot) single-flight lock the driver
+	// flights holds the per-session single-flight lock the driver
 	// acquires for the duration of one attempt. Lazily populated.
 	flights sync.Map
 }
@@ -468,10 +468,9 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 	}
 	// §4.4 / §12.5 latest-2 rotation. Best-effort: a catalog
 	// or rotation failure does not unwind the successful snapshot. The
-	// rotation is per (session, slot) — binding.SlotID is the empty
-	// string for the single-workspace path and the bound slot id for
-	// concurrent-workspace pods.
-	c.recordRetention(ctx, tenantID, sessionID, binding.SlotID, checkpointID, legalHold, trigger)
+	// rotation is per session (§4.9: the retention catalog carries no slot
+	// dimension).
+	c.recordRetention(ctx, tenantID, sessionID, checkpointID, legalHold, trigger)
 	return nil
 }
 
@@ -487,7 +486,7 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // ChunkReady, and ChunkCommitted frames advance the chunk grant/confirm
 // loop; the record path here waits for the terminal frame.
 //
-// The per-(session, slot) single-flight lock serialises a periodic
+// The per-session single-flight lock serialises a periodic
 // checkpoint against a concurrent seal of the same workspace so their
 // supersede / finalise manifest writes cannot interleave, and the driver
 // resolves the effective grant window from the bound pool at attempt time
@@ -497,14 +496,10 @@ func (c *Checkpointer) snapshot(ctx context.Context, tenantID, sessionID string,
 // the stream, and the adapter reports the confirmed byte total in
 // CheckpointSummary.
 func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.BindResult, tenantID, sessionID string, trigger checkpoint.Trigger) (string, int64, error) {
-	slotID := binding.SlotID
-	if slotID == "" {
-		slotID = partialmanifeststore.SlotDefault
-	}
-	// Serialise every attempt for this (session, slot) so the supersede set
+	// Serialise every attempt for this session so the supersede set
 	// the intent-row transaction fences is stable for the duration of the
 	// attempt.
-	unlock := c.lockFlight(sessionID, slotID)
+	unlock := c.lockFlight(sessionID)
 	defer unlock()
 
 	// Cancel the stream on return so its RPC is torn down once the
@@ -555,7 +550,6 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		stream:       stream,
 		tenantID:     tenantID,
 		sessionID:    sessionID,
-		slotID:       slotID,
 		checkpointID: checkpointID,
 		prefix:       chunkPrefix(tenantID, sessionID, checkpointID),
 		trigger:      trigger,
@@ -648,24 +642,23 @@ func (c *Checkpointer) observeDuration(trigger checkpoint.Trigger, seconds float
 
 // recordRetention inserts the catalog row for the new checkpoint and
 // runs Rotate to soft-delete any row past the §12.5 latest-2 cap for
-// the (session, slot) pair. A session under legal hold is exempt from
+// the session. A session under legal hold is exempt from
 // rotation (§12.5): the row is still catalogued so the
 // §12.8 reconciler can observe it, but Rotate is skipped so every
 // checkpoint is retained until the hold is lifted. Best-effort: a
 // failure logs and discards rather than fail the snapshot.
 // spec: §4.4 / §12.5.
-func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, slotID, ref string, legalHold bool, trigger checkpoint.Trigger) {
+func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID, ref string, legalHold bool, trigger checkpoint.Trigger) {
 	if c.Retention == nil || ref == "" {
 		return
 	}
 	if err := c.Retention.Insert(ctx, checkpointretention.Record{
 		TenantID:  tenantID,
 		SessionID: sessionID,
-		SlotID:    slotID,
 		Ref:       ref,
 	}); err != nil && !errors.Is(err, checkpointretention.ErrDuplicate) {
-		log.Printf("checkpointer: retention insert tenant=%s session=%s slot=%s ref=%s: %v",
-			tenantID, sessionID, slotID, ref, err)
+		log.Printf("checkpointer: retention insert tenant=%s session=%s ref=%s: %v",
+			tenantID, sessionID, ref, err)
 		// Skip Rotate so the cap is not enforced against an unwritten
 		// row; the next successful checkpoint will rotate the catalog.
 		return
@@ -674,10 +667,10 @@ func (c *Checkpointer) recordRetention(ctx context.Context, tenantID, sessionID,
 		// §12.5 — held sessions retain all checkpoints.
 		return
 	}
-	rotated, err := c.Retention.Rotate(ctx, tenantID, sessionID, slotID)
+	rotated, err := c.Retention.Rotate(ctx, tenantID, sessionID)
 	if err != nil {
-		log.Printf("checkpointer: retention rotate tenant=%s session=%s slot=%s: %v",
-			tenantID, sessionID, slotID, err)
+		log.Printf("checkpointer: retention rotate tenant=%s session=%s: %v",
+			tenantID, sessionID, err)
 		return
 	}
 	// §12.5 GC rule 5 — release every checkpoint the latest-2 rotation

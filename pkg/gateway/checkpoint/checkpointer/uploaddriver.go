@@ -121,7 +121,7 @@ type DriverMetrics interface {
 	IncCheckpointOrphanedObjects(pool, trigger string)
 }
 
-// lockFlight acquires the per-(session, slot) single-flight lock so a
+// lockFlight acquires the per-session single-flight lock so a
 // periodic checkpoint and a concurrent seal of the same workspace cannot
 // interleave their supersede / finalise manifest writes. The returned
 // func releases the lock. The lock map is lazily populated so a
@@ -129,9 +129,8 @@ type DriverMetrics interface {
 //
 // spec: §10.1 supersede-on-write (the supersede set must be stable for
 // the duration of one attempt).
-func (c *Checkpointer) lockFlight(sessionID, slotID string) func() {
-	key := sessionID + "\x00" + slotID
-	actual, _ := c.flights.LoadOrStore(key, &sync.Mutex{})
+func (c *Checkpointer) lockFlight(sessionID string) func() {
+	actual, _ := c.flights.LoadOrStore(sessionID, &sync.Mutex{})
 	mu := actual.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
@@ -195,7 +194,6 @@ type uploadDriver struct {
 	stream       adapterv1.Adapter_CheckpointClient
 	tenantID     string
 	sessionID    string
-	slotID       string
 	checkpointID string
 	prefix       string
 	trigger      checkpoint.Trigger
@@ -317,7 +315,6 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		TenantID:     d.tenantID,
 		CheckpointID: d.checkpointID,
 		SessionID:    d.sessionID,
-		SlotID:       d.slotID,
 		// spec: §10.1 — the intent row carries the session's
 		// coordinator generation and recovery counter so the supersede fence
 		// rejects a stale coordinator (an active row at a strictly higher
@@ -399,12 +396,11 @@ func (d *uploadDriver) reserve(probed int64) error {
 // superseded attempt runs through the shared abort/backstop path.
 func (d *uploadDriver) supersedePriorAttempts() error {
 	c := d.c
-	// Scope the lookup to this attempt's exact (session, slot). A session-wide
-	// selector returns an arbitrary slot's row on tied generations, so in a
-	// concurrent-workspace session it can miss the row Put will supersede for
-	// this slot, leaking its reservation and orphaning its chunks.
-	// spec: §10.1.7 — supersede is scoped to (session_id, slot_id).
-	prior, err := c.Manifests.LatestActiveForSlot(d.ctx, d.tenantID, d.sessionID, d.slotID)
+	// Scope the lookup to this attempt's session, which is exactly the set
+	// Put supersedes: every session is bound to a slot whose identifier is the
+	// session's own, so the session identifier is the whole scoping key.
+	// spec: §4.9, §10.1.7 — supersede is scoped to (session_id).
+	prior, err := c.Manifests.LatestActiveForSession(d.ctx, d.tenantID, d.sessionID)
 	if err != nil {
 		if errors.Is(err, partialmanifeststore.ErrNotFound) {
 			return nil

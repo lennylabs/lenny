@@ -284,9 +284,15 @@ var prodMigrationSchema = []struct {
 	{migration: "0110", table: "sandbox_warm_pools", columns: []string{"elicitation_policy"}},
 	// 0111 creates the §12.4 session_leases Postgres advisory-lock fallback table.
 	{migration: "0111", table: "session_leases", create: true},
-	// 0112 adds the §12.5 slot_id column to session_checkpoints for per-slot
-	// checkpoint retention in concurrent-workspace mode.
-	{migration: "0112", table: "session_checkpoints", columns: []string{"slot_id"}},
+	// 0112 added the slot_id column to session_checkpoints for per-slot
+	// checkpoint retention. Migration 0180 drops it: every session is bound to
+	// a slot whose identifier is the session's own, so the column carried no
+	// information beyond session_id and the §12.5 "latest 2" cap is keyed on
+	// session_id alone. The column is absent after the full prod chain, so the
+	// entry keeps its number for the lint's every-migration-is-tested rule and
+	// names no column, the way 0040/concurrency_style and 0022/task_policy are
+	// handled above. spec: §4.9, §12.5.
+	{migration: "0112", table: "session_checkpoints"},
 	// 0113 adds the §11.2.1 event-type-specific ("for X events only")
 	// conditional fields to billing_events as a single nullable JSONB
 	// blob, completing the §11.2.1 event schema (F-11.2.12).
@@ -566,6 +572,15 @@ var prodMigrationSchema = []struct {
 	// the deny bit; this BOOLEAN NOT NULL DEFAULT false column adds only it.
 	// spec: §8.3 (deny marker persistence).
 	{migration: "0179", table: "sessions", columns: []string{"credential_deny"}},
+	// 0180 drops session_checkpoints.slot_id and checkpoint_manifest.slot_id,
+	// re-keys the three checkpoint indexes on session_id, and rewrites
+	// sessions.workspace_root onto the per-slot path. It adds no column, so the
+	// entry names none; it is here so TestProdMigrationsRollBackPerStep steps
+	// through its .down.sql and the SQL surface is asserted directly in
+	// TestDropCheckpointSlotIDMigration_spec_4_9 and
+	// TestDropCheckpointSlotIDRewritesWorkspaceRoot_spec_7_3. spec: §4.9,
+	// §10.1, §12.5.
+	{migration: "0180", table: "checkpoint_manifest"},
 }
 
 // spec: 12.2, 18.5

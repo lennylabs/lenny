@@ -478,7 +478,6 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		TenantID:                    source.TenantID,
 		CheckpointID:                derivedCheckpointID,
 		SessionID:                   derivedID,
-		SlotID:                      partialmanifeststore.SlotDefault,
 		ManifestReason:              partialmanifeststore.ReasonInProgress,
 		ChunkObjectKeyPrefix:        derivedChunkPrefix(source.TenantID, derivedID, derivedCheckpointID),
 		ChunkSizeBytes:              parentRec.ChunkSizeBytes,

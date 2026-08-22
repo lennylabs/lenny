@@ -309,7 +309,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       read the two passes together with SCHEMA-1's clause two and CODE-1's runtime-generation
       membership, all of which land at S11.
       Depends on: S9, S11
-- [ ] **S14 · code, test** — CODE-4. Rotation, lease extension, and revocation address the session the
+- [x] **S14 · code, test** — CODE-4. Rotation, lease extension, and revocation address the session the
       request already carries, and the merged handler keeps the §4.7 Full-level protocol. The step also
       lands §8's tier-11 `/run/lenny/credentials.json` sweep.
       Depends on: S6, S11

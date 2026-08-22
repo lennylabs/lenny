@@ -4,7 +4,7 @@
 // row the gateway writes intent-row-first at the start of every
 // checkpoint attempt and updates as chunks commit. The row records the
 // per-attempt upload state: the gateway-minted checkpoint_id, the
-// (session_id, slot_id) scoping key, the coordination and recovery
+// session_id scoping key, the coordination and recovery
 // generations, the chunk_object_key_prefix the chunks live under, the
 // running chunk_count / workspace_bytes_uploaded counters, the §11.2
 // storage reservation and its exactly-once release guard, and the
@@ -64,22 +64,19 @@ func IsValidReason(r string) bool {
 	}
 }
 
-// SlotDefault is the sentinel slot_id for pools with
-// maxConcurrentSessions: 1, so the (session_id, slot_id) scoping key is
-// well-defined for every session (§10.1.7).
-const SlotDefault = "default"
-
 // Record is one checkpoint_manifest row.
 type Record struct {
 	// TenantID and CheckpointID are the composite primary key. The
 	// gateway mints CheckpointID (a UUID) at intent-row INSERT.
 	TenantID     string
 	CheckpointID string
-	// SessionID and SlotID are the §10.1.7 scoping key the
+	// SessionID is the §10.1.7 scoping key the
 	// partial_manifest_active_uniq index and the supersede predicate
-	// key on. SlotID defaults to SlotDefault.
+	// key on. Every session is bound to a slot whose identifier is the
+	// session's own, so the session identifier is the whole key.
+	//
+	// spec: §4.9, §10.1.7.
 	SessionID string
-	SlotID    string
 	// CoordinationGeneration is the coordinator's fenced generation at
 	// intent-row INSERT. The resume path selects the row at
 	// MAX(coordination_generation) so a late-committed older-generation
@@ -145,7 +142,7 @@ var ErrNotFound = errors.New("partialmanifeststore: row not found")
 
 // ErrStaleGeneration is returned by Put when an active partial manifest
 // at a strictly higher coordination_generation already exists for the
-// same (session, slot). The write is a fenced stale-coordinator attempt:
+// same session. The write is a fenced stale-coordinator attempt:
 // honoring it would downgrade the active manifest below the highest
 // fenced generation, which the §10.1.7 MAX(coordination_generation)
 // resume selector forbids. The losing writer rolls back and re-reads.
@@ -168,13 +165,13 @@ var ErrAlreadyExists = errors.New("partialmanifeststore: a row with this checkpo
 type Store interface {
 	// Put writes the §10.1 intent row for a fresh checkpoint attempt.
 	// In one transaction it fences on coordination_generation and
-	// supersedes prior attempts for the same (session, slot): a write
+	// supersedes prior attempts for the same session: a write
 	// whose generation is below an already-active strictly-higher
 	// generation is rejected with ErrStaleGeneration; every active
 	// partial row at or below the incoming generation is soft-deleted
 	// (manifest_reason = 'superseded') before the INSERT, so the
 	// partial_manifest_active_uniq index never sees two active partial
-	// rows for one (session, slot). A duplicate checkpoint_id is
+	// rows for one session. A duplicate checkpoint_id is
 	// rejected with ErrAlreadyExists. Returns an error when a required
 	// field is empty or invalid.
 	//
@@ -229,19 +226,15 @@ type Store interface {
 	// spec: §10.1.7 — fallback to the last successful full checkpoint.
 	LatestFull(ctx context.Context, tenantID, sessionID string) (Record, error)
 
-	// LatestActiveForSlot returns the active partial row for the single
-	// (tenantID, sessionID, slotID) the supersede path scopes on. The
+	// LatestActiveForSession returns the active partial row for
+	// (tenantID, sessionID), the exact set Put supersedes. The
 	// partial_manifest_active_uniq index admits at most one active partial
-	// row per (session, slot), so the result is that row when present. It
-	// carries the `partial = TRUE` predicate. Returns ErrNotFound when no
-	// active partial row exists for the slot. Unlike LatestActive, which is
-	// session-wide and returns an arbitrary slot's row on tied generations,
-	// this selector matches exactly the set Put supersedes, so a multi-slot
-	// session's supersede release never misses the target slot's prior row.
+	// row per session, so the result is that row when present. It carries
+	// the `partial = TRUE` predicate and returns ErrNotFound when the
+	// session has no active partial row.
 	//
-	// spec: §10.1.7 — supersede is scoped to
-	// (tenant_id, session_id, slot_id).
-	LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (Record, error)
+	// spec: §10.1.7 — supersede is scoped to (tenant_id, session_id).
+	LatestActiveForSession(ctx context.Context, tenantID, sessionID string) (Record, error)
 
 	// ConfirmChunk advances the monotonic chunk_count / workspace_bytes
 	// counters as chunk n commits. It applies the §10.1.7
@@ -364,9 +357,6 @@ func normalise(r *Record) error {
 	if r.ChunkObjectKeyPrefix == "" {
 		return fmt.Errorf("partialmanifeststore: chunk_object_key_prefix is required")
 	}
-	if r.SlotID == "" {
-		r.SlotID = SlotDefault
-	}
 	if r.ChunkEncoding == "" {
 		r.ChunkEncoding = ChunkEncodingTar
 	}
@@ -386,7 +376,7 @@ func normalise(r *Record) error {
 }
 
 // Put writes the §10.1 intent row, fencing on and superseding prior
-// attempts for the same (session, slot).
+// attempts for the same session.
 func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	if err := normalise(&r); err != nil {
 		return err
@@ -402,7 +392,7 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	// anything, so a stale-coordinator write never downgrades the active
 	// manifest.
 	for _, row := range m.rows {
-		if row.TenantID != r.TenantID || row.SessionID != r.SessionID || row.SlotID != r.SlotID {
+		if row.TenantID != r.TenantID || row.SessionID != r.SessionID {
 			continue
 		}
 		if row.Partial && row.DeletedAt.IsZero() && row.CoordinationGeneration > r.CoordinationGeneration {
@@ -411,9 +401,9 @@ func (m *MemoryStore) Put(_ context.Context, r Record) error {
 	}
 	// §10.1.7 supersede-on-write: soft-delete every active partial
 	// row at or below the incoming generation so at most one active
-	// partial row survives for this (session, slot).
+	// partial row survives for this session.
 	for key, row := range m.rows {
-		if row.TenantID != r.TenantID || row.SessionID != r.SessionID || row.SlotID != r.SlotID {
+		if row.TenantID != r.TenantID || row.SessionID != r.SessionID {
 			continue
 		}
 		if row.CheckpointID == r.CheckpointID {
@@ -533,16 +523,17 @@ func (m *MemoryStore) LatestFull(_ context.Context, tenantID, sessionID string) 
 	return best, nil
 }
 
-// LatestActiveForSlot returns the active partial row for
-// (tenantID, sessionID, slotID), the single slot the supersede path scopes
-// on.
-func (m *MemoryStore) LatestActiveForSlot(_ context.Context, tenantID, sessionID, slotID string) (Record, error) {
+// LatestActiveForSession returns the active partial row for
+// (tenantID, sessionID), the exact set the supersede path scopes on.
+//
+// spec: §10.1.7.
+func (m *MemoryStore) LatestActiveForSession(_ context.Context, tenantID, sessionID string) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var best Record
 	found := false
 	for _, row := range m.rows {
-		if row.TenantID != tenantID || row.SessionID != sessionID || row.SlotID != slotID {
+		if row.TenantID != tenantID || row.SessionID != sessionID {
 			continue
 		}
 		if !row.Partial || !row.DeletedAt.IsZero() {

@@ -37,7 +37,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 var _ partialmanifeststore.Store = (*Store)(nil)
 
-const selectList = `tenant_id, checkpoint_id, session_id, slot_id,
+const selectList = `tenant_id, checkpoint_id, session_id,
 	coordination_generation, recovery_generation, partial, manifest_reason,
 	chunk_object_key_prefix, chunk_size_bytes, chunk_encoding, chunk_count,
 	workspace_bytes_uploaded, reserved_bytes, reservation_released_at,
@@ -47,7 +47,7 @@ const selectList = `tenant_id, checkpoint_id, session_id, slot_id,
 // selectListM is selectList qualified with the m. alias so the
 // ListReclaimable join can disambiguate the manifest table's columns
 // from the sessions table's.
-const selectListM = `m.tenant_id, m.checkpoint_id, m.session_id, m.slot_id,
+const selectListM = `m.tenant_id, m.checkpoint_id, m.session_id,
 	m.coordination_generation, m.recovery_generation, m.partial, m.manifest_reason,
 	m.chunk_object_key_prefix, m.chunk_size_bytes, m.chunk_encoding, m.chunk_count,
 	m.workspace_bytes_uploaded, m.reserved_bytes, m.reservation_released_at,
@@ -61,7 +61,7 @@ const terminalStates = `('completed', 'failed', 'cancelled', 'expired')`
 
 // Put writes the §10.1 intent row for a fresh checkpoint attempt in a
 // single transaction: it fences on coordination_generation and
-// supersedes prior attempts for the same (session, slot). A write whose
+// supersedes prior attempts for the same session. A write whose
 // generation is below an already-active strictly-higher generation is a
 // fenced stale-coordinator attempt and is rejected with
 // ErrStaleGeneration (§10.1.7); otherwise every active partial
@@ -95,10 +95,10 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 		if err := tx.QueryRow(ctx,
 			`SELECT EXISTS(
 				SELECT 1 FROM checkpoint_manifest
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+				WHERE tenant_id = $1 AND session_id = $2
 					AND partial = TRUE AND deleted_at IS NULL
-					AND coordination_generation > $4)`,
-			r.TenantID, r.SessionID, r.SlotID, r.CoordinationGeneration).Scan(&higherActive); err != nil {
+					AND coordination_generation > $3)`,
+			r.TenantID, r.SessionID, r.CoordinationGeneration).Scan(&higherActive); err != nil {
 			return err
 		}
 		if higherActive {
@@ -111,28 +111,28 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 		// the new row.
 		if _, err := tx.Exec(ctx,
 			`UPDATE checkpoint_manifest
-				SET deleted_at = $5, manifest_reason = 'superseded'
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+				SET deleted_at = $4, manifest_reason = 'superseded'
+				WHERE tenant_id = $1 AND session_id = $2
 					AND partial = TRUE AND deleted_at IS NULL
-					AND coordination_generation <= $4
-					AND checkpoint_id != $6`,
-			r.TenantID, r.SessionID, r.SlotID, r.CoordinationGeneration,
+					AND coordination_generation <= $3
+					AND checkpoint_id != $5`,
+			r.TenantID, r.SessionID, r.CoordinationGeneration,
 			now, r.CheckpointID); err != nil {
 			return err
 		}
 
 		_, err := tx.Exec(ctx,
 			`INSERT INTO checkpoint_manifest (
-				tenant_id, checkpoint_id, session_id, slot_id,
+				tenant_id, checkpoint_id, session_id,
 				coordination_generation, recovery_generation, partial,
 				manifest_reason, chunk_object_key_prefix, chunk_size_bytes,
 				chunk_encoding, chunk_count, workspace_bytes_uploaded,
 				reserved_bytes, reservation_released_at,
 				baseline_full_checkpoint_bytes, checkpoint_started_at,
 				checkpoint_timeout_at, created_at, deleted_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				$14, NULL, $15, $16, $17, $18, NULL)`,
-			r.TenantID, r.CheckpointID, r.SessionID, r.SlotID,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+				$13, NULL, $14, $15, $16, $17, NULL)`,
+			r.TenantID, r.CheckpointID, r.SessionID,
 			r.CoordinationGeneration, r.RecoveryGeneration, r.Partial,
 			r.ManifestReason, r.ChunkObjectKeyPrefix, r.ChunkSizeBytes,
 			string(r.ChunkEncoding), r.ChunkCount, r.WorkspaceBytesUploaded,
@@ -153,9 +153,6 @@ func validatePut(r *partialmanifeststore.Record) error {
 	}
 	if r.ChunkObjectKeyPrefix == "" {
 		return errors.New("partialmanifeststore: chunk_object_key_prefix is required")
-	}
-	if r.SlotID == "" {
-		r.SlotID = partialmanifeststore.SlotDefault
 	}
 	if r.ChunkEncoding == "" {
 		r.ChunkEncoding = partialmanifeststore.ChunkEncodingTar
@@ -306,19 +303,19 @@ func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (par
 	return out, nil
 }
 
-// LatestActiveForSlot returns the active partial row for
-// (tenantID, sessionID, slotID), the single slot the supersede path scopes
-// on (§10.1.7). partial_manifest_active_uniq admits at most one such
+// LatestActiveForSession returns the active partial row for
+// (tenantID, sessionID), the exact set the supersede path scopes on
+// (§10.1.7). partial_manifest_active_uniq admits at most one such
 // row, so the ORDER BY / LIMIT is defensive.
-func (s *Store) LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (partialmanifeststore.Record, error) {
+func (s *Store) LatestActiveForSession(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx,
 			`SELECT `+selectList+` FROM checkpoint_manifest
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+				WHERE tenant_id = $1 AND session_id = $2
 					AND partial = TRUE AND deleted_at IS NULL
 				ORDER BY coordination_generation DESC, created_at DESC LIMIT 1`,
-			tenantID, sessionID, slotID)
+			tenantID, sessionID)
 		r, err := scanRow(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return partialmanifeststore.ErrNotFound
@@ -540,7 +537,7 @@ func scanRow(row pgx.Row) (partialmanifeststore.Record, error) {
 		deletedAt     *time.Time
 	)
 	if err := row.Scan(
-		&r.TenantID, &r.CheckpointID, &r.SessionID, &r.SlotID,
+		&r.TenantID, &r.CheckpointID, &r.SessionID,
 		&r.CoordinationGeneration, &r.RecoveryGeneration, &r.Partial,
 		&r.ManifestReason, &r.ChunkObjectKeyPrefix, &r.ChunkSizeBytes,
 		&encoding, &r.ChunkCount, &r.WorkspaceBytesUploaded,
