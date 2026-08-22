@@ -90,11 +90,13 @@ func mustBeAbsent(t *testing.T, path, what string) {
 }
 
 // TestWarmPodHoldsSlotsAndStagingAndNoCurrent_spec_6_1 asserts the warm-pod
-// filesystem invariant on a pool of either concurrency: /workspace/slots and
-// the staging directory exist and slots/ is empty, and the retired
-// pod-global /workspace/current exists on neither pool class. The layout is
-// uniform, so the exclusive pool that previously materialized into
-// /workspace/current is the arm a reinstated pod-global path fails on.
+// filesystem invariant: /workspace/slots and the staging directory exist,
+// slots/ is empty before any slot is assigned, and the retired pod-global
+// /workspace/current is absent. EnsureWarmWorkspaceLayout takes no pool
+// input and carries no pool-conditional branch, so this case asserts the
+// invariant once. The pool-class arm of the same invariant, that the layout
+// is uniform across an exclusive and a concurrent pool, is asserted at tier
+// 5 against real agent pods on both pool classes.
 //
 // diagnosis: the adapter's warm-time layout still creates, or still depends
 // on, a pod-global /workspace/current. Under §6.4 a session's cwd is its own
@@ -102,23 +104,19 @@ func mustBeAbsent(t *testing.T, path, what string) {
 // writes into a directory nothing checkpoints, scrubs, or exports.
 // spec: 6.1 (warm-pod invariant), 6.4 (per-slot workspace layout)
 func TestWarmPodHoldsSlotsAndStagingAndNoCurrent_spec_6_1(t *testing.T) {
-	for _, pool := range []string{"exclusive", "concurrent"} {
-		t.Run(pool, func(t *testing.T) {
-			_, roots := warmAdapter(t)
+	_, roots := warmAdapter(t)
 
-			slots := filepath.Join(roots.workspace, "slots")
-			mustBeDir(t, slots, "warm layout")
-			mustBeDir(t, roots.staging, "warm layout")
-			mustBeAbsent(t, filepath.Join(roots.workspace, "current"), "warm layout")
+	slots := filepath.Join(roots.workspace, "slots")
+	mustBeDir(t, slots, "warm layout")
+	mustBeDir(t, roots.staging, "warm layout")
+	mustBeAbsent(t, filepath.Join(roots.workspace, "current"), "warm layout")
 
-			entries, err := os.ReadDir(slots)
-			if err != nil {
-				t.Fatalf("read %s: %v", slots, err)
-			}
-			if len(entries) != 0 {
-				t.Fatalf("%s holds %d entries, want empty before any slot is assigned", slots, len(entries))
-			}
-		})
+	entries, err := os.ReadDir(slots)
+	if err != nil {
+		t.Fatalf("read %s: %v", slots, err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("%s holds %d entries, want empty before any slot is assigned", slots, len(entries))
 	}
 }
 

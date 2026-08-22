@@ -650,6 +650,21 @@ type ResumeRequest struct {
 	// the replacement pod carries no annotation and the §5.2 uptime drain
 	// never fires on it.
 	MaxPodUptimeSeconds int64
+	// Recycle is the pool's §5.2 sessionPolicy.recycle.enabled flag,
+	// resolved by the caller from the same pool match it resolves the
+	// concurrency bound from. Resume carries it onto the BindResult so the
+	// resumed session's release sees the pool's recycle disposition: the
+	// occupancy-zero edge of Binder.ReleaseSlot patches the per-pod claim
+	// bound → recycling instead of deleting it, and Binder.Release takes
+	// the recycle path instead of retiring the pod.
+	Recycle bool
+	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 whole-pod
+	// scrub parameters, resolved by the caller from the same pool match.
+	// Resume carries them onto the BindResult so the recycle-path Shutdown
+	// delivers them in the §4.7 RecycleScrub sub-message without
+	// re-resolving the pool at release.
+	CleanupCommands       []string
+	CleanupTimeoutSeconds int
 	// Chunks carries one presigned GET capability per chunk of the
 	// checkpoint being restored, in ascending index order. The gateway
 	// resolves the chunk set from the manifest row it owns and mints one
@@ -1633,6 +1648,15 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 			// where no slot was reserved and the release runs through
 			// Binder.Release.
 			SlotID: slotID,
+			// spec: §5.2 — the resumed session's release reads the pool's
+			// recycle disposition off the bind result, on both the
+			// exclusive Binder.Release path and the concurrent
+			// Binder.ReleaseSlot occupancy-zero edge. Without these three
+			// fields a session that resumed from a checkpoint stops
+			// recycling the pod it ran on.
+			Recycle:               req.Recycle,
+			CleanupCommands:       req.CleanupCommands,
+			CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
 		},
 		Mode:               res.Mode,
 		RecoveryGeneration: res.RecoveryGeneration,

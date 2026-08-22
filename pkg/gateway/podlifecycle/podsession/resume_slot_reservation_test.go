@@ -117,6 +117,55 @@ func TestResumeOntoAnExclusivePoolReservesNoSlot_spec_5_2(t *testing.T) {
 	}
 }
 
+// spec: 5.2 (recycle disposition at release), 7.1 (resume onto a replacement pod)
+// diagnosis: Binder.Resume dropped the pool's recycle disposition, so the
+// bind result a resumed session releases through carries Recycle false and
+// no scrub parameters. On a concurrent recycling pool that takes the
+// occupancy-zero edge of ReleaseSlot down the delete-the-claim arm instead
+// of patching the claim bound → recycling, and on an exclusive recycling
+// pool it retires the pod. Either way a pool stops recycling for any
+// session that resumed from a checkpoint, and the RecycleScrub sub-message
+// carries no cleanup commands.
+func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		maxConcurrent int32
+	}{
+		{"concurrent pool", 4},
+		{"exclusive pool", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := adapter.New("adapter-test")
+			srv.WorkspaceBase = t.TempDir()
+			srv.Runtime = &fakeRuntime{}
+
+			c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+			binder, _ := resumeSlotFixture(t, c, adapterDialer(t, srv))
+
+			req := resumeRequest(tc.maxConcurrent)
+			req.Recycle = true
+			req.CleanupCommands = []string{"rm -rf /workspace/slots/sess-1"}
+			req.CleanupTimeoutSeconds = 17
+
+			res, err := binder.Resume(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			defer res.Result.Adapter.Close()
+
+			if !res.Result.Recycle {
+				t.Errorf("BindResult.Recycle = false, want the pool's recycle disposition to survive the resume")
+			}
+			if got := res.Result.CleanupCommands; len(got) != 1 || got[0] != "rm -rf /workspace/slots/sess-1" {
+				t.Errorf("BindResult.CleanupCommands = %v, want the pool's scrub commands", got)
+			}
+			if res.Result.CleanupTimeoutSeconds != 17 {
+				t.Errorf("BindResult.CleanupTimeoutSeconds = %d, want 17", res.Result.CleanupTimeoutSeconds)
+			}
+		})
+	}
+}
+
 // getResumePod reads the agent Pod backing a Sandbox.
 func getResumePod(t *testing.T, c client.Client, name string) corev1.Pod {
 	t.Helper()

@@ -3939,6 +3939,14 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// to a minimum of 1: Binder.Resume scopes the reservation on it.
 		MaxConcurrentSessions: maxConcurrentSessions(match.MaxConcurrentSessions),
 		MaxPodUptimeSeconds:   match.MaxPodUptimeSeconds,
+		// spec: §5.2 — carry the pool's recycle disposition and whole-pod
+		// scrub parameters onto the resume, the same way the start path
+		// carries them onto a bind. The resumed session's release reads
+		// them off the bind result, so a resume that dropped them would
+		// retire a recycling pod instead of recycling it.
+		Recycle:               match.Recycle,
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
 		Chunks:                chunks,
 	})
 	if err != nil {
