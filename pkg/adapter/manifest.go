@@ -205,8 +205,9 @@ func WriteManifest(dir string, m Manifest) error {
 	// manifest. The write therefore lands in a temporary file in the same
 	// directory and is renamed over the target, which is atomic within a
 	// filesystem: a reader sees the whole of one session's manifest or the
-	// whole of the other's. spec: §15.4 (per-session manifest), §6.4
-	// (every session is bound to a slot on every pod).
+	// whole of the other's. spec: §4.7.5 (the adapter manifest is one
+	// pod-global file, complete and authoritative when the runtime binary
+	// starts), §6.4 (every session is bound to a slot on every pod).
 	tmp, err := os.CreateTemp(dir, ManifestFilename+".*")
 	if err != nil {
 		return fmt.Errorf("adapter: create manifest temp file: %w", err)

@@ -33,6 +33,7 @@ package tier7a_load_local_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -151,33 +152,49 @@ func nonceAuthenticates(t *testing.T, socket, nonce string) bool {
 	return !isErr
 }
 
+// manifestPollPause keeps the nonce watcher's read loop off a full core
+// between reads. It is far shorter than the span between the two starts'
+// manifest writes, each of which follows a workspace preparation and a set
+// of socket binds.
+const manifestPollPause = 100 * time.Microsecond
+
 // nonceWatcher reads the pod's one manifest file while the two starts run
-// and records every distinct nonce published on it. Each write is
-// published by rename, so a reader observes one whole document at a time
-// and the losing start's nonce is recoverable even though its document
-// does not survive.
+// and records the sessionId each published nonce appeared beside. Each
+// write is published by rename, so a reader observes one whole document at
+// a time and the losing start's nonce is recoverable even though its
+// document does not survive. A nonce observed beside two different
+// sessionIds is a torn document, which the watcher records rather than
+// overwrites.
 type nonceWatcher struct {
-	mu   sync.Mutex
-	seen map[string]string // nonce -> the sessionId published beside it
-	stop chan struct{}
-	done chan struct{}
+	mu        sync.Mutex
+	seen      map[string]string // nonce -> the sessionId published beside it
+	conflicts []string
+	stop      chan struct{}
+	stopOnce  sync.Once
+	done      chan struct{}
 }
 
-// watchPublishedNonces starts a watcher over the manifest in dir.
-func watchPublishedNonces(dir string) *nonceWatcher {
+// watchPublishedNonces starts a watcher over the manifest in dir and
+// registers its stop with the test, so the goroutine exits on every path
+// out of the case, including a t.Fatalf taken before the case's own stop.
+func watchPublishedNonces(t *testing.T, dir string) *nonceWatcher {
+	t.Helper()
 	w := &nonceWatcher{
 		seen: map[string]string{},
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
 	}
+	t.Cleanup(func() { _, _ = w.close() })
 	path := filepath.Join(dir, adapter.ManifestFilename)
 	go func() {
 		defer close(w.done)
+		poll := time.NewTicker(manifestPollPause)
+		defer poll.Stop()
 		for {
 			select {
 			case <-w.stop:
 				return
-			default:
+			case <-poll.C:
 			}
 			b, err := os.ReadFile(path)
 			if err != nil {
@@ -187,18 +204,35 @@ func watchPublishedNonces(dir string) *nonceWatcher {
 			if json.Unmarshal(b, &m) != nil || m.MCPNonce == "" {
 				continue
 			}
-			w.mu.Lock()
-			w.seen[m.MCPNonce] = m.SessionID
-			w.mu.Unlock()
+			w.record(m.MCPNonce, m.SessionID)
 		}
 	}()
 	return w
 }
 
+// record notes that nonce was published beside sessionID. A second
+// observation of the same nonce beside a different sessionID is kept as a
+// conflict, which is the torn concurrent write the atomic publish exists
+// to prevent.
+func (w *nonceWatcher) record(nonce, sessionID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	prev, ok := w.seen[nonce]
+	if !ok {
+		w.seen[nonce] = sessionID
+		return
+	}
+	if prev != sessionID {
+		w.conflicts = append(w.conflicts,
+			fmt.Sprintf("nonce %q was published beside sessionId %q and beside sessionId %q", nonce, prev, sessionID))
+	}
+}
+
 // close stops the watcher and returns the nonce-to-session pairs it
-// observed.
-func (w *nonceWatcher) close() map[string]string {
-	close(w.stop)
+// observed together with every torn document it saw. It is idempotent, so
+// the case's own call and the registered cleanup both run safely.
+func (w *nonceWatcher) close() (map[string]string, []string) {
+	w.stopOnce.Do(func() { close(w.stop) })
 	<-w.done
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -206,7 +240,7 @@ func (w *nonceWatcher) close() map[string]string {
 	for nonce, sessionID := range w.seen {
 		out[nonce] = sessionID
 	}
-	return out
+	return out, append([]string(nil), w.conflicts...)
 }
 
 // racedManifest reads the one pod-global manifest both starts wrote.
@@ -239,7 +273,7 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			// Both starts publish the pod's one manifest, and only one of
 			// the two documents survives. Watching the file through the
 			// race recovers the nonce of the start whose document did not.
-			watcher := watchPublishedNonces(s.ManifestDir)
+			watcher := watchPublishedNonces(t, s.ManifestDir)
 
 			var wg sync.WaitGroup
 			errs := make([]error, 2)
@@ -275,7 +309,10 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			if got := s.SoleSessionID(); got != "" {
 				t.Errorf("SoleSessionID on a pod given two sessions = %q, want empty", got)
 			}
-			published := watcher.close()
+			published, torn := watcher.close()
+			for _, conflict := range torn {
+				t.Errorf("the pod published a torn manifest: %s", conflict)
+			}
 			m := racedManifest(t, s)
 			if m.SessionID != "alice" && m.SessionID != "bob" {
 				t.Errorf("manifest sessionId = %q, want one of the two starting sessions", m.SessionID)
@@ -285,15 +322,45 @@ func TestConcurrentStartsArmThePodMCPSurfaceOnce_spec_15_4_3(t *testing.T) {
 			}
 			// The surviving document is one session's whole manifest: its
 			// sessionId is paired with the nonce that session published,
-			// rather than with its co-tenant's.
-			published[m.MCPNonce] = m.SessionID
+			// rather than with its co-tenant's. Where the watcher already
+			// observed this nonce, the pairing has to agree with what it
+			// saw; a disagreement is the torn document a truncating
+			// in-place write would leave behind.
+			if prev, seen := published[m.MCPNonce]; seen {
+				if prev != m.SessionID {
+					t.Errorf("the surviving manifest pairs nonce %q with sessionId %q, but that nonce was published beside sessionId %q",
+						m.MCPNonce, m.SessionID, prev)
+				}
+			} else {
+				published[m.MCPNonce] = m.SessionID
+			}
 			for nonce, sessionID := range published {
 				if sessionID != "alice" && sessionID != "bob" {
 					t.Errorf("a published manifest paired nonce %q with sessionId %q, want one of the two starting sessions", nonce, sessionID)
 				}
 			}
+			// The same conflation seen from the other side: each session
+			// writes the manifest once, so no sessionId may stand beside
+			// two distinct nonces.
+			nonceOf := map[string]string{}
+			for nonce, sessionID := range published {
+				if prev, dup := nonceOf[sessionID]; dup {
+					t.Errorf("sessionId %q was published beside two distinct nonces (%q and %q)", sessionID, prev, nonce)
+					continue
+				}
+				nonceOf[sessionID] = nonce
+			}
 			if len(published) > 2 {
 				t.Errorf("the pod published %d distinct MCP nonces for two starts", len(published))
+			}
+			// The arming assertion below reasons over the nonces both
+			// starts published, so a document the watcher never caught
+			// would read as an arming defect. Name the missed observation
+			// instead.
+			for _, id := range []string{"alice", "bob"} {
+				if _, ok := nonceOf[id]; !ok {
+					t.Fatalf("the watcher never observed session %q's manifest document, so the published nonce set is incomplete; the race was not observed rather than the arming being wrong", id)
+				}
 			}
 			if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket == "" {
 				t.Fatalf("manifest carries no platform MCP socket: %+v", m.PlatformMcpServer)

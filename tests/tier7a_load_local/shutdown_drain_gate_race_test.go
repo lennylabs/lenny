@@ -264,7 +264,11 @@ func TestConcurrentShutdownsSendOneDrainSignal_spec_6_4(t *testing.T) {
 		}
 	}
 	// The signal is pod-global and names no session: the co-tenant's
-	// teardown must not send a second one.
+	// teardown must not send a second one. A gate that let both teardowns
+	// drain writes both frames before either close parks, so the surplus
+	// one can still be sitting undecoded in the socket buffer; bound the
+	// count from above only once the reader has gone quiet.
+	peer.settle(500 * time.Millisecond)
 	if got := peer.count("terminate"); got != 1 {
 		t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want 1 across the two concurrent teardowns", got)
 	}
@@ -308,6 +312,10 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 			t.Fatal("no CH-RUNTIMEOPS drain signal reached the runtime; the incoming " +
 				"session's registered-but-unbound entry must not withhold the drain")
 		}
+		// awaitTerminate returning is evidence only that one frame
+		// decoded; a second frame may still be pending in the socket
+		// buffer, so settle before bounding the count from above.
+		peer.settle(500 * time.Millisecond)
 		if got := peer.count("terminate"); got != 1 {
 			t.Errorf("CH-RUNTIMEOPS terminate frames = %d, want 1; the incoming session's "+
 				"registered-but-unbound entry must not withhold the drain", got)
