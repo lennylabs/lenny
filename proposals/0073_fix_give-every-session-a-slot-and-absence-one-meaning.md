@@ -295,11 +295,11 @@ rule, the text moves to the code's step, and the step that carries it names the 
       arming edit it takes §8's tier-1 coordinator-hold arming cases, which are the first case of that block
       and its non-happy arming paths, whose predicates read that edit alone.
       Depends on: S1, S3, S5, S9
-- [ ] **S12 · code, test** — CODE-2. Restore, `ExportPaths`, and the workspace-root derivation resolve the
+- [x] **S12 · code, test** — CODE-2. Restore, `ExportPaths`, and the workspace-root derivation resolve the
       slot root from the session identifier, and `Binder.Resume` reserves its slot on the pod `connect`
       claimed.
       Depends on: S5, S11
-- [ ] **S13 · code, test** — CODE-3's termination half. The timeout deregisters every started entry in
+- [x] **S13 · code, test** — CODE-3's termination half. The timeout deregisters every started entry in
       one critical section and then terminates each, with a per-session post-mortem, final usage
       report, `Runtime.Close`, tree removal, and `AdapterTerminating`. The arming read moves from
       S11's `anyStartedSession()` onto `hasStartedSession()`, `holdState.session` and
