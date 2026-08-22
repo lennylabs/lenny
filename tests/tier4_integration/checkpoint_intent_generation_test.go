@@ -60,7 +60,6 @@ func TestCheckpointIntentRowCarriesSessionCoordinationGeneration(t *testing.T) {
 		TenantID:               cpTenant,
 		CheckpointID:           "older-generation-attempt",
 		SessionID:              cpSession,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: 5,
 		ChunkObjectKeyPrefix:   "/acme/checkpoints/s1/older/",
 	}); err != nil {
@@ -126,7 +125,6 @@ func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
 		TenantID:               cpTenant,
 		CheckpointID:           "newer-writer",
 		SessionID:              cpSession,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: 7,
 		ChunkObjectKeyPrefix:   newerPrefix,
 		ReservedBytes:          4096,

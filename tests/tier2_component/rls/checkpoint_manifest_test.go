@@ -5,7 +5,7 @@
 // Component tests for the §10.1 checkpoint_manifest table (migration
 // 0178): the §12.3 tenant-isolation apparatus (tenant-guard trigger,
 // FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 partial_manifest_active_uniq at-most-one-active-partial
-// invariant scoped to (session_id, slot_id), and the §10.1.7
+// invariant scoped to session_id, and the §10.1.7
 // intent-row defaults (manifest_reason = 'in_progress',
 // baseline_full_checkpoint_bytes NULL) the §7.2 resume path relies on.
 package rls_test
@@ -21,13 +21,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// insertManifest writes one checkpoint_manifest intent row for tenant /
-// session / slot under that tenant's app.current_tenant context as the
+// insertManifest writes one checkpoint_manifest intent row for a tenant's
+// session under that tenant's app.current_tenant context as the
 // lenny_app role, mirroring the §10.1 intent-row-first INSERT. baseline
 // and manifest_reason are left to their column defaults so callers can
 // assert those defaults. Returns any INSERT error (e.g. the partial
 // unique violation) without failing the test.
-func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, session, slot, checkpointID string) error {
+func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, session, checkpointID string) error {
 	t.Helper()
 	tx, err := pg.Pool.Begin(ctx)
 	if err != nil {
@@ -43,13 +43,13 @@ func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, 
 	}
 	_, err = tx.Exec(ctx,
 		`INSERT INTO checkpoint_manifest (
-			tenant_id, checkpoint_id, session_id, slot_id,
+			tenant_id, checkpoint_id, session_id,
 			chunk_object_key_prefix, chunk_size_bytes,
 			checkpoint_started_at, checkpoint_timeout_at)
-		 VALUES ($1, $2::uuid, $3, $4,
+		 VALUES ($1, $2::uuid, $3,
 			'/'||$1||'/checkpoints/'||$3||'/'||$2::text||'/', 16777216,
 			now(), now() + interval '30 seconds')`,
-		tenant, checkpointID, session, slot)
+		tenant, checkpointID, session)
 	if err != nil {
 		return err
 	}
@@ -102,10 +102,10 @@ func TestCheckpointManifestPreventsCrossTenantRead(t *testing.T) {
 
 	seedTenant(t, ctx, pg, "tenant-a")
 	seedTenant(t, ctx, pg, "tenant-b")
-	if err := insertManifest(t, ctx, pg, "tenant-a", "sess-a", "default", "11111111-1111-1111-1111-111111111111"); err != nil {
+	if err := insertManifest(t, ctx, pg, "tenant-a", "sess-a", "11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatalf("seed tenant-a manifest: %v", err)
 	}
-	if err := insertManifest(t, ctx, pg, "tenant-b", "sess-b", "default", "22222222-2222-2222-2222-222222222222"); err != nil {
+	if err := insertManifest(t, ctx, pg, "tenant-b", "sess-b", "22222222-2222-2222-2222-222222222222"); err != nil {
 		t.Fatalf("seed tenant-b manifest: %v", err)
 	}
 
@@ -151,10 +151,11 @@ func TestCheckpointManifestPreventsCrossTenantRead(t *testing.T) {
 // spec: 10.1
 // diagnosis: the partial_manifest_active_uniq index did not enforce
 //
-//	at-most-one active partial manifest per (session_id, slot_id).
-//	The migration 0150 index scoped on (tenant_id, session_id) admitted
-//	a second active partial row for a distinct slot's key; the §10.1 index scopes on (session_id, slot_id) over active partial
-//	rows so a second active partial row for the same slot is rejected.
+//	at-most-one active partial manifest per session. Every session is
+//	bound to a slot on every pod and a session-mode slot's identifier is
+//	its session's identifier, so the index scopes on session_id alone over
+//	active partial rows and a second active partial row for one session is
+//	rejected.
 func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -163,26 +164,25 @@ func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, ctx, pg, "acme")
 
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "33333333-3333-3333-3333-333333333333"); err != nil {
+	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "33333333-3333-3333-3333-333333333333"); err != nil {
 		t.Fatalf("first active partial manifest must insert: %v", err)
 	}
 
-	// A second active partial row for the same (session_id, slot_id) — a
-	// fresh checkpoint_id, so the primary key does not collide — must be
-	// rejected by the partial unique index.
-	err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "44444444-4444-4444-4444-444444444444")
+	// A second active partial row for the same session — a fresh
+	// checkpoint_id, so the primary key does not collide — must be rejected
+	// by the partial unique index.
+	err := insertManifest(t, ctx, pg, "acme", "sess-1", "44444444-4444-4444-4444-444444444444")
 	if err == nil {
-		t.Fatal("second active partial manifest for the same (session_id, slot_id) must be rejected")
+		t.Fatal("second active partial manifest for the same session must be rejected")
 	}
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "partial_manifest_active_uniq" {
 		t.Errorf("want unique violation on partial_manifest_active_uniq, got: %v", err)
 	}
 
-	// A different slot for the same session is a distinct active key and
-	// must be admitted.
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "slot-2", "55555555-5555-5555-5555-555555555555"); err != nil {
-		t.Errorf("a distinct slot's active partial manifest must insert: %v", err)
+	// A different session is a distinct active key and must be admitted.
+	if err := insertManifest(t, ctx, pg, "acme", "sess-2", "55555555-5555-5555-5555-555555555555"); err != nil {
+		t.Errorf("a distinct session's active partial manifest must insert: %v", err)
 	}
 }
 
@@ -202,7 +202,7 @@ func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, ctx, pg, "acme")
 
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "66666666-6666-6666-6666-666666666666"); err != nil {
+	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "66666666-6666-6666-6666-666666666666"); err != nil {
 		t.Fatalf("insert intent row: %v", err)
 	}
 

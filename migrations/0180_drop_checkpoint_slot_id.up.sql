@@ -103,6 +103,17 @@ CREATE INDEX idx_checkpoint_manifest_active
 
 -- Rewrite the recorded workspace root of every session still holding the
 -- retired pod-global path onto its own slot root (§6.4, §7.3 step (d)).
+--
+-- sessions carries the §12.3 tenant-guard trigger, which rejects any write
+-- made with no app.current_tenant set. A migration runs outside a tenant
+-- context and rewrites rows across every tenant, so it takes the platform
+-- cross-tenant sentinel with the explicit opt-in migration 0057 requires.
+-- Both settings are SET LOCAL, so they are confined to this migration's own
+-- transaction and no session inherits them.
+SET LOCAL lenny.allow_all_sentinel = 'true';
+SET LOCAL app.current_tenant = '__all__';
 UPDATE sessions
     SET workspace_root = '/workspace/slots/' || id::text || '/current'
     WHERE workspace_root = '/workspace/current';
+SET LOCAL app.current_tenant TO DEFAULT;
+SET LOCAL lenny.allow_all_sentinel TO DEFAULT;

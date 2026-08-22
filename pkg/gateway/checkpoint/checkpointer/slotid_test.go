@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -84,30 +83,5 @@ func TestDriveCheckpointAddressesTheStartBySession(t *testing.T) {
 				t.Errorf("CheckpointStart.session_id.value = %q, want s1", v)
 			}
 		})
-	}
-}
-
-// spec: 10.1 (the 'default' sentinel is manifest-only), 15
-// (single-session runtimes never see a slotId). Sending the raw
-// binding.SlotID on the wire must not change the manifest-side
-// substitution: a single-session binding (empty SlotID) still scopes its
-// §10.1 intent row on the SlotDefault sentinel, so the intent-row, the
-// single-flight lock, and the supersede fence keep their pod-global key
-// while the wire field stays empty.
-func TestDriveCheckpointKeepsManifestSlotDefaultForEmptyBinding(t *testing.T) {
-	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes:    10,
-		chunkLens:     []int64{10},
-		truncateAfter: -1,
-	}, 1<<30)
-	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("Checkpoint: %v", err)
-	}
-	rec, err := h.manifests.LatestFull(context.Background(), "acme", sid)
-	if err != nil {
-		t.Fatalf("LatestFull: %v", err)
-	}
-	if rec.SlotID != partialmanifeststore.SlotDefault {
-		t.Errorf("intent-row SlotID = %q, want %q for a single-session binding", rec.SlotID, partialmanifeststore.SlotDefault)
 	}
 }

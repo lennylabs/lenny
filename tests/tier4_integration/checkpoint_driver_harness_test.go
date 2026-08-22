@@ -72,8 +72,6 @@ type cpChunkedAdapter struct {
 	// recvSlotID records the session address the gateway put on the CheckpointStart
 	// frame, so a concurrent-pool test asserts each slot's stream carried
 	// its own slot identity (empty on a maxConcurrentSessions: 1 pod).
-	recvSlotID string
-
 	store *cpStore
 	mu    sync.Mutex
 }
@@ -84,23 +82,10 @@ func (a *cpChunkedAdapter) grantCount(index uint32) int {
 	return a.remintObserved[index]
 }
 
-// receivedSlotID reports the session address the gateway sent on
-// CheckpointStart, which under §5.2 also names the slot that session
-// holds on the pod.
-func (a *cpChunkedAdapter) receivedSlotID() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.recvSlotID
-}
-
 func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
-	first, err := stream.Recv()
-	if err != nil {
+	if _, err := stream.Recv(); err != nil {
 		return err
 	}
-	a.mu.Lock()
-	a.recvSlotID = first.GetStart().GetSessionId().GetValue()
-	a.mu.Unlock()
 	if err := stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
@@ -377,46 +362,46 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 	store := newCPStore()
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
-	registerCPSlot(t, store, registry, sessions, adapter, cpSession, "")
+	registerCPSlot(t, store, registry, sessions, adapter, cpSession)
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
 // cpSlotSpec names one occupied slot in a concurrent (maxConcurrentSessions
-// > 1) pool: a session bound to a shared pod under a distinct slotID,
-// served by its own chunked producer.
+// > 1) pool: a session bound to the shared pod, served by its own chunked
+// producer. A session-mode slot's identifier is its session's identifier,
+// so the session name is the whole address.
 type cpSlotSpec struct {
 	sessionID string
-	slotID    string
 	adapter   *cpChunkedAdapter
 }
 
 // newCPConcurrentHarness stands up a concurrent pool: several slot-bound
 // sessions sharing one object store and one gateway checkpointer, each
-// bound to its own adapter under a distinct slotID. It drives the
-// gateway's per-slot checkpoint path (CheckpointStart carries the raw
-// binding slotID) so a test asserts each slot is captured independently.
+// bound to its own adapter. It drives the gateway's checkpoint path, which
+// addresses each stream by its session identifier, so a test asserts each
+// session is captured independently.
 func newCPConcurrentHarness(t *testing.T, slots []cpSlotSpec) *cpDriverHarness {
 	t.Helper()
 	store := newCPStore()
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
 	for _, s := range slots {
-		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID, s.slotID)
+		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID)
 	}
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
 // registerCPSlot wires one slot-bound session: it points the adapter at
-// the shared store, dials it, registers the (session, slotID) binding, and
-// seeds the running session row.
-func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID, slotID string) {
+// the shared store, dials it, registers the session's binding on the slot
+// its own identifier names, and seeds the running session row.
+func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID string) {
 	t.Helper()
 	adapter.store = store
 	if adapter.putBytes == nil {
 		adapter.putBytes = map[int]int64{}
 	}
 	client := cpDialAdapter(t, adapter)
-	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: cpTenant, SlotID: slotID, Adapter: client})
+	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: cpTenant, SlotID: sessionID, Adapter: client})
 	if err := sessions.Create(context.Background(), sessionstore.Session{
 		ID: sessionID, TenantID: cpTenant, State: session.StateRunning, RuntimeRef: "echo",
 	}); err != nil {

@@ -195,15 +195,6 @@ func newChunkReleaseSpy() *chunkReleaseSpy {
 	return &chunkReleaseSpy{softDeleted: map[string]bool{}, rows: map[string]int64{}}
 }
 
-// seedChunk registers a chunk object and its live catalog row so the release
-// path discovers it under the checkpoint's prefix and releases its bytes.
-func (s *chunkReleaseSpy) seedChunk(u blobstore.URI, size int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.objects = append(s.objects, u)
-	s.rows[u.String()] = size
-}
-
 func (s *chunkReleaseSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,12 +261,6 @@ func (s *chunkReleaseSpy) listedCheckpoint(checkpointID string) bool {
 	return false
 }
 
-func (s *chunkReleaseSpy) freedBytes() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.freed
-}
-
 // driverHarness wires a Checkpointer with the full seam set over a
 // chunked adapter and an in-memory object store, manifest store, and
 // quota counter.
@@ -317,7 +302,7 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 }
 
 // seedRetainedTimeoutRow seeds a partial = true / manifest_reason = 'timeout'
-// row for the session's default slot, with its reservation already released on
+// row for the session, with its reservation already released on
 // its own deadline-fire arm. A deadline-fire (timeout) abort is the one arm
 // that retains its row active for the resume path, so it is the prior active
 // row a later attempt supersedes; the stream-truncation, adapter-crash,
@@ -329,7 +314,6 @@ func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID,
 		TenantID:              tenantID,
 		CheckpointID:          checkpointID,
 		SessionID:             sessionID,
-		SlotID:                partialmanifeststore.SlotDefault,
 		Partial:               true,
 		ManifestReason:        partialmanifeststore.ReasonTimeout,
 		ChunkObjectKeyPrefix:  "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
@@ -341,18 +325,17 @@ func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID,
 }
 
 // seedAbandonedIntentRow seeds a partial = true / manifest_reason =
-// 'in_progress' row for the session's default slot with its reservation still
+// 'in_progress' row for the session with its reservation still
 // outstanding. An abandoned intent row is one a prior attempt wrote at
 // intent-row INSERT and never carried to a terminal arm, so no finaliseAbort
-// arm ever counted it on the partial counter. It is active for the (session,
-// slot), so the next attempt's supersede path finds and fences it.
+// arm ever counted it on the partial counter. It is the session's active
+// row, so the next attempt's supersede path finds and fences it.
 func seedAbandonedIntentRow(t *testing.T, h *driverHarness, tenantID, sessionID, checkpointID string) {
 	t.Helper()
 	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
 		TenantID:             tenantID,
 		CheckpointID:         checkpointID,
 		SessionID:            sessionID,
-		SlotID:               partialmanifeststore.SlotDefault,
 		Partial:              true,
 		ManifestReason:       partialmanifeststore.ReasonInProgress,
 		ChunkObjectKeyPrefix: "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
@@ -782,8 +765,8 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	}
 	// spec: §10.1.7 — a zero-chunk finalisation soft-deletes the row
 	// in the same transaction, so an empty partial manifest is never left
-	// active occupying the (session, slot) slot for a later supersede or the
-	// §12.5 backstop to reclaim.
+	// active occupying the session's active-partial slot for a later
+	// supersede or the §12.5 backstop to reclaim.
 	if rec.DeletedAt.IsZero() {
 		t.Errorf("zero-chunk abort left the manifest row active, want soft-deleted at finalisation")
 	}
@@ -908,7 +891,7 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
 
-	// Inject a retained 'timeout' resume-aid row for the same (session, slot)
+	// Inject a retained 'timeout' resume-aid row for the same session
 	// whose reservation was already released on its own deadline-fire arm
 	// (ReservationReleasedAt set, reserved 30, 10 bytes confirmed). Those 10
 	// confirmed bytes are the only storage this row still accounts for, so
@@ -918,7 +901,6 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 		TenantID:               "acme",
 		CheckpointID:           "cp-timeout",
 		SessionID:              sid,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		Partial:                true,
 		ManifestReason:         partialmanifeststore.ReasonTimeout,
 		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-timeout/",
@@ -957,7 +939,7 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 // objects; the stale attempt's own intent-row Put is rejected instead.
 //
 // diagnosis: supersedePriorAttempts released the prior row's reservation and
-// swept its chunk prefix under only a slot / checkpoint-id guard, with no
+// swept its chunk prefix under only a checkpoint-id guard, with no
 // coordination_generation check, so a stale coordinator destroyed a live
 // newer writer's state before its own Put rejected the write as stale.
 // Against the pre-fix code the higher-generation row's reservation is
@@ -977,7 +959,6 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 		TenantID:               "acme",
 		CheckpointID:           "cp-higher",
 		SessionID:              sid,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: 1, // a fenced newer writer
 		ChunkObjectKeyPrefix:   higherPrefix,
 		ReservedBytes:          50,
@@ -1007,95 +988,6 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 	}
 	if m.superseded != 0 {
 		t.Errorf("supersede counter fired %d times, want 0 (the stale attempt supersedes nothing)", m.superseded)
-	}
-}
-
-// spec: §10.1.7 — supersede is scoped to (session_id, slot_id). In a
-// multi-slot session the driver releases the prior active row for the exact
-// slot it is superseding, not a session-wide winner that may belong to a
-// different slot.
-//
-// diagnosis: supersedePriorAttempts resolved the prior row via the
-// session-scoped LatestActive, which returns the highest-generation row
-// across every slot. With a higher-generation row active on another slot,
-// the release skipped on the slot guard while Put still soft-deleted this
-// slot's prior row, leaking its reservation and orphaning its chunks.
-// Against the pre-fix code the target slot's row is never released; the fix
-// releases it and sweeps its chunks.
-func TestDriverSupersedeReleasesTargetSlotPriorRow_spec_10_1(t *testing.T) {
-	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
-	}, 1<<30)
-	m := &captureDriverMetrics{}
-	h.cp.DriverMetrics = m
-
-	// The incoming attempt targets the default slot at generation 0. A prior
-	// active row sits on the default slot (the row it must supersede), and a
-	// higher-generation row sits on a different slot (the session-wide
-	// selector's winner).
-	const targetPrefix = "/acme/checkpoint/s1/cp-target/"
-	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
-		TenantID:             "acme",
-		CheckpointID:         "cp-target",
-		SessionID:            sid,
-		SlotID:               partialmanifeststore.SlotDefault,
-		ChunkObjectKeyPrefix: targetPrefix,
-		ReservedBytes:        40,
-	}); err != nil {
-		t.Fatalf("seed target-slot active row: %v", err)
-	}
-	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
-		TenantID:               "acme",
-		CheckpointID:           "cp-other",
-		SessionID:              sid,
-		SlotID:                 "slot-other",
-		CoordinationGeneration: 1, // higher generation: the session-wide selector's winner
-		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-other/",
-		ReservedBytes:          40,
-	}); err != nil {
-		t.Fatalf("seed other-slot active row: %v", err)
-	}
-	// Seed a confirmed chunk (object + live catalog row) under the target
-	// slot's prefix so the supersede release must run it through the cataloging
-	// decorator. Against a plain prefix delete the row stays live and its bytes
-	// stay charged; the fix soft-deletes the row and frees the bytes.
-	h.release.seedChunk(blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint,
-		SessionID: sid, PartID: "cp-target/chunk-00000.tar",
-	}, 40)
-
-	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("Checkpoint: %v", err)
-	}
-
-	// The target-slot prior row's reservation is released and its prefix swept.
-	target, err := h.manifests.Get(context.Background(), "acme", "cp-target")
-	if err != nil {
-		t.Fatalf("get target-slot row: %v", err)
-	}
-	if target.ReservationReleasedAt.IsZero() {
-		t.Errorf("target-slot prior row reservation not released; the supersede release missed it")
-	}
-	if !h.release.listedCheckpoint("cp-target") {
-		t.Errorf("target-slot prior row chunk prefix not swept")
-	}
-	if h.release.freedBytes() != 40 {
-		t.Errorf("target-slot chunk bytes freed = %d, want 40 (the confirmed chunk released, not orphaned)", h.release.freedBytes())
-	}
-	if m.superseded != 1 {
-		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
-	}
-	// The other slot's row is untouched: it is a different slot the incoming
-	// attempt does not supersede.
-	other, err := h.manifests.Get(context.Background(), "acme", "cp-other")
-	if err != nil {
-		t.Fatalf("get other-slot row: %v", err)
-	}
-	if !other.ReservationReleasedAt.IsZero() {
-		t.Errorf("other-slot row reservation released, want untouched (different slot)")
-	}
-	if !other.DeletedAt.IsZero() {
-		t.Errorf("other-slot row soft-deleted, want left active (different slot)")
 	}
 }
 

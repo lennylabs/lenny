@@ -44,7 +44,6 @@ func seedManifest(t *testing.T, m *partialmanifeststore.MemoryStore, tenant, ses
 		TenantID:               tenant,
 		CheckpointID:           checkpointID,
 		SessionID:              session,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: gen,
 		ChunkObjectKeyPrefix:   "/" + tenant + "/checkpoints/" + session + "/" + checkpointID + "/",
 		ChunkEncoding:          partialmanifeststore.ChunkEncodingTarGz,

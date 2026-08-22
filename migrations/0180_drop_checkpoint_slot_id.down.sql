@@ -5,9 +5,16 @@
 --
 -- spec: §4.9, §6.4, §7.3, §10.1, §12.5.
 
+-- sessions carries the §12.3 tenant-guard trigger, so the reverse rewrite
+-- takes the same platform cross-tenant sentinel and opt-in the forward
+-- migration uses. Both are SET LOCAL and end with this transaction.
+SET LOCAL lenny.allow_all_sentinel = 'true';
+SET LOCAL app.current_tenant = '__all__';
 UPDATE sessions
     SET workspace_root = '/workspace/current'
     WHERE workspace_root = '/workspace/slots/' || id::text || '/current';
+SET LOCAL app.current_tenant TO DEFAULT;
+SET LOCAL lenny.allow_all_sentinel TO DEFAULT;
 
 DROP INDEX IF EXISTS idx_checkpoint_manifest_active;
 DROP INDEX IF EXISTS partial_manifest_active_uniq;

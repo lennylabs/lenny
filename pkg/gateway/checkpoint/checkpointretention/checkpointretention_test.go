@@ -62,7 +62,7 @@ func TestRotate_RetainsLatestTwo(t *testing.T) {
 			t.Fatalf("insert %s: %v", ref, err)
 		}
 	}
-	transitioned, err := store.Rotate(ctx, "acme", "sess", "")
+	transitioned, err := store.Rotate(ctx, "acme", "sess")
 	if err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRotate_RetainsLatestTwo(t *testing.T) {
 		}
 	}
 	// Cross-check via List: the two retained rows are r4 and r3.
-	rows, err := store.List(ctx, "acme", "sess", "")
+	rows, err := store.List(ctx, "acme", "sess")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -109,11 +109,11 @@ func TestRotate_Idempotent(t *testing.T) {
 	for _, ref := range []string{"r1", "r2", "r3"} {
 		_ = store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: ref})
 	}
-	t1, err := store.Rotate(ctx, "t", "s", "")
+	t1, err := store.Rotate(ctx, "t", "s")
 	if err != nil {
 		t.Fatalf("Rotate 1: %v", err)
 	}
-	t2, err := store.Rotate(ctx, "t", "s", "")
+	t2, err := store.Rotate(ctx, "t", "s")
 	if err != nil {
 		t.Fatalf("Rotate 2: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestRotate_FewerThanCap(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
 	_ = store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: "only"})
-	transitioned, err := store.Rotate(ctx, "t", "s", "")
+	transitioned, err := store.Rotate(ctx, "t", "s")
 	if err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
@@ -149,12 +149,12 @@ func TestRotate_ScopedBySession(t *testing.T) {
 			_ = store.Insert(ctx, Record{TenantID: "t", SessionID: sess, Ref: ref})
 		}
 	}
-	if _, err := store.Rotate(ctx, "t", "sA", ""); err != nil {
+	if _, err := store.Rotate(ctx, "t", "sA"); err != nil {
 		t.Fatalf("Rotate sA: %v", err)
 	}
 	// sB must be untouched: rotating sA's catalog must not retire any
 	// of sB's checkpoints.
-	rows, _ := store.List(ctx, "t", "sB", "")
+	rows, _ := store.List(ctx, "t", "sB")
 	for _, row := range rows {
 		if !row.Retained || !row.DeletedAt.IsZero() {
 			t.Fatalf("sB row %s should not have been rotated: %+v", row.Ref, row)
@@ -171,7 +171,7 @@ func TestListSoftDeletedBefore(t *testing.T) {
 	for _, ref := range []string{"r1", "r2", "r3"} {
 		_ = store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: ref})
 	}
-	if _, err := store.Rotate(ctx, "t", "s", ""); err != nil {
+	if _, err := store.Rotate(ctx, "t", "s"); err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
 	// All rows so far are stamped around 2026-05-24. A cutoff one year
@@ -197,10 +197,10 @@ func TestHardDelete(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
 	_ = store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: "r"})
-	if err := store.HardDelete(ctx, "t", "s", "", "r"); err != nil {
+	if err := store.HardDelete(ctx, "t", "s", "r"); err != nil {
 		t.Fatalf("HardDelete: %v", err)
 	}
-	rows, _ := store.List(ctx, "t", "s", "")
+	rows, _ := store.List(ctx, "t", "s")
 	if len(rows) != 0 {
 		t.Fatalf("List after HardDelete: want 0, got %d", len(rows))
 	}
@@ -217,12 +217,12 @@ func TestDeleteByUser(t *testing.T) {
 		t.Fatalf("DeleteByUser: %v", err)
 	}
 	for _, sess := range []string{"s1", "s3"} {
-		rows, _ := store.List(ctx, "t", sess, "")
+		rows, _ := store.List(ctx, "t", sess)
 		if len(rows) != 0 {
 			t.Fatalf("session %s: want 0 rows, got %d", sess, len(rows))
 		}
 	}
-	rows, _ := store.List(ctx, "t", "s2", "")
+	rows, _ := store.List(ctx, "t", "s2")
 	if len(rows) != 1 {
 		t.Fatalf("session s2: want 1 row, got %d", len(rows))
 	}
@@ -237,11 +237,11 @@ func TestDeleteByTenant(t *testing.T) {
 	if err := store.DeleteByTenant(ctx, "t1"); err != nil {
 		t.Fatalf("DeleteByTenant: %v", err)
 	}
-	rows, _ := store.List(ctx, "t1", "s", "")
+	rows, _ := store.List(ctx, "t1", "s")
 	if len(rows) != 0 {
 		t.Fatalf("t1: want 0 rows, got %d", len(rows))
 	}
-	rows, _ = store.List(ctx, "t2", "s", "")
+	rows, _ = store.List(ctx, "t2", "s")
 	if len(rows) != 1 {
 		t.Fatalf("t2: want 1 row, got %d", len(rows))
 	}
@@ -251,48 +251,37 @@ func TestDeleteByTenant(t *testing.T) {
 	}
 }
 
-// spec: §12.5 — in concurrent-workspace mode the
-// "latest 2" cap applies independently per slot. A session with two
-// slots each carrying three checkpoints retains two per slot (four
-// total), not two for the whole session.
-func TestRotate_PerSlotIndependent(t *testing.T) {
+// spec: §12.5 — the "latest 2" cap is keyed on the session alone. Every
+// session is bound to a slot on every pod and a session-mode slot's
+// identifier is its session's identifier, so a session's checkpoints share
+// one cap however many rows it accumulated. Six rows for one session rotate
+// down to two retained rows and four transitions.
+func TestRotate_CapIsSessionKeyed(t *testing.T) {
 	store, _ := newStore()
 	ctx := context.Background()
-	for _, slot := range []string{"slot-a", "slot-b"} {
+	for _, group := range []string{"a", "b"} {
 		for _, ref := range []string{"r1", "r2", "r3"} {
-			if err := store.Insert(ctx, Record{TenantID: "t", SessionID: "s", SlotID: slot, Ref: slot + "-" + ref}); err != nil {
-				t.Fatalf("insert %s/%s: %v", slot, ref, err)
+			if err := store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: group + "-" + ref}); err != nil {
+				t.Fatalf("insert %s/%s: %v", group, ref, err)
 			}
 		}
 	}
-	// Rotating slot-a must not touch slot-b.
-	transA, err := store.Rotate(ctx, "t", "s", "slot-a")
+	trans, err := store.Rotate(ctx, "t", "s")
 	if err != nil {
-		t.Fatalf("Rotate slot-a: %v", err)
+		t.Fatalf("Rotate: %v", err)
 	}
-	if len(transA) != 1 {
-		t.Fatalf("slot-a rotate: want 1 transition, got %d", len(transA))
+	if len(trans) != 4 {
+		t.Fatalf("rotate: want 4 transitions, got %d", len(trans))
 	}
-	// slot-b is untouched: all three rows retained, none soft-deleted.
-	rowsB, _ := store.List(ctx, "t", "s", "slot-b")
-	if len(rowsB) != 3 {
-		t.Fatalf("slot-b: want 3 rows, got %d", len(rowsB))
-	}
-	for _, row := range rowsB {
-		if !row.Retained || !row.DeletedAt.IsZero() {
-			t.Fatalf("slot-b row %s rotated unexpectedly: %+v", row.Ref, row)
-		}
-	}
-	// slot-a now has two retained rows.
-	rowsA, _ := store.List(ctx, "t", "s", "slot-a")
-	retainedA := 0
-	for _, row := range rowsA {
+	rows, _ := store.List(ctx, "t", "s")
+	retained := 0
+	for _, row := range rows {
 		if row.Retained {
-			retainedA++
+			retained++
 		}
 	}
-	if retainedA != RetainedCount {
-		t.Fatalf("slot-a retained: got %d want %d", retainedA, RetainedCount)
+	if retained != RetainedCount {
+		t.Fatalf("retained: got %d want %d", retained, RetainedCount)
 	}
 }
 
@@ -303,7 +292,7 @@ func TestRotate_StampsDeletedAt(t *testing.T) {
 	for _, ref := range []string{"r1", "r2", "r3"} {
 		_ = store.Insert(ctx, Record{TenantID: "t", SessionID: "s", Ref: ref})
 	}
-	transitioned, err := store.Rotate(ctx, "t", "s", "")
+	transitioned, err := store.Rotate(ctx, "t", "s")
 	if err != nil {
 		t.Fatalf("Rotate: %v", err)
 	}
@@ -330,7 +319,7 @@ func TestInsert_StampsSchemaVersion_spec_15_5_item7(t *testing.T) {
 	if err := store.Insert(ctx, Record{TenantID: "acme", SessionID: "s", Ref: "b", SchemaVersion: 3}); err != nil {
 		t.Fatalf("Insert explicit: %v", err)
 	}
-	rows, err := store.List(ctx, "acme", "s", "")
+	rows, err := store.List(ctx, "acme", "s")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}

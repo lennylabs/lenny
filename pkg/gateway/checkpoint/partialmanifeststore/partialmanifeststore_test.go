@@ -49,9 +49,6 @@ func TestPutAndGet(t *testing.T) {
 	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
 		t.Errorf("ChunkEncoding = %q, want tar.gz", got.ChunkEncoding)
 	}
-	if got.SlotID != partialmanifeststore.SlotDefault {
-		t.Errorf("SlotID = %q, want %q", got.SlotID, partialmanifeststore.SlotDefault)
-	}
 	if got.ManifestReason != partialmanifeststore.ReasonInProgress {
 		t.Errorf("ManifestReason = %q, want in_progress", got.ManifestReason)
 	}
@@ -216,9 +213,9 @@ func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
 }
 
 // spec: §10.1.7 — supersede-on-write collapses the active partial
-// set to the highest-generation row for the (session, slot). A same-slot
-// write at or above the incoming generation soft-deletes the prior
-// active partial row, even at the same coordination_generation (two
+// set to the highest-generation row for the session. A write at or above the
+// incoming generation soft-deletes the prior active partial row, even at the
+// same coordination_generation (two
 // attempts on one coordinator share a generation).
 func TestPutSupersedesAtOrBelowGeneration(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -271,70 +268,6 @@ func TestPutRejectsStaleLowerGeneration(t *testing.T) {
 	got, _ := store.LatestActive(context.Background(), "acme", "s1")
 	if got.CheckpointID != "cp-5" {
 		t.Errorf("LatestActive.CheckpointID = %q, want cp-5 (active manifest unchanged)", got.CheckpointID)
-	}
-}
-
-// spec: §10.1.7 — the supersede predicate is scoped to
-// (session_id, slot_id); a write in a different slot does not supersede
-// another slot's active partial row.
-func TestPutSupersedeScopedToSlot(t *testing.T) {
-	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
-	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
-
-	a := intentRow(clock, "acme", "cp-a", "s1", 5)
-	a.SlotID = "slot-0"
-	b := intentRow(clock, "acme", "cp-b", "s1", 5)
-	b.SlotID = "slot-1"
-	if err := store.Put(context.Background(), a); err != nil {
-		t.Fatalf("Put slot-0: %v", err)
-	}
-	if err := store.Put(context.Background(), b); err != nil {
-		t.Fatalf("Put slot-1: %v", err)
-	}
-	// Both survive: distinct slots hold independent active partials.
-	got, _ := store.Get(context.Background(), "acme", "cp-a")
-	if !got.DeletedAt.IsZero() {
-		t.Error("slot-0 row should not be superseded by a slot-1 write")
-	}
-}
-
-// spec: §10.1.7 — LatestActiveForSlot returns the active partial row
-// for the exact (session, slot) the supersede path scopes on, even when
-// another slot in the same session holds a higher-generation active row that
-// the session-wide LatestActive would return first.
-func TestLatestActiveForSlotIsSlotScoped(t *testing.T) {
-	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
-	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
-
-	target := intentRow(clock, "acme", "cp-target", "s1", 0)
-	target.SlotID = "slot-0"
-	other := intentRow(clock, "acme", "cp-other", "s1", 9) // higher generation, different slot
-	other.SlotID = "slot-1"
-	if err := store.Put(context.Background(), target); err != nil {
-		t.Fatalf("Put slot-0: %v", err)
-	}
-	if err := store.Put(context.Background(), other); err != nil {
-		t.Fatalf("Put slot-1: %v", err)
-	}
-
-	// The session-wide selector returns the higher-generation slot-1 row.
-	if latest, err := store.LatestActive(context.Background(), "acme", "s1"); err != nil {
-		t.Fatalf("LatestActive: %v", err)
-	} else if latest.CheckpointID != "cp-other" {
-		t.Fatalf("LatestActive = %q, want cp-other (the higher-generation row)", latest.CheckpointID)
-	}
-	// The slot-scoped selector returns slot-0's own row, not the winner.
-	got, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-0")
-	if err != nil {
-		t.Fatalf("LatestActiveForSlot slot-0: %v", err)
-	}
-	if got.CheckpointID != "cp-target" {
-		t.Errorf("LatestActiveForSlot(slot-0) = %q, want cp-target", got.CheckpointID)
-	}
-
-	// A slot with no active partial row returns ErrNotFound.
-	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActiveForSlot(empty slot) = %v, want ErrNotFound", err)
 	}
 }
 
@@ -415,8 +348,8 @@ func TestFinaliseSoftDeletesZeroChunkRow(t *testing.T) {
 	}
 	// The soft-deleted empty row is invisible to the resume-time cleanup
 	// selector, so no reclaimer ever picks it up.
-	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", partialmanifeststore.SlotDefault); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActiveForSlot after zero-chunk finalise = %v, want ErrNotFound", err)
+	if _, err := store.LatestActiveForSession(context.Background(), "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActiveForSession after zero-chunk finalise = %v, want ErrNotFound", err)
 	}
 
 	// A row that confirmed a chunk finalises partial without soft-deleting:

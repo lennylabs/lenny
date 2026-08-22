@@ -90,9 +90,6 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
 			t.Errorf("chunk_encoding = %q, want tar.gz", got.ChunkEncoding)
 		}
-		if got.SlotID != partialmanifeststore.SlotDefault {
-			t.Errorf("slot_id = %q, want default", got.SlotID)
-		}
 		if !got.Partial || got.ManifestReason != partialmanifeststore.ReasonInProgress {
 			t.Errorf("intent row = partial %v reason %q, want true/in_progress", got.Partial, got.ManifestReason)
 		}
@@ -151,40 +148,39 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1.7 — LatestActiveForSlot returns the active partial
-	// row for the exact (session, slot) the supersede path scopes on, not the
-	// session-wide highest-generation winner LatestActive returns.
-	t.Run("latest active is scoped to the slot", func(t *testing.T) {
+	// spec: §10.1.7, §12.5 — the active-partial invariant and its selector
+	// are keyed on the session alone. partial_manifest_active_uniq is a
+	// unique index on session_id where partial and not deleted, so a second
+	// active partial row for one session supersedes the first, and
+	// LatestActiveForSession resolves the survivor.
+	t.Run("the session-keyed selector resolves the surviving active partial row", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		session := newUUID(t)
-		target := newUUID(t)
-		other := newUUID(t)
-		targetRow := manifestRow(time.Now().UTC(), tenant, target, session, 0)
-		targetRow.SlotID = "slot-0"
-		if err := store.Put(ctx, targetRow); err != nil {
-			t.Fatalf("Put slot-0: %v", err)
+		first := newUUID(t)
+		second := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, first, session, 0)); err != nil {
+			t.Fatalf("Put first: %v", err)
 		}
-		otherRow := manifestRow(time.Now().UTC(), tenant, other, session, 9)
-		otherRow.SlotID = "slot-1"
-		if err := store.Put(ctx, otherRow); err != nil {
-			t.Fatalf("Put slot-1: %v", err)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, second, session, 1)); err != nil {
+			t.Fatalf("Put second: %v", err)
 		}
-		// The session-wide selector returns the higher-generation slot-1 row.
-		if latest, err := store.LatestActive(ctx, tenant, session); err != nil {
-			t.Fatalf("LatestActive: %v", err)
-		} else if latest.CheckpointID != other {
-			t.Fatalf("LatestActive = %q, want the higher-generation slot-1 row", latest.CheckpointID)
+		// The re-keyed unique index admits one active partial row per
+		// session, so the first is superseded rather than left beside it.
+		if f, err := store.Get(ctx, tenant, first); err != nil {
+			t.Fatalf("Get first: %v", err)
+		} else if f.DeletedAt.IsZero() {
+			t.Error("first row still active; the session-keyed supersede did not fire")
 		}
-		// The slot-scoped selector returns slot-0's own row.
-		got, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-0")
+		got, err := store.LatestActiveForSession(ctx, tenant, session)
 		if err != nil {
-			t.Fatalf("LatestActiveForSlot slot-0: %v", err)
+			t.Fatalf("LatestActiveForSession: %v", err)
 		}
-		if got.CheckpointID != target {
-			t.Errorf("LatestActiveForSlot(slot-0) = %q, want the slot-0 row", got.CheckpointID)
+		if got.CheckpointID != second {
+			t.Errorf("LatestActiveForSession = %q, want the surviving row %q", got.CheckpointID, second)
 		}
-		if _, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-			t.Errorf("LatestActiveForSlot(empty slot): got %v, want ErrNotFound", err)
+		// A session holding no active partial row returns ErrNotFound.
+		if _, err := store.LatestActiveForSession(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActiveForSession(unknown session): got %v, want ErrNotFound", err)
 		}
 	})
 

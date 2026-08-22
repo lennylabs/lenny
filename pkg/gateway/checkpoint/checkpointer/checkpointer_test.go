@@ -609,23 +609,21 @@ type fakeRetention struct {
 type retInsert struct {
 	tenantID  string
 	sessionID string
-	slotID    string
 	ref       string
 }
 
 type retRotate struct {
 	tenantID  string
 	sessionID string
-	slotID    string
 }
 
 func (f *fakeRetention) Insert(_ context.Context, r checkpointretention.Record) error {
-	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.SlotID, r.Ref})
+	f.inserts = append(f.inserts, retInsert{r.TenantID, r.SessionID, r.Ref})
 	return f.insertErr
 }
 
-func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID, slotID string) ([]checkpointretention.Record, error) {
-	f.rotates = append(f.rotates, retRotate{tenantID, sessionID, slotID})
+func (f *fakeRetention) Rotate(_ context.Context, tenantID, sessionID string) ([]checkpointretention.Record, error) {
+	f.rotates = append(f.rotates, retRotate{tenantID, sessionID})
 	if f.rotateErr != nil {
 		return nil, f.rotateErr
 	}
@@ -717,14 +715,15 @@ func TestLegalHoldSessionSkipsRotation(t *testing.T) {
 	}
 }
 
-// spec: §12.5 — in concurrent-workspace mode the
-// rotation operates on (session_id, slot_id) pairs. The bound slot id
-// flows into both the catalog Insert and the Rotate call.
-func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
+// spec: §12.5 — the retention catalog and its rotation are keyed on the
+// session alone. A session-mode slot's identifier is its session's
+// identifier, so the catalog write and the Rotate call that follows it both
+// name the session being checkpointed and carry no second dimension.
+func TestCheckpointKeysRetentionOnSession(t *testing.T) {
 	registry := podsession.NewRegistry()
 	store := memstore.New()
 	client := dialAdapter(t, fakeCheckpointAdapter{})
-	registry.Put(&podsession.BindResult{SessionID: "cw", TenantID: "acme", SlotID: "slot-3", Adapter: client})
+	registry.Put(&podsession.BindResult{SessionID: "cw", TenantID: "acme", SlotID: "cw", Adapter: client})
 	runningSession(t, store, "acme", "cw")
 
 	ret := &fakeRetention{}
@@ -732,11 +731,11 @@ func TestCheckpointPropagatesSlotToRetention(t *testing.T) {
 	if err := cp.Checkpoint(context.Background(), "acme", "cw"); err != nil {
 		t.Fatalf("Checkpoint: %v", err)
 	}
-	if len(ret.inserts) != 1 || ret.inserts[0].slotID != "slot-3" {
-		t.Fatalf("Insert slot: got %+v, want slotID slot-3", ret.inserts)
+	if len(ret.inserts) != 1 || ret.inserts[0].sessionID != "cw" || ret.inserts[0].tenantID != "acme" {
+		t.Fatalf("Insert: got %+v, want one row for acme/cw", ret.inserts)
 	}
-	if len(ret.rotates) != 1 || ret.rotates[0].slotID != "slot-3" {
-		t.Fatalf("Rotate slot: got %+v, want slotID slot-3", ret.rotates)
+	if len(ret.rotates) != 1 || ret.rotates[0].sessionID != "cw" || ret.rotates[0].tenantID != "acme" {
+		t.Fatalf("Rotate: got %+v, want one call for acme/cw", ret.rotates)
 	}
 }
 
