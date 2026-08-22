@@ -726,7 +726,7 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_credential_rotation_inflight_ceiling_hit_total > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Credential rotation hit the in-flight ceiling",
-			Description: "The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. Indicates a compromised or buggy runtime.",
+			Description: "The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. The gate polls the pod-wide per-provider in-flight counter, so on a pod holding more than one bound session a co-tenant's outstanding request for the same provider can drive the ceiling on its own. It indicates a compromised or buggy runtime that failed to emit llm_request_completed only once that cause is excluded.",
 			SpecRef:     "§16.5",
 		},
 		{

@@ -79,8 +79,9 @@ export interface ResponseError {
   message?: string;
 }
 
-// CredentialBundle is the parsed §4.7 runtime credential file written
-// to /run/lenny/credentials.json. The SDK refreshes it in place on a
+// CredentialBundle is the parsed §4.7 runtime credential file the
+// manifest's credentialsPath names, this session's own
+// /run/lenny/slots/{sessionId}/credentials.json. The SDK refreshes it on a
 // credentials_rotated lifecycle message. Fields are the union of proxy
 // and direct delivery modes; an absent field is missing in the file.
 export interface CredentialBundle {
@@ -143,6 +144,11 @@ export interface AdapterManifest {
   // mcpNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
   // SDK injects it as params._lennyNonce on every MCP initialize.
   mcpNonce?: string;
+  // credentialsPath is the §4.7 absolute path of this session's own
+  // credential file. The SDK reads credential material from it and
+  // falls back to the credentialsPath option when the manifest omits
+  // it. spec: §4.7; §6.1.
+  credentialsPath?: string;
   // platformMcpServer names the platform MCP server socket.
   platformMcpServer?: MCPServerRef;
   // connectorServers names the per-connector MCP server sockets.

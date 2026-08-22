@@ -44,9 +44,6 @@ const MANIFEST_ENV_VAR = "LENNY_ADAPTER_MANIFEST";
 // DEFAULT_MANIFEST_PATH is the §4.7 adapter manifest path.
 const DEFAULT_MANIFEST_PATH = "/run/lenny/adapter-manifest.json";
 
-// DEFAULT_CREDENTIALS_PATH is the §4.7 runtime credential file path.
-const DEFAULT_CREDENTIALS_PATH = "/run/lenny/credentials.json";
-
 // RunOptions configures run. Every field is optional; the zero-value
 // configuration covers the Basic level.
 export interface RunOptions {
@@ -61,8 +58,11 @@ export interface RunOptions {
   // the LENNY_ADAPTER_MANIFEST environment variable when set, otherwise
   // /run/lenny/adapter-manifest.json.
   manifestPath?: string;
-  // credentialsPath overrides the §4.7 runtime credential file path.
-  // Defaults to /run/lenny/credentials.json.
+  // credentialsPath is the §4.7 runtime credential file path used when
+  // the adapter manifest carries no credentialsPath. The manifest's
+  // value wins, because the adapter writes one file per session at
+  // /run/lenny/slots/{sessionId}/credentials.json and no fixed location
+  // names it. spec: §4.7; §6.1.
   credentialsPath?: string;
   // socketTransport enables the §4.7 abstract-Unix-socket transport
   // fallback. When true (the default) and LENNY_ADAPTER_SOCKET is set,
@@ -106,7 +106,7 @@ function resolveConfig(opts: RunOptions): ResolvedConfig {
       opts.manifestPath ??
       process.env[MANIFEST_ENV_VAR] ??
       DEFAULT_MANIFEST_PATH,
-    credentialsPath: opts.credentialsPath ?? DEFAULT_CREDENTIALS_PATH,
+    credentialsPath: opts.credentialsPath ?? "",
     socketTransport: opts.socketTransport ?? true,
     dialTimeoutMs: opts.dialTimeoutMs ?? 5000,
     input: opts.input,
@@ -150,6 +150,10 @@ export async function run(handler: Handler, opts: RunOptions = {}): Promise<void
 class Session {
   private writer!: FrameWriter;
   private manifest?: AdapterManifest;
+  // credPath is the §4.7 credential file this runtime reads, resolved
+  // from the manifest at startup with the credentialsPath option as the
+  // fallback. spec: §4.7; §6.1.
+  private credPath = "";
   private credentials?: CredentialBundle;
   private tools?: Tools;
   private lifecycle?: Lifecycle;
@@ -180,6 +184,7 @@ class Session {
     // Basic-level runtime is exercised without a manifest, and a
     // runtime whose pool has no active lease has no credential file.
     await this.loadManifest();
+    this.credPath = this.resolveCredentialsPath();
     await this.loadCredentials();
 
     await this.startChannels();
@@ -505,12 +510,31 @@ class Session {
     this.manifest = m;
   }
 
+  // resolveCredentialsPath is the §4.7 credential file this runtime
+  // reads: the manifest's credentialsPath, which names this session's
+  // own /run/lenny/slots/{sessionId}/credentials.json, falling back to
+  // the credentialsPath option when the manifest carries none. There is
+  // no fixed default, because the file's location depends on the
+  // session identifier.
+  //
+  // spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential
+  // file).
+  private resolveCredentialsPath(): string {
+    return this.manifest?.credentialsPath || this.cfg.credentialsPath;
+  }
+
   // loadCredentials parses the §4.7 runtime credential file. A missing
-  // file is normal when the runtime's pool has no active lease.
+  // file is normal when the runtime's pool has no active lease, and an
+  // unresolved path is normal when neither the manifest nor the caller
+  // named one.
   private async loadCredentials(): Promise<void> {
+    const path = this.credPath;
+    if (path === "") {
+      return;
+    }
     let data: string;
     try {
-      data = await readFile(this.cfg.credentialsPath, "utf8");
+      data = await readFile(path, "utf8");
     } catch {
       return;
     }
@@ -518,7 +542,7 @@ class Session {
       this.credentials = JSON.parse(data) as CredentialBundle;
     } catch (err) {
       this.cfg.logger(
-        `runtime: malformed credential file ${this.cfg.credentialsPath}: ${(err as Error).message}`,
+        `runtime: malformed credential file ${path}: ${(err as Error).message}`,
       );
     }
   }

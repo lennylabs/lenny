@@ -213,14 +213,14 @@ func TestRuntimeOpsCredentialRotation(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- lc.RotateCredentials(context.Background(), "anthropic", "/run/lenny/credentials.json", "lease-9")
+		errc <- lc.RotateCredentials(context.Background(), "anthropic", "/run/lenny/slots/sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0/credentials.json", "lease-9")
 	}()
 
 	req := fr.read()
 	if req.Type != "credentials_rotated" || req.LeaseID != "lease-9" {
 		t.Fatalf("request = %+v, want credentials_rotated lease-9", req)
 	}
-	if req.Provider != "anthropic" || req.CredentialsPath != "/run/lenny/credentials.json" {
+	if req.Provider != "anthropic" || req.CredentialsPath != "/run/lenny/slots/sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0/credentials.json" {
 		t.Errorf("credentials_rotated provider=%q credentialsPath=%q", req.Provider, req.CredentialsPath)
 	}
 	fr.write(lifecycleFrame{Type: "credentials_acknowledged", LeaseID: "lease-9", Provider: "anthropic"})

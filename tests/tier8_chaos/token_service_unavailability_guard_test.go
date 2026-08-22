@@ -39,7 +39,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
@@ -270,11 +270,18 @@ func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 	return cl, credsDir
 }
 
-// credentialFileHasProvider reports whether the adapter credential file under
-// dir still carries an entry for provider.
-func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
+// credentialFileHasProvider reports whether the named session's own §6.1
+// credential file under root still carries an entry for provider. Every
+// session is bound to a slot on every pod, so the file sits at
+// root/slots/{sessionId}/credentials.json rather than at a pod-global
+// path. spec: §6.1.
+func credentialFileHasProvider(t *testing.T, root, sessionID, provider string) bool {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, credfile.FileName))
+	paths, err := slotlayout.Resolve(slotlayout.Roots{Credentials: root}, sessionID)
+	if err != nil {
+		t.Fatalf("resolve session %s credential path: %v", sessionID, err)
+	}
+	data, err := os.ReadFile(paths.CredentialsFile)
 	if os.IsNotExist(err) {
 		return false
 	}
@@ -424,18 +431,18 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 	// The credential file survived past the original expiry (the extension
 	// moved the enforced deadline), then the adapter timer armed at the capped
 	// deadline (origExpiry + 2*buffer) deletes the entry when it fires.
-	if !credentialFileHasProvider(t, credsDir, guardProvider) {
+	if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 		t.Fatal("credential file lost the provider entry before the capped deadline: the extension did not move the enforced deadline")
 	}
 	cappedDeadline := origExpiry.Add(2 * buffer)
 	waitDeadline := cappedDeadline.Add(2 * time.Second)
 	for time.Now().Before(waitDeadline) {
-		if !credentialFileHasProvider(t, credsDir, guardProvider) {
+		if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if credentialFileHasProvider(t, credsDir, guardProvider) {
+	if credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 		t.Fatal("credential file still carries the provider entry past the capped deadline: the key outlived the capped lease")
 	}
 }

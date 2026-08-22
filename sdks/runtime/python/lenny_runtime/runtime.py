@@ -54,9 +54,6 @@ MANIFEST_ENV_VAR = "LENNY_ADAPTER_MANIFEST"
 # DEFAULT_MANIFEST_PATH is the §4.7 adapter manifest path.
 DEFAULT_MANIFEST_PATH = "/run/lenny/adapter-manifest.json"
 
-# DEFAULT_CREDENTIALS_PATH is the §4.7 runtime credential file path.
-DEFAULT_CREDENTIALS_PATH = "/run/lenny/credentials.json"
-
 # _LEVEL_RANK orders the §15.4.3 integration levels for comparison.
 _LEVEL_RANK = {"basic": 0, "standard": 1, "full": 2}
 
@@ -131,8 +128,11 @@ class RunOptions:
     # the LENNY_ADAPTER_MANIFEST environment variable when set,
     # otherwise /run/lenny/adapter-manifest.json.
     manifest_path: str | None = None
-    # credentials_path overrides the §4.7 runtime credential file path.
-    # None means /run/lenny/credentials.json.
+    # credentials_path is the §4.7 runtime credential file path used
+    # when the adapter manifest carries no credentialsPath. The
+    # manifest's value wins, because the adapter writes one file per
+    # session at /run/lenny/slots/{sessionId}/credentials.json and no
+    # fixed location names it. spec: §4.7; §6.1.
     credentials_path: str | None = None
     # socket_transport enables the §4.7 abstract-Unix-socket transport
     # fallback. When True (the default) and LENNY_ADAPTER_SOCKET is set,
@@ -188,6 +188,10 @@ class _Session:
         if opts.lifecycle is not None and self._level != "full":
             self._level = "full"
         self._manifest: AdapterManifest | None = None
+        # _credentials_path is the §4.7 credential file this runtime
+        # reads, resolved from the manifest at startup with
+        # opts.credentials_path as the fallback. spec: §4.7; §6.1.
+        self._credentials_path: str = ""
         self._credentials: CredentialBundle | None = None
         self._tools: PlatformTools | None = None
         self._lifecycle: Lifecycle | None = None
@@ -211,6 +215,7 @@ class _Session:
         # Basic-level runtime is exercised without a manifest, and a
         # runtime whose pool has no active lease has no credential file.
         self._load_manifest()
+        self._credentials_path = self._resolve_credentials_path()
         self._load_credentials()
 
         self._start_channels()
@@ -538,13 +543,32 @@ class _Session:
             return
         self._manifest = manifest
 
+    def _resolve_credentials_path(self) -> str:
+        """Resolve the §4.7 credential file this runtime reads.
+
+        The manifest's ``credentialsPath`` names this session's own
+        ``/run/lenny/slots/{sessionId}/credentials.json``. The
+        construction-time ``credentials_path`` option is the fallback
+        when the manifest carries none. There is no fixed default,
+        because the file's location depends on the session identifier.
+
+        spec: §4.7 (manifest credentialsPath); §6.1 (per-session
+        credential file).
+        """
+        if self._manifest is not None and self._manifest.credentials_path:
+            return self._manifest.credentials_path
+        return self._opts.credentials_path or ""
+
     def _load_credentials(self) -> None:
         """Parse the §4.7 runtime credential file.
 
         A missing file is normal when the runtime's pool has no active
-        lease.
+        lease, and an unresolved path is normal when neither the
+        manifest nor the caller named one.
         """
-        path = self._opts.credentials_path or DEFAULT_CREDENTIALS_PATH
+        path = self._credentials_path
+        if not path:
+            return
         try:
             with open(path, encoding="utf-8") as fh:
                 raw = json.load(fh)

@@ -48,7 +48,7 @@ func runtimeOpsFrames() map[string]map[string]any {
 		"credentials_rotated": {
 			"type":            "credentials_rotated",
 			"provider":        "anthropic",
-			"credentialsPath": "/run/lenny/credentials.json",
+			"credentialsPath": "/run/lenny/slots/sess_01HX9F0YWXKK0V7QZ7G6P3R5JN/credentials.json",
 			"leaseId":         "lease_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		},
 		"deadline_approaching": {

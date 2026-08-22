@@ -48,7 +48,6 @@ func defaultConfig() config {
 		socketTransport: true,
 		dialTimeout:     5 * time.Second,
 		manifestPath:    envOr(manifestEnvVar, defaultManifestPath),
-		credentialsPath: defaultCredentialsPath,
 		logger:          func(f string, a ...any) { log.Printf(f, a...) },
 	}
 }
@@ -100,8 +99,11 @@ func WithManifestPath(path string) Option {
 	return func(c *config) { c.manifestPath = path }
 }
 
-// WithCredentialsPath overrides the §4.7 runtime credential file path.
-// The default is /run/lenny/credentials.json.
+// WithCredentialsPath sets the §4.7 runtime credential file path used
+// when the adapter manifest carries no credentialsPath. The manifest's
+// value wins, because the adapter writes one file per session at
+// /run/lenny/slots/{sessionId}/credentials.json and no fixed location
+// names it. spec: §4.7; §6.1.
 func WithCredentialsPath(path string) Option {
 	return func(c *config) { c.credentialsPath = path }
 }

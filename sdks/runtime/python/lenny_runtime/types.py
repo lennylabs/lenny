@@ -183,7 +183,9 @@ class ResponseError:
 
 @dataclass
 class CredentialBundle:
-    """Parsed §4.7 runtime credential file at /run/lenny/credentials.json.
+    """Parsed §4.7 runtime credential file the manifest's
+    ``credentialsPath`` names, this session's own
+    ``/run/lenny/slots/{sessionId}/credentials.json``.
 
     The SDK refreshes it in place on a ``credentials_rotated`` lifecycle
     message. Fields are the union of proxy and direct delivery modes; an
@@ -273,6 +275,11 @@ class AdapterManifest:
     # mcp_nonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
     # SDK injects it as params._lennyNonce on every MCP initialize.
     mcp_nonce: str = ""
+    # credentials_path is the §4.7 absolute path of this session's own
+    # credential file. The SDK reads credential material from it and
+    # falls back to the credentials_path option when the manifest omits
+    # it. spec: §4.7; §6.1.
+    credentials_path: str = ""
     # platform_mcp_server names the platform MCP server socket.
     platform_mcp_server: MCPServerRef | None = None
     # connector_servers names the per-connector MCP server sockets.
@@ -297,6 +304,7 @@ class AdapterManifest:
             session_id=str(raw.get("sessionId", "")),
             task_id=str(raw.get("taskId", "")),
             mcp_nonce=str(raw.get("mcpNonce", "")),
+            credentials_path=str(raw.get("credentialsPath", "")),
             platform_mcp_server=MCPServerRef(socket=str(platform["socket"]))
             if isinstance(platform, dict) and platform.get("socket")
             else None,

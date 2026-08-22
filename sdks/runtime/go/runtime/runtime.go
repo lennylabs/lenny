@@ -125,9 +125,6 @@ const manifestEnvVar = "LENNY_ADAPTER_MANIFEST"
 // defaultManifestPath is the §4.7 adapter manifest path.
 const defaultManifestPath = "/run/lenny/adapter-manifest.json"
 
-// defaultCredentialsPath is the §4.7 runtime credential file path.
-const defaultCredentialsPath = "/run/lenny/credentials.json"
-
 // Run wires up the §28.5.3 stdin/stdout framing, optionally dials the
 // manifest-advertised abstract Unix sockets (platform MCP server,
 // connector MCP servers, CH-RUNTIMEOPS) with the §15.4.3
@@ -157,7 +154,16 @@ type session struct {
 
 	manifest    *AdapterManifest
 	credentials *CredentialBundle
-	credMu      sync.RWMutex
+	// credPath is the §4.7 credential file this runtime reads. The
+	// adapter writes one file per session at
+	// /run/lenny/slots/{sessionId}/credentials.json and names it on the
+	// manifest, so the path is resolved at startup rather than fixed at
+	// construction, and a credentials_rotated frame that names a path
+	// re-points it. credMu guards it along with the parsed bundle,
+	// because the CH-RUNTIMEOPS reader writes both.
+	// spec: §4.7; §6.1.
+	credPath string
+	credMu   sync.RWMutex
 
 	tools     *Tools
 	lifecycle *Lifecycle
@@ -227,6 +233,7 @@ func (s *session) run(ctx context.Context) error {
 	// has no active lease has no credential file. A malformed manifest is
 	// a hard error only when a higher integration level needs it.
 	s.loadManifest()
+	s.setCredentialsPath(s.resolvedCredentialsPath())
 	s.loadCredentials()
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -571,16 +578,51 @@ func (s *session) loadManifest() {
 	s.manifest = &m
 }
 
+// resolvedCredentialsPath is the §4.7 credential file this runtime
+// reads: the manifest's credentialsPath, which names this session's own
+// /run/lenny/slots/{sessionId}/credentials.json, falling back to the
+// construction-time WithCredentialsPath option when the manifest carries
+// none. There is no fixed default, because the file's location depends
+// on the session identifier.
+//
+// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
+func (s *session) resolvedCredentialsPath() string {
+	if s.manifest != nil && s.manifest.CredentialsPath != "" {
+		return s.manifest.CredentialsPath
+	}
+	return s.cfg.credentialsPath
+}
+
+// setCredentialsPath points subsequent credential reads at path.
+func (s *session) setCredentialsPath(path string) {
+	s.credMu.Lock()
+	s.credPath = path
+	s.credMu.Unlock()
+}
+
+// credentialsPath returns the credential file reads resolve against.
+func (s *session) credentialsPath() string {
+	s.credMu.RLock()
+	defer s.credMu.RUnlock()
+	return s.credPath
+}
+
 // loadCredentials parses the §4.7 runtime credential file. A missing
-// file is normal when the runtime's pool has no active lease.
+// file is normal when the runtime's pool has no active lease, and an
+// unresolved path is normal when neither the manifest nor the caller
+// named one.
 func (s *session) loadCredentials() {
-	data, err := os.ReadFile(s.cfg.credentialsPath)
+	path := s.credentialsPath()
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
 	var c CredentialBundle
 	if err := json.Unmarshal(data, &c); err != nil {
-		s.cfg.logf("runtime: malformed credential file %s: %v", s.cfg.credentialsPath, err)
+		s.cfg.logf("runtime: malformed credential file %s: %v", path, err)
 		return
 	}
 	s.credMu.Lock()
@@ -590,8 +632,13 @@ func (s *session) loadCredentials() {
 
 // reloadCredentials re-reads the §4.7 credential file in place. The
 // CH-RUNTIMEOPS calls it on a credentials_rotated event so a
-// Full-level runtime continues without restart.
-func (s *session) reloadCredentials() *CredentialBundle {
+// Full-level runtime continues without restart. A non-empty path
+// re-points the runtime at the file the adapter names on that event,
+// which is the rotating session's own credential file.
+func (s *session) reloadCredentials(path string) *CredentialBundle {
+	if path != "" {
+		s.setCredentialsPath(path)
+	}
 	s.loadCredentials()
 	s.credMu.RLock()
 	defer s.credMu.RUnlock()

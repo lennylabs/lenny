@@ -241,19 +241,24 @@ func (lc *Lifecycle) handleInterrupt(line []byte, s *session) {
 }
 
 // handleCredentialsRotated answers a §15.4.3 credentials_rotated event:
-// it re-reads the §4.7 credential file in place, runs the runtime
+// it re-reads the §4.7 credential file the event names, runs the runtime
 // rotation callback, and replies with credentials_acknowledged.
 func (lc *Lifecycle) handleCredentialsRotated(line []byte, s *session) {
 	var req struct {
 		Type     string `json:"type"`
 		Provider string `json:"provider"`
 		LeaseID  string `json:"leaseId"`
+		// CredentialsPath names the file the adapter rewrote, this
+		// session's own /run/lenny/slots/{sessionId}/credentials.json.
+		// The runtime re-reads that path rather than the one it started
+		// with. spec: §4.7; §6.1.
+		CredentialsPath string `json:"credentialsPath"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {
 		s.cfg.logf("runtime: credentials_rotated decode: %v", err)
 		return
 	}
-	creds := s.reloadCredentials()
+	creds := s.reloadCredentials(req.CredentialsPath)
 	if lc.hooks.onRotate != nil {
 		lc.hooks.onRotate(creds)
 	}

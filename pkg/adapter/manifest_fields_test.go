@@ -224,3 +224,70 @@ func setSessionLeasesForTest(t *testing.T, srv *Server, sessionID string, leases
 	st.sessionID = sessionID
 	st.creds = leases
 }
+
+// spec: §4.7 — the manifest names this session's own credential file,
+// and §6.1 puts that file at /run/lenny/slots/{sessionId}/credentials.json.
+// The path is not a fixed location: two sessions on one pod resolve to
+// two files, which is what a runtime cannot derive without the manifest.
+func TestWriteSessionManifestCredentialsPath_spec_4_7(t *testing.T) {
+	dir := t.TempDir()
+	credRoot := t.TempDir()
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir, CredentialsDir: credRoot}
+
+	read := func(sessionID string) string {
+		t.Helper()
+		if _, err := srv.writeSessionManifest(manifestInputs{sessionID: sessionID}); err != nil {
+			t.Fatalf("writeSessionManifest(%s): %v", sessionID, err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		var m Manifest
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("decode manifest: %v", err)
+		}
+		if !fieldPresent(t, raw, "credentialsPath") {
+			t.Error("manifest carries no credentialsPath member; a runtime cannot locate its credential file")
+		}
+		return m.CredentialsPath
+	}
+
+	alice := read("sess-alice")
+	want := filepath.Join(credRoot, "slots", "sess-alice", "credentials.json")
+	if alice != want {
+		t.Errorf("manifest credentialsPath = %q, want %q", alice, want)
+	}
+	bob := read("sess-bob")
+	if bob == alice {
+		t.Errorf("both sessions' manifests name %q; the path must be per session", bob)
+	}
+
+	// The path the manifest names is the path the credential handlers
+	// write, so a runtime that reads the member finds the file its own
+	// session's leases were materialized into.
+	setSessionLeasesForTest(t, srv, "sess-alice", map[string]*adapterv1.CredentialLease{
+		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
+	})
+	handlerPath, err := srv.sessionCredentialFile("sess-alice")
+	if err != nil {
+		t.Fatalf("sessionCredentialFile: %v", err)
+	}
+	if handlerPath != alice {
+		t.Errorf("credential handlers write %q but the manifest names %q", handlerPath, alice)
+	}
+}
+
+// spec: §4.7 — a session identifier that is not a safe path segment
+// cannot name a credential file inside the slot tree, so the manifest
+// write fails closed rather than emitting a path outside it.
+func TestWriteSessionManifestRejectsUnsafeSessionCredentialPath_spec_4_7(t *testing.T) {
+	dir := t.TempDir()
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir, CredentialsDir: t.TempDir()}
+	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "../escape"}); err == nil {
+		t.Fatal("writeSessionManifest accepted a traversal session identifier; want an error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ManifestFilename)); err == nil {
+		t.Error("a manifest was written for a rejected session identifier")
+	}
+}

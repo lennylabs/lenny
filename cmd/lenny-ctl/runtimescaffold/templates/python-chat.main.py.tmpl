@@ -10,8 +10,9 @@ into a provider request and streams the response back.
 The runtime is started with ``level="full"``, so the SDK opens the
 lifecycle channel. The ``on_credentials_rotated`` callback is where the
 runtime rebinds its provider client after the credential lease rotates;
-the SDK has already re-read ``/run/lenny/credentials.json`` by the time
-the callback runs.
+the SDK has already re-read this session's own credential file, at the
+path the adapter manifest's ``credentialsPath`` names, by the time the
+callback runs.
 
 The message handler is an echo placeholder. Replace
 :meth:`on_message` with a provider call: read the current credential

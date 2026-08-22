@@ -9,7 +9,8 @@
 // The runtime is started with WithFullLevel, so the SDK opens the
 // lifecycle channel. The credentials-rotated hook is where the runtime
 // rebinds its provider client after the credential lease rotates; the
-// SDK has already re-read /run/lenny/credentials.json by the time the
+// SDK has already re-read this session's own credential file, at the
+// path the adapter manifest's credentialsPath names, by the time the
 // hook runs.
 //
 // The message handler is an echo placeholder. Replace OnMessage with a

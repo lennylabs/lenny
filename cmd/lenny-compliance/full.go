@@ -74,6 +74,10 @@ func (r *Report) recordCheck(name, spec string, detail string, err error) {
 	r.Checks = append(r.Checks, entry)
 }
 
+// fullSessionID is the session the Full-level battery's fake adapter
+// binds its manifest and its per-session credential file to.
+const fullSessionID = "sess_compliance_full"
+
 // fakeAdapter spins up a Unix-socket listener that plays the adapter
 // side of the CH-RUNTIMEOPS and writes a manifest pointing the
 // runtime at it. The returned cleanup MUST be called.
@@ -81,10 +85,16 @@ type fakeAdapter struct {
 	dir        string
 	socketPath string
 	manifest   string
-	listener   net.Listener
-	conn       net.Conn
-	connErr    error
-	connReady  chan struct{}
+	// credentialsPath is the session's own §6.1 credential file, the
+	// path the manifest names and the path a credentials_rotated frame
+	// carries. The harness roots the slot tree in its temp directory so
+	// the battery exercises the manifest-resolved path rather than a
+	// fixed location. spec: §4.7; §6.1.
+	credentialsPath string
+	listener        net.Listener
+	conn            net.Conn
+	connErr         error
+	connReady       chan struct{}
 }
 
 func newFakeAdapter() (*fakeAdapter, func(), error) {
@@ -94,9 +104,16 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	}
 	socketPath := filepath.Join(dir, "lifecycle.sock")
 	manifest := filepath.Join(dir, "adapter-manifest.json")
+	// spec: §6.1 — the credential file is written per session under
+	// slots/{sessionId}/, so the harness names that path on the manifest
+	// and on every credentials_rotated frame it sends.
+	credentialsPath := filepath.Join(dir, "run", "lenny", "slots", fullSessionID, "credentials.json")
 	body, _ := json.Marshal(map[string]any{
-		"runtimeOps": map[string]any{"socket": socketPath},
-		"mcpNonce":   "nonce_compliance_harness",
+		"sessionId":       fullSessionID,
+		"taskId":          fullSessionID,
+		"credentialsPath": credentialsPath,
+		"runtimeOps":      map[string]any{"socket": socketPath},
+		"mcpNonce":        "nonce_compliance_harness",
 	})
 	if err := os.WriteFile(manifest, body, 0o600); err != nil {
 		os.RemoveAll(dir)
@@ -108,11 +125,12 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 		return nil, nil, fmt.Errorf("listen %s: %w", socketPath, err)
 	}
 	fa := &fakeAdapter{
-		dir:        dir,
-		socketPath: socketPath,
-		manifest:   manifest,
-		listener:   l,
-		connReady:  make(chan struct{}),
+		dir:             dir,
+		socketPath:      socketPath,
+		manifest:        manifest,
+		credentialsPath: credentialsPath,
+		listener:        l,
+		connReady:       make(chan struct{}),
 	}
 	go func() {
 		c, err := l.Accept()
@@ -370,7 +388,7 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 	if err := fa.send(map[string]any{
 		"type":            "credentials_rotated",
 		"provider":        "anthropic",
-		"credentialsPath": "/run/lenny/credentials.json",
+		"credentialsPath": fa.credentialsPath,
 		"leaseId":         leaseID,
 	}); err != nil {
 		return "", err

@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"sort"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/adapter/localtools"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -115,6 +118,14 @@ type Manifest struct {
 	// runtime uses to stitch its native traces into the parent's trace
 	// tree. Omitted when no tracing context is set.
 	TracingContext map[string]string `json:"tracingContext,omitempty"`
+	// CredentialsPath is the §4.7 absolute path of this session's own
+	// credential file, /run/lenny/slots/{sessionId}/credentials.json.
+	// The adapter writes the file before spawning the runtime binary and
+	// rewrites it in place on a rotation for this session, so a runtime
+	// that reads credential material reads its path from here rather
+	// than assuming a fixed location. Empty only on an adapter wired
+	// with no credentials root. spec: §4.7; §6.1.
+	CredentialsPath string `json:"credentialsPath"`
 	// MCPNonce is the §15.4.3 intra-pod MCP authentication nonce: a
 	// random 256-bit hex string the runtime presents on the MCP
 	// initialize handshake to every adapter-local MCP server. The
@@ -276,10 +287,15 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	}
 	// spec: §7.2 — a session has exactly one execution, so the manifest
 	// taskId equals the session id; the adapter derives it from sessionId.
+	credentialsPath, err := s.sessionCredentialsPath(in.sessionID)
+	if err != nil {
+		return "", err
+	}
 	m := Manifest{
 		Version:            ManifestVersion,
 		SessionID:          in.sessionID,
 		TaskID:             in.sessionID,
+		CredentialsPath:    credentialsPath,
 		ExperimentContext:  manifestExperimentContext(in.experimentContext),
 		TracingContext:     in.tracingContext,
 		MCPNonce:           nonce,
@@ -305,6 +321,25 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 		return "", err
 	}
 	return nonce, nil
+}
+
+// sessionCredentialsPath derives the manifest's §4.7 credentialsPath for
+// the named session: the same /run/lenny/slots/{sessionId}/credentials.json
+// the credential handlers write, resolved from the session identifier
+// through the one slot layout. An adapter wired with no credentials root
+// resolves to the empty string, which is the manifest's statement that
+// this deployment delivers no credential file. A session identifier that
+// is not a safe path segment is an error rather than a path outside the
+// slot tree.
+//
+// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
+func (s *Server) sessionCredentialsPath(sessionID string) (string, error) {
+	paths, err := s.resolveSlotPaths(sessionID)
+	if err != nil {
+		return "", status.Errorf(codes.InvalidArgument,
+			"resolve credential path for session %s: %v", sessionID, err)
+	}
+	return paths.CredentialsFile, nil
 }
 
 // manifestAgentInterface validates the gateway-supplied agentInterface
