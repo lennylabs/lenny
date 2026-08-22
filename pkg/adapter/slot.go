@@ -41,10 +41,9 @@ type slotState struct {
 }
 
 // concurrentRoots derives the §6.4 base directories the per-slot trees
-// nest under from the adapter's configured roots: the workspace base is
-// the parent of the single WorkspaceRoot (WorkspaceBase), and sessions,
-// artifacts, and credentials reuse the same roots the single-slot layout
-// uses.
+// nest under from the adapter's configured roots: the workspace base the
+// operator renders onto --workspace-base, and the sessions, artifacts,
+// and credentials roots.
 func (s *Server) concurrentRoots() slotlayout.Roots {
 	return slotlayout.Roots{
 		Workspace:   s.WorkspaceBase,

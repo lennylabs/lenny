@@ -22,30 +22,36 @@ import (
 // export's wildcard-free base path (§8.7 "base path is stripped").
 const globMeta = "*?["
 
-// ExportPaths packages files from /workspace/current for delegation,
-// rebased per the §8.7 file-export model. For each export it resolves
-// the source glob inside the workspace root, walks any matched
-// directory, strips the glob's base path, and re-roots each file under
-// the export's dest_prefix. Matched files whose realpath escapes the
-// workspace root via symlink are rejected (§8.7 validation). The
-// gateway applies the lease's fileExportLimits and optional content
+// ExportPaths packages files from the named session's workspace for
+// delegation, rebased per the §8.7 file-export model. For each export it
+// resolves the source glob inside that session's workspace root, walks
+// any matched directory, strips the glob's base path, and re-roots each
+// file under the export's dest_prefix. Matched files whose realpath
+// escapes the workspace root via symlink are rejected (§8.7 validation).
+// The gateway applies the lease's fileExportLimits and optional content
 // scanning to the returned set.
+//
+// spec: §6.4 — the export resolves the requesting session's own
+// `/workspace/slots/{sessionId}/current`, so a co-tenant session on the
+// same pod can never be exported from. A session the slot registry does
+// not hold has no root on this pod and the call fails closed.
 //
 // spec: §4.7, §8.7
 func (s *Server) ExportPaths(_ context.Context, req *adapterv1.ExportPathsRequest) (*adapterv1.ExportPathsResponse, error) {
-	if req.GetSessionId().GetValue() == "" {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "ExportPaths requires a session id")
 	}
-	if s.WorkspaceRoot == "" {
-		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root")
+	workspaceRoot, err := s.workspaceRootForSession(sessionID)
+	if err != nil {
+		return nil, err
 	}
-	// realRoot is the workspace root's own realpath. Every exported
-	// file's resolved path must stay within it; resolving the root once
-	// keeps the per-file symlink check comparing realpath to realpath
-	// (spec: §8.7 — "rejects any file whose resolved path is outside the
-	// workspace root").
-	realRoot, err := filepath.EvalSymlinks(filepath.Clean(s.WorkspaceRoot))
+	// realRoot is the session's workspace root's own realpath. Every
+	// exported file's resolved path must stay within it; resolving the
+	// root once keeps the per-file symlink check comparing realpath to
+	// realpath (spec: §8.7 — "rejects any file whose resolved path is
+	// outside the workspace root").
+	realRoot, err := filepath.EvalSymlinks(filepath.Clean(workspaceRoot))
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "resolve workspace root: %v", err)
 	}

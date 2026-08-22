@@ -14,7 +14,8 @@
 //   - Uploads buffer in the Artifact Store during the created window; the
 //     workspace is NOT streamed into the claimed pod until finalize.
 //   - /finalize is the preparation barrier: it streams the buffered blob into
-//     /workspace/current AND assigns the credential lease, returning ready.
+//     the session's /workspace/slots/{sessionId}/current AND assigns the
+//     credential lease, returning ready.
 //   - /start launches only: it assigns no lease and runs no materialization.
 //
 // This crosses the gateway, the datastore (the per-pod SandboxClaim on the
@@ -203,14 +204,14 @@ func eagerAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapte
 }
 
 // spec: 7.1, 7.4, 15.1 (decomposed create → upload → finalize → start; upload
-// buffers in the Artifact Store; finalize materializes /workspace/current and
+// buffers in the Artifact Store; finalize materializes the session's slot cwd and
 // assigns the lease; start launches only)
 // diagnosis: a failure means the end-to-end eager-claim lifecycle diverges
 // from the proposal across components. If the uploaded file appears in the pod
 // workspace before finalize, the gateway streamed bytes into the pod during
 // the upload window instead of buffering them in the Artifact Store. If the
 // file is absent after finalize, the finalize barrier did not stream the
-// buffered blob into /workspace/current. If the lease is assigned at create or
+// buffered blob into the session's slot cwd. If the lease is assigned at create or
 // start rather than once at finalize, the §4.9 lease-assignment step did not
 // move to the finalize barrier. If the runtime starts before /start, the
 // launch leaked into an earlier phase.
@@ -333,7 +334,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	}
 
 	// 3. Finalize: the preparation barrier streams the buffered blob into
-	// /workspace/current, runs setup, and assigns the credential lease; returns
+	// the session's slot cwd, runs setup, and assigns the credential lease; returns
 	// ready.
 	finalizeBody, _ := json.Marshal(map[string]any{
 		"workspacePlan": map[string]any{
@@ -352,7 +353,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	if finResp.State != string(session.StateReady) {
 		t.Fatalf("after finalize, state = %q, want ready (finalize is the barrier and returns ready)", finResp.State)
 	}
-	// The buffered blob was streamed into /workspace/current at finalize.
+	// The buffered blob was streamed into the session's slot cwd at finalize.
 	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-eager", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("the buffered upload was not materialized into the pod workspace at finalize: %v", err)

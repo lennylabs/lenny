@@ -12,19 +12,22 @@ import (
 )
 
 // TestEnsureWarmWorkspaceLayout_CreatesSubdirs verifies the §6.1
-// warm-pod invariant: /workspace/current and the staging directory
-// exist (and current/ is empty) before the pod is claimed.
+// warm-pod invariant: /workspace/slots/ and the staging directory exist
+// (and slots/ is empty) before the pod is claimed, and no pod-global
+// `current` leaf is created. A session's slot tree is created at slot
+// assignment under §6.4.
+// spec: 6.1 (warm-pod invariant), 6.4 (per-slot workspace layout)
 func TestEnsureWarmWorkspaceLayout_CreatesSubdirs(t *testing.T) {
-	root := t.TempDir()
-	current := filepath.Join(root, "current")
-	staging := filepath.Join(root, "staging")
+	base := t.TempDir()
+	staging := filepath.Join(base, "staging")
+	slots := filepath.Join(base, "slots")
 
-	s := &Server{WorkspaceRoot: current, StagingDir: staging}
+	s := &Server{WorkspaceBase: base, StagingDir: staging}
 	if err := s.EnsureWarmWorkspaceLayout(); err != nil {
 		t.Fatalf("EnsureWarmWorkspaceLayout: %v", err)
 	}
 
-	for _, dir := range []string{current, staging} {
+	for _, dir := range []string{slots, staging} {
 		info, err := os.Stat(dir)
 		if err != nil {
 			t.Fatalf("stat %s: %v", dir, err)
@@ -34,13 +37,19 @@ func TestEnsureWarmWorkspaceLayout_CreatesSubdirs(t *testing.T) {
 		}
 	}
 
-	// spec: §6.1 — /workspace/current "exists but is empty".
-	entries, err := os.ReadDir(current)
+	// spec: §6.1 — /workspace/slots/ "exists and is empty".
+	entries, err := os.ReadDir(slots)
 	if err != nil {
-		t.Fatalf("read current: %v", err)
+		t.Fatalf("read slots: %v", err)
 	}
 	if len(entries) != 0 {
-		t.Fatalf("workspace current = %d entries, want empty", len(entries))
+		t.Fatalf("workspace slots = %d entries, want empty", len(entries))
+	}
+
+	// spec: §6.4 — the pod-global `current` directory is retired, so the
+	// warm layout must not create one for a runtime to fall back on.
+	if _, err := os.Stat(filepath.Join(base, "current")); !os.IsNotExist(err) {
+		t.Fatalf("stat %s/current = %v, want the leaf to be absent", base, err)
 	}
 }
 
@@ -48,10 +57,10 @@ func TestEnsureWarmWorkspaceLayout_CreatesSubdirs(t *testing.T) {
 // existing directories succeeds (the adapter may restart on the same
 // workspace volume).
 func TestEnsureWarmWorkspaceLayout_Idempotent(t *testing.T) {
-	root := t.TempDir()
+	base := t.TempDir()
 	s := &Server{
-		WorkspaceRoot: filepath.Join(root, "current"),
-		StagingDir:    filepath.Join(root, "staging"),
+		WorkspaceBase: base,
+		StagingDir:    filepath.Join(base, "staging"),
 	}
 	if err := s.EnsureWarmWorkspaceLayout(); err != nil {
 		t.Fatalf("first call: %v", err)
@@ -63,17 +72,16 @@ func TestEnsureWarmWorkspaceLayout_Idempotent(t *testing.T) {
 
 // TestEnsureWarmWorkspaceLayout_UnconfiguredDirsSkipped verifies a
 // Basic-level adapter wired without a staging area still starts: an
-// empty WorkspaceRoot or StagingDir skips that directory.
+// empty WorkspaceBase or StagingDir skips that directory.
 func TestEnsureWarmWorkspaceLayout_UnconfiguredDirsSkipped(t *testing.T) {
-	root := t.TempDir()
-	current := filepath.Join(root, "current")
+	base := t.TempDir()
 
-	s := &Server{WorkspaceRoot: current, StagingDir: ""}
+	s := &Server{WorkspaceBase: base, StagingDir: ""}
 	if err := s.EnsureWarmWorkspaceLayout(); err != nil {
 		t.Fatalf("EnsureWarmWorkspaceLayout: %v", err)
 	}
-	if _, err := os.Stat(current); err != nil {
-		t.Fatalf("workspace root not created: %v", err)
+	if _, err := os.Stat(filepath.Join(base, "slots")); err != nil {
+		t.Fatalf("workspace slots directory not created: %v", err)
 	}
 
 	// Fully unconfigured: no-op, no error.
@@ -84,24 +92,26 @@ func TestEnsureWarmWorkspaceLayout_UnconfiguredDirsSkipped(t *testing.T) {
 }
 
 // TestEnsureWarmWorkspaceLayout_RootModeReadable verifies the
-// /workspace/current leaf carries the group/other read+execute bits the
-// agent runtime needs, independent of the process umask.
+// /workspace/slots container carries the group/other read+execute bits
+// the agent runtime needs to traverse into its own session's slot tree,
+// independent of the process umask.
+// spec: 6.1 (warm-pod invariant), 6.4 (per-slot workspace layout)
 func TestEnsureWarmWorkspaceLayout_RootModeReadable(t *testing.T) {
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
 
-	root := t.TempDir()
-	current := filepath.Join(root, "current")
-	s := &Server{WorkspaceRoot: current}
+	base := t.TempDir()
+	slots := filepath.Join(base, "slots")
+	s := &Server{WorkspaceBase: base}
 	if err := s.EnsureWarmWorkspaceLayout(); err != nil {
 		t.Fatalf("EnsureWarmWorkspaceLayout: %v", err)
 	}
-	info, err := os.Stat(current)
+	info, err := os.Stat(slots)
 	if err != nil {
-		t.Fatalf("stat current: %v", err)
+		t.Fatalf("stat slots: %v", err)
 	}
-	if got := info.Mode().Perm(); got != warmWorkspaceRootMode {
-		t.Fatalf("workspace current mode = %o, want %o", got, warmWorkspaceRootMode)
+	if got := info.Mode().Perm(); got != warmSlotsMode {
+		t.Fatalf("workspace slots mode = %o, want %o", got, warmSlotsMode)
 	}
 }
 
@@ -189,10 +199,10 @@ func TestChmodWarmDir_DeniedButAdequateModeTolerated(t *testing.T) {
 // the pod is claimed: the directory exists at a runtime-readable mode and
 // each configured inline asset is written read-only.
 func TestEnsureWarmWorkspaceLayout_PopulatesSharedAssets_spec_6_4(t *testing.T) {
-	root := t.TempDir()
-	shared := filepath.Join(root, "shared")
+	base := t.TempDir()
+	shared := filepath.Join(base, "shared")
 	s := &Server{
-		WorkspaceRoot:   filepath.Join(root, "current"),
+		WorkspaceBase:   base,
 		SharedAssetsDir: shared,
 		SharedAssets: []sharedassets.FileSpec{
 			{Path: "common/config.yaml", Content: "shared: true\n"},

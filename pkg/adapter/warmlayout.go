@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 )
 
 // chmodWarmDir pins dir to mode so the runtime can traverse it regardless
@@ -58,11 +59,12 @@ func chmodWarmDirWith(dir string, mode os.FileMode, chmod func(string, os.FileMo
 	return nil
 }
 
-// warmWorkspaceRootMode is the permission mode of the warm-time
-// /workspace/current directory. The agent-container runtime reads from
-// it, so it carries group/other read+execute (0o755) — the same mode
-// workspace materialization creates parent directories with.
-const warmWorkspaceRootMode = 0o755
+// warmSlotsMode is the permission mode of the warm-time
+// /workspace/slots container. The agent-container runtime traverses it
+// to reach its own session's slot tree, so it carries group/other
+// read+execute (0o755) — the same mode slotlayout creates the per-slot
+// trees with.
+const warmSlotsMode = 0o755
 
 // warmSharedMode is the permission mode of the warm-time
 // /workspace/shared directory. The runtime container reads from it
@@ -80,33 +82,38 @@ const warmStagingMode = 0o700
 
 // EnsureWarmWorkspaceLayout creates the workspace subdirectories the
 // §6.1 warm-pod invariant requires to exist before a pod is claimed:
-// "/workspace/current exists but is empty" (spec: §6.1) and
+// "/workspace/slots/ exists and is empty" (spec: §6.1) and
 // "/workspace/staging exists for upload staging" (spec: §6.1).
 // The pod spec mounts a single emptyDir at /workspace, so without this
-// step a freshly-warmed pod exposes an empty /workspace and the
-// current/ and staging/ subdirectories appear only lazily at claim
-// time (the first FinalizeWorkspace / PrepareWorkspace call). The
-// adapter calls this once at startup, before it signals READY, so the
-// directories are present for the lifetime of the warm pod.
+// step a freshly-warmed pod exposes an empty /workspace and the slots/
+// and staging/ directories appear only lazily at claim time (the first
+// PrepareWorkspace call). The adapter calls this once at startup, before
+// it signals READY, so the directories are present for the lifetime of
+// the warm pod.
+//
+// It creates no `current` leaf. Under §6.4 the per-slot tree is the only
+// workspace layout: a session's cwd is
+// `<base>/slots/{sessionId}/current`, created at slot assignment, and no
+// pod-global `/workspace/current` exists for a runtime to fall back on.
 //
 // It is idempotent: re-creating an existing directory is a no-op.
 // Either directory being unconfigured (empty string) skips that
 // directory rather than erroring, so a Basic-level adapter wired
 // without a staging area still starts.
 func (s *Server) EnsureWarmWorkspaceLayout() error {
-	if s.WorkspaceRoot != "" {
-		if err := os.MkdirAll(s.WorkspaceRoot, warmWorkspaceRootMode); err != nil {
-			return fmt.Errorf("adapter: create workspace root %q: %w", s.WorkspaceRoot, err)
+	if slots := slotlayout.SlotsDir(s.WorkspaceBase); slots != "" {
+		if err := os.MkdirAll(slots, warmSlotsMode); err != nil {
+			return fmt.Errorf("adapter: create workspace slots directory %q: %w", slots, err)
 		}
 		// os.MkdirAll honors the process umask, which can strip the
-		// group/other read+execute bits the runtime needs. Chmod the
-		// leaf to the exact mode so the §6.1 "empty but present"
-		// directory is readable regardless of the inherited umask. The
-		// root is a kubelet-owned emptyDir mountpoint when /workspace is
-		// mounted directly, so tolerate the EPERM when it already carries
-		// the required bits.
-		if err := chmodWarmDir(s.WorkspaceRoot, warmWorkspaceRootMode); err != nil {
-			return fmt.Errorf("adapter: chmod workspace root %q: %w", s.WorkspaceRoot, err)
+		// group/other read+execute bits the runtime needs to traverse into
+		// its own slot tree. Chmod the container to the exact mode so the
+		// §6.1 "empty but present" directory is traversable regardless of
+		// the inherited umask. Its parent is a kubelet-owned emptyDir
+		// mountpoint, so tolerate the EPERM when the directory already
+		// carries the required bits.
+		if err := chmodWarmDir(slots, warmSlotsMode); err != nil {
+			return fmt.Errorf("adapter: chmod workspace slots directory %q: %w", slots, err)
 		}
 	}
 	if s.StagingDir != "" {

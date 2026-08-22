@@ -484,7 +484,6 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
-	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = rt
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
@@ -1642,7 +1641,6 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
-	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = rt
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))

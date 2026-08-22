@@ -174,7 +174,7 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	// The runtime's session binding was force-cleared, so a fresh session can
 	// rebind the loop. (The Server-level SDKWarmReady flag is cleared by
 	// ShutdownDemoteSDK's timeout path, covered separately above.)
-	if err := rt.ConfigureWorkspace(context.Background(), "sess-2", s.WorkspaceRoot); err != nil {
+	if err := rt.ConfigureWorkspace(context.Background(), "sess-2", s.WorkspaceBase); err != nil {
 		t.Errorf("ConfigureWorkspace after ForceTerminate: %v", err)
 	}
 }

@@ -11,11 +11,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/upload"
-	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
 
 // SlotBindRequest describes a session to place on a §5.2 concurrent-session
@@ -270,7 +270,13 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	// slot's actual /workspace/slots/{slotId}/current after promotion.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
-		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), archive.DefaultWorkspaceRoot),
+		// spec: §6.4; §13.4 — the containment root symlink targets are
+		// canonicalized against is this bind's own slot cwd, derived from
+		// the base the adapter reported and the session identifier, so the
+		// gateway-side extraction matches where the adapter re-validates
+		// after promotion.
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(),
+			slotlayout.SessionCurrentDir(workspaceBase, req.SessionID)),
 	}
 	// spec: §6.4 — the slot's workspace materializes into
 	// its own /workspace/slots/{sessionId}/ tree, which the adapter keys on

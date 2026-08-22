@@ -152,7 +152,7 @@ func recycleServer(t *testing.T) (*Server, *recordingPodScrubReporter, *fakePodS
 	ops := newFakePodScrubOps()
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.PodScrubReporter = reporter
 	s.ScrubOps = ops
@@ -588,7 +588,7 @@ func TestStartPodScrubWithNilScrubOpsWithholdsReport_spec_5_2(t *testing.T) {
 	reporter := &recordingPodScrubReporter{}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = nil // the pre-fix production state: never wired
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
@@ -624,7 +624,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 	reporter := &recordingPodScrubReporter{err: errors.New("gateway unreachable")}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = newFakePodScrubOps()
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
@@ -646,7 +646,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 func TestStartPodScrubWithoutReporterDoesNotPanic_spec_5_2(t *testing.T) {
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = newFakePodScrubOps()
 	s.PodScrubReporter = nil
 	s.scrubDone = func() { close(done) }
@@ -684,7 +684,7 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	ops := &gatedScrubOps{fakePodScrubOps: newFakePodScrubOps(), release: make(chan struct{})}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.PodScrubReporter = reporter
 	s.ScrubOps = ops

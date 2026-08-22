@@ -76,7 +76,7 @@ type Pod struct {
 func StartPod(t testing.TB, sessionID string) *Pod {
 	t.Helper()
 	srv := adapter.New("coordfixture")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = t.TempDir()
 	srv.Runtime = fakeRuntime{}
 

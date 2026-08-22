@@ -74,7 +74,6 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
-	adapterSrv.WorkspaceRoot = adapterSrv.WorkspaceBase
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(

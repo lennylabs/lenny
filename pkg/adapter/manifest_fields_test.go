@@ -84,7 +84,7 @@ func TestAPIKeyEnvForDialect_spec_4_7(t *testing.T) {
 // assigned lease, and is JSON null when no lease is assigned.
 func TestWriteSessionManifestLLMField_spec_4_7(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 
 	// No lease assigned: llm is null.
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-1"}); err != nil {
@@ -116,7 +116,7 @@ func TestWriteSessionManifestLLMField_spec_4_7(t *testing.T) {
 // field is derived from a deterministic (provider-sorted) lease.
 func TestManifestLLMMultiProviderDeterministic_spec_4_7(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 	setSessionLeasesForTest(t, srv, "sess-1", map[string]*adapterv1.CredentialLease{
 		"openai":    {LeaseId: "l2", Provider: "openai", Payload: []byte(directLeasePayload)},
 		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
@@ -138,7 +138,7 @@ func TestManifestLLMMultiProviderDeterministic_spec_4_7(t *testing.T) {
 func TestWriteSessionManifestObservability_spec_4_7(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{
-		WorkspaceRoot: "/workspace/current", ManifestDir: dir,
+		WorkspaceBase: "/workspace", ManifestDir: dir,
 		OTLPEndpoint: "https://otel.lenny-system:4317",
 	}
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-1"}); err != nil {

@@ -637,6 +637,19 @@ type ResumeRequest struct {
 	// asserts on Resume that the replacement pod's WorkspaceRoot
 	// matches. Empty disables the assertion. F-7.3.15.
 	ExpectedWorkspaceRoot string
+	// MaxConcurrentSessions is the resumed session's pool bound
+	// (sessionPolicy.maxConcurrentSessions), normalized to a minimum of 1
+	// by the caller. Resume reserves one counted slot on the replacement
+	// pod when it is greater than one, the same pools the start path
+	// reserves a slot on. spec: §5.2.
+	MaxConcurrentSessions int32
+	// MaxPodUptimeSeconds is the pool's recycle.maxPodUptimeSeconds cap.
+	// The reservation delivers it onto the replacement pod as the
+	// lenny.dev/max-pod-uptime-seconds annotation, which is the only
+	// channel by which the WarmPoolController learns the cap. Without it
+	// the replacement pod carries no annotation and the §5.2 uptime drain
+	// never fires on it.
+	MaxPodUptimeSeconds int64
 	// Chunks carries one presigned GET capability per chunk of the
 	// checkpoint being restored, in ascending index order. The gateway
 	// resolves the chunk set from the manifest row it owns and mints one
@@ -883,7 +896,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// re-validation location.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
-		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID), archive.DefaultWorkspaceRoot),
+		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID)),
 	}
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
 	if err != nil {
@@ -1325,10 +1338,6 @@ func (b *Binder) rewriteExtractedSources(ctx context.Context, plan *adapterv1.Wo
 	if !needsRewrite {
 		return plan, nil, nil
 	}
-	if allow.WorkspaceRoot == "" {
-		allow.WorkspaceRoot = archive.DefaultWorkspaceRoot
-	}
-
 	newSources := make([]*adapterv1.WorkspaceSource, 0, len(plan.GetSources()))
 	var warnings []*adapterv1.WorkspacePlanWarning
 	for i, src := range plan.GetSources() {
@@ -1568,6 +1577,18 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	if err != nil {
 		return ResumeResult{}, err
 	}
+	// spec: §5.2; §6.4 — every session is bound to a slot, so a resume onto
+	// a concurrent-workspace pool reserves one counted slot on the pod
+	// connect already claimed. Without it the resumed session holds a
+	// whole-pod claim and no slot, so it has no slot tree to restore into
+	// and the pod's occupancy ledger under-counts it. The reservation runs
+	// on the pod connect resolved rather than through a pool scan, which
+	// would increment a different pod's counter.
+	slotID, err := b.reserveResumeSlot(ctx, sb.Name, req)
+	if err != nil {
+		cl.Close()
+		return ResumeResult{}, err
+	}
 	res, err := cl.Resume(ctx, adapterclient.ResumeParams{
 		SessionID:               req.SessionID,
 		Runtime:                 req.Runtime,
@@ -1584,6 +1605,13 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	})
 	if err != nil {
 		cl.Close()
+		// The reservation is the resume's own, so its compensating release
+		// is too: the adapter Resume RPC is the one failure that follows a
+		// completed reservation, and leaving the increment behind would
+		// compound per retry on the retryable restore path. Every earlier
+		// failure returns out of connect or out of the reservation itself
+		// with no increment landed, so no other error path releases.
+		b.releaseResumeSlot(ctx, sb.Name, slotID)
 		return ResumeResult{}, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
 	}
 	// spec: §6.2 — the resumed session's fine states
@@ -1599,10 +1627,69 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 			PodIP:         sb.Status.PodIP,
 			Adapter:       cl,
 			WorkspaceBase: neg.WorkspaceBase,
+			// spec: §5.2 — SlotID is the resumed session's statement that
+			// the pod keeps a slot ledger for it, and it is the key both
+			// release paths dispatch on. It is empty on an exclusive pool,
+			// where no slot was reserved and the release runs through
+			// Binder.Release.
+			SlotID: slotID,
 		},
 		Mode:               res.Mode,
 		RecoveryGeneration: res.RecoveryGeneration,
 	}, nil
+}
+
+// reserveResumeSlot reserves the resumed session's counted slot on the pod
+// connect already claimed, on the pools the start path reserves one on
+// (sessionPolicy.maxConcurrentSessions greater than one). It returns the
+// reserved slot's identifier, which is the session's own identifier, and
+// the empty string on an exclusive pool, which keeps no per-pod ledger.
+//
+// spec: §5.2 (atomic slot reservation), §7.1 (resume onto a replacement
+// pod).
+func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req ResumeRequest) (string, error) {
+	if req.MaxConcurrentSessions <= 1 {
+		return "", nil
+	}
+	claimer := &podclaim.SlotClaimer{
+		Client:         b.Client,
+		Namespace:      b.Namespace,
+		Counter:        b.SlotCounter,
+		OnSlotConflict: b.SlotConflict,
+		OnRehydrate:    b.Rehydration,
+	}
+	res, err := claimer.ReserveSlotOnPod(ctx, sandboxName, podclaim.SlotRequest{
+		Pool:                  req.Pool,
+		SessionID:             req.SessionID,
+		TenantID:              req.TenantID,
+		MaxConcurrentSessions: req.MaxConcurrentSessions,
+		MaxPodUptimeSeconds:   req.MaxPodUptimeSeconds,
+	})
+	if err != nil {
+		// ErrNoConcurrentSlot is returned unwrapped: a concurrent start for
+		// the same tenant can fill the pod's bound in the window between
+		// connect's claim CREATE and this reservation, and the caller
+		// retries the resume on a fresh pod under Resume's existing
+		// contract. No increment landed, so nothing is released.
+		if errors.Is(err, podclaim.ErrNoConcurrentSlot) {
+			return "", err
+		}
+		return "", fmt.Errorf("podsession: reserve resume slot on pod %s: %w", sandboxName, err)
+	}
+	return res.SlotID, nil
+}
+
+// releaseResumeSlot rolls back the resume's slot reservation after the
+// adapter Resume RPC failed. It is a no-op on an exclusive pool, which
+// reserved nothing: ReleaseSlotReservation decrements unconditionally, so
+// a release for an increment that never landed would under-count the pod.
+func (b *Binder) releaseResumeSlot(ctx context.Context, sandboxName, slotID string) {
+	if slotID == "" {
+		return
+	}
+	if err := b.ReleaseSlotReservation(ctx, sandboxName, slotID); err != nil {
+		log.Printf("podsession: release resume slot reservation on pod %s: %v", sandboxName, err)
+	}
 }
 
 // negotiated bundles the handshake-reported metadata the caller needs

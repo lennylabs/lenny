@@ -16,28 +16,6 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// checkpointRoots returns the §4.4 checkpoint bundle: the session
-// workspace under workspace.WorkspacePrefix, plus the §6.4
-// /sessions session-file tmpfs under workspace.SessionsPrefix when the
-// adapter is configured with a SessionsRoot. The sessions root is
-// skipped (no entries) when unset or absent on disk, so a runtime that
-// keeps no session file checkpoints workspace-only exactly as before.
-//
-// spec: §7.3 step (e) (replay workspace checkpoint) and step (f)
-// (restore session file to expected path) — both replayed from
-// this one bundle on Resume.
-func (s *Server) checkpointRoots() []workspace.NamedRoot {
-	roots := []workspace.NamedRoot{
-		{Prefix: workspace.WorkspacePrefix, Root: s.WorkspaceRoot},
-	}
-	if s.SessionsRoot != "" {
-		roots = append(roots, workspace.NamedRoot{
-			Prefix: workspace.SessionsPrefix, Root: s.SessionsRoot,
-		})
-	}
-	return roots
-}
-
 // probeWorkspaceBytes measures the on-disk workspace byte total for the
 // §4.4 pre-checkpoint size probe, summing every checkpoint root
 // the resume path replays so the gateway reserves quota against the whole

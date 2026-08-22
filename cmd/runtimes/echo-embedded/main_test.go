@@ -31,7 +31,7 @@ func TestEmbeddedMainAcceptsPlatformMCPFlags_spec_9_1(t *testing.T) {
 		"--mcp-socket=@lenny-platform-mcp",
 		"--gateway-grpc-addr=lenny-gateway.lenny-system.svc:50051",
 		"--credentials-dir="+t.TempDir(),
-		"--workspace-root="+filepath.Join(t.TempDir(), "current"),
+		"--workspace-base="+t.TempDir(),
 		"--staging-dir="+filepath.Join(t.TempDir(), "staging"),
 		"--shared-assets-dir="+filepath.Join(t.TempDir(), "shared"),
 	)

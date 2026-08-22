@@ -147,8 +147,8 @@ const (
 
 	// stagingPath is the §4.7 PrepareWorkspace staging directory. It sits
 	// under the shared workspace emptyDir so the adapter can promote
-	// staged content into /workspace/current without crossing a volume
-	// boundary.
+	// staged content into the session's slot cwd without crossing a
+	// volume boundary.
 	stagingPath = workspaceMount + "/.staging"
 
 	// RuntimeSocketName is the §4.7 sidecar-model abstract Unix socket
@@ -559,15 +559,16 @@ func buildSidecar(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 
 	adapterArgs := []string{
 		fmt.Sprintf("--addr=:%d", adapterPort),
-		// spec: §6.4 — session-mode pods (maxConcurrentSessions=1)
-		// use the single `/workspace/current` cwd. The concurrent-workspace
-		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
-		// in v1 (tracked under F-6.4.2); when it lands, the builder will
-		// select the workspace root from the resolved Runtime layout
-		// instead of hard-coding it here.
-		"--workspace-root=" + workspaceMount + "/current",
+		// spec: §6.4 — every session on every pod owns a per-slot tree
+		// under the workspace base: `<base>/slots/{sessionId}/current/` is
+		// its cwd and `<base>/slots/{sessionId}/staging/` its upload
+		// staging area. The layout is uniform across pool concurrencies,
+		// so the builder renders the base the trees nest under and the
+		// adapter resolves each session's root from it. The pod carries no
+		// pod-global `current` directory.
+		"--workspace-base=" + workspaceMount,
 		// §4.7: PrepareWorkspace stages uploads here before
-		// FinalizeWorkspace promotes them into /workspace/current.
+		// FinalizeWorkspace promotes them into the session's slot cwd.
 		"--staging-dir=" + stagingPath,
 		// §4.7/§13: enforce the SO_PEERCRED MCP peer check against
 		// the runtime container's runAsUser.
@@ -660,13 +661,14 @@ func buildEmbedded(in Inputs, runtimeClass string) (*corev1.Pod, error) {
 
 	embeddedArgs := []string{
 		fmt.Sprintf("--addr=:%d", adapterPort),
-		// spec: §6.4 — session-mode pods (maxConcurrentSessions=1)
-		// use the single `/workspace/current` cwd. The concurrent-workspace
-		// per-slot tree (`/workspace/slots/{slotId}/current/`) is unbuilt
-		// in v1 (tracked under F-6.4.2); when it lands, the builder will
-		// select the workspace root from the resolved Runtime layout
-		// instead of hard-coding it here.
-		"--workspace-root=" + workspaceMount + "/current",
+		// spec: §6.4 — every session on every pod owns a per-slot tree
+		// under the workspace base: `<base>/slots/{sessionId}/current/` is
+		// its cwd and `<base>/slots/{sessionId}/staging/` its upload
+		// staging area. The layout is uniform across pool concurrencies,
+		// so the builder renders the base the trees nest under and the
+		// adapter resolves each session's root from it. The pod carries no
+		// pod-global `current` directory.
+		"--workspace-base=" + workspaceMount,
 		// §4.7: the embedded runtime is the adapter, so it stages
 		// uploads the same way the sidecar adapter does.
 		"--staging-dir=" + stagingPath,

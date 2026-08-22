@@ -34,8 +34,8 @@
 // "runtime" container with the shared "workspace" emptyDir mounted,
 // mirroring the pattern gvisor_isolation_test.go uses for its
 // /proc/version kernel-fingerprint probe. The adapter (not the debug
-// container's unprivileged UID) owns /workspace/current and
-// /workspace/slots/{slotId}/current, so content is placed via a client
+// container's unprivileged UID) owns each session's
+// /workspace/slots/{sessionId}/current, so content is placed via a client
 // §14 WorkspacePlan at session start rather than by writing through the
 // debug container, which the directory's group-readable, non-group-
 // writable permissions would reject anyway.
@@ -90,10 +90,10 @@ const executionModesNamespace = "lenny-agents"
 // `recycling`... On a successful scrub on a `standard` or `in-place`
 // pool the pod is held for its tenant through the claim's `reserved`
 // state and serves the next session." And (§5.2, "Lenny scrub
-// procedure") — "Before materializing, the adapter MUST remove all
-// files from `/workspace/current` to prevent residual state from prior
-// tasks" and "Verify scrub by stat-checking the workspace path... if
-// any path is non-empty after scrub... the scrub is marked failed."
+// procedure") — the adapter removes each session's workspace tree before
+// materializing so no residual state from a prior task survives, and
+// "Verify scrub by stat-checking the workspace path... if any path is
+// non-empty after scrub... the scrub is marked failed."
 //
 // diagnosis: a failure here means §5.2 sequential pod reuse ("task
 // mode") is broken on a real agent pod: either the second session on a
@@ -152,20 +152,88 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	}
 	t.Logf("session B %s reused pod %s", sessB.ID, sessB.PodAssignment)
 
+	// spec: §6.4 — the per-slot tree is the only workspace layout, so each
+	// session materialized into its own /workspace/slots/{sessionId}/current
+	// and the recycled pod must carry session B's tree and none of session
+	// A's. The pod-global /workspace/current is retired on every pool class,
+	// including this exclusive one, so the directory must be absent.
 	listing := execDebugContainer(t, c, podA, []string{
-		"sh", "-c", "ls -la /workspace/current/ 2>&1",
+		"sh", "-c", "ls -la /workspace/slots/ 2>&1; echo ---; " +
+			"ls -la /workspace/slots/" + sessB.ID + "/current/ 2>&1; echo ---; " +
+			"[ -e /workspace/current ] && echo present || echo absent",
 	})
-	if strings.Contains(listing, "marker-a.txt") {
-		t.Errorf("pod %s: session A's /workspace/current/marker-a.txt survived into session B; "+
-			"the §5.2 whole-pod scrub did not clear residual state between recycled sessions:\n%s", podA, listing)
+	parts := strings.Split(listing, "---")
+	if len(parts) != 3 {
+		t.Fatalf("pod %s: debug container output did not split into 3 sections, got %d:\n%s", podA, len(parts), listing)
 	}
-	if !strings.Contains(listing, "marker-b.txt") {
-		t.Errorf("pod %s: session B's /workspace/current/marker-b.txt is missing; workspace materialization "+
-			"did not run for the reused pod:\n%s", podA, listing)
+	slotsListing, currentListing, podGlobal := strings.TrimSpace(parts[0]),
+		strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+
+	if strings.Contains(slotsListing, sessA.ID) {
+		t.Errorf("pod %s: session A's slot tree /workspace/slots/%s survived into session B; "+
+			"the §5.2 whole-pod scrub did not clear residual state between recycled sessions:\n%s",
+			podA, sessA.ID, slotsListing)
 	}
-	if !strings.Contains(listing, "marker-a.txt") && strings.Contains(listing, "marker-b.txt") {
-		t.Logf("pod %s: /workspace/current scrubbed clean between sessions A and B; only session B's "+
-			"marker is present:\n%s", podA, listing)
+	if !strings.Contains(currentListing, "marker-b.txt") {
+		t.Errorf("pod %s: session B's /workspace/slots/%s/current/marker-b.txt is missing; workspace "+
+			"materialization did not run for the reused pod:\n%s", podA, sessB.ID, currentListing)
+	}
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path on every pool class, "+
+			"including a maxConcurrentSessions: 1 pool", podA, podGlobal)
+	}
+}
+
+// spec: §6.4 (spec/06_warm-pod-model.md) — a session's cwd is
+// `/workspace/slots/{sessionId}/current/` and no global
+// `/workspace/current` path exists.
+//
+// diagnosis: an exclusive pool (maxConcurrentSessions: 1) still
+// materializes into a pod-global /workspace/current on a real agent pod.
+// This is the pool class that used the retired path before the layout
+// became uniform, so a regression that reinstates it fails here and passes
+// unnoticed on the concurrent pool that never used it.
+func TestSessionModePoolMaterializesIntoTheSlotTree_spec_6_4(t *testing.T) {
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	c := d.Cluster()
+	requirePoolReadyPods(t, c, taskModePoolName, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	tenant := uniqueName("session-mode-layout-tenant")
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant: %v", err)
+	}
+
+	sess, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
+		inlineWorkspacePlan("marker.txt", "workspace-of-session-mode"))
+	if err != nil {
+		t.Fatalf("create session on %s: %v", taskModeRuntimeRef, err)
+	}
+	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
+	if sess.PodAssignment == "" {
+		t.Fatalf("session carries no podAssignment; the pool did not bind a pod")
+	}
+	pod := sess.PodAssignment
+
+	listing := execDebugContainer(t, c, pod, []string{
+		"sh", "-c", "cat /workspace/slots/" + sess.ID + "/current/marker.txt 2>&1; echo ---; " +
+			"[ -e /workspace/current ] && echo present || echo absent",
+	})
+	parts := strings.Split(listing, "---")
+	if len(parts) != 2 {
+		t.Fatalf("pod %s: debug container output did not split into 2 sections, got %d:\n%s", pod, len(parts), listing)
+	}
+	slotContent, podGlobal := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+
+	if slotContent != "workspace-of-session-mode" {
+		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want the session's own content; "+
+			"an exclusive pool materializes into its session's slot tree like every other pool",
+			pod, sess.ID, slotContent)
+	}
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path", pod, podGlobal)
 	}
 }
 
@@ -173,17 +241,16 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 // sessions (`maxConcurrentSessions > 1`)") — "Each slot gets its own
 // workspace under `/workspace/slots/{slotId}/`... Cross-slot isolation
 // is process-level and filesystem-level." And §6.4 (spec/
-// 06_warm-pod-model.md) — "The runtime MUST NOT assume a global
-// `/workspace/current` path when `maxConcurrentSessions > 1`."
+// 06_warm-pod-model.md) — "No global `/workspace/current` path exists,
+// and the runtime MUST NOT assume one."
 //
 // diagnosis: a failure here means the §5.2 concurrent-slot filesystem
 // isolation is broken on a real agent pod: either two sessions
 // multiplexed onto one pod's slots did not each get their own
-// /workspace/slots/{slotId}/current/ tree, one slot's file leaked into
-// a sibling slot's tree, or a slot's content leaked into the whole-pod
-// /workspace/current (which a concurrent-workspace pod must never use).
-// The gateway derives slotId from the session id (podsession/
-// slotbinder.go), so each session's own id names its slot directory.
+// /workspace/slots/{sessionId}/current/ tree, one slot's file leaked into
+// a sibling slot's tree, or a pod-global /workspace/current appeared on a
+// pod that must carry none. A session-mode slot's identifier is its
+// session's identifier, so each session's own id names its slot directory.
 func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
@@ -231,13 +298,14 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	listing := execDebugContainer(t, c, pod, []string{
 		"sh", "-c", "cat /workspace/slots/" + sessA.ID + "/current/marker.txt 2>&1; echo ---; " +
 			"cat /workspace/slots/" + sessB.ID + "/current/marker.txt 2>&1; echo ---; " +
-			"ls /workspace/current/ 2>&1",
+			"[ -e /workspace/current ] && echo present || echo absent",
 	})
 	parts := strings.Split(listing, "---")
 	if len(parts) != 3 {
 		t.Fatalf("pod %s: debug container output did not split into 3 sections, got %d:\n%s", pod, len(parts), listing)
 	}
-	slotAContent, slotBContent, wholePodListing := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	slotAContent, slotBContent, podGlobal := strings.TrimSpace(parts[0]),
+		strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
 
 	if slotAContent != "workspace-of-slot-A" {
 		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want \"workspace-of-slot-A\"; "+
@@ -247,14 +315,14 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want \"workspace-of-slot-B\"; "+
 			"slot B's per-slot workspace is missing or was overwritten by a sibling slot", pod, sessB.ID, slotBContent)
 	}
-	// §6.4: a concurrent-workspace pod has no shared /workspace/current;
-	// the whole-pod path must never have been materialized into.
-	if wholePodListing != "" {
-		t.Errorf("pod %s: /workspace/current is non-empty (%q); a concurrent-workspace pod must never "+
-			"materialize into the whole-pod path, only into /workspace/slots/{slotId}/current/", pod, wholePodListing)
+	// §6.4: the pod-global /workspace/current is retired rather than kept as
+	// an empty directory, so the path must not exist at all.
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path, and every session "+
+			"materializes into /workspace/slots/{sessionId}/current/", pod, podGlobal)
 	}
-	t.Logf("pod %s: slot %s and slot %s each hold only their own workspace content, whole-pod "+
-		"/workspace/current is empty", pod, sessA.ID, sessB.ID)
+	t.Logf("pod %s: session %s and session %s each hold only their own workspace content, and no "+
+		"pod-global /workspace/current exists", pod, sessA.ID, sessB.ID)
 }
 
 // uniqueName returns a base name suffixed with a per-call nanosecond

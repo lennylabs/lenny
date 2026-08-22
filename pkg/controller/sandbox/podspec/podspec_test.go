@@ -1110,3 +1110,51 @@ func requiredNodeAffinity(t *testing.T, pod *corev1.Pod) *corev1.NodeSelector {
 	}
 	return pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
 }
+
+// TestBuildRendersTheWorkspaceBaseOnBothAdapterArgvs_spec_6_4 pins what the
+// operator renders onto the adapter's command line. Under the uniform
+// per-slot layout every session's cwd is
+// `/workspace/slots/{sessionId}/current`, created at slot assignment, and
+// the pod-global `/workspace/current` exists on no pod. The builder
+// therefore renders the workspace base and never the retired leaf, on the
+// sidecar-adapter argv and the embedded-adapter argv alike. Rendering the
+// leaf would run every adapter against a directory the platform never
+// creates, and no other case would notice: the documentation sweep's
+// predicate does not reach this package.
+// spec: 6.4 (per-slot workspace layout), 4.7 (adapter argv)
+func TestBuildRendersTheWorkspaceBaseOnBothAdapterArgvs_spec_6_4(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		model     string
+		container string
+	}{
+		{name: "sidecar", model: "", container: "adapter"},
+		{name: "embedded", model: "embedded", container: "runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := inputs()
+			in.DeploymentModel = tc.model
+			pod, err := podspec.Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			args := container(t, pod, tc.container).Args
+			joined := strings.Join(args, " ")
+			if strings.Contains(joined, "/workspace/current") {
+				t.Errorf("%s argv names the retired pod-global /workspace/current: %v", tc.container, args)
+			}
+			if strings.Contains(joined, "--workspace-root") {
+				t.Errorf("%s argv still declares --workspace-root: %v", tc.container, args)
+			}
+			var found bool
+			for _, a := range args {
+				if a == "--workspace-base=/workspace" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s argv = %v, want --workspace-base=/workspace", tc.container, args)
+			}
+		})
+	}
+}

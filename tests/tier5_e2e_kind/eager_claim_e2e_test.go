@@ -202,7 +202,8 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 	})
 
 	// Finalize with an inline workspace file: the finalize barrier streams it
-	// into /workspace/current on the claimed pod and reaches ready.
+	// into the session's /workspace/slots/{sessionId}/current on the claimed
+	// pod and reaches ready.
 	finalizeBody := `{"workspacePlan":{"schemaVersion":1,"sources":[` +
 		`{"type":"inlineFile","path":"CLAUDE.md","content":"# e2e finalized","mode":"0644"}]}}`
 	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/finalize", role, finalizeBody)

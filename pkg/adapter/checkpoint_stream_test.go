@@ -625,11 +625,16 @@ func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 func TestCheckpointStreamProbeBeforeQuiesce_spec_4_4_255(t *testing.T) {
 	transport := &recordingTransport{}
 	s := adapter.New("ckpt-probe-order")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.StagingDir = t.TempDir()
 	s.CheckpointTransport = transport
 	s.WorkspaceSizeLimitBytes = 1 // any real workspace file is over-limit
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "big.txt"), []byte("this workspace is over the one-byte limit"), 0o644); err != nil {
+	s.Runtime = &fakeRuntime{}
+	if _, err := s.StartSession(context.Background(), startReq(streamSession)); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", streamSession, "current")
+	if err := os.WriteFile(filepath.Join(current, "big.txt"), []byte("this workspace is over the one-byte limit"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	fr := wireLifecycle(t, s)

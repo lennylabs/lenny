@@ -30,9 +30,9 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	if req.GetCheckpointId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "Resume requires a checkpoint id")
 	}
-	if s.WorkspaceRoot == "" || s.Runtime == nil {
+	if s.WorkspaceBase == "" || s.Runtime == nil {
 		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root and runtime")
+			"adapter is not configured with a workspace base and runtime")
 	}
 	// spec: §10.1.7 — the gateway resolves the checkpoint's chunk
 	// set and hands the adapter one presigned single-key GET capability per
@@ -102,7 +102,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// the workspace under workspace.WorkspacePrefix and the §6.4
 	// /sessions session file under workspace.SessionsPrefix. A resume that
 	// carries no chunks (conversation-only) restores nothing.
-	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
+	restored, extractErr := s.restoreChunks(ctx, sessionID, req.GetChunks())
 	if extractErr != nil {
 		s.releaseSessionSlot(sessionID)
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
@@ -158,17 +158,26 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 
 // restoreChunks fetches each presigned GET capability in ascending index
 // order, concatenates the chunk bodies into one byte stream, and extracts
-// the checkpoint bundle into the checkpoint roots. It returns the
-// uncompressed bytes restored. An empty chunk set restores nothing (a
+// the checkpoint bundle into the named session's checkpoint roots. It
+// returns the uncompressed bytes restored. An empty chunk set restores nothing (a
 // conversation-only or coordinator-handoff resume), which is not an error.
 //
 // spec: §10.1.7 — the concatenation of all chunks in index order is
 // consumed as a single tar (or tar.gz) stream fed end-to-end into one
 // decompress→untar pipeline; chunk boundaries are never parsed in
 // isolation.
-func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGrant) (int64, error) {
+func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*adapterv1.ChunkGrant) (int64, error) {
 	if len(chunks) == 0 {
 		return 0, nil
+	}
+	// spec: §6.4 — the restore replays into the resuming session's own
+	// slot tree, `/workspace/slots/{sessionId}/current` and
+	// `/sessions/{sessionId}`, resolved from the identifier the
+	// ResumeRequest names. Extracting into a pod-global root would
+	// discard the restore on every pod under the uniform layout.
+	roots, err := s.checkpointRootsForSession(sessionID)
+	if err != nil {
+		return 0, err
 	}
 	ordered := make([]*adapterv1.ChunkGrant, len(chunks))
 	copy(ordered, chunks)
@@ -192,7 +201,7 @@ func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGra
 		_ = pw.Close()
 	}()
 
-	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), pr)
+	restored, extractErr := workspace.ExtractTree(roots, pr)
 	_ = pr.Close()
 	return restored, extractErr
 }

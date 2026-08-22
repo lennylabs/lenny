@@ -188,11 +188,10 @@ func ssIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	srv := adapter.New("singleshot-test")
-	// Set the full §6.4 root layout, not just the whole-pod WorkspaceRoot, so
-	// the per-slot materialization path (WorkspaceBase/slots/{slotId}) the
-	// concurrent-workspace bind drives has a real tree to write into.
+	// Set the full §6.4 root layout so the per-slot materialization path
+	// (WorkspaceBase/slots/{sessionId}) every bind drives has a real tree
+	// to write into.
 	base := t.TempDir()
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")

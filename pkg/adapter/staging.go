@@ -306,8 +306,8 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 // RunSetup executes the §14 WorkspacePlan setup commands against the
 // materialized workspace. It is the third RPC of the §4.7 session
 // assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-// StartSession): the workspace has already been materialized into
-// WorkspaceRoot by the time RunSetup runs, so this RPC neither claims
+// StartSession): the workspace has already been materialized into the
+// session's §6.4 slot cwd by the time RunSetup runs, so this RPC neither claims
 // the session nor touches pod assignment state. The §5.1 setupPolicy in
 // the request bounds the aggregate setup phase. The response carries
 // the per-command setup output the §7.5 contract

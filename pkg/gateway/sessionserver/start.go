@@ -3258,6 +3258,16 @@ func (s *Server) persistPodAssignment(ctx context.Context, tenantID, sessionID, 
 	}
 }
 
+// maxConcurrentSessions normalizes a pool's sessionPolicy bound to a
+// minimum of 1, so a pool that records none reads as the exclusive
+// default rather than as an invalid reservation request. spec: §5.2.
+func maxConcurrentSessions(bound int32) int32 {
+	if bound < 1 {
+		return 1
+	}
+	return bound
+}
+
 // persistWorkspaceRoot derives the session's §6.4 slot root,
 // `<base>/slots/{sessionId}/current`, from the workspace base the adapter
 // reported and records it on the session row at the first non-empty bind.
@@ -3923,6 +3933,12 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// (legacy row, adapter on an older protocol) disables the
 		// assertion on the adapter side. F-7.3.15.
 		ExpectedWorkspaceRoot: row.WorkspaceRoot,
+		// spec: §5.2 — the resume reserves one counted slot on the
+		// replacement pod on the pools the start path reserves one on, and
+		// delivers the pool's uptime cap onto that pod. Normalize the bound
+		// to a minimum of 1: Binder.Resume scopes the reservation on it.
+		MaxConcurrentSessions: maxConcurrentSessions(match.MaxConcurrentSessions),
+		MaxPodUptimeSeconds:   match.MaxPodUptimeSeconds,
 		Chunks:                chunks,
 	})
 	if err != nil {

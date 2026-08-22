@@ -352,11 +352,12 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 // materializes the given §14 WorkspacePlan (raw JSON, e.g.
 // `{"schemaVersion":1,"sources":[{"type":"inlineFile","path":"marker.txt",
 // "content":"...","mode":"0644"}]}`) into the claimed pod's
-// /workspace/current at session start. A nil plan omits the field
+// own slot cwd, /workspace/slots/{sessionId}/current, at session start.
+// A nil plan omits the field
 // entirely, identical to CreateAndStart. Used by a test that needs to
 // place content into a real pod's workspace without shelling into a
 // distroless runtime image (the adapter, not the caller, owns
-// /workspace/current, so this is the only write path a client has).
+// the slot tree, so this is the only write path a client has).
 func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRef string, workspacePlan json.RawMessage) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime

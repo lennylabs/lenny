@@ -53,8 +53,13 @@ func main() {
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
-	workspaceRoot := flag.String("workspace-root", "/workspace/current",
-		"directory the session workspace is materialized into")
+	// spec: §6.4 — every session on every pod owns a per-slot tree under
+	// the workspace base, `<base>/slots/{sessionId}/current/` for its cwd
+	// and `<base>/slots/{sessionId}/staging/` for its uploads. The
+	// embedded runtime is the adapter, so it parses the same base the
+	// controller renders onto the runtime container's argv.
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}` trees nest under")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them")
@@ -85,7 +90,7 @@ func main() {
 	}
 
 	adapterSrv := adapter.New(version)
-	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.WorkspaceBase = *workspaceBase
 	adapterSrv.StagingDir = *stagingDir
 	adapterSrv.CredentialsDir = *credentialsDir
 	adapterSrv.ManifestDir = *credentialsDir

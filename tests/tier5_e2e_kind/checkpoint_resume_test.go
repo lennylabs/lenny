@@ -237,14 +237,17 @@ func TestCheckpointOnPodLossResumesWorkspace(t *testing.T) {
 	t.Logf("session %s resumed onto pod %s with resumeMode=%q workspaceLost=%v",
 		sess.ID, resumed.PodAssignment, mode, lost)
 
-	// The marker file the checkpoint captured must be present on the fresh pod's
-	// restored workspace.
+	// The marker file the checkpoint captured must be present on the fresh
+	// pod's restored workspace. spec: §6.4 — the restore replays into the
+	// resuming session's own slot tree, so the marker lands at
+	// /workspace/slots/{sessionId}/current and no pod-global path holds it.
+	slotMarker := "/workspace/slots/" + sess.ID + "/current/resume-marker.txt"
 	listing := execDebugContainer(t, c, resumed.PodAssignment, []string{
-		"sh", "-c", "cat /workspace/current/resume-marker.txt 2>&1",
+		"sh", "-c", "cat " + slotMarker + " 2>&1",
 	})
 	if !strings.Contains(listing, marker) {
-		t.Errorf("pod %s: /workspace/current/resume-marker.txt does not contain %q after resume; the "+
-			"checkpointed workspace was not restored onto the fresh pod:\n%s", resumed.PodAssignment, marker, listing)
+		t.Errorf("pod %s: %s does not contain %q after resume; the checkpointed workspace was not "+
+			"restored onto the fresh pod:\n%s", resumed.PodAssignment, slotMarker, marker, listing)
 	}
 }
 

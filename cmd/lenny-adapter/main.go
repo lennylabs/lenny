@@ -38,7 +38,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -114,8 +113,10 @@ func main() {
 	keyFile := flag.String("tls-key-file", "", "path to the adapter server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
-	workspaceRoot := flag.String("workspace-root", "/workspace/current",
-		"directory the session workspace is materialized into")
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}/{current,staging}` "+
+			"trees nest under; each session's workspace is materialized into its own "+
+			"slot tree under this base")
 	sessionsRoot := flag.String("sessions-root", "/sessions",
 		"§6.4 /sessions tmpfs the runtime writes its session file into; "+
 			"bundled into the §4.4 checkpoint and restored on §7.3 resume "+
@@ -262,14 +263,13 @@ func main() {
 	)
 
 	adapterSrv := adapter.New(version)
-	adapterSrv.WorkspaceRoot = *workspaceRoot
-	// §6.4: the per-slot `slots/{slotId}` workspace and
-	// `/artifacts/{slotId}` trees nest under the parent of --workspace-root
+	// §6.4: the per-session `slots/{sessionId}` workspace and
+	// `/artifacts/{sessionId}` trees nest under --workspace-base
 	// (production /workspace) and --artifacts-root (production /artifacts).
 	// These roots feed slotlayout.Resolve, which gates per-slot tree
-	// construction on each being non-empty; they are set unconditionally
-	// so a slotId-bearing frame always materializes its per-slot tree.
-	adapterSrv.WorkspaceBase = filepath.Dir(*workspaceRoot)
+	// construction on each being non-empty; the layout is uniform across
+	// pool concurrencies, so every session resolves its root from the base.
+	adapterSrv.WorkspaceBase = *workspaceBase
 	adapterSrv.ArtifactsRoot = *artifactsRoot
 	adapterSrv.SessionsRoot = *sessionsRoot
 	adapterSrv.StagingDir = *stagingDir
@@ -309,7 +309,7 @@ func main() {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
 	adapterSrv.SharedAssets = parsedShared
-	// §6.1: /workspace/current and the staging area must exist before the
+	// §6.1: /workspace/slots and the staging area must exist before the
 	// pod is claimed. The pod spec mounts one emptyDir at /workspace, so
 	// create the subdirectories at startup rather than lazily at claim time.
 	// §6.4: the same step materializes /workspace/shared read-only.
@@ -336,7 +336,7 @@ func main() {
 	adapterSrv.CredentialsDir = *credentialsDir
 	// §5.2 whole-pod scrub: wire the recycle-scrub driver's host operations so
 	// a session-mode recycle actually scrubs the pod. The scrub reads its
-	// credential and workspace paths from CredentialsDir and WorkspaceRoot set
+	// credential and workspace paths from CredentialsDir and WorkspaceBase set
 	// above.
 	adapterSrv.ScrubOps = newScrubOps()
 	// §15.4: the adapter manifest is written into /run/lenny alongside

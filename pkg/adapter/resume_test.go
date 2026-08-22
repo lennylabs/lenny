@@ -131,7 +131,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	if len(rt.started) != 1 || rt.started[0] != "sess-1" {
 		t.Errorf("runtime started for %v, want [sess-1]", rt.started)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "restored.txt"))
 	if err != nil {
 		t.Fatalf("the checkpoint workspace was not restored: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "multi.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "multi.txt"))
 	if err != nil {
 		t.Fatalf("the concatenated checkpoint workspace was not restored: %v", err)
 	}
@@ -190,12 +190,13 @@ func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	// The workspace tree restored to WorkspaceRoot.
-	if got, err := os.ReadFile(filepath.Join(root, "work/file.txt")); err != nil || string(got) != "ws" {
+	// The workspace tree restored to the session's own slot cwd.
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "work/file.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
-	// The session file restored to SessionsRoot — the §7.3 step (f) path.
-	got, err := os.ReadFile(filepath.Join(sessionsRoot, ".session.json"))
+	// The session file restored to the session's own /sessions/{sessionId}
+	// tree — the §7.3 step (f) path. spec: §6.4.
+	got, err := os.ReadFile(filepath.Join(sessionsRoot, "sess-1", ".session.json"))
 	if err != nil {
 		t.Fatalf("the session file was not restored to /sessions: %v", err)
 	}
@@ -223,7 +224,7 @@ func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) 
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(root, "only.txt")); err != nil || string(got) != "ws" {
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "only.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
 	if n := countFiles(t, sessionsRoot); n != 0 {

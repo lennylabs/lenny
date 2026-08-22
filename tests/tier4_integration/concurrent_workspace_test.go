@@ -22,7 +22,7 @@
 // The flow asserts the two properties the proposal names. First, workspace
 // distinctness: each slot's FinalizeWorkspace materializes its own content
 // into its own per-slot tree, and neither slot's file leaks into the other's
-// workspace or into the whole-pod /workspace/current. Second, per-slot
+// workspace or into a pod-global /workspace/current. Second, per-slot
 // response slotId tagging: a message dispatched on one slot's Attach stream
 // comes back tagged with that slot's slotId, and each Attach stream receives
 // only its slot's responses, proving the adapter stamps the inbound slotId
@@ -87,7 +87,7 @@ type slot struct {
 // regressed end to end across the gateway->adapter->runtime path. Either two
 // sessions on a maxConcurrentSessions > 1 pod did not land in distinct slots
 // with isolated workspaces (one slot's file leaked into the other's tree or
-// into the whole-pod /workspace/current), or the per-slot response was not
+// into a pod-global /workspace/current), or the per-slot response was not
 // tagged with its originating slotId (the adapter failed to stamp the
 // inbound slotId or to demultiplex the single runtime connection's
 // interleaved output by slotId).
@@ -153,12 +153,12 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 
 // assertWorkspaceDistinctness materializes a distinct marker file into each
 // slot's per-slot workspace and asserts that each slot's tree holds only its
-// own content, that no slot's file leaked into a sibling's tree, and that the
-// whole-pod /workspace/current was never used. This pins the §6.4 per-slot
-// layout: each slot's cwd is /workspace/slots/{slotId}/current/, not a shared
-// /workspace/current.
+// own content, that no slot's file leaked into a sibling's tree, and that no
+// pod-global /workspace/current appears. This pins the §6.4 per-slot layout:
+// a session's cwd is /workspace/slots/{sessionId}/current/ on every pod
+// whatever the pool's concurrency, and the pod-global path exists nowhere.
 //
-// spec: §6.4 — per-slot workspace /workspace/slots/{slotId}/,
+// spec: §6.4 — per-slot workspace /workspace/slots/{sessionId}/;
 // the runtime MUST NOT assume a global /workspace/current.
 func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapterv1.AdapterClient, srv *adapter.Server, slots []slot) {
 	t.Helper()
@@ -190,10 +190,13 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 				sl.slotID, got, content[sl.slotID])
 		}
 	}
-	// The whole-pod /workspace/current must never have been written: a
-	// concurrent-workspace pod has no shared current cwd.
-	if _, err := os.Stat(filepath.Join(srv.WorkspaceBase, "current", "marker.txt")); !os.IsNotExist(err) {
-		t.Errorf("whole-pod /workspace/current was written; concurrent slots are not isolated (err=%v)", err)
+	// The pod-global /workspace/current is retired on every pool class, so
+	// the directory itself must be absent rather than merely unwritten. The
+	// property it protects, that a materialization never lands outside the
+	// requesting session's own tree, outlives the concurrency condition the
+	// assertion was first written under.
+	if _, err := os.Stat(filepath.Join(srv.WorkspaceBase, "current")); !os.IsNotExist(err) {
+		t.Errorf("pod-global /workspace/current exists (err=%v); §6.4 retires the path on every pod", err)
 	}
 }
 

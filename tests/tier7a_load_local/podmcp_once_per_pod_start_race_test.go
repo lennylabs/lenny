@@ -94,7 +94,6 @@ func mcpRacePod(t *testing.T) *adapter.Server {
 	base := t.TempDir()
 	s := adapter.New("test")
 	s.WorkspaceBase = filepath.Join(base, "workspace")
-	s.WorkspaceRoot = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
 	s.ArtifactsRoot = filepath.Join(base, "artifacts")
 	s.CredentialsDir = filepath.Join(base, "run", "lenny")

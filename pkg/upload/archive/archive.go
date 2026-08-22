@@ -33,11 +33,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/upload"
 )
 
-// DefaultWorkspaceRoot is the §13.4 canonical workspace root symlink
-// targets are validated against when the per-Runtime ArchivePolicy does
-// not name one. spec: §7.4; §13.4.
-const DefaultWorkspaceRoot = "/workspace/current"
-
 // StripComponentsSkipCode is the §14 closed-enum WarningCode for the
 // §7.4
 // advisory. It matches pkg/workspaceplan.WarnStripComponentsSkip so the

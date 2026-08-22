@@ -574,6 +574,76 @@ func (c *SlotClaimer) podClaim(ctx context.Context, sandboxName string) (*lennyv
 	return &claim, true, nil
 }
 
+// ReserveSlotOnPod reserves one counted slot for the request's session on
+// a named pod the caller has already acquired, skipping the pool scan
+// ClaimSlot performs. The §7.1 resume takes this entry point: its pod
+// arrives from the whole-pod claim the resume's connect already created,
+// so a pool scan would increment the counter on a different pod than the
+// one the session resumes onto and the compensating release would have no
+// way to name it.
+//
+// It never creates a per-pod claim. The live claim connect created is the
+// claim the reservation runs against; a claim that is absent, or whose
+// phase is terminal because a concurrent orphan-GC reclaim ran in the
+// window since connect, is an error rather than a fresh acquisition, so
+// the call fails closed before touching the counter and the caller
+// compensates nothing.
+//
+// A pod already at its maxConcurrentSessions bound yields
+// ErrNoConcurrentSlot: the pod is fixed, so there is no next candidate to
+// move to. The caller retries the whole resume on a fresh pod.
+//
+// spec: §5.2 (atomic slot reservation, tenant pinning), §7.1 (resume onto
+// a replacement pod).
+func (c *SlotClaimer) ReserveSlotOnPod(ctx context.Context, sandboxName string, req SlotRequest) (*SlotResult, error) {
+	// The refusals ClaimSlot states in its own body, restated here because
+	// reserveSlot opens with c.Counter.Reserve and no nil test: a nil
+	// counter would panic the gateway where every other counter-touching
+	// entry point fails closed.
+	if req.MaxConcurrentSessions < 1 {
+		return nil, fmt.Errorf("podclaim: maxConcurrentSessions must be >= 1, got %d", req.MaxConcurrentSessions)
+	}
+	if c.Counter == nil {
+		return nil, errors.New("podclaim: slot counter is required for concurrent-session slot assignment")
+	}
+
+	sb, err := c.sandbox(ctx, sandboxName)
+	if err != nil {
+		return nil, err
+	}
+	claim, found, err := c.podClaim(ctx, sandboxName)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("podclaim: pod %s holds no per-pod claim to reserve a slot against", sandboxName)
+	}
+	// podClaim filters no phase, so the terminal test is this function's
+	// own condition rather than a consequence of the read.
+	if claimstate.IsTerminal(claimstate.State(claim.Status.Phase)) {
+		return nil, fmt.Errorf("podclaim: per-pod claim for %s is terminal (phase %s)",
+			sandboxName, claim.Status.Phase)
+	}
+
+	res, conflict, err := c.reserveSlot(ctx, sb, claim, req, false)
+	if err != nil {
+		return nil, err
+	}
+	if conflict {
+		return nil, ErrNoConcurrentSlot
+	}
+	return res, nil
+}
+
+// sandbox reads the named Sandbox in the claimer's agent namespace.
+func (c *SlotClaimer) sandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, error) {
+	var sb lennyv1.Sandbox
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &sb); err != nil {
+		return nil, fmt.Errorf("podclaim: get sandbox %s: %w", sandboxName, err)
+	}
+	return &sb, nil
+}
+
 // reserveSlot reserves one Redis-counter slot on sb for the request and, on
 // a fresh acquisition, CREATEs the per-pod claim and writes its first
 // `bound` status. existing is the live per-pod claim on a Pass-1 placement
@@ -651,8 +721,13 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// §13.2 NET-003 NetworkPolicies select. Best-effort: a missing pod is
 	// tolerated and the next assignment re-stamps it.
 	if err := stampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
+		// spec: §5.2 — Counter.Reserve has already incremented
+		// lenny:pod:{pod_id}:active_slots, so a reservation that fails here
+		// retains no increment on either arm. The claim DELETE stays
+		// fresh-only: a non-fresh reservation did not create the claim and
+		// must not delete the one its caller holds.
+		_, _ = c.Counter.Release(ctx, sb.Name)
 		if freshPod {
-			_, _ = c.Counter.Release(ctx, sb.Name)
 			_ = c.Client.Delete(ctx, claim)
 		}
 		return nil, false, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
@@ -670,8 +745,11 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// present in production, so the controller's uptime check stays disabled and
 	// the §5.2 maxPodUptimeSeconds drain never fires.
 	if err := StampMaxPodUptime(ctx, c.Client, sb.Namespace, sb.Name, req.MaxPodUptimeSeconds); err != nil {
+		// spec: §5.2 — as on the tenant-stamp branch above, the counter
+		// increment is undone unconditionally while the claim DELETE stays
+		// fresh-only.
+		_, _ = c.Counter.Release(ctx, sb.Name)
 		if freshPod {
-			_, _ = c.Counter.Release(ctx, sb.Name)
 			_ = c.Client.Delete(ctx, claim)
 		}
 		return nil, false, fmt.Errorf("stamp max-pod-uptime on pod %s: %w", sb.Name, err)

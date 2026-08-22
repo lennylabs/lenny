@@ -346,7 +346,6 @@ func raceAdapter(t *testing.T) (*adapter.Server, *raceRuntime, *raceForwarder, a
 	t.Helper()
 	base := t.TempDir()
 	s := adapter.New("test")
-	s.WorkspaceRoot = filepath.Join(base, "workspace-root")
 	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
 	s.ArtifactsRoot = filepath.Join(base, "artifacts")

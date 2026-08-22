@@ -218,7 +218,6 @@ func sessionServer(t *testing.T) (*adapter.Server, *fakeRuntime, string) {
 	rt := &fakeRuntime{}
 	s := adapter.New("test")
 	s.WorkspaceBase = base
-	s.WorkspaceRoot = base
 	s.Runtime = rt
 	return s, rt, base
 }
@@ -467,7 +466,7 @@ func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
 func TestStartSessionReleasesPodOnRuntimeFailure(t *testing.T) {
 	root := t.TempDir()
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Runtime = &fakeRuntime{startErr: errors.New("runtime crashed")}
 
 	_, err := s.StartSession(context.Background(), startReq("sess-1"))

@@ -14,6 +14,21 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
+// exportServer builds an adapter Server on a fresh workspace base with the
+// slot tree for the exporting session already assigned, and returns the
+// server together with that session's `slots/{sessionId}/current` root.
+// ExportPaths resolves per session under §6.4, so a server with no slot
+// for the session has no root to export from.
+func exportServer(t *testing.T) (*Server, string) {
+	t.Helper()
+	s := &Server{WorkspaceBase: t.TempDir()}
+	paths, err := s.ensureSlotPaths("sess-1")
+	if err != nil {
+		t.Fatalf("assign slot: %v", err)
+	}
+	return s, paths.Current
+}
+
 func writeWorkspaceFile(t *testing.T, root, rel, content string) {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(rel))
@@ -44,13 +59,12 @@ func filesByPath(resp *adapterv1.ExportPathsResponse) map[string]*adapterv1.Expo
 // the glob base path is stripped and matched files are re-rooted under
 // destPrefix.
 func TestExportPathsRebasing_Spec87(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	writeWorkspaceFile(t, root, "exports/export1/foo.ts", "foo")
 	writeWorkspaceFile(t, root, "exports/export1/lib/bar.ts", "bar")
 	writeWorkspaceFile(t, root, "src/auth.ts", "auth")
 	writeWorkspaceFile(t, root, "results.json", "{}")
 
-	s := &Server{WorkspaceRoot: root}
 	resp, err := s.ExportPaths(context.Background(), exportReq(
 		&adapterv1.ExportSpec{Source: "./exports/export1/*"},
 		&adapterv1.ExportSpec{Source: "./src/*", DestPrefix: "project/src/"},
@@ -92,9 +106,8 @@ func TestExportPathsRebasing_Spec87(t *testing.T) {
 // TestExportPathsLiteralNestedFile confirms a literal nested source
 // strips its directory, leaving the file at the child root.
 func TestExportPathsLiteralNestedFile(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	writeWorkspaceFile(t, root, "config/child-config.json", "cfg")
-	s := &Server{WorkspaceRoot: root}
 	resp, err := s.ExportPaths(context.Background(), exportReq(
 		&adapterv1.ExportSpec{Source: "./config/child-config.json", DestPrefix: ""},
 	))
@@ -110,10 +123,9 @@ func TestExportPathsLiteralNestedFile(t *testing.T) {
 // TestExportPathsLastWriteWins covers the §8.7 overlap rule: later
 // exports overwrite earlier ones on path collision.
 func TestExportPathsLastWriteWins(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	writeWorkspaceFile(t, root, "a/shared.txt", "first")
 	writeWorkspaceFile(t, root, "b/shared.txt", "second")
-	s := &Server{WorkspaceRoot: root}
 	resp, err := s.ExportPaths(context.Background(), exportReq(
 		&adapterv1.ExportSpec{Source: "./a/*"},
 		&adapterv1.ExportSpec{Source: "./b/*"},
@@ -130,7 +142,7 @@ func TestExportPathsLastWriteWins(t *testing.T) {
 // TestExportPathsRejectsSymlinkEscape covers the §8.7 validation rule:
 // a matched file whose realpath leaves the workspace is rejected.
 func TestExportPathsRejectsSymlinkEscape(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	outside := filepath.Join(t.TempDir(), "secret")
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
 		t.Fatalf("write outside: %v", err)
@@ -141,7 +153,6 @@ func TestExportPathsRejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "exports", "leak")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	s := &Server{WorkspaceRoot: root}
 	_, err := s.ExportPaths(context.Background(), exportReq(
 		&adapterv1.ExportSpec{Source: "./exports/*"},
 	))
@@ -153,9 +164,8 @@ func TestExportPathsRejectsSymlinkEscape(t *testing.T) {
 // TestExportPathsRejectsBadDestPrefix covers the §8.7 destPrefix
 // validation: absolute or escaping prefixes are rejected.
 func TestExportPathsRejectsBadDestPrefix(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	writeWorkspaceFile(t, root, "f.txt", "x")
-	s := &Server{WorkspaceRoot: root}
 	for _, prefix := range []string{"/abs", "../escape", ".."} {
 		_, err := s.ExportPaths(context.Background(), exportReq(
 			&adapterv1.ExportSpec{Source: "./f.txt", DestPrefix: prefix},
@@ -169,7 +179,7 @@ func TestExportPathsRejectsBadDestPrefix(t *testing.T) {
 // TestExportPathsRejectsNonRegularFile covers the §8.7/§13.4 rule that
 // only regular files cross the export boundary.
 func TestExportPathsRejectsNonRegularFile(t *testing.T) {
-	root := t.TempDir()
+	s, root := exportServer(t)
 	if err := os.MkdirAll(filepath.Join(root, "d"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -177,7 +187,6 @@ func TestExportPathsRejectsNonRegularFile(t *testing.T) {
 	if err := makeFIFO(fifo); err != nil {
 		t.Skipf("mkfifo unsupported: %v", err)
 	}
-	s := &Server{WorkspaceRoot: root}
 	_, err := s.ExportPaths(context.Background(), exportReq(
 		&adapterv1.ExportSpec{Source: "./d/*"},
 	))
@@ -187,7 +196,7 @@ func TestExportPathsRejectsNonRegularFile(t *testing.T) {
 }
 
 func TestExportPathsRequiresSessionAndRoot(t *testing.T) {
-	s := &Server{WorkspaceRoot: t.TempDir()}
+	s, _ := exportServer(t)
 	if _, err := s.ExportPaths(context.Background(),
 		&adapterv1.ExportPathsRequest{}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("missing session err = %v, want InvalidArgument", err)
@@ -196,6 +205,53 @@ func TestExportPathsRequiresSessionAndRoot(t *testing.T) {
 	if _, err := noRoot.ExportPaths(context.Background(),
 		exportReq()); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("missing root err = %v, want FailedPrecondition", err)
+	}
+}
+
+// TestExportPathsResolvesTheRequestingSessionsSlotRoot_spec_6_4 pins the
+// §6.4 uniform per-slot layout on the export path: the handler resolves
+// `/workspace/slots/{sessionId}/current` for the session the request
+// names, so a co-tenant session's files on the same pod are never
+// reachable and a session with no slot on the pod is refused. The
+// pod-global root this replaced returned one directory for every caller,
+// so both assertions below passed content across the session boundary.
+// spec: 6.4 (per-slot workspace layout), 8.7 (file export model)
+func TestExportPathsResolvesTheRequestingSessionsSlotRoot_spec_6_4(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	mine, err := s.ensureSlotPaths("sess-1")
+	if err != nil {
+		t.Fatalf("assign slot for sess-1: %v", err)
+	}
+	theirs, err := s.ensureSlotPaths("sess-2")
+	if err != nil {
+		t.Fatalf("assign slot for sess-2: %v", err)
+	}
+	writeWorkspaceFile(t, mine.Current, "out/mine.txt", "mine")
+	writeWorkspaceFile(t, theirs.Current, "out/theirs.txt", "theirs")
+
+	resp, err := s.ExportPaths(context.Background(), exportReq(
+		&adapterv1.ExportSpec{Source: "./out/*"},
+	))
+	if err != nil {
+		t.Fatalf("ExportPaths: %v", err)
+	}
+	got := filesByPath(resp)
+	if len(got) != 1 {
+		t.Fatalf("exported %v, want only sess-1's own file", keys(got))
+	}
+	if _, ok := got["mine.txt"]; !ok {
+		t.Fatalf("exported %v, want mine.txt", keys(got))
+	}
+
+	// A session the slot registry does not hold has no workspace on this
+	// pod, so the export fails closed rather than falling back to a
+	// pod-global tree.
+	_, err = s.ExportPaths(context.Background(), &adapterv1.ExportPathsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-unbound"},
+		Exports:   []*adapterv1.ExportSpec{{Source: "./out/*"}},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("unbound-session export err = %v, want FailedPrecondition", err)
 	}
 }
 

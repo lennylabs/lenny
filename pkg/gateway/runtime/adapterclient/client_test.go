@@ -882,7 +882,6 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 	const chunkURL = "https://objectstore.example/chunk-0"
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceBase = t.TempDir()
-	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = &fakeRuntime{}
 	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
@@ -929,7 +928,6 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	chunks := []adapterclient.ChunkGrant{{Index: 0, URL: chunkURL, Length: int64(archived.Len())}}
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceBase = t.TempDir()
-	srv.WorkspaceRoot = srv.WorkspaceBase
 	srv.Runtime = &fakeRuntime{}
 	srv.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl := dialAdapter(t, srv)
@@ -955,7 +953,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	// Pre-extraction refusal: expected_bytes above the limit must
 	// fail with FailedPrecondition before any extraction work begins.
 	srv2 := adapter.New("adapter-test-build")
-	srv2.WorkspaceRoot = t.TempDir()
+	srv2.WorkspaceBase = t.TempDir()
 	srv2.Runtime = &fakeRuntime{}
 	srv2.CheckpointTransport = stubChunkTransport{url: chunkURL, archive: archived.Bytes()}
 	cl2 := dialAdapter(t, srv2)

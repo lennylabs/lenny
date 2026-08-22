@@ -102,7 +102,7 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 
 	root := t.TempDir()
 	s := adapter.New("contract")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Lifecycle = lc
 	// The production assembly: set the UsageMeter and the token sink the
 	// lifecycle read loop folds llm_request_completed counts into. Before

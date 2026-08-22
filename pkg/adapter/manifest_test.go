@@ -59,7 +59,7 @@ func TestWriteManifestModeIsGroupReadableNotWorldReadable(t *testing.T) {
 
 func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-t"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 
 func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 
 	readNonce := func() string {
 		if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-n"}); err != nil {
@@ -120,7 +120,7 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 
 func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 
 	// A Basic-level adapter has no CH-RUNTIMEOPS; the manifest omits
 	// the runtimeOps object entirely.
@@ -260,7 +260,7 @@ func TestWriteManifestWithExperimentContext(t *testing.T) {
 
 func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 	// An adapter with no ManifestDir writes nothing.
-	srv := &Server{WorkspaceRoot: "/workspace/current"}
+	srv := &Server{WorkspaceBase: "/workspace"}
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-x"}); err != nil {
 		t.Errorf("writeSessionManifest with no ManifestDir = %v, want nil", err)
 	}
@@ -268,7 +268,7 @@ func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 
 func TestWriteSessionManifestWrites(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 	if _, err := srv.writeSessionManifest(manifestInputs{
 		sessionID: "sess-y",
 		experimentContext: &adapterv1.ExperimentContext{
@@ -299,7 +299,7 @@ func TestWriteSessionManifestWrites(t *testing.T) {
 // spec: §7.2 (session/task 1:1), §4.7 (per-session manifest)
 func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-frozen"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
 // spec: §7.2 (session/task 1:1), §4.7 (per-session manifest regen)
 func TestWriteSessionManifestTaskIDStableAcrossRegeneration(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 	in := manifestInputs{sessionID: "sess-r"}
 	for i := 0; i < 3; i++ {
 		if _, err := srv.writeSessionManifest(in); err != nil {
