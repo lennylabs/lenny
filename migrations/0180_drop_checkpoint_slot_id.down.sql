@@ -9,9 +9,8 @@
 -- adapter reports and re-persisted at the next handshake, so leaving it alone
 -- costs nothing (§6.4, §7.3 step (d)).
 --
--- The collapse of duplicate active partial rows is likewise not reversed: the
--- superseded rows stay soft-deleted, which is a state the §10.1.7 supersede
--- rule produces on its own.
+-- The forward file's uniqueness gate reads without writing, so there is
+-- nothing on that side to reverse.
 --
 -- spec: §4.9, §6.4, §7.3, §10.1, §12.5.
 

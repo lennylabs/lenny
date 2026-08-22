@@ -254,37 +254,35 @@ func TestDropCheckpointSlotIDUpIsIdempotent_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: 10.1 (the at-most-one-active-partial invariant and the supersede rule
-// that resolves a session holding more than one active partial row), 4.9 (the
-// unique index is re-keyed on session_id alone)
-// diagnosis: migration 0180 aborted, or collapsed the wrong row, on a session
+// spec: 10.1 (the at-most-one-active-partial invariant, which the re-keyed
+// unique index expresses on session_id alone), 11.2 (a reservation is released
+// exactly once through the guarded release, which SQL alone cannot issue),
+// 12.5 (the backstop reclaim sees only rows that are still active)
+// diagnosis: migration 0180 did not refuse a schema in which one session holds
 //
-//	that carried two active partial rows under distinct slot_id values. The
-//	pre-drop unique index was scoped on (session_id, slot_id), so that state is
-//	one the platform produces: a crashed attempt at the 'default' sentinel is
-//	never superseded by a later attempt that writes slot_id = session_id. Both
-//	rows pass the Phase 3 gate, so without the collapse the re-keyed unique
-//	index fails with a bare unique violation and the migration is unappliable
-//	until an operator clears the duplicates by hand. The survivor is the
-//	highest (coordination_generation, created_at) row, which is what
-//	supersede-on-write selects.
-func TestDropCheckpointSlotIDCollapsesDuplicateActivePartials_spec_10_1(t *testing.T) {
+//	more than one active partial checkpoint_manifest row. The pre-drop unique
+//	index was scoped on (session_id, slot_id), so that state is one the platform
+//	produces: a crashed attempt at the 'default' sentinel is never superseded by
+//	a later attempt that writes slot_id = session_id, and both rows pass the
+//	Phase 3 column gates. The re-keyed index admits one such row per session, so
+//	the migration has to resolve the duplicate before creating it. Retiring the
+//	extra attempt is not a soft-delete: the reservation release is guarded on
+//	reservation_released_at and the attempt's confirmed chunk objects and their
+//	artifact_store rows have to be released, and once deleted_at is stamped the
+//	§12.5 backstop can no longer reach the row. A migration that soft-deletes
+//	the duplicate therefore leaks the attempt's reserved bytes and orphans its
+//	chunk objects permanently, which is why this case asserts that the migration
+//	refuses and leaves every row exactly as it found it.
+func TestDropCheckpointSlotIDRefusesDuplicateActivePartials_spec_10_1(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
 	ctx := context.Background()
 
 	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
 
-	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO tenants (id, genesis_nonce) VALUES ('acme', '\x00')`); err != nil {
-		t.Fatalf("seed tenant: %v", err)
-	}
 	const session = "44444444-4444-4444-8444-444444444444"
-	const insertManifest = `INSERT INTO checkpoint_manifest
-		(tenant_id, checkpoint_id, session_id, slot_id, coordination_generation, partial,
-		 chunk_object_key_prefix, chunk_size_bytes, checkpoint_started_at, checkpoint_timeout_at)
-		VALUES ('acme', $1, $2, $3, $4, TRUE, '/acme/checkpoints/', 1048576, now(), now() + interval '1 hour')`
 	var (
 		stale    = "55555555-5555-4555-8555-555555555555"
 		survivor = "66666666-6666-4666-8666-666666666666"
@@ -292,41 +290,124 @@ func TestDropCheckpointSlotIDCollapsesDuplicateActivePartials_spec_10_1(t *testi
 	// The crashed attempt sits at the 'default' sentinel and a lower fenced
 	// generation; the later attempt on a concurrent pod wrote its own session
 	// identifier, so the old (session_id, slot_id) index admitted both.
-	for _, row := range []struct {
-		checkpointID, slotID string
-		generation           int64
-	}{
-		{stale, "default", 1},
-		{survivor, session, 2},
-	} {
-		if err := execTenant(ctx, pg, "acme", insertManifest, row.checkpointID, session, row.slotID, row.generation); err != nil {
-			t.Fatalf("seed manifest row %s: %v", row.checkpointID, err)
+	seedActivePartial(t, ctx, pg, "acme", stale, session, "default", 1)
+	seedActivePartial(t, ctx, pg, "acme", survivor, session, session, 2)
+
+	err := applyDropSlotIDUp(ctx, pg, dir)
+	if err == nil {
+		t.Fatalf("migration 0180 applied against a session holding two active partial rows; want it refused")
+	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want it to name session %s so an operator can retire the extra attempt", err, session)
+	}
+
+	// The refusal rolled the whole migration back, so no row was retired and
+	// no column was dropped.
+	mustHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+	mustHaveColumn(t, ctx, pg, "session_checkpoints", "slot_id")
+	for _, id := range []string{stale, survivor} {
+		if deleted, reason := manifestTombstone(t, ctx, pg, "acme", id); deleted || reason != "in_progress" {
+			t.Errorf("manifest row %s after the refusal: soft-deleted = %v, manifest_reason = %q; want it untouched and %q",
+				id, deleted, reason, "in_progress")
 		}
 	}
 
+	// Retiring the extra attempt through the abort path (its reservation
+	// released and its row soft-deleted) lets the migration through.
+	if err := execTenant(ctx, pg, "acme",
+		`UPDATE checkpoint_manifest SET deleted_at = now(), manifest_reason = 'superseded',
+			reservation_released_at = now()
+			WHERE tenant_id = 'acme' AND checkpoint_id = $1`, stale); err != nil {
+		t.Fatalf("retire the extra attempt: %v", err)
+	}
 	pg.MigrateTo(t, dir, dropSlotIDPriorVersion+1)
+	mustNotHaveColumn(t, ctx, pg, "checkpoint_manifest", "slot_id")
+}
 
-	for _, want := range []struct {
-		checkpointID string
-		deleted      bool
-		reason       string
-	}{
-		{survivor, false, "in_progress"},
-		{stale, true, "superseded"},
-	} {
-		var (
-			deleted bool
-			reason  string
-		)
-		if err := pg.Pool.QueryRow(ctx,
-			`SELECT deleted_at IS NOT NULL, manifest_reason FROM checkpoint_manifest
-				WHERE tenant_id = 'acme' AND checkpoint_id = $1`, want.checkpointID).
-			Scan(&deleted, &reason); err != nil {
-			t.Fatalf("read manifest row %s: %v", want.checkpointID, err)
-		}
-		if deleted != want.deleted || reason != want.reason {
-			t.Errorf("manifest row %s after the collapse: soft-deleted = %v, manifest_reason = %q; want %v and %q",
-				want.checkpointID, deleted, reason, want.deleted, want.reason)
-		}
+// spec: 10.1 (the at-most-one-active-partial invariant), 4.9 (the unique index
+// is re-keyed on session_id alone, with no tenant column)
+// diagnosis: migration 0180's uniqueness gate is keyed on a wider column set
+//
+//	than the index it prepares for. The re-keyed unique index carries no tenant
+//	column, so it admits one active partial row per session_id across every
+//	tenant. A gate that partitions per tenant passes a pair of rows the index
+//	then rejects, and the migration aborts on a bare unique violation that names
+//	nothing an operator can act on instead of on the gate's own message.
+func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_4_9(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+	seedDropSlotIDTenant(t, ctx, pg, "globex")
+
+	const session = "77777777-7777-4777-8777-777777777777"
+	seedActivePartial(t, ctx, pg, "acme", "88888888-8888-4888-8888-888888888888", session, "default", 1)
+	seedActivePartial(t, ctx, pg, "globex", "99999999-9999-4999-8999-999999999999", session, session, 1)
+
+	err := applyDropSlotIDUp(ctx, pg, dir)
+	if err == nil {
+		t.Fatalf("migration 0180 applied against two tenants holding an active partial row for one session; want it refused")
 	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want the gate's message naming session %s rather than a bare unique violation", err, session)
+	}
+	if strings.Contains(err.Error(), "partial_manifest_active_uniq") {
+		t.Errorf("refusal = %v, want the gate to reject the pair before the unique index is created", err)
+	}
+}
+
+// applyDropSlotIDUp applies the drop migration's forward file directly, so a
+// refusal is returned rather than failing the test the way MigrateTo does.
+// The file is one implicit transaction, matching how the migrator applies it.
+func applyDropSlotIDUp(ctx context.Context, pg *containers.Postgres, dir string) error {
+	src, err := os.ReadFile(filepath.Join(dir, dropSlotIDUpFile))
+	if err != nil {
+		return err
+	}
+	_, err = pg.Pool.Exec(ctx, string(src))
+	return err
+}
+
+// seedDropSlotIDTenant inserts the tenant row the seeded manifest rows
+// reference.
+func seedDropSlotIDTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant string) {
+	t.Helper()
+	if _, err := pg.Pool.Exec(ctx,
+		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, tenant); err != nil {
+		t.Fatalf("seed tenant %s: %v", tenant, err)
+	}
+}
+
+// seedActivePartial inserts one active partial manifest row at the pre-drop
+// schema, which still carries slot_id.
+func seedActivePartial(t *testing.T, ctx context.Context, pg *containers.Postgres,
+	tenant, checkpointID, sessionID, slotID string, generation int64,
+) {
+	t.Helper()
+	const insertManifest = `INSERT INTO checkpoint_manifest
+		(tenant_id, checkpoint_id, session_id, slot_id, coordination_generation, partial,
+		 chunk_object_key_prefix, chunk_size_bytes, checkpoint_started_at, checkpoint_timeout_at)
+		VALUES ($1, $2, $3, $4, $5, TRUE, '/checkpoints/', 1048576, now(), now() + interval '1 hour')`
+	if err := execTenant(ctx, pg, tenant, insertManifest, tenant, checkpointID, sessionID, slotID, generation); err != nil {
+		t.Fatalf("seed manifest row %s: %v", checkpointID, err)
+	}
+}
+
+// manifestTombstone reads one manifest row's soft-delete state and reason.
+func manifestTombstone(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, checkpointID string) (bool, string) {
+	t.Helper()
+	var (
+		deleted bool
+		reason  string
+	)
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT deleted_at IS NOT NULL, manifest_reason FROM checkpoint_manifest
+			WHERE tenant_id = $1 AND checkpoint_id = $2`, tenant, checkpointID).
+		Scan(&deleted, &reason); err != nil {
+		t.Fatalf("read manifest row %s: %v", checkpointID, err)
+	}
+	return deleted, reason
 }

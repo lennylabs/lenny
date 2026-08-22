@@ -9,9 +9,9 @@
 -- invariant, and the resume-selection walk are all keyed on session_id alone
 -- after this migration. There is no backfill: no row carries a value worth
 -- preserving. Re-keying the at-most-one-active-partial index does narrow the
--- uniqueness scope, so the migration first collapses each session's
--- pre-existing active partial rows onto one survivor the way supersede-on-
--- write does.
+-- uniqueness scope, so a third gate refuses the migration when any session
+-- holds more than one active partial row, naming the sessions an operator
+-- must retire first.
 --
 -- The migration also rewrites sessions.workspace_root, which recorded the
 -- retired pod-global /workspace/current path. Under the per-slot layout the
@@ -34,9 +34,8 @@
 -- without partially applying it. The whole file is idempotent: the drops are
 -- DROP COLUMN IF EXISTS, every statement that names a dropped column sits
 -- inside an information_schema guard, each re-keyed index is created with
--- IF NOT EXISTS, and the collapse below is a no-op once one active partial
--- row per session is all that remains. A re-run after the gate passes
--- therefore changes nothing.
+-- IF NOT EXISTS, and the uniqueness gate below reads without writing. A
+-- re-run after the gates pass therefore changes nothing.
 
 -- gate-index: idx_session_checkpoints_slot_id_unmigrated
 DO $$
@@ -109,43 +108,46 @@ DROP INDEX IF EXISTS partial_manifest_active_uniq;
 DROP INDEX IF EXISTS idx_checkpoint_manifest_active;
 ALTER TABLE checkpoint_manifest
     DROP COLUMN IF EXISTS slot_id;
--- Collapse the pre-existing active partial rows of each session onto one
--- survivor before the re-keyed unique index lands (§10.1.7 supersede).
+-- Gate the narrowed uniqueness scope: refuse the migration when any session
+-- holds more than one active partial row (§10.1).
 --
 -- The old unique index was scoped on (session_id, slot_id), so one session
--- could legitimately hold two active partial rows under different slot_id
--- values: a crashed attempt that wrote slot_id = 'default' is never superseded
--- by a later attempt on a pod that wrote slot_id = session_id. Both rows pass
--- the gate above, because each value is the table's sentinel or a copy of
+-- could hold two active partial rows under different slot_id values: a
+-- crashed attempt that wrote slot_id = 'default' is never superseded by a
+-- later attempt on a pod that wrote slot_id = session_id. Both rows pass the
+-- gate above, because each value is the table's sentinel or a copy of
 -- session_id, and the re-keyed index would then fail with a bare unique
--- violation that names nothing an operator can act on. The supersede rule
--- already states how the state resolves: the highest
--- (coordination_generation, created_at) row survives and every other active
--- partial row of that session is soft-deleted as superseded, which is what
--- supersede-on-write does for every attempt after this migration.
+-- violation that names nothing an operator can act on.
 --
--- checkpoint_manifest carries the §12.3 tenant-guard trigger, so the
--- cross-tenant rewrite takes the platform sentinel with the explicit opt-in
--- migration 0057 requires. Both settings are SET LOCAL and end with this
--- migration's transaction.
-SET LOCAL lenny.allow_all_sentinel = 'true';
-SET LOCAL app.current_tenant = '__all__';
-WITH survivor AS (
-    SELECT DISTINCT ON (tenant_id, session_id) tenant_id, session_id, checkpoint_id
-    FROM checkpoint_manifest
-    WHERE partial = TRUE AND deleted_at IS NULL
-    ORDER BY tenant_id, session_id, coordination_generation DESC, created_at DESC
-)
-UPDATE checkpoint_manifest m
-    SET deleted_at = now(), manifest_reason = 'superseded'
-    FROM survivor s
-    WHERE m.tenant_id = s.tenant_id
-      AND m.session_id = s.session_id
-      AND m.partial = TRUE
-      AND m.deleted_at IS NULL
-      AND m.checkpoint_id <> s.checkpoint_id;
-SET LOCAL app.current_tenant TO DEFAULT;
-SET LOCAL lenny.allow_all_sentinel TO DEFAULT;
+-- The gate refuses rather than retiring the extra rows itself. Retiring an
+-- active partial attempt is three operations, and only one of them is SQL a
+-- migration can issue: the §11.2 reservation release under the exactly-once
+-- reservation_released_at guard with its tenant storage-counter decrement,
+-- the release of the attempt's confirmed chunk objects and their
+-- artifact_store rows under its chunk_object_key_prefix, and the soft-delete
+-- of the manifest row itself. Soft-deleting alone is terminal: the §12.5
+-- backstop selects partial = TRUE AND deleted_at IS NULL, so no later sweep
+-- reaches a row a migration retired, and its reserved bytes and chunk objects
+-- stay charged to the tenant forever. An operator retires the extra attempt
+-- through the abort path, which performs all three, and then re-runs this
+-- migration. The gate is keyed on session_id alone, the same column set as
+-- the index below, so a duplicate held by two tenants under one session
+-- identifier is refused here rather than surfacing as that unique violation.
+DO $$
+DECLARE duplicated TEXT;
+BEGIN
+    SELECT string_agg(session_id, ', ' ORDER BY session_id) INTO duplicated
+    FROM (
+        SELECT session_id
+        FROM checkpoint_manifest
+        WHERE partial = TRUE AND deleted_at IS NULL
+        GROUP BY session_id
+        HAVING count(*) > 1
+    ) d;
+    IF duplicated IS NOT NULL THEN
+        RAISE EXCEPTION 'Phase 3 gate failed: more than one active partial checkpoint_manifest row for session(s) %. Abort the extra attempts before retrying.', duplicated;
+    END IF;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS partial_manifest_active_uniq
     ON checkpoint_manifest (session_id)
