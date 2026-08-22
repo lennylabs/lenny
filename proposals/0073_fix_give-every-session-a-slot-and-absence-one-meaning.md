@@ -280,7 +280,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
 - [x] **S10 · schema** — SCHEMA-2. The JSONL schema states §4.6.1's population rule on all six session-scoped
       frames, renames `slotId` to `sessionId`, adds the field to `status`, and updates the frame example.
       Depends on: S1
-- [ ] **S11 · schema, code, test** — SCHEMA-1, CODE-1, and REG-1's retirement half. The duplicate `slot_id`
+- [x] **S11 · schema, code, test** — SCHEMA-1, CODE-1, and REG-1's retirement half. The duplicate `slot_id`
       fields come off both gRPC services, the adapter resolves one address through one session check with
       no presence branch, and the register rows the removed fields name, their generator sources, and the
       gate machinery they drive are retired. The three are one step under ordering rule 1. The step also
