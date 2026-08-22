@@ -72,11 +72,14 @@ func revoke(t *testing.T, s *adapter.Server, sessionID string) {
 	}
 }
 
-// platformToolCallOutcome dials the pod's platform MCP socket, presents
-// the nonce, and issues a tools/call. It reports whether the socket was
-// reachable at all, whether the nonce authenticated, and whether the call
-// was answered rather than refused.
-func platformToolCallOutcome(t *testing.T, socket, nonce string) (reachable, authenticated, dispatched bool) {
+// intraPodMCPOutcome dials one of the pod's intra-pod MCP sockets,
+// presents the nonce, and issues the named request. It reports whether the
+// socket was reachable at all, whether the nonce authenticated, and whether
+// the request was answered rather than refused. It is the one probe both
+// the platform socket and the per-connector sockets are read through,
+// because §15.4.3 gives them the same handshake and §9.1 gives them the
+// same session gate.
+func intraPodMCPOutcome(t *testing.T, socket, nonce, method string, params map[string]any) (reachable, authenticated, dispatched bool) {
 	t.Helper()
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
@@ -98,8 +101,7 @@ func platformToolCallOutcome(t *testing.T, socket, nonce string) (reachable, aut
 		return true, false, false
 	}
 	if err := enc.Encode(map[string]any{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]any{"name": privilegedPlatformTool, "arguments": map[string]any{}},
+		"jsonrpc": "2.0", "id": 2, "method": method, "params": params,
 	}); err != nil {
 		return true, true, false
 	}
@@ -110,6 +112,35 @@ func platformToolCallOutcome(t *testing.T, socket, nonce string) (reachable, aut
 	_, isErr := callResp["error"]
 	return true, true, !isErr
 }
+
+// platformToolCallOutcome probes the pod's platform MCP socket with a
+// tools/call for a privileged platform tool.
+func platformToolCallOutcome(t *testing.T, socket, nonce string) (reachable, authenticated, dispatched bool) {
+	t.Helper()
+	return intraPodMCPOutcome(t, socket, nonce, "tools/call",
+		map[string]any{"name": privilegedPlatformTool, "arguments": map[string]any{}})
+}
+
+// connectorToolCallOutcome probes one of the pod's per-connector MCP
+// sockets with a tools/call. The per-connector servers are armed and
+// cancelled on their own code path, so a teardown that reaches the
+// platform socket alone still leaves this one serving.
+func connectorToolCallOutcome(t *testing.T, socket, nonce string) (reachable, authenticated, dispatched bool) {
+	t.Helper()
+	return intraPodMCPOutcome(t, socket, nonce, "tools/call",
+		map[string]any{"name": connectorProbeTool, "arguments": map[string]any{}})
+}
+
+// connectorToolListOutcome probes a per-connector MCP socket with a
+// tools/list, which §9.1 gates on the same sole-session test as a call.
+func connectorToolListOutcome(t *testing.T, socket, nonce string) (reachable, authenticated, dispatched bool) {
+	t.Helper()
+	return intraPodMCPOutcome(t, socket, nonce, "tools/list", map[string]any{})
+}
+
+// connectorProbeTool is the tool the recording forwarder advertises on the
+// resolved connector.
+const connectorProbeTool = "list_repos"
 
 // spec: 9.1 (the surface names one session or none), 11.4 (full revoke
 // teardown), 15.4.3 (nonce-authenticated intra-pod MCP), 13.1 (isolation
@@ -127,8 +158,12 @@ func TestSessionTeardownLeavesNoSurfaceForTheEndedSession_spec_11_4(t *testing.T
 	t.Run("sole_session_pod", func(t *testing.T) {
 		fwd := &recordingForwarder{}
 		s, m := teardownPod(t, fwd, "sess-alice")
+		connectorSocket := soleConnectorSocket(t, m)
 		if _, _, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); !dispatched {
 			t.Fatal("the platform tool surface refused the sole session before its teardown")
+		}
+		if _, _, dispatched := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce); !dispatched {
+			t.Fatal("the connector tool surface refused the sole session before its teardown")
 		}
 		revoke(t, s, "sess-alice")
 
@@ -146,11 +181,28 @@ func TestSessionTeardownLeavesNoSurfaceForTheEndedSession_spec_11_4(t *testing.T
 		if got := fwd.platformCallCount(); got != 1 {
 			t.Errorf("forwarded platform calls = %d, want 1 (the pre-teardown control call only)", got)
 		}
+
+		// The per-connector servers are armed on their own code path and
+		// cancelled through their own cancels, so the teardown is checked
+		// against the connector socket separately: an ended session's nonce
+		// must open no connector tool surface either.
+		reachable, authenticated, dispatched = connectorToolCallOutcome(t, connectorSocket, m.MCPNonce)
+		if authenticated || dispatched {
+			t.Errorf("after the teardown the connector socket authenticated=%v dispatched=%v for the ended session's nonce, want both false",
+				authenticated, dispatched)
+		}
+		if reachable && authenticated {
+			t.Error("the ended session's manifest nonce still opens the pod's connector tool surface")
+		}
+		if got := fwd.connectorCallCount(); got != 1 {
+			t.Errorf("forwarded connector calls = %d, want 1 (the pre-teardown control call only)", got)
+		}
 	})
 
 	t.Run("co_tenanted_pod", func(t *testing.T) {
 		fwd := &recordingForwarder{}
 		s, m := teardownPod(t, fwd, "sess-alice", "sess-bob")
+		connectorSocket := soleConnectorSocket(t, m)
 		revoke(t, s, "sess-alice")
 
 		// The pod's shared runtime process is still serving bob, so the
@@ -175,17 +227,48 @@ func TestSessionTeardownLeavesNoSurfaceForTheEndedSession_spec_11_4(t *testing.T
 		}
 		// The co-tenant's own calls stay refused until its release ends the
 		// generation, because alice's code may still be resident in the one
-		// process both were given to.
+		// process both were given to. The refusal covers tools/list as well
+		// as tools/call, and the connector surface as well as the platform
+		// one: each is gated on the same sole-session test.
 		if _, _, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); dispatched {
 			t.Error("the surviving session's own tools/call was dispatched while its neighbour's code may still be resident")
+		}
+		connReachable, _, connDispatched := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce)
+		if !connReachable {
+			t.Error("the co-tenant's pod-wide connector endpoint was cancelled by its neighbour's teardown")
+		}
+		if connDispatched {
+			t.Error("the connector tool surface dispatched a call after one of the pod's two sessions ended")
+		}
+		if _, _, listed := connectorToolListOutcome(t, connectorSocket, m.MCPNonce); listed {
+			t.Error("the connector tool surface answered tools/list while the pod's shared process may hold two sessions' code")
+		}
+		if got := fwd.connectorCallCount(); got != 0 {
+			t.Errorf("forwarded connector calls = %d on a pod that has served two sessions, want 0", got)
 		}
 
 		revoke(t, s, "sess-bob")
 		if reachable, authenticated, _ := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce); reachable && authenticated {
 			t.Error("the pod-wide platform endpoint still authenticates the pod's manifest nonce after its last session ended")
 		}
+		if reachable, authenticated, _ := connectorToolCallOutcome(t, connectorSocket, m.MCPNonce); reachable && authenticated {
+			t.Error("the pod-wide connector endpoint still authenticates the pod's manifest nonce after its last session ended")
+		}
 		if got := fwd.platformCallCount(); got != 0 {
 			t.Errorf("forwarded platform calls = %d across the whole co-tenanted episode, want 0", got)
 		}
+		if got := fwd.connectorCallCount(); got != 0 {
+			t.Errorf("forwarded connector calls = %d across the whole co-tenanted episode, want 0", got)
+		}
 	})
+}
+
+// soleConnectorSocket returns the socket of the one §9.3 connector the
+// recording forwarder resolves for the pod's sessions.
+func soleConnectorSocket(t *testing.T, m *adapter.Manifest) string {
+	t.Helper()
+	if len(m.ConnectorServers) != 1 || m.ConnectorServers[0].Socket == "" {
+		t.Fatalf("manifest carries no connector MCP socket: %+v", m.ConnectorServers)
+	}
+	return m.ConnectorServers[0].Socket
 }

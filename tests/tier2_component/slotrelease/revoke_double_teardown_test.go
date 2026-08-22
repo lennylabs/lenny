@@ -20,8 +20,15 @@
 // Both live outside the process under test, so the case runs against a
 // real kube-apiserver and a real Redis counter.
 //
+// The §10.1 coordinator-lost hold is the second producer of that pair. Its
+// timeout terminates the session the adapter started on the pod, and the
+// gateway's terminal release follows with a Shutdown for a session already
+// torn down, over a different code path than the revoke takes. The last
+// case here drives that route to the same single decrement.
+//
 // spec: §5.2 (per-pod slot counter, leaked slots stay counted), §6.2
-// (release disposition), §11.4 (full revoke propagation).
+// (release disposition), §10.1 (coordinator-lost self-termination), §11.4
+// (full revoke propagation).
 package slotrelease_test
 
 import (
@@ -92,12 +99,17 @@ type releaseFixture struct {
 	exec     *executor.PodExecutor
 	kube     client.Client
 	redis    *miniredis.Miniredis
+	// srv is the pod's adapter and rawClient a direct gRPC client onto it,
+	// so a case can drive the §10.1 coordinator control stream the binder
+	// does not open.
+	srv       *adapter.Server
+	rawClient adapterv1.AdapterClient
 }
 
 // newReleaseFixture brings up a real kube-apiserver holding one idle
 // Sandbox, a miniredis-backed slot counter, and an adapter served over an
 // in-memory connection.
-func newReleaseFixture(t *testing.T, rt adapter.RuntimeProcess) *releaseFixture {
+func newReleaseFixture(t *testing.T, rt adapter.RuntimeProcess, configure ...func(*adapter.Server)) *releaseFixture {
 	t.Helper()
 	kube := releaseKubeClient(t)
 	mr := miniredis.RunT(t)
@@ -110,22 +122,28 @@ func newReleaseFixture(t *testing.T, rt adapter.RuntimeProcess) *releaseFixture 
 	srv.ArtifactsRoot = t.TempDir()
 	srv.ManifestDir = t.TempDir()
 	srv.Runtime = rt
+	for _, c := range configure {
+		c(srv)
+	}
 
+	lis := releaseListener(t, srv)
 	binder := &podsession.Binder{
 		Client:           kube,
 		Namespace:        releaseNS,
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
-		DialAdapter:      releaseDialer(t, srv),
+		DialAdapter:      releaseDialer(lis),
 		SlotCounter:      slotcounter.New(rc),
 	}
 	registry := podsession.NewRegistry()
 	return &releaseFixture{
-		binder:   binder,
-		registry: registry,
-		exec:     executor.NewPodExecutor(registry, binder),
-		kube:     kube,
-		redis:    mr,
+		binder:    binder,
+		registry:  registry,
+		exec:      executor.NewPodExecutor(registry, binder),
+		kube:      kube,
+		redis:     mr,
+		srv:       srv,
+		rawClient: releaseRawClient(t, lis),
 	}
 }
 
@@ -285,6 +303,113 @@ func TestUncleanSlotTeardownStaysCounted_spec_5_2(t *testing.T) {
 	})
 }
 
+// dropCoordinatorStream opens the §10.1 gateway control stream, waits
+// until the adapter has attached it, and then drops it, which is the
+// coordinator-loss signal a crashed coordinating replica produces.
+func (f *releaseFixture) dropCoordinatorStream(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := f.rawClient.AdapterEvents(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("open the gateway control stream: %v", err)
+	}
+	probing := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-probing:
+				return
+			default:
+			}
+			f.srv.EmitRateLimited("hold-probe")
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	if _, err := stream.Recv(); err != nil {
+		close(probing)
+		cancel()
+		t.Fatalf("the adapter never attached the control stream: %v", err)
+	}
+	close(probing)
+	cancel()
+}
+
+// waitForHoldTermination blocks until the §10.1 hold timeout has taken the
+// pod's started session off the shared runtime process, which is the point
+// at which the adapter has terminated it.
+func (f *releaseFixture) waitForHoldTermination(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if f.srv.SoleSessionID() == "" {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("the coordinator hold never terminated the pod's session")
+}
+
+// spec: 10.1 (coordinator-lost self-termination), 5.2 (per-pod slot
+// counter; a leaked slot stays counted), 6.2 (release disposition)
+// diagnosis: a session the coordinator-lost hold terminated did not
+// release its slot exactly once. The hold timeout is the second producer
+// of a terminal release for a session the adapter has already torn down,
+// and it reaches that teardown through its own path rather than through a
+// gateway Shutdown. A count that never reaches zero means the release read
+// the hold-terminated session's Shutdown as a failure and marked the slot
+// leaked, so every hold-terminated session consumes one of the pod's slots
+// for the life of the pod and the pod never recycles or retires. A count
+// below the number of live slots means the pair decremented twice and the
+// gateway will over-assign past maxConcurrentSessions.
+func TestHoldTerminatedSessionDecrementsItsSlotExactlyOnce_spec_10_1(t *testing.T) {
+	f := newReleaseFixture(t, &slotRuntime{}, func(s *adapter.Server) {
+		s.CoordinatorHoldTimeout = 20 * time.Millisecond
+	})
+	f.bindSlot(t, "sess-held")
+	if got := f.activeSlots(t); got != 1 {
+		t.Fatalf("pod occupancy after the first bind = %d, want 1", got)
+	}
+
+	// The coordinating gateway drops, no replacement fences, and the hold
+	// times out and terminates the session the adapter had started.
+	f.dropCoordinatorStream(t)
+	f.waitForHoldTermination(t)
+	if got := f.activeSlots(t); got != 1 {
+		t.Fatalf("pod occupancy after the hold termination = %d, want 1; the termination does not touch the counter", got)
+	}
+
+	// A co-tenant takes a second slot, so the pod reaching occupancy zero
+	// is a separate event from the terminated session's release.
+	f.bindSlot(t, "sess-cotenant")
+	if got := f.activeSlots(t); got != 2 {
+		t.Fatalf("pod occupancy after the co-tenant bound = %d, want 2", got)
+	}
+
+	// The gateway's terminal release for the terminated session is the
+	// second teardown, and it decrements the slot exactly once.
+	if err := f.exec.Release(context.Background(), "sess-held", ""); err != nil {
+		t.Fatalf("release the hold-terminated session's slot: %v", err)
+	}
+	if got := f.activeSlots(t); got != 1 {
+		t.Errorf("pod occupancy after the hold termination and the release = %d, want 1; "+
+			"the pair decremented the slot other than exactly once", got)
+	}
+	if !f.claimExists(t) {
+		t.Error("the per-pod claim was disposed of while a co-tenant slot is still live")
+	}
+
+	if err := f.exec.Release(context.Background(), "sess-cotenant", ""); err != nil {
+		t.Fatalf("release the co-tenant's slot: %v", err)
+	}
+	if got := f.activeSlots(t); got != 0 {
+		t.Errorf("pod occupancy after every slot released = %d, want 0", got)
+	}
+	if f.claimExists(t) {
+		t.Error("the per-pod claim survived occupancy zero; the pod neither recycles nor retires")
+	}
+}
+
 // releaseKubeClient starts an envtest kube-apiserver holding one idle
 // Sandbox in the pool. The gateway's slot claim uses SSA Apply, which the
 // controller-runtime fake client does not implement, so the case needs a
@@ -335,18 +460,42 @@ func releaseKubeClient(t *testing.T) client.Client {
 	return c
 }
 
-// releaseDialer serves the adapter over an in-memory connection.
-func releaseDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// releaseListener serves the adapter over an in-memory connection.
+func releaseListener(t *testing.T, srv *adapter.Server) *bufconn.Listener {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
-	return func(string) (*adapterclient.Client, error) {
-		return adapterclient.Dial("passthrough:///bufnet",
-			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-				return lis.DialContext(ctx)
-			}),
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return lis
+}
+
+// bufconnDialOptions dials the in-memory listener.
+func bufconnDialOptions(lis *bufconn.Listener) []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+}
+
+// releaseDialer is the binder's adapter dialer onto the in-memory listener.
+func releaseDialer(lis *bufconn.Listener) func(string) (*adapterclient.Client, error) {
+	return func(string) (*adapterclient.Client, error) {
+		return adapterclient.Dial("passthrough:///bufnet", bufconnDialOptions(lis)...)
+	}
+}
+
+// releaseRawClient returns a plain adapter gRPC client onto the same
+// listener, which a case uses to open and drop the §10.1 gateway control
+// stream the binder itself never opens.
+func releaseRawClient(t *testing.T, lis *bufconn.Listener) adapterv1.AdapterClient {
+	t.Helper()
+	conn, err := grpc.NewClient("passthrough:///bufnet", bufconnDialOptions(lis)...)
+	if err != nil {
+		t.Fatalf("dial the adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return adapterv1.NewAdapterClient(conn)
 }
