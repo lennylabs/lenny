@@ -3,8 +3,10 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -879,5 +881,52 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	if got := fr.read(); got.Type != "terminate" {
 		t.Errorf("the next session's teardown sent %q, want the CH-RUNTIMEOPS terminate frame; "+
 			"a surviving hold-terminated entry holds the drain gate false", got.Type)
+	}
+}
+
+// spec: §10.1.4 — the hold-resolved line names no session and carries no
+// structured fields. The hold's unit is the pod, and the generation it
+// armed under is already on the coordinator_connection_lost line that
+// opened the hold, so repeating it on the resolved line records nothing
+// the operator does not already have. A build that emits any attribute on
+// this line fails here.
+func TestCoordinatorHoldResolvedLineCarriesNoFields_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	clk := &fakeExpiryClock{}
+	s := New("hold-test")
+	s.HoldAfterFunc = clk.After
+	if err := s.claimSessionForTest("s1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	s.enterHoldState()
+	s.exitHoldState()
+
+	var resolved map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if rec["msg"] == "coordinator_hold_resolved" {
+			resolved = rec
+		}
+	}
+	if resolved == nil {
+		t.Fatalf("no coordinator_hold_resolved line in %q", logBuf.String())
+	}
+	for k := range resolved {
+		switch k {
+		case slog.TimeKey, slog.LevelKey, slog.MessageKey:
+		default:
+			t.Errorf("coordinator_hold_resolved carries structured field %q = %v; the line takes none", k, resolved[k])
+		}
 	}
 }

@@ -151,7 +151,10 @@ func (s *Server) exitHoldState() {
 		s.hold.timer = nil
 	}
 	setCoordinatorHold(false)
-	slog.Info("coordinator_hold_resolved", "last_generation", s.hold.gen)
+	// The resolved line carries no structured fields: the hold names no
+	// session, and the generation it armed under is already on the
+	// coordinator_connection_lost line that opened this hold.
+	slog.Info("coordinator_hold_resolved")
 }
 
 // onHoldTimeout runs when no new coordinator fenced within

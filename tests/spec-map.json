@@ -1604,7 +1604,9 @@
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier0_static/coordinator_hold_allowlist_test.go",
-        "tests/tier7a_load_local/coordinator_hold_termination_race_test.go"
+        "tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1"
       ],
       "packages": [
         "pkg/gateway"
