@@ -1037,6 +1037,7 @@
         "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance",
         "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
+        "tests/tier7a_load_local/racestart_testsupport_test.go",
         "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go"
       ],
       "packages": [
