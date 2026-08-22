@@ -133,7 +133,7 @@ func (s *Server) sessionCredentialFile(sessionID string) (string, error) {
 // Token Service circuit breaker is open and the lease has not yet expired,
 // the gateway extends the enforced deadline from the lease record it
 // already holds, so no Token Service call is made. It touches neither the
-// credential file nor s.credLeases.
+// session's credential file nor its slot's lease set.
 //
 // spec: §4.9.
 func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {

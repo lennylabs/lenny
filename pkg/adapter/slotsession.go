@@ -24,10 +24,16 @@ import (
 //
 // sdkWarm gates the different-session refusal. A pre-connected pod holds
 // one runtime process with one working directory the handler re-points in
-// place, and §6.4 admits preConnect only at maxConcurrentSessions: 1, so
-// admitting a second session there would rewrite the §15.4.3 nonce the
-// incumbent runtime already authenticated with. On a pod-warm pod a
-// different session arrives on its own slot and is admitted.
+// place, and §6.1 admits preConnect only at maxConcurrentSessions: 1, so
+// admitting a session while another has already started on that process
+// would rewrite the §15.4.3 nonce the incumbent runtime already
+// authenticated with. That refusal reads the same started flag the
+// same-session arm reads: an entry bound before its start has no
+// incumbent, because no manifest was written for it, no nonce was issued,
+// and the runtime was never pointed at its workspace, so refusing on it
+// would strand the pod on a session the gateway has re-placed elsewhere.
+// On a pod-warm pod a different session arrives on its own slot and is
+// admitted.
 //
 // idempotentRepeat reports a repeat for an already-started session as
 // fresh=false rather than refusing it, which is the §4.7
@@ -57,9 +63,9 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotent
 	defer s.mu.Unlock()
 	if sdkWarm {
 		for id, other := range s.slots {
-			if id != sessionID && other.sessionID != "" {
+			if id != sessionID && other.started {
 				return false, false, nil, status.Errorf(codes.Unavailable,
-					"pod is not idle: session %s is already assigned", other.sessionID)
+					"pod is not idle: session %s has already started on this pod", id)
 			}
 		}
 	}
@@ -238,7 +244,7 @@ func (s *Server) mcpArmingHeldLocked() bool {
 // slot registry. Every session is bound to a slot on every pod, so this
 // is the one session check: it admits an entry bound to the named session
 // (started or not) and refuses one that is absent or registered but not
-// yet bound. spec: §4.2; §5.2.
+// yet bound. spec: §4.1; §5.2.
 func (s *Server) checkSessionBound(sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

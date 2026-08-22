@@ -449,7 +449,7 @@ message ReportSessionScrubRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 3;
   reserved "slot_id";
   SessionScrubOutcome outcome = 4;
@@ -679,7 +679,7 @@ message PrepareWorkspaceRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
 }
@@ -713,7 +713,7 @@ message FinalizeWorkspaceRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 5;
   reserved "slot_id";
 }
@@ -837,7 +837,7 @@ message RunSetupRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
 }
@@ -916,7 +916,7 @@ message StartSessionRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 11;
   reserved "slot_id";
 }
@@ -953,7 +953,7 @@ message SendMessageRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 2;
   reserved "slot_id";
   // Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
@@ -978,7 +978,7 @@ message AttachRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 2;
   reserved "slot_id";
   // Opaque JSON-encoded client-to-agent frame (lenny-adapter-jsonl.schema.json
@@ -1011,7 +1011,7 @@ message AssignCredentialsRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 3;
   reserved "slot_id";
 }
@@ -1033,7 +1033,7 @@ message RotateCredentialsRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
@@ -1057,7 +1057,7 @@ message ExtendCredentialLeaseRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 5;
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
@@ -1078,7 +1078,7 @@ message RevokeCredentialsRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
@@ -1114,7 +1114,7 @@ message InterruptRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 5;
   reserved "slot_id";
   enum Mode {
@@ -1192,14 +1192,14 @@ message CheckpointStart {
   int64 deadline_ms = 5;
   // Field 6 held slot_id. The stream's sole per-session address is
   // session_id below, which every session on every pod carries.
-  // spec: §4.5; §5.2.
+  // spec: §4.1; §5.2.
   reserved 6;
   reserved "slot_id";
   // session_id names the session this checkpoint captures. Neither the
   // CheckpointRequest envelope nor the Checkpoint RPC signature carries
   // one, so the opening frame is where the stream is addressed. The
   // adapter resolves the checkpoint roots and the per-session op lock
-  // from it. spec: §4.5; §10.1.7.
+  // from it. spec: §4.1; §10.1.7.
   SessionId session_id = 7;
 }
 
@@ -1305,7 +1305,7 @@ message SignalDeadlineRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 5;
   reserved "slot_id";
 }
@@ -1393,7 +1393,7 @@ message ResumeRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 15;
   reserved "slot_id";
 }
@@ -1478,7 +1478,7 @@ message CheckpointBarrierRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
 }
@@ -1574,7 +1574,7 @@ message ReportUsageRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
 }
@@ -1593,7 +1593,7 @@ message ShutdownRequest {
   // message already names in session_id. Every session is bound to a
   // slot on every pod and a session-mode slot's identifier is its
   // session's identifier, so the field carried no information of its
-  // own. spec: §4.5; §5.2.
+  // own. spec: §4.1; §5.2.
   reserved 4;
   reserved "slot_id";
 

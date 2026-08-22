@@ -291,7 +291,7 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 	// moves with it before the release evaluates the pod-surface gate.
 	// The request carries no session identifier, so the release names the
 	// registry's single entry, which is well defined on this pod class:
-	// §6.4 admits preConnect only at maxConcurrentSessions: 1. A demote on
+	// §6.1 admits preConnect only at maxConcurrentSessions: 1. A demote on
 	// an already-empty registry releases nothing.
 	if sessionID := s.anyRegisteredSession(); sessionID != "" {
 		s.noteRuntimeClosed(sessionID)

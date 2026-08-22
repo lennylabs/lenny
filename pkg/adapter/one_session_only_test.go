@@ -78,3 +78,53 @@ func TestStartClaimReadmitsASessionAfterItsRelease_spec_4_7(t *testing.T) {
 		t.Errorf("claim after release: %v (the slot must be free again)", err)
 	}
 }
+
+// spec: 4.7 (the SDK-warm different-session refusal), 6.1 (preConnect is
+// admitted only at maxConcurrentSessions: 1)
+//
+// On an SDK-warm pod the claim refuses a session that arrives while
+// another has already started on the pre-connected runtime, because that
+// runtime holds one working directory and one authenticated nonce.
+func TestSDKWarmClaimRefusesASessionBesideAStartedOne_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	if _, _, err := s.claimSessionSlot("sess-a", true, false); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	_, _, err := s.claimSessionSlot("sess-b", true, false)
+	if err == nil {
+		t.Fatal("second session admitted beside a started one; want Unavailable")
+	}
+	if got := status.Code(err); got != codes.Unavailable {
+		t.Errorf("code = %v, want Unavailable", got)
+	}
+}
+
+// spec: 4.7 (the credentials-first bind sequence), 6.1 (preConnect is
+// admitted only at maxConcurrentSessions: 1)
+//
+// The SDK-warm different-session refusal reads the started flag rather
+// than the entry's bound state. A bind that fails after AssignCredentials
+// and before ConfigureWorkspace leaves a bound-not-started entry behind on
+// the pod, with no incumbent runtime: no manifest was written for it, no
+// nonce was issued, and the runtime was never pointed at its workspace.
+// A refusal keyed on the binding would strand the pod, refusing every
+// later session the gateway places on it for the life of the pod.
+func TestSDKWarmClaimAdmitsASessionBesideABoundNotStartedEntry_spec_4_7(t *testing.T) {
+	s := &Server{WorkspaceBase: t.TempDir()}
+	s.mu.Lock()
+	st, err := s.ensureSlotStateLocked("sess-stranded")
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("ensure slot state: %v", err)
+	}
+	st.sessionID = "sess-stranded"
+	s.mu.Unlock()
+
+	fresh, _, err := s.claimSessionSlot("sess-b", true, false)
+	if err != nil {
+		t.Fatalf("claim beside a bound-not-started entry = %v, want admitted", err)
+	}
+	if !fresh {
+		t.Error("fresh = false, want true for the first start of sess-b")
+	}
+}
