@@ -360,8 +360,7 @@ func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
 // rewritten, so a read failure on that file is an error the runtime
 // reports rather than the no-active-lease silence the startup read
 // takes. The runtime keeps the bundle it holds and stays pointed at the
-// path it last resolved, so a later event carrying no path re-reads its
-// own credential file rather than the one that failed.
+// path it last resolved.
 func TestRotationOnAnUnreadablePathIsReportedAndDoesNotRepointTheRuntime(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.json")
@@ -444,14 +443,15 @@ func TestRotationOnAnotherPathDoesNotRepointTheResolvedCredentialPath(t *testing
 		t.Fatalf("credential path after a rotation naming another session's file = %q, want the manifest-resolved path %q", p, mine)
 	}
 
-	// The next read lands on the resolved path rather than on the file
-	// the previous event named.
+	// The next ordinary read lands on the resolved path rather than on
+	// the file the previous event named.
 	if err := os.WriteFile(mine, []byte(`{"mode":"direct","provider":"rotated"}`), 0o600); err != nil {
 		t.Fatalf("rewrite credential file: %v", err)
 	}
-	got = s.reloadCredentials("")
+	s.loadCredentials()
+	got = s.Credentials()
 	if got == nil || got.Provider != "rotated" {
-		t.Fatalf("bundle after a pathless rotation = %+v, want the manifest-resolved path's contents (provider %q)", got, "rotated")
+		t.Fatalf("bundle after re-reading the resolved path = %+v, want its contents (provider %q)", got, "rotated")
 	}
 }
 
@@ -460,11 +460,17 @@ func TestRotationOnAnotherPathDoesNotRepointTheResolvedCredentialPath(t *testing
 //
 // The runtime-ops credentials_rotated frame is required to carry a
 // credentialsPath. A frame without one breaks that contract, so the
-// runtime reports it rather than treating the event as an ordinary
-// re-read, and keeps the bundle it holds when the fallback read fails.
+// runtime reports it, keeps the bundle it holds, and does not read any
+// other file in its place: the event delivered no path, so there is
+// nothing it can be said to have delivered. A runtime that fell back to
+// its startup path would replace the held bundle with whatever that
+// file happens to contain.
 func TestPathlessRotationIsReportedAndKeepsTheHeldBundle(t *testing.T) {
 	dir := t.TempDir()
-	absent := filepath.Join(dir, "absent", "credentials.json")
+	resolved := filepath.Join(dir, "credentials.json")
+	if err := os.WriteFile(resolved, []byte(`{"mode":"direct","provider":"unexpected"}`), 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
 
 	var mu sync.Mutex
 	var logs []string
@@ -476,11 +482,14 @@ func TestPathlessRotationIsReportedAndKeepsTheHeldBundle(t *testing.T) {
 	}
 	s := newSession(nil, cfg)
 	s.credentials = &CredentialBundle{Mode: "direct", Provider: "anthropic"}
-	s.setCredentialsPath(absent)
+	s.setCredentialsPath(resolved)
 
 	got := s.reloadCredentials("")
 	if got == nil || got.Provider != "anthropic" {
-		t.Fatalf("bundle after a pathless rotation onto an unreadable file = %+v, want the bundle already held", got)
+		t.Fatalf("bundle after a pathless rotation = %+v, want the bundle already held (provider %q)", got, "anthropic")
+	}
+	if held := s.Credentials(); held == nil || held.Provider != "anthropic" {
+		t.Fatalf("bundle held after a pathless rotation = %+v, want the bundle already held (provider %q)", held, "anthropic")
 	}
 	mu.Lock()
 	reported := strings.Join(logs, "\n")
@@ -488,25 +497,11 @@ func TestPathlessRotationIsReportedAndKeepsTheHeldBundle(t *testing.T) {
 	if !strings.Contains(reported, "no credentialsPath") {
 		t.Errorf("no diagnostic reported the frame carrying no credentialsPath; logged: %q", reported)
 	}
-	if !strings.Contains(reported, absent) {
-		t.Errorf("no diagnostic named the fallback path %s; logged: %q", absent, reported)
-	}
 
-	// Neither the manifest nor the caller named a path, so there is
-	// nothing to fall back to. The runtime reports that and keeps the
-	// bundle it holds.
-	mu.Lock()
-	logs = nil
-	mu.Unlock()
-	s.setCredentialsPath("")
-	got = s.reloadCredentials("")
-	if got == nil || got.Provider != "anthropic" {
-		t.Fatalf("bundle after a pathless rotation with no resolved path = %+v, want the bundle already held", got)
-	}
-	mu.Lock()
-	reported = strings.Join(logs, "\n")
-	mu.Unlock()
-	if !strings.Contains(reported, "no credentialsPath") {
-		t.Errorf("no diagnostic reported a pathless frame with no resolved credential path; logged: %q", reported)
+	// The resolved path stays authoritative for the reads the runtime
+	// does take, so the pathless frame costs it nothing but the rotation.
+	s.loadCredentials()
+	if held := s.Credentials(); held == nil || held.Provider != "unexpected" {
+		t.Fatalf("bundle after re-reading the resolved path = %+v, want its contents (provider %q)", held, "unexpected")
 	}
 }

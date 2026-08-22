@@ -479,26 +479,26 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 	}
 
 	// Non-happy path: an event carrying no credentialsPath breaks the
-	// wire contract, which makes the path required. The runtime reports
-	// it and falls back to the manifest-resolved path, which stays
-	// authoritative for every read however many files earlier events
-	// named. The rotated file keeps its own provider, so a runtime that
-	// re-pointed itself at an event's path reads "openai" here.
-	writeCredentialBundle(t, startPath, "recovered")
+	// wire contract, which makes the path required. The runtime keeps
+	// the bundle it holds, acknowledges the event, and reports the
+	// violation. The startup file is rewritten first, so a runtime that
+	// fell back to reading it would hand the callback "unexpected"
+	// instead of the bundle it already held.
+	writeCredentialBundle(t, startPath, "unexpected")
 	fa.send(t, map[string]any{
 		"type":     "credentials_rotated",
-		"provider": "recovered",
-		"leaseId":  "lease_recovered",
+		"provider": "unexpected",
+		"leaseId":  "lease_pathless",
 	})
 	ack = fa.recv(t, 5*time.Second)
-	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_recovered" {
-		t.Fatalf("pathless rotation reply = %v, want credentials_acknowledged for lease_recovered", ack)
+	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_pathless" {
+		t.Fatalf("pathless rotation reply = %v, want credentials_acknowledged for lease_pathless", ack)
 	}
 	select {
 	case got := <-rotated:
-		if got == nil || got.Provider != "recovered" {
-			t.Fatalf("bundle after a pathless rotation = %+v, want the manifest-resolved path %s (provider %q); the runtime read a path an earlier event named",
-				got, startPath, "recovered")
+		if got == nil || got.Provider != "openai" {
+			t.Fatalf("bundle after a pathless rotation = %+v, want the bundle the runtime already held (provider %q); the runtime read a file the event did not name",
+				got, "openai")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OnCredentialsRotated did not run for the pathless event")

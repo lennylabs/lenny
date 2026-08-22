@@ -658,6 +658,11 @@ func (s *session) loadCredentials() {
 // no-active-lease case the startup read tolerates: the runtime reports
 // it, keeps the bundle in hand, and still acknowledges the event.
 //
+// The frame is required to carry the path, so a frame without one is a
+// contract violation. The runtime reports it and keeps the bundle it
+// holds; it does not substitute another file's contents for the ones
+// the event claimed to deliver.
+//
 // The path the runtime reads from is not installed as the session's
 // credential path. That path is resolved once, from the §4.7 manifest
 // member or the construction-time option, and stays authoritative for
@@ -668,21 +673,9 @@ func (s *session) loadCredentials() {
 // §6.1 (per-session credential file).
 func (s *session) reloadCredentials(path string) *CredentialBundle {
 	if path == "" {
-		// The runtime-ops credentials_rotated frame is required to carry
-		// a credentialsPath. A frame without one breaks that contract, so
-		// report it and fall back to the path resolved at startup rather
-		// than reading nothing.
-		path = s.credentialsPath()
-		if path == "" {
-			s.cfg.logf("runtime: credential rotation: event carries no credentialsPath and no credential path is resolved; keeping the bundle already held")
-		} else {
-			s.cfg.logf("runtime: credential rotation: event carries no credentialsPath; re-reading %q", path)
-		}
-	}
-	if path != "" {
-		if err := s.loadCredentialsFrom(path); err != nil {
-			s.cfg.logf("runtime: credential rotation: %v", err)
-		}
+		s.cfg.logf("runtime: credential rotation: event carries no credentialsPath; keeping the bundle already held")
+	} else if err := s.loadCredentialsFrom(path); err != nil {
+		s.cfg.logf("runtime: credential rotation: %v", err)
 	}
 	s.credMu.RLock()
 	defer s.credMu.RUnlock()
