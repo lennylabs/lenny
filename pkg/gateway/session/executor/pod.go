@@ -79,16 +79,10 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	}
 	// The §7.2 KindToolUse interaction the approval gate records is keyed
 	// on the session's tenant; capture it from the live binding once so
-	// each approval-required frame on this Send carries it. The same live
-	// bind carries the §6.4 slot the gateway resolved for the session: a
-	// concurrent-pool bind (SlotID != "") stamps the slotId on every
-	// outbound envelope so the reconciled adapter and runtime key on it,
-	// while an exclusive session-mode bind leaves it empty. spec: §7.2
-	// (per-slot routing), §28.5.3 (slotId multiplexing).
-	var tenantID, slotID string
+	// each approval-required frame on this Send carries it. spec: §7.2.
+	var tenantID string
 	if bind, ok := e.registry.Get(sessionID); ok {
 		tenantID = bind.TenantID
-		slotID = bind.SlotID
 	}
 	var out []MessagePart
 	var envAnn map[string]any
@@ -99,7 +93,11 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 			ID:            newMessageID(),
 			From:          resolveFromBlock(m),
 			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
-			SlotID:        slotID,
+			// spec: §28.5.3 — every session is bound to a slot on every
+			// pod, and the wire addresses it by its session identifier, so
+			// the envelope carries the session it is being sent on
+			// whatever the pool's concurrency.
+			SessionID: sessionID,
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
@@ -215,7 +213,9 @@ type toolCallFrame struct {
 	Name             string          `json:"name"`
 	Arguments        json.RawMessage `json:"arguments"`
 	ApprovalRequired bool            `json:"approvalRequired"`
-	SlotID           string          `json:"slotId,omitempty"`
+	// SessionID names the session the runtime addressed the call to.
+	// spec: §28.5.3.
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // toolResultFrame is the §28.5.3 tool_result the executor writes back to
@@ -245,7 +245,7 @@ func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID
 		ID:        call.ID,
 		Name:      call.Name,
 		Arguments: call.Arguments,
-		SlotID:    call.SlotID,
+		SlotID:    call.SessionID,
 	})
 	if err != nil {
 		return false, fmt.Errorf("podexec: await tool-use approval: %w", err)
@@ -259,7 +259,7 @@ func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID
 			ID:        call.ID,
 			Name:      call.Name,
 			Arguments: call.Arguments,
-			SlotID:    call.SlotID,
+			SessionID: call.SessionID,
 		})
 		if mErr != nil {
 			return false, fmt.Errorf("podexec: encode approved tool_call: %w", mErr)

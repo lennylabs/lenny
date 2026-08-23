@@ -336,7 +336,7 @@ func (s *Server) startedSessionCount() int {
 // removes nothing and skips its teardown, and one whose step runs first
 // takes the member out of the set collected here. Without the pass, every
 // terminated session's entry would survive for the life of the pod,
-// holding the §15.4.2 drain gate false and the §4.6.1 inbound count above
+// holding the §15.4.2 drain gate false and the §28.5.3 inbound count above
 // one on a pod that goes on serving.
 //
 // The order is fixed rather than incidental: s.slots is a map and Go
@@ -365,4 +365,16 @@ func (s *Server) deregisterStartedSessions() []heldSession {
 		members = append(members, heldSession{sessionID: id, state: st})
 	}
 	return members
+}
+
+// slotCount reports the entries the slot registry holds, bound or
+// registered-but-unbound. It is the quantity §28.5.3's resolve-or-reject
+// rule reads: counting a registered-but-unbound entry makes the rule fail
+// closed while a second session's workspace is being prepared, so an
+// unaddressed frame is never resolved to the incumbent session on a pod
+// that is about to serve two. spec: §28.5.3.
+func (s *Server) slotCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.slots)
 }

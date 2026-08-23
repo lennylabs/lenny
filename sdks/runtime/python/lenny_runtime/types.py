@@ -136,7 +136,7 @@ class MessageEnvelope:
     thread_id: str | None = None
     delivery: str | None = None
     delegation_depth: int = 0
-    slot_id: str | None = None
+    session_id: str | None = None
     input: list[MessagePart] = field(default_factory=list)
     annotations: dict[str, Any] = field(default_factory=dict)
 
@@ -162,7 +162,7 @@ class MessageEnvelope:
             thread_id=raw.get("threadId"),
             delivery=raw.get("delivery"),
             delegation_depth=int(raw.get("delegationDepth", 0)),
-            slot_id=raw.get("slotId"),
+            session_id=raw.get("sessionId"),
             input=[MessagePart.from_wire(p) for p in raw.get("input", [])],
             annotations=annotations,
         )

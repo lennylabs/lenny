@@ -77,7 +77,7 @@ def write_json(obj):
     sys.stdout.flush()
 
 
-def with_slot_id(frame, slot_id):
+def with_session_id(frame, session_id):
     """Stamp the session identifier on a session-scoped frame.
 
     The caller passes the identifier read from the inbound envelope the frame
@@ -90,20 +90,20 @@ def with_slot_id(frame, slot_id):
     a string here, and a frame that omits the key resolves to the binding of
     the stream that delivered it on a pod holding at most one slot.
     """
-    if slot_id is not None:
-        frame["slotId"] = slot_id
+    if session_id is not None:
+        frame["sessionId"] = session_id
     return frame
 
 
-def write_response(slot_id, text):
+def write_response(session_id, text):
     """Send a response message signaling task completion."""
     global phase
-    write_json(with_slot_id({
+    write_json(with_session_id({
         "type": "response",
         "output": [
             {"type": "text", "inline": text}
         ]
-    }, slot_id))
+    }, session_id))
     phase = 0
 
 
@@ -123,30 +123,30 @@ def truncate(s, n=500):
 
 # ---- Tool call helpers ----
 
-def list_dir(slot_id, path):
+def list_dir(session_id, path):
     """Send a list_dir tool call."""
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json(with_slot_id({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "list_dir",
         "arguments": {"path": path}
-    }, slot_id))
+    }, session_id))
 
 
-def read_file(slot_id, path):
+def read_file(session_id, path):
     """Send a read_file tool call."""
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json(with_slot_id({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "read_file",
         "arguments": {"path": path}
-    }, slot_id))
+    }, session_id))
 
 
 # ---- Message handlers ----
@@ -170,7 +170,7 @@ def handle_message(msg):
 
     # Step 1: List files in the workspace. The tool_call this message triggers
     # is addressed to the session the message itself was addressed to.
-    session_id = msg.get("slotId")
+    session_id = msg.get("sessionId")
     list_dir(session_id, f"/workspace/slots/{session_id}/current")
 
 
@@ -180,7 +180,7 @@ def handle_tool_result(msg):
 
     # Every frame emitted on this continuation is addressed to the session the
     # tool_result being answered was addressed to.
-    slot_id = msg.get("slotId")
+    session_id = msg.get("sessionId")
 
     # Verify this result matches our pending tool call.
     if msg.get("id") != pending_tool_call_id:
@@ -196,7 +196,7 @@ def handle_tool_result(msg):
         if msg.get("content") and len(msg["content"]) > 0:
             error_text = msg["content"][0].get("inline", error_text)
         print(f"file-summarizer: tool error: {error_text}", file=sys.stderr)
-        write_response(slot_id, f"Error reading workspace: {error_text}")
+        write_response(session_id, f"Error reading workspace: {error_text}")
         return
 
     if phase == 1:
@@ -209,13 +209,13 @@ def handle_tool_result(msg):
                     file_list.append(line)
 
         if not file_list:
-            write_response(slot_id, "No files found in the workspace.")
+            write_response(session_id, "No files found in the workspace.")
             return
 
         # Step 2: Start reading files one by one.
         phase = 2
         current_file_index = 0
-        read_next_file(slot_id)
+        read_next_file(session_id)
 
     elif phase == 2:
         # Phase 2: We received a file's contents.
@@ -227,29 +227,29 @@ def handle_tool_result(msg):
         current_file_index += 1
         if current_file_index < len(file_list) and current_file_index < 10:
             # Read the next file (cap at 10 files).
-            read_next_file(slot_id)
+            read_next_file(session_id)
         else:
             # All files read. Produce the summary.
             phase = 3
-            produce_summary(slot_id)
+            produce_summary(session_id)
 
 
-def read_next_file(slot_id):
+def read_next_file(session_id):
     """Send a read_file tool call for the next file in the list."""
     if current_file_index >= len(file_list):
         return
-    file_path = f"/workspace/slots/{slot_id}/current/{file_list[current_file_index]}"
-    read_file(slot_id, file_path)
+    file_path = f"/workspace/slots/{session_id}/current/{file_list[current_file_index]}"
+    read_file(session_id, file_path)
 
 
-def produce_summary(slot_id):
+def produce_summary(session_id):
     """Generate the final summary response."""
     lines = [f"Workspace Summary ({len(file_contents)} files)\n"]
     for fc in file_contents:
         lines.append(fc)
         lines.append("")
     lines.append(f"Total files examined: {len(file_contents)}")
-    write_response(slot_id, "\n".join(lines))
+    write_response(session_id, "\n".join(lines))
 
 
 # ---- Main loop ----

@@ -21,8 +21,8 @@
 //     slice is admitted under the sibling — proving the budget is bound to
 //     the session, not pooled across the pod's slots.
 //   - Per-slot cleanup. Releasing each slot emits its own
-//     ReportSessionScrub tagged with that slot's slotId and sessionId
-//     (§5.2), and releasing one slot leaves the sibling slot's session and
+//     ReportSessionScrub naming that slot's own session (§5.2), and
+//     releasing one slot leaves the sibling slot's session and
 //     credential file intact until the sibling is released in turn.
 //
 // This composes the production surfaces the earlier building blocks
@@ -157,7 +157,7 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	srv.SessionScrubReporter = reporter
 
 	// One real runtime process per pod serves every slot, multiplexed on
-	// slotId over the single connection (§5.2, §28.5.3).
+	// sessionId over the single connection (§5.2, §28.5.3).
 	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)

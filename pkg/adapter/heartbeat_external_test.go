@@ -126,7 +126,7 @@ func TestAttachRegistersSetTracingContextForTheBoundSession(t *testing.T) {
 		t.Fatalf("Send bind: %v", err)
 	}
 
-	rt.output <- []byte(`{"type":"set_tracing_context","slotId":"sess-trace","context":{"langsmith_run_id":"run_abc"}}`)
+	rt.output <- []byte(`{"type":"set_tracing_context","sessionId":"sess-trace","context":{"langsmith_run_id":"run_abc"}}`)
 	rt.output <- []byte(`{"type":"status","state":"thinking"}`)
 
 	got, err := stream.Recv()

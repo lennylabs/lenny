@@ -61,11 +61,16 @@ type frame struct {
 	Type string `json:"type"`
 }
 
-// message is the inbound message frame. Basic-level runtimes read only
-// the id and the input parts.
+// message is the inbound message frame. Basic-level runtimes read the
+// id, the input parts, and the session the frame is addressed to, which
+// they echo on the response they emit.
 type message struct {
-	ID    string `json:"id"`
-	Input []part `json:"input"`
+	ID string `json:"id"`
+	// SessionID names the session the adapter addressed this frame to.
+	// The adapter populates it on every pod, and a Basic-level runtime
+	// echoes it on the frames it emits in response.
+	SessionID string `json:"sessionId"`
+	Input     []part `json:"input"`
 }
 
 // part is one content part of a message or response. Basic-level
@@ -81,10 +86,12 @@ type shutdownFrame struct {
 	DeadlineMS int `json:"deadlineMs"`
 }
 
-// response is the outbound response frame for a message.
+// response is the outbound response frame for a message. It echoes the
+// session identifier the inbound message carried.
 type response struct {
-	Type   string `json:"type"`
-	Output []part `json:"output"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Output    []part `json:"output"`
 }
 
 // heartbeatAck is the outbound acknowledgement for a heartbeat frame.
@@ -221,7 +228,7 @@ func handleMessage(enc *json.Encoder, w *bufio.Writer, line []byte, seq int) err
 		}
 		out = append(out, p)
 	}
-	return writeFrame(enc, w, response{Type: "response", Output: out})
+	return writeFrame(enc, w, response{Type: "response", SessionID: m.SessionID, Output: out})
 }
 
 // writeFrame serializes one frame and flushes it. The adapter binary

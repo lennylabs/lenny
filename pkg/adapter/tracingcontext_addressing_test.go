@@ -20,13 +20,13 @@ import (
 
 // tracingFrame builds a set_tracing_context frame, tagging it with the
 // session address when one is given. An untagged frame is what a runtime
-// that does not populate the address writes; §4.6.1 requires the address
+// that does not populate the address writes; §28.5.3 requires the address
 // on every session-scoped frame, on every pod.
-func tracingFrame(slotID string) []byte {
-	if slotID == "" {
+func tracingFrame(sessionID string) []byte {
+	if sessionID == "" {
 		return []byte(`{"type":"set_tracing_context","context":{"langsmith_run_id":"run_abc"}}`)
 	}
-	return []byte(`{"type":"set_tracing_context","slotId":"` + slotID +
+	return []byte(`{"type":"set_tracing_context","sessionId":"` + sessionID +
 		`","context":{"langsmith_run_id":"run_abc"}}`)
 }
 
@@ -35,11 +35,11 @@ func tracingFrame(slotID string) []byte {
 // handles one frame at a time, so receiving the status frame that follows
 // a set_tracing_context frame proves the adapter finished handling that
 // frame.
-func statusFrame(slotID string) []byte {
-	if slotID == "" {
+func statusFrame(sessionID string) []byte {
+	if sessionID == "" {
 		return []byte(`{"type":"status","state":"thinking"}`)
 	}
-	return []byte(`{"type":"status","slotId":"` + slotID + `","state":"thinking"}`)
+	return []byte(`{"type":"status","sessionId":"` + sessionID + `","state":"thinking"}`)
 }
 
 // tracingDrops reads the §28.5.3 drop counter.
@@ -317,7 +317,7 @@ func TestSetTracingContextUnaddressedOnAMultiSlotPodIsRejected_spec_28_5_3(t *te
 	requireRejectLogs(t, logs, rejectLog{session: "sess-a"}, rejectLog{session: "sess-b"})
 }
 
-// spec: 4.6.1 (an absent address on a pod holding at most one slot
+// spec: 28.5.3 (an absent address on a pod holding at most one slot
 // resolves to the receiving stream's own binding), 28.5.3
 // (set_tracing_context addressing) — a Basic-level runtime that echoes no
 // identifier has the stdout frame as its only tracing path, and on a pod
@@ -329,7 +329,7 @@ func TestSetTracingContextUnaddressedOnAMultiSlotPodIsRejected_spec_28_5_3(t *te
 // set_tracing_context frame, which silently disables tracing for every
 // Basic-level runtime, since the JSONL frame is the only tracing path such
 // a runtime has.
-func TestSetTracingContextUnaddressedOnASingleSlotPodResolvesToTheStream_spec_4_6_1(t *testing.T) {
+func TestSetTracingContextUnaddressedOnASingleSlotPodResolvesToTheStream_spec_28_5_3(t *testing.T) {
 	_, rt, fwd, client := concurrentTracingPod(t, "sess-a")
 	streamA := openTracingAttach(t, client, "sess-a")
 	rt.waitForSubscribers(t, 1)
@@ -383,9 +383,9 @@ func TestSetTracingContextAddressedToACoTenantNeverReachesStream_spec_28_5_3(t *
 // because it decodes the address value's JSON type as a third answer.
 func TestSetTracingContextUnreadableAddressIsTheEmptyAddress_spec_28_5_3(t *testing.T) {
 	frames := map[string]string{
-		"number": `{"type":"set_tracing_context","slotId":1,"context":{"langsmith_run_id":"run_abc"}}`,
-		"null":   `{"type":"set_tracing_context","slotId":null,"context":{"langsmith_run_id":"run_abc"}}`,
-		"object": `{"type":"set_tracing_context","slotId":{"id":"sess-a"},"context":{"langsmith_run_id":"run_abc"}}`,
+		"number": `{"type":"set_tracing_context","sessionId":1,"context":{"langsmith_run_id":"run_abc"}}`,
+		"null":   `{"type":"set_tracing_context","sessionId":null,"context":{"langsmith_run_id":"run_abc"}}`,
+		"object": `{"type":"set_tracing_context","sessionId":{"id":"sess-a"},"context":{"langsmith_run_id":"run_abc"}}`,
 	}
 	for name, frame := range frames {
 		t.Run(name+" is rejected", func(t *testing.T) {
@@ -435,7 +435,7 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 	requireDropLogs(t, logs, dropLog{frameSession: "sess-a", session: "sess-a", streamSlot: "sess-a"})
 }
 
-// spec: 4.6.1 (the slot count that decides an absent address is every
+// spec: 28.5.3 (the slot count that decides an absent address is every
 // entry in the adapter's slot registry, bound or registered-but-unbound),
 // 28.5.3 (set_tracing_context addressing) — the registry entry a
 // workspace-prep RPC creates ahead of StartSession already counts, so a
@@ -449,7 +449,7 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 // alone, so on a pod that is preparing a second session an unaddressed
 // frame registers one runtime's tracing identifiers against the
 // incumbent session instead of being rejected.
-func TestSetTracingContextUnaddressedWhileASecondSlotIsUnboundIsRejected_spec_4_6_1(t *testing.T) {
+func TestSetTracingContextUnaddressedWhileASecondSlotIsUnboundIsRejected_spec_28_5_3(t *testing.T) {
 	s, rt, fwd, client := concurrentTracingPod(t, "sess-a")
 	streamA := openTracingAttach(t, client, "sess-a")
 	rt.waitForSubscribers(t, 1)

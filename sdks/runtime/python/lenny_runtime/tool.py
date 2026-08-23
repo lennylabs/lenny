@@ -121,12 +121,12 @@ class AdapterToolset:
         writer: FrameWriter,
         registry: ToolCallRegistry,
         timeout_s: float,
-        slot_id: str | None,
+        session_id: str | None,
     ) -> None:
         self._writer = writer
         self._registry = registry
         self._timeout_s = timeout_s if timeout_s > 0 else 30.0
-        self._slot_id = slot_id
+        self._session_id = session_id
 
     def tool_call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Emit a §28.5.3 ``tool_call`` frame for the named
@@ -143,8 +143,10 @@ class AdapterToolset:
             "name": name,
             "arguments": arguments,
         }
-        if self._slot_id:
-            frame["slotId"] = self._slot_id
+        # §28.5.3: a session-scoped frame carries the session it addresses
+        # on every pod, so the key is written whatever the pool's
+        # concurrency.
+        frame["sessionId"] = self._session_id or ""
         try:
             self._writer.write(frame)
         except Exception as err:

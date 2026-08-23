@@ -11,10 +11,12 @@
 //
 // One runtime process serves every slot on a concurrent pod and its output
 // is fanned out to every Attach stream (§5.2, §13.1), so a frame that
-// carries no slotId reaches every slot's stream. The isolation boundary
-// under test is that such a frame writes no session's tracing context: the
-// stream's own (session, slot) address is the frame's address, and a frame
-// that does not match it is dropped.
+// carries no per-session identifier reaches every slot's stream. The
+// isolation boundary under test is that such a frame writes no session's
+// tracing context: on a pod holding more than one slot nothing in the
+// frame says which session it addresses, so each stream's demultiplexer
+// rejects it, counts it on lenny_adapter_unaddressed_frame_rejected_total,
+// and relays it to no stream (§28.5.3).
 //
 // The write these cases forbid is permanent. pkg/delegation/tracing merges
 // without overwriting and the tree exposes no delete path, so an identifier
@@ -36,6 +38,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -49,11 +52,35 @@ import (
 // tracingIsolationRuntime is the pod's single runtime process. Its output
 // is broadcast to every Attach subscriber, mirroring
 // SocketRuntimeProcess: one process per pod serves every slot and each
-// Attach stream demultiplexes the shared stream by slotId.
+// Attach stream demultiplexes the shared stream by sessionId.
 type tracingIsolationRuntime struct {
 	mu   sync.Mutex
 	cond *sync.Cond
 	subs []chan []byte
+}
+
+// unaddressedRejections reads the §16.1 unaddressed-frame counter for the
+// set_tracing_context frame type off the default registry, where the
+// adapter registers it.
+func unaddressedRejections(t *testing.T) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, f := range fams {
+		if f.GetName() != "lenny_adapter_unaddressed_frame_rejected_total" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "frame_type" && l.GetValue() == "set_tracing_context" {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func newTracingIsolationRuntime() *tracingIsolationRuntime {
@@ -268,7 +295,7 @@ func tracingContextFrame(slotID, runID string) []byte {
 	if slotID == "" {
 		return []byte(`{"type":"set_tracing_context","context":{"langsmith_run_id":"` + runID + `"}}`)
 	}
-	return []byte(`{"type":"set_tracing_context","slotId":"` + slotID +
+	return []byte(`{"type":"set_tracing_context","sessionId":"` + slotID +
 		`","context":{"langsmith_run_id":"` + runID + `"}}`)
 }
 
@@ -280,7 +307,7 @@ func tracingStatusFrame(slotID string) []byte {
 	if slotID == "" {
 		return []byte(`{"type":"status","state":"thinking"}`)
 	}
-	return []byte(`{"type":"status","slotId":"` + slotID + `","state":"thinking"}`)
+	return []byte(`{"type":"status","sessionId":"` + slotID + `","state":"thinking"}`)
 }
 
 // awaitTracingStatus receives the next relayed frame and requires it to be
@@ -302,19 +329,24 @@ func awaitTracingStatus(t *testing.T, stream adapterv1.Adapter_AttachClient) {
 	}
 }
 
-// spec: 28.5.3 (set_tracing_context addressing), 8.3 (tracing context,
-// per-session scope), 13.1 (concurrent-slot isolation boundaries)
+// spec: 28.5.3 (an absent address on a pod holding more than one slot is
+// rejected and relayed to no stream), 28.5.3 (set_tracing_context
+// addressing), 8.3 (tracing context, per-session scope), 13.1
+// (concurrent-slot isolation boundaries)
 //
 // diagnosis: a failure means one runtime wrote tracing identifiers onto a
 // sibling session on the same concurrent pod. The pod's single runtime
 // process serves every slot and its output reaches every slot's Attach
-// stream, so an untagged set_tracing_context frame handled by each stream
-// merges one slot's identifiers into every other slot's session. The write
-// is permanent: pkg/delegation/tracing merges without overwriting and the
-// tree has no delete path, so the entries stay on the sibling session and
-// count against the 32-entry bound, and a session driven to that bound
-// rejects every later registration on itself and on its delegated children.
-func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T) {
+// stream, so an unaddressed set_tracing_context frame that any stream
+// acted on would merge one session's identifiers into a co-tenant's. The
+// write is permanent: pkg/delegation/tracing merges without overwriting
+// and the tree has no delete path, so the entries stay on the sibling
+// session and count against the 32-entry bound, and a session driven to
+// that bound rejects every later registration on itself and on its
+// delegated children. A counter that did not move by one per receiving
+// stream means the rejection is attributed to the wrong series, or that a
+// stream never evaluated the frame at all.
+func TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3(t *testing.T) {
 	s, rt, gw, client := tracingIsolationPod(t)
 	startTracingSlot(t, s, "sess-slot-a")
 	startTracingSlot(t, s, "sess-slot-b")
@@ -327,8 +359,10 @@ func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T
 	streamB := attachTracingStream(t, client, "sess-slot-b")
 	rt.waitForSubscribers(t, 2)
 
-	// The runtime writes a frame carrying no slotId. It reaches both slots'
-	// streams and addresses neither.
+	// The runtime writes a frame carrying no per-session identifier. It
+	// reaches both slots' streams and addresses neither, so each stream
+	// rejects it and counts the rejection.
+	beforeRejects := unaddressedRejections(t)
 	rt.emit(tracingContextFrame("", "run_untagged"))
 	rt.emit(tracingStatusFrame("sess-slot-a"))
 	rt.emit(tracingStatusFrame("sess-slot-b"))
@@ -337,6 +371,9 @@ func TestUntaggedTracingFrameWritesNoSiblingSlotSession_spec_28_5_3(t *testing.T
 
 	requireTracingContext(t, gw, "sess-slot-a", inheritedA)
 	requireTracingContext(t, gw, "sess-slot-b", inheritedB)
+	if moved := unaddressedRejections(t) - beforeRejects; moved != 2 {
+		t.Errorf("unaddressed set_tracing_context rejections moved by %v, want 2 (one per receiving Attach stream)", moved)
+	}
 
 	// A correctly addressed frame still registers, and only on the session
 	// that owns the slot it names, so the isolation asserted above is the

@@ -78,11 +78,33 @@ const ssNS = "lenny-agents"
 // ssRespondingRuntime is an adapter.RuntimeProcess that replies to every
 // written envelope with a §28.5.3 response frame, so the single-shot
 // dispatch (exec.Send) returns a 200 rather than blocking on empty output.
+//
+// The reply echoes the session the inbound envelope was addressed to, which
+// is the obligation §28.5.3 places on every runtime: the adapter relays a
+// session-scoped frame to the session it names, and a frame that names none
+// is rejected on a pod holding more than one slot. A stub that echoed
+// nothing would have its reply withheld on the concurrent-slot case below
+// and the dispatch would block.
 type ssRespondingRuntime struct{ out chan []byte }
 
 func (r *ssRespondingRuntime) Start(context.Context, string) error { return nil }
-func (r *ssRespondingRuntime) WriteEnvelope(string, []byte) error {
-	r.out <- []byte(`{"type":"response","text":"ack"}`)
+func (r *ssRespondingRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
+	var inbound struct {
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.Unmarshal(envelope, &inbound)
+	if inbound.SessionID == "" {
+		inbound.SessionID = sessionID
+	}
+	reply, err := json.Marshal(map[string]any{
+		"type":      "response",
+		"sessionId": inbound.SessionID,
+		"text":      "ack",
+	})
+	if err != nil {
+		return err
+	}
+	r.out <- reply
 	return nil
 }
 
@@ -477,7 +499,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 		t.Error("dispatch ran without a registered pod binding")
 	}
 	if spy.sawSlotID != "" {
-		t.Errorf("exclusive session-mode bind carried slotId %q, want empty", spy.sawSlotID)
+		t.Errorf("exclusive session-mode bind carried slot identifier %q, want empty", spy.sawSlotID)
 	}
 	// The deferred release removed the binding within the one HTTP call.
 	if _, ok := registry.Get("sess-ss-ok"); ok {
@@ -514,10 +536,10 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 // session-mode release), §4.6.3 (gateway writes no Sandbox.status).
 // diagnosis: on a concurrent-workspace pool (maxConcurrentSessions > 1) the
 // single-shot adapter must claim a per-slot reservation, dispatch with the
-// resolved slotId stamped on the registry binding, and release that one slot
+// resolved slot identifier stamped on the registry binding, and release that one slot
 // through Binder.ReleaseSlot so a concurrently-held sibling slot on the same
 // pod survives. A failure means the slot path regressed: the bind carried no
-// slotId during exec.Send (the executor fails closed with SLOT_ID_REQUIRED or
+// slot identifier during exec.Send (the executor fails closed with SLOT_ID_REQUIRED or
 // misroutes into another slot), the binding was not removed after the call, or
 // the release drained the whole pod through session-mode Release (which
 // deletes the per-pod claim and tears down the sibling) instead of decrementing
@@ -570,13 +592,13 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 	if !spy.sawBinding {
 		t.Error("dispatch ran without a registered pod binding")
 	}
-	// A concurrent-workspace bind stamps the resolved slotId onto the registry
-	// binding; the executor reads it to route the per-slot message. The slotId
-	// equals the session id (§5.2), so a non-empty value matching the request's
+	// A concurrent-workspace bind stamps the resolved slot identifier onto
+	// the registry binding. The identifier equals the session id (§5.2), so
+	// a non-empty value matching the request's
 	// session id proves the slot path ran during exec.Send rather than the
 	// exclusive session-mode path (which carries an empty SlotID).
 	if spy.sawSlotID != "sess-ss-slot" {
-		t.Errorf("concurrent-slot bind carried slotId %q during dispatch, want sess-ss-slot", spy.sawSlotID)
+		t.Errorf("concurrent-slot bind carried slot identifier %q during dispatch, want sess-ss-slot", spy.sawSlotID)
 	}
 	// The deferred release removed the request's binding within the one call.
 	if _, ok := registry.Get("sess-ss-slot"); ok {

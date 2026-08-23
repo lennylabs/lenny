@@ -838,7 +838,7 @@ func TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1(
 }
 
 // spec: 10.1.4 (the hold timeout's deregistration pass), 15.4.2 (the
-// CH-RUNTIMEOPS drain signal), 4.6.1 (an unaddressed inbound frame)
+// CH-RUNTIMEOPS drain signal), 28.5.3 (an unaddressed inbound frame)
 //
 // The deregistration pass is what lets the pod serve a next session at
 // all. Without it the terminated sessions' entries survive, so the next
@@ -866,7 +866,7 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	if err := rt.Start(context.Background(), "sess-next"); err != nil {
 		t.Fatalf("start the next session: %v", err)
 	}
-	// §4.6.1 — an inbound frame carrying no session identifier resolves on
+	// §28.5.3 — an inbound frame carrying no session identifier resolves on
 	// a pod holding one session, which is what the pass restored.
 	if got := s.soleSession(); got != "sess-next" {
 		t.Errorf("sole session after the timeout = %q, want sess-next", got)

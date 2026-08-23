@@ -12,7 +12,7 @@
 // sequential pod reuse, and maxConcurrentSessions > 1 is the
 // concurrent-slot configuration").
 //
-// tests/tier4_integration/concurrent_workspace_test.go exercises slotId
+// tests/tier4_integration/concurrent_workspace_test.go exercises sessionId
 // multiplexing in-process: a bufconn adapter driving a spawned
 // echo-concurrent binary, with no real pod, no RuntimeClass, and no
 // per-slot filesystem isolation enforced by a real container boundary.
@@ -72,7 +72,7 @@ const (
 
 // concurrentPoolName and concurrentRuntimeRef name the §5.2 concurrent-
 // session pool: sessionPolicy.maxConcurrentSessions: 2 with
-// acknowledgeProcessLevelIsolation, backed by the slotId dispatch-loop
+// acknowledgeProcessLevelIsolation, backed by the sessionId dispatch-loop
 // reference runtime (cmd/runtimes/echo-concurrent).
 const (
 	concurrentPoolName   = "concurrent-echo-pool"
@@ -288,7 +288,7 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	// pod (podclaim/slotclaimer.go prefers a partially-occupied pod over
 	// claiming a fresh idle one), so both sessions should share the same
 	// pod. If they did not, the isolation assertions below would pass
-	// trivially without exercising slotId multiplexing at all, so this is
+	// trivially without exercising sessionId multiplexing at all, so this is
 	// a hard precondition rather than a soft log.
 	if sessB.PodAssignment != pod {
 		t.Fatalf("session B landed on pod %q, want session A's pod %q; the concurrent pool did not "+

@@ -29,9 +29,9 @@ import (
 	"testing"
 )
 
-// addressKeyPattern matches either spelling of the per-session address key as
+// addressKeyPattern matches the per-session address key as
 // a JSON property in a documentation example.
-const addressKeyPattern = `"(?:slotId|sessionId)"`
+const addressKeyPattern = `"sessionId"`
 
 var (
 	// absentAddressExample matches an example that spells the per-session

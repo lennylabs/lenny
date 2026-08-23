@@ -60,26 +60,24 @@ var basicLevelRuntimeSamplePages = []string{
 // identifier.
 var sessionScopedEmission = regexp.MustCompile(`(?i)"?type"?\s*[:=]\s*"(response|tool_call)"`)
 
-// frameAddressKeys is the set of spellings the per-session frame address key
-// is published under across the tree. The JSON Lines schema and the
-// reader-facing pages take the rename to the session spelling in separate
-// changes, so a page carrying either spelling satisfies the assertions below.
-// What they hold is that the address is present and carries a value the schema
-// accepts, which is the obligation that stands whatever the key is called.
-var frameAddressKeys = []string{"slotId", "sessionId"}
+// frameAddressKeys is the spelling the per-session frame address key is
+// published under across the tree. The wire addresses a session by its
+// session identifier, so `sessionId` is the one spelling a page, a schema,
+// or a sample may carry. spec: §28.5.3.
+var frameAddressKeys = []string{"sessionId"}
 
 // wireSpelling returns the address key as it appears on the wire.
 func wireSpelling(key string) string { return key }
 
 // goFieldSpelling returns the exported Go member a sample names the address
-// key with. `slotId` gives `SlotID`.
+// key with. `sessionId` gives `SessionID`.
 func goFieldSpelling(key string) string {
 	stem := strings.TrimSuffix(key, "Id")
 	return strings.ToUpper(stem[:1]) + stem[1:] + "ID"
 }
 
 // snakeSpelling returns the snake-case member a Python sample names the
-// address key with. `slotId` gives `slot_id`.
+// address key with. `sessionId` gives `session_id`.
 func snakeSpelling(key string) string { return strings.TrimSuffix(key, "Id") + "_id" }
 
 // stemSpelling returns the address key without its identifier suffix, which is
@@ -146,18 +144,17 @@ func checkFrameAddress(t *testing.T, at, literal string) {
 }
 
 // spec: 15.4.3, 28.5.3
-// diagnosis: the frame-address matchers above resolve the per-session address
+// diagnosis: the frame-address matchers above no longer resolve the
 //
-//	by one key spelling and reject the other. The schema, the SDKs, and the
-//	reader-facing pages take the rename to the session spelling in separate
-//	changes, so during that sequence the tree carries both spellings at once. A
-//	matcher bound to a single spelling reports every page still carrying the
-//	other as unaddressed, which turns the echo obligation into a rename tracker
-//	and hides the defect it exists to catch. The obligation is that the address
-//	is present and carries a value the published JSON Lines schema accepts.
-func TestFrameAddressMatchersAcceptEitherPublishedKeySpelling(t *testing.T) {
-	if len(frameAddressKeys) < 2 {
-		t.Fatalf("frameAddressKeys names %d spelling(s); the matchers are written to span the rename", len(frameAddressKeys))
+//	per-session address the wire publishes. The wire addresses a session by
+//	its session identifier, so `sessionId` is the one spelling a page, a
+//	schema, or a sample carries, and a matcher that misses it reports every
+//	addressed page as unaddressed, which hides the defect the echo
+//	obligation exists to catch. The obligation is that the address is
+//	present and carries a value the published JSON Lines schema accepts.
+func TestFrameAddressMatchersResolveThePublishedKeySpelling(t *testing.T) {
+	if len(frameAddressKeys) != 1 || frameAddressKeys[0] != "sessionId" {
+		t.Fatalf("frameAddressKeys = %v, want the one published spelling [sessionId]", frameAddressKeys)
 	}
 	for _, key := range frameAddressKeys {
 		addressed := fmt.Sprintf(`{"type": "response", %q: "sess_abc", "text": "hi"}`, key)

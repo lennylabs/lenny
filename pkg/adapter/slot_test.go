@@ -69,9 +69,9 @@ func TestStartSessionSlotCreatesTreeAndStartsRuntime_spec_6_4(t *testing.T) {
 // spec: §5.2 concurrent mode; spec/05:509, spec/05:511 — two distinct slots
 // are served concurrently over the single pod-global runtime connection,
 // each with its own isolated per-slot workspace tree. With the mode flag and
-// the per-slot RuntimeFactory removed, the per-slot path activates on slotId
+// the per-slot RuntimeFactory removed, the per-slot path activates on sessionId
 // presence alone, one runtime process per pod multiplexes both slots on
-// slotId, and each slot's /workspace/slots/{slotId}/current/ is materialized
+// sessionId, and each slot's /workspace/slots/{sessionId}/current/ is materialized
 // independently so one slot's files never appear in the other's workspace.
 func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 	s, rt := concurrentServer(t)
@@ -83,7 +83,7 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 		t.Fatalf("StartSession(slot-b): %v", err)
 	}
 	// One runtime process per pod serves both slots: it sees both sessions
-	// started, multiplexed on slotId over the single connection.
+	// started, multiplexed on sessionId over the single connection.
 	if got := rt.started; len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
 		t.Fatalf("pod runtime sessions = %v, want [sess-a sess-b]", got)
 	}
@@ -141,7 +141,7 @@ func TestStartSessionRejectsARepeatedStart_spec_4_7(t *testing.T) {
 }
 
 // spec: §6.4 — a slot-qualified finalize materializes into the
-// slot's /workspace/slots/{slotId}/current cwd.
+// slot's /workspace/slots/{sessionId}/current cwd.
 func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
 	req := &adapterv1.FinalizeWorkspaceRequest{
@@ -171,7 +171,7 @@ func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 }
 
 // spec: §6.1 — a slot-qualified assignment writes the slot's own
-// /run/lenny/slots/{slotId}/credentials.json, not the global file.
+// /run/lenny/slots/{sessionId}/credentials.json, not the global file.
 func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 	s, _ := concurrentServer(t)
 	leases := map[string]*adapterv1.CredentialLease{
@@ -233,7 +233,7 @@ func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 
 // spec: §6.4; spec/05:509 — a slot-qualified SendMessage
 // validates the slot's bound session and delivers the envelope to the
-// single pod-global runtime, which multiplexes slots on slotId over the
+// single pod-global runtime, which multiplexes sessions on sessionId over the
 // one connection. A message naming a session that is not bound to the
 // addressed slot is rejected rather than delivered.
 func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
@@ -334,6 +334,6 @@ func TestSingleSessionPodTakesThePerSlotPath_spec_5_2(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if len(rt.started) != 1 || rt.started[0] != "sess-a" {
-		t.Errorf("base runtime started = %v, want [sess-a] for a no-slotId frame", rt.started)
+		t.Errorf("base runtime started = %v, want [sess-a] on an exclusive pool", rt.started)
 	}
 }

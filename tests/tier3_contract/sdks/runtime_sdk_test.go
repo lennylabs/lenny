@@ -245,6 +245,23 @@ func checkDetail(report complianceReport, name string) string {
 	return "check not found in report"
 }
 
+// sessionEchoCheck is the Basic-level lenny-compliance check that drives
+// the runtime with an addressed `message` and requires the `response` to
+// echo the identifier it was handed. It is the per-SDK pin of the wire
+// key each SDK emits: all three carry the address as a struct tag, a
+// dataclass field, or an interface member, so a rename that misses the
+// emitter compiles and diverges only on the wire.
+const sessionEchoCheck = "response_echoes_session_id"
+
+// requireSessionEcho fails when the named SDK's runtime did not echo the
+// per-session identifier on the response it emitted.
+func requireSessionEcho(t *testing.T, sdk string, report complianceReport) {
+	t.Helper()
+	if !checkPassed(report, sessionEchoCheck) {
+		t.Errorf("%s SDK runtime failed %s: %s", sdk, sessionEchoCheck, checkDetail(report, sessionEchoCheck))
+	}
+}
+
 // spec: 28.5.3, 15.7 (Go runtime SDK, Basic level)
 // diagnosis: the SDK-based echo runtime (sdks/runtime/go/example/echo)
 // must clear every Basic-level lenny-compliance check: stdin/stdout
@@ -257,6 +274,7 @@ func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/echo")
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
+	requireSessionEcho(t, "Go", report)
 }
 
 // spec: 28.5.3, 15.7 (Python runtime SDK, Basic level)
@@ -271,6 +289,7 @@ func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
 	runtimeBin := buildPythonRuntime(t, python, "echo")
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
+	requireSessionEcho(t, "Python", report)
 }
 
 // spec: 28.5.3, 15.7 (TypeScript runtime SDK, Basic level)
@@ -286,6 +305,7 @@ func TestRuntimeSDKAdapterBinaryProtocolTypeScript(t *testing.T) {
 	runtimeBin := buildTypeScriptRuntime(t, node, npm, "echo")
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
+	requireSessionEcho(t, "TypeScript", report)
 }
 
 // spec: 15.4.3, 15.7 (Go runtime SDK, Standard level)

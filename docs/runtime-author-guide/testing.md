@@ -74,7 +74,7 @@ The validator runs a set of test categories for the declared level. Each higher 
 | Category | What it asserts |
 |----------|-----------------|
 | stdin/stdout protocol framing | The binary reads newline-delimited JSON on stdin and writes newline-delimited JSON on stdout, flushes every outbound message before the next read, and ignores unknown inbound `type` values rather than aborting. |
-| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response` carrying the `slotId` the inbound `message` was addressed with, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","slotId":"...","text":"..."}`. The response validates against the published JSON Lines schema. |
+| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response` carrying the `sessionId` the inbound `message` was addressed with, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","sessionId":"...","text":"..."}`. The response validates against the published JSON Lines schema. |
 | heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. Missing the window triggers the adapter's unresponsive-agent escalation. |
 | shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the adapter SIGKILLs the process in production, losing unflushed output. |
 | `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
@@ -242,7 +242,7 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     defer cmd.Process.Kill()
 
     // Send a message addressed to a session
-    msg := `{"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}` + "\n"
+    msg := `{"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}` + "\n"
     stdin.Write([]byte(msg))
 
     // Read response
@@ -257,8 +257,8 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     }
     // The response echoes the address the inbound message carried. A response
     // that names no session is rejected on a pod holding more than one slot.
-    if resp["slotId"] != "sess_abc" {
-        t.Errorf("expected slotId sess_abc, got %v", resp["slotId"])
+    if resp["sessionId"] != "sess_abc" {
+        t.Errorf("expected sessionId sess_abc, got %v", resp["sessionId"])
     }
 }
 ```

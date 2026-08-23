@@ -169,9 +169,9 @@ spec:
   isolationProfile: sandboxed
   deploymentModel: sidecar
 ---
-# §5.2 slotId dispatch-loop reference runtime. cmd/runtimes/echo-concurrent
+# §5.2 sessionId dispatch-loop reference runtime. cmd/runtimes/echo-concurrent
 # is a stdin/stdout §28.5.3 binary that demultiplexes several simultaneous
-# slots over the single connection, keyed on the inbound frame's slotId, so
+# slots over the single connection, keyed on the inbound frame's sessionId, so
 # the §4.7 sidecar deployment model bridges it over the abstract Unix
 # socket the same way echo-runtime-sidecar does. Backs concurrent-echo-pool
 # (sessionPolicy.maxConcurrentSessions > 1), the tier-5 real-pod

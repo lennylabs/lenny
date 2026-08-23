@@ -85,9 +85,9 @@ type InboundMessage struct {
 	ID    string      `json:"id,omitempty"`
 	Input []InputPart `json:"input,omitempty"`
 	Ts    int64       `json:"ts,omitempty"`
-	// SlotID names the session this frame is addressed to. The adapter
+	// SessionID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID string `json:"slotId,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 type InputPart struct {
@@ -101,9 +101,9 @@ type MessagePart struct {
 }
 
 type ResponseMsg struct {
-	Type   string        `json:"type"`
-	SlotID string        `json:"slotId,omitempty"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 // --- Manifest ---
@@ -172,8 +172,8 @@ func main() {
 
 			// Send final response
 			resp := ResponseMsg{
-				Type:   "response",
-				SlotID: msg.SlotID,
+				Type:      "response",
+				SessionID: msg.SessionID,
 				Output: []MessagePart{
 					{Type: "text", Inline: result},
 				},
@@ -238,9 +238,9 @@ func runBasicLevel() {
 			text := extractText(msg.Input)
 			result := processTask(text)
 			writeJSON(ResponseMsg{
-				Type:   "response",
-				SlotID: msg.SlotID,
-				Output: []MessagePart{{Type: "text", Inline: result}},
+				Type:      "response",
+				SessionID: msg.SessionID,
+				Output:    []MessagePart{{Type: "text", Inline: result}},
 			})
 		case "heartbeat":
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
@@ -288,9 +288,9 @@ type InboundMessage struct {
 	ID    string      `json:"id,omitempty"`
 	Input []InputPart `json:"input,omitempty"`
 	Ts    int64       `json:"ts,omitempty"`
-	// SlotID names the session this frame is addressed to. The adapter
+	// SessionID names the session this frame is addressed to. The adapter
 	// populates it on every pod; echo it on the frames you emit in response.
-	SlotID string `json:"slotId,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 type InputPart struct {
@@ -304,9 +304,9 @@ type MessagePart struct {
 }
 
 type ResponseMsg struct {
-	Type   string        `json:"type"`
-	SlotID string        `json:"slotId,omitempty"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 type AdapterManifest struct {
@@ -390,9 +390,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	subTasks := strings.Split(text, "|")
 	if len(subTasks) == 0 {
 		writeJSON(ResponseMsg{
-			Type:   "response",
-			SlotID: msg.SlotID,
-			Output: []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
+			Type:      "response",
+			SessionID: msg.SessionID,
+			Output:    []MessagePart{{Type: "text", Inline: "No sub-tasks found. Use 'cmd1:data1 | cmd2:data2' format."}},
 		})
 		return
 	}
@@ -407,9 +407,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	})
 	if err != nil {
 		writeJSON(ResponseMsg{
-			Type:   "response",
-			SlotID: msg.SlotID,
-			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
+			Type:      "response",
+			SessionID: msg.SessionID,
+			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("Discovery failed: %v", err)}},
 		})
 		return
 	}
@@ -421,9 +421,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if len(agents) == 0 {
 		writeJSON(ResponseMsg{
-			Type:   "response",
-			SlotID: msg.SlotID,
-			Output: []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
+			Type:      "response",
+			SessionID: msg.SessionID,
+			Output:    []MessagePart{{Type: "text", Inline: "No worker agents available for delegation."}},
 		})
 		return
 	}
@@ -475,9 +475,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if len(childIDs) == 0 {
 		writeJSON(ResponseMsg{
-			Type:   "response",
-			SlotID: msg.SlotID,
-			Output: []MessagePart{{Type: "text", Inline: "All delegations failed."}},
+			Type:      "response",
+			SessionID: msg.SessionID,
+			Output:    []MessagePart{{Type: "text", Inline: "All delegations failed."}},
 		})
 		return
 	}
@@ -496,9 +496,9 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 
 	if err != nil {
 		writeJSON(ResponseMsg{
-			Type:   "response",
-			SlotID: msg.SlotID,
-			Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
+			Type:      "response",
+			SessionID: msg.SessionID,
+			Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("await_children failed: %v", err)}},
 		})
 		return
 	}
@@ -520,8 +520,8 @@ func handleTask(ctx context.Context, mcp *mcpclient.Client, msg InboundMessage) 
 	}
 
 	writeJSON(ResponseMsg{
-		Type:   "response",
-		SlotID: msg.SlotID,
+		Type:      "response",
+		SessionID: msg.SessionID,
 		Output: []MessagePart{
 			{Type: "text", Inline: strings.Join(outputLines, "\n")},
 		},

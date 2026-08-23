@@ -43,7 +43,7 @@ type fakeRuntime struct {
 	// stream fans out to, mirroring the production SocketRuntimeProcess:
 	// one runtime process per pod serves every slot over one connection,
 	// so each concurrent Attach stream sees the runtime's full output and
-	// demultiplexes by slotId. fanOnce starts the single fan-out reader on
+	// demultiplexes by sessionId. fanOnce starts the single fan-out reader on
 	// the first Output call. subCond signals every change to len(subs) so a
 	// concurrent-slot test can wait for both Attach handlers to subscribe
 	// before writing to f.output, since a frame written before a slot
@@ -94,7 +94,7 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 	// Subscribe to the fanned-out stream. The first Output call starts the
 	// single reader that broadcasts f.output to every subscriber, so two
 	// concurrent per-slot Attach streams each receive the full output and
-	// demultiplex by slotId (matching SocketRuntimeProcess).
+	// demultiplex by sessionId (matching SocketRuntimeProcess).
 	sub := make(chan []byte, 8)
 	f.mu.Lock()
 	f.subs = append(f.subs, sub)

@@ -272,7 +272,7 @@ func (f *raceForwarder) count() int {
 func raceTracingFrame(slotID, seq string) []byte {
 	slot := ""
 	if slotID != "" {
-		slot = `"slotId":"` + slotID + `",`
+		slot = `"sessionId":"` + slotID + `",`
 	}
 	return []byte(`{"type":"set_tracing_context",` + slot +
 		`"context":{"langsmith_run_id":"run_race","` + raceFrameSeqKey + `":"` + seq + `"}}`)
@@ -286,7 +286,7 @@ func raceStatusFrame(slotID string) []byte {
 	if slotID == "" {
 		return []byte(`{"type":"status","state":"thinking"}`)
 	}
-	return []byte(`{"type":"status","slotId":"` + slotID + `","state":"thinking"}`)
+	return []byte(`{"type":"status","sessionId":"` + slotID + `","state":"thinking"}`)
 }
 
 // tracingDropCount reads the §28.5.3 drop counter off the default registry,
@@ -593,7 +593,7 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 			// teardown releases sess-slot-a. An unaddressed frame is
 			// therefore unresolvable at every point of the race, which is
 			// what makes "never forwarded" the invariant of every
-			// interleaving. spec: §4.6.1.
+			// interleaving. spec: §28.5.3.
 			startRaceSlot(t, s, "sess-slot-c")
 			streamA := openRaceAttach(t, client, "sess-slot-a", "sess-slot-a")
 			streamB := openRaceAttach(t, client, "sess-slot-b", "sess-slot-b")
@@ -651,11 +651,11 @@ func TestSetTracingContextSlotReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t *te
 //
 // diagnosis: the adapter's addressing decision for a set_tracing_context
 //
-//	frame is wrong while the pod-global session is being released
-//	underneath the stream that carries it. A count mismatch means a frame
+//	frame is wrong while the session is being released underneath the
+//	stream that carries it. A count mismatch means a frame
 //	was both forwarded and counted as dropped, or neither. A forward of a
-//	frame carrying a slot id means address equality admitted a frame the
-//	slotless stream does not address. A forward recorded after the release
+//	frame carrying a co-tenant's address means address equality admitted a
+//	frame this stream does not address. A forward recorded after the release
 //	sentinel means live-binding confirmation admitted a frame the handler
 //	decided against a session binding that was already cleared. The
 //	post-release phase failing means a released session still registers
@@ -668,7 +668,7 @@ func TestSetTracingContextSessionReleaseRaceDecidesEveryFrameOnce_spec_28_5_3(t 
 			// A co-tenant slot with no Attach stream keeps the pod holding
 			// more than one slot across the teardown, so an unaddressed
 			// frame stays unresolvable while the session under test is
-			// released underneath its stream. spec: §4.6.1.
+			// released underneath its stream. spec: §28.5.3.
 			startRaceSlot(t, s, "sess-solo-peer")
 			stream := openRaceAttach(t, client, "sess-solo", "sess-solo")
 			rt.waitForSubscribers(t, 1)

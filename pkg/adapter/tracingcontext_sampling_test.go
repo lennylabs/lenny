@@ -56,10 +56,10 @@ func TestSetTracingContextAddressingSamplesTheRegistryOnce_spec_28_5_3(t *testin
 	for time.Now().Before(deadline) {
 		for i := 0; i < 1024; i++ {
 			decisions++
-			// An untagged frame on a pod holding at most one slot
-			// resolves to the delivering stream's own binding, so only
-			// the live-binding confirmation can reject it.
-			if s.resolveTracingFrame(sessionID, "", sessionID) == frameAddressed {
+			// The demultiplexer has already resolved the frame to the
+			// delivering stream, so only the live-binding confirmation
+			// can reject it.
+			if s.resolveTracingFrame(sessionID, sessionID) {
 				close(stop)
 				wg.Wait()
 				t.Fatalf("addressing decision %d admitted an untagged frame on a pod that never held "+

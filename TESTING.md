@@ -1035,7 +1035,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | credential_lifecycle | Credential assignment → rotation (`credentials_rotated` lifecycle message) → runtime re-bind → emergency revoke → active session terminated |
 | credential_fallback | Primary provider unavailable; fallback chain activates; health scores update; cooldown respected |
 | credential_revocation | Emergency revoke → deny-list propagation via Redis pub/sub → active leases terminated within propagation SLO |
-| concurrent_workspace | `slotId` multiplexing: N prompts on same pod; per-slot credential isolation; per-slot cleanup timeout |
+| concurrent_workspace | `sessionId` multiplexing: N prompts on same pod; per-slot credential isolation; per-slot cleanup timeout |
 | concurrent_stateless | Tenant-affinity routing; cross-tenant routing rejected; pod assignment correctness |
 | quota_enforcement | Token budget exhaustion → `budget_exhausted` → session termination; storage quota → upload rejection; per-tenant rate limit → 429 |
 | quota_recovery | Redis outage → fail-open with timer; Redis recovery → MAX-rule reconciliation |

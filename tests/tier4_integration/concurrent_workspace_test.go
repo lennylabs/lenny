@@ -13,31 +13,32 @@
 //     adapterclient speaks.
 //   - A single real SocketRuntimeProcess binds the pod's abstract runtime
 //     socket and spawns the real cmd/runtimes/echo-concurrent binary, the
-//     one reference runtime that implements the slotId dispatch loop. One
-//     runtime process per pod serves every slot, multiplexed on slotId over
+//     one reference runtime that implements the sessionId dispatch loop. One
+//     runtime process per pod serves every slot, multiplexed on sessionId over
 //     the single connection.
 //   - Two sessions land on the pod in distinct slots, each with an isolated
-//     per-slot workspace at /workspace/slots/{slotId}/current/.
+//     per-slot workspace at /workspace/slots/{sessionId}/current/.
 //
 // The flow asserts the two properties the proposal names. First, workspace
 // distinctness: each slot's FinalizeWorkspace materializes its own content
 // into its own per-slot tree, and neither slot's file leaks into the other's
 // workspace or into a pod-global /workspace/current. Second, per-slot
-// response slotId tagging: a message dispatched on one slot's Attach stream
-// comes back tagged with that slot's slotId, and each Attach stream receives
-// only its slot's responses, proving the adapter stamps the inbound slotId
-// and demultiplexes the runtime's interleaved output by slotId.
+// response sessionId tagging: a message dispatched on one slot's Attach stream
+// comes back tagged with that slot's sessionId, and each Attach stream receives
+// only its slot's responses, proving the adapter stamps the inbound sessionId
+// and demultiplexes the runtime's interleaved output by sessionId.
 //
 // The pool configuration the path requires (maxConcurrentSessions > 1 with
 // acknowledgeProcessLevelIsolation: true) is the deployer contract the
-// gateway enforces before it ever assigns a slotId; on the adapter the
-// per-slot path activates on slotId presence alone, so a slotId-bearing
-// StartSession is by definition a concurrent-pool claim.
+// gateway enforces before it ever mints a slot. On the adapter every
+// session is bound to a slot on every pod, so the concurrent-pool claim
+// this flow drives differs from an exclusive one in the pod's slot count
+// rather than in the path a StartSession takes.
 //
-// spec: §5.2 (concurrent sessions: slotId multiplexing over stdin, dispatch
-// loop keyed on slotId, acknowledgeProcessLevelIsolation), §6.4 (per-slot
-// filesystem layout /workspace/slots/{slotId}/, per-slot cwd), §28.5.3
-// (single stdin channel carrying slotId when maxConcurrentSessions > 1).
+// spec: §5.2 (concurrent sessions: sessionId multiplexing over stdin, dispatch
+// loop keyed on sessionId, acknowledgeProcessLevelIsolation), §6.4 (per-slot
+// filesystem layout /workspace/slots/{sessionId}/, per-slot cwd), §28.5.3
+// (single stdin channel carrying sessionId on every pod).
 package tier4_integration_test
 
 import (
@@ -88,9 +89,9 @@ type slot struct {
 // sessions on a maxConcurrentSessions > 1 pod did not land in distinct slots
 // with isolated workspaces (one slot's file leaked into the other's tree or
 // into a pod-global /workspace/current), or the per-slot response was not
-// tagged with its originating slotId (the adapter failed to stamp the
-// inbound slotId or to demultiplex the single runtime connection's
-// interleaved output by slotId).
+// tagged with its originating sessionId (the adapter failed to stamp the
+// inbound sessionId or to demultiplex the single runtime connection's
+// interleaved output by sessionId).
 func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 	pool := concurrentPool{maxConcurrentSessions: 2, acknowledgeProcessLevelIsolate: true}
 	// The deployer contract that admits the per-slot path: the gateway
@@ -113,7 +114,7 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 
 	// One real runtime process per pod, the §4.7 sidecar transport: the
 	// adapter binds the abstract socket and spawns the real echo-concurrent
-	// binary, which dials back and runs its slotId dispatch loop over the one
+	// binary, which dials back and runs its sessionId dispatch loop over the one
 	// connection. Every slot rides this single connection (spec/05:509).
 	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
 	if err != nil {
@@ -137,7 +138,7 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 
 	// Two sessions land on the one pod, each claiming its own slot. The
 	// second claim is admitted rather than rejected with "pod is not idle":
-	// the single pod-global runtime multiplexes both slots on slotId.
+	// the single pod-global runtime multiplexes both slots on sessionId.
 	for _, sl := range slots {
 		if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: sl.sessionID},
@@ -202,15 +203,15 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 
 // assertPerSlotResponseTagging opens a per-slot Attach stream for each slot,
 // dispatches a message on it, and asserts the response comes back tagged with
-// that slot's slotId. Each stream receives only its own slot's response,
-// proving the adapter stamps the inbound slotId onto the envelope it writes
+// that slot's sessionId. Each stream receives only its own slot's response,
+// proving the adapter stamps the inbound sessionId onto the envelope it writes
 // to the single runtime connection and demultiplexes the runtime's
-// interleaved output by slotId. The real echo-concurrent runtime stamps the
-// originating slotId onto every response, so the tag the stream observes is
+// interleaved output by sessionId. The real echo-concurrent runtime stamps the
+// originating sessionId onto every response, so the tag the stream observes is
 // the runtime's, carried back across the adapter unchanged.
 //
 // spec: §28.5.3 — single stdin channel, dispatch loop keyed on
-// slotId; §6.4 — adapter sets the slot's cwd when dispatching.
+// sessionId; §6.4 — adapter sets the slot's cwd when dispatching.
 func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, slots []slot) {
 	t.Helper()
 	for _, sl := range slots {
@@ -223,8 +224,8 @@ func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, 
 				t.Fatalf("Attach(%s): %v", sl.slotID, err)
 			}
 			// The first AttachRequest binds the slot and carries a message
-			// envelope with no slotId in its body: the adapter stamps the
-			// slot's slotId before the envelope reaches the shared runtime.
+			// envelope with no sessionId in its body: the adapter stamps the
+			// slot's sessionId before the envelope reaches the shared runtime.
 			msg := map[string]any{
 				"type":  "message",
 				"id":    "m_" + sl.sessionID,
@@ -242,9 +243,9 @@ func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, 
 			}
 
 			resp := recvResponse(t, stream)
-			if resp.SlotID != sl.slotID {
-				t.Errorf("%s response carried slotId %q, want %q; per-slot response tagging regressed",
-					sl.slotID, resp.SlotID, sl.slotID)
+			if resp.SessionID != sl.slotID {
+				t.Errorf("%s response carried sessionId %q, want %q; per-slot response tagging regressed",
+					sl.slotID, resp.SessionID, sl.slotID)
 			}
 			if len(resp.Output) != 1 || resp.Output[0].Inline == "" {
 				t.Errorf("%s response output = %+v, want the echoed input", sl.slotID, resp.Output)
@@ -262,12 +263,12 @@ func assertPerSlotResponseTagging(t *testing.T, client adapterv1.AdapterClient, 
 }
 
 // slotResponse is the subset of a §28.5.3 outbound `response` frame this
-// flow asserts on: the discriminator, the slotId the runtime stamps and the
+// flow asserts on: the discriminator, the sessionId the runtime stamps and the
 // adapter carries back, and the echoed text parts.
 type slotResponse struct {
-	Type   string `json:"type"`
-	SlotID string `json:"slotId"`
-	Output []struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Output    []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
 }
@@ -297,7 +298,7 @@ func recvResponse(t *testing.T, stream adapterv1.Adapter_AttachClient) slotRespo
 
 // buildConcurrentRuntime compiles the real cmd/runtimes/echo-concurrent
 // binary into a temp path. It is the reference runtime that implements the
-// slotId dispatch loop, so the flow exercises the production multiplexing
+// sessionId dispatch loop, so the flow exercises the production multiplexing
 // path rather than a fake.
 func buildConcurrentRuntime(t *testing.T) string {
 	t.Helper()

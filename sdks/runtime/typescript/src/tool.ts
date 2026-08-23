@@ -17,7 +17,7 @@ export interface InboundToolResult {
   id: string;
   content?: MessagePart[];
   isError?: boolean;
-  slotId?: string;
+  sessionId?: string;
 }
 
 // PendingToolCall is the in-flight bookkeeping for one tool_call: the
@@ -111,7 +111,7 @@ export class AdapterToolset implements AdapterTools {
     private readonly writer: FrameWriter,
     private readonly registry: ToolCallRegistry,
     private readonly timeoutMs: number,
-    private readonly slotId: string | undefined,
+    private readonly sessionId: string | undefined,
   ) {}
 
   // toolCall emits a §28.5.3 tool_call frame for the named
@@ -129,9 +129,9 @@ export class AdapterToolset implements AdapterTools {
       name,
       arguments: args,
     };
-    if (this.slotId) {
-      frame.slotId = this.slotId;
-    }
+    // §28.5.3: a session-scoped frame carries the session it addresses on
+    // every pod, so the key is written whatever the pool's concurrency.
+    frame.sessionId = this.sessionId ?? "";
     try {
       await this.writer.write(frame);
     } catch (err) {

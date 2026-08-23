@@ -354,7 +354,7 @@ class _Session:
                 self._writer,
                 self._registry,
                 self._opts.dial_timeout_s,
-                env.slot_id,
+                env.session_id,
             ),
             platform=self._tools,
             credentials=self._credentials,
@@ -369,8 +369,7 @@ class _Session:
                 "output": [],
                 "error": {"code": "RUNTIME_ERROR", "message": str(err)},
             }
-            if env.slot_id:
-                frame["slotId"] = env.slot_id
+            frame["sessionId"] = env.session_id or ""
             self._safe_write(frame)
             return
 
@@ -386,8 +385,9 @@ class _Session:
         }
         if reply.error is not None:
             frame["error"] = reply.error.to_wire()
-        if env.slot_id:
-            frame["slotId"] = env.slot_id
+        # §28.5.3: the runtime echoes the session identifier it was handed
+        # on every session-scoped frame it emits, on every pod.
+        frame["sessionId"] = env.session_id or ""
         self._safe_write(frame)
 
     def _handle_tool_result(self, frame: dict[str, Any]) -> None:

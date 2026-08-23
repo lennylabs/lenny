@@ -83,7 +83,7 @@ spec:
 # acknowledgeProcessLevelIsolation deployer acknowledgment live in the
 # gateway poolstore per the §4.6.3 ownership boundary, so the CRD
 # template carries executionMode: session only; the runtime container
-# materializes a per-slot workspace under /workspace/slots/{slotId}/.
+# materializes a per-slot workspace under /workspace/slots/{sessionId}/.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:

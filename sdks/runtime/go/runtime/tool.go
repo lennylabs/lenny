@@ -21,9 +21,9 @@ import (
 // A handler reaches AdapterTools through AdapterToolsFrom on the
 // context the SDK passes to OnMessage.
 type AdapterTools struct {
-	w       *frameWriter
-	timeout time.Duration
-	slotID  string
+	w         *frameWriter
+	timeout   time.Duration
+	sessionID string
 }
 
 // ToolResult is the decoded result of an adapter-local tool call. A
@@ -48,7 +48,7 @@ func (a *AdapterTools) ToolCall(ctx context.Context, name string, arguments map[
 		ID:        id,
 		Name:      name,
 		Arguments: arguments,
-		SlotID:    a.slotID,
+		SessionID: a.sessionID,
 	}); err != nil {
 		a.w.cancelToolCall(id)
 		return ToolResult{}, fmt.Errorf("write tool_call %q: %w", name, err)

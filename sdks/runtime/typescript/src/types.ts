@@ -68,7 +68,11 @@ export interface MessageEnvelope {
   threadId?: string;
   delivery?: string;
   delegationDepth?: number;
-  slotId?: string;
+  // sessionId names the session this frame is addressed to. The adapter
+  // populates it on every session-scoped frame on every pod, and the
+  // runtime echoes it on the frames it emits in response.
+  // spec: §28.5.3.
+  sessionId?: string;
   input?: MessagePart[];
 }
 

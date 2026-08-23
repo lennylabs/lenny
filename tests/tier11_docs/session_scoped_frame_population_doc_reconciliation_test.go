@@ -111,7 +111,7 @@ func TestSessionScopedFrameReferenceStatesThePopulationRule(t *testing.T) {
 		// carries the identifier rather than showing the unaddressed form the
 		// adapter rejects on a pod holding more than one slot.
 		requireAllContain(t, "adapter-contract.md "+heading+" example", entry, []string{
-			`"slotId": "sess_abc"`,
+			`"sessionId": "sess_abc"`,
 		})
 	}
 }
@@ -148,7 +148,7 @@ func TestSessionModeGuideStatesTheSlotRuleOnEveryPod(t *testing.T) {
 	}
 	requireNoneContain(t, "lifecycle.md maxConcurrentSessions > 1 bullet", concurrent, []string{
 		"dispatch loop",
-		"carry a `slotId` field",
+		"carry a `sessionId` field",
 		"/workspace/slots/",
 	})
 	requireAllContain(t, "lifecycle.md maxConcurrentSessions > 1 bullet", concurrent, []string{

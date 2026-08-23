@@ -15,22 +15,22 @@ import (
 )
 
 // outFrame is the subset of an outbound JSONL frame the echo-concurrent
-// tests assert on: the discriminator, the slotId the front loop stamps,
-// and the echoed text parts. The §28.5.3 outbound schema carries slotId
-// alone for concurrent multiplexing, so the tests assert on slotId and
-// never on a cwd wire field (the per-slot cwd is an internal derivation
-// covered by TestSlotCwdDerivation).
+// tests assert on: the discriminator, the sessionId the front loop
+// stamps, and the echoed text parts. The §28.5.3 outbound schema carries
+// sessionId alone for multiplexing, so the tests assert on sessionId and
+// never on a cwd wire field (the per-session cwd is an internal
+// derivation covered by TestSessionCwdDerivation).
 type outFrame struct {
-	Type   string `json:"type"`
-	SlotID string `json:"slotId"`
-	Output []struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Output    []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
 }
 
-// drive runs the slotId dispatch loop over input and returns the decoded
-// outbound frames. A trailing shutdown is appended so the loop drains
-// every slot deterministically before returning.
+// drive runs the sessionId dispatch loop over input and returns the
+// decoded outbound frames. A trailing shutdown is appended so the loop
+// drains every session deterministically before returning.
 func drive(t *testing.T, input string) []outFrame {
 	t.Helper()
 	var out bytes.Buffer
@@ -57,102 +57,108 @@ func decodeFrames(t *testing.T, raw string) []outFrame {
 	return frames
 }
 
-// message builds a `message` JSONL frame carrying an optional slotId and a
-// single inline text part.
-func message(slotID, text string) string {
+// message builds a `message` JSONL frame carrying the session address the
+// adapter stamps and a single inline text part. An empty sessionID builds
+// the unaddressed frame §28.5.3 makes a protocol error on this leg.
+func message(sessionID, text string) string {
 	m := map[string]any{
 		"type":  "message",
 		"id":    "m_" + text,
 		"input": []map[string]any{{"type": "text", "inline": text}},
 	}
-	if slotID != "" {
-		m["slotId"] = slotID
+	if sessionID != "" {
+		m["sessionId"] = sessionID
 	}
 	b, _ := json.Marshal(m)
 	return string(b) + "\n"
 }
 
-// TestDemultiplexesTwoSlotsWithIsolatedSequences asserts the front loop
-// routes frames to per-slot echocore loops keyed on slotId, each with its
-// own sequence counter, and stamps the originating slotId onto every
-// response. This is the core §28.5.3 dispatch loop the concurrent-workspace
-// pod depends on. slotId is the only field the §28.5.3 outbound schema tags
-// for concurrent multiplexing; the per-slot cwd derivation is asserted
-// directly in TestSlotCwdDerivation rather than read off the wire.
-// spec: §5.2,
-// §28.5.3, §6.4.
-func TestDemultiplexesTwoSlotsWithIsolatedSequences(t *testing.T) {
-	// Interleave two slots: slot-01 gets two messages, slot-02 one. Each
-	// slot's sequence counter is independent, so slot-01's second response
-	// is seq=2 while slot-02's only response is seq=1.
-	in := message("slot-01", "a1") +
-		message("slot-02", "b1") +
-		message("slot-01", "a2")
+// TestDemultiplexesTwoSessionsWithIsolatedSequences asserts the front loop
+// routes frames to per-session echocore loops keyed on sessionId, each
+// with its own sequence counter, and stamps the originating sessionId onto
+// every response. This is the core §28.5.3 dispatch loop the
+// concurrent-workspace pod depends on. sessionId is the only field the
+// §28.5.3 outbound schema adds for multiplexing; the per-session cwd
+// derivation is asserted directly in TestSessionCwdDerivation rather than
+// read off the wire.
+// spec: §5.2; §6.4; §28.5.3.
+func TestDemultiplexesTwoSessionsWithIsolatedSequences(t *testing.T) {
+	// Interleave two sessions: sess-01 gets two messages, sess-02 one.
+	// Each session's sequence counter is independent, so sess-01's second
+	// response is seq=2 while sess-02's only response is seq=1.
+	in := message("sess-01", "a1") +
+		message("sess-02", "b1") +
+		message("sess-01", "a2")
 	frames := responsesOnly(drive(t, in))
 
-	bySlot := map[string][]outFrame{}
+	bySession := map[string][]outFrame{}
 	for _, f := range frames {
-		bySlot[f.SlotID] = append(bySlot[f.SlotID], f)
+		bySession[f.SessionID] = append(bySession[f.SessionID], f)
 	}
-	if len(bySlot["slot-01"]) != 2 {
-		t.Fatalf("slot-01 got %d responses, want 2: %+v", len(bySlot["slot-01"]), bySlot["slot-01"])
+	if len(bySession["sess-01"]) != 2 {
+		t.Fatalf("sess-01 got %d responses, want 2: %+v", len(bySession["sess-01"]), bySession["sess-01"])
 	}
-	if len(bySlot["slot-02"]) != 1 {
-		t.Fatalf("slot-02 got %d responses, want 1: %+v", len(bySlot["slot-02"]), bySlot["slot-02"])
+	if len(bySession["sess-02"]) != 1 {
+		t.Fatalf("sess-02 got %d responses, want 1: %+v", len(bySession["sess-02"]), bySession["sess-02"])
 	}
 
-	// Per-slot cwd derivation (§6.4) is an internal filesystem
+	// Per-session cwd derivation (§6.4) is an internal filesystem
 	// derivation the runtime never emits on the wire; it is asserted
-	// directly in TestSlotCwdDerivation. Here, confirm the dispatch tagged
-	// each response with the slot whose cwd the runtime derives.
-	for slotID := range bySlot {
-		if slotID == "" {
-			continue
-		}
-		if want := slotCwd(slotID); want != "/workspace/slots/"+slotID+"/current/" {
-			t.Errorf("slot %q cwd = %q, want the per-slot path", slotID, want)
+	// directly in TestSessionCwdDerivation. Here, confirm the dispatch
+	// tagged each response with the session whose cwd the runtime derives.
+	for sessionID := range bySession {
+		if want := slotCwd(sessionID); want != "/workspace/slots/"+sessionID+"/current/" {
+			t.Errorf("session %q cwd = %q, want the per-slot path", sessionID, want)
 		}
 	}
 
-	// Independent per-slot sequence counters: slot-01's responses are
-	// seq=1 then seq=2; slot-02's single response is seq=1, not seq=3,
-	// proving the counters are not shared across slots.
-	if got := inline(bySlot["slot-01"][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a1") {
-		t.Errorf("slot-01 first response = %q, want seq=1 echo of a1", got)
+	// Independent per-session sequence counters: sess-01's responses are
+	// seq=1 then seq=2; sess-02's single response is seq=1, not seq=3,
+	// proving the counters are not shared across sessions.
+	if got := inline(bySession["sess-01"][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a1") {
+		t.Errorf("sess-01 first response = %q, want seq=1 echo of a1", got)
 	}
-	if got := inline(bySlot["slot-01"][1]); !strings.Contains(got, "[echo seq=2]") || !strings.Contains(got, "a2") {
-		t.Errorf("slot-01 second response = %q, want seq=2 echo of a2", got)
+	if got := inline(bySession["sess-01"][1]); !strings.Contains(got, "[echo seq=2]") || !strings.Contains(got, "a2") {
+		t.Errorf("sess-01 second response = %q, want seq=2 echo of a2", got)
 	}
-	if got := inline(bySlot["slot-02"][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "b1") {
-		t.Errorf("slot-02 response = %q, want an independent seq=1 echo of b1", got)
-	}
-}
-
-// TestNoSlotIDFrameServesWholePodSession asserts a frame without a slotId
-// takes the single-session whole-pod path: the response carries no slotId,
-// so echo-concurrent also serves a maxConcurrentSessions: 1 pod, where
-// runtimes never see slotId.
-// spec: §28.5.3.
-func TestNoSlotIDFrameServesWholePodSession(t *testing.T) {
-	frames := responsesOnly(drive(t, message("", "solo")))
-	if len(frames) != 1 {
-		t.Fatalf("got %d responses, want 1: %+v", len(frames), frames)
-	}
-	if frames[0].SlotID != "" {
-		t.Errorf("whole-pod response slotId = %q, want empty (no slotId on a single-session pod)", frames[0].SlotID)
-	}
-	if got := inline(frames[0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "solo") {
-		t.Errorf("whole-pod response = %q, want a seq=1 echo of solo", got)
+	if got := inline(bySession["sess-02"][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "b1") {
+		t.Errorf("sess-02 response = %q, want an independent seq=1 echo of b1", got)
 	}
 }
 
-// TestHeartbeatAckIsNotSlotStamped asserts a per-slot heartbeat is
-// answered with a heartbeat_ack carrying no content payload: the front
-// loop does not stamp slotId onto the protocol-level ack, matching the
-// §28.5.3 heartbeat_ack schema.
+// TestUnaddressedSessionScopedFrameIsAProtocolError asserts a
+// session-scoped frame carrying no sessionId names no session the runtime
+// may act for. The adapter populates the identifier on every pod, so the
+// front loop fails closed with the §15.4 protocol-error rather than
+// routing the frame to a pod-global default session, which is the path
+// §28.5.3 retires.
+// spec: §15.4; §28.5.3.
+func TestUnaddressedSessionScopedFrameIsAProtocolError(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), strings.NewReader(message("", "solo")), &out, io.Discard)
+	if err == nil {
+		t.Fatal("a session-scoped frame carrying no sessionId must fail the runtime")
+	}
+	var pe protocolError
+	if !errors.As(err, &pe) {
+		t.Errorf("error %T must convert to protocolError so the entrypoint exits with code 2", err)
+	}
+	if !strings.Contains(err.Error(), "sessionId") {
+		t.Errorf("error %q must name the missing address", err.Error())
+	}
+	for _, f := range responsesOnly(decodeFrames(t, out.String())) {
+		t.Errorf("an unaddressed frame produced a response %+v; it must be answered by no session", f)
+	}
+}
+
+// TestHeartbeatAckIsPodGlobalAndUnaddressed asserts an unaddressed
+// heartbeat is answered once, with a heartbeat_ack carrying no per-session
+// identifier. heartbeat and heartbeat_ack are protocol-level and sit
+// outside the addressing rule, so the pod answers a heartbeat that names
+// no session rather than failing closed on it.
 // spec: §28.5.3.
-func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
-	in := `{"type":"heartbeat","ts":1,"slotId":"slot-01"}` + "\n"
+func TestHeartbeatAckIsPodGlobalAndUnaddressed(t *testing.T) {
+	in := `{"type":"heartbeat","ts":1}` + "\n"
 	frames := drive(t, in)
 	var acks int
 	for _, f := range frames {
@@ -160,8 +166,8 @@ func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 			continue
 		}
 		acks++
-		if f.SlotID != "" {
-			t.Errorf("heartbeat_ack carried slotId=%q, want none", f.SlotID)
+		if f.SessionID != "" {
+			t.Errorf("heartbeat_ack carried sessionId=%q, want none", f.SessionID)
 		}
 	}
 	if acks != 1 {
@@ -174,9 +180,9 @@ func TestHeartbeatAckIsNotSlotStamped(t *testing.T) {
 // further output. spec: §28.5.3.
 func TestShutdownEndsEverySlot(t *testing.T) {
 	var out bytes.Buffer
-	in := message("slot-01", "before") +
+	in := message("sess-01", "before") +
 		`{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n" +
-		message("slot-01", "after")
+		message("sess-01", "after")
 	if err := run(context.Background(), strings.NewReader(in), &out, io.Discard); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -214,16 +220,14 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 	}
 }
 
-// TestSlotCwdDerivation asserts the per-slot cwd derivation: a non-empty
-// slotId yields /workspace/slots/{slotId}/current/, and the empty default
-// session keeps the global /workspace/current.
-// spec: §6.4.
-func TestSlotCwdDerivation(t *testing.T) {
-	if got := slotCwd("slot-7"); got != "/workspace/slots/slot-7/current/" {
-		t.Errorf("slotCwd(slot-7) = %q, want the per-slot path", got)
-	}
-	if got := slotCwd(""); got != "/workspace/current" {
-		t.Errorf("slotCwd(\"\") = %q, want the global /workspace/current", got)
+// TestSessionCwdDerivation asserts the per-session cwd derivation: the
+// session identifier yields /workspace/slots/{sessionId}/current/. Every
+// session is bound to a slot on every pod, so there is one layout and no
+// pod-global /workspace/current alternative.
+// spec: §6.4; §28.5.3.
+func TestSessionCwdDerivation(t *testing.T) {
+	if got := slotCwd("sess-7"); got != "/workspace/slots/sess-7/current/" {
+		t.Errorf("slotCwd(sess-7) = %q, want the per-slot path", got)
 	}
 }
 
@@ -236,16 +240,16 @@ func TestSlotCwdDerivation(t *testing.T) {
 // spec: §15.4 (protocol-error exit code 2), §5.2.
 func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
 	// A frame whose `input` is a string, not a MessagePart array: the front
-	// loop accepts it (it reads only type and slotId) but echocore's
+	// loop accepts it (it reads only type and sessionId) but echocore's
 	// handleMessage rejects the body.
-	in := `{"type":"message","id":"m1","slotId":"slot-01","input":"not-an-array"}` + "\n"
+	in := `{"type":"message","id":"m1","sessionId":"sess-01","input":"not-an-array"}` + "\n"
 	var out bytes.Buffer
 	err := run(context.Background(), strings.NewReader(in), &out, io.Discard)
 	if err == nil {
 		t.Fatal("a malformed per-slot message body must fail the runtime")
 	}
-	if !strings.Contains(err.Error(), "slot-01") {
-		t.Errorf("error %q must name the offending slot", err.Error())
+	if !strings.Contains(err.Error(), "sess-01") {
+		t.Errorf("error %q must name the offending session", err.Error())
 	}
 	// The per-slot ProtocolError must surface as the package-local
 	// protocolError so the entrypoint maps it to the §15.4 protocol-error
@@ -272,7 +276,7 @@ func TestProtocolErrorMessage(t *testing.T) {
 // a non-object outbound frame verbatim, so a future non-object frame on a
 // slot is not dropped or corrupted by the stamping path.
 func TestStampLeavesNonObjectFrameUnchanged(t *testing.T) {
-	s := &slotWriter{slotID: "slot-01"}
+	s := &slotWriter{sessionID: "sess-01"}
 	got, err := s.stamp([]byte("[]"))
 	if err != nil {
 		t.Fatalf("stamp non-object frame: %v", err)
@@ -316,24 +320,24 @@ func TestWriteFrameSurfacesTransportError(t *testing.T) {
 // a single slot from wedging a concurrent pod.
 // spec: §15.4 (protocol-error exit code 2 vs runtime-error exit code 1).
 func TestSlotErrorMapsExitCodes(t *testing.T) {
-	protoErr := slotError("slot-01", echocore.ProtocolError{Msg: "bad body"})
+	protoErr := slotError("sess-01", echocore.ProtocolError{Msg: "bad body"})
 	var pe protocolError
 	if !errors.As(protoErr, &pe) {
 		t.Errorf("a per-slot ProtocolError must convert to protocolError (exit code 2), got %T", protoErr)
 	}
-	if !strings.Contains(protoErr.Error(), "slot-01") {
-		t.Errorf("error %q must name the offending slot", protoErr.Error())
+	if !strings.Contains(protoErr.Error(), "sess-01") {
+		t.Errorf("error %q must name the offending session", protoErr.Error())
 	}
 
-	runErr := slotError("slot-02", io.ErrClosedPipe)
+	runErr := slotError("sess-02", io.ErrClosedPipe)
 	if errors.As(runErr, &pe) {
 		t.Error("a non-protocol per-slot failure must not convert to protocolError; it maps to exit code 1")
 	}
 	if !errors.Is(runErr, io.ErrClosedPipe) {
 		t.Errorf("a non-protocol per-slot failure must preserve its wrapped chain, got %v", runErr)
 	}
-	if !strings.Contains(runErr.Error(), "slot-02") {
-		t.Errorf("error %q must name the offending slot", runErr.Error())
+	if !strings.Contains(runErr.Error(), "sess-02") {
+		t.Errorf("error %q must name the offending session", runErr.Error())
 	}
 }
 

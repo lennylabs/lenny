@@ -316,7 +316,7 @@ class Session {
         this.writer,
         this.registry,
         this.cfg.dialTimeoutMs,
-        env.slotId,
+        env.sessionId,
       ),
       platform: this.tools,
       credentials: this.credentials,
@@ -331,7 +331,7 @@ class Session {
         type: "response",
         output: [],
         error: { code: "RUNTIME_ERROR", message: (err as Error).message },
-        ...(env.slotId ? { slotId: env.slotId } : {}),
+        sessionId: env.sessionId ?? "",
       });
       return;
     }
@@ -346,7 +346,9 @@ class Session {
       type: "response",
       output: stampParts(reply.parts ?? []),
       ...(reply.error ? { error: reply.error } : {}),
-      ...(env.slotId ? { slotId: env.slotId } : {}),
+      // §28.5.3: the runtime echoes the session identifier it was handed
+      // on every session-scoped frame it emits, on every pod.
+      sessionId: env.sessionId ?? "",
     });
   }
 

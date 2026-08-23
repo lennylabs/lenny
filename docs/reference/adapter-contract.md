@@ -137,7 +137,7 @@ The unified message type for all inbound content: initial task, mid-session inje
   "threadId": "t_01",
   "delivery": "queued",
   "delegationDepth": 0,
-  "slotId": "sess_abc"
+  "sessionId": "sess_abc"
 }
 ```
 
@@ -153,9 +153,9 @@ The unified message type for all inbound content: initial task, mid-session inje
 | `threadId` | string or null | Standard+ | Thread label. One implicit thread per session in v1. |
 | `delivery` | string or null | Standard+ | `"immediate"` or `"queued"` (default). Controls interrupt behavior. |
 | `delegationDepth` | integer | Standard+ | How many tree hops this message crossed. Informational. |
-| `slotId` | string | All | Names the session this message is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
+| `sessionId` | string | All | Names the session this message is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
-**Basic-level runtimes:** Read `type`, `id`, `input`, and `slotId`. The remaining envelope fields may be ignored safely. `slotId` is excepted from that permission: it names the session the message is addressed to, the adapter populates it on every pod, and a Basic-level runtime echoes it on the session-scoped frames it emits in response.
+**Basic-level runtimes:** Read `type`, `id`, `input`, and `sessionId`. The remaining envelope fields may be ignored safely. `sessionId` is excepted from that permission: it names the session the message is addressed to, the adapter populates it on every pod, and a Basic-level runtime echoes it on the session-scoped frames it emits in response.
 
 **The `input` array contains MessagePart objects.** The simplest MessagePart is:
 
@@ -177,7 +177,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
     { "type": "text", "inline": "file contents here" }
   ],
   "isError": false,
-  "slotId": "sess_abc"
+  "sessionId": "sess_abc"
 }
 ```
 
@@ -187,7 +187,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
 | `id` | string | Matches the `id` of the `tool_call` this result responds to |
 | `content` | MessagePart[] | Result content |
 | `isError` | boolean | `true` if tool execution failed. Default `false`. |
-| `slotId` | string | Names the session this result is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
+| `sessionId` | string | Names the session this result is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`. |
 
 **Correlation:** Every `tool_result.id` matches a previously emitted `tool_call.id`. Results may arrive in any order when you have multiple outstanding tool calls. Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` --- your runtime must handle interleaved delivery.
 
@@ -229,14 +229,14 @@ The primary output message. Signals task completion.
   "output": [
     { "type": "text", "inline": "The answer is 42." }
   ],
-  "slotId": "sess_abc"
+  "sessionId": "sess_abc"
 }
 ```
 
 **Simplified shorthand** (Basic-level convenience --- adapter normalizes to the full form). A Basic-level runtime echoes the identifier the adapter handed it on the shorthand form as well:
 
 ```json
-{ "type": "response", "slotId": "sess_abc", "text": "The answer is 42." }
+{ "type": "response", "sessionId": "sess_abc", "text": "The answer is 42." }
 ```
 
 **Error reporting via `response`.** Include an optional `error` field for structured error reporting:
@@ -244,7 +244,7 @@ The primary output message. Signals task completion.
 ```json
 {
   "type": "response",
-  "slotId": "sess_abc",
+  "sessionId": "sess_abc",
   "output": [
     { "type": "text", "inline": "Partial results before failure..." }
   ],
@@ -257,7 +257,7 @@ The primary output message. Signals task completion.
 
 When `error` is present, the adapter maps the task to `failed` state. When `error` is absent and the process exits with code 0, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
 
-**Relationship with `lenny/output`:** At the Standard and Full levels, you may emit output parts incrementally via the `lenny/output` platform tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "slotId": "sess_abc", "output": []}`.
+**Relationship with `lenny/output`:** At the Standard and Full levels, you may emit output parts incrementally via the `lenny/output` platform tool. The stdout `response` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`. If you emitted all output via `lenny/output`, send an empty array: `{"type": "response", "sessionId": "sess_abc", "output": []}`.
 
 #### `tool_call` --- Request Tool Execution
 
@@ -269,7 +269,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
   "id": "tc_001",
   "name": "read_file",
   "arguments": { "path": "/workspace/slots/sess_abc/current/README.md" },
-  "slotId": "sess_abc"
+  "sessionId": "sess_abc"
 }
 ```
 
@@ -279,7 +279,7 @@ Request the adapter to execute a tool. At the Basic level, only adapter-local to
 | `id` | string | Unique call identifier. Used to correlate the inbound `tool_result`. Recommended format: `tc_` prefix with monotonic counter or random suffix. |
 | `name` | string | Tool name (e.g., `read_file`, `write_file`) |
 | `arguments` | object | Tool-specific parameters |
-| `slotId` | string, optional | Names the session this call belongs to. Echo the identifier the adapter handed you on the frame you are responding to. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
+| `sessionId` | string, optional | Names the session this call belongs to. Echo the identifier the adapter handed you on the frame you are responding to. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
 
 **Built-in adapter-local tools:**
 
@@ -303,7 +303,7 @@ Must be sent in response to every inbound `heartbeat`. No other fields.
 #### `status` --- Optional Status Update
 
 ```json
-{ "type": "status", "state": "thinking", "message": "Analyzing code...", "slotId": "sess_abc" }
+{ "type": "status", "state": "thinking", "message": "Analyzing code...", "sessionId": "sess_abc" }
 ```
 
 | Field | Type | Description |
@@ -311,7 +311,7 @@ Must be sent in response to every inbound `heartbeat`. No other fields.
 | `type` | string | Always `"status"` |
 | `state` | string | Status label (for example `thinking`, `analyzing`, or `calling_tool`) |
 | `message` | string, optional | Human-readable detail |
-| `slotId` | string, optional | Names the session this status belongs to. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
+| `sessionId` | string, optional | Names the session this status belongs to. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. |
 
 Informational. The adapter forwards status updates to the gateway for client visibility. Not required at any integration level.
 
@@ -321,7 +321,7 @@ Informational. The adapter forwards status updates to the gateway for client vis
 {
   "type": "set_tracing_context",
   "context": { "langsmith_run_id": "run_abc123" },
-  "slotId": "sess_abc"
+  "sessionId": "sess_abc"
 }
 ```
 
@@ -329,13 +329,13 @@ Informational. The adapter forwards status updates to the gateway for client vis
 |-------|------|-------------|
 | `type` | string | Always `"set_tracing_context"` |
 | `context` | object | Map of string keys to string values carrying opaque, non-sensitive tracing identifiers |
-| `slotId` | string, optional | Names the session registering the identifiers. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
+| `sessionId` | string, optional | Names the session registering the identifiers. Echo the identifier the adapter handed you. An identifier the frame omits resolves to the binding of the stream that delivered it on a pod holding at most one slot, and is rejected on a pod holding more. The published JSONL schema accepts only a JSON string here; `null` and any other type fail schema validation. |
 
 Registers tracing identifiers for the session that emitted the frame. The gateway merges the submitted context into that session's recorded context, validates the merged result against the tracing-context rules at registration time, and attaches the registered context to each child's delegation lease when the session delegates. The adapter itself stores no context and attaches none to later requests. The frame is available at all integration levels.
 
-**Addressing.** The adapter hands the runtime a per-session identifier on every pod, and the runtime echoes that identifier in the frame's `slotId`. The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and to that session's slot, on every pod. The adapter applies the frame only when the frame's `slotId` matches the stream's session and the adapter's registry still holds that address with a bound session. The comparison is exact string equality.
+**Addressing.** The adapter hands the runtime a per-session identifier on every pod, and the runtime echoes that identifier in the frame's `sessionId`. The adapter resolves the frame against the stream that delivered it. That stream is bound to one session and to that session's slot, on every pod. The adapter applies the frame only when the frame's `sessionId` matches the stream's session and the adapter's registry still holds that address with a bound session. The comparison is exact string equality.
 
-Two dispositions reject a frame. A frame that carries no `slotId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream by that stream's demultiplexer, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame. A frame's identifier names no live binding either when it is not the receiving stream's own session, or when the adapter's registry no longer holds that identifier with a bound session, which is the case while an ending session's stream drains after its slot is released.
+Two dispositions reject a frame. A frame that carries no `sessionId` resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream by that stream's demultiplexer, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose `sessionId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total` (see [Metrics](metrics.md)), and logged as a protocol error. Nothing is relayed onward and nothing is returned to the runtime; the runtime receives no error for a dropped frame. A frame's identifier names no live binding either when it is not the receiving stream's own session, or when the adapter's registry no longer holds that identifier with a bound session, which is the case while an ending session's stream drains after its slot is released.
 
 ---
 
@@ -397,10 +397,10 @@ Setting both `inline` and `ref` on the same part is a validation error (`400 MES
 Basic-level runtimes may emit a `response` with a top-level `text` field instead of a full `output` array, echoing on it the per-session identifier the adapter handed them:
 
 ```json
-{ "type": "response", "slotId": "sess_abc", "text": "The answer is 42." }
+{ "type": "response", "sessionId": "sess_abc", "text": "The answer is 42." }
 ```
 
-The adapter normalizes this to the canonical form `{"type": "response", "slotId": "sess_abc", "output": [{"type": "text", "inline": "The answer is 42."}]}` before forwarding. Use the full form when you have more than one part or need a non-text type.
+The adapter normalizes this to the canonical form `{"type": "response", "sessionId": "sess_abc", "output": [{"type": "text", "inline": "The answer is 42."}]}` before forwarding. Use the full form when you have more than one part or need a non-text type.
 
 ### Examples
 
@@ -591,12 +591,12 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 1. Adapter starts agent binary, stdin/stdout pipes open.
 
 2. Adapter writes to stdin:
-   {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Hello"}],"from":{"kind":"client","id":"client_8f3a2b"},"threadId":"t_01"}
+   {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}],"from":{"kind":"client","id":"client_8f3a2b"},"threadId":"t_01"}
 
-3. Agent reads line from stdin, parses JSON, reads type/id/input/slotId (ignores the other fields, and echoes slotId on what it emits).
+3. Agent reads line from stdin, parses JSON, reads type/id/input/sessionId (ignores the other fields, and echoes sessionId on what it emits).
 
 4. Agent writes to stdout:
-   {"type":"response","slotId":"sess_abc","text":"Echo: Hello"}
+   {"type":"response","sessionId":"sess_abc","text":"Echo: Hello"}
 
 5. Adapter reads line from stdout, delivers response to gateway.
 
@@ -618,21 +618,21 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 
 ```
 Agent writes to stdout:
-{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/README.md"}}
+{"type":"tool_call","id":"tc_001","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/README.md"}}
 
 Adapter reads file and writes to stdin:
-{"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"# My Project\nThis is a sample project."}],"isError":false}
+{"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"# My Project\nThis is a sample project."}],"isError":false}
 ```
 
 ### Multiple Outstanding Tool Calls
 
 ```
 Agent writes:
-{"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"read_file","arguments":{"path":"src/main.go"}}
-{"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"go.mod"}}
+{"type":"tool_call","id":"tc_001","sessionId":"sess_abc","name":"read_file","arguments":{"path":"src/main.go"}}
+{"type":"tool_call","id":"tc_002","sessionId":"sess_abc","name":"read_file","arguments":{"path":"go.mod"}}
 
 Adapter may respond in any order:
-{"type":"tool_result","id":"tc_002","slotId":"sess_abc","content":[{"type":"text","inline":"module example.com/myapp\ngo 1.22"}],"isError":false}
+{"type":"tool_result","id":"tc_002","sessionId":"sess_abc","content":[{"type":"text","inline":"module example.com/myapp\ngo 1.22"}],"isError":false}
 
 A heartbeat may arrive between tool results:
 {"type":"heartbeat","ts":1717430420}
@@ -641,7 +641,7 @@ Agent acks immediately:
 {"type":"heartbeat_ack"}
 
 Then the other result arrives:
-{"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
+{"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"package main\n..."}],"isError":false}
 ```
 
 ### Full-level checkpoint handshake

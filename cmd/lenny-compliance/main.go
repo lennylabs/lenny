@@ -229,6 +229,7 @@ func basicCases() []checkCase {
 		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
 		{"messagepart_schema_compliance", "15.4.6", checkMessagePartSchemaCompliance},
 		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
+		{"response_echoes_session_id", "28.5.3", checkResponseEchoesSessionID},
 	}
 }
 
@@ -385,7 +386,7 @@ func checkEmptyStdin(binary string, timeout time.Duration, _ bool) (string, erro
 
 func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose bool) (string, error) {
 	in := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"ping"}]}`,
+		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"ping"}]}`,
 	}
 	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
 	if err != nil {
@@ -421,6 +422,56 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 
 // checkResponseMatchesJSONLSchema validates that the runtime's response
 // frame matches the published adapter JSONL schema. spec: §15.4.6.
+// complianceSessionID is the session the battery addresses every inbound
+// `message` frame to. The adapter populates the per-session identifier on
+// every session-scoped frame on every pod, so a runtime the battery drives
+// is handed one and echoes it back. spec: §28.5.3.
+const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
+
+// checkResponseEchoesSessionID is the Basic-level echo obligation. A
+// Basic-level runtime may ignore every envelope field but `type`, `id`,
+// and `input`, with the per-session identifier excepted: it echoes the
+// identifier it was handed on the frames it emits in response, on every
+// pod. Without the echo the adapter cannot attribute the response to the
+// session that produced it, and on a pod holding more than one slot the
+// frame is rejected and relayed to no stream.
+// spec: §15.4.3; §28.5.3.
+func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose bool) (string, error) {
+	in := []string{
+		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"schemaVersion":1,"type":"text","inline":"ping"}]}`,
+	}
+	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", fmt.Errorf("exit %d", code)
+	}
+	if len(stdout) == 0 {
+		return "", errors.New("no response on stdout")
+	}
+	var resp struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal([]byte(stdout[0]), &resp); err != nil {
+		return "", fmt.Errorf("response not JSON: %w (line: %s)", err, stdout[0])
+	}
+	if resp.Type != "response" {
+		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
+	}
+	if resp.SessionID == "" {
+		return "", fmt.Errorf("response carries no sessionId; a Basic-level runtime echoes the per-session identifier it was handed (%s)", complianceSessionID)
+	}
+	if resp.SessionID != complianceSessionID {
+		return "", fmt.Errorf("response.sessionId = %q, want the inbound %q echoed unchanged", resp.SessionID, complianceSessionID)
+	}
+	if verbose {
+		return fmt.Sprintf("response echoed sessionId=%q (line: %s)", resp.SessionID, stdout[0]), nil
+	}
+	return "response.sessionId echoes the inbound " + complianceSessionID, nil
+}
+
 func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
@@ -622,9 +673,9 @@ func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
 
 func checkSequentialMessages(binary string, timeout time.Duration, _ bool) (string, error) {
 	in := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"three"}]}`,
+		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"one"}]}`,
+		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"two"}]}`,
+		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"three"}]}`,
 	}
 	stdout, _, code, err := driveAdapter(binary, in, 3, timeout)
 	if err != nil {

@@ -34,7 +34,8 @@ import (
 )
 
 // spec: §7.2 (per-slot inbox routing on the coordinating gateway replica),
-// §5.2 (maxConcurrentSessions > 1 slotId multiplexing).
+// §5.2 (per-session multiplexing), §28.5.3 (the outbound envelope carries
+// sessionId on every pod).
 //
 // This is the tier-2 gateway component test for the per-slot message routing
 // the gateway owns. It backs the binder with an envtest cluster (the §5.2
@@ -45,16 +46,19 @@ import (
 // outbound adapter envelope; a bind that resolved no session identifier
 // fails closed on the internal §7.2 dispatch invariant.
 
-// perSlotAdapter records the slotId the PodExecutor stamped on each session's
-// Attach binding frame and on each forwarded message envelope, so a component
-// test can assert per-session→slot resolution and outbound stamping. It keys
-// captures by the Attach binding slotId observed first on each stream.
+// perSlotAdapter records the address the PodExecutor stamped on each
+// session's Attach binding frame and the sessionId it stamped on each
+// forwarded message envelope, so a component test can assert per-session
+// routing and outbound stamping. It keys captures by the Attach binding
+// address observed first on each stream. The envelope decode reads the
+// wire key off a struct tag, so a producer-side rename that this fake
+// does not follow yields the empty string rather than a build failure.
 type perSlotAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 
 	mu        sync.Mutex
 	bindSlots []string // the session address on each opened Attach stream, in open order
-	envSlots  []string // slotId on each forwarded envelope
+	envSlots  []string // sessionId on each forwarded envelope
 }
 
 func (a *perSlotAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse]) error {
@@ -72,11 +76,11 @@ func (a *perSlotAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.Attach
 		}
 		if env := req.GetEnvelopeJson(); len(env) > 0 {
 			var decoded struct {
-				SlotID string `json:"slotId"`
+				SessionID string `json:"sessionId"`
 			}
 			_ = json.Unmarshal(env, &decoded)
 			a.mu.Lock()
-			a.envSlots = append(a.envSlots, decoded.SlotID)
+			a.envSlots = append(a.envSlots, decoded.SessionID)
 			a.mu.Unlock()
 			_ = stream.Send(&adapterv1.AttachResponse{
 				EnvelopeJson: []byte(`{"type":"response","text":"ack"}`),
@@ -155,16 +159,17 @@ func seedConcurrentSession(t *testing.T, store sessionstore.Store, id string, st
 // test. Two sessions share one maxConcurrentSessions > 1 pod in distinct
 // slots: slot 01 is running and slot 02 is in input_required. The gateway
 // resolves each session to its bound slot, delivers to slot 01 (path 2) while
-// slot 02 buffers (path 3), and stamps the resolved slotId on the outbound
-// adapter envelope. A client-supplied slotId is ignored; the session→slot
-// resolution governs.
+// slot 02 buffers (path 3), and stamps the addressed session on the
+// outbound adapter envelope. A client-supplied address is ignored; the
+// session the request names governs.
 //
-// spec: 7.2 (per-slot inbox routing), 5.2 (slotId multiplexing)
+// spec: 7.2 (per-slot inbox routing), 5.2 (per-session multiplexing),
+// 28.5.3 (the outbound envelope carries sessionId on every pod)
 //
 // diagnosis: a failure means the gateway's per-slot message routing over the
-// single pod regressed — either it no longer resolves session→slot and stamps
-// the slotId outbound, it lets one slot's input_required block a sibling
-// slot's delivery, or it began honoring a client-supplied slotId.
+// single pod regressed — either it no longer stamps the addressed session
+// outbound, it lets one slot's input_required block a sibling
+// slot's delivery, or it began honoring a client-supplied address.
 func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	rec01 := &perSlotAdapter{}
 	rec02 := &perSlotAdapter{}
@@ -217,13 +222,13 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	}
 
 	// The gateway addressed each Attach stream by its own session and
-	// stamped the resolved slot on the outbound envelope.
+	// stamped that session on the outbound envelope.
 	bind01, env01 := rec01.snapshot()
 	if len(bind01) == 0 || bind01[0] != "sess-slot-01" {
 		t.Errorf("session Attach binding address = %v, want [sess-slot-01]", bind01)
 	}
-	if len(env01) == 0 || env01[0] != "slot_01" {
-		t.Errorf("slot 01 outbound envelope slotId = %v, want slot_01 stamped", env01)
+	if len(env01) == 0 || env01[0] != "sess-slot-01" {
+		t.Errorf("slot 01 outbound envelope sessionId = %v, want sess-slot-01 stamped", env01)
 	}
 	// Slot 02 buffered in the gateway inbox, so it never reached the adapter
 	// stream — the buffered path is a gateway concern, not an adapter one.
@@ -232,17 +237,17 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	}
 }
 
-// TestMessagesIgnoresClientSlotIDAndRoutesBySession confirms a legitimate
-// inbound message that carries a stray client slotId on a
-// maxConcurrentSessions > 1 pod is routed by session→slot resolution rather
-// than rejected, and the gateway stamps its own resolved slotId outbound.
+// TestMessagesIgnoresAClientAddressAndRoutesBySession confirms a
+// legitimate inbound message that carries a stray client address on a
+// maxConcurrentSessions > 1 pod is routed by the session the request names
+// rather than rejected, and the gateway stamps its own address outbound.
 //
-// spec: 7.2 (per-slot routing; slotId is internal), 5.2
+// spec: 7.2 (per-slot routing; the address is internal), 5.2, 28.5.3
 //
 // diagnosis: a failure means the gateway began honoring a client-supplied
-// slotId or rejecting a no-client-slotId message on a concurrent pod, rather
-// than deriving the slot from the session.
-func TestMessagesIgnoresClientSlotIDAndRoutesBySession(t *testing.T) {
+// address or rejecting a message that carries none on a concurrent pod,
+// rather than deriving the address from the session.
+func TestMessagesIgnoresAClientAddressAndRoutesBySession(t *testing.T) {
 	rec := &perSlotAdapter{}
 	cl := dialPerSlotAdapter(t, rec)
 	reg := podsession.NewRegistry()
@@ -253,33 +258,38 @@ func TestMessagesIgnoresClientSlotIDAndRoutesBySession(t *testing.T) {
 	srv, store, _ := concurrentRoutingServer(t, reg)
 	seedConcurrentSession(t, store, "sess-slot-01", session.StateRunning)
 
-	// A raw body that carries a stray client slotId pointing at a different
-	// slot. The gateway must ignore it and route by the session's bound slot.
+	// A raw body that carries a stray client address pointing at a
+	// different session. The gateway must ignore it and route by the
+	// session the request names.
 	rr := sendRawMessageRequest(t, srv.Handler(), "sess-slot-01",
-		`{"messages":[{"content":"hello","slotId":"slot_99"}]}`)
+		`{"messages":[{"content":"hello","sessionId":"sess-slot-99"}]}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("no-client-slotId message rejected: %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("message carrying a stray client address rejected: %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var resp sessionserver.MessageResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
 		t.Errorf("status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
-	if _, env := rec.snapshot(); len(env) == 0 || env[0] != "slot_01" {
-		t.Errorf("outbound envelope slotId = %v, want the session's resolved slot_01 (not the client slot_99)", env)
+	if _, env := rec.snapshot(); len(env) == 0 || env[0] != "sess-slot-01" {
+		t.Errorf("outbound envelope sessionId = %v, want the addressed sess-slot-01 (not the client sess-slot-99)", env)
 	}
 }
 
 // TestMessagesAddressesTheStreamBySessionOnAPoolOfOne confirms that a bind
 // with no separate slot recorded still addresses its Attach stream by the
 // session identifier, which under §5.2 names the slot that session holds
-// on the pod.
+// on the pod, and that the outbound envelope carries that same identifier.
+// A bind on a pool of one records no separate slot, so an envelope filled
+// from the bind's slot would emit no address at all on exactly the pool
+// §28.5.3 exists to normalize.
 //
-// spec: 7.2 (per-session routing), 5.2
+// spec: 7.2 (per-session routing), 5.2, 28.5.3 (the outbound envelope
+// carries sessionId on every pod, whatever the pool's concurrency)
 //
-// diagnosis: a failure means the stream carries a separate slot address
-// again, which a bind on a pool of one leaves empty and the adapter cannot
-// attribute.
+// diagnosis: a failure means the stream or the envelope carries a separate
+// slot address again, which a bind on a pool of one leaves empty and the
+// adapter cannot attribute.
 func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
 	rec := &perSlotAdapter{}
 	cl := dialPerSlotAdapter(t, rec)
@@ -303,8 +313,11 @@ func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
 	if resp.DeliveryReceipt.Status != session.DeliveryStatusDelivered {
 		t.Errorf("exclusive status = %q, want delivered", resp.DeliveryReceipt.Status)
 	}
-	bind, _ := rec.snapshot()
+	bind, env := rec.snapshot()
 	if len(bind) == 0 || bind[0] != "sess-excl" {
 		t.Errorf("Attach binding address = %v, want [sess-excl]", bind)
+	}
+	if len(env) == 0 || env[0] != "sess-excl" {
+		t.Errorf("outbound envelope sessionId = %v, want [sess-excl]; the envelope carries the addressed session on a pool of one too", env)
 	}
 }

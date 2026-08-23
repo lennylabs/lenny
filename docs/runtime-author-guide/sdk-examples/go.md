@@ -47,10 +47,10 @@ type InboundMessage struct {
 	Type  string        `json:"type"`
 	ID    string        `json:"id,omitempty"`
 	Input []MessagePart `json:"input,omitempty"`
-	// SlotID names the session this frame is addressed to. The adapter
+	// SessionID names the session this frame is addressed to. The adapter
 	// populates it on every pod, and the runtime echoes it on the
 	// session-scoped frames it emits in response.
-	SlotID     string `json:"slotId,omitempty"`
+	SessionID  string `json:"sessionId,omitempty"`
 	TS         int64  `json:"ts,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	DeadlineMs int    `json:"deadline_ms,omitempty"`
@@ -71,16 +71,16 @@ type MessagePart struct {
 type ToolCall struct {
 	Type      string            `json:"type"`
 	ID        string            `json:"id"`
-	SlotID    string            `json:"slotId,omitempty"`
+	SessionID string            `json:"sessionId,omitempty"`
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments"`
 }
 
 // Response signals task completion.
 type Response struct {
-	Type   string        `json:"type"`
-	SlotID string        `json:"slotId,omitempty"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 // HeartbeatAck acknowledges a heartbeat ping.
@@ -176,7 +176,7 @@ func handleMessage(msg InboundMessage) {
 
 	// Step 1: List files in the workspace. The frame this message triggers is
 	// addressed to the session the message itself was addressed to.
-	listDir(msg.SlotID, "/workspace/slots/"+msg.SlotID+"/current")
+	listDir(msg.SessionID, "/workspace/slots/"+msg.SessionID+"/current")
 }
 
 // handleToolResult processes the result of a tool call.
@@ -193,7 +193,7 @@ func handleToolResult(msg InboundMessage) {
 			errorText = msg.Content[0].Inline
 		}
 		fmt.Fprintf(os.Stderr, "file-summarizer: tool error: %s\n", errorText)
-		writeResponse(msg.SlotID, fmt.Sprintf("Error reading workspace: %s", errorText))
+		writeResponse(msg.SessionID, fmt.Sprintf("Error reading workspace: %s", errorText))
 		return
 	}
 
@@ -212,14 +212,14 @@ func handleToolResult(msg InboundMessage) {
 		}
 
 		if len(fileList) == 0 {
-			writeResponse(msg.SlotID, "No files found in the workspace.")
+			writeResponse(msg.SessionID, "No files found in the workspace.")
 			return
 		}
 
 		// Step 2: Start reading files one by one.
 		phase = 2
 		currentFileIndex = 0
-		readNextFile(msg.SlotID)
+		readNextFile(msg.SessionID)
 
 	case 2:
 		// Phase 2: We received a file's contents.
@@ -233,24 +233,24 @@ func handleToolResult(msg InboundMessage) {
 		currentFileIndex++
 		if currentFileIndex < len(fileList) && currentFileIndex < 10 {
 			// Read the next file (cap at 10 files to avoid excessive reads).
-			readNextFile(msg.SlotID)
+			readNextFile(msg.SessionID)
 		} else {
 			// All files read. Produce the summary.
 			phase = 3
-			produceSummary(msg.SlotID)
+			produceSummary(msg.SessionID)
 		}
 	}
 }
 
 // listDir sends a list_dir tool call for the given path, addressed to the
 // session the inbound frame that triggered it was addressed to.
-func listDir(slotID, path string) {
+func listDir(sessionID, path string) {
 	id := nextToolCallID()
 	pendingToolCallID = id
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SlotID:    slotID,
+		SessionID: sessionID,
 		Name:      "list_dir",
 		Arguments: map[string]string{"path": path},
 	})
@@ -258,17 +258,17 @@ func listDir(slotID, path string) {
 
 // readNextFile sends a read_file tool call for the next file in the list,
 // addressed to the session the tool_result that triggered it was addressed to.
-func readNextFile(slotID string) {
+func readNextFile(sessionID string) {
 	if currentFileIndex >= len(fileList) {
 		return
 	}
 	id := nextToolCallID()
 	pendingToolCallID = id
-	filePath := "/workspace/slots/" + slotID + "/current/" + fileList[currentFileIndex]
+	filePath := "/workspace/slots/" + sessionID + "/current/" + fileList[currentFileIndex]
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
-		SlotID:    slotID,
+		SessionID: sessionID,
 		Name:      "read_file",
 		Arguments: map[string]string{"path": filePath},
 	})
@@ -276,7 +276,7 @@ func readNextFile(slotID string) {
 
 // produceSummary generates the final summary response, addressed to the
 // session the tool_result that completed the read run was addressed to.
-func produceSummary(slotID string) {
+func produceSummary(sessionID string) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Workspace Summary (%d files)\n\n", len(fileContents)))
 	for _, fc := range fileContents {
@@ -284,7 +284,7 @@ func produceSummary(slotID string) {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString(fmt.Sprintf("Total files examined: %d", len(fileContents)))
-	writeResponse(slotID, sb.String())
+	writeResponse(sessionID, sb.String())
 }
 
 // ---- Helpers ----
@@ -293,10 +293,10 @@ func produceSummary(slotID string) {
 // the inbound frame it answers was addressed to. Stamping the address read
 // from that frame, rather than one held in a variable between frames, is what
 // keeps the answer on the right session when the pod holds more than one.
-func writeResponse(slotID, text string) {
+func writeResponse(sessionID, text string) {
 	resp := Response{
-		Type:   "response",
-		SlotID: slotID,
+		Type:      "response",
+		SessionID: sessionID,
 		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},
@@ -339,14 +339,14 @@ func truncate(s string, n int) string {
 ### Message Flow
 
 ```
-1. Adapter sends:    {"type":"message","id":"msg_001","slotId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
-2. Runtime sends:    {"type":"tool_call","id":"tc_001","slotId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/slots/sess_abc/current"}}
-3. Adapter sends:    {"type":"tool_result","id":"tc_001","slotId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
-4. Runtime sends:    {"type":"tool_call","id":"tc_002","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/main.go"}}
-5. Adapter sends:    {"type":"tool_result","id":"tc_002","slotId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
-6. Runtime sends:    {"type":"tool_call","id":"tc_003","slotId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/util.go"}}
-7. Adapter sends:    {"type":"tool_result","id":"tc_003","slotId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
-8. Runtime sends:    {"type":"response","slotId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
+1. Adapter sends:    {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
+2. Runtime sends:    {"type":"tool_call","id":"tc_001","sessionId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/slots/sess_abc/current"}}
+3. Adapter sends:    {"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
+4. Runtime sends:    {"type":"tool_call","id":"tc_002","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/main.go"}}
+5. Adapter sends:    {"type":"tool_result","id":"tc_002","sessionId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
+6. Runtime sends:    {"type":"tool_call","id":"tc_003","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/util.go"}}
+7. Adapter sends:    {"type":"tool_result","id":"tc_003","sessionId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
+8. Runtime sends:    {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
 ```
 
 ### Key Design Choices

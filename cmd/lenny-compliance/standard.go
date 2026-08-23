@@ -485,7 +485,7 @@ func (fa *fakePlatformAdapter) spawn(ctx context.Context, binary string) (*exec.
 
 // canonicalMessage is the inbound `message` envelope the Standard checks
 // drive the runtime with.
-const canonicalMessage = `{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"input":[{"schemaVersion":1,"type":"text","inline":"delegate this"}]}`
+const canonicalMessage = `{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"schemaVersion":1,"type":"text","inline":"delegate this"}]}`
 
 // readResponseLine drives the runtime with one message, reads the first
 // stdout line, and returns it parsed. It reaps the child afterwards.

@@ -179,7 +179,7 @@ func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T)
 
 	// Each session writes over the one connection; the runtime reads both.
 	reader := bufio.NewReader(runtimeConn)
-	for _, frame := range []string{`{"type":"message","slotId":"slot-a"}`, `{"type":"message","slotId":"slot-b"}`} {
+	for _, frame := range []string{`{"type":"message","sessionId":"sess-a"}`, `{"type":"message","sessionId":"sess-b"}`} {
 		if err := sp.WriteEnvelope("ignored", []byte(frame)); err != nil {
 			t.Fatalf("WriteEnvelope(%s): %v", frame, err)
 		}
@@ -195,7 +195,7 @@ func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T)
 
 // spec: §28.5.3 — the single runtime connection fans every frame
 // out to all Output subscribers, so two concurrent per-slot Attach streams
-// each receive the runtime's full output and demultiplex by slotId. A
+// each receive the runtime's full output and demultiplex by sessionId. A
 // subscriber that arrives after Start still sees frames written after it
 // subscribes.
 func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing.T) {
@@ -225,7 +225,7 @@ func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing
 		t.Fatalf("Output(sess-b): %v", err)
 	}
 
-	frame := `{"type":"response","slotId":"slot-a"}`
+	frame := `{"type":"response","sessionId":"sess-a"}`
 	if _, err := runtimeConn.Write([]byte(frame + "\n")); err != nil {
 		t.Fatalf("runtime write: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	// sess-b can still write over the shared connection and the runtime
 	// reads it: the per-slot Close did not EOF sess-b's transport.
 	reader := bufio.NewReader(runtimeConn)
-	frame := `{"type":"message","slotId":"slot-b"}`
+	frame := `{"type":"message","sessionId":"sess-b"}`
 	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
 		t.Fatalf("WriteEnvelope after sibling Close: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 	}
 
 	reader := bufio.NewReader(runtimeConn)
-	frame := `{"type":"message","slotId":"slot-b"}`
+	frame := `{"type":"message","sessionId":"sess-b"}`
 	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
 		t.Fatalf("WriteEnvelope after sibling Interrupt: %v", err)
 	}

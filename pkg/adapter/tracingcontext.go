@@ -14,10 +14,6 @@ import (
 // or unreachable gateway cannot stall the Attach output relay.
 const setTracingContextForwardTimeout = 5 * time.Second
 
-// setTracingContextFrameType is the frame type the unaddressed-frame
-// counter labels this path's rejections with. spec: §16.1.
-const setTracingContextFrameType = "set_tracing_context"
-
 // setTracingContextFrame is the §28.5.3 outbound JSONL frame a
 // runtime writes on stdout to register distributed-tracing identifiers:
 // `{"type":"set_tracing_context","context":{"langsmith_run_id":"..."}}`.
@@ -26,69 +22,30 @@ type setTracingContextFrame struct {
 	Context map[string]string `json:"context"`
 }
 
-// frameAddressing is the disposition of a session-scoped inbound frame
-// against the Attach stream that delivered it. The two rejections are
-// separate because they are counted on separate series: an unaddressed
-// frame the pod cannot resolve is a runtime that emitted no identifier on
-// a pod holding more than one slot, and a misaddressed frame names a
-// session that is not this stream's live binding.
-type frameAddressing int
-
-const (
-	// frameAddressed resolves to the delivering stream's session.
-	frameAddressed frameAddressing = iota
-	// frameUnaddressed carries no identifier on a pod holding more than
-	// one slot, so no stream may claim it.
-	frameUnaddressed
-	// frameMisaddressed names an identifier that is not the delivering
-	// stream's live binding.
-	frameMisaddressed
-)
-
-// resolveTracingFrame resolves a set_tracing_context frame against the
-// Attach stream that delivered it, which is bound to (sessionID, slotID).
-// Both §28.5.3 conditions are evaluated here:
+// resolveTracingFrame confirms a set_tracing_context frame against the
+// Attach stream that delivered it, which is bound to (sessionID, slotID),
+// and reports whether the stream may act on it. The demultiplexer has
+// already applied §28.5.3's resolve-or-reject rule, so a frame reaching
+// here either carries this stream's address or carries none on a pod
+// holding at most one slot, where it resolved to this stream's binding.
+// What remains is §28.5.3's condition 2:
 //
-//  1. Address resolution. A frame carrying the per-session identifier is
-//     addressed to the stream when the identifier equals the stream's own,
-//     as exact string equality. A frame carrying no identifier resolves to
-//     the stream's own binding while the pod holds at most one slot, and is
-//     rejected on a pod holding more than one, where nothing in the frame
-//     says which session it addresses. The slot count is every entry the
-//     registry holds, bound or registered-but-unbound, so the rule fails
-//     closed while a second session's workspace is being prepared. A count
-//     of zero falls in the same arm as a count of one: the ending session's
-//     stream is still draining the shared runtime's output after its entry
-//     was deleted, and the frame resolves to it, where condition 2 then
-//     rejects it as naming no live binding.
-//  2. Live-binding confirmation: the registry still holds the stream's
-//     address and the entry it holds still names this stream's session.
-//     Every session is bound to a slot on every pod, so there is one
-//     resolution here rather than a slotless case beside a slot-bound
-//     one, and the entry is the only thing that can confirm the binding.
+//	Live-binding confirmation: the registry still holds the stream's
+//	address and the entry it holds still names this stream's session.
+//	Every session is bound to a slot on every pod, so there is one
+//	resolution here rather than a slotless case beside a slot-bound one,
+//	and the entry is the only thing that can confirm the binding.
 //
-// Condition 2 reads state that changes over the session's lifetime, so it
-// may only reject. The registry is read under a single s.mu hold so the
-// slot count and both of condition 2's terms read one consistent state.
-// Modeled on checkSessionBound, which validates the same binding at Attach
-// bind time.
+// The condition reads state that changes over the session's lifetime, so
+// it may only reject. Both of its terms are read under a single s.mu hold
+// so they come from one consistent state. Modeled on checkSessionBound,
+// which validates the same binding at Attach bind time.
 // spec: §28.5.3, §6.4.
-func (s *Server) resolveTracingFrame(sessionID, frameSlot, slotID string) frameAddressing {
+func (s *Server) resolveTracingFrame(sessionID, slotID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	switch {
-	case frameSlot == "":
-		if len(s.slots) > 1 {
-			return frameUnaddressed
-		}
-	case frameSlot != slotID:
-		return frameMisaddressed
-	}
 	st, ok := s.slotStateLocked(slotID)
-	if !ok || st.sessionID != sessionID {
-		return frameMisaddressed
-	}
-	return frameAddressed
+	return ok && st.sessionID == sessionID
 }
 
 // handleSetTracingContext consumes a §28.5.3 set_tracing_context
@@ -104,26 +61,20 @@ func (s *Server) resolveTracingFrame(sessionID, frameSlot, slotID string) frameA
 // own.
 //
 // The single pod-global runtime serves every slot and its output is
-// fanned out to every Attach stream, so a frame that does not resolve to
-// this stream is rejected, counted, and logged as a protocol error, on
-// the unaddressed counter when the frame names no session on a pod
-// holding more than one slot and on the drop counter when it names one
-// that is not this stream's live binding. The
-// adapter relays nothing onward and returns nothing to the runtime: the
-// inbound message set on this channel admits no report frame.
+// fanned out to every Attach stream. A frame carrying no identifier on a
+// pod holding more than one slot is rejected in the demultiplexer and
+// never reaches here. A frame that reaches here and names no live
+// binding is dropped, counted on
+// lenny_adapter_set_tracing_context_dropped_total, and logged as a
+// protocol error. The adapter relays nothing onward and returns nothing
+// to the runtime: the inbound message set on this channel admits no
+// report frame.
 // spec: §28.5.3, §8.3.
 func (s *Server) handleSetTracingContext(ctx context.Context, sessionID, slotID string, line []byte) {
-	frameSlot := frameSlotID(line)
-	switch s.resolveTracingFrame(sessionID, frameSlot, slotID) {
-	case frameUnaddressed:
-		incUnaddressedFrameRejected(setTracingContextFrameType)
-		log.Printf("lenny-adapter: protocol error: set_tracing_context frame carrying no session identifier rejected on the stream bound to session %s, which shares the pod with another slot",
-			sessionID)
-		return
-	case frameMisaddressed:
+	if !s.resolveTracingFrame(sessionID, slotID) {
 		incSetTracingContextDropped()
 		log.Printf("lenny-adapter: protocol error: set_tracing_context frame for session %q dropped on the stream bound to session %s slot %q",
-			frameSlot, sessionID, slotID)
+			frameSessionID(line), sessionID, slotID)
 		return
 	}
 	if s.PlatformForwarder == nil {

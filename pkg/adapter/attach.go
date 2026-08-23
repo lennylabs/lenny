@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
@@ -50,7 +51,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 		return err
 	}
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
-		if err := s.writeSlotEnvelope(rt, sessionID, env); err != nil {
+		if err := s.writeSessionEnvelope(rt, sessionID, env); err != nil {
 			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 		}
 	}
@@ -60,12 +61,13 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	if err != nil {
 		return status.Errorf(codes.Internal, "open runtime output: %v", err)
 	}
-	// spec: §28.5.3 — the single pod-global runtime serves every
-	// session over one connection, so its output stream interleaves frames
-	// for every session, each tagged with the session it addresses.
+	// spec: §28.5.3 — the single pod-global runtime serves
+	// every session over one connection, so its output stream interleaves
+	// frames for every session, each tagged with the session it addresses.
 	// Demultiplex on that address so this Attach stream sees only its own
-	// session's frames.
-	out := demuxSlotOutput(ctx, rawOut, slotID)
+	// session's frames, resolving a session-scoped frame that carries none
+	// against the pod's slot count.
+	out := demuxSessionOutput(ctx, rawOut, sessionID, s.slotCount)
 
 	// spec: §28.5.3 — the adapter probes runtime liveness
 	// with periodic heartbeats and SIGTERMs a process that misses the ack
@@ -177,7 +179,7 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID, slotID string
 			tracing.CategoryUpstream,
 		))
 	}
-	if err := s.writeSlotEnvelope(rt, sessionID, result); err != nil {
+	if err := s.writeSessionEnvelope(rt, sessionID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
 	}
@@ -238,37 +240,74 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 			return err
 		}
 		if env := msg.GetEnvelopeJson(); len(env) > 0 {
-			if err := s.writeSlotEnvelope(rt, sessionID, env); err != nil {
+			if err := s.writeSessionEnvelope(rt, sessionID, env); err != nil {
 				return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 			}
 		}
 	}
 }
 
-// writeSlotEnvelope stamps the session's address onto an outbound
+// writeSessionEnvelope stamps the session's address onto an outbound
 // envelope and forwards it to the shared runtime over the single
 // connection. Every session is bound to a slot on every pod and a
 // session-mode slot's identifier is its session's identifier, so the
 // stamp is unconditional and every inbound frame carries it.
 // spec: §5.2; §6.4; §28.5.3.
-func (s *Server) writeSlotEnvelope(rt RuntimeProcess, sessionID string, envelope []byte) error {
-	stamped, err := stampSlotID(envelope, sessionID)
+func (s *Server) writeSessionEnvelope(rt RuntimeProcess, sessionID string, envelope []byte) error {
+	stamped, err := stampSessionID(envelope, sessionID)
 	if err != nil {
 		return err
 	}
 	return rt.WriteEnvelope(sessionID, stamped)
 }
 
-// demuxSlotOutput filters the shared runtime's interleaved output stream
-// down to the frames carrying slotID, so a per-slot Attach stream receives
-// only its slot's output. The single pod-global runtime serves every slot
-// over one connection (spec/05:509, spec/15:1459), so each Attach stream
-// subscribes to the same fan-out and drops frames addressed to a sibling
-// slot. Protocol-level frames the adapter consumes per session
-// (heartbeat_ack) carry no slotId; they pass through so each slot's
-// heartbeat monitor still sees its ack on a no-slotId frame. ctx bounds the
-// filter goroutine so a stalled consumer does not leak it. spec: §28.5.3.
-func demuxSlotOutput(ctx context.Context, in <-chan []byte, slotID string) <-chan []byte {
+// sessionScopedFrameTypes is the §28.5.3 session-scoped set: the frame
+// types that address a session and are therefore relayed to that
+// session's Attach stream alone. Every other frame type is
+// protocol-level and passes through the demultiplexer unchanged, which is
+// what keeps the per-stream heartbeat monitor answering on a pod-global
+// runtime that acks unstamped. spec: §28.5.3.
+var sessionScopedFrameTypes = map[string]bool{
+	"message":             true,
+	"tool_call":           true,
+	"tool_result":         true,
+	"response":            true,
+	"set_tracing_context": true,
+	"status":              true,
+}
+
+// demuxSessionOutput filters the shared runtime's interleaved output
+// stream down to the frames this Attach stream's session owns. The single
+// pod-global runtime serves every session over one connection, so each
+// Attach stream subscribes to the same fan-out.
+//
+// The predicate narrows by frame type. A frame whose type is outside the
+// §28.5.3 session-scoped set is protocol-level (heartbeat and
+// heartbeat_ack) and passes through, so each session's heartbeat monitor
+// still sees its ack on an unaddressed frame. A session-scoped frame
+// carrying this session's address is delivered and one carrying a
+// co-tenant's is dropped. A session-scoped frame carrying no address
+// resolves to this stream's own binding while the pod holds at most one
+// slot, which is the only session it could name, and is rejected on a pod
+// holding more than one slot, where nothing in the frame says which
+// session it addresses. A rejection is relayed to no stream, counted on
+// lenny_adapter_unaddressed_frame_rejected_total under the frame's own
+// type, and logged with that type and the pod's slot count. The decision
+// sits in each stream's demultiplexer, so one unaddressed frame on a pod
+// holding two live Attach streams is evaluated, counted, and logged once
+// per stream.
+//
+// slotCount reports the entries the adapter's slot registry holds, bound
+// or registered-but-unbound, so the rule fails closed while a second
+// session's workspace is being prepared. It is read per frame rather than
+// once, because the pod's population changes over a stream's life. A
+// count of zero falls in the same arm as a count of one: the ending
+// session's stream drains the shared runtime's output after its entry was
+// deleted, and the frame resolves to the one stream still open.
+//
+// ctx bounds the filter goroutine so a stalled consumer does not leak it.
+// spec: §28.5.3.
+func demuxSessionOutput(ctx context.Context, in <-chan []byte, sessionID string, slotCount func() int) <-chan []byte {
 	out := make(chan []byte)
 	go func() {
 		defer close(out)
@@ -278,11 +317,7 @@ func demuxSlotOutput(ctx context.Context, in <-chan []byte, slotID string) <-cha
 				if !ok {
 					return
 				}
-				// A frame tagged for a different slot belongs to a sibling
-				// Attach stream; drop it. A frame with no slotId (a
-				// protocol-level ack or a base-path frame) is delivered so
-				// the per-session heartbeat path still observes it.
-				if fs := frameSlotID(line); fs != "" && fs != slotID {
+				if !deliverToSession(line, sessionID, slotCount) {
 					continue
 				}
 				select {
@@ -296,4 +331,30 @@ func demuxSlotOutput(ctx context.Context, in <-chan []byte, slotID string) <-cha
 		}
 	}()
 	return out
+}
+
+// deliverToSession applies §28.5.3's type-scoped resolve-or-reject rule to
+// one runtime output frame on the Attach stream bound to sessionID, and
+// reports whether the stream relays it. A rejected unaddressed frame is
+// counted and logged here, which is the one site that decides it.
+// spec: §28.5.3.
+func deliverToSession(line []byte, sessionID string, slotCount func() int) bool {
+	frameType := jsonlFrameType(line)
+	if !sessionScopedFrameTypes[frameType] {
+		return true
+	}
+	switch addr := frameSessionID(line); {
+	case addr == sessionID:
+		return true
+	case addr != "":
+		// A co-tenant's frame belongs to a sibling Attach stream.
+		return false
+	}
+	if n := slotCount(); n > 1 {
+		incUnaddressedFrameRejected(frameType)
+		log.Printf("lenny-adapter: protocol error: %s frame carrying no session identifier rejected on the stream bound to session %s; the pod holds %d slots",
+			frameType, sessionID, n)
+		return false
+	}
+	return true
 }

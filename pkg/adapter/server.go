@@ -369,11 +369,13 @@ type Server struct {
 	// session.
 	cohortSession string
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
-	// slotId. Populated on the adapter's first reference to a slotId the
-	// gateway minted at claim time, which a slot bind carries. Each slot
-	// owns its own workspace tree, state, and credential lease set; one
-	// pod-global runtime serves every slot, multiplexed on slotId over the
-	// single runtime connection. Guarded by mu. spec: §6.4.
+	// the slot identifier, which for a session-mode slot is the session's
+	// own identifier. Populated on the adapter's first reference to a slot
+	// the gateway minted at claim time, which a slot bind carries. Each
+	// slot owns its own workspace tree, state, and credential lease set;
+	// one pod-global runtime serves every slot, multiplexed on the frame's
+	// sessionId over the single runtime connection. Guarded by mu.
+	// spec: §6.4; §28.5.3.
 	slots map[string]*slotState
 }
 

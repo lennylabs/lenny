@@ -50,7 +50,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 	// The adapter stamps the stream's session address onto the envelope
 	// before it reaches the shared runtime, and the fake runtime echoes
 	// what it was written.
-	if string(got.GetEnvelopeJson()) != `{"n":1,"slotId":"sess-x","type":"message"}` {
+	if string(got.GetEnvelopeJson()) != `{"n":1,"sessionId":"sess-x","type":"message"}` {
 		t.Errorf("received %s, want the echoed first envelope carrying the session address", got.GetEnvelopeJson())
 	}
 
@@ -65,7 +65,7 @@ func TestAttachRoundTripsEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recv second: %v", err)
 	}
-	if string(got.GetEnvelopeJson()) != `{"n":2,"slotId":"sess-x","type":"message"}` {
+	if string(got.GetEnvelopeJson()) != `{"n":2,"sessionId":"sess-x","type":"message"}` {
 		t.Errorf("received %s, want the echoed second envelope carrying the session address", got.GetEnvelopeJson())
 	}
 
@@ -194,29 +194,30 @@ func TestAttachRejectsUnassignedSession(t *testing.T) {
 	}
 }
 
-// frameSlotIDForTest reads the slotId off a JSONL frame so a test can
-// assert demultiplexing routed the right slot's output to a stream.
-func frameSlotIDForTest(t *testing.T, frame []byte) string {
+// frameSessionIDForTest reads the sessionId off a JSONL frame so a test
+// can assert demultiplexing routed the right session's output to a
+// stream.
+func frameSessionIDForTest(t *testing.T, frame []byte) string {
 	t.Helper()
 	var probe struct {
-		SlotID string `json:"slotId"`
+		SessionID string `json:"sessionId"`
 	}
 	if err := json.Unmarshal(frame, &probe); err != nil {
-		t.Fatalf("decode frame slotId from %q: %v", frame, err)
+		t.Fatalf("decode frame sessionId from %q: %v", frame, err)
 	}
-	return probe.SlotID
+	return probe.SessionID
 }
 
 // spec: §6.4; spec/05:509; spec/15:1459 — the single
 // pod-global runtime serves two concurrent slots over one connection, and
-// the adapter demultiplexes its interleaved output by slotId so each
+// the adapter demultiplexes its interleaved output by sessionId so each
 // per-slot Attach stream receives only its slot's frames. A second
 // concurrent slot is admitted rather than rejected with "pod is not idle".
 //
 // diagnosis: a failure means per-slot output demultiplexing over the
 // single runtime connection regressed: a slot's Attach stream saw a
 // sibling slot's output, or the second concurrent slot was rejected.
-func TestAttachDemultiplexesConcurrentSlotsBySlotID_spec_6_4(t *testing.T) {
+func TestAttachDemultiplexesConcurrentSlotsBySessionID_spec_6_4(t *testing.T) {
 	s, rt := concurrentServer(t)
 	rt.output = make(chan []byte, 16)
 	ctx := context.Background()
@@ -255,18 +256,18 @@ func TestAttachDemultiplexesConcurrentSlotsBySlotID_spec_6_4(t *testing.T) {
 	// happened yet when open() returns.
 	rt.waitForSubscribers(t, 2)
 
-	// The runtime interleaves slotId-tagged frames for both slots over the
+	// The runtime interleaves sessionId-tagged frames for both sessions over the
 	// one connection (each stamped by the runtime's dispatch loop). The
 	// adapter must route each frame to the slot that owns it.
-	rt.output <- []byte(`{"type":"response","slotId":"sess-a","n":1}`)
-	rt.output <- []byte(`{"type":"response","slotId":"sess-b","n":1}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-a","n":1}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-b","n":1}`)
 
 	// sess-a's stream receives only its own frame.
 	gotA, err := streamA.Recv()
 	if err != nil {
 		t.Fatalf("Recv(sess-a): %v", err)
 	}
-	if sid := frameSlotIDForTest(t, gotA.GetEnvelopeJson()); sid != "sess-a" {
+	if sid := frameSessionIDForTest(t, gotA.GetEnvelopeJson()); sid != "sess-a" {
 		t.Errorf("sess-a stream received a frame addressed to %q, want sess-a", sid)
 	}
 	// sess-b's stream receives only its own frame.
@@ -274,19 +275,19 @@ func TestAttachDemultiplexesConcurrentSlotsBySlotID_spec_6_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recv(sess-b): %v", err)
 	}
-	if sid := frameSlotIDForTest(t, gotB.GetEnvelopeJson()); sid != "sess-b" {
+	if sid := frameSessionIDForTest(t, gotB.GetEnvelopeJson()); sid != "sess-b" {
 		t.Errorf("sess-b stream received a frame addressed to %q, want sess-b", sid)
 	}
 
 	// A second sess-a frame still routes only to sess-a, proving the
 	// co-tenant frame above was demultiplexed away rather than consumed by
 	// sess-a's stream.
-	rt.output <- []byte(`{"type":"response","slotId":"sess-a","n":2}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-a","n":2}`)
 	gotA2, err := streamA.Recv()
 	if err != nil {
 		t.Fatalf("Recv(sess-a #2): %v", err)
 	}
-	if sid := frameSlotIDForTest(t, gotA2.GetEnvelopeJson()); sid != "sess-a" {
+	if sid := frameSessionIDForTest(t, gotA2.GetEnvelopeJson()); sid != "sess-a" {
 		t.Errorf("sess-a stream second frame address = %q, want sess-a", sid)
 	}
 }
@@ -332,15 +333,16 @@ func TestAttachRelaysAProtocolLevelFrame_spec_28_5_3(t *testing.T) {
 }
 
 // spec: §6.4; spec/15:1459 — an inbound (client→agent)
-// envelope on a per-slot Attach stream is stamped with the slot's slotId
-// before it reaches the shared runtime, so the runtime's dispatch loop
-// routes it to the slot's cwd. Driven under two concurrent slots so the
+// envelope on a per-slot Attach stream is stamped with the session's
+// sessionId before it reaches the shared runtime, so the runtime's
+// dispatch loop routes it to the session's cwd. Driven under two concurrent slots so the
 // race detector exercises the shared-connection write path.
 //
-// diagnosis: a failure means inbound slotId stamping over the single
+// diagnosis: a failure means inbound sessionId stamping over the single
 // runtime connection regressed: an envelope reached the runtime without
-// the addressed slot's slotId, which would misroute it on a concurrent pod.
-func TestAttachStampsInboundSlotID_spec_6_4(t *testing.T) {
+// the addressed session's sessionId, which would misroute it on a pod
+// holding more than one slot.
+func TestAttachStampsInboundSessionID_spec_6_4(t *testing.T) {
 	s, rt := concurrentServer(t)
 	rt.output = make(chan []byte, 16)
 	ctx := context.Background()
@@ -364,7 +366,7 @@ func TestAttachStampsInboundSlotID_spec_6_4(t *testing.T) {
 			return
 		}
 		// The first message binds the stream and carries an envelope with
-		// no slotId; the adapter must stamp the slot's slotId onto it.
+		// no sessionId; the adapter must stamp the session's own onto it.
 		if err := stream.Send(&adapterv1.AttachRequest{
 			SessionId:    &adapterv1.SessionId{Value: slot},
 			EnvelopeJson: []byte(`{"type":"message"}`),
@@ -379,7 +381,8 @@ func TestAttachStampsInboundSlotID_spec_6_4(t *testing.T) {
 	wg.Wait()
 
 	// Both inbound envelopes reached the shared runtime, each stamped with
-	// its slot's slotId. Wait briefly for the concurrent writes to land.
+	// its session's sessionId. Wait briefly for the concurrent writes to
+	// land.
 	deadline := time.Now().Add(2 * time.Second)
 	var envs [][]byte
 	for time.Now().Before(deadline) {
@@ -394,7 +397,7 @@ func TestAttachStampsInboundSlotID_spec_6_4(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, env := range envs {
-		seen[frameSlotIDForTest(t, env)] = true
+		seen[frameSessionIDForTest(t, env)] = true
 	}
 	if !seen["sess-a"] || !seen["sess-b"] {
 		t.Errorf("stamped session addresses = %v, want both sess-a and sess-b", seen)

@@ -2,44 +2,44 @@
 
 //go:build conformance
 
-// Tier-10 conformance case for the concurrent-workspace per-slot dispatch
-// loop. A pool whose sessionPolicy.maxConcurrentSessions is above 1
-// multiplexes simultaneous sessions onto one pod, each in its own slot,
-// over a single runtime process. The §28.5.3 contract requires a runtime
-// serving such a pool to implement a dispatch loop keyed on slotId: every
-// inbound frame carries a slotId, the runtime derives each slot's cwd as
-// /workspace/slots/{slotId}/current/, and every outbound frame echoes the
-// originating slotId so the adapter routes the response back to the right
-// slot. cmd/runtimes/echo-concurrent is the reference runtime that
-// implements that loop.
+// Tier-10 conformance case for the per-session dispatch loop. A pool whose
+// sessionPolicy.maxConcurrentSessions is above 1 multiplexes simultaneous
+// sessions onto one pod, each in its own slot, over a single runtime
+// process. Every session is bound to a slot on every pod, so the §28.5.3
+// contract requires a runtime to implement a dispatch loop keyed on
+// sessionId: every inbound session-scoped frame carries a sessionId, the
+// runtime derives each session's cwd as
+// /workspace/slots/{sessionId}/current/, and every outbound session-scoped
+// frame echoes the identifier it was handed so the adapter routes the
+// response back to the session that sent it.
+// cmd/runtimes/echo-concurrent is the reference runtime that implements
+// that loop.
 //
 // This case drives the freshly built echo-concurrent binary over its
 // §15.4 stdin/stdout contract transport (the same transport the
 // conformance harness and the Tier 3 contract tests use) with frames
-// interleaved across two distinct slotIds plus one frame that carries no
-// slotId. It asserts the three properties the per-slot model rests on:
+// interleaved across two distinct sessions, and separately with one
+// session-scoped frame that carries no identifier. It asserts the three
+// properties the model rests on:
 //
-//   - Per-slot response slotId tagging: each slot's response comes back
-//     tagged with the slot that sent it, and each slot keeps an
+//   - Per-session response tagging: each session's response comes back
+//     tagged with the session that sent it, and each session keeps an
 //     independent sequence counter, so the adapter can demultiplex the
-//     interleaved output by slotId.
-//   - Per-slot cwd derivation: the runtime derives each slot's cwd as
-//     /workspace/slots/{slotId}/current/ rather than assuming the global
-//     /workspace/current. The reference echo runtime performs no file
-//     operations, so it surfaces the derived cwd as a per-slot stderr
-//     diagnostic; this case reads that diagnostic to confirm the
-//     derivation.
-//   - The no-slotId whole-pod path: a frame without a slotId is served on
-//     the single-session whole-pod path with a response carrying no
-//     slotId, so the same runtime serves a maxConcurrentSessions: 1 pod,
-//     where runtimes never see slotId.
+//     interleaved output by sessionId.
+//   - Per-session cwd derivation: the runtime derives each session's cwd
+//     as /workspace/slots/{sessionId}/current/. The reference echo runtime
+//     performs no file operations, so it surfaces the derived cwd as a
+//     per-session stderr diagnostic; this case reads that diagnostic to
+//     confirm the derivation.
+//   - The unaddressed frame is refused: a session-scoped frame carrying no
+//     sessionId names no session the runtime may act for, so the loop
+//     answers no response and exits with the §15.4 protocol-error code
+//     rather than serving the frame on a pod-global default session.
 //
-// spec: 5.2 (slotId multiplexing over stdin, dispatch loop keyed on
+// spec: 5.2 (per-session multiplexing
 //
-//	slotId, line 509), 28.5.3 (single stdin channel carrying slotId when
-//	maxConcurrentSessions > 1), 6.4 (per-slot cwd
-//	/workspace/slots/{slotId}/current/, no global /workspace/current when
-//	maxConcurrentSessions > 1, line 384).
+//	over stdin), 28.5.3 (single stdin channel carrying sessionId on every
+//	pod), 6.4 (per-slot cwd /workspace/slots/{sessionId}/current/).
 
 package tier10_conformance_test
 
@@ -47,22 +47,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
 
-// concurrentFrame is the subset of an outbound JSONL frame the
-// concurrent-slot conformance case reads: the discriminator, the slotId
-// the dispatch loop stamps, and the echoed text parts. The §28.5.3
-// outbound schema carries slotId alone for concurrent multiplexing, so
-// the case asserts on slotId and never on a cwd wire field; the per-slot
-// cwd is an internal derivation read from the runtime's stderr diagnostic.
+// concurrentFrame is the subset of an outbound JSONL frame this
+// conformance case reads: the discriminator, the sessionId the dispatch
+// loop stamps, and the echoed text parts. The §28.5.3 outbound schema
+// carries sessionId alone for multiplexing, so the case asserts on
+// sessionId and never on a cwd wire field; the per-session cwd is an
+// internal derivation read from the runtime's stderr diagnostic.
 type concurrentFrame struct {
-	Type   string `json:"type"`
-	SlotID string `json:"slotId"`
-	Output []struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Output    []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
 }
@@ -73,13 +74,14 @@ type concurrentFrame struct {
 type concurrentResult struct {
 	responses []concurrentFrame
 	stderr    string
+	exitCode  int
 }
 
 // runConcurrentRuntime execs the echo-concurrent binary over its §15.4
 // stdin/stdout contract transport, feeds it the frames, and returns the
-// decoded `response` frames plus the captured stderr. A trailing shutdown
-// is appended so the dispatch loop drains every slot deterministically
-// before the process exits.
+// decoded `response` frames, the captured stderr, and the exit code. A
+// trailing shutdown is appended so the dispatch loop drains every session
+// deterministically before the process exits.
 func runConcurrentRuntime(t *testing.T, binary string, frames []string) concurrentResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -93,8 +95,13 @@ func runConcurrentRuntime(t *testing.T, binary string, frames []string) concurre
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	exitCode := 0
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("echo-concurrent exited with error (stderr: %s): %v", stderr.String(), err)
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("echo-concurrent could not be run (stderr: %s): %v", stderr.String(), err)
+		}
+		exitCode = ee.ExitCode()
 	}
 
 	var responses []concurrentFrame
@@ -110,20 +117,21 @@ func runConcurrentRuntime(t *testing.T, binary string, frames []string) concurre
 			responses = append(responses, f)
 		}
 	}
-	return concurrentResult{responses: responses, stderr: stderr.String()}
+	return concurrentResult{responses: responses, stderr: stderr.String(), exitCode: exitCode}
 }
 
-// concurrentMessage builds a `message` JSONL frame carrying an optional
-// slotId and a single inline text part. An empty slotID omits the field,
-// producing a single-session whole-pod frame.
-func concurrentMessage(slotID, text string) string {
+// concurrentMessage builds a `message` JSONL frame carrying the session
+// address the adapter stamps and a single inline text part. An empty
+// sessionID omits the field, producing the unaddressed session-scoped
+// frame §28.5.3 gives no session to serve.
+func concurrentMessage(sessionID, text string) string {
 	m := map[string]any{
 		"type":  "message",
 		"id":    "m_" + text,
 		"input": []map[string]any{{"type": "text", "inline": text}},
 	}
-	if slotID != "" {
-		m["slotId"] = slotID
+	if sessionID != "" {
+		m["sessionId"] = sessionID
 	}
 	b, _ := json.Marshal(m)
 	return string(b) + "\n"
@@ -138,104 +146,120 @@ func inlineText(f concurrentFrame) string {
 	return b.String()
 }
 
-// spec: 5.2 (slotId multiplexing over stdin, dispatch loop keyed on slotId,
+// spec: 5.2 (per-session multiplexing
 //
-//	line 509), 28.5.3 (single stdin channel carrying slotId when
-//	maxConcurrentSessions > 1), 6.4 (per-slot cwd derivation,
-//	line 384).
+//	over stdin), 28.5.3 (single stdin channel carrying sessionId on every
+//	pod), 6.4 (per-session cwd derivation).
 //
 // diagnosis: The reference echo-concurrent runtime no longer demultiplexes
 //
-//	interleaved frames for distinct slotIds over a single stdin channel:
-//	either a slot's response is not tagged with its slotId, the per-slot
-//	cwd is no longer derived as /workspace/slots/{slotId}/current/, or a
-//	no-slotId frame no longer falls through to the whole-pod path. The
-//	§28.5.3 concurrent-session dispatch loop regressed and a
-//	maxConcurrentSessions > 1 pod can no longer serve a second slot over
-//	one runtime process.
-func TestConcurrentSlotDispatchConformance(t *testing.T) {
+//	interleaved frames for distinct sessions over a single stdin channel:
+//	either a session's response is not tagged with its sessionId, or the
+//	per-session cwd is no longer derived as
+//	/workspace/slots/{sessionId}/current/. The §28.5.3 dispatch loop
+//	regressed and a maxConcurrentSessions > 1 pod can no longer serve a
+//	second session over one runtime process.
+func TestConcurrentSessionDispatchConformance(t *testing.T) {
 	a := buildArtifacts(t)
 
 	const (
-		slot01 = "slot-01"
-		slot02 = "slot-02"
+		sessionA = "sess-01"
+		sessionB = "sess-02"
 	)
 
-	// Interleave two slots and a no-slotId whole-pod frame on one stdin
-	// channel: slot-01 sends two messages, slot-02 one, and a final frame
-	// carries no slotId. The single dispatch loop must demultiplex all
-	// three streams.
+	// Interleave two sessions on one stdin channel: sess-01 sends two
+	// messages and sess-02 one. The single dispatch loop must demultiplex
+	// both streams.
 	frames := []string{
-		concurrentMessage(slot01, "a1"),
-		concurrentMessage(slot02, "b1"),
-		concurrentMessage(slot01, "a2"),
-		concurrentMessage("", "solo"),
+		concurrentMessage(sessionA, "a1"),
+		concurrentMessage(sessionB, "b1"),
+		concurrentMessage(sessionA, "a2"),
 	}
 	result := runConcurrentRuntime(t, a.echoConcurrent, frames)
+	if result.exitCode != 0 {
+		t.Fatalf("echo-concurrent exited %d serving addressed frames, want 0 (stderr: %s)", result.exitCode, result.stderr)
+	}
 
-	bySlot := map[string][]concurrentFrame{}
+	bySession := map[string][]concurrentFrame{}
 	for _, f := range result.responses {
-		bySlot[f.SlotID] = append(bySlot[f.SlotID], f)
+		bySession[f.SessionID] = append(bySession[f.SessionID], f)
 	}
 
-	// Per-slot response slotId tagging: each slot's responses come back
-	// tagged with that slot's slotId, and the no-slotId frame's response
-	// carries no slotId (the empty-string bucket).
-	if got := len(bySlot[slot01]); got != 2 {
-		t.Errorf("slot-01 got %d responses, want 2: %+v", got, bySlot[slot01])
+	// Per-session response tagging: each session's responses come back
+	// tagged with the identifier the inbound frame carried.
+	if got := len(bySession[sessionA]); got != 2 {
+		t.Errorf("sess-01 got %d responses, want 2: %+v", got, bySession[sessionA])
 	}
-	if got := len(bySlot[slot02]); got != 1 {
-		t.Errorf("slot-02 got %d responses, want 1: %+v", got, bySlot[slot02])
+	if got := len(bySession[sessionB]); got != 1 {
+		t.Errorf("sess-02 got %d responses, want 1: %+v", got, bySession[sessionB])
+	}
+	if got := len(bySession[""]); got != 0 {
+		t.Errorf("%d response(s) carried no sessionId: %+v; every session-scoped frame is addressed on every pod", got, bySession[""])
 	}
 
-	// Independent per-slot sequence counters: slot-01's two responses are
-	// seq=1 then seq=2; slot-02's single response is an independent seq=1,
-	// not seq=3, proving the dispatch loop does not share a counter across
-	// slots. A shared counter would let one slot observe another slot's
-	// ordering, breaking the per-slot stream isolation §28.5.3 promises.
-	if len(bySlot[slot01]) == 2 {
-		if got := inlineText(bySlot[slot01][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a1") {
-			t.Errorf("slot-01 first response = %q, want a seq=1 echo of a1", got)
+	// Independent per-session sequence counters: sess-01's two responses
+	// are seq=1 then seq=2; sess-02's single response is an independent
+	// seq=1, not seq=3, proving the dispatch loop does not share a counter
+	// across sessions. A shared counter would let one session observe
+	// another's ordering, breaking the per-session stream isolation
+	// §28.5.3 promises.
+	if len(bySession[sessionA]) == 2 {
+		if got := inlineText(bySession[sessionA][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a1") {
+			t.Errorf("sess-01 first response = %q, want a seq=1 echo of a1", got)
 		}
-		if got := inlineText(bySlot[slot01][1]); !strings.Contains(got, "[echo seq=2]") || !strings.Contains(got, "a2") {
-			t.Errorf("slot-01 second response = %q, want a seq=2 echo of a2", got)
-		}
-	}
-	if len(bySlot[slot02]) == 1 {
-		if got := inlineText(bySlot[slot02][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "b1") {
-			t.Errorf("slot-02 response = %q, want an independent seq=1 echo of b1", got)
+		if got := inlineText(bySession[sessionA][1]); !strings.Contains(got, "[echo seq=2]") || !strings.Contains(got, "a2") {
+			t.Errorf("sess-01 second response = %q, want a seq=2 echo of a2", got)
 		}
 	}
-
-	// The no-slotId frame falls through to the whole-pod path: its response
-	// carries no slotId, so the same runtime serves a maxConcurrentSessions:
-	// 1 pod, where runtimes never see slotId.
-	whole := bySlot[""]
-	if got := len(whole); got != 1 {
-		t.Fatalf("no-slotId whole-pod path got %d responses, want 1: %+v", got, whole)
-	}
-	if whole[0].SlotID != "" {
-		t.Errorf("whole-pod response slotId = %q, want empty (a single-session pod carries no slotId)", whole[0].SlotID)
-	}
-	if got := inlineText(whole[0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "solo") {
-		t.Errorf("whole-pod response = %q, want an independent seq=1 echo of solo", got)
+	if len(bySession[sessionB]) == 1 {
+		if got := inlineText(bySession[sessionB][0]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "b1") {
+			t.Errorf("sess-02 response = %q, want an independent seq=1 echo of b1", got)
+		}
 	}
 
-	// Per-slot cwd derivation (§6.4): the runtime derives each
-	// active slot's cwd as /workspace/slots/{slotId}/current/ rather than
-	// the global /workspace/current. The echo runtime performs no file
-	// operations, so it surfaces the derived cwd on stderr; the diagnostic
-	// confirms the derivation runs for each slot the dispatch loop opens.
-	for _, slotID := range []string{slot01, slot02} {
-		wantCwd := "/workspace/slots/" + slotID + "/current/"
+	// Per-session cwd derivation (§6.4): the runtime derives each active
+	// session's cwd as /workspace/slots/{sessionId}/current/. The echo
+	// runtime performs no file operations, so it surfaces the derived cwd
+	// on stderr; the diagnostic confirms the derivation runs for each
+	// session the dispatch loop opens.
+	for _, sessionID := range []string{sessionA, sessionB} {
+		wantCwd := "/workspace/slots/" + sessionID + "/current/"
 		if !strings.Contains(result.stderr, wantCwd) {
-			t.Errorf("stderr does not record per-slot cwd %q for %q; got:\n%s", wantCwd, slotID, result.stderr)
+			t.Errorf("stderr does not record per-session cwd %q for %q; got:\n%s", wantCwd, sessionID, result.stderr)
 		}
 	}
-	// The whole-pod default session must not derive a per-slot cwd: a
-	// /workspace/slots/ path with an empty slotId would mean a no-slotId
-	// frame leaked into the per-slot tree.
+	// No session derives a tree under an empty identifier, which would
+	// mean an unaddressed frame opened a session of its own.
 	if strings.Contains(result.stderr, "/workspace/slots//") {
-		t.Errorf("stderr records an empty-slotId per-slot cwd; the no-slotId frame must keep the global /workspace/current path:\n%s", result.stderr)
+		t.Errorf("stderr records a per-session cwd under an empty identifier:\n%s", result.stderr)
+	}
+}
+
+// spec: 28.5.3 (a session-scoped frame carries the per-session identifier
+//
+//	on every pod, so absence is an error rather than a scope), 15.4
+//	(protocol-error exit code 2), 28.5.3
+//
+// diagnosis: the reference runtime serves a session-scoped frame that
+//
+//	names no session. Under the retired rule that frame took a pod-global
+//	default path, which is what made the absence of an identifier carry a
+//	scope. A response emitted for it, or a clean exit, means the retired
+//	path is back and a co-tenanted pod can answer one session's frame as
+//	another's.
+func TestUnaddressedSessionScopedFrameIsRefused_spec_28_5_3(t *testing.T) {
+	a := buildArtifacts(t)
+
+	result := runConcurrentRuntime(t, a.echoConcurrent, []string{concurrentMessage("", "solo")})
+	if len(result.responses) != 0 {
+		t.Errorf("an unaddressed session-scoped frame produced %d response(s): %+v; it must be served by no session",
+			len(result.responses), result.responses)
+	}
+	if result.exitCode != 2 {
+		t.Errorf("echo-concurrent exited %d on an unaddressed session-scoped frame, want the §15.4 protocol-error code 2 (stderr: %s)",
+			result.exitCode, result.stderr)
+	}
+	if strings.Contains(result.stderr, "/workspace/slots//") {
+		t.Errorf("the unaddressed frame opened a session under an empty identifier:\n%s", result.stderr)
 	}
 }

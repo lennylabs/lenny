@@ -45,7 +45,7 @@ interface InboundMessage {
   input?: MessagePart[];
   // Names the session this frame is addressed to. The adapter populates it on
   // every pod, and the runtime echoes it on the frames it emits in response.
-  slotId?: string;
+  sessionId?: string;
   ts?: number;
   reason?: string;
   deadline_ms?: number;
@@ -57,14 +57,14 @@ interface InboundMessage {
 interface ToolCall {
   type: "tool_call";
   id: string;
-  slotId?: string;
+  sessionId?: string;
   name: string;
   arguments: Record<string, string>;
 }
 
 interface Response {
   type: "response";
-  slotId?: string;
+  sessionId?: string;
   output: MessagePart[];
 }
 
@@ -98,10 +98,10 @@ function writeJSON(obj: unknown): void {
  * continuation stays on the session that tool_result belongs to. The field is
  * optional, so an inbound frame that carried no address emits none.
  */
-function writeResponse(slotId: string | undefined, text: string): void {
+function writeResponse(sessionId: string | undefined, text: string): void {
   const resp: Response = {
     type: "response",
-    slotId,
+    sessionId,
     output: [{ type: "text", inline: text }],
   };
   writeJSON(resp);
@@ -129,13 +129,13 @@ function truncate(s: string, n = 500): string {
 /**
  * Send a list_dir tool call.
  */
-function listDir(slotId: string | undefined, path: string): void {
+function listDir(sessionId: string | undefined, path: string): void {
   const id = nextToolCallId();
   pendingToolCallId = id;
   const call: ToolCall = {
     type: "tool_call",
     id,
-    slotId,
+    sessionId,
     name: "list_dir",
     arguments: { path },
   };
@@ -145,15 +145,15 @@ function listDir(slotId: string | undefined, path: string): void {
 /**
  * Send a read_file tool call for the next file in the list.
  */
-function readNextFile(slotId: string | undefined): void {
+function readNextFile(sessionId: string | undefined): void {
   if (currentFileIndex >= fileList.length) return;
   const id = nextToolCallId();
   pendingToolCallId = id;
-  const filePath = `/workspace/slots/${slotId}/current/${fileList[currentFileIndex]}`;
+  const filePath = `/workspace/slots/${sessionId}/current/${fileList[currentFileIndex]}`;
   const call: ToolCall = {
     type: "tool_call",
     id,
-    slotId,
+    sessionId,
     name: "read_file",
     arguments: { path: filePath },
   };
@@ -181,7 +181,7 @@ function handleMessage(msg: InboundMessage): void {
 
   // Step 1: List files in the workspace. The tool_call this message triggers
   // is addressed to the session the message itself was addressed to.
-  listDir(msg.slotId, `/workspace/slots/${msg.slotId}/current`);
+  listDir(msg.sessionId, `/workspace/slots/${msg.sessionId}/current`);
 }
 
 /**
@@ -203,7 +203,7 @@ function handleToolResult(msg: InboundMessage): void {
       errorText = msg.content[0].inline || errorText;
     }
     process.stderr.write(`file-summarizer: tool error: ${errorText}\n`);
-    writeResponse(msg.slotId, `Error reading workspace: ${errorText}`);
+    writeResponse(msg.sessionId, `Error reading workspace: ${errorText}`);
     return;
   }
 
@@ -220,14 +220,14 @@ function handleToolResult(msg: InboundMessage): void {
     }
 
     if (fileList.length === 0) {
-      writeResponse(msg.slotId, "No files found in the workspace.");
+      writeResponse(msg.sessionId, "No files found in the workspace.");
       return;
     }
 
     // Step 2: Start reading files one by one.
     phase = 2;
     currentFileIndex = 0;
-    readNextFile(msg.slotId);
+    readNextFile(msg.sessionId);
   } else if (phase === 2) {
     // Phase 2: We received a file's contents.
     if (msg.content && msg.content.length > 0) {
@@ -239,11 +239,11 @@ function handleToolResult(msg: InboundMessage): void {
     currentFileIndex++;
     if (currentFileIndex < fileList.length && currentFileIndex < 10) {
       // Read the next file (cap at 10 files).
-      readNextFile(msg.slotId);
+      readNextFile(msg.sessionId);
     } else {
       // All files read. Produce the summary.
       phase = 3;
-      produceSummary(msg.slotId);
+      produceSummary(msg.sessionId);
     }
   }
 }
@@ -251,14 +251,14 @@ function handleToolResult(msg: InboundMessage): void {
 /**
  * Generate the final summary response.
  */
-function produceSummary(slotId: string | undefined): void {
+function produceSummary(sessionId: string | undefined): void {
   const lines = [`Workspace Summary (${fileContents.length} files)\n`];
   for (const fc of fileContents) {
     lines.push(fc);
     lines.push("");
   }
   lines.push(`Total files examined: ${fileContents.length}`);
-  writeResponse(slotId, lines.join("\n"));
+  writeResponse(sessionId, lines.join("\n"));
 }
 
 // ---- Main loop ----

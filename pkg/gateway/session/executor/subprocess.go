@@ -373,13 +373,14 @@ type messageEnvelope struct {
 	ID            string            `json:"id"`
 	From          fromBlock         `json:"from"`
 	Input         []wireMessagePart `json:"input"`
-	// SlotID is the §6.4 slot the gateway minted and resolved for the
-	// target session. It is stamped only on the outbound envelope to a
-	// concurrent-pool pod (maxConcurrentSessions > 1); an exclusive
-	// session-mode bind leaves it empty so the single-session path emits no
-	// slotId and the runtime never sees one. spec: §7.2 (per-slot routing),
-	// §28.5.3 (slotId multiplexing).
-	SlotID string `json:"slotId,omitempty"`
+	// SessionID names the session this envelope is addressed to. It is
+	// stamped on every outbound envelope on every pod, whatever the pool's
+	// maxConcurrentSessions, so the adapter and the runtime address one
+	// session rather than reading a scope off the field's absence. From
+	// separately names the sending session, which may be a different
+	// session; delivery follows SessionID. spec: §7.2 (per-slot routing);
+	// §28.5.3 (sessionId multiplexing).
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 type fromBlock struct {

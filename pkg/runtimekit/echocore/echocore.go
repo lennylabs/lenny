@@ -108,9 +108,13 @@ func (w *writer) write(v any) error {
 // prefixing text parts with the per-loop sequence number.
 func handleMessage(w *writer, line []byte, seq *atomic.Uint64) error {
 	var inbound struct {
-		Type  string        `json:"type"`
-		ID    string        `json:"id"`
-		Input []messagePart `json:"input"`
+		Type string `json:"type"`
+		ID   string `json:"id"`
+		// SessionID is the session the adapter addressed the frame to. A
+		// Basic-level runtime echoes it on the frames it emits in
+		// response, on every pod. spec: §15.4.3; §28.5.3.
+		SessionID string        `json:"sessionId"`
+		Input     []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return ProtocolError{Msg: fmt.Sprintf("malformed message envelope: %v", err)}
@@ -135,7 +139,7 @@ func handleMessage(w *writer, line []byte, seq *atomic.Uint64) error {
 			out = append(out, p)
 		}
 	}
-	return w.write(response{Type: "response", Output: out})
+	return w.write(response{Type: "response", SessionID: inbound.SessionID, Output: out})
 }
 
 // handleShutdown reads the deadline, gives ongoing work a bounded moment
@@ -174,8 +178,11 @@ type messagePart struct {
 }
 
 type response struct {
-	Type   string        `json:"type"`
-	Output []messagePart `json:"output"`
+	Type string `json:"type"`
+	// SessionID echoes the session the inbound message was addressed to,
+	// which §28.5.3 requires of a Basic-level runtime on every pod.
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []messagePart `json:"output"`
 }
 
 type heartbeatAck struct {

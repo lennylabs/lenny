@@ -120,7 +120,7 @@ RUNTIME_IMAGES=(
   # raises §9.2 elicitations through the platform MCP fabric.
   "lenny-runtime-cred-shell-echo=runtimes/cred-shell-echo"
   "lenny-runtime-elicitation-echo=runtimes/elicitation-echo"
-  # §5.2 slotId dispatch-loop reference runtime. Backs
+  # §5.2 sessionId dispatch-loop reference runtime. Backs
   # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
   # tier-5 real-pod counterpart of the tier-4
   # concurrent_workspace_test.go in-process flow.
@@ -726,11 +726,11 @@ bootstrap:
       isolationProfile: sandboxed
       labels:
         lenny.dev/e2e: gvisor-echo
-    # §5.2 slotId dispatch-loop reference runtime, the sidecar-model
+    # §5.2 sessionId dispatch-loop reference runtime, the sidecar-model
     # counterpart of the tier-4 concurrent_workspace_test.go in-process
     # flow. Backs concurrent-echo-pool, whose sessionPolicy.
     # maxConcurrentSessions > 1 multiplexes simultaneous sessions onto
-    # this runtime's single stdin/stdout dispatch loop keyed on slotId.
+    # this runtime's single stdin/stdout dispatch loop keyed on sessionId.
     - name: echo-runtime-concurrent
       type: agent
       image: ${ECHO_CONCURRENT_IMAGE}
@@ -854,7 +854,7 @@ bootstrap:
         cleanupTimeoutSeconds: 30
     # §5.2 concurrent-session pool: maxConcurrentSessions > 1 multiplexes
     # simultaneous sessions onto one warm pod's echo-concurrent process,
-    # each in its own slotId-addressed slot. warmCount: 2 for the same
+    # each in its own sessionId-addressed slot. warmCount: 2 for the same
     # PoolWarmingUp-race reason as task-mode-echo-pool above,
     # deliberately above 1 even though a single pod's 2 slots are enough
     # capacity for the test's two sessions. cleanupTimeoutSeconds must be

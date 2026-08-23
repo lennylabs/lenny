@@ -455,23 +455,23 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 	}
 
 	// §28.5.3 adapter-local tools are reachable for the duration of the
-	// turn. The slot id from the inbound envelope is threaded onto every
-	// tool_call so a runtime on a pool with maxConcurrentSessions > 1
-	// stays correlated to the originating slot.
-	// spec: §28.5.3 (slotId present only when maxConcurrentSessions > 1)
+	// turn. The session identifier from the inbound envelope is threaded
+	// onto every tool_call so the frame the runtime emits addresses the
+	// session it was handed, on every pod.
+	// spec: §28.5.3 (sessionId on every session-scoped frame)
 	mctx := context.WithValue(s.withSessionContext(ctx), ctxKeyAdapterTools, &AdapterTools{
-		w:       s.w,
-		timeout: s.cfg.dialTimeout,
-		slotID:  env.SlotID,
+		w:         s.w,
+		timeout:   s.cfg.dialTimeout,
+		sessionID: env.SessionID,
 	})
 	reply, err := s.handler.OnMessage(mctx, msg)
 	if err != nil {
 		s.cfg.logf("runtime: OnMessage error: %v", err)
 		if werr := s.w.write(outboundResponse{
-			Type:   "response",
-			Output: []MessagePart{},
-			Error:  &ResponseError{Code: "RUNTIME_ERROR", Message: err.Error()},
-			SlotID: env.SlotID,
+			Type:      "response",
+			Output:    []MessagePart{},
+			Error:     &ResponseError{Code: "RUNTIME_ERROR", Message: err.Error()},
+			SessionID: env.SessionID,
 		}); werr != nil {
 			s.cfg.logf("runtime: write error response: %v", werr)
 		}
@@ -487,10 +487,10 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 		return
 	}
 	if werr := s.w.write(outboundResponse{
-		Type:   "response",
-		Output: stampParts(reply.Parts),
-		Error:  reply.Error,
-		SlotID: env.SlotID,
+		Type:      "response",
+		Output:    stampParts(reply.Parts),
+		Error:     reply.Error,
+		SessionID: env.SessionID,
 	}); werr != nil {
 		s.cfg.logf("runtime: write response: %v", werr)
 	}

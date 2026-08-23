@@ -140,7 +140,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Errorf("docs/reference/adapter-contract.md set_tracing_context entry: the example frame does not carry the per-session address as a non-empty string; the published JSONL schema rejects any other type, so a runtime author copying the example emits a frame the adapter drops")
 	}
 	requireAllContain(t, "adapter-contract.md set_tracing_context entry", entry, []string{
-		"| `slotId` | string, optional |",
+		"| `sessionId` | string, optional |",
 		// The addressing rule and its outcome.
 		"resolves the frame against the stream that delivered it",
 		"matches the stream's session",
@@ -156,7 +156,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		// attribute every rejection to it.
 		"Two dispositions reject a frame.",
 		"counted in `lenny_adapter_unaddressed_frame_rejected_total`",
-		"A frame whose `slotId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
+		"A frame whose `sessionId` names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`",
 		"logged as a protocol error",
 		// Live-binding confirmation fails for both of the reasons
 		// §28.5.3 states, so the drain window after a slot is released
@@ -183,7 +183,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/runtime-author-guide/platform-tools.md: `lenny/set_tracing_context` entry not found (renamed or removed?)")
 	}
 	requireAllContain(t, "platform-tools.md lenny/set_tracing_context entry", toolEntry, []string{
-		"The JSONL frame carries the per-session identifier in `slotId` on every pod",
+		"The JSONL frame carries the per-session identifier in `sessionId` on every pod",
 		"the runtime echoes the identifier the adapter handed it",
 		"resolves to the receiving stream's own binding on a pod holding at most one slot",
 		"on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged",
@@ -202,7 +202,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 		t.Fatal("docs/runtime-author-guide/platform-tools.md: no paragraph states the JSONL set_tracing_context frame is available at every level (renamed or removed?)")
 	}
 	requireAllContain(t, "platform-tools.md tool-availability paragraph", availability, []string{
-		"The frame carries the per-session identifier in `slotId` on every pod",
+		"The frame carries the per-session identifier in `sessionId` on every pod",
 		// The echo obligation reaches a Basic-level author here and
 		// nowhere else on the page.
 		"a Basic-level runtime echoes the identifier the adapter handed it",
@@ -222,7 +222,7 @@ func TestTracingContextAddressingRuleDocumented(t *testing.T) {
 //	docs/reference/adapter-contract.md does not validate against the published
 //	JSONL schema at schemas/lenny-adapter-jsonl.schema.json. A runtime author
 //	copies the documented frame verbatim, so a documented form the schema
-//	rejects (a null `slotId`, for instance, where the schema declares a string)
+//	rejects (a null `sessionId`, for instance, where the schema declares a string)
 //	produces a frame the adapter reads as untagged and, on a pod holding
 //	registered slots, drops.
 func TestDocumentedTracingContextFrameValidatesAgainstJSONLSchema(t *testing.T) {
@@ -305,8 +305,8 @@ func tracingAddressingSpecBlock(t *testing.T, root string) string {
 //	outcome for `set_tracing_context` that §28.5.3 does not define. The
 //	addressing rule resolves the frame through two conditions over an
 //	address compared as exact string equality, with an absent or empty
-//	`slotId` counting as the empty string on both sides. A page that also
-//	tells a runtime author what happens to a `slotId` of some other JSON
+//	`sessionId` counting as the empty string on both sides. A page that also
+//	tells a runtime author what happens to a `sessionId` of some other JSON
 //	type states behavior no implementor can derive from the contract, and
 //	an adapter written from the spec alone would not match it. Either the
 //	statement comes out of the page or the outcome goes into §28.5.3
@@ -322,7 +322,7 @@ func TestTracingContextAddressingDocStatesNoOutcomeBeyondTheSpec(t *testing.T) {
 		"The comparison is exact string equality.",
 	})
 
-	// The page may describe an outcome for a `slotId` of a non-string JSON
+	// The page may describe an outcome for a `sessionId` of a non-string JSON
 	// type only once §28.5.3 defines one, so the check reads the spec block
 	// first and applies only while the spec is silent.
 	specBlock := tracingAddressingSpecBlock(t, root)
@@ -334,7 +334,7 @@ func TestTracingContextAddressingDocStatesNoOutcomeBeyondTheSpec(t *testing.T) {
 		}
 	}
 	if len(stated) > 0 {
-		t.Logf("spec/28 §28.5.3 Addressing now states a non-string `slotId` outcome (%v); the reference page may restate it", stated)
+		t.Logf("spec/28 §28.5.3 Addressing now states a non-string `sessionId` outcome (%v); the reference page may restate it", stated)
 		return
 	}
 	requireNoneContain(t, "adapter-contract.md set_tracing_context entry", entry, claims)

@@ -39,14 +39,14 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // with LENNY_ADAPTER_SOCKET pointing at the bound socket, so one host
 // can exercise the sidecar transport without a pod.
 //
-// One runtime process per pod serves every slot, multiplexed on slotId
-// over the single connection (spec/05:509, spec/15:1459). Start is
-// idempotent across slots: the first call accepts the connection and
-// starts the fan-out reader, and a later Start for a sibling slot's
-// session reuses the live connection. WriteEnvelope writes any slot's
-// slotId-tagged envelope over that one connection, and each Output
+// One runtime process per pod serves every slot, multiplexed on the
+// frame's sessionId over the single connection. Start is idempotent
+// across slots: the first call accepts the connection and starts the
+// fan-out reader, and a later Start for a sibling slot's session reuses
+// the live connection. WriteEnvelope writes any session's
+// sessionId-tagged envelope over that one connection, and each Output
 // subscriber receives every frame the runtime emits; the Attach handler
-// demultiplexes by slotId.
+// demultiplexes by sessionId.
 //
 // Interrupt and Close are scoped to the named session: each Start
 // registers the session in the active set, and Close (or a hard Interrupt)
@@ -222,7 +222,8 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 
 	// One reader goroutine over the single connection fans every frame out
 	// to all subscribers, so concurrent per-slot Attach streams each see
-	// the runtime's full output and demultiplex by slotId. spec: §28.5.3.
+	// the runtime's full output and demultiplex by sessionId.
+	// spec: §28.5.3.
 	go p.fanOut(scanner)
 	return nil
 }
@@ -315,9 +316,9 @@ func (p *SocketRuntimeProcess) spawn(path string) error {
 
 // WriteEnvelope forwards a pre-encoded §28.5.3 message envelope to the
 // runtime over the single connection, terminated by a newline. The
-// envelope already carries its slotId (stamped by the Attach handler on a
-// concurrent pod), so WriteEnvelope is session-agnostic: every slot's
-// frames share the one connection. spec: §28.5.3.
+// envelope already carries its sessionId, which the Attach handler
+// stamps on every pod, so WriteEnvelope is session-agnostic: every
+// session's frames share the one connection. spec: §28.5.3.
 func (p *SocketRuntimeProcess) WriteEnvelope(_ string, envelope []byte) error {
 	p.mu.Lock()
 	conn := p.conn
@@ -333,8 +334,8 @@ func (p *SocketRuntimeProcess) WriteEnvelope(_ string, envelope []byte) error {
 
 // Output subscribes to the runtime's output. It returns a channel carrying
 // every §28.5.3 JSONL frame the runtime writes on the single connection;
-// the Attach handler demultiplexes by slotId so each per-slot stream keeps
-// only its slot's frames (spec/15:1459). The channel closes when the
+// the Attach handler demultiplexes by sessionId so each per-slot stream
+// keeps only its session's frames. The channel closes when the
 // runtime closes the connection, and ctx cancellation unsubscribes so a
 // stalled consumer does not stall the shared reader.
 func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []byte, error) {

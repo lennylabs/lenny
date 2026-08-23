@@ -191,18 +191,20 @@ func TestPodExecutorEvictStreamOnAnUnstreamedSession(t *testing.T) {
 	pe.EvictStream("sess-never-streamed")
 }
 
-// slotCapturingAdapter is a minimal AdapterServer that records the §6.4
-// slotId the gateway's PodExecutor stamped on the Attach binding frame and
-// on the message envelope it forwarded over the stream, so a test can
-// assert a concurrent-pool bind threads the slotId onto the outbound path
-// while an exclusive bind threads none.
+// slotCapturingAdapter is a minimal AdapterServer that records the
+// address the gateway's PodExecutor stamped on the Attach binding frame
+// and the sessionId it stamped on the message envelope it forwarded over
+// the stream, so a test can assert both carry the addressed session on a
+// binding of either concurrency. The envelope decode reads the wire key
+// off a struct tag, so a producer-side rename this fake does not follow
+// yields the empty string rather than a build failure.
 type slotCapturingAdapter struct {
 	adapterv1.UnimplementedAdapterServer
 
-	mu             sync.Mutex
-	attachBindSlot string
-	envelopeSlot   string
-	gotEnvelope    bool
+	mu                sync.Mutex
+	attachBindSession string
+	envelopeSession   string
+	gotEnvelope       bool
 }
 
 func newSlotCapturingAdapter() *slotCapturingAdapter {
@@ -215,7 +217,7 @@ func (a *slotCapturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.
 		return err
 	}
 	a.mu.Lock()
-	a.attachBindSlot = first.GetSessionId().GetValue()
+	a.attachBindSession = first.GetSessionId().GetValue()
 	a.mu.Unlock()
 	for {
 		req, err := stream.Recv()
@@ -224,11 +226,11 @@ func (a *slotCapturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.
 		}
 		if env := req.GetEnvelopeJson(); len(env) > 0 {
 			var decoded struct {
-				SlotID string `json:"slotId"`
+				SessionID string `json:"sessionId"`
 			}
 			_ = json.Unmarshal(env, &decoded)
 			a.mu.Lock()
-			a.envelopeSlot = decoded.SlotID
+			a.envelopeSession = decoded.SessionID
 			a.gotEnvelope = true
 			a.mu.Unlock()
 			// Reply so the executor's Send completes.
@@ -239,10 +241,10 @@ func (a *slotCapturingAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.
 	}
 }
 
-func (a *slotCapturingAdapter) snapshot() (bindSlot, envelopeSlot string, gotEnvelope bool) {
+func (a *slotCapturingAdapter) snapshot() (bindSession, envelopeSession string, gotEnvelope bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.attachBindSlot, a.envelopeSlot, a.gotEnvelope
+	return a.attachBindSession, a.envelopeSession, a.gotEnvelope
 }
 
 // dialSlotCapturingAdapter serves rec over bufconn and returns a connected
@@ -268,11 +270,13 @@ func dialSlotCapturingAdapter(t *testing.T, rec *slotCapturingAdapter) *adapterc
 }
 
 // TestPodExecutorSendAddressesTheAttachStreamBySession pins that the
-// executor addresses the Attach stream by the session identifier, which
-// under §5.2 names the slot that session holds on the pod, on a binding of
-// either concurrency. Before this the stream carried a separate slot
-// address that a bind on a pool of one left empty.
-// spec: 7.2 (per-session routing), 5.2
+// executor addresses the Attach stream and the outbound envelope by the
+// session identifier, which under §5.2 names the slot that session holds
+// on the pod, on a binding of either concurrency. Before this both carried
+// a separate slot address that a bind on a pool of one left empty, so the
+// envelope's omitempty tag dropped the key outright on exactly the pool
+// §28.5.3 exists to normalize.
+// spec: 7.2 (per-session routing), 5.2, 28.5.3 (population on every pod)
 func TestPodExecutorSendAddressesTheAttachStreamBySession(t *testing.T) {
 	for _, slotID := range []string{"slot_02", ""} {
 		rec := newSlotCapturingAdapter()
@@ -286,12 +290,15 @@ func TestPodExecutorSendAddressesTheAttachStreamBySession(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Send with recorded slot %q: %v", slotID, err)
 		}
-		bindSession, _, gotEnvelope := rec.snapshot()
+		bindSession, envelopeSession, gotEnvelope := rec.snapshot()
 		if !gotEnvelope {
 			t.Fatal("adapter never received the forwarded envelope")
 		}
 		if bindSession != "sess-pod" {
 			t.Errorf("Attach binding address = %q, want sess-pod", bindSession)
+		}
+		if envelopeSession != "sess-pod" {
+			t.Errorf("outbound envelope sessionId = %q with recorded slot %q, want sess-pod", envelopeSession, slotID)
 		}
 	}
 }

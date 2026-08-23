@@ -60,17 +60,22 @@ func Text(s string) MessagePart {
 // occur. The field is open metadata so future annotations can land
 // without a schema-version bump. F-15.5.5.
 type MessageEnvelope struct {
-	SchemaVersion   int            `json:"schemaVersion,omitempty"`
-	Type            string         `json:"type"`
-	ID              string         `json:"id"`
-	From            *MessageFrom   `json:"from,omitempty"`
-	InReplyTo       string         `json:"inReplyTo,omitempty"`
-	ThreadID        string         `json:"threadId,omitempty"`
-	Delivery        string         `json:"delivery,omitempty"`
-	DelegationDepth int            `json:"delegationDepth,omitempty"`
-	SlotID          string         `json:"slotId,omitempty"`
-	Input           []MessagePart  `json:"input,omitempty"`
-	Annotations     map[string]any `json:"annotations,omitempty"`
+	SchemaVersion   int          `json:"schemaVersion,omitempty"`
+	Type            string       `json:"type"`
+	ID              string       `json:"id"`
+	From            *MessageFrom `json:"from,omitempty"`
+	InReplyTo       string       `json:"inReplyTo,omitempty"`
+	ThreadID        string       `json:"threadId,omitempty"`
+	Delivery        string       `json:"delivery,omitempty"`
+	DelegationDepth int          `json:"delegationDepth,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every session-scoped frame on every pod, whatever
+	// the pool's maxConcurrentSessions, and a runtime echoes it on the
+	// frames it emits in response. From separately names the sending
+	// session, which may be a different session. spec: §28.5.3.
+	SessionID   string         `json:"sessionId,omitempty"`
+	Input       []MessagePart  `json:"input,omitempty"`
+	Annotations map[string]any `json:"annotations,omitempty"`
 }
 
 // MessageFrom is the §15.4 from object. Kind is one of client, agent,
@@ -297,19 +302,19 @@ type inboundShutdown struct {
 
 // inboundToolResult is the §28.5.3 tool_result frame.
 type inboundToolResult struct {
-	Type    string        `json:"type"`
-	ID      string        `json:"id"`
-	Content []MessagePart `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-	SlotID  string        `json:"slotId,omitempty"`
+	Type      string        `json:"type"`
+	ID        string        `json:"id"`
+	Content   []MessagePart `json:"content"`
+	IsError   bool          `json:"isError,omitempty"`
+	SessionID string        `json:"sessionId,omitempty"`
 }
 
 // outboundResponse is the §28.5.3 outbound response frame.
 type outboundResponse struct {
-	Type   string         `json:"type"`
-	Output []MessagePart  `json:"output"`
-	Error  *ResponseError `json:"error,omitempty"`
-	SlotID string         `json:"slotId,omitempty"`
+	Type      string         `json:"type"`
+	Output    []MessagePart  `json:"output"`
+	Error     *ResponseError `json:"error,omitempty"`
+	SessionID string         `json:"sessionId,omitempty"`
 }
 
 // outboundHeartbeatAck is the §28.5.3 heartbeat_ack frame.
@@ -323,14 +328,17 @@ type outboundToolCall struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
-	SlotID    string         `json:"slotId,omitempty"`
+	SessionID string         `json:"sessionId,omitempty"`
 }
 
-// outboundStatus is the §28.5.3 optional status frame.
+// outboundStatus is the §28.5.3 optional status frame. It is
+// session-scoped, so it carries the session it is addressed to.
+// spec: §28.5.3.
 type outboundStatus struct {
-	Type    string `json:"type"`
-	State   string `json:"state,omitempty"`
-	Message string `json:"message,omitempty"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	State     string `json:"state,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // outboundTracingContext is the §28.5.3 set_tracing_context frame.
