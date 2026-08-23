@@ -34,6 +34,7 @@ package tier11_docs_test
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1030,5 +1031,97 @@ func TestCheckpointSlotDropCitesTheOwningSpecSections(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(heading), "credential") {
 		t.Fatalf("spec section 4.9 heading = %q, want the credential leasing service; update the exclusion rationale above", heading)
+	}
+}
+
+// checkpointGoSourceRoot is the package subtree whose Go sources and tests
+// carry the checkpoint persistence surface the slot-column drop re-keys.
+const checkpointGoSourceRoot = "pkg/gateway/checkpoint"
+
+// goSpecCitationRE captures the body of a `// spec:` citation line in a Go
+// comment, in either the `// spec: §a, §b` or `// spec: a, b` spelling.
+var goSpecCitationRE = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.+)$`)
+
+// goSpecCitationContinuationRE captures a comment line that continues the
+// citation started on the line above, so a section number wrapped onto a
+// second line is read as part of the same citation.
+var goSpecCitationContinuationRE = regexp.MustCompile(`^\s*//\s?(.*)$`)
+
+// citedSpecSectionsInGo returns the section numbers the `// spec:` annotations
+// of a Go source body cite, following each annotation across the comment lines
+// that continue it.
+func citedSpecSectionsInGo(body string) map[string][]int {
+	out := map[string][]int{}
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		m := goSpecCitationRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		citation := m[1]
+		for j := i + 1; j < len(lines); j++ {
+			c := goSpecCitationContinuationRE.FindStringSubmatch(lines[j])
+			if c == nil || strings.HasPrefix(strings.TrimSpace(c[1]), "spec:") ||
+				strings.HasPrefix(strings.TrimSpace(c[1]), "diagnosis:") {
+				break
+			}
+			citation += " " + c[1]
+		}
+		for _, s := range specSectionRE.FindAllString(citation, -1) {
+			out[s] = append(out[s], i+1)
+		}
+	}
+	return out
+}
+
+// spec: 10.1 (the manifest scoping key and the supersede rule the checkpoint
+// store implements), 5.2 (a session-mode slot's identifier is its session's
+// identifier, which is the premise the scoping key rests on)
+// diagnosis: a Go source or test under the checkpoint packages cites the spec
+//
+//	section that owns credential leasing, which says nothing about checkpoint
+//	persistence. The harness maps a test to its spec sections through the
+//	`// spec:` annotation, so the case is filed under an unrelated mechanism
+//	and the section it really pins has no test against it. The most likely
+//	cause is a section number copied from a change proposal's own numbering,
+//	which does not correspond to the numbering under spec/.
+func TestCheckpointSourcesCiteNoCredentialLeasingSection(t *testing.T) {
+	root := repoRoot(t)
+	// The excluded section is a live section of the spec that owns an
+	// unrelated mechanism, so citing it is not a dangling reference a
+	// resolver would catch. Pin what it owns, so the reason it is excluded
+	// stays legible.
+	heading, ok := specSectionHeading(t, root, "4.9")
+	if !ok {
+		t.Fatalf("spec section 4.9 has no heading under spec/")
+	}
+	if !strings.Contains(strings.ToLower(heading), "credential") {
+		t.Fatalf("spec section 4.9 heading = %q, want the credential leasing service; update the exclusion rationale above", heading)
+	}
+
+	dir := filepath.Join(root, checkpointGoSourceRoot)
+	var scanned int
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		scanned++
+		for _, line := range citedSpecSectionsInGo(readMigration(t, path))["4.9"] {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				rel = path
+			}
+			t.Errorf("%s:%d cites spec §4.9 (%s), which owns no part of checkpoint persistence; cite the sections that own the behaviour (§10.1.7 for the manifest scoping key and the supersede rule, §5.2 for a session-mode slot's identifier being its session's)", rel, line, heading)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", checkpointGoSourceRoot, err)
+	}
+	if scanned == 0 {
+		t.Fatalf("no Go sources found under %s; the gate scans nothing", checkpointGoSourceRoot)
 	}
 }

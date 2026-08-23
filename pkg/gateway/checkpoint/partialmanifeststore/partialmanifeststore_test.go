@@ -729,8 +729,9 @@ func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
 	}
 }
 
-// spec: §4.9 (every session is bound to a slot whose identifier is the
-// session's own, so the session identifier is the whole scoping key),
+// spec: §10.1.7 (the manifest scoping key and the supersede-on-write rule
+// the selector serves), §5.2 (a session-mode slot's identifier is its
+// session's identifier, so the session identifier is the whole scoping key),
 // §10.1 (the manifest row is keyed on session_id). LatestActive is the
 // selector the supersede-on-write path reads, and after the slot column is
 // dropped from checkpoint_manifest its scope is exactly (tenant_id,
