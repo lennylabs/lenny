@@ -1412,3 +1412,68 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 }
 
 var _ = checkpoint.TriggerPeriodic
+
+// spec: §10.1.7 (supersede is scoped to (tenant_id, session_id)), §5.2 (a
+// session-mode slot's identifier is its session's identifier, so the session
+// identifier is the whole scoping key). The upload driver reads the row it
+// supersedes through the session-keyed active-partial selector. A co-tenant
+// session's active partial row and a same-identifier session in another
+// tenant are both outside that scope, so a fresh attempt on one session
+// supersedes its own prior attempt and leaves every neighbouring row active.
+// diagnosis: the supersede lookup resolved a row outside (tenant_id,
+// session_id) — a wider selector destroys another session's live attempt, and
+// a narrower one leaves the superseded row active and orphans its
+// reservation.
+func TestDriverSupersedeLookupScopedToTenantAndSession_spec_10_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+	// The session's own abandoned attempt, plus two neighbours a mis-scoped
+	// selector would reach: a co-tenant session, and another tenant carrying
+	// this session's identifier.
+	seedAbandonedIntentRow(t, h, "acme", sid, "cp-own-prior")
+	seedAbandonedIntentRow(t, h, "acme", "s2", "cp-co-tenant-session")
+	seedAbandonedIntentRow(t, h, "globex", sid, "cp-other-tenant")
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	prior, err := h.manifests.Get(context.Background(), "acme", "cp-own-prior")
+	if err != nil {
+		t.Fatalf("Get the session's prior row: %v", err)
+	}
+	if prior.DeletedAt.IsZero() {
+		t.Errorf("the session's own prior attempt is still active; the supersede lookup did not resolve it")
+	}
+	if prior.ManifestReason != partialmanifeststore.ReasonSuperseded {
+		t.Errorf("prior row manifest_reason = %q, want superseded", prior.ManifestReason)
+	}
+	// The supersede arm releases the reservation of exactly the row the
+	// session-keyed lookup resolved, so the release lands here and nowhere
+	// else.
+	if prior.ReservationReleasedAt.IsZero() {
+		t.Errorf("the session's own prior attempt kept its reservation; the supersede lookup resolved a different row")
+	}
+
+	for _, n := range []struct {
+		tenantID, sessionID, checkpointID string
+	}{
+		{"acme", "s2", "cp-co-tenant-session"},
+		{"globex", sid, "cp-other-tenant"},
+	} {
+		rec, err := h.manifests.Get(context.Background(), n.tenantID, n.checkpointID)
+		if err != nil {
+			t.Fatalf("Get neighbouring row %s/%s: %v", n.tenantID, n.checkpointID, err)
+		}
+		if !rec.DeletedAt.IsZero() {
+			t.Errorf("neighbouring row %s/%s was soft-deleted; the supersede lookup reached outside (tenant_id, session_id)", n.tenantID, n.checkpointID)
+		}
+		if rec.ManifestReason != partialmanifeststore.ReasonInProgress {
+			t.Errorf("neighbouring row %s/%s manifest_reason = %q, want in_progress (untouched)", n.tenantID, n.checkpointID, rec.ManifestReason)
+		}
+		if !rec.ReservationReleasedAt.IsZero() {
+			t.Errorf("neighbouring row %s/%s had its reservation released; the supersede lookup reached outside (tenant_id, session_id)", n.tenantID, n.checkpointID)
+		}
+	}
+}
