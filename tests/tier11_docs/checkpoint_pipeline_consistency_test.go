@@ -103,16 +103,16 @@ var droppedColumns = map[string]droppedColumn{
 	// reassembly predicate are keyed on session_id alone), §12.5 (retention
 	// and supersession operate on session_id)
 	//
-	// Migration 0180 is the migration that drops session_checkpoints.slot_id
+	// Migration 0180 carries the drop: it removes session_checkpoints.slot_id
 	// and checkpoint_manifest.slot_id and re-keys the three checkpoint indexes
-	// on session_id. It is named here before it is written, the way
-	// tests/tier2_component/migrations/prod_columns_test.go names migration
-	// 0167 as the drop of sandbox_warm_pools.concurrency_style, so the
-	// exception identifies the change that retires the column rather than
-	// leaving a reader to search the tree for it. 0180 is the next free prefix
-	// under migrations/; should the drop land under another prefix, the drain
-	// check below fails this entry and names the migration that actually
-	// carries the drop.
+	// on session_id. Naming it here identifies the change that retires the
+	// column, the way tests/tier2_component/migrations/prod_columns_test.go
+	// names migration 0167 as the drop of
+	// sandbox_warm_pools.concurrency_style, rather than leaving a reader to
+	// search the tree for it. The drain check below verifies this entry
+	// against that migration's `.up.sql`, and fails the entry naming a
+	// different migration should the drop of this column move to another
+	// prefix.
 	"slot_id": {
 		table:     "checkpoint_manifest",
 		migration: "0180",
