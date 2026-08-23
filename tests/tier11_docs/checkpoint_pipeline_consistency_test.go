@@ -1038,6 +1038,23 @@ func TestCheckpointSlotDropCitesTheOwningSpecSections(t *testing.T) {
 // carry the checkpoint persistence surface the slot-column drop re-keys.
 const checkpointGoSourceRoot = "pkg/gateway/checkpoint"
 
+// checkpointGoCitationFiles are the checkpoint test files that live outside
+// that subtree. Walking the subtree alone leaves the tier files that pin the
+// same persistence surface free to carry the citation the gate rejects, so
+// they are covered by name. A test file whose subject is credential leasing
+// cites the credential leasing section legitimately, which is why the list is
+// enumerated rather than derived from a path glob over tests/.
+var checkpointGoCitationFiles = []string{
+	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
+	"tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+	"tests/tier2_component/rls/checkpoint_manifest_test.go",
+	"tests/tier2_component/stores/partialmanifeststore_test.go",
+	"tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+	"tests/tier4_integration/checkpoint_driver_harness_test.go",
+	"tests/tier7a_load_local/checkpoint_grant_window_test.go",
+	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
+}
+
 // goSpecCitationRE captures the body of a `// spec:` citation line in a Go
 // comment, in either the `// spec: §a, §b` or `// spec: a, b` spelling.
 var goSpecCitationRE = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.+)$`)
@@ -1109,13 +1126,7 @@ func TestCheckpointSourcesCiteNoCredentialLeasingSection(t *testing.T) {
 			return nil
 		}
 		scanned++
-		for _, line := range citedSpecSectionsInGo(readMigration(t, path))["4.9"] {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				rel = path
-			}
-			t.Errorf("%s:%d cites spec §4.9 (%s), which owns no part of checkpoint persistence; cite the sections that own the behaviour (§10.1.7 for the manifest scoping key and the supersede rule, §5.2 for a session-mode slot's identifier being its session's)", rel, line, heading)
-		}
+		reportCredentialLeasingCitations(t, root, path, heading)
 		return nil
 	})
 	if err != nil {
@@ -1123,5 +1134,64 @@ func TestCheckpointSourcesCiteNoCredentialLeasingSection(t *testing.T) {
 	}
 	if scanned == 0 {
 		t.Fatalf("no Go sources found under %s; the gate scans nothing", checkpointGoSourceRoot)
+	}
+	for _, rel := range checkpointGoCitationFiles {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		reportCredentialLeasingCitations(t, root, path, heading)
+	}
+}
+
+// reportCredentialLeasingCitations reports every `// spec:` annotation in the
+// Go file at path that cites the credential leasing section, naming the
+// sections that own the checkpoint persistence surface instead.
+func reportCredentialLeasingCitations(t *testing.T, root, path, heading string) {
+	t.Helper()
+	for _, line := range citedSpecSectionsInGo(readMigration(t, path))["4.9"] {
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+		t.Errorf("%s:%d cites spec §4.9 (%s), which owns no part of checkpoint persistence; cite the sections that own the behaviour (§10.1.7 for the manifest scoping key and the supersede rule, §5.2 for a session-mode slot's identifier being its session's)", rel, line, heading)
+	}
+}
+
+// credentialLeasingCitationCases pin the extractor the gate rests on to a
+// `// spec:` annotation, in both the sectioned and the bare spelling and
+// across a wrapped citation, so a citation the gate must reject is never
+// missed and a section number that is merely discussed in prose or held in a
+// string literal is never reported.
+var credentialLeasingCitationCases = []struct {
+	name  string
+	body  string
+	cited bool
+}{
+	{"sectioned annotation", "// spec: §4.9, §10.1\nfunc f() {}\n", true},
+	{"bare annotation", "// spec: 4.9 (credential leasing)\nfunc f() {}\n", true},
+	{"wrapped annotation", "// spec: 10.1 (the scoping key),\n// 4.9 (credential leasing)\nfunc f() {}\n", true},
+	{"owning sections only", "// spec: §10.1.7, §5.2\nfunc f() {}\n", false},
+	{"prose mention outside an annotation", "// The drop cites no §4.9 behaviour.\nfunc f() {}\n", false},
+	{"string literal mention", "func f() string { return \"cites spec §4.9\" }\n", false},
+}
+
+// spec: 10.1 (the manifest scoping key and the supersede rule the checkpoint
+// store implements), 5.2 (a session-mode slot's identifier is its session's
+// identifier, which is the premise the scoping key rests on)
+// diagnosis: the extractor behind the credential-leasing citation gate no
+//
+//	longer reads the annotation form the checkpoint sources use. A false
+//	negative lets a `// spec:` annotation under the checkpoint pipeline file
+//	the change under credential leasing unreported; a false positive rejects a
+//	file that only discusses the section in prose.
+func TestCredentialLeasingCitationExtractorReadsTheAnnotationOnly(t *testing.T) {
+	for _, tc := range credentialLeasingCitationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := citedSpecSectionsInGo(tc.body)["4.9"]
+			if got != tc.cited {
+				t.Errorf("citedSpecSectionsInGo cites 4.9 = %v, want %v for:\n%s", got, tc.cited, tc.body)
+			}
+		})
 	}
 }
