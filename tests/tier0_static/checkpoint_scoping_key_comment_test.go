@@ -57,6 +57,18 @@ var twoColumnCheckpointKey = regexp.MustCompile(`(?i)\(\s*` + "`?" + `session(_i
 // spec: 10.1 (partial manifest scoping key and supersede-on-write), 12.5
 // (checkpoint retention and supersession on the same key)
 func TestCheckpointCommentsNameTheSessionScopingKeyAlone_spec_10_1(t *testing.T) {
+	offenses := checkpointCommentOffenses(t, twoColumnCheckpointKey)
+	if len(offenses) > 0 {
+		t.Errorf("comments state the checkpoint scoping key as the retired two-column pair:\n%s", strings.Join(offenses, "\n"))
+	}
+}
+
+// checkpointCommentOffenses reports every comment in the checkpoint pipeline's
+// production sources, and in the checkpoint test files named beside them, that
+// matches re. The two comment gates over this surface share the file set, so
+// each states only the phrasing it bans.
+func checkpointCommentOffenses(t *testing.T, re *regexp.Regexp) []string {
+	t.Helper()
 	root := schematest.RepoRoot(t)
 	dir := filepath.Join(root, checkpointScopingCommentRoot)
 	if _, err := os.Stat(dir); err != nil {
@@ -76,7 +88,7 @@ func TestCheckpointCommentsNameTheSessionScopingKeyAlone_spec_10_1(t *testing.T)
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		offenses = append(offenses, checkpointScopingKeyOffenses(t, root, path)...)
+		offenses = append(offenses, checkpointFileCommentOffenses(t, root, path, re)...)
 		return nil
 	})
 	if err != nil {
@@ -87,16 +99,14 @@ func TestCheckpointCommentsNameTheSessionScopingKeyAlone_spec_10_1(t *testing.T)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("stat %s: %v", rel, err)
 		}
-		offenses = append(offenses, checkpointScopingKeyOffenses(t, root, path)...)
+		offenses = append(offenses, checkpointFileCommentOffenses(t, root, path, re)...)
 	}
-	if len(offenses) > 0 {
-		t.Errorf("comments state the checkpoint scoping key as the retired two-column pair:\n%s", strings.Join(offenses, "\n"))
-	}
+	return offenses
 }
 
-// checkpointScopingKeyOffenses reports every comment in the Go file at path
-// that spells the retired two-column key, as "rel:line: text".
-func checkpointScopingKeyOffenses(t *testing.T, root, path string) []string {
+// checkpointFileCommentOffenses reports every comment in the Go file at path
+// that matches re, as "rel:line: text".
+func checkpointFileCommentOffenses(t *testing.T, root, path string, re *regexp.Regexp) []string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
@@ -112,7 +122,7 @@ func checkpointScopingKeyOffenses(t *testing.T, root, path string) []string {
 		// Line breaks are folded to spaces so a pair wrapped across two
 		// comment lines is one site rather than two halves that match nothing.
 		text := strings.Join(strings.Fields(group.Text()), " ")
-		if m := twoColumnCheckpointKey.FindString(text); m != "" {
+		if m := re.FindString(text); m != "" {
 			out = append(out, rel+":"+strconv.Itoa(fset.Position(group.Pos()).Line)+": "+m)
 		}
 	}

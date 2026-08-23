@@ -91,17 +91,20 @@ func TestConcurrentPoolCapturesEachSessionIndependently(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (a session-mode slot's identifier is its session's identifier;
-// an exclusive maxConcurrentSessions=1 bind claims the whole pod for the
-// session and names no slot). The two checkpoint harness arms model the two
-// binds production mints: the base-mode harness registers a binding with no
-// slot identifier, and the concurrent-pool harness registers each session
-// under a slot its own identifier names.
+// spec: §5.2 (a session-mode slot's identifier is its session's identifier)
+// The two checkpoint harness arms model the two binds production mints. A
+// binding's slot identifier is populated exactly when the slot reservation
+// returned a slot result, so it records whether the pod keeps a counted slot
+// ledger, and it is the key the two release paths dispatch on: an exclusive
+// bind that carried it would send its release down the counted-slot release
+// path. The exclusive-pool harness therefore registers a binding whose slot
+// identifier is empty, and the concurrent-pool harness registers each session
+// under a slot the session's own identifier names.
 // diagnosis: a failure here means the tier-4 checkpoint fixtures no longer
 // model the binding contract — an exclusive bind was registered carrying a
-// slot identifier, or a concurrent bind was registered without one — so every
-// checkpoint case in this tier runs against a binding the binder never
-// produces.
+// slot identifier, so its release would dispatch onto the counted-slot path,
+// or a concurrent bind was registered without one — so every checkpoint case
+// in this tier runs against a binding the binder never produces.
 func TestCheckpointHarnessBindingsMatchTheirPoolMode(t *testing.T) {
 	base := newCPDriverHarness(t, &cpChunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, failAfter: -1, truncateAfter: -1})
 	bind, ok := base.registry.Get(cpSession)
@@ -109,7 +112,7 @@ func TestCheckpointHarnessBindingsMatchTheirPoolMode(t *testing.T) {
 		t.Fatalf("exclusive bind for %s is not registered", cpSession)
 	}
 	if bind.SlotID != "" {
-		t.Errorf("exclusive bind SlotID = %q, want empty (the pod is claimed for the session and names no slot)", bind.SlotID)
+		t.Errorf("exclusive bind SlotID = %q, want empty (it is populated only when a slot reservation returned a slot result, and the release paths dispatch on it)", bind.SlotID)
 	}
 
 	pool := newCPConcurrentHarness(t, []cpSlotSpec{
