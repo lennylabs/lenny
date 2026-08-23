@@ -184,6 +184,57 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1.7, §10.1 — the surviving active-partial selector is the
+	// one the checkpoint upload driver supersedes on, so its scope is the
+	// whole (tenant_id, session_id) key against real Postgres. A second
+	// session in the same tenant must be invisible to it, and reading the
+	// same session identifier under another tenant must resolve nothing.
+	// The re-keyed partial_manifest_active_uniq is scoped on session_id
+	// alone, so one session identifier cannot hold an active partial row in
+	// two tenants; the tenant half of the selector's key is pinned by the
+	// cross-tenant read returning ErrNotFound rather than by a second row.
+	t.Run("the session-keyed selector is scoped to the tenant and the session", func(t *testing.T) {
+		a := freshTenant(t, ctx, pg)
+		b := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		neighbour := newUUID(t)
+		own := newUUID(t)
+		neighbourCheckpoint := newUUID(t)
+		now := time.Now().UTC()
+		if err := store.Put(ctx, manifestRow(now, a, own, session, 1)); err != nil {
+			t.Fatalf("Put own: %v", err)
+		}
+		// A different session in the same tenant, at a higher generation so
+		// a selector that dropped the session predicate would prefer it.
+		if err := store.Put(ctx, manifestRow(now, a, neighbourCheckpoint, neighbour, 9)); err != nil {
+			t.Fatalf("Put neighbouring session: %v", err)
+		}
+		got, err := store.LatestActive(ctx, a, session)
+		if err != nil {
+			t.Fatalf("LatestActive: %v", err)
+		}
+		if got.CheckpointID != own {
+			t.Errorf("LatestActive(tenant a, session) = %q, want %q; the neighbouring session carries the higher generation and must not be selected", got.CheckpointID, own)
+		}
+		other, err := store.LatestActive(ctx, a, neighbour)
+		if err != nil {
+			t.Fatalf("LatestActive for the neighbouring session: %v", err)
+		}
+		if other.CheckpointID != neighbourCheckpoint {
+			t.Errorf("LatestActive(tenant a, neighbour) = %q, want %q", other.CheckpointID, neighbourCheckpoint)
+		}
+		// The same session identifier read under another tenant resolves
+		// nothing, so the supersede path can never reach a foreign row.
+		if _, err := store.LatestActive(ctx, b, session); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive(tenant b, session): got %v, want ErrNotFound", err)
+		}
+		// A session with no row of its own resolves nothing, even though
+		// its tenant holds active partial rows for other sessions.
+		if _, err := store.LatestActive(ctx, a, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive for a session with no row: got %v, want ErrNotFound", err)
+		}
+	})
+
 	// spec: §10.1.7 — LatestActiveAny is the resume-reassembly
 	// selector: the highest-coordination_generation active row regardless of
 	// partial. A completed checkpoint is returned when it is the only active
