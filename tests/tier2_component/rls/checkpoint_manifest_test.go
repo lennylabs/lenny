@@ -234,3 +234,67 @@ func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 		t.Errorf("intent-row partial = %v, want true", partial)
 	}
 }
+
+// spec: 10.1, 12.3
+// diagnosis: migration 0180 widens checkpoint_manifest's
+//
+//	lenny_tenant_isolation policy to the '__all__' cross-tenant sentinel
+//	form so its one preflight read can scan every tenant, and must restore
+//	the strict form migration 0178 created before it finishes. A failure
+//	means the widening outlived the migration, so checkpoint_manifest now
+//	admits a cross-tenant read that no other part of §12.3 grants it.
+func TestCheckpointManifestRejectsAllTenantsSentinelAfterSlotDrop(t *testing.T) {
+	t.Parallel()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: migrationsDir(t),
+	})
+	ctx := context.Background()
+
+	seedTenant(t, ctx, pg, "acme")
+	seedTenant(t, ctx, pg, "globex")
+	if err := insertManifest(t, ctx, pg, "acme", "sess-acme", "33333333-3333-3333-3333-333333333333"); err != nil {
+		t.Fatalf("seed acme manifest: %v", err)
+	}
+	if err := insertManifest(t, ctx, pg, "globex", "sess-globex", "44444444-4444-4444-4444-444444444444"); err != nil {
+		t.Fatalf("seed globex manifest: %v", err)
+	}
+
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_app"); err != nil {
+		t.Fatalf("set role lenny_app: %v", err)
+	}
+	// The strongest cross-tenant context the platform admits anywhere: the
+	// '__all__' sentinel together with its lenny.allow_all_sentinel opt-in.
+	// checkpoint_manifest's strict policy matches neither, so the read must
+	// return nothing.
+	if _, err := tx.Exec(ctx, "SET LOCAL lenny.allow_all_sentinel = 'true'"); err != nil {
+		t.Fatalf("set allow_all_sentinel: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.current_tenant', '__all__', true)"); err != nil {
+		t.Fatalf("set __all__ context: %v", err)
+	}
+	var visible int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM checkpoint_manifest`).Scan(&visible); err != nil {
+		t.Fatalf("count under __all__: %v", err)
+	}
+	if visible != 0 {
+		t.Errorf("__all__ sees %d checkpoint_manifest rows, want 0 (§12.3 strict isolation)", visible)
+	}
+
+	var using string
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT qual FROM pg_policies
+		 WHERE tablename = 'checkpoint_manifest' AND policyname = 'lenny_tenant_isolation'`,
+	).Scan(&using); err != nil {
+		t.Fatalf("read lenny_tenant_isolation USING clause: %v", err)
+	}
+	if strings.Contains(using, "__all__") {
+		t.Errorf("checkpoint_manifest isolation policy retains the cross-tenant sentinel: %s", using)
+	}
+}

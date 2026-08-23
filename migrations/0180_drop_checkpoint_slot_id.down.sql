@@ -10,9 +10,10 @@
 -- costs nothing (§6.4, §7.3 step (d)).
 --
 -- The forward file's uniqueness gate reads without writing, so there is
--- nothing on that side to reverse. Its cross-tenant read does need the
--- checkpoint_manifest isolation policy put back in the strict form migration
--- 0178 created it with, so the reverted schema admits no '__all__' read.
+-- nothing on that side to reverse. The widened isolation policy that read
+-- needs is confined to the forward file, which restores the strict form
+-- migration 0178 created before it finishes, so this file has no policy to
+-- put back.
 --
 -- spec: §6.4, §7.3, §10.1, §12.5.
 
@@ -32,7 +33,3 @@ ALTER TABLE session_checkpoints
     ADD COLUMN IF NOT EXISTS slot_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX idx_session_checkpoints_slot_age
     ON session_checkpoints (tenant_id, session_id, slot_id, created_at DESC);
-
-DROP POLICY IF EXISTS lenny_tenant_isolation ON checkpoint_manifest;
-CREATE POLICY lenny_tenant_isolation ON checkpoint_manifest
-    USING (tenant_id = current_setting('app.current_tenant', false));

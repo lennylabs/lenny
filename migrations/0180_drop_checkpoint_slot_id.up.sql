@@ -36,10 +36,14 @@
 -- clause matches tenant_id against app.current_tenant with no cross-tenant
 -- form. The gate below reads across every tenant, and a migration role that
 -- is not a superuser is subject to the policy under FORCE ROW LEVEL SECURITY,
--- so the read needs the platform cross-tenant sentinel the §4.2 / §12.3
--- policies elsewhere already admit. Restate the policy in the sentinel form
--- migration 0057 fixed: the '__all__' bypass is admitted only inside a
--- transaction that has also taken the lenny.allow_all_sentinel opt-in.
+-- so that one read needs the platform cross-tenant sentinel the §4.2 / §12.3
+-- policies elsewhere already admit. Widen the policy to the sentinel form for
+-- the duration of the gate read only: the '__all__' bypass is admitted only
+-- inside a transaction that has also taken the lenny.allow_all_sentinel
+-- opt-in, and the strict form migration 0178 created is put back as soon as
+-- the gate has run. The steady-state schema this migration leaves behind
+-- differs from the pre-0180 schema only in the columns and indexes §10.1
+-- names; the isolation policy of this table is not one of its effects.
 DROP POLICY IF EXISTS lenny_tenant_isolation ON checkpoint_manifest;
 CREATE POLICY lenny_tenant_isolation ON checkpoint_manifest
     USING (
@@ -105,6 +109,16 @@ BEGIN
         RAISE EXCEPTION 'Phase 3 gate failed: more than one active partial checkpoint_manifest row for session(s) %. Abort the extra attempts before retrying.', duplicated;
     END IF;
 END $$;
+
+-- The gate read is done. Restore checkpoint_manifest's §12.3 isolation policy
+-- to the strict form migration 0178 created, so this migration leaves no
+-- durable widening of the table's tenant predicate behind. Nothing below
+-- reads checkpoint_manifest: the index re-key is DDL, which RLS does not
+-- filter, and the sessions rewrite at the foot needs only the §12.3 tenant
+-- guard, which the app.current_tenant sentinel still in force satisfies.
+DROP POLICY IF EXISTS lenny_tenant_isolation ON checkpoint_manifest;
+CREATE POLICY lenny_tenant_isolation ON checkpoint_manifest
+    USING (tenant_id = current_setting('app.current_tenant', false));
 
 -- Re-point the rotation index from (tenant_id, session_id, slot_id,
 -- created_at DESC) to (tenant_id, session_id, created_at DESC): the §12.5

@@ -291,7 +291,7 @@ func TestDropCheckpointSlotIDRefusesDuplicateActivePartials_spec_10_1(t *testing
 	seedActivePartial(t, ctx, pg, "acme", stale, session, "default", 1)
 	seedActivePartial(t, ctx, pg, "acme", survivor, session, session, 2)
 
-	err := applyDropSlotIDUp(ctx, pg, dir)
+	err := applyDropSlotIDUp(ctx, pg, dir, "")
 	if err == nil {
 		t.Fatalf("migration 0180 applied against a session holding two active partial rows; want it refused")
 	}
@@ -345,7 +345,7 @@ func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_10_1
 	seedActivePartial(t, ctx, pg, "acme", "88888888-8888-4888-8888-888888888888", session, "default", 1)
 	seedActivePartial(t, ctx, pg, "globex", "99999999-9999-4999-8999-999999999999", session, session, 1)
 
-	err := applyDropSlotIDUp(ctx, pg, dir)
+	err := applyDropSlotIDUp(ctx, pg, dir, "")
 	if err == nil {
 		t.Fatalf("migration 0180 applied against two tenants holding an active partial row for one session; want it refused")
 	}
@@ -360,12 +360,18 @@ func TestDropCheckpointSlotIDRefusesCrossTenantDuplicateActivePartials_spec_10_1
 // applyDropSlotIDUp applies the drop migration's forward file directly, so a
 // refusal is returned rather than failing the test the way MigrateTo does.
 // The file is one implicit transaction, matching how the migrator applies it.
-func applyDropSlotIDUp(ctx context.Context, pg *containers.Postgres, dir string) error {
+// A non-empty role is taken for that transaction with SET LOCAL ROLE, so the
+// file applies under a role that row-level security is enforced against.
+func applyDropSlotIDUp(ctx context.Context, pg *containers.Postgres, dir, role string) error {
 	src, err := os.ReadFile(filepath.Join(dir, dropSlotIDUpFile))
 	if err != nil {
 		return err
 	}
-	_, err = pg.Pool.Exec(ctx, string(src))
+	batch := string(src)
+	if role != "" {
+		batch = "SET LOCAL ROLE " + role + ";\n" + batch
+	}
+	_, err = pg.Pool.Exec(ctx, batch)
 	return err
 }
 
@@ -518,19 +524,75 @@ func TestDropCheckpointSlotIDAppliesUnderRowLevelSecurity_spec_12_3(t *testing.T
 		t.Errorf("sessions.workspace_root = %q, want %q: the rewrite ran under the cross-tenant sentinel", got, want)
 	}
 
-	// The gate read saw the seeded row rather than an empty table: the
-	// isolation policy the migration restates admits the '__all__' sentinel
-	// only alongside the lenny.allow_all_sentinel opt-in, so a gate that took
-	// the sentinel against the strict policy form would have passed on nothing.
-	if got := crossTenantManifestRows(t, ctx, pg, checkpointID); got != 1 {
-		t.Errorf("manifest rows visible to a cross-tenant read as the migration role = %d, want 1", got)
+	// The widening the gate read needs is confined to the migration. Its
+	// steady-state schema differs from the pre-drop schema only in the columns
+	// and indexes §10.1 names, so checkpoint_manifest is left carrying the
+	// strict §12.3 predicate migration 0178 created it with.
+	if using := manifestIsolationUsing(t, ctx, pg); strings.Contains(using, "__all__") {
+		t.Errorf("checkpoint_manifest isolation policy after the migration = %s, want the strict §12.3 form with no cross-tenant sentinel", using)
 	}
+	if got := crossTenantManifestRows(t, ctx, pg, checkpointID); got != 0 {
+		t.Errorf("manifest rows visible to a cross-tenant read as the migration role = %d, want 0", got)
+	}
+}
+
+// spec: 12.3 (the isolation policy the migration widens for its gate read and
+// restores), 10.1 (the at-most-one-active-partial invariant the gate holds)
+// diagnosis: the migration's uniqueness gate passed vacuously under row-level
+//
+//	security. The gate reads checkpoint_manifest across every tenant, and the
+//	table's strict §12.3 predicate matches no row under the '__all__' sentinel,
+//	so a gate taken against that predicate as a non-superuser migration role
+//	sees an empty table and admits a pair of rows the re-keyed unique index then
+//	rejects with a bare unique violation. The superuser cases cannot surface it
+//	because a superuser bypasses row-level security unconditionally.
+func TestDropCheckpointSlotIDGateReadsUnderRowLevelSecurity_spec_10_1(t *testing.T) {
+	t.Parallel()
+	dir := prodMigrations(t)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: dir})
+	ctx := context.Background()
+
+	pg.MigrateTo(t, dir, dropSlotIDPriorVersion)
+	seedDropSlotIDTenant(t, ctx, pg, "acme")
+
+	const session = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	seedActivePartial(t, ctx, pg, "acme", "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaaa", session, "default", 1)
+	seedActivePartial(t, ctx, pg, "acme", "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaaa", session, session, 2)
+
+	grantDropSlotIDMigratorRole(t, ctx, pg)
+
+	err := applyDropSlotIDUp(ctx, pg, dir, "lenny_migrator")
+	if err == nil {
+		t.Fatalf("migration applied as the non-superuser migration role against a session holding two active partial rows; want the gate to refuse")
+	}
+	if !strings.Contains(err.Error(), session) {
+		t.Errorf("refusal = %v, want the gate's message naming session %s: the gate read saw no row under the isolation policy", err, session)
+	}
+	if strings.Contains(err.Error(), "partial_manifest_active_uniq") {
+		t.Errorf("refusal = %v, want the gate to reject the pair before the unique index is created", err)
+	}
+}
+
+// manifestIsolationUsing returns the USING clause of checkpoint_manifest's
+// lenny_tenant_isolation policy as the catalog records it.
+func manifestIsolationUsing(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
+	t.Helper()
+	var using string
+	if err := pg.Pool.QueryRow(
+		ctx,
+		`SELECT qual FROM pg_policies
+		 WHERE tablename = 'checkpoint_manifest' AND policyname = 'lenny_tenant_isolation'`,
+	).Scan(&using); err != nil {
+		t.Fatalf("read the checkpoint_manifest isolation policy: %v", err)
+	}
+	return using
 }
 
 // crossTenantManifestRows counts the manifest rows one checkpoint identifier
 // resolves to under the platform cross-tenant sentinel, read as the
 // non-superuser migration role so the isolation policy is applied rather than
-// bypassed.
+// bypassed. The strict §12.3 predicate matches no row under the sentinel, so
+// the count is zero on a schema the migration left as it should.
 func crossTenantManifestRows(t *testing.T, ctx context.Context, pg *containers.Postgres, checkpointID string) int {
 	t.Helper()
 	tx, err := pg.Pool.Begin(ctx)
