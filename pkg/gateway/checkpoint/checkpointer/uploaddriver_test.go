@@ -275,11 +275,21 @@ type driverHarness struct {
 
 func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driverHarness, string) {
 	t.Helper()
+	return newDriverHarnessOnSlot(t, adapter, limit, "")
+}
+
+// newDriverHarnessOnSlot is newDriverHarness with the pod-side slot the
+// binding records. A concurrent pool records the session's own identifier
+// there and an exclusive bind leaves it empty, and no checkpoint path may
+// read the difference: the manifest row is keyed on the session alone
+// (spec: §10.1, §5.2).
+func newDriverHarnessOnSlot(t *testing.T, adapter *chunkedAdapter, limit int64, slotID string) (*driverHarness, string) {
+	t.Helper()
 	store := blobstore.NewMemoryStore(time.Now)
 	adapter.store = store
 	client := dialAdapter(t, adapter)
 	registry := podsession.NewRegistry()
-	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: client})
+	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", SlotID: slotID, Adapter: client})
 	sessions := memstore.New()
 	runningSession(t, sessions, "acme", "s1")
 
@@ -685,6 +695,41 @@ func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
 	}
 	if superseded := countSupersededPartialEmissions(t, m); superseded != 1 {
 		t.Fatalf("superseded partial-counter emissions = %d, want 1", superseded)
+	}
+}
+
+// spec: §10.1.7 (the supersede-on-write set is scoped to the session),
+// §10.1 (the manifest row is keyed on session_id), §5.2 (a session-mode
+// slot's identifier is its session's identifier). The upload driver's
+// supersede lookup is addressed by the session alone, so it finds the
+// session's prior active row whatever the pod-side slot the binding
+// records. A lookup that also matched on a per-pod identifier missed the
+// prior row whenever the two disagreed, leaking its reservation and
+// orphaning its chunk objects.
+func TestDriverSupersedeLookupIgnoresTheBindingSlot_spec_10_1_7(t *testing.T) {
+	// The binding records a slot, while the prior active row is addressed by
+	// the session alone.
+	h, sid := newDriverHarnessOnSlot(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30, "s1")
+	seedAbandonedIntentRow(t, h, "acme", sid, "cp-intent")
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if superseded := countSupersededPartialEmissions(t, m); superseded != 1 {
+		t.Fatalf("superseded partial-counter emissions = %d, want 1 (the prior row is in scope whatever slot the binding records)", superseded)
+	}
+	prior, err := h.manifests.Get(context.Background(), "acme", "cp-intent")
+	if err != nil {
+		t.Fatalf("Get prior row: %v", err)
+	}
+	if prior.DeletedAt.IsZero() {
+		t.Error("the prior active row survived the supersede; its reservation and chunk objects are orphaned")
+	}
+	if prior.ReservationReleasedAt.IsZero() {
+		t.Error("the superseded attempt's reservation was never released")
 	}
 }
 
