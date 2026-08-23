@@ -69,6 +69,15 @@ func TestCheckpointCommentsNameTheSessionScopingKeyAlone_spec_10_1(t *testing.T)
 // each states only the phrasing it bans.
 func checkpointCommentOffenses(t *testing.T, re *regexp.Regexp) []string {
 	t.Helper()
+	return checkpointCommentOffensesIn(t, re, checkpointScopingCommentFiles)
+}
+
+// checkpointCommentOffensesIn reports every comment matching re in the
+// checkpoint pipeline's production sources and in the named test files. A gate
+// whose subject reaches a checkpoint test outside the shared set passes its own
+// file list rather than widening the set the other gates walk.
+func checkpointCommentOffensesIn(t *testing.T, re *regexp.Regexp, files []string) []string {
+	t.Helper()
 	root := schematest.RepoRoot(t)
 	dir := filepath.Join(root, checkpointScopingCommentRoot)
 	if _, err := os.Stat(dir); err != nil {
@@ -94,7 +103,7 @@ func checkpointCommentOffenses(t *testing.T, re *regexp.Regexp) []string {
 	if err != nil {
 		t.Fatalf("walk %s: %v", checkpointScopingCommentRoot, err)
 	}
-	for _, rel := range checkpointScopingCommentFiles {
+	for _, rel := range files {
 		path := filepath.Join(root, rel)
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("stat %s: %v", rel, err)

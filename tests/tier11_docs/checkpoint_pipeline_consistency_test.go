@@ -62,8 +62,9 @@ var infraColumns = map[string]bool{
 type droppedColumn struct {
 	// table is the table the drop is asserted against. The record is scoped to
 	// it so a drop of the same column name from a sibling table never
-	// satisfies the record: session_checkpoints carries a slot_id of its own,
-	// and only the checkpoint_manifest column is excepted here.
+	// satisfies the record. Migration 0180 dropped the slot column from both
+	// checkpoint tables in one change, so only the statement against
+	// checkpoint_manifest resolves the exception recorded here.
 	table string
 	// migration is the four-digit prefix of the migration that drops the
 	// column. Every entry names one, so a reader resolves the retirement to a
@@ -142,9 +143,10 @@ const manifestTable = "checkpoint_manifest"
 
 // suppressesManifestColumn reports whether set excepts manifestTable.col from
 // the §10.1 column agreement. The lookup is table-scoped, so an entry recorded
-// against a sibling table that carries a column of the same name (as
-// session_checkpoints carries its own slot_id) never suppresses the agreement
-// for the manifest column.
+// against a sibling table never suppresses the agreement for a manifest column
+// of the same name. Migration 0180 dropped the slot column from
+// session_checkpoints and from checkpoint_manifest in one change, and only the
+// record against checkpoint_manifest excepts the manifest column.
 //
 // spec: §10.1 (the manifest column enumeration)
 func suppressesManifestColumn(set map[string]droppedColumn, col string) bool {
@@ -517,9 +519,10 @@ func TestDroppedColumnExceptionRecordResolves(t *testing.T) {
 // diagnosis: the §10.1 manifest column agreement is being suppressed
 //
 //	table-blind. A column is excepted from the agreement only by a
-//	droppedColumns entry recorded against checkpoint_manifest;
-//	session_checkpoints carries a slot_id of its own, so an entry recorded
-//	against it must leave the manifest column held to the agreement. A failure
+//	droppedColumns entry recorded against checkpoint_manifest. Migration 0180
+//	dropped the slot column from session_checkpoints too, so an entry recorded
+//	against that sibling table must leave the manifest column held to the
+//	agreement rather than stand in for the manifest's own drop. A failure
 //	here means an entry for a sibling table's column now shields the manifest
 //	column of the same name, which is the state the gate exists to catch.
 func TestDroppedColumnSuppressionIsTableScoped(t *testing.T) {
@@ -569,11 +572,12 @@ func TestDroppedColumnSuppressionIsTableScoped(t *testing.T) {
 //
 //	this repository writes, or resolves a column name without its table. Every
 //	column drop under migrations/ is written `DROP COLUMN IF EXISTS <col>`, and
-//	session_checkpoints carries a slot_id of its own alongside
-//	checkpoint_manifest's. A failure here means the third drain condition either
-//	fails a correct drop, turning the gate red when the retirement it records
-//	completes, or accepts a drop of the same column name from a sibling table,
-//	letting the exception outlive the column it excepts.
+//	migration 0180 drops the slot column from session_checkpoints in the same
+//	change as checkpoint_manifest's, so a table-blind matcher would let either
+//	statement resolve the other's record. A failure here means the third drain
+//	condition either fails a correct drop, turning the gate red when the
+//	retirement it records completes, or accepts a drop of the same column name
+//	from a sibling table, letting the exception outlive the column it excepts.
 func TestMigrationDropMatcherIsTableScopedAndAdmitsIfExists(t *testing.T) {
 	const (
 		table = "checkpoint_manifest"
