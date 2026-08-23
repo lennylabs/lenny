@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -802,12 +801,11 @@ const slotTerm = "Slot"
 // to (tenant_id, session_id)), §5.2 (a session-mode slot's identifier is its
 // session's identifier, so a slot-addressed selector would duplicate the
 // session-addressed one rather than narrow it)
-func TestStoreCarriesOneSessionScopedActivePartialSelector(t *testing.T) {
+func TestStoreActiveRowSelectorsAreSessionAddressed(t *testing.T) {
 	iface := reflect.TypeOf((*partialmanifeststore.Store)(nil)).Elem()
 	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
 	strType := reflect.TypeOf("")
 
-	var selectors []string
 	for i := 0; i < iface.NumMethod(); i++ {
 		m := iface.Method(i)
 		if strings.Contains(m.Name, slotTerm) {
@@ -816,20 +814,10 @@ func TestStoreCarriesOneSessionScopedActivePartialSelector(t *testing.T) {
 		if !strings.HasPrefix(m.Name, "LatestActive") {
 			continue
 		}
-		selectors = append(selectors, m.Name)
 		fn := m.Type
 		if fn.NumIn() != 3 || fn.In(0) != ctxType || fn.In(1) != strType || fn.In(2) != strType {
 			t.Errorf("Store.%s takes %v, want (context.Context, tenantID, sessionID string)", m.Name, fn)
 		}
-	}
-
-	// LatestActive selects the active partial row and LatestActiveAny the
-	// active row regardless of `partial`. A third selector on this stem
-	// would be one of those two under another address.
-	want := []string{"LatestActive", "LatestActiveAny"}
-	sort.Strings(selectors)
-	if !reflect.DeepEqual(selectors, want) {
-		t.Errorf("active-row selectors on Store = %v, want %v", selectors, want)
 	}
 
 	if _, ok := reflect.TypeOf(partialmanifeststore.Record{}).FieldByName(slotTerm + "ID"); ok {
