@@ -293,7 +293,9 @@ func (d *uploadDriver) run() (string, int64, error) {
 // onProbe reserves the probed workspace size against the tenant's storage
 // quota and writes the §10.1 intent row (partial = true,
 // manifest_reason = in_progress), superseding any prior aborted attempt
-// for the same (session, slot) first.
+// for the same session first. The supersede fence is keyed on session_id
+// alone, which is the whole scoping key the §10.1 tables carry.
+// spec: §10.1.7 — supersede is scoped to (session_id).
 func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 	c := d.c
 	if c.Manifests == nil {

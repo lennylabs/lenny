@@ -112,8 +112,8 @@ func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
 	h := newCPDriverHarness(t, adapter)
 
 	// The session's committed generation is 3, but a newer coordinator has
-	// already written an active generation-7 manifest for the same
-	// (session, slot). This attempt reads the lagging generation-3 session row.
+	// already written an active generation-7 manifest for the same session.
+	// This attempt reads the lagging generation-3 session row.
 	if _, err := h.sessions.Update(context.Background(), cpTenant, cpSession, func(row *sessionstore.Session) error {
 		row.CoordinationGeneration = 3
 		return nil
