@@ -313,7 +313,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       request already carries, and the merged handler keeps the §4.7 Full-level protocol. The step also
       lands §8's tier-11 `/run/lenny/credentials.json` sweep.
       Depends on: S6, S11
-- [ ] **S15 · migration, code** — MIG-1, CODE-5. The two persisted `slot_id` columns are dropped, the three
+- [x] **S15 · migration, code** — MIG-1, CODE-5. The two persisted `slot_id` columns are dropped, the three
       indexes are re-keyed, `sessions.workspace_root` is rewritten to the slot path, and the `SlotDefault`
       sentinel and the Go surface of the dropped columns go with them. The two are one step under ordering
       rule 1, since the SQL naming the columns is string literals.
