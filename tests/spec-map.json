@@ -4928,7 +4928,8 @@
         "tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go::TestUnaddressedFramesValidateByLeg",
         "tests/tier3_contract/adapter_artifact_scope/scope_test.go",
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
-        "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go"
+        "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
+        "tests/tier10_conformance/scaffolds_test.go::TestBasicAdapterProtocol"
       ],
       "packages": [
         "pkg/adapter",

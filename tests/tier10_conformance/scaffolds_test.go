@@ -189,11 +189,12 @@ func assertAllPass(t *testing.T, runtime, level string, r complianceReport) {
 	}
 }
 
-// spec: 12.10 (Basic-level adapter-protocol conformance battery)
+// spec: 12.10 (Basic-level adapter-protocol conformance battery), 28.5.3 (per-session identifier echo)
 // diagnosis: The Basic battery — JSON Lines framing, message/response,
 //
-//	heartbeat ack, unknown-type tolerance, shutdown deadline — fails
-//	for a bundled runtime, so the §15.4 adapter protocol regressed.
+//	heartbeat ack, unknown-type tolerance, shutdown deadline,
+//	per-session identifier echo — fails for a bundled runtime, so the
+//	§15.4 adapter protocol regressed.
 func TestBasicAdapterProtocol(t *testing.T) {
 	a := buildArtifacts(t)
 	// Every bundled runtime is at least Basic-conformant: echo is the
@@ -213,18 +214,20 @@ func TestBasicAdapterProtocol(t *testing.T) {
 			// Every Basic check is tagged with the section that
 			// defines it: the §15.4 adapter protocol for the
 			// framing and round-trip checks, §15.4.6 for the
-			// conformance battery's schema-driven checks, and
-			// §24.8 for the proto error-code catalog the
-			// schema-driven validate command generates its
-			// assertions from.
+			// conformance battery's schema-driven checks, §24.8
+			// for the proto error-code catalog the schema-driven
+			// validate command generates its assertions from, and
+			// §28.5.3 for the per-session identifier a runtime
+			// echoes on the frames it emits.
 			basicSpecSections := map[string]bool{
 				"15.4":   true,
 				"15.4.6": true,
 				"24.8":   true,
+				"28.5.3": true,
 			}
 			for _, c := range report.Checks {
 				if !basicSpecSections[c.Spec] {
-					t.Errorf("Basic check %q spec = %q, want one of 15.4, 15.4.6, or 24.8", c.Name, c.Spec)
+					t.Errorf("Basic check %q spec = %q, want one of 15.4, 15.4.6, 24.8, or 28.5.3", c.Name, c.Spec)
 				}
 			}
 		})
