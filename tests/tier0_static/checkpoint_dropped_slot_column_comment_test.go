@@ -46,7 +46,8 @@ var checkpointTableHoldsSlotColumn = regexp.MustCompile(
 // name from a sibling table must not resolve the other table's record.
 //
 // spec: 10.1 (the manifest column enumeration and the session scoping key),
-// 12.3 (the persisted checkpoint schema)
+// 12.5 (the checkpoint retention catalog and the supersede rules the
+// dropped columns keyed)
 func TestCheckpointCommentsClaimNoDroppedSlotColumn_spec_10_1(t *testing.T) {
 	offenses := checkpointCommentOffensesIn(t, checkpointTableHoldsSlotColumn, checkpointDroppedSlotColumnFiles)
 	if len(offenses) > 0 {
@@ -78,7 +79,8 @@ var checkpointDroppedSlotColumnCases = []struct {
 // correct prose that names the drop or the pre-drop schema.
 //
 // spec: 10.1 (the manifest column enumeration and the session scoping key),
-// 12.3 (the persisted checkpoint schema)
+// 12.5 (the checkpoint retention catalog and the supersede rules the
+// dropped columns keyed)
 func TestCheckpointDroppedSlotColumnGateMatchesThePossessionClaimOnly_spec_10_1(t *testing.T) {
 	for _, tc := range checkpointDroppedSlotColumnCases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1049,6 +1049,7 @@ const checkpointGoSourceRoot = "pkg/gateway/checkpoint"
 // cites the credential leasing section legitimately, which is why the list is
 // enumerated rather than derived from a path glob over tests/.
 var checkpointGoCitationFiles = []string{
+	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
 	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
 	"tests/tier0_static/slot_absence_claim_comment_test.go",
 	"tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
@@ -1069,11 +1070,17 @@ var goSpecCitationRE = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.+)$`)
 // second line is read as part of the same citation.
 var goSpecCitationContinuationRE = regexp.MustCompile(`^\s*//\s?(.*)$`)
 
-// citedSpecSectionsInGo returns the section numbers the `// spec:` annotations
-// of a Go source body cite, following each annotation across the comment lines
-// that continue it.
-func citedSpecSectionsInGo(body string) map[string][]int {
-	out := map[string][]int{}
+// goSpecCitation is one `// spec:` annotation of a Go source, joined across
+// the comment lines that continue it, with the line its first line sits on.
+type goSpecCitation struct {
+	line int
+	text string
+}
+
+// specCitationsInGo returns the `// spec:` annotations of a Go source body,
+// each joined across the comment lines that continue it.
+func specCitationsInGo(body string) []goSpecCitation {
+	var out []goSpecCitation
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
 		m := goSpecCitationRE.FindStringSubmatch(line)
@@ -1089,8 +1096,19 @@ func citedSpecSectionsInGo(body string) map[string][]int {
 			}
 			citation += " " + c[1]
 		}
-		for _, s := range specSectionRE.FindAllString(citation, -1) {
-			out[s] = append(out[s], i+1)
+		out = append(out, goSpecCitation{line: i + 1, text: citation})
+	}
+	return out
+}
+
+// citedSpecSectionsInGo returns the section numbers the `// spec:` annotations
+// of a Go source body cite, following each annotation across the comment lines
+// that continue it.
+func citedSpecSectionsInGo(body string) map[string][]int {
+	out := map[string][]int{}
+	for _, c := range specCitationsInGo(body) {
+		for _, s := range specSectionRE.FindAllString(c.text, -1) {
+			out[s] = append(out[s], c.line)
 		}
 	}
 	return out
@@ -1196,6 +1214,153 @@ func TestCredentialLeasingCitationExtractorReadsTheAnnotationOnly(t *testing.T) 
 			_, got := citedSpecSectionsInGo(tc.body)["4.9"]
 			if got != tc.cited {
 				t.Errorf("citedSpecSectionsInGo cites 4.9 = %v, want %v for:\n%s", got, tc.cited, tc.body)
+			}
+		})
+	}
+}
+
+// postgresHACitationRE captures a §12.3 citation inside a `// spec:`
+// annotation together with the parenthetical gloss that follows it, when one
+// is written. The gloss is what states which mechanism the citation is filing
+// the case under, so it is the part the gate reads.
+var postgresHACitationRE = regexp.MustCompile(`§?\b12\.3\b\s*(?:\(([^)]*)\))?`)
+
+// checkpointPersistenceGlossRE matches a gloss that claims the cited section
+// owns part of the checkpoint persistence surface: the tables, their columns,
+// the manifest, or the retention and supersede rules keyed on them.
+var checkpointPersistenceGlossRE = regexp.MustCompile(
+	`(?i)\b(schema|manifest|column|columns|catalog|retention|supersede|supersession|checkpoint table|checkpoint tables)\b`,
+)
+
+// postgresHAGlossRE matches a gloss that names what spec §12.3 owns, so a
+// citation of the tenant-isolation apparatus, the connection pooler, or the
+// replication requirements reads clean.
+var postgresHAGlossRE = regexp.MustCompile(
+	`(?i)\b(tenant|rls|isolation|guard|pooler|pooling|connection|replica|replication|failover|availability)\b`,
+)
+
+// misfiledPostgresHACitations returns the lines of a Go source body whose
+// `// spec:` annotation cites §12.3 under a gloss that claims the section owns
+// part of the checkpoint persistence surface.
+func misfiledPostgresHACitations(body string) []int {
+	var out []int
+	for _, c := range specCitationsInGo(body) {
+		for _, m := range postgresHACitationRE.FindAllStringSubmatch(c.text, -1) {
+			gloss := m[1]
+			if checkpointPersistenceGlossRE.MatchString(gloss) && !postgresHAGlossRE.MatchString(gloss) {
+				out = append(out, c.line)
+			}
+		}
+	}
+	return out
+}
+
+// spec: 10.1 (the manifest column enumeration and the session scoping key),
+// 12.5 (the checkpoint retention catalog and the supersede rules the dropped
+// columns keyed)
+// diagnosis: a Go source or test under the checkpoint packages cites the spec
+//
+//	section that owns the Postgres HA requirements as though it owned the
+//	persisted checkpoint schema. The harness maps a test to its spec sections
+//	through the `// spec:` annotation, so the case is filed under connection
+//	pooling and the tenant guard rather than under the sections that own the
+//	checkpoint tables and their retention. The likely cause is a section
+//	number carried over from a change proposal's own numbering, which does not
+//	correspond to the numbering under spec/. Cite §10.1 for the manifest
+//	column enumeration and §12.5 for the retention catalog and the supersede
+//	rules instead.
+func TestCheckpointSourcesFileNoPersistenceClaimUnderPostgresHA(t *testing.T) {
+	root := repoRoot(t)
+	// Both sections are live, so a misfiled citation is not a dangling
+	// reference a resolver would catch. Pin what each one owns, so the
+	// division the gate rests on stays legible.
+	haHeading, ok := specSectionHeading(t, root, "12.3")
+	if !ok {
+		t.Fatalf("spec section 12.3 has no heading under spec/")
+	}
+	if !strings.Contains(strings.ToLower(haHeading), "postgres ha") {
+		t.Fatalf("spec section 12.3 heading = %q, want the Postgres HA requirements; update the gate's rationale", haHeading)
+	}
+	storeHeading, ok := specSectionHeading(t, root, "12.5")
+	if !ok {
+		t.Fatalf("spec section 12.5 has no heading under spec/")
+	}
+	if !strings.Contains(strings.ToLower(storeHeading), "artifact store") {
+		t.Fatalf("spec section 12.5 heading = %q, want the artifact store; update the gate's rationale", storeHeading)
+	}
+
+	report := func(path string) {
+		for _, line := range misfiledPostgresHACitations(readMigration(t, path)) {
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				rel = path
+			}
+			t.Errorf("%s:%d cites spec §12.3 (%s) as the owner of checkpoint persistence; cite §10.1 for the manifest column enumeration and §12.5 (%s) for the retention catalog and the supersede rules", rel, line, haHeading, storeHeading)
+		}
+	}
+
+	dir := filepath.Join(root, checkpointGoSourceRoot)
+	var scanned int
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		scanned++
+		report(path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", checkpointGoSourceRoot, err)
+	}
+	if scanned == 0 {
+		t.Fatalf("no Go sources found under %s; the gate scans nothing", checkpointGoSourceRoot)
+	}
+	for _, rel := range checkpointGoCitationFiles {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		report(path)
+	}
+}
+
+// postgresHACitationCases pin the gate to a §12.3 citation whose gloss claims
+// the checkpoint persistence surface, so that a citation of what the section
+// does own, and a mention outside an annotation, both read clean.
+var postgresHACitationCases = []struct {
+	name     string
+	body     string
+	misfiled bool
+}{
+	{"gloss claims the persisted schema", "// spec: 10.1 (the scoping key), 12.3 (the persisted checkpoint schema)\nfunc f() {}\n", true},
+	{"gloss claims the manifest columns", "// spec: §12.3 (the manifest column enumeration)\nfunc f() {}\n", true},
+	{"gloss claims the retention rules", "// spec: 12.3 (checkpoint retention and supersession on the same key)\nfunc f() {}\n", true},
+	{"claim wrapped onto a continuation line", "// spec: 10.1 (the scoping key),\n// 12.3 (the persisted checkpoint schema)\nfunc f() {}\n", true},
+	{"gloss names the tenant guard", "// spec: 12.2.2, 12.3 (the tenant-context RLS guard)\nfunc f() {}\n", false},
+	{"citation carries no gloss", "// spec: 12.2.2, 12.3\nfunc f() {}\n", false},
+	{"the owning sections cited instead", "// spec: 10.1 (the manifest column enumeration), 12.5 (the retention catalog)\nfunc f() {}\n", false},
+	{"prose mention outside an annotation", "// The §12.3 tenant guard admits the write.\nfunc f() {}\n", false},
+	{"string literal mention", "func f() string { return \"the §12.3 checkpoint schema\" }\n", false},
+}
+
+// spec: 10.1 (the manifest column enumeration and the session scoping key),
+// 12.5 (the checkpoint retention catalog and the supersede rules the dropped
+// columns keyed)
+// diagnosis: the matcher behind the Postgres HA citation gate no longer reads
+//
+//	the annotation form the checkpoint sources use. A false negative lets a
+//	`// spec:` annotation file the checkpoint schema under the Postgres HA
+//	section unreported; a false positive rejects a citation of the
+//	tenant-isolation apparatus the section does own.
+func TestPostgresHACitationGateReadsTheGlossOnly(t *testing.T) {
+	for _, tc := range postgresHACitationCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := len(misfiledPostgresHACitations(tc.body)) > 0
+			if got != tc.misfiled {
+				t.Errorf("misfiledPostgresHACitations reports %v, want %v for:\n%s", got, tc.misfiled, tc.body)
 			}
 		})
 	}
