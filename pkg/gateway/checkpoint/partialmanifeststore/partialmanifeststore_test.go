@@ -728,3 +728,63 @@ func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
 		t.Fatalf("LatestFull returned a partial row")
 	}
 }
+
+// spec: §4.9 (every session is bound to a slot whose identifier is the
+// session's own, so the session identifier is the whole scoping key),
+// §10.1 (the manifest row is keyed on session_id). LatestActive is the
+// selector the supersede-on-write path reads, and after the slot column is
+// dropped from checkpoint_manifest its scope is exactly (tenant_id,
+// session_id): a co-tenant session's active partial and a same-identifier
+// session in another tenant are both outside the set, so neither is ever
+// returned as a row to supersede.
+func TestLatestActiveScopedToTenantAndSession(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+	ctx := context.Background()
+
+	// A co-tenant session's active partial row, at a higher generation than
+	// the row under test so a selector that ignored session_id would prefer
+	// it.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-other-session", "s2", 9)); err != nil {
+		t.Fatalf("Put co-tenant session intent: %v", err)
+	}
+	// Another tenant's row carrying the same session identifier.
+	if err := store.Put(ctx, intentRow(clock, "globex", "cp-other-tenant", "s1", 9)); err != nil {
+		t.Fatalf("Put cross-tenant intent: %v", err)
+	}
+
+	// Nothing active for (acme, s1) yet: the neighbouring rows are out of
+	// scope, so the supersede path finds no prior attempt.
+	if _, err := store.LatestActive(ctx, "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Fatalf("LatestActive for (acme, s1) with only neighbouring rows: got %v, want ErrNotFound", err)
+	}
+
+	// The session's own active partial is in scope and is returned even at a
+	// lower generation than the neighbours.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-own", "s1", 3)); err != nil {
+		t.Fatalf("Put own intent: %v", err)
+	}
+	got, err := store.LatestActive(ctx, "acme", "s1")
+	if err != nil {
+		t.Fatalf("LatestActive: %v", err)
+	}
+	if got.CheckpointID != "cp-own" {
+		t.Errorf("LatestActive.CheckpointID = %q, want cp-own (the session identifier is the whole scoping key)", got.CheckpointID)
+	}
+
+	// The neighbouring rows are untouched by the session's own writes.
+	other, err := store.LatestActive(ctx, "acme", "s2")
+	if err != nil {
+		t.Fatalf("LatestActive for the co-tenant session: %v", err)
+	}
+	if other.CheckpointID != "cp-other-session" {
+		t.Errorf("LatestActive for (acme, s2) = %q, want cp-other-session", other.CheckpointID)
+	}
+	crossTenant, err := store.LatestActive(ctx, "globex", "s1")
+	if err != nil {
+		t.Fatalf("LatestActive for the cross-tenant row: %v", err)
+	}
+	if crossTenant.CheckpointID != "cp-other-tenant" {
+		t.Errorf("LatestActive for (globex, s1) = %q, want cp-other-tenant", crossTenant.CheckpointID)
+	}
+}
