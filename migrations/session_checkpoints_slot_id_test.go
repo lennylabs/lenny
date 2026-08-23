@@ -7,12 +7,18 @@ import (
 	"testing"
 )
 
-// spec: §12.5 — in concurrent-workspace mode the
-// "latest 2" checkpoint cap applies independently per slot, so the
-// retention catalog keys rotation on (session_id, slot_id) pairs.
-// Migration 0112 adds the slot_id column and re-points the rotation
-// index to include it; the down migration restores the per-session
-// index and drops the column.
+// TestSessionCheckpointsSlotIDMigration asserts the frozen SQL of migration
+// 0112 as it landed: it added the slot_id column to session_checkpoints and
+// re-pointed the rotation index onto the (session_id, slot_id) pair, because
+// the rule of the day applied the "latest 2" checkpoint cap independently per
+// slot; the down migration restored the per-session index and dropped the
+// column. That pair is history. Migration 0180 dropped the column and re-keyed
+// the rotation index on session_id, which is the key the retention rule states
+// today. Migration 0112's own text is frozen, and the drop leaves it unchanged,
+// so this test asserts it as written.
+//
+// spec: §12.5 (checkpoint retention and rotation, keyed on session_id since
+// migration 0180 retired the slot column)
 func TestSessionCheckpointsSlotIDMigration_spec_12_5(t *testing.T) {
 	b, err := FS.ReadFile("0112_session_checkpoints_slot_id.up.sql")
 	if err != nil {

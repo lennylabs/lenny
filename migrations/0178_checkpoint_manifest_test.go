@@ -8,17 +8,21 @@ import (
 )
 
 // TestCheckpointManifestMigrationSQL asserts the static SQL surface of
-// migration 0178: the up drops the migration 0062
+// migration 0178 as it landed: the up drops the migration 0062
 // session_partial_checkpoint_manifest table and the migration 0150
-// partial unique index, then creates checkpoint_manifest with the full
-// §10.1 column set, the partial_manifest_active_uniq index
-// scoped to (session_id, slot_id), the lenny_tenant_guard trigger,
-// ENABLE/FORCE ROW LEVEL SECURITY with the lenny_tenant_isolation
-// policy, and the lenny_app grants; the down recreates the 0062 table
-// and the 0150 index.
+// partial unique index, then creates checkpoint_manifest with the column
+// set §10.1 carried then, the partial_manifest_active_uniq index scoped
+// to (session_id, slot_id), the lenny_tenant_guard trigger, ENABLE/FORCE
+// ROW LEVEL SECURITY with the lenny_tenant_isolation policy, and the
+// lenny_app grants; the down recreates the 0062 table and the 0150 index.
+// Migration 0180 later dropped checkpoint_manifest.slot_id and re-keyed
+// that index on session_id alone, which is what §10.1 states today.
+// Migration 0178's own text is frozen and the drop leaves it unchanged, so
+// this test asserts it as written.
 //
-// spec: §10.1 (manifest column set and the
-// (session_id, slot_id) partial unique index), §12.3 (RLS apparatus).
+// spec: §10.1 (checkpoint_manifest column set and partial unique index,
+// whose slot column and two-column key migration 0180 retired),
+// §12.3 (RLS apparatus).
 func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	up := readMigration0173(t, "0178_checkpoint_manifest.up.sql")
 
@@ -36,7 +40,8 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		t.Fatalf("migration 0178 up must CREATE TABLE checkpoint_manifest")
 	}
 
-	// The full §10.1 column set.
+	// The column set §10.1 carried when 0178 landed, slot_id included.
+	// Migration 0180 dropped that column; 0178's text keeps it.
 	for _, col := range []string{
 		"checkpoint_id",
 		"tenant_id",
@@ -83,8 +88,9 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		t.Errorf("migration 0178 up must key checkpoint_manifest on (tenant_id, checkpoint_id)")
 	}
 
-	// The partial unique index is scoped to (session_id, slot_id) over
-	// active partial rows (§10.1).
+	// The partial unique index as 0178 created it, scoped to
+	// (session_id, slot_id) over active partial rows. Migration 0180
+	// re-keyed it on session_id alone; this asserts 0178's frozen text.
 	normUp := strings.Join(strings.Fields(up), " ")
 	if !strings.Contains(normUp,
 		"CREATE UNIQUE INDEX partial_manifest_active_uniq ON checkpoint_manifest (session_id, slot_id) WHERE partial = TRUE AND deleted_at IS NULL") {

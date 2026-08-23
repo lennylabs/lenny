@@ -174,3 +174,69 @@ func TestCheckpointScopingKeyGateMatchesTheRetiredPairOnly_spec_10_1(t *testing.
 		})
 	}
 }
+
+// checkpointMigrationTestFiles are the migration test files whose subject is
+// frozen SQL that predates the slot-column drop. Their comments may spell the
+// retired two-column checkpoint key, because the SQL they assert spells it,
+// but only as history: a comment that spells the pair must also name the
+// migration that dropped the column and re-keyed the index. Without that, a
+// `// spec:` annotation on one of these tests reads as a statement of what the
+// §10.1 manifest rule and the §12.5 retention rule require now, and the
+// harness's test-to-spec map carries the retired pair as a current claim.
+var checkpointMigrationTestFiles = []string{
+	"migrations/session_checkpoints_slot_id_test.go",
+	"migrations/0178_checkpoint_manifest_test.go",
+}
+
+// checkpointSlotDropMigration is the migration number that dropped
+// session_checkpoints.slot_id and checkpoint_manifest.slot_id and re-keyed the
+// three indexes on session_id. A comment naming it dates the pair it spells.
+const checkpointSlotDropMigration = "0180"
+
+// diagnosis: a migration test comment spells the retired two-column checkpoint
+// key without naming the migration that retired it, so the comment, and the
+// `// spec:` annotation it sits in, assert the pair as the current §10.1 and
+// §12.5 rule rather than as the frozen text of the migration under test.
+// Restate the comment on what the migration did when it landed and name the
+// drop migration.
+//
+// spec: 10.1 (partial manifest scoping key and supersede-on-write), 12.5
+// (checkpoint retention and supersession on the same key)
+func TestMigrationTestCommentsDateTheRetiredCheckpointKey_spec_10_1(t *testing.T) {
+	offenses := undatedCheckpointPairComments(t, checkpointMigrationTestFiles)
+	if len(offenses) > 0 {
+		t.Errorf("migration test comments spell the retired two-column checkpoint key without naming migration %s as the change that retired it:\n%s",
+			checkpointSlotDropMigration, strings.Join(offenses, "\n"))
+	}
+}
+
+// undatedCheckpointPairComments reports every comment in the named files that
+// spells the retired two-column key without naming the drop migration in the
+// same comment group.
+func undatedCheckpointPairComments(t *testing.T, files []string) []string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	var offenses []string
+	for _, rel := range files {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", rel, err)
+		}
+		for _, group := range file.Comments {
+			text := strings.Join(strings.Fields(group.Text()), " ")
+			if !twoColumnCheckpointKey.MatchString(text) {
+				continue
+			}
+			if strings.Contains(text, checkpointSlotDropMigration) {
+				continue
+			}
+			offenses = append(offenses, rel+":"+strconv.Itoa(fset.Position(group.Pos()).Line)+": "+text)
+		}
+	}
+	return offenses
+}
