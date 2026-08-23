@@ -352,6 +352,7 @@ type cpDriverHarness struct {
 	catalog   *cpCatalog
 	metrics   *cpDriverMetrics
 	sessions  sessionstore.Store
+	registry  *podsession.Registry
 }
 
 func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarness {
@@ -359,7 +360,10 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 	store := newCPStore()
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
-	registerCPSlot(t, store, registry, sessions, adapter, cpSession)
+	// An exclusive (maxConcurrentSessions=1) bind claims the pod for the
+	// session and carries no slot identifier, so the base-mode harness
+	// registers the binding production mints for it.
+	registerCPSlot(t, store, registry, sessions, adapter, cpSession, "")
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
@@ -383,22 +387,26 @@ func newCPConcurrentHarness(t *testing.T, slots []cpSlotSpec) *cpDriverHarness {
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
 	for _, s := range slots {
-		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID)
+		// A session-mode slot's identifier is its session's identifier, so
+		// a concurrent bind carries the session name as its slot address.
+		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID, s.sessionID)
 	}
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
-// registerCPSlot wires one slot-bound session: it points the adapter at
-// the shared store, dials it, registers the session's binding on the slot
-// its own identifier names, and seeds the running session row.
-func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID string) {
+// registerCPSlot wires one bound session: it points the adapter at the
+// shared store, dials it, registers the session's binding under slotID, and
+// seeds the running session row. slotID is empty for an exclusive bind and
+// the session's own identifier for a concurrent-pool bind, which is the
+// distinction BindResult.SlotID records.
+func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID, slotID string) {
 	t.Helper()
 	adapter.store = store
 	if adapter.putBytes == nil {
 		adapter.putBytes = map[int]int64{}
 	}
 	client := cpDialAdapter(t, adapter)
-	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: cpTenant, SlotID: sessionID, Adapter: client})
+	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: cpTenant, SlotID: slotID, Adapter: client})
 	if err := sessions.Create(context.Background(), sessionstore.Session{
 		ID: sessionID, TenantID: cpTenant, State: session.StateRunning, RuntimeRef: "echo",
 	}); err != nil {
@@ -426,7 +434,7 @@ func newCPCheckpointerHarness(store *cpStore, registry *podsession.Registry, ses
 		DriverMetrics: metrics,
 		Deadline:      5 * time.Second,
 	}
-	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, metrics: metrics, sessions: sessions}
+	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, metrics: metrics, sessions: sessions, registry: registry}
 }
 
 // latestManifest resolves the manifest row for the session's latest

@@ -90,3 +90,39 @@ func TestConcurrentPoolCapturesEachSessionIndependently(t *testing.T) {
 			recA.ChunkObjectKeyPrefix, recB.ChunkObjectKeyPrefix)
 	}
 }
+
+// spec: §5.2 (a session-mode slot's identifier is its session's identifier;
+// an exclusive maxConcurrentSessions=1 bind claims the whole pod for the
+// session and names no slot). The two checkpoint harness arms model the two
+// binds production mints: the base-mode harness registers a binding with no
+// slot identifier, and the concurrent-pool harness registers each session
+// under a slot its own identifier names.
+// diagnosis: a failure here means the tier-4 checkpoint fixtures no longer
+// model the binding contract — an exclusive bind was registered carrying a
+// slot identifier, or a concurrent bind was registered without one — so every
+// checkpoint case in this tier runs against a binding the binder never
+// produces.
+func TestCheckpointHarnessBindingsMatchTheirPoolMode(t *testing.T) {
+	base := newCPDriverHarness(t, &cpChunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, failAfter: -1, truncateAfter: -1})
+	bind, ok := base.registry.Get(cpSession)
+	if !ok {
+		t.Fatalf("exclusive bind for %s is not registered", cpSession)
+	}
+	if bind.SlotID != "" {
+		t.Errorf("exclusive bind SlotID = %q, want empty (the pod is claimed for the session and names no slot)", bind.SlotID)
+	}
+
+	pool := newCPConcurrentHarness(t, []cpSlotSpec{
+		{sessionID: "sess-a", adapter: &cpChunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, failAfter: -1, truncateAfter: -1}},
+		{sessionID: "sess-b", adapter: &cpChunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, failAfter: -1, truncateAfter: -1}},
+	})
+	for _, id := range []string{"sess-a", "sess-b"} {
+		b, ok := pool.registry.Get(id)
+		if !ok {
+			t.Fatalf("concurrent bind for %s is not registered", id)
+		}
+		if b.SlotID != id {
+			t.Errorf("concurrent bind SlotID for %s = %q, want %q (a session-mode slot's identifier is its session's identifier)", id, b.SlotID, id)
+		}
+	}
+}

@@ -14,8 +14,8 @@
 //   - a lagging Stat confirm never blocks the next grant (confirmation runs
 //     off the grant's critical path);
 //   - out-of-order chunk acknowledgements confirm each chunk exactly once;
-//   - a periodic checkpoint and a concurrent seal of one (session, slot)
-//     serialise on the single-flight lock rather than interleaving their
+//   - a periodic checkpoint and a concurrent seal of one session serialise
+//     on the per-session single-flight lock rather than interleaving their
 //     manifest writes.
 //
 // spec: §10.1, §5.2 (checkpointGrantWindow), §10.1 supersede-on-write
@@ -567,12 +567,12 @@ func TestOutOfOrderAcksConfirmExactlyOnce(t *testing.T) {
 }
 
 // spec: §10.1 supersede-on-write — a periodic checkpoint and a concurrent
-// seal of one (session, slot) serialise on the single-flight lock; under
+// seal of one session serialise on the per-session single-flight lock; under
 // the race detector neither corrupts the other's manifest writes and both
 // complete.
-// diagnosis: a periodic checkpoint and a concurrent seal on the same
-// (session, slot) did not serialise on the single-flight lock, so one
-// corrupts the other's manifest writes under the race detector.
+// diagnosis: a periodic checkpoint and a concurrent seal on the same session
+// did not serialise on the per-session single-flight lock, so one corrupts
+// the other's manifest writes under the race detector.
 func TestPeriodicVsSealSerialiseOnSingleFlight(t *testing.T) {
 	adapter := &scriptAdapter{probeBytes: 30, chunkCount: 3, chunkLen: 10}
 	h := newGWHarness(t, adapter, 4, 0)

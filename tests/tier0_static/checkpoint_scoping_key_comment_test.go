@@ -32,6 +32,17 @@ import (
 // which is a historical statement rather than a claim about current behavior.
 const checkpointScopingCommentRoot = "pkg/gateway/checkpoint"
 
+// checkpointScopingCommentFiles are test files outside that tree whose
+// comments describe the checkpoint pipeline's current key rather than a
+// pre-drop schema a migration test exercises. They are covered by name so the
+// blanket test-file exclusion above does not leave a test that pins the
+// per-session single-flight lock free to name the retired pair.
+var checkpointScopingCommentFiles = []string{
+	"tests/tier7a_load_local/checkpoint_grant_window_test.go",
+	"tests/tier4_integration/checkpoint_driver_harness_test.go",
+	"tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+}
+
 // twoColumnCheckpointKey matches the retired two-column scoping key in the
 // spellings a Go comment uses for it: the column pair and the prose pair, with
 // or without code-span backticks and with any run of spaces around the comma.
@@ -70,6 +81,13 @@ func TestCheckpointCommentsNameTheSessionScopingKeyAlone_spec_10_1(t *testing.T)
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", checkpointScopingCommentRoot, err)
+	}
+	for _, rel := range checkpointScopingCommentFiles {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stat %s: %v", rel, err)
+		}
+		offenses = append(offenses, checkpointScopingKeyOffenses(t, root, path)...)
 	}
 	if len(offenses) > 0 {
 		t.Errorf("comments state the checkpoint scoping key as the retired two-column pair:\n%s", strings.Join(offenses, "\n"))
