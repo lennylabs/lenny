@@ -138,9 +138,16 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 
 	// The whole-pod scrub runs asynchronously after Terminate releases the
 	// pod (§5.2: "the gateway does not block the response on the scrub").
-	// Wait for the recycled pod to report idle again before claiming
-	// session B.
-	waitPodLabel(t, c, podA, "lenny.dev/state", "idle", 90*time.Second)
+	// A successful scrub carries the claim recycling -> reserved, which is
+	// the state §5.2 holds the pod for its tenant in and serves the next
+	// session from; §4.6.1 bounds that hold by claimHoldTTLSeconds (a
+	// deployment default of 10 seconds), after which the claim is deleted
+	// and the pod leaves the tenant's reach. Session B is therefore claimed
+	// while the claim is reserved. The pod label is not the signal here:
+	// §6.2 projects both claimed and reserved onto the coarse "active"
+	// value, so the label never reports idle inside the hold and reaches it
+	// only once the hold has already expired.
+	waitClaimPhase(t, c, podA, "reserved", 90*time.Second)
 
 	sessB, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
 		inlineWorkspacePlan("marker-b.txt", "workspace-of-session-B"))
@@ -443,24 +450,41 @@ func TestCountingReadyWarmPodsReportsAFailedQueryRatherThanAnEmptyPool_spec_6_4(
 	}
 }
 
-// waitPodLabel polls pod's named label until it equals want or timeout
-// elapses, failing the test on timeout. Used to observe the §5.2
-// recycle boundary: the WarmPoolController's lenny.dev/state label
-// transitions active -> idle once the whole-pod scrub reports and the
-// pod is returned to the pool.
-func waitPodLabel(t *testing.T, c *kind.Cluster, pod, label, want string, timeout time.Duration) {
+// waitClaimPhase polls the §4.6.3 binding state on the pod's SandboxClaim
+// until it equals want or timeout elapses, failing the test on timeout. It
+// observes the §5.2 recycle boundary at the claim, which carries the full
+// binding state (bound, recycling, reserved) rather than the coarse
+// idle/active/draining pod label §6.2 restricts to selectors.
+//
+// The poll interval is short because the reserved state is bounded by the
+// §4.6.1 hold TTL, a deployment default of 10 seconds, and the caller has
+// to act inside it. A claim that has disappeared fails immediately rather
+// than polling to the deadline: the claim is deleted at hold expiry and at
+// retirement, so its absence means the window the caller is waiting for is
+// already gone and no later poll can observe it.
+func waitClaimPhase(t *testing.T, c *kind.Cluster, pod, want string, timeout time.Duration) {
 	t.Helper()
-	jsonpath := fmt.Sprintf("{.metadata.labels.%s}", strings.ReplaceAll(label, ".", `\.`))
+	claim := "claim-" + pod
 	deadline := time.Now().Add(timeout)
 	var last string
-	for time.Now().Before(deadline) {
-		last = podField(t, c, pod, jsonpath)
+	for {
+		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", claim,
+			"-o", "jsonpath={.status.phase}")
+		if err != nil {
+			t.Fatalf("reading the binding state of claim %s: %v\n%s\n(the claim is deleted at "+
+				"§4.6.1 hold expiry and at retirement, so an absent claim means the pod is no longer "+
+				"held for its tenant)", claim, err, out)
+		}
+		last = strings.TrimSpace(out)
 		if last == want {
 			return
 		}
-		time.Sleep(2 * time.Second)
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("%s: label %s did not reach %q within %s (last seen %q)", pod, label, want, timeout, last)
+	t.Fatalf("%s: claim %s did not reach binding state %q within %s (last seen %q)", pod, claim, want, timeout, last)
 }
 
 // execDebugContainer attaches a short-lived busybox ephemeral debug

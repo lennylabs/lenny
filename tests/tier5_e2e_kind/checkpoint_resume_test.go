@@ -156,6 +156,9 @@ func TestCheckpointOnPodLossResumesWorkspace(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	const marker = "workspace-survives-pod-loss"
 	sess, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,

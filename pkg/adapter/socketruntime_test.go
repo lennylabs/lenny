@@ -353,3 +353,65 @@ func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 		t.Error("runtime should observe EOF after the last slot's Interrupt")
 	}
 }
+
+// spec: §5.2 (recycle lifecycle: a scrubbed pod serves the next session),
+// §4.7 (sidecar runtime transport)
+//
+// The last active session's Close ends that session's connection, and the
+// pod then goes through the §5.2 whole-pod scrub and serves the next
+// session. The next session's Start has to accept a fresh connection from
+// the restarted runtime container on the same bound address, so the
+// listener is a pod resource that outlives every session on the pod.
+//
+// diagnosis: a failure here means the runtime socket is unbound by the
+// last session's teardown, so the first session on a recycled pod fails
+// its accept with "use of closed network connection". The gateway reads
+// that as a failed start, retries onto another pod, and the recycled pod
+// is retired rather than reused, which is the whole of what
+// recycle.enabled buys.
+func TestSocketRuntimeProcessAcceptsTheNextSessionAfterTheLastCloses_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	defer sp.Close(context.Background(), "sess-b")
+
+	firstCh := make(chan net.Conn, 1)
+	go func() { firstCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	first := <-firstCh
+	defer first.Close()
+
+	// The pod's only session ends. The runtime observes EOF and its
+	// container restarts, which is what re-dials the address below.
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a): %v", err)
+	}
+
+	secondCh := make(chan net.Conn, 1)
+	go func() { secondCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) on the recycled pod: %v; the next session must accept a fresh "+
+			"connection on the pod's still-bound runtime socket", err)
+	}
+	second := <-secondCh
+	defer second.Close()
+
+	// The recycled pod's session writes over the new connection and the
+	// restarted runtime reads it.
+	reader := bufio.NewReader(second)
+	frame := `{"type":"message","sessionId":"sess-b"}`
+	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
+		t.Fatalf("WriteEnvelope on the recycled pod: %v", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("restarted runtime read on the recycled pod: %v", err)
+	}
+	if strings.TrimSpace(line) != frame {
+		t.Errorf("restarted runtime received %q, want %q", strings.TrimSpace(line), frame)
+	}
+}

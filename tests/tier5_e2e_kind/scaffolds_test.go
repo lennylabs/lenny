@@ -55,11 +55,6 @@ import (
 // on a chaos-build-tagged file.
 const scaffoldsAgentNamespace = "lenny-agents"
 
-// scaffoldsLiveSessionTenant is the synthetic tenant the scaffold
-// live-session tests bootstrap. The driver best-effort deletes it on
-// Close.
-const scaffoldsLiveSessionTenant = "scaffold-live-session-tenant"
-
 // nodeDrainReplenishBound is the time a node-drain test allows for the
 // WarmPoolController to bring the pool back to its minWarm target after
 // a node-drain evicts the bound agent pod. The e2e workload's minWarm
@@ -93,20 +88,29 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	if err := d.BootstrapTenant(ctx, scaffoldsLiveSessionTenant); err != nil {
+	// The tenant is per-run rather than fixed: the driver best-effort
+	// deletes the tenants it bootstrapped on Close, and a tenant left in
+	// the deleting state rejects every later session with TENANT_NOT_ACTIVE,
+	// so a fixed name passes once on a fresh install and fails on every run
+	// after it.
+	tenant := uniqueName("scaffold-live-session-tenant")
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	// Drive a session onto the sidecar pool so a §4.6 SandboxClaim is
 	// written and a specific agent pod is bound.
-	sess, err := d.CreateAndStart(ctx, scaffoldsLiveSessionTenant, sessiondriver.EchoRuntimeSidecar)
+	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
 	if err != nil {
 		t.Fatalf("create-and-start session: %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = d.Terminate(ctx, scaffoldsLiveSessionTenant, sess.ID)
+		_ = d.Terminate(ctx, tenant, sess.ID)
 	})
 	t.Logf("created session %s in state %q", sess.ID, sess.State)
 
@@ -188,10 +192,16 @@ func TestConcurrentExecutionModes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	tenant := "scaffold-concurrent-modes-tenant"
+	// Per-run tenant: a fixed name the driver deleted on a previous run's
+	// Close is left in the deleting state, which rejects every session with
+	// TENANT_NOT_ACTIVE.
+	tenant := uniqueName("scaffold-concurrent-modes-tenant")
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	// Drive one session per §4.7 deployment model concurrently. The
 	// gateway must route each onto the correct runtime pool (sidecar

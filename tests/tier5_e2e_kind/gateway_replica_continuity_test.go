@@ -98,6 +98,9 @@ func TestSessionContinuesAfterCoordinatingGatewayReplicaLoss(t *testing.T) {
 	if err := driverB.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, driverB, tenant)
 
 	// Create and start the session through replica A. A becomes the
 	// coordinating replica for the session and claims its agent pod.
