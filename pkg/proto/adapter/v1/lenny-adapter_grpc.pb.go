@@ -81,8 +81,9 @@ type AdapterClient interface {
 	// staged content.
 	PrepareWorkspace(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse], error)
 	// FinalizeWorkspace validates the staged workspace content and
-	// materializes the §14 WorkspacePlan into /workspace/current. It is
-	// the second RPC in the §4.7 session assignment sequence
+	// materializes the §14 WorkspacePlan into the named session's
+	// /workspace/slots/{sessionId}/current. It is the second RPC in the
+	// §4.7 session assignment sequence
 	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
 	FinalizeWorkspace(ctx context.Context, in *FinalizeWorkspaceRequest, opts ...grpc.CallOption) (*FinalizeWorkspaceResponse, error)
 	// RunSetup executes the §14 WorkspacePlan setup commands against the
@@ -171,8 +172,9 @@ type AdapterClient interface {
 	SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
-	// rebuilds /workspace/current from the named checkpoint, and starts
-	// the runtime — the replacement-pod counterpart of StartSession.
+	// rebuilds /workspace/slots/{sessionId}/current from the named
+	// checkpoint, and starts the runtime — the replacement-pod
+	// counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
 	// on coordinator handoff (§4.7, §10.1). The pod records the new
@@ -201,8 +203,9 @@ type AdapterClient interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error)
-	// ExportPaths packages files from /workspace/current for delegation,
-	// rebased per the export spec (§8.7). The adapter resolves each export
+	// ExportPaths packages files from the named session's
+	// /workspace/slots/{sessionId}/current for delegation, rebased per the
+	// export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The
@@ -529,8 +532,9 @@ type AdapterServer interface {
 	// staged content.
 	PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error
 	// FinalizeWorkspace validates the staged workspace content and
-	// materializes the §14 WorkspacePlan into /workspace/current. It is
-	// the second RPC in the §4.7 session assignment sequence
+	// materializes the §14 WorkspacePlan into the named session's
+	// /workspace/slots/{sessionId}/current. It is the second RPC in the
+	// §4.7 session assignment sequence
 	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
 	FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error)
 	// RunSetup executes the §14 WorkspacePlan setup commands against the
@@ -619,8 +623,9 @@ type AdapterServer interface {
 	SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
-	// rebuilds /workspace/current from the named checkpoint, and starts
-	// the runtime — the replacement-pod counterpart of StartSession.
+	// rebuilds /workspace/slots/{sessionId}/current from the named
+	// checkpoint, and starts the runtime — the replacement-pod
+	// counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
 	// on coordinator handoff (§4.7, §10.1). The pod records the new
@@ -649,8 +654,9 @@ type AdapterServer interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error)
-	// ExportPaths packages files from /workspace/current for delegation,
-	// rebased per the export spec (§8.7). The adapter resolves each export
+	// ExportPaths packages files from the named session's
+	// /workspace/slots/{sessionId}/current for delegation, rebased per the
+	// export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The

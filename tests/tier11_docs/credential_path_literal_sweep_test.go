@@ -9,13 +9,8 @@
 // written, and every SDK default or template comment that names one
 // documents a location no session resolves to.
 //
-// The sweep covers the directories the retirement reaches: the
-// specification, the documentation, the schemas, the chart, the
-// commands (the scaffold templates and the compliance harness), the
-// runtime SDKs, and the served OpenAPI document. A missed edit in a
-// template, a chart comment, or a comment beside an SDK default is
-// invisible to the compiler, which is why the sweep is mechanical
-// rather than enumerated.
+// The sweep reads the surfaces retirementSweepSurfaces walks, which is
+// the same set the retired pod-global working directory is swept over.
 //
 // spec: 4.7 (manifest credentialsPath), 6.1 (per-session credential
 // lease), 13.1 (credential-file delivery)
@@ -23,55 +18,11 @@
 package tier11_docs_test
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// credentialSweepRoots are the directories the retirement reaches,
-// relative to the repository root.
-var credentialSweepRoots = []string{
-	"spec",
-	"docs",
-	"schemas",
-	"charts",
-	"cmd",
-	"sdks",
-}
-
-// credentialSweepExtensions are the carriers the literal can hide in.
-// Every reader-facing document, schema (both the JSON schemas and the
-// proto definitions that carry the credentials_rotated field contract),
-// chart template, scaffold template, and SDK source under the swept
-// roots is one of these.
-var credentialSweepExtensions = map[string]bool{
-	".md":    true,
-	".yaml":  true,
-	".yml":   true,
-	".json":  true,
-	".go":    true,
-	".tmpl":  true,
-	".py":    true,
-	".ts":    true,
-	".tsx":   true,
-	".js":    true,
-	".sh":    true,
-	".txt":   true,
-	".proto": true,
-}
-
-// credentialSweepSkipDirs are directories whose contents are neither
-// authored nor read as the current contract: dependency trees, build
-// output, and fixtures recorded as they were written.
-var credentialSweepSkipDirs = map[string]bool{
-	"node_modules": true,
-	"dist":         true,
-	"testdata":     true,
-	"__pycache__":  true,
-	".git":         true,
-}
 
 // spec: 6.1, 4.7
 // diagnosis: a swept surface still names the pod-global
@@ -84,7 +35,7 @@ var credentialSweepSkipDirs = map[string]bool{
 //	file and line to restate on the manifest's credentialsPath.
 func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 	root := repoRoot(t)
-	for _, path := range sweepCredentialSurfaces(t, root) {
+	for _, path := range retirementSweepSurfaces(t, root) {
 		reportCredentialLiteral(t, root, path)
 	}
 }
@@ -99,51 +50,13 @@ func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 func TestTheCredentialSweepReadsTheProtoSchemaCarrier(t *testing.T) {
 	root := repoRoot(t)
 	want := filepath.Join(root, "schemas", "lenny-adapter.proto")
-	for _, path := range sweepCredentialSurfaces(t, root) {
+	for _, path := range retirementSweepSurfaces(t, root) {
 		if path == want {
 			return
 		}
 	}
 	t.Fatalf("%s was not swept; the credentials_rotated field contract is written there",
 		mustRel(t, root, want))
-}
-
-// sweepCredentialSurfaces returns every file the retirement's sweep
-// reads: the carriers under the swept roots, plus the served OpenAPI
-// document, which is generated rather than authored and so is swept by
-// path rather than by directory.
-func sweepCredentialSurfaces(t *testing.T, root string) []string {
-	t.Helper()
-	var swept []string
-	for _, rel := range credentialSweepRoots {
-		dir := filepath.Join(root, rel)
-		walked := 0
-		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if credentialSweepSkipDirs[d.Name()] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !credentialSweepExtensions[strings.ToLower(filepath.Ext(path))] {
-				return nil
-			}
-			walked++
-			swept = append(swept, path)
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", rel, err)
-		}
-		if walked == 0 {
-			t.Fatalf("walk %s: no files swept (moved or renamed?)", rel)
-		}
-	}
-	return append(swept,
-		filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json"))
 }
 
 // reportCredentialLiteral fails the test once per line naming the

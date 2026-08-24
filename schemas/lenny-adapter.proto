@@ -40,8 +40,9 @@ service Adapter {
   rpc PrepareWorkspace(stream PrepareWorkspaceRequest) returns (PrepareWorkspaceResponse) {}
 
   // FinalizeWorkspace validates the staged workspace content and
-  // materializes the §14 WorkspacePlan into /workspace/current. It is
-  // the second RPC in the §4.7 session assignment sequence
+  // materializes the §14 WorkspacePlan into the named session's
+  // /workspace/slots/{sessionId}/current. It is the second RPC in the
+  // §4.7 session assignment sequence
   // (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
   rpc FinalizeWorkspace(FinalizeWorkspaceRequest) returns (FinalizeWorkspaceResponse) {}
 
@@ -143,8 +144,9 @@ service Adapter {
 
   // Resume restores a session's workspace from a checkpoint on a
   // replacement pod (§4.7, §7.1). The adapter claims the session,
-  // rebuilds /workspace/current from the named checkpoint, and starts
-  // the runtime — the replacement-pod counterpart of StartSession.
+  // rebuilds /workspace/slots/{sessionId}/current from the named
+  // checkpoint, and starts the runtime — the replacement-pod
+  // counterpart of StartSession.
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
   // CoordinatorFence announces a new `coordination_generation` to the pod
@@ -176,8 +178,9 @@ service Adapter {
   // the gateway across all coordinated pods.
   rpc CheckpointBarrier(CheckpointBarrierRequest) returns (CheckpointBarrierResponse) {}
 
-  // ExportPaths packages files from /workspace/current for delegation,
-  // rebased per the export spec (§8.7). The adapter resolves each export
+  // ExportPaths packages files from the named session's
+  // /workspace/slots/{sessionId}/current for delegation, rebased per the
+  // export spec (§8.7). The adapter resolves each export
   // source glob inside the workspace root, rejects any matched file whose
   // realpath escapes the workspace via symlink, strips the glob's base
   // path, and re-roots each file under the export's dest_prefix. The
@@ -701,10 +704,12 @@ message FinalizeWorkspaceRequest {
   ArchivePolicy archive_policy = 3;
   // mid_session marks a §7.4 mid-session upload: the session is
   // already running and the named sources are overlaid onto the existing
-  // /workspace/current rather than replacing the whole tree. The adapter
-  // builds the sources in /workspace/staging, validates them, atomically
-  // moves each entry onto /workspace/current (preserving the agent's
-  // existing files), then emits a `files_updated` lifecycle signal to the
+  // /workspace/slots/{sessionId}/current rather than replacing the whole
+  // tree. The adapter builds the sources in
+  // /workspace/slots/{sessionId}/staging, validates them, atomically
+  // moves each entry onto /workspace/slots/{sessionId}/current
+  // (preserving the agent's existing files), then emits a
+  // `files_updated` lifecycle signal to the
   // runtime so the agent re-reads the workspace only after promotion. The
   // proto3 default false is the pre-start whole-tree materialization the
   // §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
@@ -734,7 +739,8 @@ message ArchivePolicy {
   // gateway derives it from the SandboxTemplate so the per-Runtime
   // workspace-tier and slot-scoped paths flow through correctly. The
   // adapter falls back to its own configured root when this field is
-  // empty (workspaces materialized into /workspace/current). F-7.4.4.
+  // empty (workspaces materialized into
+  // /workspace/slots/{sessionId}/current). F-7.4.4.
   string workspace_root = 2;
 }
 
@@ -1500,11 +1506,13 @@ message CheckpointBarrierResponse {
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved
-// inside the parent's /workspace/current and an optional dest_prefix
-// the matched files are re-rooted under in the child's workspace.
+// inside the parent's /workspace/slots/{sessionId}/current and an
+// optional dest_prefix the matched files are re-rooted under in the
+// child's workspace.
 message ExportSpec {
-  // source is the glob resolved relative to /workspace/current. Its
-  // base path (the longest non-wildcard prefix) is stripped from each
+  // source is the glob resolved relative to the parent session's
+  // /workspace/slots/{sessionId}/current. Its base path (the longest
+  // non-wildcard prefix) is stripped from each
   // matched file's path during rebasing (§8.7).
   string source = 1;
   // dest_prefix is the relative directory the rebased files are placed
@@ -1652,8 +1660,8 @@ message ShutdownResponse {
 message ConfigureWorkspaceRequest {
   SessionId session_id = 1;
   // cwd is the finalized working directory the pre-connected SDK session
-  // is pointed at — /workspace/current in production. Idempotent: sending
-  // the same cwd twice is safe.
+  // is pointed at — /workspace/slots/{sessionId}/current in production.
+  // Idempotent: sending the same cwd twice is safe.
   string cwd = 2;
   // experiment_context and tracing_context are written into the adapter
   // manifest the runtime re-reads when the workspace is configured, the

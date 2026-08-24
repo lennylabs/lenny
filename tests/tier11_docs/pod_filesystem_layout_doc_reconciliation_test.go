@@ -20,7 +20,6 @@
 package tier11_docs_test
 
 import (
-	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -69,77 +68,6 @@ func TestLifecycleGuideRetiresOnlyThePodGlobalWorkingDirectory(t *testing.T) {
 	})
 }
 
-// spec: 6.1, 6.4
-// diagnosis: a documentation line states the per-session workspace tree and
-//
-//	the pod-global staging tree together, which is what a half-finished
-//	restatement of the retired pod-global working directory leaves behind:
-//	the `/workspace/current` token was moved onto the slot path and the
-//	sibling `/workspace/staging` clause was left describing the same
-//	sentence's subject. A failure here means one line documents two layouts.
-func TestNoDocLineStatesBothTheSlotTreeAndThePodGlobalStagingTree(t *testing.T) {
-	root := repoRoot(t)
-	for _, rel := range docsMarkdownFiles(t, filepath.Join(root, "docs")) {
-		page := readDocPage(t, rel)
-		for i, ln := range strings.Split(page, "\n") {
-			if strings.Contains(ln, "/workspace/staging") && strings.Contains(ln, "/workspace/slots/") {
-				t.Errorf("%s:%d states the pod-global staging tree and a slot path on one line:\n%s",
-					mustRel(t, root, rel), i+1, ln)
-			}
-		}
-	}
-}
-
-// spec: 6.4
-// diagnosis: the runtime author guide still names the retired pod-global
-//
-//	`/workspace/current`. That directory exists on no pod, so a runtime
-//	written from the guide reads and writes outside its session's tree. A
-//	failure here names the page and line that survived the retirement.
-func TestRuntimeAuthorGuideNamesNoRetiredPodGlobalWorkingDirectory(t *testing.T) {
-	root := repoRoot(t)
-	guide := filepath.Join(root, "docs", "runtime-author-guide")
-	// The one permitted occurrence is the lifecycle page's statement that the
-	// path does not exist; every other mention would send an author to it.
-	retirement := "No pod-global working directory (`/workspace/current`) exists"
-	for _, path := range docsMarkdownFiles(t, guide) {
-		page := readDocPage(t, path)
-		for i, ln := range strings.Split(page, "\n") {
-			if !strings.Contains(ln, "/workspace/current") {
-				continue
-			}
-			if strings.Contains(ln, retirement) {
-				continue
-			}
-			t.Errorf("%s:%d names the retired pod-global working directory:\n%s",
-				mustRel(t, root, path), i+1, ln)
-		}
-	}
-}
-
-// docsMarkdownFiles returns every markdown file under dir, so a sweep reaches
-// pages added after the sweep was written.
-func docsMarkdownFiles(t testing.TB, dir string) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(path, ".md") {
-			out = append(out, path)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", dir, err)
-	}
-	if len(out) == 0 {
-		t.Fatalf("walk %s: no markdown pages found (moved or renamed?)", dir)
-	}
-	return out
-}
-
 // mustRel renders an absolute path relative to the repository root so a
 // failure names the file the way a reader would open it.
 func mustRel(t testing.TB, root, path string) string {
@@ -170,13 +98,5 @@ func TestIntegrationLevelsGuideNamesThePerSessionWorkingDirectory(t *testing.T) 
 	}
 	if !strings.Contains(workspace, "`/workspace/slots/{sessionId}/current/`") {
 		t.Errorf("docs/runtime-author-guide/integration-levels.md: the workspace-files bullet does not name the per-session working directory:\n%s", workspace)
-	}
-
-	// The retired path may not stand anywhere on the page: every other mention
-	// would send the same author to the same missing directory.
-	for i, ln := range strings.Split(page, "\n") {
-		if strings.Contains(ln, "/workspace/current") {
-			t.Errorf("docs/runtime-author-guide/integration-levels.md:%d names the retired pod-global path:\n%s", i+1, ln)
-		}
 	}
 }

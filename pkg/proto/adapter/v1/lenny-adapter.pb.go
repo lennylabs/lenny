@@ -2034,10 +2034,12 @@ type FinalizeWorkspaceRequest struct {
 	ArchivePolicy *ArchivePolicy `protobuf:"bytes,3,opt,name=archive_policy,json=archivePolicy,proto3" json:"archive_policy,omitempty"`
 	// mid_session marks a §7.4 mid-session upload: the session is
 	// already running and the named sources are overlaid onto the existing
-	// /workspace/current rather than replacing the whole tree. The adapter
-	// builds the sources in /workspace/staging, validates them, atomically
-	// moves each entry onto /workspace/current (preserving the agent's
-	// existing files), then emits a `files_updated` lifecycle signal to the
+	// /workspace/slots/{sessionId}/current rather than replacing the whole
+	// tree. The adapter builds the sources in
+	// /workspace/slots/{sessionId}/staging, validates them, atomically
+	// moves each entry onto /workspace/slots/{sessionId}/current
+	// (preserving the agent's existing files), then emits a
+	// `files_updated` lifecycle signal to the
 	// runtime so the agent re-reads the workspace only after promotion. The
 	// proto3 default false is the pre-start whole-tree materialization the
 	// §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
@@ -2121,7 +2123,8 @@ type ArchivePolicy struct {
 	// gateway derives it from the SandboxTemplate so the per-Runtime
 	// workspace-tier and slot-scoped paths flow through correctly. The
 	// adapter falls back to its own configured root when this field is
-	// empty (workspaces materialized into /workspace/current). F-7.4.4.
+	// empty (workspaces materialized into
+	// /workspace/slots/{sessionId}/current). F-7.4.4.
 	WorkspaceRoot string `protobuf:"bytes,2,opt,name=workspace_root,json=workspaceRoot,proto3" json:"workspace_root,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -5220,12 +5223,14 @@ func (x *CheckpointBarrierResponse) GetQuiescedMs() int64 {
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved
-// inside the parent's /workspace/current and an optional dest_prefix
-// the matched files are re-rooted under in the child's workspace.
+// inside the parent's /workspace/slots/{sessionId}/current and an
+// optional dest_prefix the matched files are re-rooted under in the
+// child's workspace.
 type ExportSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// source is the glob resolved relative to /workspace/current. Its
-	// base path (the longest non-wildcard prefix) is stripped from each
+	// source is the glob resolved relative to the parent session's
+	// /workspace/slots/{sessionId}/current. Its base path (the longest
+	// non-wildcard prefix) is stripped from each
 	// matched file's path during rebasing (§8.7).
 	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
 	// dest_prefix is the relative directory the rebased files are placed
@@ -5843,8 +5848,8 @@ type ConfigureWorkspaceRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// cwd is the finalized working directory the pre-connected SDK session
-	// is pointed at — /workspace/current in production. Idempotent: sending
-	// the same cwd twice is safe.
+	// is pointed at — /workspace/slots/{sessionId}/current in production.
+	// Idempotent: sending the same cwd twice is safe.
 	Cwd string `protobuf:"bytes,2,opt,name=cwd,proto3" json:"cwd,omitempty"`
 	// experiment_context and tracing_context are written into the adapter
 	// manifest the runtime re-reads when the workspace is configured, the
