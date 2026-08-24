@@ -238,7 +238,8 @@
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace",
-        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces"
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
+        "tests/tier2_component/stores/checkpointretention_test.go"
       ],
       "packages": [
         "pkg/store/event",
@@ -540,7 +541,8 @@
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7",
         "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
         "tests/tier7a_load_local/sole_session_concurrent_release_test.go",
-        "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go"
+        "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -825,7 +827,8 @@
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
         "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
-        "tests/tier9_security/credential_delivery_gate_test.go"
+        "tests/tier9_security/credential_delivery_gate_test.go",
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -981,7 +984,8 @@
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestKataIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
-        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -2275,7 +2279,8 @@
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
         "tests/tier2_component/preflight/minio_sse_test.go",
         "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestBackstopSweepPredicateReadsIdenticallyAcrossSpec12"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestBackstopSweepPredicateReadsIdenticallyAcrossSpec12",
+        "tests/tier2_component/stores/checkpointretention_test.go"
       ],
       "packages": [
         "pkg/store/artifact"

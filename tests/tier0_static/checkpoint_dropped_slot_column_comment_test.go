@@ -35,7 +35,8 @@ var checkpointDroppedSlotColumnFiles = append(
 // reads clean and a past-tense statement about the pre-drop schema is not a
 // claim about the current one.
 var checkpointTableHoldsSlotColumn = regexp.MustCompile(
-	`(?i)\b(session_checkpoints|checkpoint_manifest)\b[^.]{0,60}?\b(carries|carry|has|have|contains|contain|keeps|keep)\b[^.]{0,40}?\bslot_id\b`)
+	`(?i)\b(session_checkpoints|checkpoint_manifest)\b[^.]{0,60}?\b(carries|carry|has|have|contains|contain|keeps|keep)\b[^.]{0,40}?\bslot_id\b`,
+)
 
 // diagnosis: a comment in the checkpoint pipeline, or in a checkpoint gate
 // beside it, states that session_checkpoints or checkpoint_manifest carries the

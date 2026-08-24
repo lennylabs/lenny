@@ -450,6 +450,18 @@ entries:
     reason: |-
       a checker over the agent workflow drivers, which no test tier is selected from
   - member: |-
+      scripts/test-reverify-done-steps.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      scripts/test-spec-review-focus.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       scripts/reconcile-test-gaps.py
     class: change-graph-coverage
     disposition: excluded
