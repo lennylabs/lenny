@@ -369,27 +369,45 @@ func inlineWorkspacePlan(path, content string) json.RawMessage {
 // requirePoolReadyPods skips the calling test when the named pool has
 // fewer than n Ready warm pods, so a cluster whose install.sh predates
 // this pool (or that has not finished warming it) degrades to a clean
-// skip instead of a failure. Mirrors gvisor_isolation_test.go's
-// requireGvisorPoolPod.
+// skip instead of a failure. It counts the pods that report condition
+// Ready and waits for the count to reach n, rather than requiring every
+// pod carrying the pool label to be Ready: a wedged pod left behind by
+// an earlier run keeps a label-wide readiness wait failing forever, and
+// that hid the Ready pods beside it, skipping the §6.4 slot-tree cases
+// on a cluster that had the capacity to run them.
 func requirePoolReadyPods(t *testing.T, c *kind.Cluster, pool string, n int) {
 	t.Helper()
-	selector := "lenny.dev/pool=" + pool
-	if err := c.Kubectl(
-		"-n", executionModesNamespace, "wait", "--for=condition=Ready",
-		"pod", "-l", selector, "--timeout=120s",
-	).Run(); err != nil {
-		t.Skip(pool + " has no Ready warm pod yet (pools warm asynchronously); " +
-			"re-run after tests/testinfra/kind/install.sh completes")
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		if readyPoolPods(t, c, pool) >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Skipf("%s has fewer than %d Ready warm pods (pools warm asynchronously); "+
+				"re-run after tests/testinfra/kind/install.sh completes", pool, n)
+		}
+		time.Sleep(3 * time.Second)
 	}
+}
+
+// readyPoolPods returns how many pods carrying the pool's label report
+// condition Ready true. A kubectl failure counts as zero so the caller
+// keeps polling until its deadline.
+func readyPoolPods(t *testing.T, c *kind.Cluster, pool string) int {
+	t.Helper()
 	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pods",
-		"-l", selector, "-o", "jsonpath={.items[*].metadata.name}")
+		"-l", "lenny.dev/pool="+pool, "-o",
+		`jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`)
 	if err != nil {
-		t.Fatalf("listing %s pods: %v\n%s", pool, err, out)
+		return 0
 	}
-	got := len(strings.Fields(strings.TrimSpace(out)))
-	if got < n {
-		t.Skip(pool + " has fewer than the expected warm pods; re-run after tests/testinfra/kind/install.sh completes")
+	ready := 0
+	for _, status := range strings.Fields(out) {
+		if status == "True" {
+			ready++
+		}
 	}
+	return ready
 }
 
 // waitPodLabel polls pod's named label until it equals want or timeout
