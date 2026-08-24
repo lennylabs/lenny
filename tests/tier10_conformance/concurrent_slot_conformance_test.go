@@ -263,3 +263,38 @@ func TestUnaddressedSessionScopedFrameIsRefused_spec_28_5_3(t *testing.T) {
 		t.Errorf("the unaddressed frame opened a session under an empty identifier:\n%s", result.stderr)
 	}
 }
+
+// spec: 15.4 (a runtime tolerates an inbound frame type it does not
+//
+//	recognise), 28.5.3 (the addressing rule governs the session-scoped
+//	frame set and no other type)
+//
+// diagnosis: the reference runtime failed closed on an unaddressed frame
+//
+//	whose type sits outside the session-scoped set. The addressing rule
+//	reaches the session-scoped frames alone, so a frame of any other type
+//	keeps §15.4's unknown-type tolerance. A runtime that exits on one makes
+//	every forward-compatible frame type fatal and stops serving the
+//	sessions already bound to the pod.
+func TestUnaddressedUnknownFrameTypeIsTolerated_spec_15_4(t *testing.T) {
+	a := buildArtifacts(t)
+
+	result := runConcurrentRuntime(t, a.echoConcurrent, []string{
+		`{"type":"this_is_a_future_message_type","x":1}` + "\n",
+		concurrentMessage("sess_alice", "ping"),
+	})
+	if result.exitCode != 0 {
+		t.Errorf("echo-concurrent exited %d on an unaddressed frame outside the session-scoped set, want 0 (stderr: %s)",
+			result.exitCode, result.stderr)
+	}
+	if len(result.responses) != 1 {
+		t.Fatalf("got %d response(s) after the unknown frame type, want the addressed message still served: %+v",
+			len(result.responses), result.responses)
+	}
+	if got := result.responses[0].SessionID; got != "sess_alice" {
+		t.Errorf("response carries sessionId %q, want sess_alice", got)
+	}
+	if got := inlineText(result.responses[0]); !strings.Contains(got, "ping") {
+		t.Errorf("response echoed %q, want the addressed message's text", got)
+	}
+}

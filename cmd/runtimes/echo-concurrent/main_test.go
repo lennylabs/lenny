@@ -151,6 +151,41 @@ func TestUnaddressedSessionScopedFrameIsAProtocolError(t *testing.T) {
 	}
 }
 
+// TestUnaddressedFrameOutsideTheSessionScopedSetIsTolerated asserts the
+// addressing rule is scoped to the session-scoped inbound set. A frame of
+// an unknown type carries no per-session identifier and names no session,
+// but it sits outside that set, so §15.4's unknown-type tolerance governs
+// it: the runtime drops it with a diagnostic and keeps serving. Failing
+// the runtime on it would make every forward-compatible frame type fatal
+// and would leave the following heartbeat unanswered.
+// spec: §15.4; §28.5.3.
+func TestUnaddressedFrameOutsideTheSessionScopedSetIsTolerated(t *testing.T) {
+	var stderr bytes.Buffer
+	var out bytes.Buffer
+	in := `{"type":"this_is_a_future_message_type","x":1}` + "\n" +
+		`{"type":"heartbeat","ts":2}` + "\n" +
+		`{"type":"shutdown","reason":"session_complete","deadline_ms":1}` + "\n"
+	if err := run(context.Background(), strings.NewReader(in), &out, &stderr); err != nil {
+		t.Fatalf("an unaddressed frame outside the session-scoped set must not fail the runtime: %v", err)
+	}
+	frames := decodeFrames(t, out.String())
+	var acks int
+	for _, f := range frames {
+		if f.Type == "heartbeat_ack" {
+			acks++
+		}
+		if f.Type == "response" {
+			t.Errorf("an unknown frame type produced a response %+v; it must be answered by no session", f)
+		}
+	}
+	if acks != 1 {
+		t.Fatalf("got %d heartbeat_ack frames after the unknown type, want 1: %+v", acks, frames)
+	}
+	if !strings.Contains(stderr.String(), "this_is_a_future_message_type") {
+		t.Errorf("stderr %q must name the dropped frame type", stderr.String())
+	}
+}
+
 // TestHeartbeatAckIsPodGlobalAndUnaddressed asserts an unaddressed
 // heartbeat is answered once, with a heartbeat_ack carrying no per-session
 // identifier. heartbeat and heartbeat_ack are protocol-level and sit

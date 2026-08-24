@@ -107,10 +107,14 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// propagation) and never relays as content. Available at all
 			// tiers, so even a Basic runtime with no MCP access reaches the
 			// same gateway registration the lenny/set_tracing_context MCP
-			// tool performs. The handler resolves the frame against this
-			// stream's (session, slot) address and drops one that addresses
-			// another stream, so an untagged frame on a concurrent pod no
-			// longer registers against every slot's session.
+			// tool performs. The demultiplexer above has already resolved
+			// the frame to this stream: one addressing another session is
+			// withheld, and one carrying no address on a pod holding more
+			// than one slot is rejected and counted before this branch is
+			// reached. The handler applies §28.5.3's live-binding
+			// confirmation alone, dropping a frame whose registry entry no
+			// longer names this session on
+			// lenny_adapter_set_tracing_context_dropped_total.
 			if jsonlFrameType(line) == "set_tracing_context" {
 				s.handleSetTracingContext(ctx, sessionID, slotID, line)
 				continue

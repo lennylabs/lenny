@@ -64,7 +64,7 @@ const (
 func main() {
 	// §4.7: resolve the transport. LENNY_ADAPTER_SOCKET selects the
 	// sidecar-pod abstract socket; its absence selects stdin/stdout. The
-	// slotId multiplexing is identical over either transport.
+	// sessionId multiplexing is identical over either transport.
 	transport, err := runtimekit.Open(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

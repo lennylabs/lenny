@@ -151,6 +151,7 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 			Type:          "message",
 			ID:            newMessageID(),
 			From:          resolveFromBlock(m),
+			SessionID:     sessionID,
 			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
 		}
 		line, err := json.Marshal(env)
@@ -380,7 +381,7 @@ type messageEnvelope struct {
 	// separately names the sending session, which may be a different
 	// session; delivery follows SessionID. spec: §7.2 (per-slot routing);
 	// §28.5.3 (sessionId multiplexing).
-	SessionID string `json:"sessionId,omitempty"`
+	SessionID string `json:"sessionId"`
 }
 
 type fromBlock struct {

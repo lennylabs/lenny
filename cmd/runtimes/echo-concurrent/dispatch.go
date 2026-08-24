@@ -89,9 +89,16 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 		}
 
 		// spec: §28.5.3 — the adapter populates the per-session identifier
-		// on every session-scoped frame on every pod, so a frame that
-		// carries none names no session this runtime may act for.
+		// on every session-scoped frame on every pod, so a session-scoped
+		// frame that carries none names no session this runtime may act
+		// for. The rule is scoped to the session-scoped inbound set: a
+		// frame of any other type keeps §15.4's unknown-type tolerance and
+		// is dropped with a diagnostic rather than failing the runtime.
 		if env.SessionID == "" {
+			if !sessionScopedInboundTypes[env.Type] {
+				fmt.Fprintf(stderr, "echo-concurrent: ignoring unaddressed %q frame\n", env.Type)
+				continue
+			}
 			return protocolError{msg: fmt.Sprintf("session-scoped %q frame carries no sessionId", env.Type)}
 		}
 
@@ -106,6 +113,17 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 	// EOF or shutdown: the deferred closeAll drains every slot's echocore
 	// loop and surfaces the first per-slot error.
 	return nil
+}
+
+// sessionScopedInboundTypes is the §28.5.3 session-scoped set on the
+// adapter-to-runtime direction: the inbound frame types that address a
+// session and therefore carry the per-session identifier. Every other
+// inbound type is protocol-level or unknown to this runtime, so it falls
+// under §15.4's unknown-type tolerance rather than under the addressing
+// rule. spec: §15.4; §28.5.3.
+var sessionScopedInboundTypes = map[string]bool{
+	"message":     true,
+	"tool_result": true,
 }
 
 // demux owns the per-session worker map and the single shared output

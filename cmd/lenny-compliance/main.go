@@ -420,8 +420,6 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 	return "response.type=response, output[0].type=" + resp.Output[0].Type, nil
 }
 
-// checkResponseMatchesJSONLSchema validates that the runtime's response
-// frame matches the published adapter JSONL schema. spec: §15.4.6.
 // complianceSessionID is the session the battery addresses every inbound
 // `message` frame to. The adapter populates the per-session identifier on
 // every session-scoped frame on every pod, so a runtime the battery drives
@@ -472,6 +470,8 @@ func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose 
 	return "response.sessionId echoes the inbound " + complianceSessionID, nil
 }
 
+// checkResponseMatchesJSONLSchema validates that the runtime's response
+// frame matches the published adapter JSONL schema. spec: §15.4.6.
 func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
 	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
 	if err != nil {
