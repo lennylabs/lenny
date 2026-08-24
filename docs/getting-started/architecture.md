@@ -132,7 +132,7 @@ The Stream Proxy has its own goroutine pool and concurrency limits. A slow clien
 Processes all file uploads from clients to pod workspaces. Uploads are streamed through the gateway (never directly to pods) to enforce tenant isolation and audit logging. Responsibilities:
 
 - **Payload validation.** Size limits, file type restrictions, and archive format validation.
-- **Staging.** Files are streamed to the pod's staging area and, for durable storage, to the Artifact Store (MinIO).
+- **Staging.** Files are streamed to the session's staging area (`/workspace/slots/{sessionId}/staging`) and, for durable storage, to the Artifact Store (MinIO).
 - **Archive extraction.** tar.gz and zip archives can be extracted during upload.
 - **Circuit breaker.** The Upload Handler has its own circuit breaker. If MinIO is degraded, uploads fail gracefully with 503 while the Stream Proxy and MCP Fabric continue operating normally.
 

@@ -72,13 +72,14 @@ const (
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterClient interface {
-	// PrepareWorkspace accepts streamed upload-file content into the pod's
-	// staging area. It is the first RPC in the §4.7 session assignment
-	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-	// StartSession). Frames sharing an upload_ref are concatenated in
-	// arrival order into one staged file; FinalizeWorkspace then
-	// materializes the uploadFile and uploadArchive plan sources from the
-	// staged content.
+	// PrepareWorkspace accepts streamed upload-file content into the named
+	// session's /workspace/slots/{sessionId}/staging, which is the tree
+	// FinalizeWorkspace promotes from. It is the first RPC in the §4.7
+	// session assignment sequence (PrepareWorkspace, FinalizeWorkspace,
+	// RunSetup, StartSession). Frames sharing an upload_ref are
+	// concatenated in arrival order into one staged file;
+	// FinalizeWorkspace then materializes the uploadFile and uploadArchive
+	// plan sources from the staged content.
 	PrepareWorkspace(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse], error)
 	// FinalizeWorkspace validates the staged workspace content and
 	// materializes the §14 WorkspacePlan into the named session's
@@ -523,13 +524,14 @@ type Adapter_AdapterEventsClient = grpc.BidiStreamingClient[AdapterEventsRequest
 // by the gateway only; the adapter responds to RPCs and emits structured
 // events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterServer interface {
-	// PrepareWorkspace accepts streamed upload-file content into the pod's
-	// staging area. It is the first RPC in the §4.7 session assignment
-	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-	// StartSession). Frames sharing an upload_ref are concatenated in
-	// arrival order into one staged file; FinalizeWorkspace then
-	// materializes the uploadFile and uploadArchive plan sources from the
-	// staged content.
+	// PrepareWorkspace accepts streamed upload-file content into the named
+	// session's /workspace/slots/{sessionId}/staging, which is the tree
+	// FinalizeWorkspace promotes from. It is the first RPC in the §4.7
+	// session assignment sequence (PrepareWorkspace, FinalizeWorkspace,
+	// RunSetup, StartSession). Frames sharing an upload_ref are
+	// concatenated in arrival order into one staged file;
+	// FinalizeWorkspace then materializes the uploadFile and uploadArchive
+	// plan sources from the staged content.
 	PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error
 	// FinalizeWorkspace validates the staged workspace content and
 	// materializes the §14 WorkspacePlan into the named session's

@@ -17,8 +17,8 @@
 // frames, so a frame that gains or loses the property in the schema is
 // reconciled without the gate being edited.
 //
-// spec: 4.6.1 (warm pool controller pod lifecycle), 4.6.2 (frame carriers),
-// 28.5.3 (session-scoped frame addressing in the intra-pod contract cards)
+// spec: 28.5.3 (intra-pod frame addressing), 15.4 (sessionId on
+// session-scoped frames)
 
 package tier11_docs_test
 
@@ -58,7 +58,7 @@ type jsonlSchema struct {
 // frame's fields.
 var fencedJSON = regexp.MustCompile("(?s)```json\n(.*?)```")
 
-// spec: 4.6.1, 4.6.2, 28.5.3
+// spec: 28.5.3, 15.4
 // diagnosis: the published JSONL schema and one of the two prose
 //
 //	statements of the same frame disagree about the per-session

@@ -20,7 +20,7 @@
 // pod-global /sessions/ root, which snapshots a co-tenant's session
 // files.
 //
-// spec: 6.4 (per-session workspace layout), 4.6.2 (per-slot roots)
+// spec: 6.4 (pod filesystem layout), 6.1 (the pod-global staging tree the retirement keeps)
 
 package tier11_docs_test
 
@@ -117,7 +117,7 @@ func TestNoSurfaceNamesTheRetiredPodGlobalWorkingDirectory(t *testing.T) {
 	}
 }
 
-// spec: 6.4, 4.6.2
+// spec: 6.4, 6.1
 // diagnosis: a swept surface states the pod-global staging tree and a
 //
 //	per-session slot tree on one line, which is what a half-restated
@@ -145,7 +145,7 @@ func TestNoSurfaceStatesThePodGlobalStagingTreeBesideASlotTree(t *testing.T) {
 // is the session identifier the per-session tree is keyed on.
 var bareSessionsRoot = regexp.MustCompile(`(^|[^0-9A-Za-z])/sessions/([^/\s"'` + "`" + `)\]]*)`)
 
-// spec: 6.4, 4.6.2
+// spec: 6.4
 // diagnosis: a swept surface states a per-session workspace tree and the
 //
 //	pod-global /sessions/ root on one line, which is what a half-restated
@@ -230,4 +230,93 @@ func readSweptFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+// podAttributedStaging matches a statement that attributes the staging
+// area to the pod. The pod-global /workspace/staging tree is retained as
+// a directory, so the phrase is only false where it names where staged
+// content lands.
+var podAttributedStaging = regexp.MustCompile(`(?i)\bpod(-global|'s|s')?\s+staging\b`)
+
+// stagedContentDestinationCue matches the wording that turns a mention
+// of the staging area into a statement of where staged content lands.
+var stagedContentDestinationCue = regexp.MustCompile(`(?i)\b(upload|uploads|uploaded|stream|streams|streamed|accepts|accepted|lands|written|writes|promot\w*)\b`)
+
+// stagingStatements returns the statements of a swept surface a
+// staging-destination predicate reads: every physical line, plus the
+// join of each consecutive pair whose pod-attributed staging phrase
+// straddles the boundary between them. A comment reflow can wrap the
+// subject and the object of one sentence onto separate lines, which a
+// per-line predicate misses; joining every pair unconditionally instead
+// fuses two unrelated rows of a filesystem-layout listing into one false
+// statement, so the join is taken only where the phrase itself spans the
+// two lines. Each statement carries the line it starts on.
+func stagingStatements(body string) []statementWindow {
+	lines := strings.Split(body, "\n")
+	statements := make([]statementWindow, 0, len(lines))
+	for i, line := range lines {
+		text := stripStatementMarkers(line)
+		statements = append(statements, statementWindow{line: i + 1, text: text})
+		if i+1 >= len(lines) {
+			continue
+		}
+		joined := text + " " + stripStatementMarkers(lines[i+1])
+		if straddlesBoundary(podAttributedStaging.FindAllStringIndex(joined, -1), len(text)) {
+			statements = append(statements, statementWindow{line: i + 1, text: joined})
+		}
+	}
+	return statements
+}
+
+// statementWindow is one statement of a swept surface together with the
+// line the statement starts on.
+type statementWindow struct {
+	line int
+	text string
+}
+
+// straddlesBoundary reports whether any match begins before the join
+// boundary and ends after it, which is what a phrase wrapped across two
+// lines looks like once the lines are joined.
+func straddlesBoundary(matches [][]int, boundary int) bool {
+	for _, m := range matches {
+		if m[0] < boundary && m[1] > boundary {
+			return true
+		}
+	}
+	return false
+}
+
+// stripStatementMarkers removes the leading comment, list, and
+// indentation markers a carrier prefixes a continued statement with, so
+// joining two lines yields the prose the author wrote.
+func stripStatementMarkers(line string) string {
+	return strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "/#*->| \t"))
+}
+
+// spec: 6.4, 6.1
+// diagnosis: a swept surface states that staged content lands in the
+//
+//	pod's staging area. Every session is bound to a slot, so every
+//	PrepareWorkspace writes into /workspace/slots/{sessionId}/staging and
+//	FinalizeWorkspace promotes from there into that session's current
+//	tree. The pod-global /workspace/staging directory is retained but is
+//	not what the RPC writes into, so the surviving statement points a
+//	reader of the contract at the wrong tree for the source half of the
+//	promotion. A failure names the statement to restate on the
+//	per-session staging tree.
+func TestNoSurfaceLandsStagedContentInThePodStagingArea(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range retirementSweepSurfaces(t, root) {
+		for _, window := range stagingStatements(readSweptFile(t, path)) {
+			if !podAttributedStaging.MatchString(window.text) {
+				continue
+			}
+			if !stagedContentDestinationCue.MatchString(window.text) {
+				continue
+			}
+			t.Errorf("%s:%d states that staged content lands in the pod's staging area; every upload lands in %s{sessionId}/staging:\n%s",
+				mustRel(t, root, path), window.line, workspaceSlotRoot, window.text)
+		}
+	}
 }
