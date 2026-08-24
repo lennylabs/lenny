@@ -17,8 +17,8 @@
 // frames, so a frame that gains or loses the property in the schema is
 // reconciled without the gate being edited.
 //
-// spec: 4.6.1 (session-scoped frame addressing), 4.6.2 (frame carriers),
-// 28.5.3 (intra-pod contract cards)
+// spec: 4.6.1 (warm pool controller pod lifecycle), 4.6.2 (frame carriers),
+// 28.5.3 (session-scoped frame addressing in the intra-pod contract cards)
 
 package tier11_docs_test
 
