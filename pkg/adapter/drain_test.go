@@ -69,3 +69,44 @@ func TestDrainReason_spec_15_4_2(t *testing.T) {
 		}
 	}
 }
+
+// spec: §15.4.2 / §15.4.3 (the CH-RUNTIMEOPS drain precedes the hard
+// runtime close), §5.2 (recycle lifecycle), §4.7 (Shutdown recycle
+// disposition)
+//
+// The recycle disposition is not a second condition on the teardown. A
+// Shutdown that carries both a session id and a recycle disposition runs
+// the same in-handler sequence as one that carries the session id alone:
+// the drain signal goes out because the deregistration left the registry
+// holding no bound entry, and the ending session's runtime is closed. The
+// gate on the drain is the bound-entry count and nothing else.
+func TestShutdownWithRecycleStillDrainsAndClosesTheRuntime_spec_5_2(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	s := New("test")
+	rt := &holdRuntime{}
+	s.Runtime = rt
+	s.Lifecycle = lc
+	if err := s.claimSessionForTest("sess-1"); err != nil {
+		t.Fatalf("claimSession: %v", err)
+	}
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
+		DeadlineMs: 4000,
+		Reason:     "session_complete",
+		Recycle:    &adapterv1.RecycleScrub{PodId: "pod-recycled"},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	got := fr.read()
+	if got.Type != "terminate" || got.DeadlineMs != 4000 || got.Reason != "session_complete" {
+		t.Errorf("drain frame = %+v, want terminate deadlineMs 4000 reason session_complete on the "+
+			"recycle disposition", got)
+	}
+	if len(rt.closed) != 1 || rt.closed[0] != "sess-1" {
+		t.Errorf("runtime closed = %v, want [sess-1] on the recycle disposition", rt.closed)
+	}
+}

@@ -50,15 +50,13 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 //
 // Interrupt and Close are scoped to the named session: each Start
 // registers the session in the active set, and Close (or a hard Interrupt)
-// releases it. The shared connection and the spawned child are torn down
-// only when the last active session is released, so a per-slot teardown of
-// one slot leaves sibling slots running over the same connection (§5.2,
-// "Slots fail independently" and the per-slot teardown and release). A
+// releases it. The shared connection, the spawned child, and the listener
+// are torn down only when the last active session is released, so a
+// per-slot teardown of one slot leaves sibling slots running over the same
+// connection (§5.2, "Slots fail independently" and the per-slot teardown
+// and release). A
 // clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it
-// ends only that slot when siblings remain active. ReleaseSession is the
-// §5.2 recycle boundary's teardown: it releases the session and leaves the
-// pod's transport up for the next session. The listener is bound once at
-// construction and outlives every session on the pod.
+// ends only that slot when siblings remain active.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -419,40 +417,17 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 	return nil
 }
 
-// ReleaseSession ends one session's use of the runtime and leaves the
-// pod's transport up, whether or not it was the last active session. It is
-// what the adapter calls instead of Close at the §5.2 recycle boundary,
-// where the gateway holds the pod for its next session: one runtime
-// process per pod serves every session, the §4.7 sidecar runtime runs in a
-// container the pod never restarts, and a next session that found the
-// connection gone would have no runtime to reach. spec: §5.2 (the pod
-// keeps its process alive across the recycle boundary and reuses it for
-// the next session); §4.7.
-func (p *SocketRuntimeProcess) ReleaseSession(_ context.Context, sessionID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.releaseActiveLocked(sessionID)
-	return nil
-}
-
 // Close tears down one slot's session. One runtime process per pod serves
 // every slot over the single connection, so Close is scoped to the named
 // session: it releases that slot's bookkeeping, and only when the last
 // active session is released does it close the shared socket connection
-// (the §15.4 clean-exit signal) and wait the resolved grace window for a
-// spawned child to exit. A Close for one slot while siblings remain active
-// leaves the connection up so the siblings' streams survive (§5.2, "Slots
-// fail independently" and "Other slots continue unaffected"). It is
+// (the §15.4 clean-exit signal), wait the resolved grace window for a
+// spawned child to exit, and close the listener. A Close for one slot
+// while siblings remain active leaves the connection up so the siblings'
+// streams survive (§5.2, "Slots fail independently" and "Other slots
+// continue unaffected"). It is
 // idempotent: a Close for a session not in the active set (already
 // released, or after the connection is gone) is a no-op.
-//
-// The listener stays bound. It is the pod's runtime socket rather than the
-// session's: it is bound at construction before any session exists, and
-// the address is released when the adapter process exits with the pod.
-// Closing it with the last session turned a pod-lifetime bind into a
-// one-session resource, so any later Start on the pod failed its accept
-// with a closed listener and the pod could serve nothing more.
-// spec: §5.2 (recycle lifecycle); §4.7 (sidecar runtime transport).
 //
 // The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
@@ -490,7 +465,7 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 			<-done
 		}
 	}
-	return nil
+	return p.listener.Close()
 }
 
 // defaultSocketShutdownGrace is the SIGTERM-to-SIGKILL pivot window the
