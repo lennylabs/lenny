@@ -20,8 +20,7 @@
 // pod-global /sessions/ root, which snapshots a co-tenant's session
 // files.
 //
-// spec: 6.4 (per-session workspace layout), 4.6.1 (warm pool controller pod
-// lifecycle), 4.6.2 (per-slot roots), 16.1 (adapter metrics)
+// spec: 6.4 (per-session workspace layout), 4.6.2 (per-slot roots)
 
 package tier11_docs_test
 

@@ -6,11 +6,17 @@
 // `/workspace/slots/{sessionId}/current` and no pod-global `/workspace/current`
 // exists. The retirement is of that one path: the pod-global
 // `/workspace/staging` and the read-only, pod-shared `/workspace/shared/`
-// remain mounted on every pod. Two runtime-author pages restate the layout,
-// and each has carried a statement a runtime author would implement wrongly:
-// the lifecycle page generalized the retirement to every pod-global workspace
-// directory, contradicting the tree printed directly above it, and the
-// integration-levels page still sent a Basic-level author to the retired path.
+// remain mounted on every pod.
+//
+// Two runtime-author pages restate the layout, and these cases assert what
+// each page must say about it: the lifecycle page states the retirement of
+// the pod-global working directory without generalizing it to the pod-shared
+// trees its own printed layout carries, and the integration-levels page
+// states `/workspace/slots/{sessionId}/current/` as the Basic-level working
+// directory. The predicate over surviving occurrences of the retired literal
+// is a directory-wide sweep and lives in
+// workspace_path_literal_sweep_test.go, which owns it for every surface
+// rather than for these two pages.
 //
 // These cases read the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.

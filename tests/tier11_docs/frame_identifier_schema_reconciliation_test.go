@@ -126,26 +126,38 @@ func jsonlFramesDeclaringIdentifier(t *testing.T, root string) map[string]bool {
 	return frames
 }
 
+// frameCardLabel matches the bolded lead-in that opens one frame's
+// contract card. The capture is the frame name.
+var frameCardLabel = regexp.MustCompile("^\\*\\*(?:Inbound|Outbound): `([a-z_]+)`")
+
+// boldedLeadIn matches any bolded lead-in in the section. A card ends at
+// the next one of these rather than at the next frame label, because the
+// prose that follows the last card (the addressing rules, the annotated
+// protocol trace, the internal part format) also carries fenced JSON. A
+// card delimited only by the next frame label would swallow all of it,
+// and the identifier assertion for the last card would hold on a
+// neighbour's fence whatever the card itself declares.
+var boldedLeadIn = regexp.MustCompile(`^\*\*`)
+
 // frameContractCard returns the §28.5.3 block for one frame. The blocks
 // are bold labels rather than headings, so the card runs from its own
-// label to the next one.
+// label to the next bolded lead-in, or to the end of the section when it
+// is the last block in it.
 func frameContractCard(t *testing.T, cards, frame string) string {
 	t.Helper()
 	lines := strings.Split(cards, "\n")
-	label := regexp.MustCompile("^\\*\\*(Inbound|Outbound): `([a-z_]+)`")
 	start := -1
 	for i, ln := range lines {
-		m := label.FindStringSubmatch(ln)
-		if m == nil {
-			continue
-		}
 		if start < 0 {
-			if m[2] == frame {
+			m := frameCardLabel.FindStringSubmatch(ln)
+			if m != nil && m[1] == frame {
 				start = i
 			}
 			continue
 		}
-		return strings.Join(lines[start:i], "\n")
+		if boldedLeadIn.MatchString(ln) {
+			return strings.Join(lines[start:i], "\n")
+		}
 	}
 	if start < 0 {
 		t.Fatalf("spec §28.5.3: no contract card for the %s frame (renamed or removed?)", frame)
@@ -165,4 +177,45 @@ func fencedJSONDeclares(body, property string) bool {
 		}
 	}
 	return false
+}
+
+// spec: 28.5.3
+// diagnosis: the §28.5.3 card delimiter runs past the end of a frame's
+//
+//	block and into the prose that follows it. The last labelled card in
+//	the section has no frame label after it, so a delimiter that ends only
+//	at the next frame label absorbs the addressing rules, the annotated
+//	protocol trace, and the internal part format, every one of which
+//	carries a fenced JSON block naming the per-session identifier. The
+//	identifier assertion for that card then holds on a neighbour's fence
+//	and stays green when the card itself loses the property. A failure
+//	means the delimiter is reading content the card does not own.
+func TestFrameContractCardEndsAtTheNextBoldedLeadIn(t *testing.T) {
+	const cards = "**Outbound: `last_frame`**\n" +
+		"\n" +
+		"```json\n" +
+		"{\"type\": \"last_frame\"}\n" +
+		"```\n" +
+		"\n" +
+		"**Addressing.** Unrelated prose that follows the last card.\n" +
+		"\n" +
+		"```json\n" +
+		"{\"type\": \"last_frame\", \"sessionId\": \"alice-1\"}\n" +
+		"```\n"
+
+	block := frameContractCard(t, cards, "last_frame")
+	if strings.Contains(block, "Unrelated prose") {
+		t.Errorf("the last card absorbed the prose that follows it:\n%s", block)
+	}
+	if fencedJSONDeclares(block, frameIdentifierProperty) {
+		t.Errorf("the last card's identifier assertion read a fence the card does not own:\n%s", block)
+	}
+
+	// The same boundary holds against the section as it stands: the card for
+	// the last labelled frame stops before the addressing rules.
+	cardsSection := specSection(t, filepath.Join(repoRoot(t), "spec", "28_communication-channels.md"), "28.5.3")
+	live := frameContractCard(t, cardsSection, "set_tracing_context")
+	if strings.Contains(live, "**Addressing.**") {
+		t.Errorf("spec §28.5.3: the set_tracing_context card runs past its own block into the addressing rules:\n%s", live)
+	}
 }

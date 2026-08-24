@@ -19,9 +19,12 @@
 package tier11_docs_test
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -36,25 +39,14 @@ var retirementSweepRoots = []string{
 	"sdks",
 }
 
-// retirementSweepExtensions are the carriers a retired literal can hide
-// in. Every reader-facing document, schema (both the JSON schemas and
-// the proto definitions), chart template, scaffold template, reference
-// runtime, and SDK source under the swept roots is one of these.
-var retirementSweepExtensions = map[string]bool{
-	".md":    true,
-	".yaml":  true,
-	".yml":   true,
-	".json":  true,
-	".go":    true,
-	".tmpl":  true,
-	".py":    true,
-	".ts":    true,
-	".tsx":   true,
-	".js":    true,
-	".sh":    true,
-	".txt":   true,
-	".proto": true,
-}
+// The sweep has no carrier whitelist. The predicate is stated over the
+// directory set, so every authored file under a swept root is read
+// whatever its extension: a Helm helper template (.tpl), a packaging
+// manifest (.toml), an ECMAScript module (.mjs), a published HTML page,
+// and an extensionless script are all carriers a retired literal can
+// hide in, and enumerating extensions reintroduces the enumerated-subset
+// hole the directory-wide predicate exists to close. Only binary content
+// is skipped, because no authored statement lives in it.
 
 // retirementSweepSkipDirs are directories whose contents are neither
 // authored nor read as the current contract: dependency trees, build
@@ -87,7 +79,10 @@ func retirementSweepSurfaces(t *testing.T, root string) []string {
 				}
 				return nil
 			}
-			if !retirementSweepExtensions[strings.ToLower(filepath.Ext(path))] {
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			if isBinaryFile(t, path) {
 				return nil
 			}
 			walked++
@@ -103,4 +98,64 @@ func retirementSweepSurfaces(t *testing.T, root string) []string {
 	}
 	return append(swept,
 		filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json"))
+}
+
+// isBinaryFile reports whether a swept candidate holds binary content,
+// which is decided the way the common text tools decide it: a NUL byte
+// in the leading bytes. A binary file carries no authored statement, so
+// the sweep skips it rather than matching a literal inside compiled or
+// compressed content.
+func isBinaryFile(t *testing.T, path string) bool {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	var head [512]byte
+	n, err := f.Read(head[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return bytes.IndexByte(head[:n], 0) >= 0
+}
+
+// spec: 6.4
+// diagnosis: the retirement sweeps read a subset of the directories they
+//
+//	claim to cover. The predicate is stated over the directory set, so an
+//	authored file under a swept root that the walker declines to open is a
+//	place a retired literal ships green: a Helm helper template, a
+//	packaging manifest, an ECMAScript module, or a published HTML page all
+//	sat outside the earlier extension whitelist while living under the
+//	named roots. A failure names the file the walk skipped.
+func TestRetirementSweepReadsEveryAuthoredFileUnderItsRoots(t *testing.T) {
+	root := repoRoot(t)
+	swept := map[string]bool{}
+	for _, path := range retirementSweepSurfaces(t, root) {
+		swept[path] = true
+	}
+	for _, rel := range retirementSweepRoots {
+		err := filepath.WalkDir(filepath.Join(root, rel), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if retirementSweepSkipDirs[d.Name()] {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() || isBinaryFile(t, path) {
+				return nil
+			}
+			if !swept[path] {
+				t.Errorf("%s is an authored file under %s that no retirement sweep reads", mustRel(t, root, path), rel)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", rel, err)
+		}
+	}
 }
