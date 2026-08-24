@@ -184,13 +184,15 @@ type MessagePayload struct {
 	// spec: §15.4.
 	Delivery string `json:"delivery,omitempty"`
 
-	// The §5.2 slotId is deliberately absent from the request body. slotId is
-	// adapter-injected (§15.4) and internal: a client addresses a message by
-	// session_id (the path parameter on POST /v1/sessions/{id}/messages), and
-	// the gateway derives the bound slot from the session, stamping it on the
-	// outbound adapter envelope. A client-supplied slotId is silently ignored
-	// because the field does not deserialize onto the payload. spec: §7.2
-	// (per-slot routing), §15.4.
+	// The per-session identifier is deliberately absent from the request
+	// body. It is internal and gateway-injected: a client addresses a
+	// message by session_id (the path parameter on
+	// POST /v1/sessions/{id}/messages), and the gateway stamps that session
+	// on the outbound adapter envelope as `sessionId` on every pod,
+	// whatever the pool's concurrency. A client-supplied `sessionId` in the
+	// body is silently ignored because the field does not deserialize onto
+	// the payload. spec: §4.6.1 (every session-scoped frame carries the
+	// session), §15.4.
 }
 
 // MessageResponse is the §15.1 message-injection response. It wraps

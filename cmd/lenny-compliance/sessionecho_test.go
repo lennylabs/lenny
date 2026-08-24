@@ -4,7 +4,8 @@
 // runtime echoes the per-session identifier the adapter handed it on the
 // `response` it emits. The pass arm runs against the echo reference
 // runtime built by TestMain; the reject arms use fake binaries that omit
-// or alter the identifier, which is what the check exists to catch.
+// or alter the identifier, or still emit the retired `slotId` key
+// alongside it, which is what the check exists to catch.
 package main
 
 import (
@@ -47,6 +48,11 @@ func TestResponseEchoesSessionIDRejects_spec_28_5_3(t *testing.T) {
 			name: "a runtime that omits the identifier",
 			body: `read line; printf '%s\n' '{"type":"response","output":[{"type":"text","inline":"pong"}]}'`,
 			want: "carries no sessionId",
+		},
+		{
+			name: "a runtime that emits the retired slotId alongside the session",
+			body: `read line; printf '%s\n' '{"type":"response","sessionId":"sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1","slotId":"slot_01","output":[{"type":"text","inline":"pong"}]}'`,
+			want: "retired slotId key",
 		},
 		{
 			name: "a runtime that alters the identifier",

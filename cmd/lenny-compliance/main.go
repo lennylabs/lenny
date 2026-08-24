@@ -432,7 +432,10 @@ const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
 // identifier it was handed on the frames it emits in response, on every
 // pod. Without the echo the adapter cannot attribute the response to the
 // session that produced it, and on a pod holding more than one slot the
-// frame is rejected and relayed to no stream.
+// frame is rejected and relayed to no stream. The check requires the
+// echoed value and the absence of the retired `slotId` key, so an
+// emitter that still writes the old spelling fails here rather than
+// diverging only on the wire.
 // spec: §15.4.3; §28.5.3.
 func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose bool) (string, error) {
 	in := []string{
@@ -451,12 +454,20 @@ func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose 
 	var resp struct {
 		Type      string `json:"type"`
 		SessionID string `json:"sessionId"`
+		// SlotID decodes the retired frame key so the check pins the
+		// rename rather than the mere presence of an identifier. The
+		// session-scoped frames carry `sessionId` and nothing else
+		// addresses them. spec: §28.5.3.
+		SlotID string `json:"slotId"`
 	}
 	if err := json.Unmarshal([]byte(stdout[0]), &resp); err != nil {
 		return "", fmt.Errorf("response not JSON: %w (line: %s)", err, stdout[0])
 	}
 	if resp.Type != "response" {
 		return "", fmt.Errorf("response.type = %q, want \"response\"", resp.Type)
+	}
+	if resp.SlotID != "" {
+		return "", fmt.Errorf("response carries the retired slotId key (%q); a session-scoped frame is addressed by sessionId alone", resp.SlotID)
 	}
 	if resp.SessionID == "" {
 		return "", fmt.Errorf("response carries no sessionId; a Basic-level runtime echoes the per-session identifier it was handed (%s)", complianceSessionID)

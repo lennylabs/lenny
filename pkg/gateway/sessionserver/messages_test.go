@@ -766,20 +766,23 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	}
 }
 
-// TestMessagesClientSlotIDIsIgnored — the §5.2 slotId is internal and
-// adapter-injected: the client addresses a message by session_id and never
-// supplies a slotId. A slotId in the request body does not deserialize onto
-// the payload, so it is silently ignored while the message still delivers.
-// spec: §7.2 (per-slot routing), §15.4.
-func TestMessagesClientSlotIDIsIgnored(t *testing.T) {
+// TestMessagesClientSessionIDIsIgnored — the per-session identifier is
+// internal and gateway-injected: the client addresses a message by the
+// session_id path parameter and never supplies one in the body. A
+// `sessionId` in the request body does not deserialize onto the payload,
+// so it is silently ignored while the message still delivers to the
+// session the path names.
+// spec: §4.6.1 (every session-scoped frame carries the session), §15.4.
+func TestMessagesClientSessionIDIsIgnored(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_slot")
-	// A raw body that carries a stray client slotId. The gateway must accept
-	// the message (the field is ignored, not rejected) and deliver it.
+	// A raw body that carries a stray client sessionId naming another
+	// session. The gateway must accept the message (the field is ignored
+	// rather than rejected) and deliver it against the path parameter.
 	rr := sendRawMessageRequest(t, srv.Handler(), "sess_slot",
-		`{"messages":[{"content":"ok","slotId":"slot_01"}]}`)
+		`{"messages":[{"content":"ok","sessionId":"sess_other"}]}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("client slotId rejected: got %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("client sessionId rejected: got %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var resp sessionserver.MessageResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
