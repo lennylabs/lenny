@@ -50,6 +50,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit"
@@ -65,14 +66,13 @@ func main() {
 	// §4.7: resolve the transport. LENNY_ADAPTER_SOCKET selects the
 	// sidecar-pod abstract socket; its absence selects stdin/stdout. The
 	// sessionId multiplexing is identical over either transport.
-	transport, err := runtimekit.Open(context.Background())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(exitRuntimeError)
-	}
-	defer transport.Close()
-
-	err = run(context.Background(), transport.Reader, transport.Writer, os.Stderr)
+	// §4.7: Serve runs one §28.5.3 loop per adapter connection, so the
+	// §5.2 recycle boundary's close of the ending session's runtime leaves
+	// this process alive to serve the pod's next session.
+	err := runtimekit.Serve(context.Background(),
+		func(ctx context.Context, in io.Reader, out io.Writer) error {
+			return run(ctx, in, out, os.Stderr)
+		})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var pe protocolError

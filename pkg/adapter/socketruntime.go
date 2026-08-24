@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -520,6 +521,19 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 	p.connected = false
 	p.mu.Unlock()
 
+	// A spawned child is the developer loop's runtime, whose lifetime the
+	// adapter owns: the next Start on this pod spawns another one, so this
+	// child is signalled rather than left to notice the closed connection.
+	// A §4.7 sidecar runtime keeps its process alive across the §5.2
+	// recycle boundary and redials, so a spawned one would otherwise
+	// outlive its connection here and the next Start would find a second
+	// runtime on the same socket. The signal precedes the connection close
+	// so the child exits on it rather than redialing into the listener's
+	// backlog. spec: §15.4 (SIGTERM, then SIGKILL at the grace deadline);
+	// §5.2.
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+	}
 	if conn != nil {
 		_ = conn.Close()
 	}

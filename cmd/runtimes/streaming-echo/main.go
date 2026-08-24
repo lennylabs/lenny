@@ -61,14 +61,13 @@ func main() {
 	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
 	// The Full-level CH-RUNTIMEOPS conversation runs on a separate Unix
 	// socket resolved from the adapter manifest, unaffected by this choice.
-	transport, err := runtimekit.Open(context.Background())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(exitRuntimeError)
-	}
-	defer transport.Close()
-
-	if err := run(transport.Reader, transport.Writer, os.Stderr); err != nil {
+	// §4.7: Serve runs one §28.5.3 loop per adapter connection, so the
+	// §5.2 recycle boundary's close of the ending session's runtime leaves
+	// this process alive to serve the pod's next session.
+	if err := runtimekit.Serve(context.Background(),
+		func(_ context.Context, in io.Reader, out io.Writer) error {
+			return run(in, out, os.Stderr)
+		}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var pe protocolError
 		if errors.As(err, &pe) {

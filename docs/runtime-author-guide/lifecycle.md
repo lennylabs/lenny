@@ -327,7 +327,7 @@ Full-level runtimes receive a `terminate` message on the CH-RUNTIMEOPS as the pr
 | `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
 | `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
 
-Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake.
+Your runtime must end the session within `deadlineMs`. If a runtime the adapter itself started does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always ends the session's work. On a recycling pod it ends one session rather than the pod: the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake. What the runtime process does after the session ends depends on the deployment model, described under Recycle Lifecycle below.
 
 ---
 
@@ -368,7 +368,12 @@ When the in-flight counter for a provider reaches zero and a credential rotation
 
 ## Recycle Lifecycle (recycle.enabled: true)
 
-A recycling pod is reused across sequential sessions without pod replacement. Recycling requires no runtime cooperation: your binary exits at the end of each session as it does in the default mode, and the adapter runs the whole-pod scrub and regenerates the next session's manifest.
+A recycling pod is reused across sequential sessions without pod replacement. Recycling requires no runtime cooperation: the adapter runs the whole-pod scrub and regenerates the next session's manifest with no exchange with your runtime.
+
+The adapter closes the ending session's runtime at that boundary, and what your process does next depends on which deployment model it runs under.
+
+- Sidecar model (your runtime is its own pod container): the adapter closes the connection your runtime dialed, and the pod keeps your process alive and reuses it for the next session. Your runtime redials `LENNY_ADAPTER_SOCKET` and runs a fresh session loop, carrying no state from the session that ended. Exiting instead leaves the recycled pod with no runtime, because the pod does not restart your container. A process that redials and finds the socket gone is being torn down with the pod and should exit 0. The reference runtimes under `cmd/runtimes/` get this from the `runtimekit.Serve` helper.
+- Embedded model (the adapter is linked into your image, or it started your binary itself): your binary exits at the end of each session as it does in the default mode, and the adapter starts a fresh runtime process for the next session.
 
 ![Recycle lifecycle: claimed, recycling whole-pod scrub, sdk_connecting SDK re-warm, reserved tenant hold, then claimed again on a same-tenant rebind or idle on hold expiry.](../assets/diagrams/recycle-lifecycle.svg)
 
