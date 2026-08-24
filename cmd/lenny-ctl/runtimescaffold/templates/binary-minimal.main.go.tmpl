@@ -74,11 +74,19 @@ type message struct {
 }
 
 // part is one content part of a message or response. Basic-level
-// runtimes need only the type and inline fields.
+// runtimes need only the schema version, the type, and the inline
+// field. schemaVersion is required by the MessagePart schema every
+// `response` frame's output items are validated against, so every part
+// this runtime emits carries it.
 type part struct {
-	Type   string `json:"type"`
-	Inline string `json:"inline,omitempty"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Type          string `json:"type"`
+	Inline        string `json:"inline,omitempty"`
 }
+
+// messagePartSchemaVersion is the MessagePart schema revision this
+// runtime emits. The schema requires the field on every part.
+const messagePartSchemaVersion = 1
 
 // shutdownFrame is the inbound shutdown frame. The runtime exits before
 // deadlineMs elapses.
@@ -221,11 +229,16 @@ func handleMessage(enc *json.Encoder, w *bufio.Writer, line []byte, seq int) err
 	for _, p := range m.Input {
 		if p.Type == "text" && p.Inline != "" {
 			out = append(out, part{
-				Type:   "text",
-				Inline: fmt.Sprintf("[{{.Name}} seq=%d] %s", seq, p.Inline),
+				SchemaVersion: messagePartSchemaVersion,
+				Type:          "text",
+				Inline:        fmt.Sprintf("[{{.Name}} seq=%d] %s", seq, p.Inline),
 			})
 			continue
 		}
+		// An echoed inbound part keeps its content and is stamped with
+		// the schema version this runtime emits, so a part that arrived
+		// without one still validates on the way out.
+		p.SchemaVersion = messagePartSchemaVersion
 		out = append(out, p)
 	}
 	return writeFrame(enc, w, response{Type: "response", SessionID: m.SessionID, Output: out})

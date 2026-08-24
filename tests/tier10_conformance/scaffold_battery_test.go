@@ -10,8 +10,8 @@
 // the repository's own build, so a wrong or missing edit to it turns
 // nothing red until a runtime author scaffolds it.
 //
-// The case scaffolds the cell, builds it, and runs the Basic battery
-// against the resulting binary.
+// The case scaffolds the cell, builds it, and runs the whole Basic
+// battery against the resulting binary, requiring every check to pass.
 
 package tier10_conformance_test
 
@@ -30,21 +30,18 @@ import (
 //	the binary/minimal cell), 28.5.3 (the frames the skeleton reads and
 //	emits)
 //
-// diagnosis: the shipped SDK-free skeleton no longer echoes the
+// diagnosis: the shipped SDK-free skeleton no longer satisfies the
 //
-//	per-session identifier it was handed, so `lenny runtime scaffold
-//	--language binary --template minimal` hands a runtime author a
-//	starting point whose `response` frames the adapter rejects on any pod
-//	holding more than one slot, and the command reference's
-//	"Basic-level-compliant skeleton" claim is false for that obligation.
-//
-// The case asserts the per-session echo check rather than the whole
-// battery. The shipped template also fails the two schema checks
-// (`response_matches_jsonl_schema` and `messagepart_schema_compliance`)
-// because its emitted frames carry no `schemaVersion`, which is a
-// separate pre-existing defect of the template that this case reports
-// but does not gate on.
-func TestScaffoldedBinaryMinimalEchoesTheSessionAddress_spec_28_5_3(t *testing.T) {
+//	Basic battery, so `lenny runtime scaffold --language binary
+//	--template minimal` hands a runtime author a starting point the
+//	adapter rejects, and the command reference's
+//	"Basic-level-compliant skeleton" claim is false. A failure naming
+//	`response_echoes_session_id` means the skeleton stopped echoing the
+//	per-session identifier it was handed, so its `response` frames are
+//	rejected on any pod holding more than one slot. A failure naming a
+//	schema check means the frames the skeleton emits no longer validate
+//	against the JSON Lines and MessagePart schemas.
+func TestScaffoldedBinaryMinimalPassesTheBasicBattery_spec_24_18(t *testing.T) {
 	a := buildArtifacts(t)
 
 	base := t.TempDir()
@@ -70,18 +67,18 @@ func TestScaffoldedBinaryMinimalEchoesTheSessionAddress_spec_28_5_3(t *testing.T
 	if report.Level != "basic" {
 		t.Errorf("report level = %q, want basic", report.Level)
 	}
+	assertAllPass(t, "scaffolded binary/minimal", "basic", report)
+
+	// The battery's membership is asserted separately from its result:
+	// a battery that stopped running the per-session echo check would
+	// pass the whole-battery assertion above while leaving the echo
+	// obligation unverified for the shipped skeleton.
 	const echoCheck = "response_echoes_session_id"
 	var seen bool
 	for _, c := range report.Checks {
-		if c.Name != echoCheck {
-			if !c.Pass {
-				t.Logf("scaffolded binary/minimal also fails the pre-existing basic check %q: %s", c.Name, c.Detail)
-			}
-			continue
-		}
-		seen = true
-		if !c.Pass {
-			t.Errorf("scaffolded binary/minimal failed %q: %s", echoCheck, c.Detail)
+		if c.Name == echoCheck {
+			seen = true
+			break
 		}
 	}
 	if !seen {
