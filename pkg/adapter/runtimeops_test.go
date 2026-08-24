@@ -42,26 +42,6 @@ func (fr *fakeRuntime) read() lifecycleFrame {
 	return frame
 }
 
-// readWithin waits up to d for one frame. It reports whether a frame
-// arrived, so a case can assert that the adapter sent nothing: a read
-// that times out is the absent frame, and any other read error is a
-// broken connection the case should fail on.
-func (fr *fakeRuntime) readWithin(d time.Duration) (lifecycleFrame, bool) {
-	fr.t.Helper()
-	_ = fr.conn.SetReadDeadline(time.Now().Add(d))
-	defer func() { _ = fr.conn.SetReadDeadline(time.Time{}) }()
-	frame, err := readLifecycleFrame(fr.r)
-	if err == nil {
-		return frame, true
-	}
-	var nerr net.Error
-	if errors.As(err, &nerr) && nerr.Timeout() {
-		return lifecycleFrame{}, false
-	}
-	fr.t.Fatalf("fakeRuntime read: %v", err)
-	return lifecycleFrame{}, false
-}
-
 func (fr *fakeRuntime) write(f lifecycleFrame) {
 	fr.t.Helper()
 	enc := json.NewEncoder(fr.conn)

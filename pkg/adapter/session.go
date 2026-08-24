@@ -251,9 +251,7 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 		// signal the shared runtime to terminate while it is still serving
 		// that session. It precedes the close because the last session's
 		// close tears the shared runtime down and a terminate frame sent
-		// afterwards reaches a dead runtime. The recycle disposition does
-		// not enter the decision: the ending session's runtime is closed
-		// on that request too, so the drain still precedes a hard close.
+		// afterwards reaches a dead runtime.
 		if !boundRemains {
 			s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
 		}

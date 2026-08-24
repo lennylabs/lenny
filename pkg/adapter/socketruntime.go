@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -51,15 +50,12 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 //
 // Interrupt and Close are scoped to the named session: each Start
 // registers the session in the active set, and Close (or a hard Interrupt)
-// releases it. The shared connection and the spawned child are torn down
-// only when the last active session is released, so a per-slot teardown of
-// one slot leaves sibling slots running over the same connection (§5.2,
-// "Slots fail independently" and the per-slot teardown and release). A
-// clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it
-// ends only that slot when siblings remain active. The listener is bound
-// once at construction and outlives every session on the pod, so the
-// §5.2 recycle boundary's close of the last session leaves the address
-// bound and the next session's Start accepts a fresh connection on it.
+// releases it. The shared connection, the spawned child, and the listener
+// are torn down only when the last active session is released, so a
+// per-slot teardown of one slot leaves sibling slots running over the same
+// connection (spec/05:534 — "Slots fail independently"; spec/05:537 —
+// per-slot teardown and release). A clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it ends only that slot when
+// siblings remain active.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -72,17 +68,10 @@ type SocketRuntimeProcess struct {
 	// connect. Zero defaults to 30s.
 	AcceptTimeout time.Duration
 
-	mu        sync.Mutex
-	connected bool
-	conn      net.Conn
-	// acceptCh is the one outstanding listener Accept, shared by every
-	// Start that has to wait for the runtime to connect.
-	acceptCh chan acceptResult
-	cmd      *exec.Cmd
-	// subscribers is the current connection's Output subscriber set. Each
-	// connection gets a fresh set at Start, and its reader closes that set
-	// alone, so a session that subscribes after a previous connection ended
-	// is never torn down by the previous connection's reader. spec: §5.2.
+	mu          sync.Mutex
+	connected   bool
+	conn        net.Conn
+	cmd         *exec.Cmd
 	subscribers map[*subscriber]struct{}
 	// active is the set of sessions/slots Start has registered and Close
 	// or a hard Interrupt has not yet released. The shared connection is
@@ -101,12 +90,6 @@ type subscriber struct {
 	feed chan []byte
 	out  chan []byte
 	done chan struct{}
-	// owner is the subscriber set of the connection this consumer
-	// subscribed to. Each connection has its own set, so the reader of a
-	// connection the adapter has already closed never closes a subscriber
-	// that a later session registered against the connection after it.
-	// spec: §5.2 ("Other slots continue unaffected").
-	owner map[*subscriber]struct{}
 	// closeOnce guards done so the two concurrent closers — closeSubscribers
 	// when the fan-out reader hits EOF (a per-slot Close or Interrupt that
 	// closes the shared connection), and unsubscribe on the Output context's
@@ -118,12 +101,11 @@ type subscriber struct {
 // newSubscriber starts a subscriber and its pump. The pump forwards each
 // fed frame to out and closes out when done is closed, so the Attach demux
 // observes the runtime's connection close.
-func newSubscriber(owner map[*subscriber]struct{}) *subscriber {
+func newSubscriber() *subscriber {
 	s := &subscriber{
-		feed:  make(chan []byte, 64),
-		out:   make(chan []byte),
-		done:  make(chan struct{}),
-		owner: owner,
+		feed: make(chan []byte, 64),
+		out:  make(chan []byte),
+		done: make(chan struct{}),
 	}
 	go s.pump()
 	return s
@@ -231,13 +213,10 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
 
-	// Each connection carries its own subscriber set, so the reader below
-	// tears down only the consumers that subscribed to this connection.
-	subs := map[*subscriber]struct{}{}
 	p.mu.Lock()
 	p.conn = conn
 	p.connected = true
-	p.subscribers = subs
+	p.subscribers = map[*subscriber]struct{}{}
 	p.addActiveLocked(sessionID)
 	p.mu.Unlock()
 
@@ -245,7 +224,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// to all subscribers, so concurrent per-slot Attach streams each see
 	// the runtime's full output and demultiplex by sessionId.
 	// spec: §28.5.3.
-	go p.fanOut(conn, subs, scanner)
+	go p.fanOut(scanner)
 	return nil
 }
 
@@ -255,43 +234,22 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 // stream observes the EOF. Each subscriber owns its own buffered intake
 // (subscriber.feed), so a slow or dead consumer on one slot's Attach
 // stream never head-of-line-blocks the reader from delivering a sibling
-// slot's frames.
-//
-// The scan ending is the runtime's end of the connection: the §15.4 clean
-// exit, a crash, or the adapter's own Close. The reader therefore clears
-// the pod's connection state on its way out, so a Start after the runtime
-// has gone re-establishes the transport instead of returning early on a
-// live-looking connection that is really a dead socket. The clear is
-// keyed on the connection the reader owns, so a connection a later Start
-// has already replaced is left alone. spec: §28.5.3; §5.2.
-func (p *SocketRuntimeProcess) fanOut(conn net.Conn, subs map[*subscriber]struct{}, scanner *bufio.Scanner) {
-	defer p.closeSubscribers(subs)
-	defer p.noteConnectionGone(conn)
+// slot's frames. spec: §28.5.3.
+func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner) {
+	defer p.closeSubscribers()
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
-		p.broadcast(subs, line)
+		p.broadcast(line)
 	}
-}
-
-// noteConnectionGone marks the pod's runtime transport down when conn is
-// still the live connection. spec: §5.2.
-func (p *SocketRuntimeProcess) noteConnectionGone(conn net.Conn) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.conn != conn {
-		return
-	}
-	p.conn = nil
-	p.connected = false
 }
 
 // broadcast hands one frame to every current subscriber. Each subscriber
 // has a dedicated pump goroutine draining its buffered feed into its Output
 // channel, so the send to one subscriber never blocks delivery to another.
-func (p *SocketRuntimeProcess) broadcast(owner map[*subscriber]struct{}, line []byte) {
+func (p *SocketRuntimeProcess) broadcast(line []byte) {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(owner))
-	for s := range owner {
+	subs := make([]*subscriber, 0, len(p.subscribers))
+	for s := range p.subscribers {
 		subs = append(subs, s)
 	}
 	p.mu.Unlock()
@@ -300,18 +258,16 @@ func (p *SocketRuntimeProcess) broadcast(owner map[*subscriber]struct{}, line []
 	}
 }
 
-// closeSubscribers shuts down every subscriber still registered in owner,
-// the subscriber set of one connection, so its Output channel closes and
-// the per-slot Attach stream observes that connection's close. A
-// subscriber the consumer already unsubscribed is absent from the set, so
-// each closes exactly once. Only the departing reader's own set is closed,
-// so a later connection's subscribers survive it. spec: §5.2.
-func (p *SocketRuntimeProcess) closeSubscribers(owner map[*subscriber]struct{}) {
+// closeSubscribers shuts every still-registered subscriber down so its
+// Output channel closes and the per-slot Attach stream observes the
+// runtime's connection close. A subscriber the consumer already
+// unsubscribed is absent from the map, so each closes exactly once.
+func (p *SocketRuntimeProcess) closeSubscribers() {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(owner))
-	for s := range owner {
+	subs := make([]*subscriber, 0, len(p.subscribers))
+	for s := range p.subscribers {
 		subs = append(subs, s)
-		delete(owner, s)
+		delete(p.subscribers, s)
 	}
 	p.mu.Unlock()
 	for _, s := range subs {
@@ -320,19 +276,18 @@ func (p *SocketRuntimeProcess) closeSubscribers(owner map[*subscriber]struct{}) 
 }
 
 // accept waits for the runtime's connection, bounded by timeout and ctx.
-//
-// The listener is pod-lifetime, so an accept that times out abandons its
-// wait rather than its goroutine: the pending accept is parked on the
-// struct and the next Start waits on that same one. Spawning a second
-// Accept per attempt would leak a goroutine and a claim on the address
-// per timed-out Start, and the two would race for the runtime's
-// connection, one of them handing it to a Start that had already given
-// up. spec: §5.2 (a scrubbed pod serves the next session); §4.7.
 func (p *SocketRuntimeProcess) accept(ctx context.Context, timeout time.Duration) (net.Conn, error) {
-	ch := p.pendingAccept()
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		conn, err := p.listener.Accept()
+		ch <- result{conn: conn, err: err}
+	}()
 	select {
 	case r := <-ch:
-		p.clearPendingAccept(ch)
 		if r.err != nil {
 			return nil, fmt.Errorf("adapter: accept runtime connection: %w", r.err)
 		}
@@ -342,41 +297,6 @@ func (p *SocketRuntimeProcess) accept(ctx context.Context, timeout time.Duration
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-}
-
-// pendingAccept returns the in-flight listener accept, starting one when
-// none is outstanding. The channel is buffered so the accept goroutine
-// completes even when every waiter has given up.
-func (p *SocketRuntimeProcess) pendingAccept() chan acceptResult {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.acceptCh != nil {
-		return p.acceptCh
-	}
-	ch := make(chan acceptResult, 1)
-	p.acceptCh = ch
-	go func() {
-		conn, err := p.listener.Accept()
-		ch <- acceptResult{conn: conn, err: err}
-	}()
-	return ch
-}
-
-// clearPendingAccept retires a pending accept whose result has been taken,
-// so the next Start that needs a connection starts a fresh one.
-func (p *SocketRuntimeProcess) clearPendingAccept(ch chan acceptResult) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.acceptCh == ch {
-		p.acceptCh = nil
-	}
-}
-
-// acceptResult carries one listener Accept outcome to whichever Start is
-// waiting on it.
-type acceptResult struct {
-	conn net.Conn
-	err  error
 }
 
 // spawn execs the runtime binary for the developer loop, pointing it at
@@ -424,7 +344,7 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 		p.mu.Unlock()
 		return nil, fmt.Errorf("adapter: socket runtime is not connected")
 	}
-	sub := newSubscriber(p.subscribers)
+	sub := newSubscriber()
 	p.subscribers[sub] = struct{}{}
 	p.mu.Unlock()
 
@@ -442,7 +362,7 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 // unsubscribe both resolve to a single out-channel close. spec: §28.5.3.
 func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
 	p.mu.Lock()
-	delete(sub.owner, sub)
+	delete(p.subscribers, sub)
 	p.mu.Unlock()
 	sub.close()
 }
@@ -497,23 +417,16 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 }
 
 // Close tears down one slot's session. One runtime process per pod serves
-// every slot over the single connection, so Close is scoped to the named
-// session: it releases that slot's bookkeeping, and only when the last
-// active session is released does it close the shared socket connection
-// (the §15.4 clean-exit signal) and wait the resolved grace window for a
-// spawned child to exit. A Close for one slot while siblings remain active
-// leaves the connection up so the siblings' streams survive (§5.2, "Slots
-// fail independently" and "Other slots continue unaffected"). It is
-// idempotent: a Close for a session not in the active set (already
-// released, or after the connection is gone) is a no-op.
-//
-// The listener stays bound. It is the pod's runtime socket rather than the
-// session's: it is bound at construction before any session exists, and
-// the address is released when the adapter process exits with the pod.
-// Closing it with the last session turned a pod-lifetime bind into a
-// one-session resource, so any later Start on the pod failed its accept
-// with a closed listener and the pod could serve nothing more.
-// spec: §5.2 (recycle lifecycle); §4.7 (sidecar runtime transport).
+// every slot over the single connection (spec/05:509), so Close is scoped
+// to the named session: it releases that slot's bookkeeping, and only when
+// the last active session is released does it close the shared socket
+// connection (the §15.4 clean-exit signal), wait the resolved grace window
+// for a spawned child to exit, and close the listener. A Close for one slot
+// while siblings remain active leaves the connection up so the siblings'
+// streams survive (spec/05:534 — "Slots fail independently"; spec/05:536 —
+// "Other slots continue unaffected"). It is idempotent: a Close for a
+// session not in the active set (already released, or after the connection
+// is gone) is a no-op.
 //
 // The grace window is derived from the §4.7 ShutdownRequest.deadline_ms
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
@@ -521,23 +434,13 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 // preserving the historical 10s behavior. spec: §11.4.
 func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
-	// The release precedes the connection check. The fan-out reader clears
-	// the connection state whenever the runtime's end of the connection
-	// goes away, so a session whose runtime crashed or exited on its own is
-	// closed while connected is false. Consulting the connection first left
-	// that session registered for the life of the adapter process, and the
-	// next session's Close then found a stale sibling in the active set and
-	// skipped the shared-connection teardown for good. spec: §5.2.
-	last := p.releaseActiveLocked(sessionID)
-	if !last {
-		// A sibling slot is still active; leave the shared connection up so
-		// its stream survives. spec: §5.2.
+	if !p.connected {
 		p.mu.Unlock()
 		return nil
 	}
-	if !p.connected {
-		// The runtime's end of the connection is already gone: there is
-		// nothing left to tear down for this session.
+	if !p.releaseActiveLocked(sessionID) {
+		// A sibling slot is still active; leave the shared connection up so
+		// its stream survives. spec: §5.2.
 		p.mu.Unlock()
 		return nil
 	}
@@ -547,15 +450,6 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 	p.connected = false
 	p.mu.Unlock()
 
-	// A spawned child is the developer loop's runtime, whose lifetime the
-	// adapter owns: the next Start on this pod spawns another one, so this
-	// child is signalled rather than left to notice the closed connection
-	// and run on to the SIGKILL at the grace deadline. The signal precedes
-	// the connection close so the child exits on it.
-	// spec: §15.4 (SIGTERM, then SIGKILL at the grace deadline); §5.2.
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -570,7 +464,7 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 			<-done
 		}
 	}
-	return nil
+	return p.listener.Close()
 }
 
 // defaultSocketShutdownGrace is the SIGTERM-to-SIGKILL pivot window the
