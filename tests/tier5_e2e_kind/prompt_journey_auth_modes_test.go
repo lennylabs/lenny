@@ -63,6 +63,11 @@ func TestPromptJourneyAcrossAuthModes(t *testing.T) {
 				if err := d.BootstrapTenant(ctx, tenant); err != nil {
 					t.Fatalf("bootstrap tenant: %v", err)
 				}
+				// A freshly bootstrapped tenant starts at the §10.6
+				// deny-all environment policy, which rejects a session
+				// created with no environment; relax it before the
+				// journey creates one.
+				ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 				runEchoPromptJourney(ctx, t, d, tenant)
 
 			case "bearer":
