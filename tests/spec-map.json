@@ -4934,7 +4934,8 @@
         "tests/tier3_contract/adapter_artifact_scope/scope_test.go",
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
         "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
-        "tests/tier10_conformance/scaffolds_test.go::TestBasicAdapterProtocol"
+        "tests/tier10_conformance/scaffolds_test.go::TestBasicAdapterProtocol",
+        "tests/tier11_docs/frame_address_spec_citation_test.go::TestFrameAddressingCitesTheIntraPodSection"
       ],
       "packages": [
         "pkg/adapter",

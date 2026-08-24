@@ -282,7 +282,7 @@ func TestSetTracingContextAddressedToOwnSessionRegistersOnce_spec_28_5_3(t *test
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (an absent address
+// spec: 28.5.3 (set_tracing_context addressing), 28.5.3 (an absent address
 // on a pod holding more than one slot) — a frame carrying no session
 // identifier names nothing the pod can resolve when it holds more than one
 // slot. Every stream receives it through the fan-out and every one of them
@@ -370,7 +370,7 @@ func TestSetTracingContextAddressedToACoTenantNeverReachesStream_spec_28_5_3(t *
 	requireDropLogs(t, logs)
 }
 
-// spec: 28.5.3 (set_tracing_context addressing), 4.6.1 (an absent address
+// spec: 28.5.3 (set_tracing_context addressing), 28.5.3 (an absent address
 // on a pod holding more than one slot) — address resolution is exact
 // string equality, with an absent or unreadable address counting as the
 // empty string, and the adapter reads no other outcome off the frame. A

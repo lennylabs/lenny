@@ -44,7 +44,7 @@ func newCaptureRuntime(t *testing.T) (binPath, capturePath string) {
 
 // spec: 28.5.3 (the outbound message envelope names the session it is
 //
-//	addressed to), 4.6.1 (the per-session identifier is populated on every
+//	addressed to), 28.5.3 (the per-session identifier is populated on every
 //	session-scoped frame, on every pod), 15.4
 //
 // diagnosis: the subprocess executor, which is the developer-loop and

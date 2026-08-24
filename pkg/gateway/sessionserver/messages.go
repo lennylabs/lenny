@@ -191,7 +191,7 @@ type MessagePayload struct {
 	// on the outbound adapter envelope as `sessionId` on every pod,
 	// whatever the pool's concurrency. A client-supplied `sessionId` in the
 	// body is silently ignored because the field does not deserialize onto
-	// the payload. spec: §4.6.1 (every session-scoped frame carries the
+	// the payload. spec: §28.5.3 (every session-scoped frame carries the
 	// session), §15.4.
 }
 

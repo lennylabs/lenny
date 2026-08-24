@@ -772,7 +772,7 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 // `sessionId` in the request body does not deserialize onto the payload,
 // so it is silently ignored while the message still delivers to the
 // session the path names.
-// spec: §4.6.1 (every session-scoped frame carries the session), §15.4.
+// spec: §28.5.3 (every session-scoped frame carries the session), §15.4.
 func TestMessagesClientSessionIDIsIgnored(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_slot")
