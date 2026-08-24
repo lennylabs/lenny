@@ -24,7 +24,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +123,72 @@ func isBinaryFile(t *testing.T, path string) bool {
 	return bytes.IndexByte(head[:n], 0) >= 0
 }
 
+// trackedFilesUnder returns the repository-relative paths git tracks
+// under one swept root. The expected set of the coverage gate below is
+// read from the repository index rather than from another walk, because
+// a walk that reproduces the sweep's own filter agrees with it by
+// construction and reports nothing whatever the filter becomes.
+func trackedFilesUnder(t *testing.T, root, rel string) []string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--", rel).Output()
+	if err != nil {
+		t.Fatalf("git ls-files %s: %v", rel, err)
+	}
+	var tracked []string
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" {
+			tracked = append(tracked, name)
+		}
+	}
+	if len(tracked) == 0 {
+		t.Fatalf("git ls-files %s: no tracked files (moved or renamed?)", rel)
+	}
+	return tracked
+}
+
+// retirementSweepSkipsPath reports whether a repository-relative path
+// lies under one of the directories the sweep declines to read.
+func retirementSweepSkipsPath(name string) bool {
+	for _, segment := range strings.Split(name, "/") {
+		if retirementSweepSkipDirs[segment] {
+			return true
+		}
+	}
+	return false
+}
+
+// missingFromRetirementSweep returns, in stable order, the tracked
+// authored files under the swept roots that the given swept set does not
+// contain. The candidate set comes from the git index, so narrowing the
+// walker's own carrier filter shows up here as a report rather than
+// disappearing from both sides at once.
+func missingFromRetirementSweep(t *testing.T, root string, swept map[string]bool) []string {
+	t.Helper()
+	var missing []string
+	for _, rel := range retirementSweepRoots {
+		for _, name := range trackedFilesUnder(t, root, rel) {
+			if retirementSweepSkipsPath(name) {
+				continue
+			}
+			path := filepath.Join(root, name)
+			info, err := os.Lstat(path)
+			if err != nil {
+				// A tracked path with no file in the working tree carries no
+				// authored statement to sweep.
+				continue
+			}
+			if !info.Mode().IsRegular() || isBinaryFile(t, path) {
+				continue
+			}
+			if !swept[path] {
+				missing = append(missing, name)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
 // spec: 6.4
 // diagnosis: the retirement sweeps read a subset of the directories they
 //
@@ -135,27 +204,46 @@ func TestRetirementSweepReadsEveryAuthoredFileUnderItsRoots(t *testing.T) {
 	for _, path := range retirementSweepSurfaces(t, root) {
 		swept[path] = true
 	}
-	for _, rel := range retirementSweepRoots {
-		err := filepath.WalkDir(filepath.Join(root, rel), func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
+	for _, name := range missingFromRetirementSweep(t, root, swept) {
+		t.Errorf("%s is an authored file tracked under a swept root that no retirement sweep reads", name)
+	}
+}
+
+// spec: 6.4
+// diagnosis: the coverage gate above cannot report a narrowed carrier
+//
+//	filter. It stands over a swept set built by the walker under test, so
+//	a filter that drops a carrier class drops it from the expected set as
+//	well unless the expected set is read from somewhere else. This case
+//	hands the gate's predicate a swept set narrowed the way an extension
+//	whitelist narrows it and requires the dropped carriers to be named. A
+//	failure means the gate agrees with whatever the walker does.
+func TestRetirementSweepCoverageGateReportsANarrowedCarrierFilter(t *testing.T) {
+	root := repoRoot(t)
+	// The whitelist the sweep used to carry: prose and schema carriers only.
+	whitelisted := map[string]bool{".md": true, ".json": true, ".yaml": true, ".go": true}
+	narrowed := map[string]bool{}
+	for _, path := range retirementSweepSurfaces(t, root) {
+		if whitelisted[filepath.Ext(path)] {
+			narrowed[path] = true
+		}
+	}
+	missing := missingFromRetirementSweep(t, root, narrowed)
+	if len(missing) == 0 {
+		t.Fatal("the coverage gate reported nothing against a whitelist-narrowed sweep; its expected set is derived from the walker under test")
+	}
+	// The carrier classes the whitelist drops are the ones the widening was
+	// made to reach, so each must be named rather than merely counted.
+	for _, ext := range []string{".tpl", ".toml", ".mjs", ".html"} {
+		found := false
+		for _, name := range missing {
+			if filepath.Ext(name) == ext {
+				found = true
+				break
 			}
-			if d.IsDir() {
-				if retirementSweepSkipDirs[d.Name()] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !d.Type().IsRegular() || isBinaryFile(t, path) {
-				return nil
-			}
-			if !swept[path] {
-				t.Errorf("%s is an authored file under %s that no retirement sweep reads", mustRel(t, root, path), rel)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", rel, err)
+		}
+		if !found {
+			t.Errorf("no %s carrier was reported against a whitelist-narrowed sweep", ext)
 		}
 	}
 }

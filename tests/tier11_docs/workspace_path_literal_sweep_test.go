@@ -47,10 +47,12 @@ const podGlobalStagingPath = "/workspace/staging"
 
 // permittedWorkspaceRetirementStatements are the occurrences of the
 // retired literal that state its retirement. Each is keyed by the
-// repository-relative file it stands in and matched on the trimmed line
-// text, so a line that moves keeps its exemption and a line that is
-// reworded loses it. Every other occurrence sends a reader to a
-// directory no pod has.
+// repository-relative file it stands in and matched as a substring of
+// the trimmed line text, so a line that moves keeps its exemption and a
+// line that is reworded loses it. The exemption covers the statement's
+// own occurrence, so any further occurrence on the same line is still
+// reported. Every other occurrence sends a reader to a directory no pod
+// has.
 var permittedWorkspaceRetirementStatements = map[string][]string{
 	filepath.Join("spec", "06_warm-pod-model.md"): {
 		"No pod-global `/workspace/current` path exists.",
@@ -89,11 +91,14 @@ func TestNoSurfaceNamesTheRetiredPodGlobalWorkingDirectory(t *testing.T) {
 				continue
 			}
 			trimmed := strings.TrimSpace(line)
-			if match := matchPermitted(permitted, trimmed); match != "" {
+			residue, matched := stripPermitted(permitted, trimmed)
+			for _, statement := range matched {
 				if seen[rel] == nil {
 					seen[rel] = map[string]bool{}
 				}
-				seen[rel][match] = true
+				seen[rel][statement] = true
+			}
+			if !strings.Contains(residue, retiredPodGlobalWorkspacePath) {
 				continue
 			}
 			t.Errorf("%s:%d names the retired pod-global working directory; each session's workspace is %s{sessionId}/current:\n%s",
@@ -167,15 +172,53 @@ func TestNoSurfaceStatesTheBareSessionsRootBesideASlotTree(t *testing.T) {
 	}
 }
 
-// matchPermitted returns the permitted statement the line carries, or
-// the empty string when the line carries none.
-func matchPermitted(permitted []string, line string) string {
+// stripPermitted removes every permitted retirement statement the line
+// carries and returns the text that remains together with the statements
+// that matched. The exemption is stated over an occurrence rather than
+// over a line, because a markdown paragraph is one physical line and
+// each prose exemption is a whole paragraph: exempting the line would
+// excuse any further occurrence a later sentence in that paragraph
+// introduces.
+func stripPermitted(permitted []string, line string) (residue string, matched []string) {
+	residue = line
 	for _, statement := range permitted {
-		if strings.Contains(line, statement) {
-			return statement
+		if !strings.Contains(residue, statement) {
+			continue
 		}
+		residue = strings.ReplaceAll(residue, statement, "")
+		matched = append(matched, statement)
 	}
-	return ""
+	return residue, matched
+}
+
+// spec: 6.4
+// diagnosis: a permitted retirement statement exempts the whole line it
+//
+//	stands on rather than its own occurrence. Each prose exemption is a
+//	full markdown paragraph, which is one physical line, so a sentence
+//	added to that paragraph naming the retired pod-global working
+//	directory would send a reader to a directory no pod has and the sweep
+//	would stay green. A failure means the exemption is line-wide again.
+func TestAPermittedRetirementStatementExemptsOnlyItsOwnOccurrence(t *testing.T) {
+	const permittedStatement = "No pod-global `/workspace/current` path exists."
+	line := permittedStatement + " Write build output to " + retiredPodGlobalWorkspacePath + " instead."
+
+	residue, matched := stripPermitted([]string{permittedStatement}, line)
+	if len(matched) != 1 || matched[0] != permittedStatement {
+		t.Errorf("stripPermitted recorded %q as the statements it matched; want the one permitted statement", matched)
+	}
+	if !strings.Contains(residue, retiredPodGlobalWorkspacePath) {
+		t.Errorf("a live occurrence beside the permitted statement was excused with it; residue: %q", residue)
+	}
+
+	// A line carrying the permitted statement alone is still exempt.
+	residue, matched = stripPermitted([]string{permittedStatement}, permittedStatement)
+	if len(matched) != 1 {
+		t.Errorf("the permitted statement alone recorded %q as matched; want it recorded once", matched)
+	}
+	if strings.Contains(residue, retiredPodGlobalWorkspacePath) {
+		t.Errorf("the permitted statement alone was reported as a surviving occurrence; residue: %q", residue)
+	}
 }
 
 // readSweptFile reads one swept surface, failing the test when the walk

@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -77,8 +78,16 @@ func TestFrameIdentifierAgreesAcrossSchemaSpecAndReference(t *testing.T) {
 	cards := specSection(t, filepath.Join(root, "spec", "28_communication-channels.md"), "28.5.3")
 	reference := adapterContractDoc(t, root)
 
-	for frame, wantIdentifier := range frames {
-		block := frameContractCard(t, cards, frame)
+	// The frames are read from a map, so the walk is ordered by name: a run
+	// that reports a divergence reports the same set of frames every time,
+	// and no frame's reconciliation depends on where an earlier one failed.
+	for _, frame := range sortedFrameNames(frames) {
+		wantIdentifier := frames[frame]
+		block, ok := frameContractCard(cards, frame)
+		if !ok {
+			t.Errorf("spec §28.5.3: no contract card for the %s frame (renamed or removed?)", frame)
+			continue
+		}
 		if got := fencedJSONDeclares(block, frameIdentifierProperty); got != wantIdentifier {
 			t.Errorf("spec §28.5.3 %s block declares %s = %t; the published JSONL schema declares it %t",
 				frame, frameIdentifierProperty, got, wantIdentifier)
@@ -139,12 +148,24 @@ var frameCardLabel = regexp.MustCompile("^\\*\\*(?:Inbound|Outbound): `([a-z_]+)
 // neighbour's fence whatever the card itself declares.
 var boldedLeadIn = regexp.MustCompile(`^\*\*`)
 
-// frameContractCard returns the §28.5.3 block for one frame. The blocks
-// are bold labels rather than headings, so the card runs from its own
-// label to the next bolded lead-in, or to the end of the section when it
-// is the last block in it.
-func frameContractCard(t *testing.T, cards, frame string) string {
-	t.Helper()
+// sortedFrameNames returns the frame names in name order.
+func sortedFrameNames(frames map[string]bool) []string {
+	names := make([]string, 0, len(frames))
+	for name := range frames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// frameContractCard returns the §28.5.3 block for one frame and reports
+// whether the section carries a card for it. The blocks are bold labels
+// rather than headings, so the card runs from its own label to the next
+// bolded lead-in, or to the end of the section when it is the last block
+// in it. A missing card is returned as an absence rather than raised as
+// a fatal, so the caller reports it beside every other frame's result
+// instead of halting the run at whichever frame it reached first.
+func frameContractCard(cards, frame string) (string, bool) {
 	lines := strings.Split(cards, "\n")
 	start := -1
 	for i, ln := range lines {
@@ -156,13 +177,13 @@ func frameContractCard(t *testing.T, cards, frame string) string {
 			continue
 		}
 		if boldedLeadIn.MatchString(ln) {
-			return strings.Join(lines[start:i], "\n")
+			return strings.Join(lines[start:i], "\n"), true
 		}
 	}
 	if start < 0 {
-		t.Fatalf("spec §28.5.3: no contract card for the %s frame (renamed or removed?)", frame)
+		return "", false
 	}
-	return strings.Join(lines[start:], "\n")
+	return strings.Join(lines[start:], "\n"), true
 }
 
 // fencedJSONDeclares reports whether any fenced JSON block in body
@@ -203,7 +224,10 @@ func TestFrameContractCardEndsAtTheNextBoldedLeadIn(t *testing.T) {
 		"{\"type\": \"last_frame\", \"sessionId\": \"alice-1\"}\n" +
 		"```\n"
 
-	block := frameContractCard(t, cards, "last_frame")
+	block, ok := frameContractCard(cards, "last_frame")
+	if !ok {
+		t.Fatal("the fixture card was not found")
+	}
 	if strings.Contains(block, "Unrelated prose") {
 		t.Errorf("the last card absorbed the prose that follows it:\n%s", block)
 	}
@@ -214,8 +238,41 @@ func TestFrameContractCardEndsAtTheNextBoldedLeadIn(t *testing.T) {
 	// The same boundary holds against the section as it stands: the card for
 	// the last labelled frame stops before the addressing rules.
 	cardsSection := specSection(t, filepath.Join(repoRoot(t), "spec", "28_communication-channels.md"), "28.5.3")
-	live := frameContractCard(t, cardsSection, "set_tracing_context")
+	live, ok := frameContractCard(cardsSection, "set_tracing_context")
+	if !ok {
+		t.Fatal("spec §28.5.3: no contract card for the set_tracing_context frame (renamed or removed?)")
+	}
 	if strings.Contains(live, "**Addressing.**") {
 		t.Errorf("spec §28.5.3: the set_tracing_context card runs past its own block into the addressing rules:\n%s", live)
+	}
+}
+
+// spec: 28.5.3
+// diagnosis: a §28.5.3 card that is renamed or removed halts the
+//
+//	reconciliation instead of being reported as one divergence among the
+//	rest. The frames come from a map, so a halt lands at an arbitrary
+//	point and leaves an unknown, run-dependent subset of frames
+//	unchecked, including the frame whose three statements the
+//	reconciliation exists to hold in agreement. A failure means a missing
+//	card is fatal again, or the walk is unordered.
+func TestAMissingFrameContractCardIsReportedRatherThanHalting(t *testing.T) {
+	const cards = "**Outbound: `present_frame`**\n" +
+		"\n" +
+		"```json\n" +
+		"{\"type\": \"present_frame\", \"sessionId\": \"alice-1\"}\n" +
+		"```\n"
+
+	if _, ok := frameContractCard(cards, "absent_frame"); ok {
+		t.Error("a frame with no card in the section was reported as carrying one")
+	}
+	if _, ok := frameContractCard(cards, "present_frame"); !ok {
+		t.Error("a frame with a card in the section was reported as carrying none")
+	}
+
+	got := sortedFrameNames(map[string]bool{"status": true, "message": false, "absent_frame": true})
+	want := []string{"absent_frame", "message", "status"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("the reconciliation walks the frames as %v; want the stable order %v", got, want)
 	}
 }
