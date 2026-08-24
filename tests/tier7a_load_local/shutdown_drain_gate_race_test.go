@@ -350,9 +350,10 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 				"registered-but-unbound entry must not withhold the drain", got)
 		}
 		// alice was the shared runtime process's only member, so her close
-		// took the connection and the process-scoped listener with it and
-		// nothing re-binds them. The incoming session's start fails in
-		// accept rather than re-establishing the connection.
+		// took the shared connection with it. The pod's listener stays
+		// bound, but nothing re-dials it here, so the incoming session's
+		// start fails in accept rather than re-establishing the
+		// connection.
 		if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
 		}); err == nil {
@@ -402,7 +403,7 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 // func that stands in for the pod's one runtime process connecting. The
 // shared connection is what makes the incoming session's disposition
 // observable: one process serves every slot, so the last member's close
-// takes the connection and the listener down.
+// takes the connection down.
 func socketDrainPod(t *testing.T) (*adapter.Server, *drainPeer, func() net.Conn) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lenny-rt-*")

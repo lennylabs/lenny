@@ -775,23 +775,24 @@ func TestRecycleScrubWithUnreadableSlotsContainerReportsFailure_spec_5_2(t *test
 	}
 }
 
-// podTransportRuntime is a RuntimeProcess double whose transport belongs to
-// the pod rather than to a session: it implements the optional
-// ReleaseSession half of the contract the §4.7 sidecar transport
-// implements, and records which of the two the adapter called.
-type podTransportRuntime struct {
+// releaserRuntime is a RuntimeProcess double that also offers a
+// session-scoped release leaving the pod's transport up. The adapter's
+// teardown sequence carries the runtime close on every ended session
+// whatever else the runtime offers, so the double records both calls and
+// the case below pins which one the recycle boundary makes.
+type releaserRuntime struct {
 	recycleRuntime
 	released []string
 }
 
-func (r *podTransportRuntime) ReleaseSession(_ context.Context, sessionID string) error {
+func (r *releaserRuntime) ReleaseSession(_ context.Context, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.released = append(r.released, sessionID)
 	return nil
 }
 
-func (r *podTransportRuntime) releasedSnapshot() []string {
+func (r *releaserRuntime) releasedSnapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]string, len(r.released))
@@ -799,17 +800,17 @@ func (r *podTransportRuntime) releasedSnapshot() []string {
 	return out
 }
 
-// spec: 5.2 (the pod keeps its process alive across the recycle boundary
-// and reuses it for the next session), 4.7 (sidecar runtime transport)
+// spec: 5.2 (the adapter "closes the ending session's runtime, keeps the
+// pod process alive across the recycle boundary"), 15.4 (a recycling pool
+// "scrubs the pod and starts a fresh runtime process for each session"),
+// 4.7
 //
-// diagnosis: a failure means the recycle boundary tears the pod's runtime
-// transport down with the ending session. The §4.7 sidecar runtime runs in
-// a container the pod never restarts, so its process exits on the closed
-// transport, the first session on the recycled pod fails its start, and
-// the gateway retires the pod instead of reusing it. That empties
-// recycle.enabled of its content while every scrub still reports success.
-func TestShutdownRecycleReleasesTheSessionAndKeepsThePodsRuntime_spec_5_2(t *testing.T) {
-	rt := &podTransportRuntime{}
+// diagnosis: a failure means the recycle disposition selected a scope for
+// the teardown instead of being carried beside it. A session whose runtime
+// is not closed leaves its in-process state in front of the next session
+// on the pod, which is the state the whole-pod scrub exists to prevent.
+func TestShutdownRecycleClosesTheEndingSessionsRuntime_spec_5_2(t *testing.T) {
+	rt := &releaserRuntime{}
 	s, _, _, done := recycleServer(t)
 	s.Runtime = rt
 	startRecycleSession(t, s, "sess-1")
@@ -822,11 +823,12 @@ func TestShutdownRecycleReleasesTheSessionAndKeepsThePodsRuntime_spec_5_2(t *tes
 	}
 	waitScrubDone(t, done)
 
-	if got := rt.releasedSnapshot(); len(got) != 1 || got[0] != "sess-1" {
-		t.Errorf("runtime released = %v, want [sess-1]", got)
+	if got := rt.closedSnapshot(); len(got) != 1 || got[0] != "sess-1" {
+		t.Errorf("runtime closed = %v, want [sess-1] at the recycle boundary", got)
 	}
-	if got := rt.closedSnapshot(); len(got) != 0 {
-		t.Errorf("runtime closed = %v at the recycle boundary; the pod keeps its runtime for the next session", got)
+	if got := rt.releasedSnapshot(); len(got) != 0 {
+		t.Errorf("runtime released = %v; the teardown sequence closes the ending session's "+
+			"runtime whatever else the runtime offers", got)
 	}
 }
 
@@ -837,7 +839,7 @@ func TestShutdownRecycleReleasesTheSessionAndKeepsThePodsRuntime_spec_5_2(t *tes
 // on the ordinary end of a session, so a pod the gateway is retiring leaves
 // its runtime process running until the pod is deleted.
 func TestShutdownWithoutRecycleClosesTheRuntime_spec_5_2(t *testing.T) {
-	rt := &podTransportRuntime{}
+	rt := &releaserRuntime{}
 	s, _, _, _ := recycleServer(t)
 	s.Runtime = rt
 	startRecycleSession(t, s, "sess-1")

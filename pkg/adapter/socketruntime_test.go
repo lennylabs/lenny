@@ -417,59 +417,118 @@ func TestSocketRuntimeProcessAcceptsTheNextSessionAfterTheLastCloses_spec_5_2(t 
 	}
 }
 
-// spec: §5.2 (the pod keeps its process alive across the recycle boundary
-// and reuses it for the next session), §4.7 (sidecar runtime transport)
+// spec: §5.2 (a scrubbed pod serves the next session), §4.7 (sidecar
+// runtime transport)
 //
-// The §4.7 sidecar runtime runs in a container the pod never restarts
-// (RestartPolicy: Never), so nothing re-dials the socket once the shared
-// connection is gone. ReleaseSession is what the recycle boundary calls
-// instead of Close: it releases the ending session and leaves the pod's
-// connection up, so the next session on the recycled pod writes over the
-// same transport to the same runtime process.
+// The listener is bound for the pod's lifetime, so a Start whose accept
+// times out parks its pending accept rather than abandoning the
+// goroutine that holds it. A second Accept per attempt would race the
+// first for the runtime's connection and hand it to a Start that had
+// already given up, so the runtime would be connected and every later
+// Start would still time out.
 //
-// diagnosis: a failure here means the recycle boundary tears the pod's
-// runtime transport down with the ending session. The runtime process
-// exits on the closed connection, the first session on the recycled pod
-// has nothing to write to, and the gateway retires the pod instead of
-// reusing it.
-func TestSocketRuntimeProcessReleaseSessionKeepsThePodsConnection_spec_5_2(t *testing.T) {
+// diagnosis: a failure here means each timed-out Start leaves a goroutine
+// parked on the pod's listener. The next session's Start times out even
+// though the runtime has connected, and the pod serves nothing more.
+func TestSocketRuntimeProcessReusesThePendingAcceptAfterATimedOutStart_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
 	sp, err := adapter.NewSocketRuntimeProcess(socket)
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
+	sp.AcceptTimeout = 200 * time.Millisecond
 	defer sp.Close(context.Background(), "sess-b")
 
-	connCh := make(chan net.Conn, 1)
-	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
-	if err := sp.Start(context.Background(), "sess-a"); err != nil {
-		t.Fatalf("Start(sess-a): %v", err)
-	}
-	runtimeConn := <-connCh
-	defer runtimeConn.Close()
-
-	// The recycle boundary: the pod's only session ends and the pod is
-	// held for its next session.
-	if err := sp.ReleaseSession(context.Background(), "sess-a"); err != nil {
-		t.Fatalf("ReleaseSession(sess-a): %v", err)
+	// Nothing dials, so the first session's start gives up on its accept.
+	if err := sp.Start(context.Background(), "sess-a"); err == nil {
+		t.Fatal("Start(sess-a) succeeded with no runtime connected")
 	}
 
-	// No second dial: the next session reuses the connection the runtime
-	// already holds.
+	// The runtime connects late. The next session's start must be the one
+	// that takes the connection.
+	conn := dialRuntimeSocket(t, sp.SocketPath())
+	defer conn.Close()
+
+	sp.AcceptTimeout = 5 * time.Second
 	if err := sp.Start(context.Background(), "sess-b"); err != nil {
-		t.Fatalf("Start(sess-b) on the recycled pod: %v; the next session must reuse the pod's "+
-			"live runtime connection", err)
+		t.Fatalf("Start(sess-b) after a timed-out start: %v; the pending accept must carry the "+
+			"runtime's connection to the next start", err)
 	}
-	reader := bufio.NewReader(runtimeConn)
+	reader := bufio.NewReader(conn)
 	frame := `{"type":"message","sessionId":"sess-b"}`
 	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
-		t.Fatalf("WriteEnvelope on the recycled pod: %v", err)
+		t.Fatalf("WriteEnvelope: %v", err)
 	}
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		t.Fatalf("runtime read on the recycled pod: %v", err)
+		t.Fatalf("runtime read: %v", err)
 	}
 	if strings.TrimSpace(line) != frame {
 		t.Errorf("runtime received %q, want %q", strings.TrimSpace(line), frame)
+	}
+}
+
+// spec: §5.2 (recycle lifecycle: a scrubbed pod serves the next session),
+// §15.4 (a runtime's clean exit closes the transport), §4.7
+//
+// The runtime may end its own connection between sessions: the §15.4
+// clean exit, or a crash. The pod's transport state follows the reader,
+// so the next session's Start accepts a fresh connection instead of
+// returning early on a connection that is gone.
+//
+// diagnosis: a failure here means the pod holds a dead socket open in its
+// bookkeeping. Every later Start returns success without a transport and
+// every write on that session goes nowhere, so the pod cannot recover in
+// place and each session on it fails silently.
+func TestSocketRuntimeProcessReconnectsAfterTheRuntimeEndsTheConnection_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	sp.AcceptTimeout = 5 * time.Second
+	defer sp.Close(context.Background(), "sess-b")
+
+	firstCh := make(chan net.Conn, 1)
+	go func() { firstCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	first := <-firstCh
+
+	// The subscriber's channel closes when the fan-out reader exits, which
+	// is after it has recorded the connection as gone.
+	out, err := sp.Output(context.Background(), "sess-a")
+	if err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
+	}
+
+	// The runtime exits and its connection ends.
+	first.Close()
+	select {
+	case <-out:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fan-out reader did not observe the runtime's end of the connection")
+	}
+
+	secondCh := make(chan net.Conn, 1)
+	go func() { secondCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) after the runtime exited: %v", err)
+	}
+	second := <-secondCh
+	defer second.Close()
+
+	reader := bufio.NewReader(second)
+	frame := `{"type":"message","sessionId":"sess-b"}`
+	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
+		t.Fatalf("WriteEnvelope after the runtime re-dialled: %v", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("re-dialled runtime read: %v", err)
+	}
+	if strings.TrimSpace(line) != frame {
+		t.Errorf("re-dialled runtime received %q, want %q", strings.TrimSpace(line), frame)
 	}
 }

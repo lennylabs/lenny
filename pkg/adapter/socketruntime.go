@@ -55,10 +55,10 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 // one slot leaves sibling slots running over the same connection (§5.2,
 // "Slots fail independently" and the per-slot teardown and release). A
 // clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it
-// ends only that slot when siblings remain active. ReleaseSession is the
-// §5.2 recycle boundary's teardown: it releases the session and leaves the
-// pod's transport up for the next session. The listener is bound once at
-// construction and outlives every session on the pod.
+// ends only that slot when siblings remain active. The listener is bound
+// once at construction and outlives every session on the pod, so the
+// §5.2 recycle boundary's close of the last session leaves the address
+// bound and the next session's Start accepts a fresh connection on it.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -71,9 +71,12 @@ type SocketRuntimeProcess struct {
 	// connect. Zero defaults to 30s.
 	AcceptTimeout time.Duration
 
-	mu          sync.Mutex
-	connected   bool
-	conn        net.Conn
+	mu        sync.Mutex
+	connected bool
+	conn      net.Conn
+	// acceptCh is the one outstanding listener Accept, shared by every
+	// Start that has to wait for the runtime to connect.
+	acceptCh    chan acceptResult
 	cmd         *exec.Cmd
 	subscribers map[*subscriber]struct{}
 	// active is the set of sessions/slots Start has registered and Close
@@ -227,7 +230,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// to all subscribers, so concurrent per-slot Attach streams each see
 	// the runtime's full output and demultiplex by sessionId.
 	// spec: §28.5.3.
-	go p.fanOut(scanner)
+	go p.fanOut(conn, scanner)
 	return nil
 }
 
@@ -237,13 +240,34 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 // stream observes the EOF. Each subscriber owns its own buffered intake
 // (subscriber.feed), so a slow or dead consumer on one slot's Attach
 // stream never head-of-line-blocks the reader from delivering a sibling
-// slot's frames. spec: §28.5.3.
-func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner) {
+// slot's frames.
+//
+// The scan ending is the runtime's end of the connection: the §15.4 clean
+// exit, a crash, or the adapter's own Close. The reader therefore clears
+// the pod's connection state on its way out, so a Start after the runtime
+// has gone re-establishes the transport instead of returning early on a
+// live-looking connection that is really a dead socket. The clear is
+// keyed on the connection the reader owns, so a connection a later Start
+// has already replaced is left alone. spec: §28.5.3; §5.2.
+func (p *SocketRuntimeProcess) fanOut(conn net.Conn, scanner *bufio.Scanner) {
 	defer p.closeSubscribers()
+	defer p.noteConnectionGone(conn)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		p.broadcast(line)
 	}
+}
+
+// noteConnectionGone marks the pod's runtime transport down when conn is
+// still the live connection. spec: §5.2.
+func (p *SocketRuntimeProcess) noteConnectionGone(conn net.Conn) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn != conn {
+		return
+	}
+	p.conn = nil
+	p.connected = false
 }
 
 // broadcast hands one frame to every current subscriber. Each subscriber
@@ -279,18 +303,19 @@ func (p *SocketRuntimeProcess) closeSubscribers() {
 }
 
 // accept waits for the runtime's connection, bounded by timeout and ctx.
+//
+// The listener is pod-lifetime, so an accept that times out abandons its
+// wait rather than its goroutine: the pending accept is parked on the
+// struct and the next Start waits on that same one. Spawning a second
+// Accept per attempt would leak a goroutine and a claim on the address
+// per timed-out Start, and the two would race for the runtime's
+// connection, one of them handing it to a Start that had already given
+// up. spec: §5.2 (a scrubbed pod serves the next session); §4.7.
 func (p *SocketRuntimeProcess) accept(ctx context.Context, timeout time.Duration) (net.Conn, error) {
-	type result struct {
-		conn net.Conn
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		conn, err := p.listener.Accept()
-		ch <- result{conn: conn, err: err}
-	}()
+	ch := p.pendingAccept()
 	select {
 	case r := <-ch:
+		p.clearPendingAccept(ch)
 		if r.err != nil {
 			return nil, fmt.Errorf("adapter: accept runtime connection: %w", r.err)
 		}
@@ -300,6 +325,41 @@ func (p *SocketRuntimeProcess) accept(ctx context.Context, timeout time.Duration
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// pendingAccept returns the in-flight listener accept, starting one when
+// none is outstanding. The channel is buffered so the accept goroutine
+// completes even when every waiter has given up.
+func (p *SocketRuntimeProcess) pendingAccept() chan acceptResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.acceptCh != nil {
+		return p.acceptCh
+	}
+	ch := make(chan acceptResult, 1)
+	p.acceptCh = ch
+	go func() {
+		conn, err := p.listener.Accept()
+		ch <- acceptResult{conn: conn, err: err}
+	}()
+	return ch
+}
+
+// clearPendingAccept retires a pending accept whose result has been taken,
+// so the next Start that needs a connection starts a fresh one.
+func (p *SocketRuntimeProcess) clearPendingAccept(ch chan acceptResult) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.acceptCh == ch {
+		p.acceptCh = nil
+	}
+}
+
+// acceptResult carries one listener Accept outcome to whichever Start is
+// waiting on it.
+type acceptResult struct {
+	conn net.Conn
+	err  error
 }
 
 // spawn execs the runtime binary for the developer loop, pointing it at
@@ -416,22 +476,6 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 			return fmt.Errorf("adapter: kill spawned runtime: %w", err)
 		}
 	}
-	return nil
-}
-
-// ReleaseSession ends one session's use of the runtime and leaves the
-// pod's transport up, whether or not it was the last active session. It is
-// what the adapter calls instead of Close at the §5.2 recycle boundary,
-// where the gateway holds the pod for its next session: one runtime
-// process per pod serves every session, the §4.7 sidecar runtime runs in a
-// container the pod never restarts, and a next session that found the
-// connection gone would have no runtime to reach. spec: §5.2 (the pod
-// keeps its process alive across the recycle boundary and reuses it for
-// the next session); §4.7.
-func (p *SocketRuntimeProcess) ReleaseSession(_ context.Context, sessionID string) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.releaseActiveLocked(sessionID)
 	return nil
 }
 

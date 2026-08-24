@@ -71,19 +71,24 @@ func TestDrainReason_spec_15_4_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (recycling "requires no runtime cooperation ... with no
-// CH-RUNTIMEOPS exchange between sessions", and the pod "keeps the
-// process alive and reuses it for the next session"), §15.4.2 (the
-// DRAINING terminate frame), §4.7 (Shutdown recycle disposition)
+// spec: §5.2 (the adapter "closes the ending session's runtime" at the
+// recycle boundary), §15.4.2 (the DRAINING terminate frame precedes the
+// hard close), §4.7 (Shutdown recycle disposition)
 //
-// The recycle disposition says the gateway is holding this pod for its
-// next session. The §15.4.2 terminate frame names no session and tells
-// the pod's shared runtime to finish and exit, so it is the pod's own end
-// rather than the ending session's: at the recycle boundary the adapter
-// closes the ending session's runtime and sends no terminate frame. A
-// Shutdown carrying no recycle disposition still drains, which
-// TestShutdownDrainsViaLifecycle_spec_15_4_2 above pins.
-func TestShutdownWithRecycleSendsNoRuntimeOpsTerminate_spec_5_2(t *testing.T) {
+// The drain decision has one term: the deregistration left the registry
+// holding no bound entry. The recycle disposition is carried beside the
+// ending session's teardown rather than selecting a scope for it, so the
+// ending session's runtime is closed on that request too and the
+// §15.4.2 terminate frame still precedes that close. Suppressing the
+// drain on the recycle disposition while the close still runs makes the
+// graceful drain a no-op on every pod in a recycling pool, and the
+// regression is silent because a frame sent after the close would be
+// swallowed anyway.
+//
+// diagnosis: a failure means the drain gate took a second term. A
+// missing frame means a Full-level runtime is hard-closed on every
+// recycle boundary with no graceful window.
+func TestShutdownAtRecycleBoundaryStillDrainsBeforeTheClose_spec_15_4_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
@@ -104,9 +109,13 @@ func TestShutdownWithRecycleSendsNoRuntimeOpsTerminate_spec_5_2(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	if got, ok := fr.readWithin(500 * time.Millisecond); ok {
-		t.Errorf("drain frame = %+v on the recycle disposition; the pod keeps its runtime for the "+
-			"next session, so no terminate frame goes out", got)
+	got, ok := fr.readWithin(2 * time.Second)
+	if !ok {
+		t.Fatal("no CH-RUNTIMEOPS terminate frame on the recycle disposition; the drain gate is " +
+			"the bound-entry test alone and the ending session's runtime is closed here too")
+	}
+	if got.Type != "terminate" {
+		t.Errorf("drain frame type = %q, want terminate", got.Type)
 	}
 	if len(rt.closed) != 1 || rt.closed[0] != "sess-1" {
 		t.Errorf("runtime closed = %v, want [sess-1] on the recycle disposition", rt.closed)
