@@ -145,6 +145,23 @@ func TestNoSurfaceStatesThePodGlobalStagingTreeBesideASlotTree(t *testing.T) {
 // is the session identifier the per-session tree is keyed on.
 var bareSessionsRoot = regexp.MustCompile(`(^|[^0-9A-Za-z])/sessions/([^/\s"'` + "`" + `)\]]*)`)
 
+// statesBareSessionsRoot reports whether the line names the pod
+// session-file root with no session-identifier segment after it. An
+// occurrence that carries a segment is per-session however the segment
+// is spelled, as the documented placeholder, as a concrete identifier in
+// a walkthrough, or as a reader-facing stand-in, so the predicate reads
+// the presence of a segment rather than one spelling of it. The empty
+// capture is the bare root, which is the half-restated checkpoint bundle
+// the sweep exists to catch.
+func statesBareSessionsRoot(line string) bool {
+	for _, m := range bareSessionsRoot.FindAllStringSubmatch(line, -1) {
+		if m[2] == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // spec: 6.4
 // diagnosis: a swept surface states a per-session workspace tree and the
 //
@@ -161,14 +178,57 @@ func TestNoSurfaceStatesTheBareSessionsRootBesideASlotTree(t *testing.T) {
 			if !strings.Contains(line, workspaceSlotRoot) {
 				continue
 			}
-			for _, m := range bareSessionsRoot.FindAllStringSubmatch(line, -1) {
-				if m[2] == "{sessionId}" {
-					continue
-				}
-				t.Errorf("%s:%d states a per-session workspace tree and the bare pod session-file root on one line; the session tmpfs is /sessions/{sessionId}:\n%s",
-					mustRel(t, root, path), i+1, strings.TrimSpace(line))
+			if !statesBareSessionsRoot(line) {
+				continue
 			}
+			t.Errorf("%s:%d states a per-session workspace tree and the bare pod session-file root on one line; the session tmpfs is /sessions/{sessionId}:\n%s",
+				mustRel(t, root, path), i+1, strings.TrimSpace(line))
 		}
+	}
+}
+
+// spec: 6.4
+// diagnosis: the bare-root predicate reads one spelling of the session
+//
+//	segment rather than its presence. A line that already addresses both
+//	halves per session, spelling the segment as a concrete identifier in
+//	a walkthrough or as a reader-facing stand-in, is then reported as a
+//	half-restated checkpoint bundle, and the only way to green the sweep
+//	is to rewrite a correct statement into the placeholder spelling. A
+//	failure means the predicate is spelling-bound again.
+func TestTheBareSessionsRootPredicateReadsTheSegmentRatherThanItsSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "the documented placeholder addresses a session",
+			line: "the bundle copies `/workspace/slots/{sessionId}/current` and `/sessions/{sessionId}`",
+		},
+		{
+			name: "a concrete identifier addresses a session",
+			line: "the bundle copies `/workspace/slots/sess-7/current` and `/sessions/sess-7`",
+		},
+		{
+			name: "a reader-facing stand-in addresses a session",
+			line: "the bundle copies `/workspace/slots/<session-id>/current` and `/sessions/<session-id>`",
+		},
+		{
+			name: "the REST collection route is not the pod session-file root",
+			line: "POST /v1/sessions/ alongside /workspace/slots/{sessionId}/current",
+		},
+		{
+			name: "the root with no segment is the bare root",
+			line: "the bundle copies `/workspace/slots/{sessionId}/current` and `/sessions/`",
+			want: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := statesBareSessionsRoot(tc.line); got != tc.want {
+				t.Errorf("statesBareSessionsRoot(%q) = %t; want %t", tc.line, got, tc.want)
+			}
+		})
 	}
 }
 

@@ -374,32 +374,45 @@ func inlineWorkspacePlan(path, content string) json.RawMessage {
 // pod carrying the pool label to be Ready: a wedged pod left behind by
 // an earlier run keeps a label-wide readiness wait failing forever, and
 // that hid the Ready pods beside it, skipping the §6.4 slot-tree cases
-// on a cluster that had the capacity to run them.
+// on a cluster that had the capacity to run them. It fails rather than
+// skips when the pod query itself never succeeded, because a skip there
+// would report a broken cluster query as an unwarmed pool.
 func requirePoolReadyPods(t *testing.T, c *kind.Cluster, pool string, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		if readyPoolPods(t, c, pool) >= n {
+		ready, err := readyPoolPods(t, c, pool)
+		if err == nil && ready >= n {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Skipf("%s has fewer than %d Ready warm pods (pools warm asynchronously); "+
-				"re-run after tests/testinfra/kind/install.sh completes", pool, n)
+			// A query that never succeeded is a broken namespace, a
+			// renamed label, or an unusable kubeconfig, and reporting it
+			// as an unwarmed pool would let the §6.4 slot-tree cases
+			// silently not run while the tier reported green. Only a
+			// successful query that counted too few Ready pods is a
+			// precondition the cluster can still reach.
+			if err != nil {
+				t.Fatalf("counting Ready %s pods: %v", pool, err)
+			}
+			t.Skipf("not-yet-applicable: %s has %d Ready warm pods, fewer than the %d the case needs "+
+				"(pools warm asynchronously); re-run after tests/testinfra/kind/install.sh completes", pool, ready, n)
 		}
 		time.Sleep(3 * time.Second)
 	}
 }
 
 // readyPoolPods returns how many pods carrying the pool's label report
-// condition Ready true. A kubectl failure counts as zero so the caller
-// keeps polling until its deadline.
-func readyPoolPods(t *testing.T, c *kind.Cluster, pool string) int {
+// condition Ready true. A kubectl failure is returned rather than
+// counted as zero, so the caller can tell a pool that has not warmed
+// from a query that could not run.
+func readyPoolPods(t *testing.T, c *kind.Cluster, pool string) (int, error) {
 	t.Helper()
 	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pods",
 		"-l", "lenny.dev/pool="+pool, "-o",
 		`jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("kubectl get pods -l lenny.dev/pool=%s in %s: %w\n%s", pool, executionModesNamespace, err, out)
 	}
 	ready := 0
 	for _, status := range strings.Fields(out) {
@@ -407,7 +420,27 @@ func readyPoolPods(t *testing.T, c *kind.Cluster, pool string) int {
 			ready++
 		}
 	}
-	return ready
+	return ready, nil
+}
+
+// spec: 6.4
+// diagnosis: the Ready-warm-pod count reports success on a query that
+//
+//	could not run. The count then reads zero on a broken namespace, a
+//	renamed pool label, or an unusable kubeconfig, requirePoolReadyPods
+//	reports that as an unwarmed pool, and the §6.4 slot-tree cases skip
+//	while the tier reports green. A failure means a failed query is
+//	indistinguishable from an empty pool again.
+func TestCountingReadyWarmPodsReportsAFailedQueryRatherThanAnEmptyPool_spec_6_4(t *testing.T) {
+	unusable := &kind.Cluster{Name: "no-such-cluster", KubeconfigPath: filepath.Join(t.TempDir(), "absent.kubeconfig")}
+
+	ready, err := readyPoolPods(t, unusable, taskModePoolName)
+	if err == nil {
+		t.Fatalf("counting Ready pods against an unusable kubeconfig returned %d and no error; a query that could not run must report its failure", ready)
+	}
+	if ready != 0 {
+		t.Errorf("a failed query counted %d Ready pods; want 0", ready)
+	}
 }
 
 // waitPodLabel polls pod's named label until it equals want or timeout

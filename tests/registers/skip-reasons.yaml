@@ -1117,14 +1117,6 @@ sites:
       reason: |-
         precondition not met: cannot scale %s to %d: %v
         %s
-    - path: tests/tier5_e2e_kind/execution_modes_test.go
-      function: requirePoolReadyPods
-      site: 1
-      call: Skip
-    - path: tests/tier5_e2e_kind/execution_modes_test.go
-      function: requirePoolReadyPods
-      site: 2
-      call: Skip
     - path: tests/tier5_e2e_kind/gateway_replica_continuity_test.go
       function: TestSessionContinuesAfterCoordinatingGatewayReplicaLoss
       site: 1
