@@ -122,8 +122,8 @@ func main() {
 			"bundled into the §4.4 checkpoint and restored on §7.3 resume "+
 			"(step f). Empty disables session-file capture")
 	artifactsRoot := flag.String("artifacts-root", "/artifacts",
-		"§6.4 /artifacts base the per-slot concurrent-workspace artifact "+
-			"trees (/artifacts/{slotId}) nest under")
+		"§6.4 /artifacts base the per-slot artifact "+
+			"trees (/artifacts/{sessionId}) nest under")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them; empty leaves PrepareWorkspace "+

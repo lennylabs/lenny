@@ -10,8 +10,8 @@ import (
 // EnsureTree creates the per-slot directory tree §6.4 makes the adapter
 // responsible for, on the adapter's first reference to an identifier the
 // gateway minted at claim time: the slot's `current/`, `staging/`,
-// `/sessions/{slotId}/`, `/artifacts/{slotId}/`, and the
-// `/run/lenny/slots/{slotId}/` credential directory. It is idempotent —
+// `/sessions/{sessionId}/`, `/artifacts/{sessionId}/`, and the
+// `/run/lenny/slots/{sessionId}/` credential directory. It is idempotent —
 // re-creating an existing slot tree is a no-op — so a retried slot bind
 // does not error. Each directory is chmod'd to its exact mode after
 // MkdirAll so the process umask cannot strip the bits the runtime or the
@@ -46,9 +46,9 @@ func EnsureTree(p SlotPaths) error {
 }
 
 // RemoveTree removes the per-slot directory tree on slot cleanup. It
-// removes the slot's `/workspace/slots/{slotId}` root (current + staging),
-// `/sessions/{slotId}`, `/artifacts/{slotId}`, and
-// `/run/lenny/slots/{slotId}` credential directory. Removal is
+// removes the slot's `/workspace/slots/{sessionId}` root (current + staging),
+// `/sessions/{sessionId}`, `/artifacts/{sessionId}`, and
+// `/run/lenny/slots/{sessionId}` credential directory. Removal is
 // best-effort across the trees: a removal error on one tree is
 // accumulated but does not abort the others, so a partial cleanup still
 // drops as much per-slot state as possible. An already-absent tree is not
