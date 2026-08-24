@@ -147,5 +147,32 @@ console.log("\n3. flag ON, re-verify finds a divergence: repaired through the no
 }
 
 if (failures) { const { logs } = await run({ reverifyDoneSteps: true, reverifyFindings: FINDING }); console.log("\n  --- S1 log lines ---"); logs.filter((l) => /S1/.test(l)).forEach((l) => console.log("   " + l.slice(0, 130))); }
+console.log("\n4. tier scoping: full on the first implementation, scoped on a fix, full again at the end");
+{
+  // S2 is unticked, so it is a fresh step: attempt 1 is an initial implementation.
+  const { calls } = await run({ reverifyDoneSteps: false, reverifyFindings: [] });
+  const v1 = calls.find((c) => c.label === "verify:S2:r1");
+  check("attempt 1 runs the FULL tier set", v1 && /each higher tier this step must run/.test(v1.prompt));
+  check("attempt 1 is not scoped", v1 && !/ONLY those of the step's higher tiers/.test(v1.prompt));
+  check("a first-try-correct step needs no final gate", !calls.some((c) => c.label === "verify:S2:final"));
+}
+{
+  // A ticked step with findings: its first attempt is a FIX, so it takes the
+  // scoped path, and the final gate must then run before it is marked done.
+  const { calls, logs } = await run({ reverifyDoneSteps: true, reverifyFindings: FINDING });
+  const v1 = calls.find((c) => c.label === "verify:S1:r1");
+  check("a fix attempt runs only the tiers the fix could affect",
+    v1 && /ONLY those of the step's higher tiers/.test(v1.prompt));
+  check("the fix attempt is told the skipped tiers get re-run",
+    v1 && /not the final gate/.test(v1.prompt));
+  check("the fixer itself is scoped too",
+    calls.some((c) => c.label.startsWith("build:S1") && !c.label.endsWith(":base") &&
+      /TESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX/.test(c.prompt)));
+  const fg = calls.find((c) => c.label === "verify:S1:final");
+  check("the final full gate runs before the step is marked done", !!fg);
+  check("the final gate skips nothing", fg && /Skip none of them/.test(fg.prompt));
+  check("logged the final gate", logs.some((l) => /full tier pass as the final gate/.test(l)));
+}
+
 console.log(failures === 0 ? "\nAll checks passed.\n" : "\n" + failures + " check(s) FAILED.\n");
 process.exit(failures ? 1 : 0);

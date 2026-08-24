@@ -496,6 +496,18 @@ log("Build sequence: " + plan.steps.length + " steps");
 // Per-step review lenses, scoped to the single step's diff. Whole-change
 // completeness is left to the final Review; here a surface this step adds
 // for a later step to consume is explicitly out of scope.
+// The memory and stall rules every test-running agent is held to. Extracted so
+// the final gate states them identically to the per-attempt verifier rather
+// than paraphrasing them into something weaker.
+const MEMORY_SAFE_NOTE =
+  " MEMORY-SAFE and no-stall: run every command in the FOREGROUND, one at a time, scoped to the changed " +
+  "packages. Never use `run_in_background` for tests unless a single tier will exceed the 180s watchdog " +
+  "without emitting output, and never run whole-repo `go test -race ./...` or `lenny-test --max-tier unit`: " +
+  "orphaned or concurrent envtest etcd and kube-apiserver pairs, and the race detector's memory, OOM this " +
+  "16GB host and take the build down with them. Run a tier-2 envtest package foreground and alone with " +
+  "`-p 1` and `KUBEBUILDER_ASSETS` set, then reap strays with `pkill -f kubebuilder-envtest` before the " +
+  "next one. Let output stream rather than piping it through `tail` or `head`.";
+
 const STEP_REVIEW_LENSES = [
   {
     key: "conformance",
@@ -692,6 +704,17 @@ for (let i = 0; i < plan.steps.length; i++) {
   // quickly, because the operator's move is to wait or re-authenticate rather
   // than to let the loop keep trying.
   let deadAttempts = 0;
+  // Whether the tree as it now stands has had a full tier pass. Every attempt
+  // commits, so any attempt invalidates it. A step is never marked done on a
+  // false value: when the lenses come back clean and this is false, the full
+  // set runs as the final gate. That is what makes the scoped runs below safe —
+  // they are early feedback, and the guarantee comes from the last full pass
+  // running against the exact tree that gets marked done.
+  let fullVerifyCurrent = false;
+  // A re-verified step (reverifyDoneSteps) enters the loop with findings
+  // already carried, so its first attempt is a fix rather than an initial
+  // implementation and takes the scoped path like any other fix.
+  const firstAttemptWasFix = !!issues;
   // Inner loop: implement/fix → verify → review, until green-and-conformant
   // or the attempt cap. Each iteration is one fix attempt.
   while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
@@ -720,7 +743,17 @@ for (let i = 0; i < plan.steps.length; i++) {
             stepHeader +
             "\n\nThe prior attempt left this step not done. Address this:\n" +
             issues +
-            "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code to match the proposal's design where the issue is a divergence), run tier 0, tier 1, and this step's listed tiers to green (skip only a tier that genuinely needs a cloud-only resource, noting it), then commit on the current branch. " +
+            "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code " +
+            "to match the proposal's design where the issue is a divergence), then commit on the current " +
+            "branch.\n\nTESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX. Run tier 0 and tier 1 for the packages " +
+            "this fix touches, plus only those of the step's tiers (" +
+            ((step.tiers || []).join(", ") || "none beyond tier 0/1") +
+            ") whose subject this fix actually changes. Skip a tier this fix cannot affect and name the ones " +
+            "you skipped: a comment, a rename, or a doc line does not need an envtest or an integration tier " +
+            "re-run, and those cost tens of minutes each. Err toward running one tier too many rather than " +
+            "skipping one that mattered. This is not the final gate — the whole set runs again once the " +
+            "design review comes back clean, so a tier skipped here is re-run before the step is marked " +
+            "done. " +
             RULES_FULL +
             "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
       { schema: STEP, label: "build:" + step.id + (attempt > 1 ? ":fix" + attempt : ""), phase: "Build" },
@@ -760,6 +793,10 @@ for (let i = 0; i < plan.steps.length; i++) {
     // continuation of this one.
     deadAttempts = 0;
 
+    // Full tiers on the first implementation of a step; scoped on a fix, whose
+    // blast radius is usually far narrower than the step's. The final gate
+    // below restores the full set, so nothing is marked done on a scoped pass.
+    const fullPass = attempt === 1 && !firstAttemptWasFix;
     // Independent verify: a different agent re-runs the step's tiers and
     // gates green. The implementer's self-report is advisory.
     const sv = await agentTry(
@@ -774,12 +811,25 @@ for (let i = 0; i < plan.steps.length; i++) {
         stepRef +
         " (`git diff " +
         stepRef +
-        "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus each higher tier this step must run: " +
-        ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+        "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus " +
+        (fullPass
+          ? "each higher tier this step must run: " +
+            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)")
+          : "ONLY those of the step's higher tiers whose subject the LAST FIX changed, out of: " +
+            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+            ". Read `git diff HEAD~1..HEAD` first to see what that fix was. Skip a tier it cannot affect and " +
+            "list every tier you skipped, and why, in your notes: a comment, a rename, or a doc line does not " +
+            "need an envtest or an integration tier re-run and those cost tens of minutes each. Err toward " +
+            "running one tier too many rather than skipping one that mattered. This is not the final gate — " +
+            "the whole set runs again once the design review is clean, before the step is marked done"
+        ) +
         ". MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
       { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
     stepGreen = !!(sv && sv.green);
+    // This attempt committed, so whatever full pass preceded it is stale. A
+    // green full pass on THIS tree is the only thing that sets it true again.
+    fullVerifyCurrent = fullPass && stepGreen;
     if (!stepGreen) {
       stepReviewClean = false;
       stepFindings = [];
@@ -810,6 +860,47 @@ for (let i = 0; i < plan.steps.length; i++) {
         " design-conformance finding(s)" +
         (allReviewersRan ? "" : " (a reviewer did not return; not treated as clean)"),
     );
+    // FINAL GATE. The lenses are clean, but if the tree reached this state
+    // through scoped runs then no full tier pass has covered it. Run the whole
+    // set now, against the exact tree about to be marked done. This is the
+    // guarantee the scoped fix rounds borrow against: green here, or the
+    // failures become the next attempt's work.
+    if (stepReviewClean && !fullVerifyCurrent) {
+      log("Step " + step.id + ": review clean after scoped runs; full tier pass as the final gate");
+      const fg = await agentTry(
+        "Run the FULL test set for one build step of an applied spec proposal and report whether it is green. " +
+          "You did not write this code. Work in " +
+          repo +
+          ". Do not edit anything; only run tests and report.\n\n" +
+          stepHeader +
+          "\n\nThe step's design review is clean and its code is committed. Earlier rounds ran only the tiers " +
+          "each fix could affect, so no single run has covered the tree as it now stands. Run tier 0 and " +
+          "tier 1 for every package this step changed (`git diff " +
+          stepRef +
+          "..HEAD`), and every higher tier this step must run: " +
+          ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+          ". Skip none of them except a tier that genuinely needs a cloud-only resource, which you name. " +
+          MEMORY_SAFE_NOTE +
+          "\n\nReport green, the tiers you ran, the changed-line coverage if you measured it, and every failure.",
+        { schema: VERIFY, label: "verify:" + step.id + ":final", phase: "Build" },
+      );
+      if (fg && fg.green) {
+        fullVerifyCurrent = true;
+        log("Step " + step.id + ": full tier pass green");
+      } else {
+        stepGreen = false;
+        stepReviewClean = false;
+        issues =
+          "The design review is clean, but the full tier pass run against the finished tree is not green. " +
+          "Earlier rounds ran only the tiers each fix could affect, so these failures are in tiers those " +
+          "rounds skipped. Fix them and keep the design conformant:\n" +
+          (((fg && fg.failures) || []).map((f) => "- " + f).join("\n") ||
+            "- (the final verifier reported not green without listing failures)") +
+          ((fg && fg.notes) ? "\nVerifier notes: " + fg.notes : "");
+        log("Step " + step.id + ": full tier pass FAILED after a clean review; returning to the fix loop");
+        continue;
+      }
+    }
     if (!stepReviewClean) {
       issues =
         stepFindings.length > 0
