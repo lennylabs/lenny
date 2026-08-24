@@ -76,7 +76,7 @@ func TestPromptJourneyAcrossAuthModes(t *testing.T) {
 				// session surface.
 				setup := sessiondriver.New(t)
 				ensureDefaultTenantSeeded(t, setup)
-				ensureDefaultTenantAllowsSessionsWithNoEnvironment(t, setup)
+				ensureTenantAllowsSessionsWithNoEnvironment(t, setup, "default")
 				bearer := freshAdminBearer(t, setup, c)
 
 				d := sessiondriver.New(t, sessiondriver.Options{SessionBearer: bearer})

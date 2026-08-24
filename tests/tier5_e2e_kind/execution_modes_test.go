@@ -117,6 +117,9 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	sessA, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
 		inlineWorkspacePlan("marker-a.txt", "workspace-of-session-A"))
@@ -205,6 +208,9 @@ func TestSessionModePoolMaterializesIntoTheSlotTree_spec_6_4(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	sess, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
 		inlineWorkspacePlan("marker.txt", "workspace-of-session-mode"))
@@ -263,6 +269,9 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	sessA, err := d.CreateAndStartWithPlan(ctx, tenant, concurrentRuntimeRef,
 		inlineWorkspacePlan("marker.txt", "workspace-of-slot-A"))

@@ -102,28 +102,28 @@ func ensureDefaultTenantSeeded(t *testing.T, d *sessiondriver.Driver) {
 	}
 }
 
-// ensureDefaultTenantAllowsSessionsWithNoEnvironment sets the built-in
-// "default" tenant's §10.6 noEnvironmentPolicy to allow-all via
-// GET/PUT .../rbac-config, preserving every other rbac-config field on
-// the tenant. This e2e Kind cluster is a long-lived, reused install
-// (tests/testinfra/kind/install.sh's idempotent bring-up), and an
-// earlier, unrelated §10.6/§11.1 test run against this same shared
-// cluster can leave "default" pinned at the stricter deny-all policy;
-// requireEnvironmentAdmission (pkg/gateway/sessionserver/runtimes.go)
-// then rejects any session-creation request that names no explicit
-// environment with 403 FORBIDDEN
-// reason=no_environment_policy_deny_all. This test's session-creation
-// assertions are about the §10.2 Bearer auth chain, not the §10.6
-// environment-membership axis, so it pins the precondition explicitly
-// through the documented admin path rather than depending on
-// whatever state an earlier, unrelated test left behind.
-func ensureDefaultTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *sessiondriver.Driver) {
+// ensureTenantAllowsSessionsWithNoEnvironment sets the named tenant's
+// §10.6 noEnvironmentPolicy to allow-all via GET/PUT .../rbac-config,
+// preserving every other rbac-config field on the tenant. A tenant
+// carries the stricter deny-all policy unless it is relaxed: a freshly
+// bootstrapped tenant starts there, and on this long-lived, reused Kind
+// install (tests/testinfra/kind/install.sh's idempotent bring-up) an
+// earlier §10.6/§11.1 run can leave the built-in "default" tenant
+// pinned there too. requireEnvironmentAdmission
+// (pkg/gateway/sessionserver/runtimes.go) then rejects any
+// session-creation request that names no explicit environment with 403
+// FORBIDDEN reason=no_environment_policy_deny_all. A test whose
+// assertions sit on another axis pins the precondition explicitly
+// through the documented admin path rather than depending on the
+// tenant's default policy or on whatever state an earlier, unrelated
+// test left behind.
+func ensureTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *sessiondriver.Driver, tenantID string) {
 	t.Helper()
-	getReq, err := http.NewRequest(http.MethodGet, d.BaseURL()+"/v1/admin/tenants/default/rbac-config", nil)
+	getReq, err := http.NewRequest(http.MethodGet, d.BaseURL()+"/v1/admin/tenants/"+tenantID+"/rbac-config", nil)
 	if err != nil {
 		t.Fatalf("build rbac-config GET request: %v", err)
 	}
-	getReq.Header.Set("X-Lenny-Tenant-ID", "default")
+	getReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
 	getReq.Header.Set("X-Lenny-Roles", "platform-admin")
 	getReq.Header.Set("X-Lenny-User-ID", "alice")
 	getRes, err := http.DefaultClient.Do(getReq)
@@ -133,7 +133,7 @@ func ensureDefaultTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *session
 	defer getRes.Body.Close()
 	raw, _ := io.ReadAll(getRes.Body)
 	if getRes.StatusCode != http.StatusOK {
-		t.Fatalf("GET /v1/admin/tenants/default/rbac-config: want 200, got %d (body %s)", getRes.StatusCode, raw)
+		t.Fatalf("GET rbac-config for tenant %q: want 200, got %d (body %s)", tenantID, getRes.StatusCode, raw)
 	}
 	etag := getRes.Header.Get("ETag")
 	if etag == "" {
@@ -151,13 +151,13 @@ func ensureDefaultTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *session
 	if err != nil {
 		t.Fatalf("re-encode rbac-config payload: %v", err)
 	}
-	putReq, err := http.NewRequest(http.MethodPut, d.BaseURL()+"/v1/admin/tenants/default/rbac-config", bytes.NewReader(body))
+	putReq, err := http.NewRequest(http.MethodPut, d.BaseURL()+"/v1/admin/tenants/"+tenantID+"/rbac-config", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("build rbac-config PUT request: %v", err)
 	}
 	putReq.Header.Set("Content-Type", "application/json")
 	putReq.Header.Set("If-Match", etag)
-	putReq.Header.Set("X-Lenny-Tenant-ID", "default")
+	putReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
 	putReq.Header.Set("X-Lenny-Roles", "platform-admin")
 	putReq.Header.Set("X-Lenny-User-ID", "alice")
 	putRes, err := http.DefaultClient.Do(putReq)
@@ -167,7 +167,7 @@ func ensureDefaultTenantAllowsSessionsWithNoEnvironment(t *testing.T, d *session
 	defer putRes.Body.Close()
 	raw, _ = io.ReadAll(putRes.Body)
 	if putRes.StatusCode != http.StatusOK {
-		t.Fatalf("PUT /v1/admin/tenants/default/rbac-config: want 200, got %d (body %s)", putRes.StatusCode, raw)
+		t.Fatalf("PUT rbac-config for tenant %q: want 200, got %d (body %s)", tenantID, putRes.StatusCode, raw)
 	}
 }
 
@@ -263,7 +263,7 @@ func TestStandardBearerGatesSessionCreation(t *testing.T) {
 	c := kind.InstallLenny(t)
 	d := sessiondriver.New(t)
 	ensureDefaultTenantSeeded(t, d)
-	ensureDefaultTenantAllowsSessionsWithNoEnvironment(t, d)
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, "default")
 	bearer := freshAdminBearer(t, d, c)
 
 	t.Run("valid bearer creates and reads a session", func(t *testing.T) {
