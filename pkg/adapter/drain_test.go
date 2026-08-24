@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"testing"
+	"time"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -70,17 +71,19 @@ func TestDrainReason_spec_15_4_2(t *testing.T) {
 	}
 }
 
-// spec: §15.4.2 / §15.4.3 (the CH-RUNTIMEOPS drain precedes the hard
-// runtime close), §5.2 (recycle lifecycle), §4.7 (Shutdown recycle
-// disposition)
+// spec: §5.2 (recycling "requires no runtime cooperation ... with no
+// CH-RUNTIMEOPS exchange between sessions", and the pod "keeps the
+// process alive and reuses it for the next session"), §15.4.2 (the
+// DRAINING terminate frame), §4.7 (Shutdown recycle disposition)
 //
-// The recycle disposition is not a second condition on the teardown. A
-// Shutdown that carries both a session id and a recycle disposition runs
-// the same in-handler sequence as one that carries the session id alone:
-// the drain signal goes out because the deregistration left the registry
-// holding no bound entry, and the ending session's runtime is closed. The
-// gate on the drain is the bound-entry count and nothing else.
-func TestShutdownWithRecycleStillDrainsAndClosesTheRuntime_spec_5_2(t *testing.T) {
+// The recycle disposition says the gateway is holding this pod for its
+// next session. The §15.4.2 terminate frame names no session and tells
+// the pod's shared runtime to finish and exit, so it is the pod's own end
+// rather than the ending session's: at the recycle boundary the adapter
+// closes the ending session's runtime and sends no terminate frame. A
+// Shutdown carrying no recycle disposition still drains, which
+// TestShutdownDrainsViaLifecycle_spec_15_4_2 above pins.
+func TestShutdownWithRecycleSendsNoRuntimeOpsTerminate_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
@@ -101,10 +104,9 @@ func TestShutdownWithRecycleStillDrainsAndClosesTheRuntime_spec_5_2(t *testing.T
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	got := fr.read()
-	if got.Type != "terminate" || got.DeadlineMs != 4000 || got.Reason != "session_complete" {
-		t.Errorf("drain frame = %+v, want terminate deadlineMs 4000 reason session_complete on the "+
-			"recycle disposition", got)
+	if got, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("drain frame = %+v on the recycle disposition; the pod keeps its runtime for the "+
+			"next session, so no terminate frame goes out", got)
 	}
 	if len(rt.closed) != 1 || rt.closed[0] != "sess-1" {
 		t.Errorf("runtime closed = %v, want [sess-1] on the recycle disposition", rt.closed)

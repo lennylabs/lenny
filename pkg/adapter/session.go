@@ -235,6 +235,19 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 	bound := removed && st.sessionID != ""
 	s.mu.Unlock()
 
+	// spec: §5.2 — the recycle disposition says the gateway is holding
+	// this pod for its next session: the adapter closes the ending
+	// session's runtime, keeps the pod's process alive across the recycle
+	// boundary, and the pod "keeps the process alive and reuses it for the
+	// next session". The pod-global drain signal and the shared runtime
+	// transport are the pod's own end rather than the ending session's, so
+	// neither is torn down on this request. Tearing them down leaves a
+	// recycled pod that cannot serve anything: the §4.7 sidecar runtime
+	// runs in a container the pod never restarts, so its process exits on
+	// the closed transport and the next session's start has nothing to
+	// talk to.
+	recycling := req.GetRecycle() != nil
+
 	closeErr := error(nil)
 	if bound {
 		// §4.7: flush a final usage report onto the gateway control stream
@@ -251,13 +264,17 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 		// signal the shared runtime to terminate while it is still serving
 		// that session. It precedes the close because the last session's
 		// close tears the shared runtime down and a terminate frame sent
-		// afterwards reaches a dead runtime.
-		if !boundRemains {
+		// afterwards reaches a dead runtime. The recycle disposition
+		// suppresses it too: §5.2 states that recycling "requires no
+		// runtime cooperation ... with no CH-RUNTIMEOPS exchange between
+		// sessions", and the pod keeps the process this frame would tell
+		// to terminate.
+		if !boundRemains && !recycling {
 			s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
 		}
 		if s.Runtime != nil {
 			closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
-			closeErr = s.Runtime.Close(closeCtx, sessionID)
+			closeErr = s.endRuntimeUse(closeCtx, sessionID, recycling)
 			cancel()
 		}
 		s.noteRuntimeClosed(sessionID)
@@ -300,6 +317,33 @@ func (s *Server) drainViaLifecycle(deadlineMs int32, reason string) {
 		!errors.Is(err, errLifecycleNotConnected) && !errors.Is(err, errLifecycleClosed) {
 		log.Printf("lenny-adapter: lifecycle drain signal: %v", err)
 	}
+}
+
+// endRuntimeUse ends sessionID's use of the pod's runtime. Off the
+// recycle boundary it is the runtime's Close, which tears the shared
+// transport down once the last session releases it. On the recycle
+// boundary the pod is kept for its next session, so a runtime that can
+// separate the two (the §4.7 sidecar transport, which is bound per pod
+// rather than per session) releases the session and leaves its transport
+// up. A runtime whose transport ends with its last session falls back to
+// Close. spec: §5.2 (recycle lifecycle); §4.7.
+func (s *Server) endRuntimeUse(ctx context.Context, sessionID string, recycling bool) error {
+	if recycling {
+		if r, ok := s.Runtime.(sessionReleaser); ok {
+			return r.ReleaseSession(ctx, sessionID)
+		}
+	}
+	return s.Runtime.Close(ctx, sessionID)
+}
+
+// sessionReleaser is the optional half of RuntimeProcess a runtime
+// implements when its transport outlives the sessions carried on it: the
+// pod's next session reuses that transport after the §5.2 recycle
+// boundary. spec: §5.2.
+type sessionReleaser interface {
+	// ReleaseSession ends one session's use of the runtime and leaves the
+	// pod's transport up for the next session.
+	ReleaseSession(ctx context.Context, sessionID string) error
 }
 
 // drainReason maps a §4.7 ShutdownRequest reason to the lifecycle

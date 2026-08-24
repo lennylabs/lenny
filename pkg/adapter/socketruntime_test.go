@@ -353,3 +353,123 @@ func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 		t.Error("runtime should observe EOF after the last slot's Interrupt")
 	}
 }
+
+// spec: §5.2 (recycle lifecycle: a scrubbed pod serves the next session),
+// §4.7 (sidecar runtime transport)
+//
+// The listener is bound once at construction, before any session exists,
+// and its address is released when the adapter process exits with the
+// pod, so it outlives every session on the pod. A runtime that re-dials
+// after the last session's Close (the developer-loop spawn path, where
+// Start execs the runtime binary again) therefore finds the address still
+// bound and the next session's Start accepts its connection.
+//
+// diagnosis: a failure here means the runtime socket is unbound by the
+// last session's teardown, so the first session on a recycled pod fails
+// its accept with "use of closed network connection". The gateway reads
+// that as a failed start, retries onto another pod, and the recycled pod
+// is retired rather than reused, which is the whole of what
+// recycle.enabled buys.
+func TestSocketRuntimeProcessAcceptsTheNextSessionAfterTheLastCloses_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	defer sp.Close(context.Background(), "sess-b")
+
+	firstCh := make(chan net.Conn, 1)
+	go func() { firstCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	first := <-firstCh
+	defer first.Close()
+
+	// The pod's only session ends. The runtime observes EOF and re-dials
+	// the still-bound address below.
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a): %v", err)
+	}
+
+	secondCh := make(chan net.Conn, 1)
+	go func() { secondCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) on the recycled pod: %v; the next session must accept a fresh "+
+			"connection on the pod's still-bound runtime socket", err)
+	}
+	second := <-secondCh
+	defer second.Close()
+
+	// The recycled pod's session writes over the new connection and the
+	// re-dialled runtime reads it.
+	reader := bufio.NewReader(second)
+	frame := `{"type":"message","sessionId":"sess-b"}`
+	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
+		t.Fatalf("WriteEnvelope on the recycled pod: %v", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("re-dialled runtime read on the recycled pod: %v", err)
+	}
+	if strings.TrimSpace(line) != frame {
+		t.Errorf("re-dialled runtime received %q, want %q", strings.TrimSpace(line), frame)
+	}
+}
+
+// spec: §5.2 (the pod keeps its process alive across the recycle boundary
+// and reuses it for the next session), §4.7 (sidecar runtime transport)
+//
+// The §4.7 sidecar runtime runs in a container the pod never restarts
+// (RestartPolicy: Never), so nothing re-dials the socket once the shared
+// connection is gone. ReleaseSession is what the recycle boundary calls
+// instead of Close: it releases the ending session and leaves the pod's
+// connection up, so the next session on the recycled pod writes over the
+// same transport to the same runtime process.
+//
+// diagnosis: a failure here means the recycle boundary tears the pod's
+// runtime transport down with the ending session. The runtime process
+// exits on the closed connection, the first session on the recycled pod
+// has nothing to write to, and the gateway retires the pod instead of
+// reusing it.
+func TestSocketRuntimeProcessReleaseSessionKeepsThePodsConnection_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	defer sp.Close(context.Background(), "sess-b")
+
+	connCh := make(chan net.Conn, 1)
+	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	runtimeConn := <-connCh
+	defer runtimeConn.Close()
+
+	// The recycle boundary: the pod's only session ends and the pod is
+	// held for its next session.
+	if err := sp.ReleaseSession(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("ReleaseSession(sess-a): %v", err)
+	}
+
+	// No second dial: the next session reuses the connection the runtime
+	// already holds.
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) on the recycled pod: %v; the next session must reuse the pod's "+
+			"live runtime connection", err)
+	}
+	reader := bufio.NewReader(runtimeConn)
+	frame := `{"type":"message","sessionId":"sess-b"}`
+	if err := sp.WriteEnvelope("sess-b", []byte(frame)); err != nil {
+		t.Fatalf("WriteEnvelope on the recycled pod: %v", err)
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("runtime read on the recycled pod: %v", err)
+	}
+	if strings.TrimSpace(line) != frame {
+		t.Errorf("runtime received %q, want %q", strings.TrimSpace(line), frame)
+	}
+}
