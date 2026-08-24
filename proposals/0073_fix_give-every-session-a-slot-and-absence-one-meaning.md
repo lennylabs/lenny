@@ -318,7 +318,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       sentinel and the Go surface of the dropped columns go with them. The two are one step under ordering
       rule 1, since the SQL naming the columns is string literals.
       Depends on: S9, S12
-- [ ] **S16 · code, test** — CODE-6. The adapter frame helpers, the demultiplexer, the gateway envelopes,
+- [x] **S16 · code, test** — CODE-6. The adapter frame helpers, the demultiplexer, the gateway envelopes,
       the three runtime SDKs, and the two reference runtimes take the `sessionId` rename and the
       unconditional population. The step also lands §8's tier-11 `/workspace/current` sweep and its
       tier-11 frame-identifier reconciliation, whose predicate reads SCHEMA-2's JSONL schema against
