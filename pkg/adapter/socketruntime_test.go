@@ -5,7 +5,9 @@ package adapter_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"runtime"
@@ -530,5 +532,164 @@ func TestSocketRuntimeProcessReconnectsAfterTheRuntimeEndsTheConnection_spec_5_2
 	}
 	if strings.TrimSpace(line) != frame {
 		t.Errorf("re-dialled runtime received %q, want %q", strings.TrimSpace(line), frame)
+	}
+}
+
+// spec: §5.2 (per-slot teardown and release; the shared runtime
+// connection), §4.7 (sidecar runtime transport)
+//
+// The fan-out reader records the connection as gone whenever the runtime's
+// end of it disappears, so a session can reach Close with no live
+// connection. Close must still release that session from the active set:
+// a session left registered there is a permanent phantom sibling, and
+// every later session on the pod then finds the set non-empty and skips
+// the shared-connection teardown.
+//
+// diagnosis: a failure here means a runtime crash strands its session in
+// the adapter's active set. From that point on no session's Close tears
+// the runtime connection down, the §15.4 clean-exit signal never reaches
+// the runtime again, and the spawned-child grace wait never runs.
+func TestSocketRuntimeProcessCloseReleasesTheSessionAfterTheRuntimeDied_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	sp.AcceptTimeout = 5 * time.Second
+	defer sp.Close(context.Background(), "sess-b")
+
+	firstCh := make(chan net.Conn, 1)
+	go func() { firstCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	first := <-firstCh
+
+	// The subscriber's channel closes once the reader has recorded the
+	// connection as gone, which is the state Close has to handle.
+	out, err := sp.Output(context.Background(), "sess-a")
+	if err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
+	}
+
+	// The runtime crashes: its end of the connection goes away without the
+	// adapter having closed it.
+	first.Close()
+	select {
+	case <-out:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fan-out reader did not observe the runtime's end of the connection")
+	}
+
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a) after the runtime died: %v", err)
+	}
+
+	secondCh := make(chan net.Conn, 1)
+	go func() { secondCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) after the runtime re-dialled: %v", err)
+	}
+	second := <-secondCh
+	defer second.Close()
+
+	// sess-b is the pod's only active session, so its Close closes the
+	// shared connection and the runtime reads EOF.
+	if err := sp.Close(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Close(sess-b): %v", err)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	buf := make([]byte, 1)
+	if _, err := second.Read(buf); !errors.Is(err, io.EOF) {
+		t.Errorf("the re-dialled runtime read %v, want EOF; the crashed session was left in the "+
+			"active set, so sess-b's Close never tore the shared connection down", err)
+	}
+}
+
+// spec: §5.2 ("Other slots continue unaffected"; the pod reuses its
+// runtime socket for the next session), §28.5.3 (JSONL framing)
+//
+// Each connection owns the subscribers registered against it. The reader
+// of a connection the adapter has already closed can still be running when
+// the next session's Start installs a fresh connection and its Attach
+// stream subscribes, and it must close only its own connection's
+// subscribers on the way out.
+//
+// diagnosis: a failure here means a departing reader closes the next
+// session's Attach subscribers. That session's stream ends at an EOF the
+// runtime never sent, so its first message produces no output.
+func TestSocketRuntimeProcessDepartingReaderLeavesTheNextSessionsSubscriber_spec_5_2(t *testing.T) {
+	socket := runtimeSocketAddr(t)
+	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	sp.AcceptTimeout = 5 * time.Second
+	defer sp.Close(context.Background(), "sess-b")
+
+	firstCh := make(chan net.Conn, 1)
+	go func() { firstCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Start(sess-a): %v", err)
+	}
+	first := <-firstCh
+
+	// sess-a's Attach stream subscribes and never reads. Enough frames to
+	// fill its intake park the fan-out reader inside the delivery, so the
+	// reader is still alive when the next session starts below.
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	if _, err := sp.Output(firstCtx, "sess-a"); err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
+	}
+	for i := 0; i < 256; i++ {
+		if _, err := fmt.Fprintf(first, "{\"type\":\"status\",\"sessionId\":\"sess-a\",\"n\":%d}\n", i); err != nil {
+			t.Fatalf("write frame %d from the runtime: %v", i, err)
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	// The pod's only session ends and the runtime re-dials for the next
+	// one, which registers its own Attach subscriber.
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a): %v", err)
+	}
+	first.Close()
+
+	secondCh := make(chan net.Conn, 1)
+	go func() { secondCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b): %v", err)
+	}
+	second := <-secondCh
+	defer second.Close()
+
+	outB, err := sp.Output(context.Background(), "sess-b")
+	if err != nil {
+		t.Fatalf("Output(sess-b): %v", err)
+	}
+
+	// Release the parked reader of the previous connection. It exits and
+	// tears down its own subscribers.
+	cancelFirst()
+	time.Sleep(200 * time.Millisecond)
+
+	frame := `{"type":"status","sessionId":"sess-b"}`
+	if _, err := fmt.Fprintln(second, frame); err != nil {
+		t.Fatalf("write the next session's frame from the runtime: %v", err)
+	}
+	select {
+	case line, ok := <-outB:
+		if !ok {
+			t.Fatal("the next session's Attach stream closed; the previous connection's reader " +
+				"closed a subscriber that belongs to the connection after it")
+		}
+		if strings.TrimSpace(string(line)) != frame {
+			t.Errorf("the next session's stream carried %q, want %q", line, frame)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the next session's Attach stream carried no frame")
 	}
 }

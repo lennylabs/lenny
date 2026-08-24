@@ -77,8 +77,12 @@ type SocketRuntimeProcess struct {
 	conn      net.Conn
 	// acceptCh is the one outstanding listener Accept, shared by every
 	// Start that has to wait for the runtime to connect.
-	acceptCh    chan acceptResult
-	cmd         *exec.Cmd
+	acceptCh chan acceptResult
+	cmd      *exec.Cmd
+	// subscribers is the current connection's Output subscriber set. Each
+	// connection gets a fresh set at Start, and its reader closes that set
+	// alone, so a session that subscribes after a previous connection ended
+	// is never torn down by the previous connection's reader. spec: §5.2.
 	subscribers map[*subscriber]struct{}
 	// active is the set of sessions/slots Start has registered and Close
 	// or a hard Interrupt has not yet released. The shared connection is
@@ -97,6 +101,12 @@ type subscriber struct {
 	feed chan []byte
 	out  chan []byte
 	done chan struct{}
+	// owner is the subscriber set of the connection this consumer
+	// subscribed to. Each connection has its own set, so the reader of a
+	// connection the adapter has already closed never closes a subscriber
+	// that a later session registered against the connection after it.
+	// spec: §5.2 ("Other slots continue unaffected").
+	owner map[*subscriber]struct{}
 	// closeOnce guards done so the two concurrent closers — closeSubscribers
 	// when the fan-out reader hits EOF (a per-slot Close or Interrupt that
 	// closes the shared connection), and unsubscribe on the Output context's
@@ -108,11 +118,12 @@ type subscriber struct {
 // newSubscriber starts a subscriber and its pump. The pump forwards each
 // fed frame to out and closes out when done is closed, so the Attach demux
 // observes the runtime's connection close.
-func newSubscriber() *subscriber {
+func newSubscriber(owner map[*subscriber]struct{}) *subscriber {
 	s := &subscriber{
-		feed: make(chan []byte, 64),
-		out:  make(chan []byte),
-		done: make(chan struct{}),
+		feed:  make(chan []byte, 64),
+		out:   make(chan []byte),
+		done:  make(chan struct{}),
+		owner: owner,
 	}
 	go s.pump()
 	return s
@@ -220,10 +231,13 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
 
+	// Each connection carries its own subscriber set, so the reader below
+	// tears down only the consumers that subscribed to this connection.
+	subs := map[*subscriber]struct{}{}
 	p.mu.Lock()
 	p.conn = conn
 	p.connected = true
-	p.subscribers = map[*subscriber]struct{}{}
+	p.subscribers = subs
 	p.addActiveLocked(sessionID)
 	p.mu.Unlock()
 
@@ -231,7 +245,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// to all subscribers, so concurrent per-slot Attach streams each see
 	// the runtime's full output and demultiplex by sessionId.
 	// spec: §28.5.3.
-	go p.fanOut(conn, scanner)
+	go p.fanOut(conn, subs, scanner)
 	return nil
 }
 
@@ -250,12 +264,12 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 // live-looking connection that is really a dead socket. The clear is
 // keyed on the connection the reader owns, so a connection a later Start
 // has already replaced is left alone. spec: §28.5.3; §5.2.
-func (p *SocketRuntimeProcess) fanOut(conn net.Conn, scanner *bufio.Scanner) {
-	defer p.closeSubscribers()
+func (p *SocketRuntimeProcess) fanOut(conn net.Conn, subs map[*subscriber]struct{}, scanner *bufio.Scanner) {
+	defer p.closeSubscribers(subs)
 	defer p.noteConnectionGone(conn)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
-		p.broadcast(line)
+		p.broadcast(subs, line)
 	}
 }
 
@@ -274,10 +288,10 @@ func (p *SocketRuntimeProcess) noteConnectionGone(conn net.Conn) {
 // broadcast hands one frame to every current subscriber. Each subscriber
 // has a dedicated pump goroutine draining its buffered feed into its Output
 // channel, so the send to one subscriber never blocks delivery to another.
-func (p *SocketRuntimeProcess) broadcast(line []byte) {
+func (p *SocketRuntimeProcess) broadcast(owner map[*subscriber]struct{}, line []byte) {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(p.subscribers))
-	for s := range p.subscribers {
+	subs := make([]*subscriber, 0, len(owner))
+	for s := range owner {
 		subs = append(subs, s)
 	}
 	p.mu.Unlock()
@@ -286,16 +300,18 @@ func (p *SocketRuntimeProcess) broadcast(line []byte) {
 	}
 }
 
-// closeSubscribers shuts every still-registered subscriber down so its
-// Output channel closes and the per-slot Attach stream observes the
-// runtime's connection close. A subscriber the consumer already
-// unsubscribed is absent from the map, so each closes exactly once.
-func (p *SocketRuntimeProcess) closeSubscribers() {
+// closeSubscribers shuts down every subscriber still registered in owner,
+// the subscriber set of one connection, so its Output channel closes and
+// the per-slot Attach stream observes that connection's close. A
+// subscriber the consumer already unsubscribed is absent from the set, so
+// each closes exactly once. Only the departing reader's own set is closed,
+// so a later connection's subscribers survive it. spec: §5.2.
+func (p *SocketRuntimeProcess) closeSubscribers(owner map[*subscriber]struct{}) {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(p.subscribers))
-	for s := range p.subscribers {
+	subs := make([]*subscriber, 0, len(owner))
+	for s := range owner {
 		subs = append(subs, s)
-		delete(p.subscribers, s)
+		delete(owner, s)
 	}
 	p.mu.Unlock()
 	for _, s := range subs {
@@ -408,7 +424,7 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 		p.mu.Unlock()
 		return nil, fmt.Errorf("adapter: socket runtime is not connected")
 	}
-	sub := newSubscriber()
+	sub := newSubscriber(p.subscribers)
 	p.subscribers[sub] = struct{}{}
 	p.mu.Unlock()
 
@@ -426,7 +442,7 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 // unsubscribe both resolve to a single out-channel close. spec: §28.5.3.
 func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
 	p.mu.Lock()
-	delete(p.subscribers, sub)
+	delete(sub.owner, sub)
 	p.mu.Unlock()
 	sub.close()
 }
@@ -505,13 +521,23 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 // preserving the historical 10s behavior. spec: §11.4.
 func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) error {
 	p.mu.Lock()
-	if !p.connected {
+	// The release precedes the connection check. The fan-out reader clears
+	// the connection state whenever the runtime's end of the connection
+	// goes away, so a session whose runtime crashed or exited on its own is
+	// closed while connected is false. Consulting the connection first left
+	// that session registered for the life of the adapter process, and the
+	// next session's Close then found a stale sibling in the active set and
+	// skipped the shared-connection teardown for good. spec: §5.2.
+	last := p.releaseActiveLocked(sessionID)
+	if !last {
+		// A sibling slot is still active; leave the shared connection up so
+		// its stream survives. spec: §5.2.
 		p.mu.Unlock()
 		return nil
 	}
-	if !p.releaseActiveLocked(sessionID) {
-		// A sibling slot is still active; leave the shared connection up so
-		// its stream survives. spec: §5.2.
+	if !p.connected {
+		// The runtime's end of the connection is already gone: there is
+		// nothing left to tear down for this session.
 		p.mu.Unlock()
 		return nil
 	}
@@ -523,14 +549,10 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 
 	// A spawned child is the developer loop's runtime, whose lifetime the
 	// adapter owns: the next Start on this pod spawns another one, so this
-	// child is signalled rather than left to notice the closed connection.
-	// A §4.7 sidecar runtime keeps its process alive across the §5.2
-	// recycle boundary and redials, so a spawned one would otherwise
-	// outlive its connection here and the next Start would find a second
-	// runtime on the same socket. The signal precedes the connection close
-	// so the child exits on it rather than redialing into the listener's
-	// backlog. spec: §15.4 (SIGTERM, then SIGKILL at the grace deadline);
-	// §5.2.
+	// child is signalled rather than left to notice the closed connection
+	// and run on to the SIGKILL at the grace deadline. The signal precedes
+	// the connection close so the child exits on it.
+	// spec: §15.4 (SIGTERM, then SIGKILL at the grace deadline); §5.2.
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 	}

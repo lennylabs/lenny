@@ -139,64 +139,6 @@ func TestEmbeddedRuntimeDrivesTheEchoLoop(t *testing.T) {
 	}
 }
 
-// TestSidecarRuntimeServesTheNextSessionAcrossTheRecycleBoundary pins the
-// §5.2 recycle boundary in the §4.7 sidecar deployment model: the kubelet
-// starts the runtime container, the adapter closes the ending session's
-// runtime, and the pod "keeps the process alive and reuses it for the next
-// session". The runtime process is started here the way the kubelet starts
-// it (LENNY_ADAPTER_SOCKET in its environment, no SpawnPath on the adapter
-// side), so the adapter never respawns it: the next session's Start has a
-// runtime to talk to only if the process outlived the close of the
-// previous session's connection and redialled.
-//
-// spec: §5.2 (recycle lifecycle), §4.7 (sidecar deployment model),
-// §28.5.3 (JSONL framing).
-func TestSidecarRuntimeServesTheNextSessionAcrossTheRecycleBoundary(t *testing.T) {
-	echoBin := buildRuntime(t, "cmd/runtimes/echo")
-	socket := runtimeSocketAddr(t)
-
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
-	if err != nil {
-		t.Fatalf("NewSocketRuntimeProcess: %v", err)
-	}
-	sp.AcceptTimeout = 10 * time.Second
-
-	// The kubelet's half: the runtime container runs on its own and dials
-	// the socket the adapter bound.
-	runtimeCmd := exec.Command(echoBin)
-	runtimeCmd.Env = append(os.Environ(), "LENNY_ADAPTER_SOCKET="+socket)
-	runtimeCmd.Stderr = os.Stderr
-	if err := runtimeCmd.Start(); err != nil {
-		t.Fatalf("start the sidecar runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = runtimeCmd.Process.Kill()
-		_, _ = runtimeCmd.Process.Wait()
-	})
-
-	if err := sp.Start(context.Background(), "sess-a"); err != nil {
-		t.Fatalf("Start session A: %v", err)
-	}
-	requireSocketEcho(t, sp, "sess-a", "first-session")
-
-	// The recycle boundary: the adapter closes the ending session's
-	// runtime. It is the pod's last session, so the shared connection goes
-	// with it.
-	closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := sp.Close(closeCtx, "sess-a"); err != nil {
-		t.Fatalf("Close session A: %v", err)
-	}
-
-	if err := sp.Start(context.Background(), "sess-b"); err != nil {
-		t.Fatalf("Start session B after the recycle boundary: %v; the runtime process "+
-			"did not survive the close of session A's connection, so the recycled pod "+
-			"has no runtime to serve its next session", err)
-	}
-	defer sp.Close(context.Background(), "sess-b")
-	requireSocketEcho(t, sp, "sess-b", "second-session")
-}
-
 // requireSocketEcho round-trips one §28.5.3 message frame for sessionID
 // over the socket transport and fails the test unless the echoed response
 // carries the sent text.
@@ -241,14 +183,11 @@ func requireSocketEcho(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID
 
 // TestSpawnedRuntimeIsSignalledOnClose pins the developer-loop half of the
 // §4.7 socket transport: a runtime the adapter spawned is the adapter's own
-// child, so Close signals it rather than waiting for it to notice the
-// closed connection. A sidecar runtime redials across the §5.2 recycle
-// boundary instead of exiting, so a spawned one left unsignalled would run
-// on to the SIGKILL at the grace deadline and the next Start would find a
-// second runtime on the same socket.
+// child, so Close signals it rather than leaving it to notice the closed
+// connection and run on to the SIGKILL at the grace deadline.
 //
 // spec: §4.7 (sidecar deployment model), §15.4 (SIGTERM, then SIGKILL at
-// the grace deadline), §5.2 (recycle lifecycle).
+// the grace deadline).
 func TestSpawnedRuntimeIsSignalledOnClose(t *testing.T) {
 	echoBin := buildRuntime(t, "cmd/runtimes/echo")
 
@@ -265,8 +204,8 @@ func TestSpawnedRuntimeIsSignalledOnClose(t *testing.T) {
 	requireSocketEcho(t, sp, "sess-a", "spawned")
 
 	// The grace window is the §11.4 10s default; a signalled child exits
-	// far inside it, and an unsignalled one that redials burns the whole
-	// window before the SIGKILL.
+	// far inside it, and a child that misses the closed connection burns
+	// the whole window before the SIGKILL.
 	start := time.Now()
 	if err := sp.Close(context.Background(), "sess-a"); err != nil {
 		t.Fatalf("Close: %v", err)

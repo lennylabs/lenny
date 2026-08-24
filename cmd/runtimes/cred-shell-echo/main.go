@@ -26,7 +26,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit"
@@ -40,13 +39,14 @@ const (
 )
 
 func main() {
-	// §4.7: Serve runs one §28.5.3 loop per adapter connection, so the
-	// §5.2 recycle boundary's close of the ending session's runtime leaves
-	// this process alive to serve the pod's next session.
-	if err := runtimekit.Serve(context.Background(),
-		func(ctx context.Context, in io.Reader, out io.Writer) error {
-			return echocore.Run(ctx, in, out, os.Stderr)
-		}); err != nil {
+	transport, err := runtimekit.Open(context.Background())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitRuntimeError)
+	}
+	defer transport.Close()
+
+	if err := echocore.Run(context.Background(), transport.Reader, transport.Writer, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var pe echocore.ProtocolError
 		if errors.As(err, &pe) {
