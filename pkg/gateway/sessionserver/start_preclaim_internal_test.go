@@ -1010,8 +1010,10 @@ func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
 		// The §5.2 client-error classification keeps the bind error in its
 		// chain, so the binder-owned release is still recognized and the
 		// reservation is not decremented twice.
-		{"slot reservation, classified slot failure", slot,
-			classifySlotBindFailure(binderFailure, podsession.SlotBindRequest{SessionID: "sess-1", Pool: "pool-x"}), false},
+		{
+			"slot reservation, classified slot failure", slot,
+			classifySlotBindFailure(binderFailure, podsession.SlotBindRequest{SessionID: "sess-1", Pool: "pool-x"}), false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

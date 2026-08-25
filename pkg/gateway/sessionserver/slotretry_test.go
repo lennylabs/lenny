@@ -437,7 +437,8 @@ func TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2(t *testing.T) {
 // bare bind error and falls through to the retryable creation fallback.
 func TestClassifySlotBindFailureNamesSession_spec_5_2(t *testing.T) {
 	err := classifySlotBindFailure(
-		slotBindErr("pod-b", "sess-1", "connect", codes.InvalidArgument), req("pool-x", 4))
+		slotBindErr("pod-b", "sess-1", "connect", codes.InvalidArgument), req("pool-x", 4),
+	)
 	var sf *podsession.SlotFailedError
 	if !errors.As(err, &sf) {
 		t.Fatalf("expected *SlotFailedError, got %v", err)
