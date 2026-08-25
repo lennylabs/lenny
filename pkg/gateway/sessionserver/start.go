@@ -2108,7 +2108,11 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// SlotID equals the session id, so the binding is reconstructable from the
 	// persisted columns. Pool/slot exhaustion at the reservation surfaces as
 	// the §7.1 SESSION_CREATION_FAILED atomicity envelope before the client
-	// uploads, the same fail-fast contract the exclusive claim gives.
+	// uploads, the same fail-fast contract the exclusive claim gives. A
+	// failure after the slot is reserved is a different boundary: a
+	// non-retryable bind reason answers the §5.2 "Client error on exhaustion"
+	// envelope naming the session whose slot failed, while a transient reason
+	// keeps the retryable §15.1 creation fallback.
 	if match.MaxConcurrentSessions > 1 {
 		slotReq := s.slotBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
 		// spec: §4.6.1 / §5.2 — a `queue` pool holds an exhausted slot

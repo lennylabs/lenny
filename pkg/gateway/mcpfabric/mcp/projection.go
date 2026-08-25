@@ -316,6 +316,7 @@ func projectToolUse(ev sessionevents.Event) []byte {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
 		Args       json.RawMessage `json:"args,omitempty"`
+		SlotID     string          `json:"slotId,omitempty"`
 		Phase      string          `json:"phase,omitempty"`
 		Result     json.RawMessage `json:"result,omitempty"`
 	}
