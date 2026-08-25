@@ -465,3 +465,41 @@ func TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2(t *testing.T)
 		t.Errorf("the retryable creation fallback carries no Retry-After header")
 	}
 }
+
+// spec: §7.1 (atomic creation envelope); §5.2 (client error on exhaustion)
+// diagnosis: a plain POST /v1/sessions is answering a create-time slot
+// failure with the §5.2 non-retryable client error. That route starts
+// nothing, so §7.1's atomic-creation contract owns its failures: every
+// claim failure, including a non-retryable post-reservation slot failure,
+// stays the retryable 503 SESSION_CREATION_FAILED envelope with
+// Retry-After. The §5.2 client error belongs to the routes that start a
+// session on the slot they bind.
+func TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1(t *testing.T) {
+	cluster := slotFailCluster(t)
+	store := memstore.New()
+	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{
+		"runtimeRef": "echo",
+		"userId":     "alice@acme.com",
+	})
+	envelope, _ := body["error"].(map[string]any)
+	if envelope != nil && envelope["code"] == "SLOT_FAILED" {
+		t.Fatalf("plain creation answered a slot failure with the §5.2 client error: status=%d body=%v",
+			resp.StatusCode, body)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 SESSION_CREATION_FAILED; body=%v", resp.StatusCode, body)
+	}
+	if envelope == nil {
+		t.Fatalf("response carries no error envelope: %v", body)
+	}
+	if envelope["code"] != "SESSION_CREATION_FAILED" {
+		t.Errorf("error.code = %v, want SESSION_CREATION_FAILED", envelope["code"])
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Errorf("the §7.1 creation fallback carries no Retry-After header")
+	}
+}

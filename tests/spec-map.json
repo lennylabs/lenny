@@ -237,6 +237,7 @@
         "tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackMinIOOutageWritesPostgresMinimalState",
         "tests/tier4_integration/eviction_fallback_outage_test.go::TestEvictionFallbackTotalLossWhenBothStoresDown",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
@@ -938,6 +939,7 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesTransientThrough_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3"
       ],
       "packages": [
