@@ -27,16 +27,23 @@ import (
 // step that closes it, which is what makes the register the work queue for the
 // steps that follow.
 //
-// The check is deliberately schema-only. Whether a `WIRED` row's named surface
-// is genuinely reachable from production code is a different question, answered
-// by a reachability gate this tree does not yet build; joining a row to that
-// gate's output is the work its own step carries. What is checkable here is that
-// every row is well-formed, that its status is one the closed set holds, that a
-// `WIRED` row names a surface, and one that carries a file path or a symbol
-// rather than a bare line number, that every other row names a step the
-// remediation plan carries, and that every row anchors itself to the §28 heading
-// whose statement it carries a status for. A register that fails any of those is
+// Every row carries the schema rules: that it is well-formed, that its status
+// is one the closed set holds, that a `WIRED` row names a surface, and one that
+// carries a file path or a symbol rather than a bare line number, that every
+// other row names a step the remediation plan carries, and that it anchors
+// itself to the §28 heading whose statement it carries a status for. A register that fails any of those is
 // one no later step can use, whatever the tree does.
+//
+// The credential rows are held to more than their schema. This file builds a
+// reachability gate over the production trees, `adapterClientReachableRPCs`,
+// which reports the non-test files under `pkg/` and `cmd/` that call an adapter
+// RPC through a value of the adapter client type, and it joins the three
+// per-slot credential rows to that gate's output: a row is WIRED when the RPC
+// it names has a production caller and UNWIRED when it has none, and a WIRED
+// row's surface must name every production file that reaches its RPC. §28.4
+// draws WIRED from reachability rather than from an implemented surface, so the
+// gate is what keeps those rows from asserting a reach the tree does not have.
+// Rows outside the credential set carry the schema rules alone.
 //
 // A deferral is resolved against the plan rather than against its spelling. A
 // row that is not `WIRED` exists to hand the mechanism to the step that closes
