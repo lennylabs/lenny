@@ -5,6 +5,7 @@ package tier0_static
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -627,12 +628,14 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 }
 
 // spec: 28.4 (claim register), 4.7 (runtime adapter)
-// diagnosis: a credential-operation row's status disagrees with whether the
-// gateway's adapter client declares a caller for the RPC. §28.4 draws the
-// status from a closed set in which WIRED means the mechanism is reachable
-// from production code and UNWIRED means it is implemented and has no
-// production caller, so a row that claims WIRED for an RPC nothing calls
-// records a reachability the tree does not have.
+// diagnosis: a credential-operation row's status disagrees with whether a
+// production call site reaches the RPC. §28.4 draws the status from a closed
+// set in which WIRED means the mechanism is reachable from production code and
+// UNWIRED means it is implemented and has no production caller, so a row that
+// claims WIRED for an RPC nothing calls records a reachability the tree does
+// not have. A method the adapter client merely declares is the UNWIRED state,
+// so the gate resolves the status against a caller outside the client package
+// rather than against the declaration.
 func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
@@ -644,14 +647,15 @@ func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%s: %v", claimRegisterPath, err)
 	}
-	callers, err := adapterClientMethods(root)
+	reachable, err := adapterClientReachableRPCs(root)
 	if err != nil {
 		t.Fatalf("%s: %v", adapterClientDir, err)
 	}
 
 	// Each row names one adapter credential RPC. The gateway reaches the
-	// adapter only through the adapter client, so a method there is what
-	// makes the RPC reachable from production code.
+	// adapter only through the adapter client, so the RPC is reachable from
+	// production code when the client declares a method for it and some
+	// non-test code outside the client package calls that method.
 	rpcOfRow := map[string]string{
 		"Credential rotation addressed to the session's own lease file":       "RotateCredentials",
 		"Credential lease extension addressed to the session's own lease set": "ExtendCredentialLease",
@@ -664,16 +668,16 @@ func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 			continue
 		}
 		want := "UNWIRED"
-		if callers[rpc] {
+		if reachable[rpc] {
 			want = "WIRED"
 		}
 		if row.Status != want {
-			declares := "declares no caller for"
-			if callers[rpc] {
-				declares = "declares a caller for"
+			calls := "no production code calls the adapter client's"
+			if reachable[rpc] {
+				calls = "production code calls the adapter client's"
 			}
-			t.Errorf("the row %q is %s; the adapter client %s %s, so §28.4 makes the row %s",
-				claim, row.Status, declares, rpc, want)
+			t.Errorf("the row %q is %s; %s %s, so §28.4 makes the row %s",
+				claim, row.Status, calls, rpc, want)
 		}
 	}
 }
@@ -682,8 +686,116 @@ func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 // makes into the adapter's gRPC surface.
 const adapterClientDir = "pkg/gateway/runtime/adapterclient"
 
+// productionCallerRoots are the trees a production call site can live in. Test
+// files under them are excluded, because a test caller does not make a
+// mechanism reachable from production code.
+var productionCallerRoots = []string{"pkg", "cmd"}
+
+// adapterClientReachableRPCs reports which adapter RPCs are reachable from
+// production code. §28.4 draws WIRED from a production caller rather than from
+// an implemented surface, so a method the adapter client declares counts only
+// once non-test code outside the client package calls it.
+func adapterClientReachableRPCs(root string) (map[string]bool, error) {
+	methods, err := adapterClientMethods(root)
+	if err != nil {
+		return nil, err
+	}
+	handles, err := adapterClientHandles(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(methods) == 0 || len(handles) == 0 {
+		return map[string]bool{}, nil
+	}
+	callers := make([]*regexp.Regexp, 0, len(handles))
+	for handle := range handles {
+		callers = append(callers,
+			regexp.MustCompile(`\b`+regexp.QuoteMeta(handle)+`\.(\w+)\(`))
+	}
+	reached := map[string]bool{}
+	err = walkProductionGoFiles(root, func(_ string, src []byte) error {
+		for _, re := range callers {
+			for _, m := range re.FindAllSubmatch(src, -1) {
+				name := string(m[1])
+				if methods[name] {
+					reached[name] = true
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reached, nil
+}
+
+// adapterClientHandles reports the identifiers production code holds an adapter
+// client in, taken from every declaration whose type is the client pointer. A
+// call site is attributed to the adapter client only through one of these, so a
+// same-named RPC on an unrelated stub (the Token Service's own
+// RevokeCredentials, for one) is not read as a caller of the adapter's.
+func adapterClientHandles(root string) (map[string]bool, error) {
+	// Field, parameter, variable, and result declarations all spell the type
+	// the same way, and a short variable declaration takes the client from the
+	// package constructor or from a dialer that returns one.
+	typed := regexp.MustCompile(`(?m)(\w+)\s+\*adapterclient\.Client\b`)
+	dialed := regexp.MustCompile(`(?m)^\s*(\w+)\s*(?:,\s*\w+\s*)?:=\s*[\w.]*(?:DialAdapter|adapterclient\.New\w*)\(`)
+	handles := map[string]bool{}
+	err := walkProductionGoFiles(root, func(_ string, src []byte) error {
+		for _, re := range []*regexp.Regexp{typed, dialed} {
+			for _, m := range re.FindAllSubmatch(src, -1) {
+				handles[string(m[1])] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return handles, nil
+}
+
+// walkProductionGoFiles calls visit for every non-test Go file under the
+// production trees, excluding the adapter client package itself so that the
+// client's own body is never read as its caller.
+func walkProductionGoFiles(root string, visit func(path string, src []byte) error) error {
+	skip := filepath.Join(root, filepath.FromSlash(adapterClientDir))
+	for _, tree := range productionCallerRoots {
+		dir := filepath.Join(root, tree)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if path == skip {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			name := d.Name()
+			if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				return nil
+			}
+			src, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return fmt.Errorf("read %s: %w", path, readErr)
+			}
+			return visit(path, src)
+		})
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", tree, err)
+		}
+	}
+	return nil
+}
+
 // adapterClientMethods reports which exported methods the adapter client
-// declares in non-test source, keyed by method name.
+// declares in non-test source, keyed by method name. A declaration alone is the
+// state §28.4 labels UNWIRED; adapterClientReachableRPCs joins it to a caller.
 func adapterClientMethods(root string) (map[string]bool, error) {
 	entries, err := os.ReadDir(filepath.Join(root, adapterClientDir))
 	if err != nil {
@@ -705,4 +817,76 @@ func adapterClientMethods(root string) (map[string]bool, error) {
 		}
 	}
 	return methods, nil
+}
+
+// spec: 28.4 (claim register), 4.7 (runtime adapter)
+// diagnosis: the register's status gate reads an adapter RPC as reachable from
+// production code on the strength of the adapter client declaring a method for
+// it. §28.4 makes a declared surface with no production caller UNWIRED, so a
+// gate that stops at the declaration would demand WIRED for a row §28.4 makes
+// UNWIRED as soon as an uncalled client wrapper is added.
+func TestAdapterClientReachabilityRequiresAProductionCaller(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	// The client declares three RPCs. Only RotateCredentials has a caller in
+	// production code; ExtendCredentialLease is reached from a test alone, and
+	// RevokeCredentials is declared and never called.
+	write(adapterClientDir+"/client.go", `package adapterclient
+
+type Client struct{}
+
+func (c *Client) RotateCredentials()    {}
+func (c *Client) ExtendCredentialLease() {}
+func (c *Client) RevokeCredentials()    {}
+`)
+	write(adapterClientDir+"/client_test.go", `package adapterclient
+
+func drive(c *Client) { c.RevokeCredentials() }
+`)
+	write("pkg/gateway/podlifecycle/bind.go", `package podlifecycle
+
+type Bind struct {
+	Adapter *adapterclient.Client
+}
+`)
+	write("cmd/gw/main.go", `package main
+
+func renew(bind Bind) { bind.Adapter.RotateCredentials() }
+`)
+	write("cmd/gw/main_test.go", `package main
+
+func testExtend(bind Bind) { bind.Adapter.ExtendCredentialLease() }
+`)
+	// An unrelated stub carrying the same RPC name is not the adapter client,
+	// so its call site does not make the adapter's RPC reachable.
+	write("pkg/gateway/credentials/tokens.go", `package credentials
+
+type assigner struct{ stub tokenServiceClient }
+
+func (a *assigner) revoke() { a.stub.RevokeCredentials() }
+`)
+
+	reachable, err := adapterClientReachableRPCs(root)
+	if err != nil {
+		t.Fatalf("adapterClientReachableRPCs: %v", err)
+	}
+	if !reachable["RotateCredentials"] {
+		t.Errorf("RotateCredentials has a production caller and is not reported reachable")
+	}
+	for _, rpc := range []string{"ExtendCredentialLease", "RevokeCredentials"} {
+		if reachable[rpc] {
+			t.Errorf("%s is reported reachable; it is declared with no production caller, which §28.4 labels UNWIRED", rpc)
+		}
+	}
 }
