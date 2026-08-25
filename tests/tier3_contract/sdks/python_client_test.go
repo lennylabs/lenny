@@ -26,6 +26,9 @@
 package sdks_test
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -542,4 +545,48 @@ func TestPythonClientEquivalenceWithGo(t *testing.T) {
 		},
 	}
 	harness.AssertEquivalent(t, []*harness.Helper{goHelper, pyHelper}, cases)
+}
+
+// spec: 15.4 (MessageEnvelope), 7.2 (message dispatch)
+// diagnosis: The Python client SDK encoded a slot address into the
+// POST /v1/sessions/{id}/messages body. A client addresses a session
+// rather than a slot: the path's session identifier names the slot, so the
+// encoded payload carries no slotId key.
+func TestPythonClientMessageBodyOmitsSlotAddress(t *testing.T) {
+	requirePython3(t)
+	var got []byte
+	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deliveryReceipt":{"messageId":"msg_1","status":"delivered"}}`))
+	}))
+	defer rec.Close()
+
+	script := `
+import sys
+sys.path.insert(0, sys.argv[1])
+from lenny.client import Client
+from lenny.types import MessagePayload
+
+Client(sys.argv[2], tenant_id="acme").send_messages(
+    "sess_1", [MessagePayload(role="user", content="hello", delivery="queued")])
+`
+	root := repoRootFromCWD(t)
+	cmd := exec.Command("python3", "-c", script, filepath.Join(root, "sdks", "client", "python"), rec.URL)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("python send_messages probe failed: %v\n%s", err, out)
+	}
+
+	var body struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatalf("decode encoded request body: %v (body=%s)", err, got)
+	}
+	if len(body.Messages) != 1 {
+		t.Fatalf("encoded %d message payloads, want 1: %s", len(body.Messages), got)
+	}
+	if _, ok := body.Messages[0]["slotId"]; ok {
+		t.Errorf("encoded message payload carries a slotId key: %s", got)
+	}
 }

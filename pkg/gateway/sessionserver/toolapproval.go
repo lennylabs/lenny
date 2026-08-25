@@ -94,12 +94,14 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: register waiter for %s: %w", call.ID, err)
 	}
 
+	// The detail carries no slot address. Every session is bound to a slot
+	// on every pod and a session-mode slot's identifier is its session's
+	// identifier, so the enclosing interaction's SessionID below already
+	// names the slot the call belongs to. spec: §5.2 (identity invariant);
+	// §7.2.
 	detail := map[string]any{"tool": call.Name}
 	if len(call.Arguments) > 0 {
 		detail["args"] = json.RawMessage(call.Arguments)
-	}
-	if call.SlotID != "" {
-		detail["slotId"] = call.SlotID
 	}
 	if err := g.interactions.Put(ctx, interactionstore.Interaction{
 		ID:        call.ID,
@@ -209,16 +211,17 @@ func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call exe
 	if g.events == nil {
 		return
 	}
+	// The payload carries no slot address: the stream is per session and a
+	// session-mode slot's identifier is its session's identifier.
+	// spec: §5.2 (identity invariant); §7.2.
 	payload := struct {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
 		Args       json.RawMessage `json:"args,omitempty"`
-		SlotID     string          `json:"slotId,omitempty"`
 	}{
 		ToolCallID: call.ID,
 		Tool:       call.Name,
 		Args:       json.RawMessage(call.Arguments),
-		SlotID:     call.SlotID,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

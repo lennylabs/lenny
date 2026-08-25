@@ -188,7 +188,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		// slot failure that was non-retryable or whose single retry was
 		// exhausted. The body carries error.category (the failure reason),
 		// error.retryable=false (the client may resubmit as a new request),
-		// and error.slotId. It is checked after the typed setup/credential
+		// and error.sessionId. It is checked after the typed setup/credential
 		// cases so a SlotFailedError wrapping one of those still routes to
 		// the specific handler via the unwrap chain.
 		s.writeSlotFailed(w, slotFailed)
@@ -303,8 +303,8 @@ func (s *Server) writeCredentialPoolExhausted(w http.ResponseWriter, reason stri
 // for a concurrent-workspace slot failure that was not (or no longer)
 // retried. The body carries error.category (the §5.2 failure reason),
 // error.retryable=false (the platform will not retry; the client may
-// resubmit a new request), and error.slotId. HTTP 422 is used because the
-// failure is not transient: a non-retryable category (oom,
+// resubmit a new request), and error.sessionId naming the session whose
+// slot failed. HTTP 422 is used because the failure is not transient: a non-retryable category (oom,
 // workspace_validation, policy_rejection) fails identically on resubmit,
 // and an exhausted retry has already consumed the §5.2 retry budget, so no
 // Retry-After is offered.
@@ -315,7 +315,7 @@ func (s *Server) writeSlotFailed(w http.ResponseWriter, e *podsession.SlotFailed
 		map[string]any{
 			"category":  e.Category,
 			"retryable": false,
-			"slotId":    e.SlotID,
+			"sessionId": e.SessionID,
 		})
 }
 
@@ -2784,10 +2784,10 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		}
 		if reason.NonRetryable() || attempt == maxSlotRetries {
 			return nil, &podsession.SlotFailedError{
-				Category: string(reason),
-				SlotID:   sbe.SlotID,
-				Pool:     req.Pool,
-				Err:      sbe.Err,
+				Category:  string(reason),
+				SessionID: req.SessionID,
+				Pool:      req.Pool,
+				Err:       sbe.Err,
 			}
 		}
 		// Transient with a retry remaining: loop to re-claim a fresh slot.

@@ -35,6 +35,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -758,4 +759,42 @@ func TestGoClientErgonomics(t *testing.T) {
 //	images; the in-process gateway exposes a single version only.
 func TestGoClientCompatibilityMatrix(t *testing.T) {
 	t.Logf("non-skip — documented follow-on: §15.6 Go client compatibility matrix — requires a pinned set of gateway images covering the §15.5 support window and a matrix driver; the in-process httptest gateway exposes one version")
+}
+
+// spec: 15.4 (MessageEnvelope), 7.2 (message dispatch)
+// diagnosis: The Go client SDK encoded a slot address into the
+// POST /v1/sessions/{id}/messages body. A client addresses a session
+// rather than a slot: the path's session identifier names the slot, so the
+// encoded payload carries no slotId key.
+func TestGoClientMessageBodyOmitsSlotAddress(t *testing.T) {
+	var got []byte
+	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deliveryReceipt":{"messageId":"msg_1","status":"delivered"}}`))
+	}))
+	defer rec.Close()
+
+	client, err := lenny.New(rec.URL, lenny.WithTenant("acme"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := client.SendMessages(context.Background(), "sess_1", lenny.SendMessagesRequest{
+		Messages: []lenny.MessagePayload{{Role: "user", Content: "hello", Delivery: "queued"}},
+	}); err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	var body struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatalf("decode encoded request body: %v (body=%s)", err, got)
+	}
+	if len(body.Messages) != 1 {
+		t.Fatalf("encoded %d message payloads, want 1: %s", len(body.Messages), got)
+	}
+	if _, ok := body.Messages[0]["slotId"]; ok {
+		t.Errorf("encoded message payload carries a slotId key: %s", got)
+	}
 }

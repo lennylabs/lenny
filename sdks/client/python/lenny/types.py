@@ -262,9 +262,6 @@ class MessagePayload:
     #: Section 15.4 closed enum: ``queued`` (default) or ``immediate``.
     delivery: str = ""
 
-    #: Section 5.2 concurrent-workspace slot identifier.
-    slot_id: str = ""
-
     def to_wire(self) -> dict[str, Any]:
         """Return the JSON payload the gateway expects."""
         body: dict[str, Any] = {"content": self.content}
@@ -276,8 +273,6 @@ class MessagePayload:
             body["inReplyTo"] = self.in_reply_to
         if self.delivery:
             body["delivery"] = self.delivery
-        if self.slot_id:
-            body["slotId"] = self.slot_id
         return body
 
 

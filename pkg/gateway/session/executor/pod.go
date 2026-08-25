@@ -245,7 +245,6 @@ func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID
 		ID:        call.ID,
 		Name:      call.Name,
 		Arguments: call.Arguments,
-		SlotID:    call.SessionID,
 	})
 	if err != nil {
 		return false, fmt.Errorf("podexec: await tool-use approval: %w", err)

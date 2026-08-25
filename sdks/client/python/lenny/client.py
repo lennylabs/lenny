@@ -322,8 +322,10 @@ class Client:
         """Call ``POST /v1/sessions/{id}/messages``.
 
         Returns the section 15.4 delivery receipt plus the executor's
-        synchronous output. Each payload may carry ``inReplyTo``,
-        ``delivery``, and ``slotId``; see :class:`MessagePayload`.
+        synchronous output. Each payload may carry ``inReplyTo`` and
+        ``delivery``; see :class:`MessagePayload`. A client addresses a
+        session rather than a slot: the path's session identifier names
+        the slot the gateway delivers to.
 
         spec: section 15.1; section 15.4 lines 1725-1737;
         section 7.2 line 345.

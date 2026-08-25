@@ -119,19 +119,23 @@ func slotErrCode(err error) codes.Code {
 // the failure reason is non-retryable or the single retry was exhausted.
 // Category is the failure reason (error.category), Retryable is always
 // false from the platform's perspective (the client may resubmit a new
-// request), and SlotID identifies the failed slot (error.slotId).
+// request), and SessionID identifies the session whose slot failed
+// (error.sessionId). The error carries no separate slot address: a
+// session-mode slot's identifier is its session's identifier, and one of
+// the two routes that reaches the §15.1 mapper is the one-call
+// POST /v1/sessions/start, whose 422 body would otherwise name nothing.
 //
-// spec: §5.2 "Client error on exhaustion".
+// spec: §5.2 "Client error on exhaustion"; §5.2 (identity invariant).
 type SlotFailedError struct {
-	Category string
-	SlotID   string
-	Pool     string
-	Err      error
+	Category  string
+	SessionID string
+	Pool      string
+	Err       error
 }
 
 func (e *SlotFailedError) Error() string {
-	return fmt.Sprintf("podsession: concurrent slot %s failed (%s) with no further retry: %v",
-		e.SlotID, e.Category, e.Err)
+	return fmt.Sprintf("podsession: slot for session %s failed (%s) with no further retry: %v",
+		e.SessionID, e.Category, e.Err)
 }
 
 func (e *SlotFailedError) Unwrap() error { return e.Err }

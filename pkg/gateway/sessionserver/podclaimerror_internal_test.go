@@ -382,3 +382,58 @@ func TestIsTransientPodClaimErrorSetupCommand_spec_7_3(t *testing.T) {
 		})
 	}
 }
+
+// spec: §5.2 "Client error on exhaustion" — the 422 SLOT_FAILED body names
+// the session whose slot failed on error.sessionId and carries no slot
+// address. A session-mode slot's identifier is its session's identifier, so
+// a separate slot key would duplicate an identifier the client already has,
+// and one of the two routes that reaches this mapper is the one-call
+// POST /v1/sessions/start, whose session row is rolled back rather than
+// persisted; the body has to name the session on both routes. The case runs
+// over both routes' fallback pairs (the one-call SESSION_CREATION_FAILED and
+// the two-step STARTING_FAILED) because the typed SlotFailedError takes
+// precedence over the fallback on each.
+func TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2(t *testing.T) {
+	s := New(memstore.New(), Options{})
+	slotFailed := &podsession.SlotFailedError{
+		Category:  string(podsession.SlotReasonWorkspaceValidation),
+		SessionID: "sess-1",
+		Pool:      "conc-pool",
+		Err:       errors.New("workspace plan rejected"),
+	}
+	for _, tc := range []struct {
+		name         string
+		err          error
+		fallbackCode string
+		fallbackMsg  string
+	}{
+		{"one-call start", slotFailed, "SESSION_CREATION_FAILED", "could not place the session on a warm pod"},
+		{"two-step start", slotFailed, "STARTING_FAILED", "could not place the session on a warm pod"},
+		{"wrapped", fmt.Errorf("start on pod: %w", slotFailed), "STARTING_FAILED", "could not place the session on a warm pod"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, tc.err, tc.fallbackCode, tc.fallbackMsg)
+			if w.Code != 422 {
+				t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body.String())
+			}
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != "SLOT_FAILED" {
+				t.Errorf("code = %v, want SLOT_FAILED", body["code"])
+			}
+			details, _ := body["details"].(map[string]any)
+			if details["sessionId"] != "sess-1" {
+				t.Errorf("details.sessionId = %v, want sess-1", details["sessionId"])
+			}
+			if _, ok := details["slotId"]; ok {
+				t.Errorf("details carries slotId = %v; the 422 body names the session and no slot", details["slotId"])
+			}
+			if details["category"] != string(podsession.SlotReasonWorkspaceValidation) {
+				t.Errorf("details.category = %v, want workspace_validation", details["category"])
+			}
+			if details["retryable"] != false {
+				t.Errorf("details.retryable = %v, want false", details["retryable"])
+			}
+		})
+	}
+}

@@ -321,8 +321,10 @@ export class Client {
   /**
    * sendMessages calls POST /v1/sessions/{id}/messages with the
    * supplied batch and returns the §15.4 delivery receipt plus the
-   * executor's synchronous output. Each payload may carry `inReplyTo`,
-   * `delivery`, and `slotId`; see {@link MessagePayload}.
+   * executor's synchronous output. Each payload may carry `inReplyTo`
+   * and `delivery`; see {@link MessagePayload}. A client addresses a
+   * session rather than a slot: the path's session identifier names the
+   * slot the gateway delivers to.
    *
    * spec: §15.1 messages endpoint; §15.4
    * delivery_receipt; §7.2.

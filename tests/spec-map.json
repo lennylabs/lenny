@@ -157,7 +157,11 @@
         "tests/tier4_integration/subsystem_isolation_test.go::TestUploadHandlerSaturationDoesNotStarveOtherSubsystems",
         "tests/tier3_contract/rest_circuitbreaker/subsystem_unavailable_test.go::TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes",
         "pkg/gateway/sessionserver/upload_breaker_convergence_test.go::TestUploadHandlerBreakerConvergesAcrossReplicasUnderBlobStoreOutage",
-        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1",
+        "tests/tier3_contract/sdks/go_client_test.go::TestGoClientMessageBodyOmitsSlotAddress",
+        "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientMessageBodyOmitsSlotAddress",
+        "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientMessageBodyOmitsSlotAddress"
       ],
       "packages": [
         "pkg/gateway"
@@ -924,7 +928,10 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
         "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
-        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go"
+        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryNonRetryableNoRetry_spec_5_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1114,7 +1121,12 @@
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
-        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
+        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestMessageBodyIgnoresStaleSlotAddress_spec_7_2",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1",
+        "tests/tier3_contract/sdks/go_client_test.go::TestGoClientMessageBodyOmitsSlotAddress",
+        "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientMessageBodyOmitsSlotAddress",
+        "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientMessageBodyOmitsSlotAddress"
       ],
       "packages": [
         "pkg/session/interactive"

@@ -22,11 +22,6 @@ type PendingToolCall struct {
 	// Arguments is the tool's raw argument object (`args` in the SSE
 	// event).
 	Arguments json.RawMessage
-	// SlotID is the §5.2 slot the call belongs to. Every session is bound
-	// to a slot on every pod and a session-mode slot's identifier is its
-	// session's identifier, so this is the session the runtime addressed
-	// the tool_call to. spec: §5.2; §28.5.3.
-	SlotID string
 }
 
 // ApprovalDecision is the verdict the gateway returns to a blocked

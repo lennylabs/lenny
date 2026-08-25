@@ -163,9 +163,6 @@ export interface MessagePayload {
 
   /** §15.4 closed enum: `queued` (default) or `immediate`. */
   delivery?: DeliveryMode;
-
-  /** §5.2 concurrent-workspace slot identifier. */
-  slotId?: string;
 }
 
 /**

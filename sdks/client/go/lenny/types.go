@@ -185,9 +185,6 @@ type MessagePayload struct {
 	// `immediate`. Unknown values reject with
 	// `400 INVALID_DELIVERY_VALUE`.
 	Delivery string `json:"delivery,omitempty"`
-
-	// SlotID is the §5.2 concurrent-workspace slot identifier.
-	SlotID string `json:"slotId,omitempty"`
 }
 
 // SendMessagesRequest is the body of POST /v1/sessions/{id}/messages.

@@ -111,8 +111,8 @@ func TestSlotRetryNonRetryableNoRetry_spec_5_2(t *testing.T) {
 	if sf.Category != string(podsession.SlotReasonWorkspaceValidation) {
 		t.Errorf("category = %q, want workspace_validation", sf.Category)
 	}
-	if sf.SlotID != "sess-1" {
-		t.Errorf("slotId = %q, want sess-1", sf.SlotID)
+	if sf.SessionID != "sess-1" {
+		t.Errorf("sessionId = %q, want sess-1", sf.SessionID)
 	}
 	if binder.bindCall != 1 {
 		t.Errorf("BindSlot calls = %d, want 1 (no retry for a non-retryable reason)", binder.bindCall)
@@ -402,5 +402,29 @@ func TestSlotBindErrorReason_spec_5_2(t *testing.T) {
 		if c.want.NonRetryable() == (c.want == podsession.SlotReasonTransient) {
 			t.Errorf("NonRetryable(%q) inconsistent", c.want)
 		}
+	}
+}
+
+// spec: §5.2 "Client error on exhaustion" — the structured client error
+// names the session whose slot failed, taken from the bind request, so the
+// 422 body identifies the session on every route that reaches the mapper.
+// A bind that fails before the pod-side slot is addressable reports no slot
+// on its SlotBindError; the session identifier the request already carries
+// is what the client is told, because a session-mode slot's identifier is
+// its session's identifier.
+func TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2(t *testing.T) {
+	binder := &fakeSlotBinder{
+		errs: []error{slotBindErr("pod-b", "", "workspace_prep", codes.InvalidArgument)},
+	}
+	_, err := applySlotRetryPolicy(context.Background(), binder, slothealth.New(), nil, nil, nil, req("pool-x", 4))
+	var sf *podsession.SlotFailedError
+	if !errors.As(err, &sf) {
+		t.Fatalf("expected *SlotFailedError, got %v", err)
+	}
+	if sf.SessionID != "sess-1" {
+		t.Errorf("sessionId = %q, want sess-1 (the request's session, not the bind error's slot address)", sf.SessionID)
+	}
+	if sf.Pool != "pool-x" {
+		t.Errorf("pool = %q, want pool-x", sf.Pool)
 	}
 }
