@@ -651,7 +651,7 @@ func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%s: %v", claimRegisterPath, err)
 	}
-	reachable, err := adapterClientReachableRPCs(root)
+	callers, err := adapterClientReachableRPCs(root)
 	if err != nil {
 		t.Fatalf("%s: %v", adapterClientDir, err)
 	}
@@ -672,16 +672,63 @@ func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 			continue
 		}
 		want := "UNWIRED"
-		if reachable[rpc] {
+		if len(callers[rpc]) > 0 {
 			want = "WIRED"
 		}
 		if row.Status != want {
 			calls := "no production code calls the adapter client's"
-			if reachable[rpc] {
+			if len(callers[rpc]) > 0 {
 				calls = "production code calls the adapter client's"
 			}
 			t.Errorf("the row %q is %s; %s %s, so §28.4 makes the row %s",
 				claim, row.Status, calls, rpc, want)
+		}
+	}
+}
+
+// spec: 28.4 (claim register), 4.7 (runtime adapter)
+// diagnosis: a WIRED credential row cites the adapter client library instead
+// of the production file that calls it. §28.4 has a WIRED row name the
+// production surface that reaches the mechanism, and the adapter client is a
+// declaration every credential RPC has, including the revocation RPC whose row
+// is UNWIRED for want of a caller. A surface spelled the same way on both rows
+// records a reachability its own text does not demonstrate, so the gate holds
+// each WIRED row to naming every production file that reaches its RPC.
+func TestClaimRegisterWiredCredentialRowNamesItsProductionCaller(t *testing.T) {
+	t.Parallel()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, claimRegisterPath))
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	rows, err := claimRegisterRows(body)
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	callers, err := adapterClientReachableRPCs(root)
+	if err != nil {
+		t.Fatalf("%s: %v", adapterClientDir, err)
+	}
+
+	rpcOfRow := map[string]string{
+		"Credential rotation addressed to the session's own lease file":       "RotateCredentials",
+		"Credential lease extension addressed to the session's own lease set": "ExtendCredentialLease",
+		"Credential revocation addressed to the session's own lease file":     "RevokeCredentials",
+	}
+	for claim, rpc := range rpcOfRow {
+		row, ok := rows[claim]
+		if !ok {
+			t.Errorf("%s carries no row for %q", claimRegisterPath, claim)
+			continue
+		}
+		if row.Status != "WIRED" {
+			continue
+		}
+		for _, caller := range callers[rpc] {
+			if !strings.Contains(row.Surface, caller) {
+				t.Errorf("the row %q is WIRED and names surface %q, which does not name %s, a production file that calls %s",
+					claim, row.Surface, caller, rpc)
+			}
 		}
 	}
 }
@@ -718,12 +765,14 @@ type adapterHandleSet struct {
 	fields map[string]map[string]bool
 }
 
-// adapterClientReachableRPCs reports which adapter RPCs are reachable from
-// production code. §28.4 draws WIRED from a production caller rather than from
-// an implemented surface, so a method the adapter client declares counts only
-// once non-test code outside the client package calls it through a value of
-// the client type.
-func adapterClientReachableRPCs(root string) (map[string]bool, error) {
+// adapterClientReachableRPCs reports, per adapter RPC, the repository-relative
+// paths of the production files that reach it. §28.4 draws WIRED from a
+// production caller rather than from an implemented surface, so a method the
+// adapter client declares counts only once non-test code outside the client
+// package calls it through a value of the client type. The paths are returned
+// rather than a bare boolean so a register row can be held to naming the call
+// site it claims reachability from.
+func adapterClientReachableRPCs(root string) (map[string][]string, error) {
 	methods, err := adapterClientMethods(root)
 	if err != nil {
 		return nil, err
@@ -732,7 +781,7 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	reached := map[string]bool{}
+	reached := map[string][]string{}
 	if len(methods) == 0 {
 		return reached, nil
 	}
@@ -747,6 +796,11 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 			return err
 		}
 		locals := handles.locals[path]
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("relativize %s: %w", path, err)
+		}
+		rel = filepath.ToSlash(rel)
 		ast.Inspect(file, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -760,7 +814,7 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 				return true
 			}
 			if handles.holds(sel.X, locals, imports, self) {
-				reached[sel.Sel.Name] = true
+				reached[sel.Sel.Name] = appendOnce(reached[sel.Sel.Name], rel)
 			}
 			return true
 		})
@@ -769,7 +823,21 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	for rpc := range reached {
+		sort.Strings(reached[rpc])
+	}
 	return reached, nil
+}
+
+// appendOnce adds path to paths when it is not already present, so a file that
+// calls the same RPC twice is counted as one call site.
+func appendOnce(paths []string, path string) []string {
+	for _, have := range paths {
+		if have == path {
+			return paths
+		}
+	}
+	return append(paths, path)
 }
 
 // holds reports whether expr names a value of the adapter client type at a
@@ -1103,11 +1171,14 @@ func (a *assigner) revoke() { a.stub.RevokeCredentials() }
 	if err != nil {
 		t.Fatalf("adapterClientReachableRPCs: %v", err)
 	}
-	if !reachable["RotateCredentials"] {
+	if len(reachable["RotateCredentials"]) == 0 {
 		t.Errorf("RotateCredentials has a production caller and is not reported reachable")
 	}
+	if got := reachable["RotateCredentials"]; len(got) != 1 || got[0] != "cmd/gw/main.go" {
+		t.Errorf("RotateCredentials reports call sites %v; the sole production caller is cmd/gw/main.go", got)
+	}
 	for _, rpc := range []string{"ExtendCredentialLease", "RevokeCredentials"} {
-		if reachable[rpc] {
+		if len(reachable[rpc]) > 0 {
 			t.Errorf("%s is reported reachable; it is declared with no production caller, which §28.4 labels UNWIRED", rpc)
 		}
 	}
@@ -1155,7 +1226,7 @@ func (s *GRPCServer) sweep() { s.RevokeCredentials() }
 	if err != nil {
 		t.Fatalf("adapterClientReachableRPCs: %v", err)
 	}
-	if reachable["RevokeCredentials"] {
+	if len(reachable["RevokeCredentials"]) > 0 {
 		t.Errorf("RevokeCredentials is reported reachable; the only call site is the Token Service's own method, and §28.4 makes an adapter RPC with no production caller UNWIRED")
 	}
 

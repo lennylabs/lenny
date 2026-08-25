@@ -205,8 +205,10 @@ EXPLICIT = [
         "status": "WIRED",
         "spec_anchor": "#286-exclusivity-and-concurrency-model",
         "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into "
-                   "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), gateway caller "
-                   "`pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
+                   "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), reached from "
+                   "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onRenewed` "
+                   "and `cmd/lenny-gateway/cred_fallback.go` `proxyFallbackRotator.Rotate` "
+                   "through `pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
         "note": "the rotation rewrites the addressed session's own "
                 "/run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file "
                 "is untouched; the pod-wide per-provider in-flight completion gate and its "
@@ -218,8 +220,9 @@ EXPLICIT = [
         "status": "WIRED",
         "spec_anchor": "#286-exclusivity-and-concurrency-model",
         "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into "
-                   "`extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), gateway caller "
-                   "`pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
+                   "`extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), reached from "
+                   "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onExtend` "
+                   "through `pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
         "note": "the extension re-arms the addressed session's own expiry timer and "
                 "touches neither its credential file nor a co-tenant's deadline",
     },
