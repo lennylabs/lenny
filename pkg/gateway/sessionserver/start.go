@@ -2133,7 +2133,13 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 				errors.Is(err, podclaim.ErrNoIdlePod) {
 				return nil, fmt.Errorf("%w: %w", errCreateClaimExhausted, err)
 			}
-			return nil, err
+			// A failure after the slot was reserved is the §5.2 slot failure,
+			// not an exhaustion: classify it so the handler answers with the
+			// §5.2 "Client error on exhaustion" envelope naming the session
+			// whose slot failed. The one-call POST /v1/sessions/start carries
+			// no session identifier in its path, so that body is the client's
+			// only source of one.
+			return nil, classifySlotBindFailure(err, slotReq)
 		}
 		// spec: §6.3 — record the pod_claim phase timing at /create, its new
 		// boundary in the decomposed lifecycle, for the concurrent path too.
@@ -2555,7 +2561,15 @@ func (s *Server) slotBindRequest(ctx context.Context, row sessionstore.Session, 
 // binding reconnect).
 func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, slotReq podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
-		return s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
+		res, err := s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
+		if err != nil {
+			// The reserved slot is not re-reserved and retried here, so a
+			// post-reservation failure is terminal for this request: classify
+			// it as the §5.2 client error so both the one-call and the
+			// two-step route answer a slot failure with the same envelope.
+			return nil, classifySlotBindFailure(err, slotReq)
+		}
+		return res, nil
 	}
 	return runWithQueue(ctx, s.claimQueue, match.Pool, match.OnPoolExhausted, match.MaxQueueWaitSeconds,
 		func(ctx context.Context) (*podsession.BindResult, error) {
@@ -2688,6 +2702,35 @@ type slotBinder interface {
 // metric into applySlotRetryPolicy.
 func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	return applySlotRetryPolicy(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement, s.slotLeakGauge, req)
+}
+
+// classifySlotBindFailure maps a post-reservation slot failure onto the §5.2
+// structured client error so the handler answers 422 SLOT_FAILED with the
+// failure category and the session whose slot failed, rather than the
+// retryable creation fallback. It is the no-retry counterpart of the tail of
+// applySlotRetryPolicy, used on the two paths that bind a slot without a
+// retry budget: the create-time reservation (ClaimSlot) and the reconnect to
+// a slot reserved at create (BindReservedSlot). The binder has already
+// released the reservation on both paths, so this only classifies. An error
+// that is not a post-reservation slot failure (an exhaustion sentinel, a pool
+// resolve failure) passes through unchanged for its own mapping.
+//
+// spec: §5.2 "Client error on exhaustion"; §5.2 (non-retryable categories).
+func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) {
+		return err
+	}
+	// The bind error stays in the chain rather than being replaced by its
+	// own cause: the create-time rollback predicate reads it to tell a
+	// binder-owned reservation release from a pre-bind leak, and the typed
+	// setup/credential handlers match through it either way.
+	return &podsession.SlotFailedError{
+		Category:  string(sbe.Reason()),
+		SessionID: req.SessionID,
+		Pool:      req.Pool,
+		Err:       sbe,
+	}
 }
 
 // applySlotRetryPolicy is the §5.2 "Concurrent-workspace slot retry

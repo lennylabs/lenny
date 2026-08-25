@@ -428,3 +428,42 @@ func TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2(t *testing.T) {
 		t.Errorf("pool = %q, want pool-x", sf.Pool)
 	}
 }
+
+// spec: §5.2 "Client error on exhaustion" — the no-retry slot paths (the
+// create-time reservation and the reconnect to a slot reserved at create)
+// classify a post-reservation failure as the structured client error, so the
+// 422 body names the session whose slot failed and carries the §5.2 failure
+// category. Without the classification the failure reaches the handler as a
+// bare bind error and falls through to the retryable creation fallback.
+func TestClassifySlotBindFailureNamesSession_spec_5_2(t *testing.T) {
+	err := classifySlotBindFailure(
+		slotBindErr("pod-b", "sess-1", "connect", codes.InvalidArgument), req("pool-x", 4))
+	var sf *podsession.SlotFailedError
+	if !errors.As(err, &sf) {
+		t.Fatalf("expected *SlotFailedError, got %v", err)
+	}
+	if sf.SessionID != "sess-1" {
+		t.Errorf("sessionId = %q, want sess-1", sf.SessionID)
+	}
+	if sf.Category != string(podsession.SlotReasonWorkspaceValidation) {
+		t.Errorf("category = %q, want workspace_validation", sf.Category)
+	}
+	if sf.Pool != "pool-x" {
+		t.Errorf("pool = %q, want pool-x", sf.Pool)
+	}
+}
+
+// spec: §5.2 — a reservation-exhaustion sentinel reserved no slot, so it is
+// not a slot failure and passes through unchanged for the
+// WARM_POOL_EXHAUSTED (or creation-atomicity) mapping.
+func TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2(t *testing.T) {
+	in := fmt.Errorf("claim: %w", podclaim.ErrNoConcurrentSlot)
+	out := classifySlotBindFailure(in, req("pool-x", 4))
+	if out != in {
+		t.Fatalf("exhaustion sentinel was rewritten: %v", out)
+	}
+	var sf *podsession.SlotFailedError
+	if errors.As(out, &sf) {
+		t.Errorf("exhaustion sentinel classified as a slot failure: %v", sf)
+	}
+}

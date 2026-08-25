@@ -222,7 +222,7 @@ func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
 // tool_use_requested event (emitted by the approval gate) is always
 // approval-required.
 func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
-	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"},"slotId":"slot-1"}`
+	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"}}`
 	m := decodeFrame(t, projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data)))
 	if m["method"] != "elicitation/create" {
 		t.Fatalf("approval-required requested phase must project to elicitation/create, got %v", m["method"])

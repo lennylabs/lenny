@@ -380,8 +380,9 @@ func TestStartSlotFailedBodyNamesSession_spec_5_2(t *testing.T) {
 }
 
 // spec: §5.2 (client error on exhaustion); §7.1 (atomic creation)
-// diagnosis: the one-call POST /v1/sessions/start leaked a slot address
-// into its error body. That route's path carries no session identifier, so
+// diagnosis: the one-call POST /v1/sessions/start did not answer a slot
+// failure with the §5.2 client error, or leaked a slot address into its
+// error body. That route's path carries no session identifier, so
 // the body is the client's only source of one, and a session-mode slot's
 // identifier is its session's identifier: no separate slot key belongs
 // there. The route reserves the slot inside the §7.1 atomic creation unit,
@@ -397,12 +398,23 @@ func TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2(t *testing.T
 		"runtimeRef": "echo",
 		"userId":     "alice@acme.com",
 	})
-	if resp.StatusCode < 400 {
-		t.Fatalf("status = %d, want an error status (the slot bind failed); body=%v", resp.StatusCode, body)
+	if resp.StatusCode != 422 {
+		t.Fatalf("status = %d, want 422 SLOT_FAILED; body=%v", resp.StatusCode, body)
 	}
 	envelope, _ := body["error"].(map[string]any)
 	if envelope == nil {
 		t.Fatalf("response carries no error envelope: %v", body)
+	}
+	if envelope["code"] != "SLOT_FAILED" {
+		t.Errorf("error.code = %v, want SLOT_FAILED", envelope["code"])
+	}
+	details, _ := envelope["details"].(map[string]any)
+	sessionID, _ := details["sessionId"].(string)
+	if sessionID == "" {
+		t.Errorf("error.details.sessionId is empty; the one-call route's body is the client's only source of the session identifier: %v", envelope)
+	}
+	if details["retryable"] != false {
+		t.Errorf("error.details.retryable = %v, want false", details["retryable"])
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
