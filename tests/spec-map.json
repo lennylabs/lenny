@@ -939,7 +939,8 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesTransientThrough_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2",
-        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlyTransientSlotFailureKeepsCreationEnvelope_spec_7_1",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlyNonRetryableSlotFailureIsClientError_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
       ],
@@ -1114,7 +1115,7 @@
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
-        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlyTransientSlotFailureKeepsCreationEnvelope_spec_7_1",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
       ],
       "packages": [

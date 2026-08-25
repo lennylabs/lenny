@@ -329,7 +329,7 @@ func (s *Server) claimMintPersist(w http.ResponseWriter, r *http.Request, row *s
 	// created-state pod-claim invariant holds uniformly.
 	var createClaim *podsession.ClaimResult
 	if s.podBinder != nil {
-		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan, claimRouteCreate)
+		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan)
 		if err != nil {
 			// spec: §7.1 — the pre-check or claim failed before any
 			// row was persisted; surface SESSION_CREATION_FAILED (or the

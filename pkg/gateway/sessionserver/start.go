@@ -796,7 +796,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		createClaim *podsession.ClaimResult
 	)
 	if s.podBinder != nil {
-		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan, claimRouteStart)
+		outcome, err := s.claimAtCreate(r.Context(), *row, build.parsedPlan)
 		if err != nil {
 			s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 				"could not place the session on a warm pod")
@@ -992,7 +992,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		// as the top-level create path does at claimAtCreate. On failure no pod
 		// is claimed (the pre-check gates the claim), so the typed sentinel
 		// returns directly.
-		outcome, err := s.claimAtCreate(ctx, row, plan, claimRouteStart)
+		outcome, err := s.claimAtCreate(ctx, row, plan)
 		if err != nil {
 			return "", err
 		}
@@ -2027,22 +2027,6 @@ type startContext struct {
 	PodClaim time.Duration
 }
 
-// claimRoute names the client route a create-time claim runs under. The
-// §7.1 atomic-creation envelope covers a plain creation, while the one-call
-// create-and-start route also starts the session and so answers a
-// post-reservation slot failure with the §5.2 client error.
-//
-// spec: §7.1 (atomic creation); §5.2 "Client error on exhaustion".
-type claimRoute int
-
-const (
-	// claimRouteCreate is a plain POST /v1/sessions, which starts nothing.
-	claimRouteCreate claimRoute = iota
-	// claimRouteStart is a create-and-start call, which binds the slot the
-	// session then runs on.
-	claimRouteStart
-)
-
 // claimAtCreate runs the §7.1 step-3 credential availability pre-check and
 // the step-4 pod claim inside the create atomic unit, before the session
 // row is persisted. It resolves the pool serving the row's runtime and
@@ -2082,7 +2066,7 @@ const (
 // SESSION_CREATION_FAILED envelope for every claim failure.
 //
 // spec: §4.1 (proposal), §7.1 steps 3-5; §4.9; §5.2.
-func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan, route claimRoute) (*claimOutcome, error) {
+func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, plan workspaceplan.Plan) (*claimOutcome, error) {
 	// spec: §7.1 / §14.1 — row.Pool carries the client-pinned pool selector.
 	// validateRequestEnvelope already rejected an unsatisfiable, unauthorized,
 	// or isolation-inconsistent pin before claim, so here it constrains
@@ -2161,17 +2145,13 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 				return nil, fmt.Errorf("%w: %w", errCreateClaimExhausted, err)
 			}
 			// A failure after the slot was reserved is the §5.2 slot failure
-			// rather than an exhaustion. On a start-bearing route the handler
-			// answers with the §5.2 "Client error on exhaustion" envelope
-			// naming the session whose slot failed: the one-call
-			// POST /v1/sessions/start carries no session identifier in its
-			// path, so that body is the client's only source of one. A plain
-			// POST /v1/sessions starts nothing, so its claim failure stays on
-			// the §7.1 atomic-creation SESSION_CREATION_FAILED envelope.
-			if route == claimRouteStart {
-				return nil, classifySlotBindFailure(err, slotReq)
-			}
-			return nil, err
+			// rather than an exhaustion. §5.2 states the client error
+			// unconditionally: a non-retryable category with no retry
+			// attempted is answered with the structured error naming the
+			// session whose slot failed, on every route that reaches the
+			// §15.1 mapper. A transient reason keeps the retryable
+			// creation fallback through classifySlotBindFailure's own guard.
+			return nil, classifySlotBindFailure(err, slotReq)
 		}
 		// spec: §6.3 — record the pod_claim phase timing at /create, its new
 		// boundary in the decomposed lifecycle, for the concurrent path too.

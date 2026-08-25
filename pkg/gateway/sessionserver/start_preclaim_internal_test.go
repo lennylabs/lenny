@@ -656,7 +656,7 @@ func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
 
 	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
-	}, workspaceplan.Plan{}, claimRouteCreate)
+	}, workspaceplan.Plan{})
 	if err != nil {
 		t.Fatalf("claimAtCreate (service mode): %v", err)
 	}
@@ -727,7 +727,7 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 
 	_, err := s.claimAtCreate(ctx, sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
-	}, workspaceplan.Plan{}, claimRouteCreate)
+	}, workspaceplan.Plan{})
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("claimAtCreate = %v, want ErrNoCredentialAvailable (pre-check gates the claim)", err)
 	}
@@ -798,7 +798,7 @@ func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
 	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialRevoked)
 	_, err := s.claimAtCreate(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
-	}, workspaceplan.Plan{}, claimRouteCreate)
+	}, workspaceplan.Plan{})
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("claimAtCreate (concurrent pool) = %v, want ErrNoCredentialAvailable (pre-check runs at create for concurrent pools)", err)
 	}
@@ -815,7 +815,7 @@ func TestClaimAtCreateConcurrentPoolExhaustionAtCreate(t *testing.T) {
 	s := concurrentClaimServer(t, "lenny-agents", credentialpoolstore.CredentialActive)
 	_, err := s.claimAtCreate(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "claude-code", IsolationProfile: isolation.ProfileSandboxed,
-	}, workspaceplan.Plan{}, claimRouteCreate)
+	}, workspaceplan.Plan{})
 	if !errors.Is(err, errCreateClaimExhausted) {
 		t.Errorf("claimAtCreate (concurrent pool, no idle pod) = %v, want errCreateClaimExhausted (slot reservation attempted at create)", err)
 	}
