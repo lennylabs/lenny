@@ -69,6 +69,14 @@ const reverifyDoneSteps = !!input.reverifyDoneSteps;
 // step recorded as done that was not is worth surfacing rather than quietly
 // fixing.
 const reverifyRepaired = [];
+// How often the stuck-finding introspection fires inside a step's fix loop.
+// Every fifth attempt: a step that converges normally never reaches it, and a
+// step that does not has already told us something is wrong.
+const introspectEvery = input.introspectEvery || 5;
+// Findings judged unresolvable by any change the step may legally make. Each is
+// recorded, suppressed from later review rounds of that step, written into the
+// step's commit trail, and surfaced at the end of the run.
+const stuckFindings = [];
 const maxVerifyRounds = input.maxVerifyRounds || 25;
 const maxReviewRounds = input.maxReviewRounds || 50;
 const coverageFloor = input.coverageFloor || 80;
@@ -367,6 +375,28 @@ const TICKED = {
   },
 };
 
+// One judge's reading of whether a finding is stuck. A finding is STUCK when no
+// change this step may legally make can resolve it: the code is right, the
+// proposal is wrong, and the proposal is read-only to this phase. Suppressing
+// one is a real cost — the next round stops reporting it — so the bar is
+// unanimity at high confidence, and a single dissent or a single medium keeps
+// the loop grinding instead.
+const STUCK_VERDICT = {
+  type: "object",
+  required: ["stuck", "confidence", "reasoning"],
+  properties: {
+    stuck: { type: "boolean", description: "true only when NO legal change can resolve the finding" },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    findingTitle: {
+      type: "string",
+      description: "the exact title of the finding you judge stuck, copied verbatim from the findings you were given. Empty when stuck is false.",
+    },
+    whyCodeIsRight: { type: "string", description: "the evidence that the landed code is correct, with file:line" },
+    whyProposalIsWrong: { type: "string", description: "what the proposal says that the code cannot satisfy, and where. Note especially any place the proposal contradicts itself." },
+    reasoning: { type: "string" },
+  },
+};
+
 const SHA = {
   type: "object",
   required: ["sha"],
@@ -499,6 +529,11 @@ log("Build sequence: " + plan.steps.length + " steps");
 // The memory and stall rules every test-running agent is held to. Extracted so
 // the final gate states them identically to the per-attempt verifier rather
 // than paraphrasing them into something weaker.
+// For an agent that must look and not touch.
+const READ_ONLY_NOTE =
+  "You are READ-ONLY. Do not edit, create, revert, or delete any file, do not commit, and run no command " +
+  "that writes. Inspect the tree and the git history and report a judgement.";
+
 const MEMORY_SAFE_NOTE =
   " MEMORY-SAFE and no-stall: run every command in the FOREGROUND, one at a time, scoped to the changed " +
   "packages. Never use `run_in_background` for tests unless a single tier will exceed the 180s watchdog " +
@@ -549,6 +584,91 @@ const skippedSteps = [];
 // built and ticked. `ref` is the commit the step's work is measured from; for a
 // re-verified step that is the run's base, because the step's commits predate
 // this run.
+// Three judges, three lenses, no sight of each other's verdicts. A finding is
+// suppressed only when all three say stuck at high confidence. The failure
+// direction matters: a loop wastes time visibly, while a wrongly suppressed
+// finding ships a defect silently, so a single dissent keeps the loop running.
+const STUCK_LENSES = [
+  {
+    key: "recurrence",
+    text:
+      "LENS: recurrence, behaviour only. Do not judge whether the finding is correct. Read the attempt " +
+      "history and decide whether the same defect keeps returning in different words while the commits " +
+      "between rounds failed to move it. A finding restated four ways across four rounds, each round " +
+      "producing a commit that did not resolve it, is the signature. A finding that is genuinely new each " +
+      "round, or one the commits are visibly narrowing, is not stuck.",
+  },
+  {
+    key: "ground-truth",
+    text:
+      "LENS: ground truth. Ignore the findings entirely at first. Read the code this step landed and read " +
+      "what the proposal specifies for it, and decide independently which of the two is wrong. Only then " +
+      "look at the finding. It is stuck when you concluded, on your own, that the code is right and the " +
+      "proposal is wrong. If you concluded the code is wrong, the finding is not stuck: the fixer can fix it.",
+  },
+  {
+    key: "self-consistency",
+    text:
+      "LENS: does the proposal contradict itself? A finding is unsatisfiable when the proposal asks for two " +
+      "things that cannot both hold, so no implementation can be conformant. Read every section of the " +
+      "proposal that bears on this finding, including its decisions, its recorded limits, and its open " +
+      "questions, and look for a statement elsewhere in the document that the disputed requirement " +
+      "contradicts. A document at odds with itself cannot be satisfied by any code.",
+  },
+];
+
+// What the fixer and the reviewers are told about a finding already judged
+// unresolvable. Scoped to one step: it never silences anything elsewhere, and
+// it dies with the step rather than persisting into a later run, because the
+// tree a later run sees may differ.
+function suppressedNote(step) {
+  const mine = stuckFindings.filter((f) => f.step === step.id);
+  if (mine.length === 0) return "";
+  return (
+    "\n\nALREADY JUDGED UNRESOLVABLE, AND NOT YOUR WORK. Three independent judges agreed at high " +
+    "confidence that the finding(s) below cannot be closed by any change this step may legally make: the " +
+    "landed code is correct and the proposal is wrong, and the proposal is read-only to this phase. Each is " +
+    "recorded and will be reported to a human at the end of the run. Do not act on them, do not report them " +
+    "again, and do not treat leaving them alone as leaving the step unfinished:\n" +
+    mine.map((f, i) => i + 1 + ". " + f.title + "\n   why the code is right: " + f.whyCodeIsRight +
+      "\n   what the proposal gets wrong: " + f.whyProposalIsWrong).join("\n")
+  );
+}
+
+// The per-step slice of the run's history, for the judges' recurrence lens.
+function applyHistoryForStep(step) {
+  return stepResults.filter((r) => r.step === step.id);
+}
+
+async function judgeStuck(step, findings, history, attempt) {
+  const brief =
+    "You judge whether a build step is stuck on a finding that no legal change can resolve.\n\n" +
+    READ_ONLY_NOTE +
+    "\n\nProposal: " + proposal + " (its spec edits are applied). Step " + step.id + ": " + step.title +
+    "\nWork: " + step.work +
+    "\nSections it implements: " + ((step.specRefs || []).join(", ") || "(none named)") +
+    "\nTargets: " + ((step.targets || []).join(", ") || "(none named)") +
+    "\n\nThis step has run " + attempt + " attempts without going clean. THE RULE THAT CREATES THE TRAP: " +
+    "the fixer may change code and tests, and may NEVER edit the proposal. So when a reviewer is right that " +
+    "the code diverges from the proposal, but the code is the correct thing and the proposal is the wrong " +
+    "thing, no legal action closes the finding. The reviewer reports it, the fixer cannot fix it, and the " +
+    "step loops forever. Your job is to detect exactly that, and nothing else.\n\n" +
+    "DO NOT report a finding as stuck merely because it is hard, has recurred, or was reported by several " +
+    "reviewers. Those are ordinary. Stuck means UNRESOLVABLE: the code is right, the proposal is wrong.\n\n" +
+    "The findings still outstanding on this step:\n" + JSON.stringify(findings, null, 2) +
+    "\n\nWhat the earlier rounds produced:\n" + JSON.stringify(history, null, 2) +
+    "\n\nRead the real code and the real proposal before answering. Cite file:line.";
+  return (await parallel(
+    STUCK_LENSES.map((l) => () =>
+      agentTry(brief + "\n\n" + l.text, {
+        schema: STUCK_VERDICT,
+        label: "stuck:" + step.id + ":" + l.key + ":a" + attempt,
+        phase: "Build",
+      }),
+    ),
+  )).filter(Boolean);
+}
+
 async function reviewStep(step, ref, tag) {
   return await parallel(
       STEP_REVIEW_LENSES.map((l) => () =>
@@ -561,7 +681,7 @@ async function reviewStep(step, ref, tag) {
             proposal +
             " (its spec edits are applied), focusing on the sections this step implements (" +
             ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
-            "), " +
+            "), " + suppressedNote(step) + " " +
             (ref
               ? "and read ONLY this step's diff: `git diff " + ref + "..HEAD` in " + repo + "."
               : // No diff exists for this step. Its commits landed in an earlier
@@ -901,11 +1021,46 @@ for (let i = 0; i < plan.steps.length; i++) {
         continue;
       }
     }
+    // Every introspectEvery attempts, ask whether the step is stuck on a finding
+    // no legal change can close. Only when all three judges say so at high
+    // confidence is the finding suppressed for the rest of this step: a loop
+    // wastes time in the open, while a wrongly suppressed finding ships a
+    // defect in silence, so one dissent or one medium keeps the loop running.
+    if (!stepReviewClean && stepFindings.length > 0 && attempt % introspectEvery === 0) {
+      log("Step " + step.id + ": " + attempt + " attempts without converging; asking whether a finding is stuck");
+      const votes = await judgeStuck(step, stepFindings, stepResults.concat(applyHistoryForStep(step)), attempt);
+      const unanimous =
+        votes.length === STUCK_LENSES.length &&
+        votes.every((v) => v.stuck === true && v.confidence === "high");
+      if (unanimous) {
+        const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
+        const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
+        const rec = {
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          title,
+          whyCodeIsRight: votes.map((v) => v.whyCodeIsRight).filter(Boolean)[0] || "",
+          whyProposalIsWrong: votes.map((v) => v.whyProposalIsWrong).filter(Boolean)[0] || "",
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        };
+        stuckFindings.push(rec);
+        log(
+          "Step " + step.id + ": THREE JUDGES AGREE a finding is unresolvable by any legal change — \"" +
+            title.slice(0, 110) + "\". The code is right and the proposal is wrong. Recorded for a human " +
+            "and suppressed for the rest of this step.",
+        );
+      } else {
+        const summary = votes.map((v) => (v.stuck ? "stuck/" : "not-stuck/") + v.confidence).join(", ");
+        log("Step " + step.id + ": judges did not reach unanimous high confidence (" + summary + "); the loop continues");
+      }
+    }
+
     if (!stepReviewClean) {
       issues =
         stepFindings.length > 0
           ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). THE PROPOSAL FILE IS OUT OF SCOPE FOR EVERY FINDING BELOW. The findings are reproduced verbatim, and one may name the proposal as the thing to change, or ask for an edit to it to be reverted or restored. Disregard that part of any such finding: it is outside what this step does, the current content of the proposal stands as written whatever its history, and a human has already decided to keep it and review it separately. Do not edit, revert, or restore that file, and do not treat leaving it alone as leaving the finding unaddressed. Take from each finding only what it says about the CODE; where a finding says nothing about the code, note that you left it alone and move on. Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
-            JSON.stringify(stepFindings, null, 2)
+            JSON.stringify(stepFindings, null, 2) + suppressedNote(step)
           : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
     }
   }
@@ -922,6 +1077,32 @@ for (let i = 0; i < plan.steps.length; i++) {
       { label: "tick:" + step.checklistStep, model: "haiku" },
     );
     log("Checklist: marked " + step.checklistStep + " complete");
+    await recordStuckForStep(step);
+  }
+
+  // Whether the step ticked or aborted, a finding three judges called
+  // unresolvable is written into the commit trail. Tying it to the tick alone
+  // would lose it exactly when a step ends badly, which is when it matters most.
+  async function recordStuckForStep(step) {
+    const mine = stuckFindings.filter((f) => f.step === step.id && !f.recorded);
+    if (mine.length === 0) return;
+    for (const f of mine) f.recorded = true;
+    {
+      await agentTry(
+        "Record, in the git history, a finding this build step could not resolve. Work in " + repo + ".\n\n" +
+          "Stage nothing and write no file. Make an EMPTY commit on the current branch with " +
+          "`git commit --allow-empty` whose message records the following, in the repository's commit style: " +
+          "that step " + step.checklistStep + " of " + proposal + " is complete and ticked, that the finding " +
+          "below was judged by three independent reviewers to be unresolvable by any change the step could " +
+          "legally make because the landed code is correct and the proposal is wrong, and that it is left " +
+          "for human review rather than fixed. Do not editorialise beyond what is given.\n\n" +
+          JSON.stringify(mine, null, 2) +
+          "\n\nUse a subject line under 72 characters naming the step and the subject of the finding. " +
+          "Reply with the commit sha.",
+        { label: "record-stuck:" + step.checklistStep, phase: "Build" },
+      );
+      log("Step " + step.id + ": recorded " + mine.length + " unresolvable finding(s) in the commit trail");
+    }
   }
 
   stepResults.push({
@@ -938,6 +1119,7 @@ for (let i = 0; i < plan.steps.length; i++) {
   // foundation. Stop here; the spec and the completed steps are already
   // committed for inspection and resume.
   if (!(stepGreen && stepReviewClean)) {
+    await recordStuckForStep(step);
     const remaining = plan.steps.length - i - 1;
     // Name the real cause. A run stopped because its subagents were not
     // running is resumable as soon as that clears, while a genuinely stuck
@@ -962,6 +1144,9 @@ for (let i = 0; i < plan.steps.length; i++) {
     return {
       status: "step-stuck",
       stuckStep: step.id,
+      // Recorded even here: a step that aborts is the case where a suppressed
+      // proposal defect is most likely to be the reason it could not finish.
+      stuckFindings,
       blastRadius: plan.blastRadius,
       steps: stepResults,
       commits: stepResults.map((s) => s.commit).filter(Boolean),
@@ -1408,6 +1593,10 @@ return {
   // proposal defect surfaces, and it is addressed to a human.
   // Steps that were ticked but failed re-verification and had to be repaired.
   reverifyRepaired,
+  // Findings three judges agreed no legal change could close: the code is right
+  // and the proposal is wrong. Suppressed for the step, recorded in its commit
+  // trail, and surfaced here because each is a proposal defect for a human.
+  stuckFindings,
   proposalDeviations: stepResults.flatMap((r) =>
     (r.deviations || []).map((d) => ({ step: r.step, title: r.title, ...d })),
   ),

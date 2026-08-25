@@ -174,5 +174,63 @@ console.log("\n4. tier scoping: full on the first implementation, scoped on a fi
   check("logged the final gate", logs.some((l) => /full tier pass as the final gate/.test(l)));
 }
 
+console.log("\n5. stuck-finding introspection: unanimous high confidence suppresses, anything less does not");
+{
+  // A step whose reviews never go clean, so the loop reaches attempt 5.
+  const STUCK = [{ title: "row lands UNWIRED where the proposal says WIRED", where: "x:1", divergence: "d", fix: "f" }];
+  const runStuck = (verdicts) => {
+    const calls = [];
+    let judged = 0;
+    const agent = async (prompt, opts = {}) => {
+      const label = opts.label || "";
+      calls.push({ label, prompt });
+      if (label === "plan") return { blastRadius: [], steps: [{ id: "S1", title: "t", work: "w", targets: ["pkg/a"], tiers: ["unit"], specRefs: [], checklistStep: "S1", dependsOn: [] }], deviations: [] };
+      if (label.startsWith("plan-critique")) return { complete: true, gaps: [] };
+      if (label === "checklist-ticks") return { ticked: [] };
+      if (label.startsWith("baseline") || label.endsWith(":base")) return { sha: "deadbeef" };
+      if (label.startsWith("stuck:")) return verdicts[judged++ % verdicts.length];
+      if (label.startsWith("review:")) return { findings: STUCK };
+      if (label.startsWith("build:")) return { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1" };
+      if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
+      if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
+      if (label === "proposal-edit-audit") return { edited: false, commits: [] };
+      return {};
+    };
+    const parallel = async (t) => Promise.all(t.map((f) => f()));
+    const logs = [];
+    const fn = new Function("args","agent","parallel","pipeline","phase","log","workflow","budget",
+      "return (async () => {\n" + SRC + "\n})();");
+    return fn({ proposalPath: "p.md", repoRoot: "/repo", date: "d", maxStepAttempts: 6 },
+      agent, parallel, async (i) => i, () => {}, (m) => logs.push(String(m)),
+      async () => ({}), { total: null, spent: () => 0, remaining: () => Infinity })
+      .then((result) => ({ result, calls, logs }));
+  };
+
+  const HIGH = { stuck: true, confidence: "high", findingTitle: "row lands UNWIRED where the proposal says WIRED", whyCodeIsRight: "no caller", whyProposalIsWrong: "REG-1 says WIRED", reasoning: "r" };
+  const MED  = { stuck: true, confidence: "medium", findingTitle: "x", whyCodeIsRight: "", whyProposalIsWrong: "", reasoning: "r" };
+  const NOT  = { stuck: false, confidence: "high", findingTitle: "", whyCodeIsRight: "", whyProposalIsWrong: "", reasoning: "r" };
+
+  {
+    const { calls, logs, result } = await runStuck([HIGH]);
+    check("judges fire only at the introspect interval", calls.filter((c) => c.label.startsWith("stuck:")).length === 3,
+      calls.filter((c) => c.label.startsWith("stuck:")).length + " judge calls");
+    check("three lenses, not one", new Set(calls.filter((c) => c.label.startsWith("stuck:")).map((c) => c.label.split(":")[2])).size === 3);
+    check("unanimous high confidence records it", (result.stuckFindings || []).length === 1, JSON.stringify(result.stuckFindings || []));
+    check("logged the agreement", logs.some((l) => /THREE JUDGES AGREE/.test(l)));
+    const later = calls.filter((c) => c.label.startsWith("review:") && /ALREADY JUDGED UNRESOLVABLE/.test(c.prompt));
+    check("later review rounds are told to ignore it", later.length > 0, later.length + " reviews carried the note");
+    check("a commit records it", calls.some((c) => c.label.startsWith("record-stuck:")));
+  }
+  {
+    const { result, logs } = await runStuck([HIGH, HIGH, MED]);
+    check("one MEDIUM blocks suppression", (result.stuckFindings || []).length === 0);
+    check("logged the non-agreement", logs.some((l) => /did not reach unanimous high confidence/.test(l)));
+  }
+  {
+    const { result } = await runStuck([HIGH, HIGH, NOT]);
+    check("one dissent blocks suppression", (result.stuckFindings || []).length === 0);
+  }
+}
+
 console.log(failures === 0 ? "\nAll checks passed.\n" : "\n" + failures + " check(s) FAILED.\n");
 process.exit(failures ? 1 : 0);
