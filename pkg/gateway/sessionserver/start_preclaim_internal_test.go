@@ -1009,10 +1009,15 @@ func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
 		{"slot reservation, wrapped SlotBindError", slot, fmt.Errorf("dispatch: %w", binderFailure), false},
 		// The §5.2 client-error classification keeps the bind error in its
 		// chain, so the binder-owned release is still recognized and the
-		// reservation is not decremented twice.
+		// reservation is not decremented twice. The classifier only rewrites
+		// a non-retryable reason, so this case carries an InvalidArgument
+		// (workspace_validation) failure.
 		{
 			"slot reservation, classified slot failure", slot,
-			classifySlotBindFailure(binderFailure, podsession.SlotBindRequest{SessionID: "sess-1", Pool: "pool-x"}), false,
+			classifySlotBindFailure(
+				slotBindErr("pod-a", "sess-1", "session_start", codes.InvalidArgument),
+				podsession.SlotBindRequest{SessionID: "sess-1", Pool: "pool-x"},
+			), false,
 		},
 	}
 	for _, tc := range cases {

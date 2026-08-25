@@ -454,6 +454,41 @@ func TestClassifySlotBindFailureNamesSession_spec_5_2(t *testing.T) {
 	}
 }
 
+// spec: §5.2 "Client error on exhaustion" — the client error is conditioned
+// on either no retry being attempted (a non-retryable category) or the retry
+// budget being exhausted. The no-retry slot paths carry no budget, so a
+// transient post-reservation failure (a dial Unavailable, a DeadlineExceeded,
+// a workspace-prep FailedPrecondition) satisfies neither half and must pass
+// through unclassified, keeping the retryable SESSION_CREATION_FAILED /
+// STARTING_FAILED fallback and its Retry-After (§15.1). Classifying it would
+// answer 422 SLOT_FAILED with category "transient" and retryable=false,
+// telling the client a recoverable transport failure is terminal.
+func TestClassifySlotBindFailurePassesTransientThrough_spec_5_2(t *testing.T) {
+	transient := []struct {
+		name  string
+		stage string
+		code  codes.Code
+	}{
+		{"dial unavailable", "connect", codes.Unavailable},
+		{"deadline exceeded", "session_start", codes.DeadlineExceeded},
+		{"workspace-prep failed precondition", "workspace_prep", codes.FailedPrecondition},
+		{"unknown", "connect", codes.Unknown},
+	}
+	for _, tc := range transient {
+		t.Run(tc.name, func(t *testing.T) {
+			in := slotBindErr("pod-b", "sess-1", tc.stage, tc.code)
+			out := classifySlotBindFailure(in, req("pool-x", 4))
+			if out != error(in) {
+				t.Fatalf("transient bind failure was rewritten: %v", out)
+			}
+			var sf *podsession.SlotFailedError
+			if errors.As(out, &sf) {
+				t.Errorf("transient bind failure classified as the §5.2 client error: category = %q, retryable=false", sf.Category)
+			}
+		})
+	}
+}
+
 // spec: §5.2 — a reservation-exhaustion sentinel reserved no slot, so it is
 // not a slot failure and passes through unchanged for the
 // WARM_POOL_EXHAUSTED (or creation-atomicity) mapping.

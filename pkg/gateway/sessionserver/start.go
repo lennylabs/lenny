@@ -2711,14 +2711,28 @@ func (s *Server) bindSlotWithRetry(ctx context.Context, req podsession.SlotBindR
 // applySlotRetryPolicy, used on the two paths that bind a slot without a
 // retry budget: the create-time reservation (ClaimSlot) and the reconnect to
 // a slot reserved at create (BindReservedSlot). The binder has already
-// released the reservation on both paths, so this only classifies. An error
-// that is not a post-reservation slot failure (an exhaustion sentinel, a pool
-// resolve failure) passes through unchanged for its own mapping.
+// released the reservation on both paths, so this only classifies.
 //
-// spec: §5.2 "Client error on exhaustion"; §5.2 (non-retryable categories).
+// §5.2 conditions the client error on either no retry being attempted
+// (a non-retryable category) or the retry budget being exhausted. These two
+// paths carry no retry budget, so only the first half can hold: a
+// non-retryable reason (oom, workspace_validation, policy_rejection) becomes
+// the structured error, and a transient reason keeps the retryable
+// SESSION_CREATION_FAILED/STARTING_FAILED fallback with its Retry-After
+// (§15.1), because a dial or connect failure is recoverable and the client
+// must not be told it is terminal. An error that is not a post-reservation
+// slot failure (an exhaustion sentinel, a pool resolve failure) likewise
+// passes through unchanged for its own mapping.
+//
+// spec: §5.2 "Client error on exhaustion"; §5.2 (non-retryable categories);
+// §15.1 (retryable setup-window fallback).
 func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 	var sbe *podsession.SlotBindError
 	if !errors.As(err, &sbe) {
+		return err
+	}
+	reason := sbe.Reason()
+	if !reason.NonRetryable() {
 		return err
 	}
 	// The bind error stays in the chain rather than being replaced by its
@@ -2726,7 +2740,7 @@ func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 	// binder-owned reservation release from a pre-bind leak, and the typed
 	// setup/credential handlers match through it either way.
 	return &podsession.SlotFailedError{
-		Category:  string(sbe.Reason()),
+		Category:  string(reason),
 		SessionID: req.SessionID,
 		Pool:      req.Pool,
 		Err:       sbe,

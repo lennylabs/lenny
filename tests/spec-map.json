@@ -935,7 +935,9 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryNonRetryableNoRetry_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryFailureNamesSessionWithoutSlotAddress_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailureNamesSession_spec_5_2",
-        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2"
+        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesTransientThrough_spec_5_2",
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",

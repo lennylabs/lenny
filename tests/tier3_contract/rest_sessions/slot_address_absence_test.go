@@ -15,6 +15,7 @@ package rest_sessions_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -289,11 +290,12 @@ func slotFailCluster(t *testing.T) client.Client {
 }
 
 // slotFailServer wires a session server over cluster whose adapter dial
-// fails with InvalidArgument, which the §5.2 classifier reads as the
-// non-retryable workspace_validation category: the slot is reserved and
-// then fails, with no retry, so the /start route reaches the §5.2
-// "Client error on exhaustion" mapper.
-func slotFailServer(t *testing.T, cluster client.Client, store sessionstore.Store) *sessionserver.Server {
+// fails with dialCode. InvalidArgument is the non-retryable
+// workspace_validation category, so the slot is reserved, fails with no
+// retry, and the /start route reaches the §5.2 "Client error on exhaustion"
+// mapper. A transient code (Unavailable) instead satisfies neither half of
+// §5.2's condition and keeps the retryable §15.1 creation fallback.
+func slotFailServer(t *testing.T, cluster client.Client, store sessionstore.Store, dialCode codes.Code) *sessionserver.Server {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -319,7 +321,7 @@ func slotFailServer(t *testing.T, cluster client.Client, store sessionstore.Stor
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		SlotCounter:      slotcounter.New(rc),
 		DialAdapter: func(string) (*adapterclient.Client, error) {
-			return nil, status.Error(codes.InvalidArgument, "slot workspace plan rejected by the adapter")
+			return nil, status.Error(dialCode, "adapter dial failed")
 		},
 	}
 	return sessionserver.New(store, sessionserver.Options{
@@ -351,7 +353,7 @@ func TestStartSlotFailedBodyNamesSession_spec_5_2(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed session row: %v", err)
 	}
-	srv := slotFailServer(t, cluster, store)
+	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
@@ -390,7 +392,7 @@ func TestStartSlotFailedBodyNamesSession_spec_5_2(t *testing.T) {
 func TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2(t *testing.T) {
 	cluster := slotFailCluster(t)
 	store := memstore.New()
-	srv := slotFailServer(t, cluster, store)
+	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
@@ -422,5 +424,38 @@ func TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2(t *testing.T
 	}
 	if containsKey(t, raw, "slotId") {
 		t.Errorf("the one-call start error body carries a slotId key: %s", raw)
+	}
+}
+
+// spec: §5.2 (client error on exhaustion); §15.1 (retryable creation
+// fallback)
+// diagnosis: a transient slot failure on the no-retry create path is being
+// answered with the §5.2 non-retryable client error. §5.2 conditions that
+// error on either no retry being attempted (a non-retryable category) or the
+// retry budget being exhausted; a transient dial failure with no budget
+// satisfies neither, so it stays the retryable 503 fallback with Retry-After
+// and the client backs off rather than reading a recoverable transport
+// failure as terminal.
+func TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2(t *testing.T) {
+	cluster := slotFailCluster(t)
+	store := memstore.New()
+	srv := slotFailServer(t, cluster, store, codes.Unavailable)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{
+		"runtimeRef": "echo",
+		"userId":     "alice@acme.com",
+	})
+	envelope, _ := body["error"].(map[string]any)
+	if envelope != nil && envelope["code"] == "SLOT_FAILED" {
+		t.Fatalf("a transient slot failure was answered with the non-retryable §5.2 client error: status=%d body=%v",
+			resp.StatusCode, body)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 retryable creation fallback; body=%v", resp.StatusCode, body)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Errorf("the retryable creation fallback carries no Retry-After header")
 	}
 }
