@@ -1122,14 +1122,6 @@ sites:
       site: 1
       call: Skip
       reason: 'precondition not met: §5.2 recycle pod reuse does not hold on the §4.7 sidecar transport (the runtime exits at the clean-exit EOF and RestartPolicy: Never does not re-dial); proposal 0073 §9 records the property and does not cure it'
-    - path: tests/tier5_e2e_kind/execution_modes_test.go
-      function: requirePoolReadyPods
-      site: 1
-      call: Skip
-    - path: tests/tier5_e2e_kind/execution_modes_test.go
-      function: requirePoolReadyPods
-      site: 2
-      call: Skip
     - path: tests/tier5_e2e_kind/gateway_replica_continuity_test.go
       function: TestSessionContinuesAfterCoordinatingGatewayReplicaLoss
       site: 1
