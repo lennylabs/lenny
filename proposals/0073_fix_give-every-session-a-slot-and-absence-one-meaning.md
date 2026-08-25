@@ -326,11 +326,11 @@ rule, the text moves to the code's step, and the step that carries it names the 
       assigns to this deliverable. CODE-6's deletion of the `slotID == ""` branch at
       `pkg/adapter/tracingcontext.go:49-59` lands at S11 with the field it reads.
       Depends on: S10, S12
-- [ ] **S17 · code** — CODE-7. The client SDKs, the tool-approval detail, the SSE payload, and the
+- [x] **S17 · code** — CODE-7. The client SDKs, the tool-approval detail, the SSE payload, and the
       `/start` 422 body drop `slotId`, and `SlotFailedError` carries the session identifier the
       specification sentence SPEC-7 restated in S3 names.
       Depends on: S3, S11
-- [ ] **S18 · test** — REG-1's addition half. The register gains the rows for the per-slot credential
+- [x] **S18 · test** — REG-1's addition half. The register gains the rows for the per-slot credential
       addressing CODE-4 lands, the `Checkpoint restore onto a concurrent pod` row takes the status, surface,
       and note CODE-2 makes true, and the generator is held to the register by a tier-0 case.
       Depends on: S12, S14
