@@ -586,4 +586,51 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 				name, row.Surface)
 		}
 	}
+
+	// The rotation row records the landed order. The per-session file rewrite
+	// happens first and the pod-wide in-flight gate runs after it, inside
+	// rotateProviderFull, so a note that places the gate before the rewrite
+	// would claim a stronger safety property than the adapter provides.
+	// spec: §4.7.
+	if row, ok := rows["Credential rotation addressed to the session's own lease file"]; ok {
+		if !strings.Contains(row.Note, "rotateProviderFull") {
+			t.Errorf("the rotation row's note does not name rotateProviderFull, where the in-flight gate runs: %q",
+				row.Note)
+		}
+		if !strings.Contains(row.Note, "after that rewrite") {
+			t.Errorf("the rotation row's note does not place the in-flight gate after the per-session rewrite: %q",
+				row.Note)
+		}
+	}
+}
+
+// spec: 28.4 (claim register)
+// diagnosis: a WIRED row's note states the mechanism has no caller, which is
+// the definition §28.4 gives UNWIRED. The row and its own note disagree, so
+// the register records a reachability the tree does not have.
+func TestClaimRegisterWiredRowsDoNotRecordAnAbsentCaller(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), claimRegisterPath))
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	rows, err := claimRegisterRows(body)
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	// §28.4: WIRED means the mechanism is reachable from production code, and
+	// UNWIRED means it is implemented and has no production caller. A note
+	// that asserts the absence of a caller therefore contradicts a WIRED cell.
+	absent := []string{"no gateway caller", "no production caller", "has no caller"}
+	for name, row := range rows {
+		if row.Status != "WIRED" {
+			continue
+		}
+		for _, phrase := range absent {
+			if strings.Contains(row.Note, phrase) {
+				t.Errorf("the WIRED row %q states %q in its note; §28.4 defines a mechanism with no caller as UNWIRED",
+					name, phrase)
+			}
+		}
+	}
 }

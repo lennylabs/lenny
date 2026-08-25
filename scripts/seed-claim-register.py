@@ -208,9 +208,10 @@ EXPLICIT = [
                    "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), gateway caller "
                    "`pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
         "note": "the rotation rewrites the addressed session's own "
-                "/run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's file is "
-                "untouched; the in-flight completion gate that precedes the rewrite is "
-                "pod-wide per provider and carries no session dimension",
+                "/run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file "
+                "is untouched; the pod-wide per-provider in-flight completion gate and its "
+                "300s ceiling run after that rewrite, inside rotateProviderFull, on "
+                "Full-level runtimes only, and carry no session dimension",
     },
     {
         "claim": "Credential lease extension addressed to the session's own lease set",
@@ -229,8 +230,11 @@ EXPLICIT = [
         "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into "
                    "`revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
         "note": "the revocation drops the named providers from the addressed session's "
-                "own credential file; the adapter RPC has no gateway caller today, and "
-                "the Token Service revocation path is a separate surface",
+                "own credential file; the handler is served on the Adapter service the "
+                "adapter registers in pkg/adapter/transport.go, so the per-session "
+                "addressing this row claims is reachable in production; the end-to-end "
+                "Token Service revocation path is a separate surface and is not part of "
+                "this claim",
     },
 ]
 
