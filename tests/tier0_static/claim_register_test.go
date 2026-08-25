@@ -5,11 +5,15 @@ package tier0_static
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -691,10 +695,34 @@ const adapterClientDir = "pkg/gateway/runtime/adapterclient"
 // mechanism reachable from production code.
 var productionCallerRoots = []string{"pkg", "cmd"}
 
+// adapterClientImportPath is the import path of the adapter client package. A
+// file that does not import it cannot declare a value of the client type, so
+// the handle scan reads declarations out of the importing files alone.
+const adapterClientImportPath = "github.com/lennylabs/lenny/" + adapterClientDir
+
+// adapterHandleSet records where production code holds an adapter client. A
+// handle is harvested from a declaration in the syntax tree, so prose in a
+// comment that happens to spell the client type cannot mint one.
+type adapterHandleSet struct {
+	// locals maps a file path to the identifiers that file declares with the
+	// client type: parameters, named results, variables, and the short
+	// declarations that take a client from the package constructor or a
+	// dialer. A local identifier is attributed only inside its own file, so a
+	// receiver named `s` in an unrelated package is never read as a client.
+	locals map[string]map[string]bool
+	// fields maps a struct field name of the client type to the import paths
+	// of the packages that declare it. A call through a field is attributed
+	// only in a file that imports the adapter client or one of those packages,
+	// which is what keeps a same-named field on an unrelated struct from
+	// scoring as a caller.
+	fields map[string]map[string]bool
+}
+
 // adapterClientReachableRPCs reports which adapter RPCs are reachable from
 // production code. §28.4 draws WIRED from a production caller rather than from
 // an implemented surface, so a method the adapter client declares counts only
-// once non-test code outside the client package calls it.
+// once non-test code outside the client package calls it through a value of
+// the client type.
 func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 	methods, err := adapterClientMethods(root)
 	if err != nil {
@@ -704,24 +732,38 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(methods) == 0 || len(handles) == 0 {
-		return map[string]bool{}, nil
-	}
-	callers := make([]*regexp.Regexp, 0, len(handles))
-	for handle := range handles {
-		callers = append(callers,
-			regexp.MustCompile(`\b`+regexp.QuoteMeta(handle)+`\.(\w+)\(`))
-	}
 	reached := map[string]bool{}
-	err = walkProductionGoFiles(root, func(_ string, src []byte) error {
-		for _, re := range callers {
-			for _, m := range re.FindAllSubmatch(src, -1) {
-				name := string(m[1])
-				if methods[name] {
-					reached[name] = true
-				}
-			}
+	if len(methods) == 0 {
+		return reached, nil
+	}
+	err = walkProductionGoFiles(root, func(path string, src []byte) error {
+		file, err := parseProductionGoFile(path, src)
+		if err != nil {
+			return err
 		}
+		imports := goImportSet(file)
+		self, err := goImportPathOf(root, path)
+		if err != nil {
+			return err
+		}
+		locals := handles.locals[path]
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if !methods[sel.Sel.Name] {
+				return true
+			}
+			if handles.holds(sel.X, locals, imports, self) {
+				reached[sel.Sel.Name] = true
+			}
+			return true
+		})
 		return nil
 	})
 	if err != nil {
@@ -730,30 +772,215 @@ func adapterClientReachableRPCs(root string) (map[string]bool, error) {
 	return reached, nil
 }
 
-// adapterClientHandles reports the identifiers production code holds an adapter
-// client in, taken from every declaration whose type is the client pointer. A
-// call site is attributed to the adapter client only through one of these, so a
-// same-named RPC on an unrelated stub (the Token Service's own
-// RevokeCredentials, for one) is not read as a caller of the adapter's.
-func adapterClientHandles(root string) (map[string]bool, error) {
-	// Field, parameter, variable, and result declarations all spell the type
-	// the same way, and a short variable declaration takes the client from the
-	// package constructor or from a dialer that returns one.
-	typed := regexp.MustCompile(`(?m)(\w+)\s+\*adapterclient\.Client\b`)
-	dialed := regexp.MustCompile(`(?m)^\s*(\w+)\s*(?:,\s*\w+\s*)?:=\s*[\w.]*(?:DialAdapter|adapterclient\.New\w*)\(`)
-	handles := map[string]bool{}
-	err := walkProductionGoFiles(root, func(_ string, src []byte) error {
-		for _, re := range []*regexp.Regexp{typed, dialed} {
-			for _, m := range re.FindAllSubmatch(src, -1) {
-				handles[string(m[1])] = true
+// holds reports whether expr names a value of the adapter client type at a
+// call site in a file with the given imports and import path.
+func (h *adapterHandleSet) holds(expr ast.Expr, locals map[string]bool, imports map[string]bool, self string) bool {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return locals[e.Name]
+	case *ast.SelectorExpr:
+		declarers, ok := h.fields[e.Sel.Name]
+		if !ok {
+			return false
+		}
+		if imports[adapterClientImportPath] || declarers[self] {
+			return true
+		}
+		for path := range declarers {
+			if imports[path] {
+				return true
 			}
 		}
+	}
+	return false
+}
+
+// adapterClientHandles reports the declarations production code holds an
+// adapter client in. Only a file that imports the client package can declare
+// one, and only a declaration in the syntax tree counts, so a same-named RPC
+// on an unrelated stub (the Token Service's own RevokeCredentials, for one) is
+// not read as a caller of the adapter's.
+func adapterClientHandles(root string) (*adapterHandleSet, error) {
+	handles := &adapterHandleSet{
+		locals: map[string]map[string]bool{},
+		fields: map[string]map[string]bool{},
+	}
+	err := walkProductionGoFiles(root, func(path string, src []byte) error {
+		file, err := parseProductionGoFile(path, src)
+		if err != nil {
+			return err
+		}
+		pkg, ok := adapterClientPackageName(file)
+		if !ok {
+			return nil
+		}
+		self, err := goImportPathOf(root, path)
+		if err != nil {
+			return err
+		}
+		local := func(name string) {
+			if name == "" || name == "_" {
+				return
+			}
+			if handles.locals[path] == nil {
+				handles.locals[path] = map[string]bool{}
+			}
+			handles.locals[path][name] = true
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch node := n.(type) {
+			case *ast.StructType:
+				collectClientFields(node.Fields, pkg, func(name string) {
+					if handles.fields[name] == nil {
+						handles.fields[name] = map[string]bool{}
+					}
+					handles.fields[name][self] = true
+				})
+			case *ast.FuncType:
+				collectClientFields(node.Params, pkg, local)
+				collectClientFields(node.Results, pkg, local)
+			case *ast.ValueSpec:
+				if isAdapterClientPointer(node.Type, pkg) {
+					for _, name := range node.Names {
+						local(name.Name)
+					}
+				}
+			case *ast.AssignStmt:
+				if name, ok := dialedClientName(node, pkg); ok {
+					local(name)
+				}
+			}
+			return true
+		})
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return handles, nil
+}
+
+// collectClientFields reports the name of every named entry in list whose type
+// is a pointer to the adapter client.
+func collectClientFields(list *ast.FieldList, pkg string, emit func(name string)) {
+	if list == nil {
+		return
+	}
+	for _, field := range list.List {
+		if !isAdapterClientPointer(field.Type, pkg) {
+			continue
+		}
+		for _, name := range field.Names {
+			emit(name.Name)
+		}
+	}
+}
+
+// isAdapterClientPointer reports whether expr spells *<pkg>.Client, the only
+// form the gateway holds an adapter client in.
+func isAdapterClientPointer(expr ast.Expr, pkg string) bool {
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Client" {
+		return false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	return ok && ident.Name == pkg
+}
+
+// dialedClientName reports the identifier a short declaration binds a freshly
+// dialed adapter client to, for the call sites that take one from the package
+// constructor or from a dialer seam rather than from a typed declaration.
+func dialedClientName(assign *ast.AssignStmt, pkg string) (string, bool) {
+	if assign.Tok != token.DEFINE || len(assign.Rhs) != 1 || len(assign.Lhs) == 0 {
+		return "", false
+	}
+	call, ok := assign.Rhs[0].(*ast.CallExpr)
+	if !ok || !isAdapterClientConstructor(call.Fun, pkg) {
+		return "", false
+	}
+	return identName(assign.Lhs[0])
+}
+
+// isAdapterClientConstructor reports whether fn names a call returning a
+// freshly dialed adapter client: the client package's own Dial or New
+// constructor, or the DialAdapter seam the binder holds one behind.
+func isAdapterClientConstructor(fn ast.Expr, pkg string) bool {
+	switch f := fn.(type) {
+	case *ast.Ident:
+		return f.Name == "DialAdapter"
+	case *ast.SelectorExpr:
+		if f.Sel.Name == "DialAdapter" {
+			return true
+		}
+		ident, ok := f.X.(*ast.Ident)
+		return ok && ident.Name == pkg &&
+			(strings.HasPrefix(f.Sel.Name, "Dial") || strings.HasPrefix(f.Sel.Name, "New"))
+	}
+	return false
+}
+
+// identName reports the name of expr when it is a plain identifier.
+func identName(expr ast.Expr) (string, bool) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	return ident.Name, true
+}
+
+// adapterClientPackageName reports the name a file refers to the adapter
+// client package by, honouring an import alias.
+func adapterClientPackageName(file *ast.File) (string, bool) {
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != adapterClientImportPath {
+			continue
+		}
+		if spec.Name != nil {
+			return spec.Name.Name, spec.Name.Name != "_"
+		}
+		return "adapterclient", true
+	}
+	return "", false
+}
+
+// goImportSet reports the import paths a file names.
+func goImportSet(file *ast.File) map[string]bool {
+	set := map[string]bool{}
+	for _, spec := range file.Imports {
+		if path, err := strconv.Unquote(spec.Path.Value); err == nil {
+			set[path] = true
+		}
+	}
+	return set
+}
+
+// goImportPathOf reports the import path of the package the file at path
+// belongs to.
+func goImportPathOf(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("import path of %s: %w", path, err)
+	}
+	return goModulePath + "/" + filepath.ToSlash(rel), nil
+}
+
+// goModulePath is this repository's module path, which prefixes the import
+// path of every package under it.
+const goModulePath = "github.com/lennylabs/lenny"
+
+// parseProductionGoFile parses one production file's declarations. Comments
+// are discarded, so prose that spells the client type is never read as code.
+func parseProductionGoFile(path string, src []byte) (*ast.File, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), path, src, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return file, nil
 }
 
 // walkProductionGoFiles calls visit for every non-test Go file under the
@@ -828,16 +1055,7 @@ func adapterClientMethods(root string) (map[string]bool, error) {
 func TestAdapterClientReachabilityRequiresAProductionCaller(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	write := func(rel, body string) {
-		t.Helper()
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", rel, err)
-		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
+	write := writeGoTree(t, root)
 
 	// The client declares three RPCs. Only RotateCredentials has a caller in
 	// production code; ExtendCredentialLease is reached from a test alone, and
@@ -846,9 +1064,9 @@ func TestAdapterClientReachabilityRequiresAProductionCaller(t *testing.T) {
 
 type Client struct{}
 
-func (c *Client) RotateCredentials()    {}
+func (c *Client) RotateCredentials()     {}
 func (c *Client) ExtendCredentialLease() {}
-func (c *Client) RevokeCredentials()    {}
+func (c *Client) RevokeCredentials()     {}
 `)
 	write(adapterClientDir+"/client_test.go", `package adapterclient
 
@@ -856,13 +1074,17 @@ func drive(c *Client) { c.RevokeCredentials() }
 `)
 	write("pkg/gateway/podlifecycle/bind.go", `package podlifecycle
 
+import "`+adapterClientImportPath+`"
+
 type Bind struct {
 	Adapter *adapterclient.Client
 }
 `)
 	write("cmd/gw/main.go", `package main
 
-func renew(bind Bind) { bind.Adapter.RotateCredentials() }
+import "`+goModulePath+`/pkg/gateway/podlifecycle"
+
+func renew(bind podlifecycle.Bind) { bind.Adapter.RotateCredentials() }
 `)
 	write("cmd/gw/main_test.go", `package main
 
@@ -887,6 +1109,78 @@ func (a *assigner) revoke() { a.stub.RevokeCredentials() }
 	for _, rpc := range []string{"ExtendCredentialLease", "RevokeCredentials"} {
 		if reachable[rpc] {
 			t.Errorf("%s is reported reachable; it is declared with no production caller, which §28.4 labels UNWIRED", rpc)
+		}
+	}
+}
+
+// spec: 28.4 (claim register), 4.7 (runtime adapter)
+// diagnosis: the register's status gate attributes a call site to the adapter
+// client on the strength of text that is not a declaration of the client type.
+// §28.4 draws WIRED from a production caller of the mechanism the row names, so
+// a scan that mints a handle out of prose in a comment, or that carries a
+// handle from one package into every other, reports an unrelated method call as
+// a caller of the adapter's RPC and holds a row green that §28.4 makes UNWIRED.
+func TestAdapterClientReachabilityIgnoresCommentTextAndForeignReceivers(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	write := writeGoTree(t, root)
+
+	write(adapterClientDir+"/client.go", `package adapterclient
+
+type Client struct{}
+
+func (c *Client) RevokeCredentials() {}
+`)
+	// A comment spelling the client type is prose. The apostrophe-s of
+	// "binding's" is not a declaration and must not become a handle.
+	write("cmd/gw/direct_usage.go", `package main
+
+// usage defaults to the binding's *adapterclient.Client and is overridden in
+// the tests.
+type usage struct{}
+`)
+	// An unrelated service declares the same RPC name on its own receiver. The
+	// receiver is named s, which is the identifier the comment above would have
+	// minted, and this package holds no adapter client at all.
+	write("pkg/tokenservice/grpc.go", `package tokenservice
+
+type GRPCServer struct{}
+
+func (s *GRPCServer) RevokeCredentials() {}
+
+func (s *GRPCServer) sweep() { s.RevokeCredentials() }
+`)
+
+	reachable, err := adapterClientReachableRPCs(root)
+	if err != nil {
+		t.Fatalf("adapterClientReachableRPCs: %v", err)
+	}
+	if reachable["RevokeCredentials"] {
+		t.Errorf("RevokeCredentials is reported reachable; the only call site is the Token Service's own method, and §28.4 makes an adapter RPC with no production caller UNWIRED")
+	}
+
+	handles, err := adapterClientHandles(root)
+	if err != nil {
+		t.Fatalf("adapterClientHandles: %v", err)
+	}
+	for path, idents := range handles.locals {
+		for ident := range idents {
+			t.Errorf("%s yields the adapter client handle %q; no file in this tree declares one", path, ident)
+		}
+	}
+}
+
+// writeGoTree returns a helper that writes one Go source file into root.
+func writeGoTree(t *testing.T, root string) func(rel, body string) {
+	t.Helper()
+	return func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
 }

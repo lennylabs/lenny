@@ -513,6 +513,7 @@
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore",
         "tests/tier0_static/claim_register_test.go::TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller",
         "tests/tier0_static/claim_register_test.go::TestAdapterClientReachabilityRequiresAProductionCaller",
+        "tests/tier0_static/claim_register_test.go::TestAdapterClientReachabilityIgnoresCommentTextAndForeignReceivers",
         "tests/tier0_static/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",
         "pkg/adapter/...",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
