@@ -773,6 +773,7 @@ try {
       date,
       repoRoot: repo,
       reverifyDoneSteps: !!input.reverifyDoneSteps,
+      acceptedDivergences: input.acceptedDivergences,
     },
   );
 } catch (e) {

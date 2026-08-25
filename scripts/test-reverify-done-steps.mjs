@@ -232,5 +232,52 @@ console.log("\n5. stuck-finding introspection: unanimous high confidence suppres
   }
 }
 
+console.log("\n6. accepted divergences reach the FINAL review lenses and nothing else");
+{
+  const DIVS = ["REG-1 stages the revocation row WIRED; the tree has no caller so it is UNWIRED"];
+  const runFinal = (accepted) => {
+    const calls = [];
+    const agent = async (prompt, opts = {}) => {
+      const label = opts.label || "";
+      calls.push({ label, prompt });
+      if (label === "plan") return { blastRadius: [], steps: [{ id: "S1", title: "t", work: "w", targets: ["pkg/a"], tiers: ["unit"], specRefs: [], checklistStep: "S1", dependsOn: [] }], deviations: [] };
+      if (label.startsWith("plan-critique")) return { complete: true, gaps: [] };
+      if (label === "checklist-ticks") return { ticked: ["S1"] };
+      if (label.startsWith("baseline") || label.endsWith(":base")) return { sha: "deadbeef" };
+      if (label.startsWith("review:")) return { findings: [] };
+      if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
+      if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
+      if (label === "proposal-edit-audit") return { edited: false, commits: [] };
+      return {};
+    };
+    const logs = [];
+    const fn = new Function("args","agent","parallel","pipeline","phase","log","workflow","budget",
+      "return (async () => {\n" + SRC + "\n})();");
+    return fn({ proposalPath: "p.md", repoRoot: "/repo", date: "d", acceptedDivergences: accepted },
+      agent, async (t) => Promise.all(t.map((f) => f())), async (i) => i, () => {},
+      (m) => logs.push(String(m)), async () => ({}), { total: null, spent: () => 0, remaining: () => Infinity })
+      .then((r) => ({ result: r, calls, logs }));
+  };
+  {
+    const { calls, logs } = await runFinal(DIVS);
+    const finals = calls.filter((c) => /^review:(conformance|invariants|completeness):r/.test(c.label));
+    check("the final lenses ran", finals.length >= 3, finals.length + " final reviewers");
+    check("every final lens carries the divergence", finals.length > 0 && finals.every((c) => c.prompt.includes(DIVS[0])));
+    check("they are told it is adjudicated", finals.every((c) => /ALREADY ADJUDICATED/.test(c.prompt)));
+    check("and told the rest is still fully in scope", finals.every((c) => /no gentler with it/.test(c.prompt)));
+    check("logged the seeding", logs.some((l) => /1 accepted divergence\(s\) seeded/.test(l)));
+  }
+  {
+    const { calls, logs } = await runFinal(undefined);
+    check("absent by default: no block anywhere", !calls.some((c) => /ALREADY ADJUDICATED/.test(c.prompt)));
+    check("absent by default: nothing logged", !logs.some((l) => /accepted divergence/.test(l)));
+  }
+  {
+    const { calls } = await runFinal("a single string divergence");
+    const finals = calls.filter((c) => /^review:(conformance|invariants|completeness):r/.test(c.label));
+    check("a string argument normalises", finals.length > 0 && finals.every((c) => c.prompt.includes("a single string divergence")));
+  }
+}
+
 console.log(failures === 0 ? "\nAll checks passed.\n" : "\n" + failures + " check(s) FAILED.\n");
 process.exit(failures ? 1 : 0);

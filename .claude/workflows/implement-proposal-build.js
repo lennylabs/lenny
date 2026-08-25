@@ -73,6 +73,34 @@ const reverifyRepaired = [];
 // Every fifth attempt: a step that converges normally never reaches it, and a
 // step that does not has already told us something is wrong.
 const introspectEvery = input.introspectEvery || 5;
+// Divergences a human has already seen and accepted. The final review is
+// whole-change and re-derives everything, so without this it re-raises a
+// settled question every round and can never converge on a change that
+// deliberately departs from its proposal. Each entry is quoted to the
+// reviewers as already adjudicated.
+const acceptedDivergences = (
+  Array.isArray(input.acceptedDivergences)
+    ? input.acceptedDivergences
+    : input.acceptedDivergences
+      ? [input.acceptedDivergences]
+      : []
+)
+  .map((d) => String(d).trim())
+  .filter(Boolean);
+const ACCEPTED_BLOCK =
+  acceptedDivergences.length === 0
+    ? ""
+    : "\n\nALREADY ADJUDICATED, AND NOT YOURS TO REOPEN. A human has reviewed each divergence below and " +
+      "accepted it: the landed code is what should ship and the proposal is what is wrong, and correcting " +
+      "the proposal is a separate act outside this run. They are recorded for that correction.\n" +
+      acceptedDivergences.map((d, i) => i + 1 + ". " + d).join("\n") +
+      "\n\nDo not report any of these, do not report a rephrasing or a near neighbour of one, and do not " +
+      "treat the code as non-conformant because of one. Reporting an adjudicated divergence cannot advance " +
+      "the run: no one may act on it here, so it only prevents the review from converging. Everything else " +
+      "in the change is fully in scope and you should be no gentler with it.";
+if (acceptedDivergences.length > 0) {
+  log("Final review: " + acceptedDivergences.length + " accepted divergence(s) seeded; reviewers will not re-raise them");
+}
 // Findings judged unresolvable by any change the step may legally make. Each is
 // recorded, suppressed from later review rounds of that step, written into the
 // step's commit trail, and surfaced at the end of the run.
@@ -1464,7 +1492,7 @@ if (green) {
     reviewRound++;
     const reviewResults = await parallel(
       REVIEW_LENSES.map((l) => () =>
-        agentTry(REVIEW_RULES + "\n\n" + l.text, {
+        agentTry(REVIEW_RULES + ACCEPTED_BLOCK + "\n\n" + l.text, {
           schema: REVIEW,
           label: "review:" + l.key + ":r" + reviewRound,
           phase: "Review",
