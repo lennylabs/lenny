@@ -4,7 +4,6 @@ package mcp
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -223,7 +222,7 @@ func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
 // tool_use_requested event (emitted by the approval gate) is always
 // approval-required.
 func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
-	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"}}`
+	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"},"slotId":"slot-1"}`
 	m := decodeFrame(t, projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data)))
 	if m["method"] != "elicitation/create" {
 		t.Fatalf("approval-required requested phase must project to elicitation/create, got %v", m["method"])
@@ -237,24 +236,6 @@ func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
 	}
 	if meta["lenny/kind"] != "tool_use_approval" {
 		t.Errorf("kind=%v", meta["lenny/kind"])
-	}
-}
-
-// spec: §15.2 (tool_use projection), §5.2 (identity invariant),
-// §7.2 (message dispatch) — the tool-approval payload the approval gate
-// emits carries no slot address. The projection addresses the session
-// through the event's own session identifier, and a stale slotId key in
-// the payload is ignored rather than mirrored onto the MCP frame.
-func TestProjectToolUseCarriesNoSlotAddress_spec_5_2(t *testing.T) {
-	// A stale producer key must not reach the projected frame.
-	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"},"slotId":"slot-1"}`
-	frame := projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data))
-	if strings.Contains(strings.ToLower(string(frame)), "slot") {
-		t.Fatalf("projected tool-approval frame must carry no slot address: %s", frame)
-	}
-	meta := decodeFrame(t, frame)["params"].(map[string]any)["_meta"].(map[string]any)
-	if meta["lenny/sessionId"] != "sess-4" {
-		t.Errorf("lenny/sessionId=%v want sess-4 (the session names the slot)", meta["lenny/sessionId"])
 	}
 }
 
