@@ -3,7 +3,10 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,7 +225,7 @@ func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
 // tool_use_requested event (emitted by the approval gate) is always
 // approval-required.
 func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
-	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"},"slotId":"slot-1"}`
+	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"}}`
 	m := decodeFrame(t, projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data)))
 	if m["method"] != "elicitation/create" {
 		t.Fatalf("approval-required requested phase must project to elicitation/create, got %v", m["method"])
@@ -316,5 +319,34 @@ func TestEveryProjectedFrameIsValidJSONRPC_spec_15_2_1374(t *testing.T) {
 		if m["method"] == nil {
 			t.Errorf("type %q frame missing method", s.Type)
 		}
+	}
+}
+
+// spec: §15.2 — a client-facing tool_use_requested payload carries no slot
+// address. Every session is bound to a slot on every pod and a session-mode
+// slot's identifier is its session's identifier, so the approval gate
+// publishes the session identifier alone and the MCP projection that decodes
+// that payload declares no slot key of its own. This pins the decode side:
+// re-adding a `slotId` tag to a projection payload struct reinstates a
+// retired client-facing key on the consumer of a payload no producer emits.
+func TestProjectionDeclaresNoSlotAddress_spec_15_2(t *testing.T) {
+	src, err := os.ReadFile("projection.go")
+	if err != nil {
+		t.Fatalf("read projection.go: %v", err)
+	}
+	if bytes.Contains(src, []byte("slotId")) {
+		t.Errorf("projection.go declares a slotId json key; the client-facing payloads carry no slot address")
+	}
+	// The published payload the gate emits decodes and projects intact.
+	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"}}`
+	m := decodeFrame(t, projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data)))
+	meta := m["params"].(map[string]any)["_meta"].(map[string]any)
+	for k := range meta {
+		if strings.Contains(strings.ToLower(k), "slot") {
+			t.Errorf("_meta carries slot address key %q", k)
+		}
+	}
+	if meta["lenny/sessionId"] != "sess-4" {
+		t.Errorf("sessionId=%v want sess-4 (the session addresses the call)", meta["lenny/sessionId"])
 	}
 }
