@@ -121,9 +121,11 @@ func slotErrCode(err error) codes.Code {
 // false from the platform's perspective (the client may resubmit a new
 // request), and SessionID identifies the session whose slot failed
 // (error.sessionId). The error carries no separate slot address: a
-// session-mode slot's identifier is its session's identifier, and one of
-// the two routes that reaches the §15.1 mapper is the one-call
-// POST /v1/sessions/start, whose 422 body would otherwise name nothing.
+// session-mode slot's identifier is its session's identifier. The routes
+// that reach the §15.1 mapper are the two that start a session on the slot
+// they bind, the one-call POST /v1/sessions/start and the two-step
+// POST /v1/sessions/{id}/start, and the one-call route carries no session
+// identifier in its path, so its 422 body would otherwise name nothing.
 //
 // spec: §5.2 "Client error on exhaustion"; §5.2 (identity invariant).
 type SlotFailedError struct {

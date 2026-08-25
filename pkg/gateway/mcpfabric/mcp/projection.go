@@ -310,15 +310,13 @@ func projectElicitationCreate(ev sessionevents.Event) []byte {
 // requested, approved, denied, completed) is a notifications/lenny/
 // toolCall observability frame. The live tool_use_requested event is
 // emitted by the approval gate, so it is always approval-required.
-// The payload carries no slot address: the event's session identifier
-// names the session, and a session-mode slot's identifier is its
-// session's identifier.
-// spec: §15.2; §5.2 (identity invariant).
+// spec: §15.2.
 func projectToolUse(ev sessionevents.Event) []byte {
 	var p struct {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
 		Args       json.RawMessage `json:"args,omitempty"`
+		SlotID     string          `json:"slotId,omitempty"`
 		Phase      string          `json:"phase,omitempty"`
 		Result     json.RawMessage `json:"result,omitempty"`
 	}
