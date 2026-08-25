@@ -199,11 +199,16 @@ EXPLICIT = [
     # on, so each rewrites or re-arms that session's own lease rather than a
     # pod-global one. The rows name that behavior rather than a request field,
     # because the duplicate slot address the frozen reference recorded them
-    # against is off the wire and the behavior outlives it.
+    # against is off the wire and the behavior outlives it. Each anchors to the
+    # CH-RUNTIMEOPS contract card, which is the heading that states the
+    # adapter's per-session credential-file handling, including the rewrite of
+    # /run/lenny/slots/{sessionId}/credentials.json ahead of the in-flight gate.
+    # The exclusivity heading states the one-holder rule and the pod-level
+    # operation lock and says nothing about credential addressing.
     {
         "claim": "Credential rotation addressed to the session's own lease file",
         "status": "WIRED",
-        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "spec_anchor": "#2853-intra-pod",
         "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into "
                    "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), reached from "
                    "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onRenewed` "
@@ -218,7 +223,7 @@ EXPLICIT = [
     {
         "claim": "Credential lease extension addressed to the session's own lease set",
         "status": "WIRED",
-        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "spec_anchor": "#2853-intra-pod",
         "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into "
                    "`extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), reached from "
                    "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onExtend` "
@@ -233,7 +238,7 @@ EXPLICIT = [
     {
         "claim": "Credential revocation addressed to the session's own lease file",
         "status": "UNWIRED",
-        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "spec_anchor": "#2853-intra-pod",
         "deferral_id": "R14",
         "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into "
                    "`revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",

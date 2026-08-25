@@ -103,14 +103,14 @@
     {
       "claim": "Credential lease extension addressed to the session's own lease set",
       "status": "WIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "spec_anchor": "#2853-intra-pod",
       "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into `extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), reached from `cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onExtend` through `pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
       "note": "the extension re-arms the addressed session's own expiry timer and touches neither its credential file nor a co-tenant's deadline"
     },
     {
       "claim": "Credential revocation addressed to the session's own lease file",
       "status": "UNWIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "spec_anchor": "#2853-intra-pod",
       "deferral_id": "R14",
       "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into `revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
       "note": "the handler drops the named providers from the addressed session's own credential file, and no gateway caller invokes the adapter's RevokeCredentials; the Token Service revocation the gateway does call is a separate service and is not part of this claim"
@@ -118,7 +118,7 @@
     {
       "claim": "Credential rotation addressed to the session's own lease file",
       "status": "WIRED",
-      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "spec_anchor": "#2853-intra-pod",
       "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into `rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), reached from `cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onRenewed` and `cmd/lenny-gateway/cred_fallback.go` `proxyFallbackRotator.Rotate` through `pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
       "note": "the rotation rewrites the addressed session's own /run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file is untouched; the pod-wide per-provider in-flight completion gate and its 300s ceiling run after that rewrite, inside rotateProviderFull, on Full-level runtimes only, and carry no session dimension"
     },

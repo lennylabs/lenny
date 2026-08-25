@@ -639,6 +639,46 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 }
 
 // spec: 28.4 (claim register), 4.7 (runtime adapter)
+// diagnosis: a per-slot credential row cites a §28 heading that states nothing
+// about credential addressing. §28.4 has a row record how far the tree has
+// reached a statement §28 makes, so the anchor names the heading that makes it.
+// The statement these rows carry a status for is the CH-RUNTIMEOPS contract
+// card, which states the rewrite of the addressed session's own
+// /run/lenny/slots/{sessionId}/credentials.json and the in-flight gate that
+// follows it. The exclusivity heading states the one-holder rule and the
+// pod-level operation lock and makes no statement about credential addressing,
+// so a row anchored there points a reader at a heading it does not restate.
+func TestClaimRegisterCredentialRowsAnchorToTheRuntimeOpsContractCard(t *testing.T) {
+	t.Parallel()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, claimRegisterPath))
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	rows, err := claimRegisterRows(body)
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+
+	const runtimeOpsAnchor = "#2853-intra-pod"
+	for _, name := range []string{
+		"Credential rotation addressed to the session's own lease file",
+		"Credential lease extension addressed to the session's own lease set",
+		"Credential revocation addressed to the session's own lease file",
+	} {
+		row, ok := rows[name]
+		if !ok {
+			t.Errorf("%s carries no row for %q", claimRegisterPath, name)
+			continue
+		}
+		if row.SpecAnchor != runtimeOpsAnchor {
+			t.Errorf("the row %q anchors to %q; the heading that states the adapter's per-session credential-file handling is %q",
+				name, row.SpecAnchor, runtimeOpsAnchor)
+		}
+	}
+}
+
+// spec: 28.4 (claim register), 4.7 (runtime adapter)
 // diagnosis: a credential-operation row's status disagrees with whether a
 // production call site reaches the RPC. §28.4 draws the status from a closed
 // set in which WIRED means the mechanism is reachable from production code and
