@@ -128,21 +128,29 @@ def canonical(text):
     return text
 
 
-# Rows whose surface the frozen reference cannot state, keyed by the claim the
-# table names. The reference recorded the capability by the absence of a request
-# field, and the wire has since dropped that field: the request names its session
-# by the session identifier alone. Carrying the reference's wording forward would
-# make the register contradict the proto it cites, so the row names the handler
-# that does not resolve the session's own tree and states in its note that the
-# behavior is not implemented. The status stays `ABSENT`: §28.4 reads it as
-# specified and not implemented, which is what an unresolved root is.
+# Rows whose status or surface the frozen reference cannot state, keyed by the
+# claim the table names. The reference recorded the capability by the absence of
+# a request field, and the wire has since dropped that field: the request names
+# its session by the session identifier alone. Carrying the reference's wording
+# forward would make the register contradict the code it cites, so the row names
+# the current path and states in its note what that path does.
+#
+# An entry may carry a `status` beside its `surface` and its `note`. The
+# reference's status cell records the tree as it stood when the reference was
+# frozen, so a status the tree has since contradicted is corrected here, on the
+# mechanism the override already restates. Setting a status to `WIRED` drops the
+# `deferral_id` the reference's own cell assigned, because a wired mechanism has
+# no step left to close it and the claim-register validator refuses a `WIRED`
+# row that names one.
 SURFACE_OVERRIDES = {
     "Checkpoint restore onto a concurrent pod": {
-        "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint "
-                   "roots rather than the session's own tree",
+        "status": "WIRED",
+        "surface": "`pkg/adapter/resume.go` resolves the restore's checkpoint roots "
+                   "from the request's session identifier through "
+                   "`checkpointRootsForSession` (`pkg/adapter/slot.go`)",
         "note": "the request addresses its session by the session identifier and the "
-                "restore path resolves no per-session root from it, so the per-slot "
-                "restore is not implemented",
+                "restore extracts into that session's own slot tree, so the per-slot "
+                "restore runs on every pod",
     },
 }
 
@@ -186,6 +194,43 @@ EXPLICIT = [
         "note": "the suite compiles two schema files and reads no third, while "
                 "spec/24, the adapter-contract reference, and the publishing guide "
                 "all name schemas/runtime-ops-events.schema.json as an artifact it asserts against",
+    },
+    # The three credential operations address the session whose lease they act
+    # on, so each rewrites or re-arms that session's own lease rather than a
+    # pod-global one. The rows name that behavior rather than a request field,
+    # because the duplicate slot address the frozen reference recorded them
+    # against is off the wire and the behavior outlives it.
+    {
+        "claim": "Credential rotation addressed to the session's own lease file",
+        "status": "WIRED",
+        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into "
+                   "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), gateway caller "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
+        "note": "the rotation rewrites the addressed session's own "
+                "/run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's file is "
+                "untouched; the in-flight completion gate that precedes the rewrite is "
+                "pod-wide per provider and carries no session dimension",
+    },
+    {
+        "claim": "Credential lease extension addressed to the session's own lease set",
+        "status": "WIRED",
+        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into "
+                   "`extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), gateway caller "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
+        "note": "the extension re-arms the addressed session's own expiry timer and "
+                "touches neither its credential file nor a co-tenant's deadline",
+    },
+    {
+        "claim": "Credential revocation addressed to the session's own lease file",
+        "status": "WIRED",
+        "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into "
+                   "`revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
+        "note": "the revocation drops the named providers from the addressed session's "
+                "own credential file; the adapter RPC has no gateway caller today, and "
+                "the Token Service revocation path is a separate surface",
     },
 ]
 
@@ -295,6 +340,10 @@ def main():
             if override:
                 row["surface"] = override["surface"]
                 row["note"] = override["note"]
+                if "status" in override:
+                    row["status"] = override["status"]
+                    if row["status"] == "WIRED":
+                        row.pop("deferral_id", None)
                 overridden.add(row["claim"])
             claims.append(row)
 

@@ -67,11 +67,10 @@
     },
     {
       "claim": "Checkpoint restore onto a concurrent pod",
-      "status": "ABSENT",
+      "status": "WIRED",
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
-      "surface": "`pkg/adapter/resume.go` extracts into the pod-global checkpoint roots rather than the session's own tree",
-      "deferral_id": "R22",
-      "note": "the request addresses its session by the session identifier and the restore path resolves no per-session root from it, so the per-slot restore is not implemented"
+      "surface": "`pkg/adapter/resume.go` resolves the restore's checkpoint roots from the request's session identifier through `checkpointRootsForSession` (`pkg/adapter/slot.go`)",
+      "note": "the request addresses its session by the session identifier and the restore extracts into that session's own slot tree, so the per-slot restore runs on every pod"
     },
     {
       "claim": "CheckpointBarrierRequest.coordination_generation generation fence field",
@@ -100,6 +99,27 @@
       "status": "WIRED",
       "spec_anchor": "#2852-pod-to-gateway",
       "surface": "interceptors `pkg/adapter/transport.go:46-47`; sole arm `pkg/adapter/adapterevents.go:125`"
+    },
+    {
+      "claim": "Credential lease extension addressed to the session's own lease set",
+      "status": "WIRED",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into `extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), gateway caller `pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
+      "note": "the extension re-arms the addressed session's own expiry timer and touches neither its credential file nor a co-tenant's deadline"
+    },
+    {
+      "claim": "Credential revocation addressed to the session's own lease file",
+      "status": "WIRED",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into `revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
+      "note": "the revocation drops the named providers from the addressed session's own credential file; the adapter RPC has no gateway caller today, and the Token Service revocation path is a separate surface"
+    },
+    {
+      "claim": "Credential rotation addressed to the session's own lease file",
+      "status": "WIRED",
+      "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into `rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), gateway caller `pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
+      "note": "the rotation rewrites the addressed session's own /run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's file is untouched; the in-flight completion gate that precedes the rewrite is pod-wide per provider and carries no session dimension"
     },
     {
       "claim": "Cross-replica message forward",

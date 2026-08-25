@@ -536,3 +536,54 @@ func TestClaimRegisterAnchorsComeFromTheSectionsHeadings(t *testing.T) {
 		t.Errorf("the headings outside the fenced figure were not read: %v", got)
 	}
 }
+
+// spec: 28.4 (claim register), 4.7 (runtime adapter), 10.1 (gateway horizontal
+// scaling)
+// diagnosis: the register no longer records the per-session addressing the
+// adapter implements. Either the credential operations' rows are missing or
+// carry a status other than WIRED, or the checkpoint restore row still records
+// the pod-global extraction and the deferral that went with it. A register that
+// understates what the tree does sends a later step to re-close a closed gap.
+func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *testing.T) {
+	t.Parallel()
+	body, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), claimRegisterPath))
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+	rows, err := claimRegisterRows(body)
+	if err != nil {
+		t.Fatalf("%s: %v", claimRegisterPath, err)
+	}
+
+	// Each credential operation resolves the addressed session's own lease
+	// rather than a pod-global one, so each carries its own WIRED row naming
+	// the behavior rather than a request field.
+	wanted := []string{
+		"Credential rotation addressed to the session's own lease file",
+		"Credential lease extension addressed to the session's own lease set",
+		"Credential revocation addressed to the session's own lease file",
+		// The restore resolves its checkpoint roots from the request's
+		// session identifier, so the row that recorded the pod-global
+		// extraction is WIRED with no step left to close it.
+		"Checkpoint restore onto a concurrent pod",
+	}
+	for _, name := range wanted {
+		row, ok := rows[name]
+		if !ok {
+			t.Errorf("%s carries no row for %q", claimRegisterPath, name)
+			continue
+		}
+		if row.Status != "WIRED" {
+			t.Errorf("the row %q is %s; the adapter implements the behavior it names",
+				name, row.Status)
+		}
+		if row.DeferralID != "" {
+			t.Errorf("the row %q names deferral %q; a wired mechanism has no step left to close it",
+				name, row.DeferralID)
+		}
+		if !strings.Contains(row.Surface, "pkg/adapter/") {
+			t.Errorf("the row %q names surface %q, which does not reach the adapter path that implements it",
+				name, row.Surface)
+		}
+	}
+}

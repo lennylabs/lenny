@@ -509,6 +509,8 @@
       "title": "Runtime Adapter",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier0_static/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
+        "tests/tier0_static/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",
         "pkg/adapter/...",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier3_contract/crd_schema/nonce_only_fields_test.go",
@@ -1552,6 +1554,8 @@
       "title": "Gateway Horizontal Scaling",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "tests/tier0_static/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
+        "tests/tier0_static/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
