@@ -15,6 +15,7 @@ package rest_sessions_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -417,6 +418,11 @@ func TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2(t *testing.T
 	}
 	if details["retryable"] != false {
 		t.Errorf("error.details.retryable = %v, want false", details["retryable"])
+	}
+	// §7.1 atomic creation: the slot failed inside the creation unit, so the
+	// session the body names must not survive as a row the client can find.
+	if _, err := store.GetByID(context.Background(), sessionID); !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Errorf("session %q persisted after the failed atomic creation (err = %v)", sessionID, err)
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {

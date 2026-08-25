@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 
@@ -501,5 +503,47 @@ func TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2(t *testing.T) {
 	var sf *podsession.SlotFailedError
 	if errors.As(out, &sf) {
 		t.Errorf("exhaustion sentinel classified as a slot failure: %v", sf)
+	}
+}
+
+// spec: §7.3 (setup_command_failed non-retryable), §5.2 "Client error on
+// exhaustion", §15.1 (SETUP_COMMAND_FAILED) — a setup-command exit that
+// reaches the no-retry slot paths is still answered with the typed
+// SETUP_COMMAND_FAILED envelope rather than the §5.2 SLOT_FAILED one. The
+// classification wraps the bind error rather than replacing it, so the
+// setup failure stays on the unwrap chain and the typed handler, which the
+// §15.1 mapper checks before the slot case, wins. Replacing the chain with
+// the classified cause, or checking the slot case first, would answer a
+// deterministic setup exit with the slot envelope and lose the per-command
+// transcript the client reads.
+func TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3(t *testing.T) {
+	setupFail := &podsession.SetupCommandFailure{
+		Pod:   "pod-b",
+		Cause: status.Error(codes.FailedPrecondition, "run setup commands: exit 1"),
+	}
+	bindErr := &podsession.SlotBindError{
+		Pod: "pod-b", SlotID: "sess-1", Stage: "session_start",
+		Err: fmt.Errorf("start session: %w", setupFail),
+	}
+	out := classifySlotBindFailure(bindErr, req("pool-x", 4))
+
+	var sf *podsession.SlotFailedError
+	if !errors.As(out, &sf) {
+		t.Fatalf("a policy_rejection-class bind failure was not classified: %v", out)
+	}
+	var reachedSetup *podsession.SetupCommandFailure
+	if !errors.As(out, &reachedSetup) {
+		t.Fatalf("the setup failure left the unwrap chain: %v", out)
+	}
+
+	s := New(memstore.New(), Options{})
+	w := httptest.NewRecorder()
+	s.writePodClaimError(w, out, "SESSION_CREATION_FAILED", "could not place the session on a warm pod")
+	if w.Code != 422 {
+		t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body.String())
+	}
+	body := decodeErrorBody(t, w.Body.Bytes())
+	if body["code"] != "SETUP_COMMAND_FAILED" {
+		t.Errorf("code = %v, want SETUP_COMMAND_FAILED (the typed handler wins over SLOT_FAILED)", body["code"])
 	}
 }

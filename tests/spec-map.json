@@ -937,7 +937,8 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailureNamesSession_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesExhaustionThrough_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifySlotBindFailurePassesTransientThrough_spec_5_2",
-        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2"
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1146,7 +1147,8 @@
         "pkg/checkpoint/...",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace",
-        "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go"
+        "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3"
       ],
       "packages": [
         "pkg/session/resume",
