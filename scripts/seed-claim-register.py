@@ -223,18 +223,21 @@ EXPLICIT = [
         "note": "the extension re-arms the addressed session's own expiry timer and "
                 "touches neither its credential file nor a co-tenant's deadline",
     },
+    # The adapter's revocation handler resolves the addressed session's own
+    # credential file, and no gateway code calls the RPC, which is the state
+    # §28.4 labels UNWIRED. R14 is the step that owns the adapter's revocation
+    # as an unwired security surface.
     {
         "claim": "Credential revocation addressed to the session's own lease file",
-        "status": "WIRED",
+        "status": "UNWIRED",
         "spec_anchor": "#286-exclusivity-and-concurrency-model",
+        "deferral_id": "R14",
         "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into "
                    "`revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
-        "note": "the revocation drops the named providers from the addressed session's "
-                "own credential file; the handler is served on the Adapter service the "
-                "adapter registers in pkg/adapter/transport.go, so the per-session "
-                "addressing this row claims is reachable in production; the end-to-end "
-                "Token Service revocation path is a separate surface and is not part of "
-                "this claim",
+        "note": "the handler drops the named providers from the addressed session's "
+                "own credential file, and no gateway caller invokes the adapter's "
+                "RevokeCredentials; the Token Service revocation the gateway does call "
+                "is a separate service and is not part of this claim",
     },
 ]
 

@@ -555,13 +555,14 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 		t.Fatalf("%s: %v", claimRegisterPath, err)
 	}
 
-	// Each credential operation resolves the addressed session's own lease
-	// rather than a pod-global one, so each carries its own WIRED row naming
-	// the behavior rather than a request field.
+	// The two credential operations the gateway calls resolve the addressed
+	// session's own lease rather than a pod-global one, so each carries its
+	// own WIRED row naming the behavior rather than a request field. The
+	// revocation handler resolves the same per-session file and has no
+	// gateway caller, so its row is UNWIRED and is checked below.
 	wanted := []string{
 		"Credential rotation addressed to the session's own lease file",
 		"Credential lease extension addressed to the session's own lease set",
-		"Credential revocation addressed to the session's own lease file",
 		// The restore resolves its checkpoint roots from the request's
 		// session identifier, so the row that recorded the pod-global
 		// extraction is WIRED with no step left to close it.
@@ -587,6 +588,27 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 		}
 	}
 
+	// The revocation handler addresses the session's own credential file and
+	// no gateway code calls it, which is the state §28.4 labels UNWIRED. The
+	// row still names the adapter path, because the claim is about what the
+	// handler addresses rather than about who reaches it.
+	const revocation = "Credential revocation addressed to the session's own lease file"
+	if row, ok := rows[revocation]; !ok {
+		t.Errorf("%s carries no row for %q", claimRegisterPath, revocation)
+	} else {
+		if row.Status != "UNWIRED" {
+			t.Errorf("the row %q is %s; the handler is implemented and has no gateway caller, which §28.4 labels UNWIRED",
+				revocation, row.Status)
+		}
+		if row.DeferralID == "" {
+			t.Errorf("the row %q names no deferral; a row that is not WIRED hands its mechanism to a step", revocation)
+		}
+		if !strings.Contains(row.Surface, "pkg/adapter/") {
+			t.Errorf("the row %q names surface %q, which does not reach the adapter path that implements it",
+				revocation, row.Surface)
+		}
+	}
+
 	// The rotation row records the landed order. The per-session file rewrite
 	// happens first and the pod-wide in-flight gate runs after it, inside
 	// rotateProviderFull, so a note that places the gate before the rewrite
@@ -604,13 +626,17 @@ func TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore(t *test
 	}
 }
 
-// spec: 28.4 (claim register)
-// diagnosis: a WIRED row's note states the mechanism has no caller, which is
-// the definition §28.4 gives UNWIRED. The row and its own note disagree, so
-// the register records a reachability the tree does not have.
-func TestClaimRegisterWiredRowsDoNotRecordAnAbsentCaller(t *testing.T) {
+// spec: 28.4 (claim register), 4.7 (runtime adapter)
+// diagnosis: a credential-operation row's status disagrees with whether the
+// gateway's adapter client declares a caller for the RPC. §28.4 draws the
+// status from a closed set in which WIRED means the mechanism is reachable
+// from production code and UNWIRED means it is implemented and has no
+// production caller, so a row that claims WIRED for an RPC nothing calls
+// records a reachability the tree does not have.
+func TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller(t *testing.T) {
 	t.Parallel()
-	body, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), claimRegisterPath))
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, claimRegisterPath))
 	if err != nil {
 		t.Fatalf("%s: %v", claimRegisterPath, err)
 	}
@@ -618,19 +644,65 @@ func TestClaimRegisterWiredRowsDoNotRecordAnAbsentCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%s: %v", claimRegisterPath, err)
 	}
-	// §28.4: WIRED means the mechanism is reachable from production code, and
-	// UNWIRED means it is implemented and has no production caller. A note
-	// that asserts the absence of a caller therefore contradicts a WIRED cell.
-	absent := []string{"no gateway caller", "no production caller", "has no caller"}
-	for name, row := range rows {
-		if row.Status != "WIRED" {
+	callers, err := adapterClientMethods(root)
+	if err != nil {
+		t.Fatalf("%s: %v", adapterClientDir, err)
+	}
+
+	// Each row names one adapter credential RPC. The gateway reaches the
+	// adapter only through the adapter client, so a method there is what
+	// makes the RPC reachable from production code.
+	rpcOfRow := map[string]string{
+		"Credential rotation addressed to the session's own lease file":       "RotateCredentials",
+		"Credential lease extension addressed to the session's own lease set": "ExtendCredentialLease",
+		"Credential revocation addressed to the session's own lease file":     "RevokeCredentials",
+	}
+	for claim, rpc := range rpcOfRow {
+		row, ok := rows[claim]
+		if !ok {
+			t.Errorf("%s carries no row for %q", claimRegisterPath, claim)
 			continue
 		}
-		for _, phrase := range absent {
-			if strings.Contains(row.Note, phrase) {
-				t.Errorf("the WIRED row %q states %q in its note; §28.4 defines a mechanism with no caller as UNWIRED",
-					name, phrase)
+		want := "UNWIRED"
+		if callers[rpc] {
+			want = "WIRED"
+		}
+		if row.Status != want {
+			declares := "declares no caller for"
+			if callers[rpc] {
+				declares = "declares a caller for"
 			}
+			t.Errorf("the row %q is %s; the adapter client %s %s, so §28.4 makes the row %s",
+				claim, row.Status, declares, rpc, want)
 		}
 	}
+}
+
+// adapterClientDir is the gateway package that holds every call the gateway
+// makes into the adapter's gRPC surface.
+const adapterClientDir = "pkg/gateway/runtime/adapterclient"
+
+// adapterClientMethods reports which exported methods the adapter client
+// declares in non-test source, keyed by method name.
+func adapterClientMethods(root string) (map[string]bool, error) {
+	entries, err := os.ReadDir(filepath.Join(root, adapterClientDir))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", adapterClientDir, err)
+	}
+	decl := regexp.MustCompile(`(?m)^func \(\w+ \*Client\) (\w+)\(`)
+	methods := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(root, adapterClientDir, name))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", name, err)
+		}
+		for _, m := range decl.FindAllSubmatch(src, -1) {
+			methods[string(m[1])] = true
+		}
+	}
+	return methods, nil
 }

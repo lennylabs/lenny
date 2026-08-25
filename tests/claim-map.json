@@ -109,10 +109,11 @@
     },
     {
       "claim": "Credential revocation addressed to the session's own lease file",
-      "status": "WIRED",
+      "status": "UNWIRED",
       "spec_anchor": "#286-exclusivity-and-concurrency-model",
+      "deferral_id": "R14",
       "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into `revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
-      "note": "the revocation drops the named providers from the addressed session's own credential file; the handler is served on the Adapter service the adapter registers in pkg/adapter/transport.go, so the per-session addressing this row claims is reachable in production; the end-to-end Token Service revocation path is a separate surface and is not part of this claim"
+      "note": "the handler drops the named providers from the addressed session's own credential file, and no gateway caller invokes the adapter's RevokeCredentials; the Token Service revocation the gateway does call is a separate service and is not part of this claim"
     },
     {
       "claim": "Credential rotation addressed to the session's own lease file",
