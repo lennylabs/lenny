@@ -58,6 +58,14 @@ func TestSessionCrossTenantLookupRejected(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenantB); err != nil {
 		t.Fatalf("bootstrap tenant B: %v", err)
 	}
+	// spec: §10.6, §11.1 — a bootstrapped tenant carries
+	// noEnvironmentPolicy deny-all, and this case creates a session that
+	// names no environment. Its assertion sits on the cross-tenant lookup
+	// axis, so the environment precondition is pinned through the
+	// documented admin path rather than left to the tenant default.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenantA); err != nil {
+		t.Fatalf("allow sessions with no environment for tenant A: %v", err)
+	}
 
 	sess, err := d.CreateAndStart(ctx, tenantA, sessiondriver.EchoRuntimeSidecar)
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
@@ -152,6 +160,14 @@ func TestSessionViewerRoleCannotMutate(t *testing.T) {
 	tenant := "t9-livesess-rbac" + fmt.Sprintf("-%d", time.Now().UnixNano())
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	// spec: §10.6, §11.1 — a bootstrapped tenant carries
+	// noEnvironmentPolicy deny-all, and this case creates a session that
+	// names no environment. Its assertion sits on the viewer-role axis, so
+	// the environment precondition is pinned through the documented admin
+	// path rather than left to the tenant default.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
 	}
 
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
