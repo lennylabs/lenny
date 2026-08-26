@@ -47,11 +47,16 @@ import (
 // exercise any of this live; this is the only test that drives a real
 // `lenny runtime publish` push against a real registry and a real
 // session against the result.
+// journeyRuntimePrefix is the stem of the runtime, pool, and image
+// names this test mints per run. The start-time sweep uses it to
+// recognize what an earlier, killed run of this same test left behind.
+const journeyRuntimePrefix = "bob-agent-"
+
 func TestRuntimePublishJourney(t *testing.T) {
 	c := kind.InstallLenny(t)
 	ctx := context.Background()
 
-	name := fmt.Sprintf("bob-agent-%d", time.Now().UnixNano()%1_000_000)
+	name := fmt.Sprintf("%s%d", journeyRuntimePrefix, time.Now().UnixNano()%1_000_000)
 	poolName := name + "-pool"
 	// A per-run tenant id, not a fixed constant or the doc-style "acme"
 	// example tenant: the tier-5 suite shares one long-lived Kind
@@ -116,6 +121,17 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// gives the HTTP client more headroom than sessiondriver.New's
 	// default.
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
+	// Reclaim what earlier runs of this test leaked. The pool below and
+	// the Runtime CRD above are removed in t.Cleanup, which does not run
+	// when the process is killed, and the name carries a per-run suffix
+	// so nothing a later run creates ever reuses the leaked object. Each
+	// leak leaves a warm pool that keeps recreating a member pod, and
+	// every such pod carries lenny.dev/managed=true, so any later test
+	// that waits on that label waits on the wreckage. The sweep is
+	// best-effort and never fails the run: its subject is what an
+	// earlier run left behind rather than anything this run asserts.
+	sweepStaleJourneyRuntimes(t, c, lennyCtl, repo, d.BaseURL(), poolName)
+
 	pubOut, err := runCLI(t, lennyCtl, repo,
 		"--api-url", d.BaseURL(), "--dev-tenant", "platform", "--dev-roles", "platform-admin",
 		"runtime", "publish", name, "--image", pushTag, "--manifest", "runtime.yaml")
@@ -213,6 +229,10 @@ spec:
 	if err := d.BootstrapTenant(ctx, tenantID); err != nil {
 		t.Fatalf("bootstrap tenant %q: %v", tenantID, err)
 	}
+	// The journey's session names no environment, which a freshly
+	// bootstrapped tenant's deny-all §10.6 noEnvironmentPolicy rejects
+	// with 403 FORBIDDEN.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenantID)
 
 	// Step: grant the tenant access to the runtime. spec: §26 —
 	// "Operators grant access per tenant via POST
@@ -524,5 +544,38 @@ func createAndStartTolerant(t *testing.T, ctx context.Context, d *sessiondriver.
 			t.Fatalf("pool for runtime %q did not warm up within %s: %v", runtimeRef, timeout, err)
 		}
 		time.Sleep(5 * time.Second)
+	}
+}
+
+// sweepStaleJourneyRuntimes deletes the warm pools and Runtime objects
+// this test's own name prefix left on the shared Kind cluster, keeping
+// the pool this run is about to create. A pool row is authoritative in
+// Postgres, so the pool is removed through the same admin surface the
+// test creates it with; deleting only the reconciled CRD pair would let
+// the pool controller rebuild it.
+func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL, keepPool string) {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	if err != nil {
+		t.Logf("sweep: list warm pools: %v (continuing)", err)
+		return
+	}
+	for _, pool := range strings.Fields(out) {
+		if pool == keepPool || !strings.HasPrefix(pool, journeyRuntimePrefix) ||
+			!strings.HasSuffix(pool, "-pool") {
+			continue
+		}
+		runtimeName := strings.TrimSuffix(pool, "-pool")
+		if cliOut, err := runCLI(t, lennyCtl, repo,
+			"--api-url", apiURL, "--dev-tenant", "platform", "--dev-roles", "platform-admin",
+			"admin", "pools", "delete", pool); err != nil {
+			t.Logf("sweep: delete stale pool %s: %v\n%s (continuing)", pool, err, cliOut)
+			continue
+		}
+		if kOut, err := c.KubectlOut(t, "delete", "runtime", runtimeName, "--ignore-not-found"); err != nil {
+			t.Logf("sweep: delete stale Runtime %s: %v\n%s (continuing)", runtimeName, err, kOut)
+		}
+		t.Logf("sweep: reclaimed stale pool %s and Runtime %s from an earlier run", pool, runtimeName)
 	}
 }

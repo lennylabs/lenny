@@ -120,8 +120,11 @@ func createdSession(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role
 // counter was decremented (the lease did not leak).
 func leaseRowCountForSession(t *testing.T, c *kind.Cluster, pgIP, sessionID string) int {
 	t.Helper()
+	// The lease document itself is stored encrypted (a bytea column), so
+	// the session it belongs to is read from the session_id column rather
+	// than from inside the blob.
 	sql := fmt.Sprintf(
-		"SELECT count(*) FROM credential_leases WHERE lease->>'sessionId' = '%s';",
+		"SELECT count(*) FROM credential_leases WHERE session_id = '%s';",
 		sessionID,
 	)
 	out := t5RunPsqlQuery(t, c, pgIP, "lease-count-"+sessionID, sql)
@@ -146,6 +149,10 @@ func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	probe := "eager-exhaust-probe"
 	gatewayIP := t5StartGatewayProbe(t, c, probe)
 	role := eagerTenant()
+	// These sessions name no environment, which the tenant's default
+	// deny-all §10.6 noEnvironmentPolicy rejects with 403 FORBIDDEN
+	// before any claim is taken.
+	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
 	// The finite reference pools warm one pod each (minWarm: 1). Claim every
 	// idle pod by creating one session per warm pod, then assert a further
@@ -195,6 +202,10 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 	probe := "eager-finalize-probe"
 	gatewayIP := t5StartGatewayProbe(t, c, probe)
 	role := eagerTenant()
+	// These sessions name no environment, which the tenant's default
+	// deny-all §10.6 noEnvironmentPolicy rejects with 403 FORBIDDEN
+	// before any claim is taken.
+	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
 	id := createdSession(t, c, probe, gatewayIP, role)
 	t.Cleanup(func() {
@@ -238,6 +249,10 @@ func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 	probe := "eager-expiry-probe"
 	gatewayIP := t5StartGatewayProbe(t, c, probe)
 	role := eagerTenant()
+	// These sessions name no environment, which the tenant's default
+	// deny-all §10.6 noEnvironmentPolicy rejects with 403 FORBIDDEN
+	// before any claim is taken.
+	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
 	before := claimCount(t, c)
 	id := createdSession(t, c, probe, gatewayIP, role)
@@ -296,6 +311,10 @@ func TestEagerClaimTerminateReadySessionReleasesPodAndLease(t *testing.T) {
 		t.Skip("e2e Postgres pod IP unavailable; cannot inspect the credential-lease store")
 	}
 	role := eagerTenant()
+	// The session below names no environment, which the tenant's
+	// default deny-all §10.6 noEnvironmentPolicy rejects with 403
+	// FORBIDDEN before any claim is taken.
+	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
 	beforeClaims := claimCount(t, c)
 	id := createdSession(t, c, probe, gatewayIP, role)

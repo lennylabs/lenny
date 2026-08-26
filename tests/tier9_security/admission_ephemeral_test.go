@@ -47,8 +47,8 @@ const ephemeralCredRejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 // diagnosis: the TESTING.md §12.9.3 lenny-ephemeral-container-cred-guard does not
 // reject an ephemeral container that could reach the pod credential
 // file. The test takes a live managed agent pod and issues a
-// server-side dry-run that attaches an ephemeral container with no
-// securityContext, which under §13.1 condition (iii) inherits the
+// server-side dry-run that attaches an ephemeral container which omits
+// runAsGroup, and which under §13.1 condition (iii) inherits the
 // pod-level credential-group defaults. The guard must reject the attach
 // with EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN. An admitted attach means
 // an actor with pods/ephemeralcontainers UPDATE could read
@@ -84,7 +84,7 @@ func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted a dry-run ephemeral-container attach to "+
-			"the managed agent pod %q whose ephemeral container sets no securityContext; the "+
+			"the managed agent pod %q whose ephemeral container omits runAsGroup; the "+
 			"lenny-ephemeral-container-cred-guard did not reject the credential-reaching attach."+
 			"\noutput:\n%s", pod.Name, out)
 	}
@@ -103,11 +103,19 @@ func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
 
 // ephemeralAttachBody renders the JSON pod object posted to the
 // pods/ephemeralcontainers subresource. The single ephemeral container
-// sets no securityContext, so it declares neither runAsUser,
-// runAsGroup, nor supplementalGroups: §13.1 condition (iii) treats this
-// as inheriting the pod-level credential-group defaults, the exact
-// vector the cred-guard rejects. The body is JSON because
-// `kubectl replace --raw` posts the file verbatim to the API server.
+// declares runAsUser and every field the pod-security baseline requires
+// (runAsNonRoot, no privilege escalation, all capabilities dropped, a
+// read-only root filesystem, and the default seccomp profile) but omits
+// runAsGroup, so §13.1 condition (iii) treats it as inheriting the
+// pod-level credential-group default, the exact vector the cred-guard
+// rejects.
+//
+// Every field beyond runAsUser is there so the attach passes the
+// pod-security webhook. A body carrying no securityContext at all is
+// rejected by pod-security first, and the API server then reports that
+// rejection instead, which leaves the cred-guard's own coverage of the
+// vector unproven. The body is JSON because `kubectl replace --raw`
+// posts the file verbatim to the API server.
 func ephemeralAttachBody(podName string) string {
 	return fmt.Sprintf(`{
   "apiVersion": "v1",
@@ -118,7 +126,15 @@ func ephemeralAttachBody(podName string) string {
       {
         "name": "t9-cred-snoop",
         "image": "busybox:1.36",
-        "command": ["sleep", "300"]
+        "command": ["sleep", "300"],
+        "securityContext": {
+          "runAsUser": 31337,
+          "runAsNonRoot": true,
+          "allowPrivilegeEscalation": false,
+          "readOnlyRootFilesystem": true,
+          "capabilities": {"drop": ["ALL"]},
+          "seccompProfile": {"type": "RuntimeDefault"}
+        }
       }
     ]
   }

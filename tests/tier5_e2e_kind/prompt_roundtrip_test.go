@@ -54,6 +54,10 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// The journey creates its session against a runtime with no
+	// explicit environment, which a freshly bootstrapped tenant's
+	// deny-all §10.6 noEnvironmentPolicy rejects with 403 FORBIDDEN.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	runEchoPromptJourney(ctx, t, d, tenant)
 }

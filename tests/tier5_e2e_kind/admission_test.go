@@ -18,6 +18,8 @@
 package tier5_e2e_kind_test
 
 import (
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -214,6 +216,123 @@ func TestAdmissionInventory(t *testing.T) {
 		}
 	}
 	t.Logf("admission inventory: %d ValidatingWebhookConfigurations present", len(policy))
+}
+
+// spec: 4.6.1, 13.7
+// diagnosis: an admission webhook that gates a Lenny CRD is installed
+// but never called. A ValidatingWebhookConfiguration rule matches a
+// request only when the request's API version is one the rule names, so
+// a rule naming a version the CRD does not serve silently admits every
+// write it was installed to judge. The failure is invisible from the
+// cluster: the webhook Deployment is Ready, the configuration is
+// fail-closed, and the inventory check above passes, while the guarded
+// invariant does not hold. matchPolicy: Equivalent does not rescue it,
+// because it converts between versions the CRD serves and a
+// single-version CRD has none to convert to. A failure here means at
+// least one guard is inert; the fail-open the sandboxclaim-guard rule
+// produced admitted a second SandboxClaim for a Sandbox that already
+// carried one.
+func TestLennyCRDWebhookRulesNameAServedVersion(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	served := servedCRDVersions(t, c)
+	if len(served) == 0 {
+		t.Fatalf("no lenny.dev CustomResourceDefinition reports a served version; the CRDs are not installed")
+	}
+
+	raw, err := c.KubectlOut(t, "get", "validatingwebhookconfigurations", "-o", "json")
+	if err != nil {
+		t.Fatalf("list ValidatingWebhookConfigurations: %v\n%s", err, raw)
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Webhooks []struct {
+				Rules []struct {
+					APIGroups   []string `json:"apiGroups"`
+					APIVersions []string `json:"apiVersions"`
+					Resources   []string `json:"resources"`
+				} `json:"rules"`
+			} `json:"webhooks"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode ValidatingWebhookConfiguration list: %v", err)
+	}
+
+	checked := 0
+	for _, item := range list.Items {
+		for _, wh := range item.Webhooks {
+			for _, rule := range wh.Rules {
+				if !slices.Contains(rule.APIGroups, "lenny.dev") {
+					continue
+				}
+				for _, resource := range rule.Resources {
+					// A subresource rule (sandboxes/status) is keyed on
+					// its parent resource's served versions.
+					parent, _, _ := strings.Cut(resource, "/")
+					servedForResource, known := served[parent]
+					if !known {
+						t.Errorf("webhook %q rules on lenny.dev resource %q, which no installed "+
+							"CustomResourceDefinition serves; the rule matches nothing",
+							item.Metadata.Name, resource)
+						continue
+					}
+					checked++
+					if !ruleVersionIsServed(rule.APIVersions, servedForResource) {
+						t.Errorf("webhook %q rules on lenny.dev/%s with apiVersions %v, none of which the "+
+							"CRD serves (served: %v); the rule matches no request and the guard never runs",
+							item.Metadata.Name, resource, rule.APIVersions, servedForResource)
+					}
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("no ValidatingWebhookConfiguration rule targets a lenny.dev resource; the admission gates " +
+			"on the Lenny CRDs are absent")
+	}
+	t.Logf("TESTING.md §13.7: checked %d webhook rules on lenny.dev resources against the served CRD versions", checked)
+}
+
+// servedCRDVersions maps each lenny.dev CRD's plural resource name to
+// the API versions it serves.
+func servedCRDVersions(t *testing.T, c *kind.Cluster) map[string][]string {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t, "get", "crd", "-o",
+		"jsonpath={range .items[?(@.spec.group==\"lenny.dev\")]}{.spec.names.plural}{\"\\t\"}"+
+			"{range .spec.versions[?(@.served==true)]}{.name}{\",\"}{end}{\"\\n\"}{end}",
+	)
+	if err != nil {
+		t.Fatalf("list lenny.dev CustomResourceDefinitions: %v\n%s", err, out)
+	}
+	served := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		plural, versions, ok := strings.Cut(line, "\t")
+		if !ok || plural == "" {
+			continue
+		}
+		for _, v := range strings.Split(strings.Trim(versions, ","), ",") {
+			if v != "" {
+				served[plural] = append(served[plural], v)
+			}
+		}
+	}
+	return served
+}
+
+// ruleVersionIsServed reports whether a rule's apiVersions name a
+// version the CRD serves. The wildcard "*" matches every version.
+func ruleVersionIsServed(ruleVersions, served []string) bool {
+	for _, v := range ruleVersions {
+		if v == "*" || slices.Contains(served, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // spec: 13.7

@@ -37,6 +37,16 @@ const poolConfigValidatorDeployment = "lenny-pool-config-validator"
 // SandboxClaim, Sandbox) live in on the e2e cluster.
 const agentNamespace = "lenny-agents"
 
+// poolScalingControllerSA is the only principal whose writes to a
+// SandboxWarmPool or SandboxTemplate spec the pool-config validator
+// admits. Every other principal, the kubeconfig's cluster-admin
+// included, is rejected with UNAUTHORIZED_POOL_CONFIG_WRITE before the
+// budget invariants are reached, so a test whose subject is those
+// invariants writes as this principal.
+//
+// spec: §4.6.3
+const poolScalingControllerSA = "system:serviceaccount:lenny-system:lenny-pool-scaling-controller"
+
 // spec: 12.8
 // diagnosis: §12.8 / §4.6.2 pool-config drift was not rejected at
 // admission. The lenny-pool-config-validator webhook gates the §4.6.2
@@ -68,7 +78,7 @@ func TestPoolConfigDrift(t *testing.T) {
 	const poolName = "chaos-drift-pool"
 	validPool := warmPoolManifest(poolName, agentNamespace, 1, 3)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, validPool) })
-	if out, err := c.ApplyStdin(t, validPool); err != nil {
+	if out, err := c.ApplyStdinAs(t, validPool, poolScalingControllerSA); err != nil {
 		t.Fatalf("failed to create the valid baseline SandboxWarmPool: %v\n%s", err, out)
 	}
 	t.Logf("precondition: valid SandboxWarmPool %s/%s created (minWarm=1, maxWarm=3)",
@@ -76,9 +86,13 @@ func TestPoolConfigDrift(t *testing.T) {
 
 	// Inject the drift: UPDATE the pool to minWarm=9, maxWarm=3 — a
 	// floor above the ceiling, which §4.6.2 makes unsatisfiable. The
-	// validator must reject this UPDATE.
+	// validator must reject this UPDATE. The write carries the
+	// PoolScalingController identity so the rejection under test is the
+	// budget invariant rather than the authorization rule that gates
+	// every manual write, and goes through replace because that
+	// principal holds update without patch.
 	driftedPool := warmPoolManifest(poolName, agentNamespace, 9, 3)
-	out, err := c.ApplyStdin(t, driftedPool)
+	out, err := c.ReplaceStdinAs(t, driftedPool, poolScalingControllerSA)
 	if err == nil {
 		t.Errorf("§4.6.2 violation: the pool-config validator admitted a SandboxWarmPool UPDATE with "+
 			"minWarm=9 > maxWarm=3; the minWarm <= maxWarm invariant must be rejected.\noutput:\n%s", out)
@@ -107,7 +121,7 @@ func TestPoolConfigDrift(t *testing.T) {
 	// Assert recovery: a valid UPDATE (still minWarm <= maxWarm) is
 	// admitted, proving the validator is not blanket-rejecting writes.
 	recovered := warmPoolManifest(poolName, agentNamespace, 2, 5)
-	if out, err := c.ApplyStdin(t, recovered); err != nil {
+	if out, err := c.ReplaceStdinAs(t, recovered, poolScalingControllerSA); err != nil {
 		t.Fatalf("a valid SandboxWarmPool UPDATE (minWarm=2, maxWarm=5) was rejected after the drift test: "+
 			"%v\n%s", err, out)
 	}

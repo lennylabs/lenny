@@ -100,6 +100,10 @@ func TestHAStreamingReconnectAcrossGatewayReplicas(t *testing.T) {
 	if err := driverA.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// The session below names no environment, which a freshly
+	// bootstrapped tenant's deny-all §10.6 noEnvironmentPolicy rejects
+	// with 403 FORBIDDEN.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, driverA, tenant)
 
 	// Create + start the session through replica A. A becomes the
 	// coordinating replica for the session.

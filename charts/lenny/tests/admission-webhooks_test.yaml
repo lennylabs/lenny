@@ -232,6 +232,12 @@ tests:
       - equal:
           path: webhooks[0].rules[0].resources[0]
           value: sandboxclaims
+      # The SandboxClaim CRD serves v1alpha1 only. A rule naming any
+      # other version matches no request, which leaves the guard
+      # installed and never called, so every double claim is admitted.
+      - equal:
+          path: webhooks[0].rules[0].apiVersions[0]
+          value: v1alpha1
       # spec §4.6.1: the webhook intercepts CREATE only; PATCH/PUT are
       # admitted without inspection and are not registered.
       - equal:

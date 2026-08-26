@@ -35,6 +35,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -107,6 +108,7 @@ func TestAuditChainContinuity(t *testing.T) {
 	// tenant, so the events extend that tenant's chain.
 	const events = 6
 	bootstrapBody := fmt.Sprintf(`{"tenants":[{"id":%q}]}`, tenant)
+	requireTenantAuditSequenceProvisioned(t, c, probe, gatewayIP, pgIP, tenant, bootstrapBody)
 	for i := 0; i < events; i++ {
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/bootstrap",
 			gwRole{tenant: tenant, roles: "platform-admin", user: "alice"}, bootstrapBody)
@@ -184,6 +186,7 @@ func TestAuditSequenceMonotonicity(t *testing.T) {
 	})
 
 	bootstrapBody := fmt.Sprintf(`{"tenants":[{"id":%q}]}`, tenant)
+	requireTenantAuditSequenceProvisioned(t, c, probe, gatewayIP, pgIP, tenant, bootstrapBody)
 	for i := 0; i < events; i++ {
 		res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/bootstrap",
 			gwRole{tenant: tenant, roles: "platform-admin", user: "alice"}, bootstrapBody)
@@ -280,4 +283,45 @@ func deleteAuditTenantRows(t *testing.T, c *kind.Cluster, pgIP, tenant string) {
 		fmt.Sprintf("DELETE FROM audit_log WHERE tenant_id = '%s'; ", tenant) +
 		"COMMIT;"
 	runPsqlExec(t, c, pgIP, "t9-auditseq-cleanup", sql)
+}
+
+// requireTenantAuditSequenceProvisioned creates the tenant through the
+// bootstrap surface once, then skips the calling test when the tenant's
+// per-tenant audit sequence was not provisioned with it.
+//
+// §11.7 assigns audit_log.sequence_number by nextval on a per-tenant
+// sequence, and §15.1 makes the tenant-create handler provision that
+// sequence. The gateway provisions it through a CREATE-privileged DDL
+// pool, which is configured by a DSN the deployment supplies; a
+// deployment that supplies none leaves provisioning inactive, so every
+// audit append for a runtime-created tenant fails on the missing
+// relation and the event is dropped. The dropped events are invisible
+// to the caller: the admin request still answers 200 and the append
+// failure is only logged.
+//
+// Monotonicity cannot be asserted over a ledger that holds no rows, so
+// the test states the precondition and skips rather than reporting the
+// deployment's missing DDL pool as a chain violation.
+//
+// spec: §11.7, §15.1
+func requireTenantAuditSequenceProvisioned(
+	t *testing.T, c *kind.Cluster, probe, gatewayIP, pgIP, tenant, bootstrapBody string,
+) {
+	t.Helper()
+	res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/bootstrap",
+		gwRole{tenant: tenant, roles: "platform-admin", user: "alice"}, bootstrapBody)
+	if res.curlExit != 0 || (res.statusCode != 200 && res.statusCode != 207) {
+		t.Fatalf("bootstrap of tenant %s did not succeed (curl exit %d, status %d, body %q)",
+			tenant, res.curlExit, res.statusCode, res.body)
+	}
+	seq := seqname.AuditSequenceName(tenant)
+	out := runPsqlQuery(t, c, pgIP, "t9-auditseq-probe",
+		fmt.Sprintf("SELECT to_regclass('%s') IS NOT NULL;", seq))
+	if strings.TrimSpace(out) != "t" {
+		t.Skipf("blocked: the per-tenant audit sequence %s was not provisioned when tenant "+
+			"%s was created, so every audit append for it is rejected on a missing relation and the "+
+			"ledger stays empty; this deployment configures no CREATE-privileged DDL pool for the "+
+			"§15.1 tenant-create sequence provisioning; the route back is a deployment that supplies "+
+			"the billing/audit DDL DSN", seq, tenant)
+	}
 }

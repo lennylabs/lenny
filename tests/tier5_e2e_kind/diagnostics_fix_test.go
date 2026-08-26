@@ -169,6 +169,51 @@ func diagFixWaitSecretRecreated(t *testing.T, c *kind.Cluster, before string) {
 	}
 }
 
+// diagFixWaitCertDetectable polls until the Certificate is back in the
+// state the certManagerExpiring detection requires: cert-manager
+// reports it Ready and its status.notAfter is inside the detection's
+// 7-day window.
+//
+// The remediation annotates the Certificate to request a temporary
+// certificate and deletes the backing Secret, so between the fix and
+// cert-manager's reissuance of the real 1h certificate the Certificate
+// passes through states the detection deliberately excludes: Ready is
+// briefly not True while the reissuance runs, and the temporary
+// certificate cert-manager parks in the Secret carries a notAfter far
+// outside the window. A re-run issued in either window reports the
+// finding not_detected, which says nothing about whether the
+// remediation is idempotent. Waiting for the detection precondition to
+// hold again removes that race from the assertion.
+//
+// spec: §25.6
+func diagFixWaitCertDetectable(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	const window = 7 * 24 * time.Hour
+	deadline := time.Now().Add(90 * time.Second)
+	var lastReady, lastNotAfter string
+	for {
+		lastReady, _ = c.KubectlOut(
+			t, "-n", t5SystemNS, "get", "certificate", diagFixCertName,
+			"-o", "jsonpath={range .status.conditions[?(@.type==\"Ready\")]}{.status}{end}",
+		)
+		lastNotAfter, _ = c.KubectlOut(
+			t, "-n", t5SystemNS, "get", "certificate", diagFixCertName,
+			"-o", "jsonpath={.status.notAfter}",
+		)
+		notAfter, err := time.Parse(time.RFC3339, strings.TrimSpace(lastNotAfter))
+		if strings.TrimSpace(lastReady) == "True" && err == nil &&
+			time.Until(notAfter) <= window {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("certificate %s/%s did not return to a detectable near-expiry state within 90s of the "+
+				"fix (last Ready=%q notAfter=%q); the idempotent re-run has no finding to remediate",
+				t5SystemNS, diagFixCertName, strings.TrimSpace(lastReady), strings.TrimSpace(lastNotAfter))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // diagFixFindingWire mirrors the wire shape of one §25.6
 // doctor.FindingResult entry (pkg/ops/doctor.go). Decoded from the raw
 // HTTP response rather than importing the product type, matching this
@@ -345,6 +390,7 @@ func TestDiagnosticsRunFixCertManagerExpiring(t *testing.T) {
 	// window and the finding is still detected; a second fix=true run
 	// must still succeed rather than erroring on an already-remediated
 	// resource.
+	diagFixWaitCertDetectable(t, c)
 	rerunReport := diagFixRun(t, baseURL, true, []string{"certManagerExpiring"})
 	rerunFinding := diagFixFindingFor(t, rerunReport, "certManagerExpiring")
 	if rerunFinding.Result != "applied" || rerunFinding.Error != "" {

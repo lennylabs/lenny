@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -33,9 +34,30 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// openAIConformanceTenant is the synthetic tenant the conformance tests
-// bootstrap. sessiondriver.Close removes it in best-effort cleanup.
-const openAIConformanceTenant = "scaffold-openai-conformance-tenant"
+// openAIConformanceTenantPrefix is the stem of the synthetic tenant the
+// conformance tests bootstrap. Each run appends its own suffix:
+// sessiondriver.Close deletes the tenant best-effort, and a tenant
+// delete is a soft delete, so a fixed name left behind by an
+// interrupted run on this long-lived, reused Kind install stays in the
+// deleting state and answers every later request for it with 403
+// TENANT_NOT_ACTIVE. A per-run name is unaffected by what an earlier
+// run left behind.
+const openAIConformanceTenantPrefix = "scaffold-openai-conformance-tenant"
+
+// bootstrapOpenAIConformanceTenant bootstraps a per-run conformance
+// tenant and relaxes its §10.6 noEnvironmentPolicy, because the
+// built-in adapter endpoints create their session without naming an
+// environment and a freshly bootstrapped tenant denies that with 403
+// FORBIDDEN.
+func bootstrapOpenAIConformanceTenant(ctx context.Context, t *testing.T, d *sessiondriver.Driver) string {
+	t.Helper()
+	tenant := fmt.Sprintf("%s-%d", openAIConformanceTenantPrefix, time.Now().UnixNano())
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant %q: %v", tenant, err)
+	}
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
+	return tenant
+}
 
 // t5PostJSON issues a POST against the port-forwarded gateway with the
 // dev-mode identity headers sessiondriver.New's own methods use
@@ -107,14 +129,12 @@ func TestOpenAIChatCompletionsConformsToPublishedSchemaOnDeployedGateway(t *test
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := d.BootstrapTenant(ctx, openAIConformanceTenant); err != nil {
-		t.Fatalf("bootstrap tenant: %v", err)
-	}
+	tenant := bootstrapOpenAIConformanceTenant(ctx, t, d)
 
 	sch := schematest.Compile(t, "tests/testdata/openai_chat/schema/create-chat-completion-response.schema.json")
 
-	body := t5ReadFixture(t, "openai_chat/simple/request.json")
-	status, raw := t5PostJSON(t, d.BaseURL(), "/v1/chat/completions", openAIConformanceTenant, body)
+	body := withDeployedRuntimeModel(t, t5ReadFixture(t, "openai_chat/simple/request.json"))
+	status, raw := t5PostJSON(t, d.BaseURL(), "/v1/chat/completions", tenant, body)
 	if status != http.StatusOK {
 		t.Fatalf("POST /v1/chat/completions on the deployed gateway: status %d, body=%s", status, raw)
 	}
@@ -175,14 +195,12 @@ func TestOpenAIResponsesConformsToPublishedSchemaOnDeployedGateway(t *testing.T)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if err := d.BootstrapTenant(ctx, openAIConformanceTenant); err != nil {
-		t.Fatalf("bootstrap tenant: %v", err)
-	}
+	tenant := bootstrapOpenAIConformanceTenant(ctx, t, d)
 
 	sch := schematest.Compile(t, "tests/testdata/openai_responses/schema/response.schema.json")
 
-	body := t5ReadFixture(t, "openai_responses/simple/request.json")
-	status, raw := t5PostJSON(t, d.BaseURL(), "/v1/responses", openAIConformanceTenant, body)
+	body := withDeployedRuntimeModel(t, t5ReadFixture(t, "openai_responses/simple/request.json"))
+	status, raw := t5PostJSON(t, d.BaseURL(), "/v1/responses", tenant, body)
 	if status != http.StatusOK {
 		t.Fatalf("POST /v1/responses on the deployed gateway: status %d, body=%s", status, raw)
 	}
@@ -195,4 +213,34 @@ func TestOpenAIResponsesConformsToPublishedSchemaOnDeployedGateway(t *testing.T)
 		t.Errorf("the deployed gateway's /v1/responses response does not validate against "+
 			"the published OpenAI Responses schema: %v", err)
 	}
+}
+
+// openAIConformanceRuntime is the registered runtime the deployed
+// gateway warms a pool for, named in the request's `model` field.
+//
+// The OpenAI translator reads `model` as the runtimeRef of the session
+// it creates, falling back to a configured default only when the field
+// namespaces an environment it cannot resolve. The published fixtures
+// carry a vendor model name, which names no runtime on any Lenny
+// deployment, so a request built from a fixture verbatim fails to place
+// a session before a response exists to validate.
+const openAIConformanceRuntime = "echo-runtime-sidecar"
+
+// withDeployedRuntimeModel rewrites a published OpenAI request
+// fixture's `model` field to the runtime this cluster warms a pool
+// for, leaving every other field as published. The assertions are on
+// the response document's conformance to the published schema, which
+// the model value does not affect.
+func withDeployedRuntimeModel(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decode OpenAI request fixture: %v", err)
+	}
+	req["model"] = openAIConformanceRuntime
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("encode OpenAI request: %v", err)
+	}
+	return out
 }
