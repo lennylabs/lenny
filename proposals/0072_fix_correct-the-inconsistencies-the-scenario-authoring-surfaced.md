@@ -157,13 +157,18 @@ search the channel register for what it means.
 
 Superseded by proposal 0073 and dropped from this proposal. This section recorded that
 `tests/claim-map.json` carried `"ResumeRequest.slot_id"` as `UNWIRED` while its neighbour
-`"Checkpoint restore onto a concurrent pod"` carried `ABSENT`, and that §28.4 defines `UNWIRED` as
-implemented with no production caller, which a field the proto does not declare cannot be.
+`"Checkpoint restore onto a concurrent pod"` carried `ABSENT`. Its premise was that §28.4 defines
+`UNWIRED` as implemented with no production caller, which a field the proto does not declare cannot be.
+That premise did not survive the tree it was written against. Commit 01d19af0 (2026-08-15) landed
+`ResumeRequest.slot_id` in `schemas/lenny-adapter.proto` after this proposal was drafted, so the field the
+row names exists and the row was already correctly `UNWIRED` under §28.4's definition before either
+proposal touched it.
 
-The correction this section staged has no subject left. Proposal 0073 removes the duplicate `slot_id`
-fields from both gRPC services, and its REG-1 retires the rows those fields name along with them, so the
-row is deleted rather than restatused. Neither proposal makes the status correction, and 0073's own
-record says so.
+The correction this section staged therefore had no subject even before the retirement, and it has none
+after it. Proposal 0073 removes the duplicate `slot_id` fields from both gRPC services, and its REG-1
+retires the rows those fields name along with them, so the row is deleted rather than restatused. REG-1
+records the same facts: all five fields exist, the rows are correctly `UNWIRED`, and the earlier
+`ABSENT` edit is dropped rather than amended. Neither proposal makes the status correction.
 
 ## 2. Decisions
 
@@ -190,9 +195,11 @@ record says so.
    not carry, and correcting them requires knowing what the handshake is now, which §3 stages against
    `NegotiateVersion` rather than guessing at a channel identifier.
 
-6. **The register row is dropped rather than corrected.** Proposal 0073 removes the field the row names
-   from both gRPC services and retires the row with it, so there is no status left to correct and no
-   seeded row for the script's inference to reproduce. §1.11 and its REG-1 are dropped.
+6. **The register row is dropped rather than corrected.** The row was already correct before either
+   proposal reached it: commit 01d19af0 landed `ResumeRequest.slot_id`, which made the row's `UNWIRED`
+   status accurate under §28.4 and left §1.11's correction without a subject. Proposal 0073 then removes
+   the field the row names from both gRPC services and retires the row with it, so there is no status left
+   to correct and no seeded row for the script's inference to reproduce. §1.11 and its REG-1 are dropped.
 
 7. **One flag is recorded as fixed and not restaged.** The retry-budget classes now cover the drain-driver
    checkpoint: proposal 0037 (`a474c89f`) collapsed both drain finalisations onto the `eviction` trigger,
@@ -319,8 +326,10 @@ general form of §1.7 and would have caught it.
 ## 6. Out of scope
 
 Slot-aware restore itself, which proposal 0073 builds. The missing `.partial` staging directory and atomic
-rename on the extract path, which are a second §10.1.7-versus-code divergence and belong with the restore
-work. Any change to `Merge`'s no-overwrite rule or the retry budgets' values.
+rename on the extract path remain an open §10.1.7-versus-code divergence that proposal 0073 does not close:
+its SPEC-3 states the staging directory and the atomic rename per slot root, and no code deliverable there
+changes `ExtractTree` (`pkg/adapter/workspace/tree.go`), which still writes members straight into the named
+roots. Any change to `Merge`'s no-overwrite rule or the retry budgets' values.
 
 ## 7. Files touched on application
 
