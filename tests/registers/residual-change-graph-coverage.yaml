@@ -456,6 +456,12 @@ entries:
     reason: |-
       a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
   - member: |-
+      scripts/test-stuck-judging.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       scripts/test-spec-review-focus.mjs
     class: change-graph-coverage
     disposition: excluded

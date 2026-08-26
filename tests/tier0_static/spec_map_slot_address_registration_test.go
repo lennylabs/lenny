@@ -20,15 +20,11 @@ import (
 // to the sections that case actually exercises. The map validator only checks
 // that a reference resolves, so a case filed under an unrelated section is
 // invisible to it: this test closes that gap for the file.
+const slotAddressAbsenceTestFile = "tests/tier3_contract/rest_sessions/slot_address_absence_test.go"
+
 // creditGateFile is this file, whose own cases the credit gate must account
 // for as it accounts for every other file in the inventory.
 const creditGateFile = "tests/tier0_static/spec_map_slot_address_registration_test.go"
-
-const slotAddressAbsenceTestFile = "tests/tier3_contract/rest_sessions/slot_address_absence_test.go"
-
-// specAnnotationSectionRE matches a section id in a `// spec:` annotation,
-// with or without the section sign, and captures the dotted id.
-var specAnnotationSectionRE = regexp.MustCompile(`§?(\d+(?:\.\d+)*)`)
 
 // specMapFunctionEntries returns, per spec-section id, the test function
 // names that tests/spec-map.json registers from the given repo-relative
@@ -62,37 +58,6 @@ func specMapFunctionEntries(t *testing.T, file string) map[string][]string {
 	return out
 }
 
-// specAnnotationSections returns, per test function name declared in the
-// given Go file, the set of spec-section ids the function's `// spec:`
-// annotation names.
-func specAnnotationSections(t *testing.T, file string) map[string]map[string]bool {
-	t.Helper()
-	root := schematest.RepoRoot(t)
-	body, err := os.ReadFile(filepath.Join(root, file))
-	if err != nil {
-		t.Fatalf("read %s: %v", file, err)
-	}
-	lines := strings.Split(string(body), "\n")
-	out := map[string]map[string]bool{}
-	funcRE := regexp.MustCompile(`^func (Test\w+)\(`)
-	for i, line := range lines {
-		m := funcRE.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		// Walk back over the contiguous comment block above the
-		// declaration and collect every section id it names.
-		sections := map[string]bool{}
-		for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
-			for _, s := range specAnnotationSectionRE.FindAllStringSubmatch(lines[j], -1) {
-				sections[s[1]] = true
-			}
-		}
-		out[m[1]] = sections
-	}
-	return out
-}
-
 // spec: 5.2 (client error on exhaustion), 7.1 (session lifecycle normal
 // flow), 7.2 (message dispatch), 4.1 (message scope)
 //
@@ -103,7 +68,7 @@ func specAnnotationSections(t *testing.T, file string) map[string]map[string]boo
 // does pin unmapped.
 func TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise(t *testing.T) {
 	registered := specMapFunctionEntries(t, slotAddressAbsenceTestFile)
-	annotated := specAnnotationSections(t, slotAddressAbsenceTestFile)
+	annotated := annotatedSectionsPerCase(t, slotAddressAbsenceTestFile)
 	if len(registered) == 0 {
 		t.Fatalf("spec-map.json registers no case from %s", slotAddressAbsenceTestFile)
 	}
@@ -290,18 +255,45 @@ var slotAddressCaseFiles = []string{
 	"tests/tier9_security/tracing_context_session_isolation_test.go",
 }
 
-// citedSectionRE matches one spec-section id at the head of a comma-separated
-// item of a `// spec:` annotation. The id is anchored to the head of the item
-// and must be followed by the opening parenthesis of its gloss or by the end
-// of the item, so a number that appears inside a gloss ("a Phase 3 contract
-// migration", "the latest 2 checkpoints") is not read as a citation.
-var citedSectionRE = regexp.MustCompile(`^§?(\d+(?:\.\d+)*)(\s*\(|\s*$)`)
+// citedSectionHeadRE splits one item of a `// spec:` annotation into the
+// optional section sign, a dotted section id anchored at the head of the item,
+// and whatever follows the id inside the item.
+var citedSectionHeadRE = regexp.MustCompile(`^(§?)(\d+(?:\.\d+)*)(.*)$`)
+
+// citedSectionAtHead returns the spec-section id an annotation item cites at
+// its head. The id must open the item, and what follows it decides whether the
+// item is a citation: the section sign, the end of the item, a trailing
+// period, colon, or semicolon, the opening parenthesis of a gloss, or, for a
+// dotted id, a gloss introduced by whitespace, which is how the repo's
+// annotations write an em-dash or bare-word gloss. An undotted number followed
+// by prose ("a Phase 3 contract migration", "the latest 2 checkpoints") is a
+// quantity rather than a citation and is not read as one.
+func citedSectionAtHead(item string) (string, bool) {
+	m := citedSectionHeadRE.FindStringSubmatch(strings.TrimSpace(item))
+	if m == nil {
+		return "", false
+	}
+	sign, id, rest := m[1], m[2], strings.TrimRight(m[3], " \t")
+	switch {
+	case sign == "§", rest == "", rest == ".", rest == ":", rest == ";":
+		return id, true
+	}
+	if strings.HasPrefix(strings.TrimLeft(rest, " \t"), "(") {
+		return id, true
+	}
+	if strings.Contains(id, ".") && rest != strings.TrimLeft(rest, " \t") {
+		return id, true
+	}
+	return "", false
+}
 
 // isIndentedCommentContinuation reports whether the line at idx is a comment
-// line whose text is indented under its `//` marker. gofumpt reflows a wrapped
-// `// spec:` annotation into the first physical line, a bare `//`, and then
-// tab-indented continuation lines, so an indented comment line after a blank
-// one continues the annotation rather than opening a new paragraph.
+// line whose text is indented under its `//` marker by a tab or by two or more
+// spaces. gofumpt reflows a wrapped `// spec:` annotation into the first
+// physical line, a bare `//`, and then tab-indented continuation lines, so an
+// indented comment line after a blank one continues the annotation rather than
+// opening a new paragraph. An ordinary `// text` prose line carries a single
+// space and ends the annotation instead.
 func isIndentedCommentContinuation(lines []string, idx int) bool {
 	if idx >= len(lines) {
 		return false
@@ -311,7 +303,12 @@ func isIndentedCommentContinuation(lines []string, idx int) bool {
 		return false
 	}
 	rest := strings.TrimPrefix(trimmed, "//")
-	return rest != strings.TrimLeft(rest, " \t") && strings.TrimSpace(rest) != ""
+	if strings.TrimSpace(rest) == "" {
+		return false
+	}
+	// A single space after `//` is how an ordinary comment line is written, so
+	// only a tab or a wider indent marks a reflowed continuation line.
+	return strings.HasPrefix(rest, "\t") || strings.HasPrefix(rest, "  ")
 }
 
 // annotationBlockAt joins the `// spec:` annotation opening at lines[i] with
@@ -344,12 +341,13 @@ func annotationBlockAt(lines []string, i int) (string, int) {
 	return strings.Join(block, " "), j - 1
 }
 
-// sectionsInAnnotation returns every spec-section id cited at the head of a
-// comma-separated item of one joined `// spec:` annotation.
+// sectionsInAnnotation returns every spec-section id cited at the head of an
+// item of one joined `// spec:` annotation. The repo's annotations separate
+// citations with a comma or a semicolon, so both are item separators.
 func sectionsInAnnotation(block string, out map[string]bool) {
-	for _, item := range strings.Split(block, ",") {
-		if m := citedSectionRE.FindStringSubmatch(strings.TrimSpace(item)); m != nil {
-			out[m[1]] = true
+	for _, item := range strings.FieldsFunc(block, func(r rune) bool { return r == ',' || r == ';' }) {
+		if id, ok := citedSectionAtHead(item); ok {
+			out[id] = true
 		}
 	}
 }
@@ -484,9 +482,7 @@ func specMapCredits(t *testing.T, file string) (declared, wholeFile map[string]b
 	return declared, wholeFile, perCase
 }
 
-// spec: 28.5.3 (the session identifier addresses every session-scoped frame),
-// 4.1 (one address per gRPC request), 6.1 (the per-session credential file),
-// 6.4 (the per-slot workspace tree)
+// spec: 4.1 (one address per gRPC request)
 //
 // Every case that landed with the per-session slot address contract is
 // credited in tests/spec-map.json under each spec section its own annotation
@@ -522,8 +518,7 @@ func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 	}
 }
 
-// spec: 17.2 (every test carries a `// spec:` annotation naming the sections
-// it exercises)
+// spec: 4.1 (one address per gRPC request)
 //
 // A `// spec:` annotation that gofumpt has reflowed into a first physical
 // line, a bare `//`, and tab-indented continuation lines is read whole. A
@@ -550,8 +545,7 @@ func TestReflowedSpecAnnotationIsReadPastTheBlankCommentLine(t *testing.T) {
 	}
 }
 
-// spec: 17.2 (every test carries a `// spec:` annotation naming the sections
-// it exercises)
+// spec: 4.1 (one address per gRPC request)
 //
 // Sections are resolved per test function, so a section one case cites is
 // not attributed to a sibling case in the same file. Attributing the union
@@ -594,5 +588,65 @@ func TestTheCreditGateIsCreditedByNameUnderTheSectionItAnnotates(t *testing.T) {
 	_, wholeFile, perCase := specMapCredits(t, creditGateFile)
 	if !wholeFile["4.1"] && !perCase[gate]["4.1"] {
 		t.Errorf("spec-map.json section 4.1 credits neither %s as a whole nor %s::%s", creditGateFile, creditGateFile, gate)
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A citation list that ends in a bare section id with no parenthesised gloss
+// keeps that id when an ordinary prose paragraph follows the blank comment
+// line. A reader that treats every `// text` line as a wrapped-annotation
+// continuation glues the trailing id to the first prose word, drops it, and
+// then fails to demand the credit that id names.
+func TestTrailingBareSectionIDSurvivesAFollowingProseParagraph(t *testing.T) {
+	lines := []string{
+		"// spec: 4.7 (Resume takes the same claim as StartSession), 5.2",
+		"//",
+		"// The gateway reserves the slot on the pod connect already claimed, so a",
+		"// resume that lands on a second pod is rejected rather than placed.",
+		"func TestSomething(t *testing.T) {",
+	}
+	got := sortedSectionIDs(sectionsFromLines(lines))
+	want := []string{"4.7", "5.2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("sectionsFromLines read %v, want %v", got, want)
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// Citations separated by semicolons, and a citation whose gloss follows an
+// em-dash rather than a parenthesis, are both read. The repo's `// spec:`
+// annotations use each form, and a reader that recognises only the
+// comma-separated parenthesised form is blind to those files, so the credit
+// gate passes over every section they name.
+func TestSemicolonAndEmDashCitationFormsAreRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  []string
+	}{
+		{
+			name:  "semicolons with a trailing period",
+			lines: []string{"// spec: §5.2; §6.4; §28.5.3."},
+			want:  []string{"28.5.3", "5.2", "6.4"},
+		},
+		{
+			name:  "em-dash gloss",
+			lines: []string{"// spec: 5.2 — a transient slot failure is retried once on a fresh slot"},
+			want:  []string{"5.2"},
+		},
+		{
+			name:  "a quantity in a gloss is not a citation",
+			lines: []string{"// spec: 4.1 (one address per request), the latest 2 checkpoints are kept"},
+			want:  []string{"4.1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sortedSectionIDs(sectionsFromLines(tc.lines))
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("sectionsFromLines read %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
