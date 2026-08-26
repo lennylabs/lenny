@@ -23,6 +23,11 @@ import (
 // invisible to it: this test closes that gap for the file.
 const slotAddressAbsenceTestFile = "tests/tier3_contract/rest_sessions/slot_address_absence_test.go"
 
+// addressRuleGateFile is the tier-0 gate that holds every address-guard case
+// to the section stating the rule. It carries its own `// spec:` annotation,
+// so the credit inventory must carry it as it carries every other case file.
+const addressRuleGateFile = "tests/tier0_static/address_rule_citation_test.go"
+
 // creditGateFile is this file, whose own cases the credit gate must account
 // for as it accounts for every other file in the inventory.
 const creditGateFile = "tests/tier0_static/spec_map_slot_address_registration_test.go"
@@ -98,52 +103,72 @@ func sortedSectionIDs(set map[string]bool) []string {
 	return out
 }
 
-// slotAddressCaseFiles is the inventory of test cases that landed with the
-// per-session slot address contract: every test file this change added, and
-// every existing test file whose `// spec:` annotation this change extended
-// with a further section. Each of them must be credited in tests/spec-map.json
-// under every spec section its own annotation names, so that a section the
-// case pins has a test against it in the coverage view and
-// `lenny-test --spec <section>` selects the case. The list is derived from the
-// change rather than chosen by hand: it is the set of test files this change
-// added, plus every test file whose `// spec:` citation lines the change
-// touched, taken from the diff over the change's own commit range rather than
-// assembled by reading. It includes this file, because a
-// gate that omits itself does not check the case it is part of. The map
-// validator walks tier 2 through tier 10 only, and it checks that a reference
-// resolves rather than that a case is credited to the sections it exercises,
-// so a tier-0, tier-11, `cmd/`, `pkg/`, `sdks/`, or `migrations/` case can
-// carry an annotation no section records.
+// slotAddressCaseFiles is the inventory of test cases that carry the
+// per-session slot address contract. Each of them must be credited in
+// tests/spec-map.json under every spec section its own annotation names, so
+// that a section the case pins has a test against it in the coverage view and
+// `lenny-test --spec <section>` selects the case.
+//
+// The inventory is the full set of case files the per-session address change
+// stages, whether the change added the file, rewrote cases inside it, or left
+// its citation lines untouched while rewriting the behavior it asserts. A
+// narrower inventory taken from the change's own citation-line diff credits
+// the gaps it happens to have edited and is blind to every staged case whose
+// annotation it did not touch, which is the failure this gate exists to
+// prevent. It includes this file, because a gate that omits itself does not
+// check the case it is part of.
+//
+// The map validator walks tier 2 through tier 10 only, and it checks that a
+// reference resolves rather than that a case is credited to the sections it
+// exercises, so a tier-0, tier-11, `cmd/`, `pkg/`, `sdks/`, or `migrations/`
+// case can carry an annotation no section records.
 var slotAddressCaseFiles = []string{
 	"cmd/lenny-compliance/full_test.go",
 	"cmd/lenny-compliance/sessionecho_test.go",
+	"cmd/lenny-compliance/standard_test.go",
 	"cmd/lenny-ctl/runtimescaffold/scaffold_test.go",
+	"cmd/lenny-gateway/direct_usage_quota_integration_test.go",
 	"cmd/lenny-test/cmd_run_race_test.go",
 	"cmd/runtimes/echo-concurrent/main_test.go",
 	"migrations/0178_checkpoint_manifest_test.go",
 	"migrations/session_checkpoints_slot_id_test.go",
+	"pkg/adapter/adapterevents_test.go",
 	"pkg/adapter/attach_test.go",
 	"pkg/adapter/checkpoint_stream_test.go",
+	"pkg/adapter/connectormcp_test.go",
+	"pkg/adapter/coordination_test.go",
 	"pkg/adapter/credentials_test.go",
 	"pkg/adapter/credexpiry_test.go",
+	"pkg/adapter/drain_test.go",
+	"pkg/adapter/embedded_sdkwarm_test.go",
+	"pkg/adapter/export_test.go",
 	"pkg/adapter/exportpaths_test.go",
+	"pkg/adapter/files_updated_test.go",
+	"pkg/adapter/gatewaycontrol/scrubreport_test.go",
 	"pkg/adapter/holdstate_test.go",
 	"pkg/adapter/integrationlevel_test.go",
 	"pkg/adapter/manifest_fields_test.go",
 	"pkg/adapter/manifest_test.go",
+	"pkg/adapter/mcpruntime_test.go",
 	"pkg/adapter/one_session_only_test.go",
 	"pkg/adapter/oplock_test.go",
+	"pkg/adapter/platformmcp_test.go",
 	"pkg/adapter/podmcp_arming_internal_test.go",
 	"pkg/adapter/podscrub_test.go",
 	"pkg/adapter/resume_test.go",
 	"pkg/adapter/scrub/scrub_test.go",
+	"pkg/adapter/sdkwarm_test.go",
 	"pkg/adapter/session_test.go",
 	"pkg/adapter/sessionscrub_emit_test.go",
+	"pkg/adapter/shutdown_demote_test.go",
 	"pkg/adapter/slot_test.go",
 	"pkg/adapter/slotframe_test.go",
 	"pkg/adapter/socketruntime_e2e_test.go",
 	"pkg/adapter/staging_test.go",
+	"pkg/adapter/tracing_external_test.go",
+	"pkg/adapter/tracing_internal_test.go",
 	"pkg/adapter/tracingcontext_addressing_test.go",
+	"pkg/adapter/tracingcontext_sampling_test.go",
 	"pkg/adapter/usage_test.go",
 	"pkg/adapter/warmlayout_test.go",
 	"pkg/controller/sandbox/podspec/podspec_test.go",
@@ -152,23 +177,44 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
 	"pkg/gateway/checkpoint/checkpointretention/checkpointretention_test.go",
 	"pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
+	"pkg/gateway/coordination/barrier/wiring_test.go",
+	"pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go",
 	"pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+	"pkg/gateway/podlifecycle/podsession/binder_archive_test.go",
+	"pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+	"pkg/gateway/podlifecycle/podsession/binder_readopt_test.go",
+	"pkg/gateway/podlifecycle/podsession/binder_test.go",
 	"pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
+	"pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
+	"pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
 	"pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+	"pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go",
 	"pkg/gateway/runtime/adapterclient/client_test.go",
 	"pkg/gateway/session/executor/pod_test.go",
+	"pkg/gateway/sessionserver/create_test.go",
+	"pkg/gateway/sessionserver/delegated_child_materialize_test.go",
 	"pkg/gateway/sessionserver/messages_component_test.go",
 	"pkg/gateway/sessionserver/messages_test.go",
 	"pkg/gateway/sessionserver/podclaimerror_internal_test.go",
+	"pkg/gateway/sessionserver/pool_exhaustion_queue_test.go",
+	"pkg/gateway/sessionserver/pool_selection_component_test.go",
+	"pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go",
+	"pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
+	"pkg/gateway/sessionserver/resume_external_effect_regression_test.go",
 	"pkg/gateway/sessionserver/slotretry_test.go",
+	"pkg/gateway/sessionserver/start_pod_lease_component_test.go",
+	"pkg/gateway/sessionserver/start_pod_test.go",
+	"pkg/gateway/sessionserver/upload_to_session_test.go",
 	"pkg/gateway/sessionserver/workspace_root_persist_test.go",
 	"sdks/runtime/go/runtime/runtime_test.go",
 	"tests/testinfra/sessiondriver/sessiondriver_test.go",
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
 	"tests/tier0_static/adapter_proto_parse_test.go",
+	"tests/tier0_static/address_rule_citation_test.go",
 	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
 	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
 	"tests/tier0_static/claim_register_generator_test.go",
+	"tests/tier0_static/claim_register_proto_agreement_test.go",
 	"tests/tier0_static/claim_register_test.go",
 	"tests/tier0_static/slot_absence_claim_comment_test.go",
 	"tests/tier0_static/slot_assignment_attribution_test.go",
@@ -176,15 +222,20 @@ var slotAddressCaseFiles = []string{
 	"tests/tier0_static/spec_map_slot_address_registration_test.go",
 	"tests/tier10_conformance/concurrent_slot_conformance_test.go",
 	"tests/tier10_conformance/credential_path_resolution_conformance_test.go",
+	"tests/tier10_conformance/recycle_scrub_conformance_test.go",
+	"tests/tier10_conformance/reference_battery_test.go",
 	"tests/tier10_conformance/scaffold_battery_test.go",
 	"tests/tier10_conformance/scaffolds_test.go",
+	"tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
 	"tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
 	"tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
 	"tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
+	"tests/tier11_docs/adapter_metric_catalog_test.go",
 	"tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
 	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
 	"tests/tier11_docs/checkpoint_scoping_key_test.go",
 	"tests/tier11_docs/credential_path_literal_sweep_test.go",
+	"tests/tier11_docs/embedded_manifests_sync_test.go",
 	"tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
 	"tests/tier11_docs/frame_address_spec_citation_test.go",
 	"tests/tier11_docs/frame_identifier_schema_reconciliation_test.go",
@@ -201,35 +252,57 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
 	"tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
 	"tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
+	"tests/tier11_docs/successor_pointer_test.go",
 	"tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go",
 	"tests/tier11_docs/workspace_path_literal_sweep_test.go",
+	"tests/tier2_component/legalholdreconciler/reconciler_test.go",
 	"tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
 	"tests/tier2_component/migrations/prod_columns_test.go",
+	"tests/tier2_component/observability/catalog_crosscheck_test.go",
 	"tests/tier2_component/rls/checkpoint_manifest_test.go",
 	"tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
 	"tests/tier2_component/stores/checkpointretention_test.go",
 	"tests/tier2_component/stores/partialmanifeststore_test.go",
+	"tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
 	"tests/tier2_component/warmlayout/warm_layout_test.go",
+	"tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
 	"tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go",
+	"tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
 	"tests/tier3_contract/adapter_jsonl/gateway_envelope_address_test.go",
 	"tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go",
+	"tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go",
 	"tests/tier3_contract/adapter_jsonl/subprocess_envelope_address_test.go",
 	"tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
 	"tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
 	"tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
+	"tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
 	"tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
+	"tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
 	"tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
 	"tests/tier3_contract/rest_sessions/slot_address_absence_test.go",
 	"tests/tier3_contract/sdks/go_client_test.go",
 	"tests/tier3_contract/sdks/python_client_test.go",
+	"tests/tier3_contract/sdks/runtime_sdk_test.go",
 	"tests/tier3_contract/sdks/typescript_client_test.go",
+	"tests/tier4_integration/checkpoint_chunk_helpers_test.go",
 	"tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+	"tests/tier4_integration/checkpoint_driver_harness_test.go",
+	"tests/tier4_integration/checkpoint_grant_remint_test.go",
+	"tests/tier4_integration/checkpoint_intent_generation_test.go",
 	"tests/tier4_integration/concurrent_delegation_proxy_test.go",
 	"tests/tier4_integration/concurrent_workspace_test.go",
+	"tests/tier4_integration/credential_delivery_gate_test.go",
+	"tests/tier4_integration/credential_lifecycle_test.go",
+	"tests/tier4_integration/cross_environment_delegation_test.go",
+	"tests/tier4_integration/delegation_child_materialization_test.go",
+	"tests/tier4_integration/eager_claim_lifecycle_test.go",
+	"tests/tier4_integration/mcp_runtime_lifecycle_test.go",
+	"tests/tier4_integration/recycle_scrub_path_test.go",
 	"tests/tier4_integration/token_service_unavailability_guard_test.go",
 	"tests/tier5_e2e_kind/admission_test.go",
 	"tests/tier5_e2e_kind/checkpoint_resume_test.go",
 	"tests/tier5_e2e_kind/diagnostics_fix_test.go",
+	"tests/tier5_e2e_kind/eager_claim_e2e_test.go",
 	"tests/tier5_e2e_kind/execution_modes_test.go",
 	"tests/tier5_e2e_kind/gateway_probe_test.go",
 	"tests/tier5_e2e_kind/gateway_replica_continuity_test.go",
@@ -248,9 +321,13 @@ var slotAddressCaseFiles = []string{
 	"tests/tier8_chaos/live_session_test.go",
 	"tests/tier8_chaos/token_service_unavailability_guard_test.go",
 	"tests/tier9_security/adapter_hold_termination_surface_test.go",
+	"tests/tier9_security/adapter_mcp_nonce_test.go",
 	"tests/tier9_security/adapter_shared_mcp_surface_test.go",
 	"tests/tier9_security/audit_integrity_test.go",
 	"tests/tier9_security/audit_sequence_precondition_test.go",
+	"tests/tier9_security/credential_delivery_gate_test.go",
+	"tests/tier9_security/delegation_child_materialization_cred_test.go",
+	"tests/tier9_security/delegation_credential_deny_leakage_test.go",
 	"tests/tier9_security/live_session_test.go",
 	"tests/tier9_security/ops_network_policy_test.go",
 	"tests/tier9_security/session_teardown_surface_test.go",
@@ -586,6 +663,30 @@ func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s::%s to section(s) %v its own `// spec:` annotation names", file, fn, sortedSectionIDs(missing))
 			}
+		}
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// Every file a sibling gate inventories as carrying the address contract is
+// also carried by the credit inventory. A gate that names a case file the
+// credit inventory omits leaves that file's citations uncredited: the case
+// asserts the rule, and the section the rule is stated in still shows no test
+// against it in the coverage view.
+func TestTheCreditInventoryCarriesEveryAddressGuardCaseFile(t *testing.T) {
+	inventory := map[string]bool{}
+	for _, file := range slotAddressCaseFiles {
+		inventory[file] = true
+	}
+	files := []string{addressRuleGateFile}
+	for file := range addressRuleCases {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	for _, file := range files {
+		if !inventory[file] {
+			t.Errorf("slotAddressCaseFiles omits %s, which the address-guard gate inventories", file)
 		}
 	}
 }

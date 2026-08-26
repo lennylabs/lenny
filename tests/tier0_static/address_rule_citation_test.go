@@ -28,6 +28,7 @@ const addressRuleSentence = "rejected at the adapter boundary with `InvalidArgum
 // rule, so the coverage view records the rule as tested where it is written.
 var addressRuleCases = map[string][]string{
 	"pkg/adapter/session_test.go": {
+		"TestStartSessionRejectsEmptySessionID",
 		"TestStartSessionRejectsAMalformedSessionAddress_spec_5_2",
 	},
 	"pkg/adapter/staging_test.go": {

@@ -262,6 +262,11 @@ func TestStartSessionRefusesARepeatedStartAndAdmitsASecondSession_spec_4_7(t *te
 	}
 }
 
+// TestStartSessionRejectsEmptySessionID asserts the primary arm of the
+// address guard: a session-scoped request whose session identifier is empty
+// is refused at the adapter boundary before any root is resolved.
+//
+// spec: §5.2 (the address is required and non-empty)
 func TestStartSessionRejectsEmptySessionID(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	_, err := s.StartSession(context.Background(), startReq(""))
