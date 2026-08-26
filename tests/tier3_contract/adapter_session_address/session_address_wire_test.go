@@ -91,7 +91,7 @@ func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: 4.2 (the address is required and non-empty), 4.1
+// spec: 5.2 (the address is required and non-empty), 4.1
 //
 // diagnosis: a session-scoped request lost its session address, so the
 // adapter has nothing to resolve the session's slot from and the request

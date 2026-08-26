@@ -813,7 +813,7 @@ func TestCheckpointStreamReportsObjectStoreRejection_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §4.1 (Checkpoint is session-scoped), §4.2 (an empty per-session
+// spec: §4.1 (Checkpoint is session-scoped), §5.2 (an empty per-session
 // address is InvalidArgument), §6.4 (the per-slot tree is the only layout)
 //
 // The opening frame's session identifier is the only address the
@@ -823,7 +823,7 @@ func TestCheckpointStreamReportsObjectStoreRejection_spec_4_4(t *testing.T) {
 // check answered an unaddressed stream with FailedPrecondition, which
 // tells the gateway the pod lost the session, and it took the pod-level
 // op lock under the unvalidated address on the way there.
-func TestCheckpointStreamRefusesAnUnaddressedStart_spec_4_2(t *testing.T) {
+func TestCheckpointStreamRefusesAnUnaddressedStart_spec_5_2(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		session *adapterv1.SessionId

@@ -380,7 +380,7 @@ func uploadFrame(sessionID, ref, chunk string) *adapterv1.PrepareWorkspaceReques
 // upload stages into the named session's
 // /workspace/slots/{sessionId}/staging directory, which is the only
 // staging layout: no upload lands in a pod-global /workspace/staging.
-// spec: §6.4 (per-session workspace tree), §4.2 (session-addressed
+// spec: §6.4 (per-session workspace tree), §5.2 (session-addressed
 // adapter requests).
 func TestPrepareWorkspaceStagesUnderTheSessionSlotTree(t *testing.T) {
 	base := t.TempDir()
@@ -430,9 +430,9 @@ func TestPrepareWorkspaceRefusesAnUnresolvableStagingPath(t *testing.T) {
 // InvalidArgument before a staging root is resolved and before any tree is
 // written, so a hostile identifier cannot place uploaded bytes outside the
 // session's own slot tree.
-// spec: §4.2 (the address is required and well formed), §6.4 (the per-slot
+// spec: §5.2 (the address is required and well formed), §6.4 (the per-slot
 // tree the address resolves)
-func TestPrepareWorkspaceRejectsAMalformedSessionAddress_spec_4_2(t *testing.T) {
+func TestPrepareWorkspaceRejectsAMalformedSessionAddress_spec_5_2(t *testing.T) {
 	for _, id := range []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"} {
 		base := t.TempDir()
 		srv := &Server{WorkspaceBase: base}
@@ -455,7 +455,8 @@ func TestPrepareWorkspaceRejectsAMalformedSessionAddress_spec_4_2(t *testing.T) 
 
 // TestPrepareWorkspaceRequiresASessionID asserts that a frame carrying no
 // session id is refused: absence of the address is an error rather than a
-// scope. spec: §4.2.
+// scope.
+// spec: §5.2 (the address is required and well formed)
 func TestPrepareWorkspaceRequiresASessionID(t *testing.T) {
 	srv := &Server{WorkspaceBase: t.TempDir()}
 	stream := &prepareWorkspaceStreamStub{

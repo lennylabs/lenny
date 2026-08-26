@@ -884,7 +884,7 @@ func (noopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) 
 // a usable one is refused with InvalidArgument before any probe frame is
 // sent.
 //
-// spec: 4.1, 4.2, 6.4
+// spec: 4.1, 5.2, 6.4
 // diagnosis: The adapter served a Checkpoint stream whose opening frame
 // named no session. The gateway reads the FailedPrecondition a bare
 // registry miss returns as "the pod lost this session" and re-places it,

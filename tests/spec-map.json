@@ -197,12 +197,7 @@
         "tests/tier4_integration/idempotency_test.go",
         "tests/tier4_integration/session_lifecycle_test.go",
         "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
-        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway",
-        "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
-        "pkg/adapter/checkpoint_stream_test.go",
-        "pkg/adapter/session_test.go",
-        "pkg/adapter/staging_test.go",
-        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go"
+        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway"
       ],
       "packages": [
         "pkg/session",
@@ -1025,6 +1020,7 @@
         "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
         "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
         "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+        "tests/tier0_static/address_rule_citation_test.go",
         "tests/tier0_static/slot_absence_claim_comment_test.go",
         "tests/tier0_static/slot_assignment_attribution_test.go",
         "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
@@ -1053,6 +1049,7 @@
         "pkg/adapter/resume_test.go",
         "pkg/adapter/scrub/scrub_test.go",
         "pkg/adapter/session_test.go",
+        "pkg/adapter/staging_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",

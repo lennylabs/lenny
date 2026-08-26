@@ -281,9 +281,9 @@ var malformedSessionAddresses = []string{".", "..", "a/b", `a\b`, "a\x00b", "./a
 // arm of the address guard: a session id that is not a safe path segment
 // is refused with InvalidArgument before a root is resolved, before a
 // registry entry exists, and before any tree is written.
-// spec: §4.2 (the address is required and well formed), §6.4 (the per-slot
+// spec: §5.2 (the address is required and well formed), §6.4 (the per-slot
 // tree the address resolves)
-func TestStartSessionRejectsAMalformedSessionAddress_spec_4_2(t *testing.T) {
+func TestStartSessionRejectsAMalformedSessionAddress_spec_5_2(t *testing.T) {
 	for _, id := range malformedSessionAddresses {
 		s, rt, _ := sessionServer(t)
 		_, err := s.StartSession(context.Background(), startReq(id))
